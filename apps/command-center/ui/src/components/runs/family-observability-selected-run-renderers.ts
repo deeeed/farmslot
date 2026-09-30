@@ -14,6 +14,8 @@ import '../workspace/ready-workspace.js';
 import './run-pipeline.js';
 import './step-inspector.js';
 
+import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
+
 import { familyArtifactUrl } from './family-observability-artifact-model.js';
 import {
   familyPublishGateMaximizeLabel,
@@ -175,7 +177,9 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
     >
       <div class="publish-gate-reopen-head">
         <div class="detail-title">Publish gate</div>
-        <span class="muted">${resolvedLabel}</span>
+        <span class="muted" role="status" data-testid="rdy-review-progress"
+          >${readyReviewRequestProgress(options.fullRun) || resolvedLabel}</span
+        >
         <span class="publish-gate-reopen-actions">
           ${options.gateOpen
             ? html`

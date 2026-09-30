@@ -3012,7 +3012,7 @@ export const DEFAULT_TASK_DIR = '.task';
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
 /** Default Codex model used when no slot/task/project/user override is set. */
-export const DEFAULT_CODEX_MODEL = 'gpt-6-sol';
+export const DEFAULT_CODEX_MODEL = 'gpt-6.1-sol';
 
 /** Reasoning efforts exposed by the Codex CLI, including max and ultra. */
 export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
@@ -3022,6 +3022,7 @@ export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 export function codexReasoningEfforts(model?: string | null): readonly CodexReasoningEffort[] {
   switch (model) {
     case 'gpt-6-astra':
+    case 'gpt-6.1-sol':
     case 'gpt-6-sol':
     case 'gpt-5.6-sol':
     case 'gpt-5.6-terra':

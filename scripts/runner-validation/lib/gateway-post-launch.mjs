@@ -800,10 +800,13 @@ export function runGatewayRepeatReviewResume({
   sessionIntent = 'resume',
   expectedKind = 'resumed',
   probeOnly = false,
+  restoreCompletedReviewer = false,
   timeoutMs = 120_000,
 }) {
   const snippet = `
 import os from 'node:os';
+import assert from 'node:assert/strict';
+import { persistedWarmReviewerSession } from './services/gateway/src/self-review/session-policy.ts';
 import { attemptRepeatReviewResume, resolveRepeatReviewResumePlan } from './services/gateway/src/run-engine/review-session-chain.ts';
 import { automatedRepeatReviewSelection } from './services/gateway/src/run-engine/engine-decisions.ts';
 import { getRunnerObservability } from './services/gateway/src/runners/registry.ts';
@@ -880,6 +883,34 @@ const prior = {
     startedAt: new Date().toISOString(),
   }],
 };
+let recoveredReviewer = null;
+if (${JSON.stringify(restoreCompletedReviewer)}) {
+  const scope = {
+    runId: 'same-run-review', taskDir: 'tasks/validation', artifactScope: 'review-2',
+    runner: ${JSON.stringify(runner)}, subjectRef: 'validation-subject',
+  };
+  const completed = {
+    id: scope.runId, status: 'human-gating', slotId: ${JSON.stringify(slotId)}, branch: scope.subjectRef,
+    agentContexts: [{
+      ...prior.agentContexts[0], role: 'self-review', runId: scope.runId,
+      artifactScope: 'review-1', taskFile: scope.taskDir + '/SELF-REVIEW.md',
+      runnerSessionCapturedAt: new Date().toISOString(), reviewLoopNumber: 1,
+      target: { session: 'validation', window: 'reviewer', pane: null, target: ${JSON.stringify(target)} },
+    }],
+    engineState: { publishGate: { independentReviews: [{
+      id: 'review-1', source: 'human-gate', runner: ${JSON.stringify(runner)},
+      model: ${JSON.stringify(model)}, crossRunner: false, loopNumber: 1, verdict: 'pass', unresolvedCount: 0,
+      reviewerSessionId: ${JSON.stringify(sessionId)},
+      reviewSnapshot: { source: 'local-git', headRef: scope.subjectRef, headSha: '1111111', capturedAt: new Date().toISOString() },
+    }] } },
+  };
+  recoveredReviewer = persistedWarmReviewerSession(scope, completed);
+  assert.equal(recoveredReviewer?.runnerSessionId, ${JSON.stringify(sessionId)});
+  assert.equal(persistedWarmReviewerSession({ ...scope, runId: 'another-run' }, completed), null);
+  assert.equal(persistedWarmReviewerSession(scope, { ...completed, status: 'done' }), null);
+  prior.agentContexts[0].runnerSessionId = recoveredReviewer.runnerSessionId;
+  prior.agentContexts[0].runnerSessionPath = recoveredReviewer.runnerSessionPath;
+}
 const reviewOptions = { sessionIntent: ${JSON.stringify(sessionIntent)}, scope: 'incremental', validationDepth: 'full-live' };
 if (${JSON.stringify(probeOnly)}) {
   const state = await getRunnerObservability(${JSON.stringify(runner)}).getSessionDeliveryState(vars, ${JSON.stringify(target)}, ${JSON.stringify(sessionId)}, ${JSON.stringify(sessionPath)});
@@ -908,7 +939,7 @@ const result = await attemptRepeatReviewResume(plan, ${JSON.stringify(runner)}, 
   runtimeDir: '.agent',
   timeoutMs: ${timeoutMs},
 });
-console.log(JSON.stringify(result));
+console.log(JSON.stringify({ ...result, recoveredReviewer }));
 if (result.kind !== ${JSON.stringify(expectedKind)}) process.exit(1);
 `;
 

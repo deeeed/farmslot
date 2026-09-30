@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover completed same-run reviewer sessions for explicit warm rechecks after a gateway restart, and keep reviewers starting until their prompt is accepted.
+
+- Use GPT-6.1 Sol when a Codex task omits its model.
+
 - Distinguish retired worker terminals from windows that are still starting when terminal attachment finds a missing target.
 
 - Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.

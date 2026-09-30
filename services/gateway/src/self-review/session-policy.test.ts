@@ -7,6 +7,7 @@ import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
   parseReviewSessionPolicy,
+  persistedWarmReviewerSession,
   registerWarmReviewerSession,
   resetWarmReviewerSessionsForTest,
   shouldAttemptWarmResume,
@@ -174,4 +175,89 @@ test("a later unrelated run can never claim another run's session", () => {
   register(1);
   // Same slot, same runner, same task dir — but a different run.
   assert.equal(claimWarmReviewerSession({ ...scope, runId: 'run-later' }), null);
+});
+
+test('explicit continuation recovers a completed same-run reviewer after registry loss', () => {
+  const nextScope = { ...scope, artifactScope: 'independent-review-3' };
+  const run: Parameters<typeof persistedWarmReviewerSession>[1] = {
+    id: scope.runId,
+    status: 'human-gating',
+    slotId: 'slot-1',
+    branch: scope.subjectRef,
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        role: 'self-review',
+        label: 'Reviewer',
+        runner: scope.runner,
+        runId: scope.runId,
+        slotId: 'slot-1',
+        status: 'complete',
+        artifactScope: 'independent-review-2',
+        taskFile: `${scope.taskDir}/SELF-REVIEW.rev-codex.md`,
+        runnerSessionId: 'sess-persisted',
+        runnerSessionPath: '/sessions/sess-persisted.jsonl',
+        runnerSessionCapturedAt: '2026-09-30T00:00:00.000Z',
+        reviewLoopNumber: 2,
+        target: { session: 'slot', window: 'rev-codex', pane: null, target: 'slot:rev-codex' },
+      },
+    ],
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-2',
+            source: 'human-gate',
+            runner: scope.runner,
+            model: 'gpt-6-sol',
+            crossRunner: true,
+            loopNumber: 2,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewerSessionId: 'sess-persisted',
+            reviewSnapshot: {
+              source: 'local-git',
+              headRef: scope.subjectRef,
+              headSha: 'head-2',
+              capturedAt: '2026-09-30T00:00:00.000Z',
+            },
+          },
+        ],
+      },
+    },
+  };
+  assert.equal(persistedWarmReviewerSession(nextScope, run)?.runnerSessionId, 'sess-persisted');
+  assert.equal(persistedWarmReviewerSession(nextScope, run)?.artifactScope, 'independent-review-2');
+  assert.equal(persistedWarmReviewerSession({ ...nextScope, runId: 'other-run' }, run), null);
+  assert.equal(persistedWarmReviewerSession({ ...nextScope, taskDir: 'other-task' }, run), null);
+  assert.equal(
+    persistedWarmReviewerSession({ ...nextScope, subjectRef: 'other-branch' }, run),
+    null,
+  );
+  assert.equal(persistedWarmReviewerSession({ ...nextScope, runner: 'claude' }, run), null);
+  assert.equal(persistedWarmReviewerSession(nextScope, { ...run, slotId: 'other-slot' }), null);
+  assert.equal(persistedWarmReviewerSession(nextScope, { ...run, status: 'cancelled' }), null);
+  assert.equal(
+    persistedWarmReviewerSession(nextScope, {
+      ...run,
+      agentContexts: run.agentContexts!.map((context) => ({ ...context, runnerSessionPath: null })),
+    }),
+    null,
+  );
+  assert.equal(
+    persistedWarmReviewerSession(nextScope, {
+      ...run,
+      resourcePosture: {
+        posture: 'terminal',
+        policySource: 'framework-default',
+        capabilities: [],
+        workerRetained: false,
+        updatedAt: '2026-09-30T00:00:00.000Z',
+      },
+    }),
+    null,
+  );
+  register(2);
+  invalidateWarmReviewerSessions(scope.runId);
+  assert.equal(persistedWarmReviewerSession(nextScope, run), null);
 });

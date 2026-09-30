@@ -674,7 +674,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   async _submitReviewRequest() {
     const request = readyReviewLoopRequestPayload(this._reviewLoops, this._currentRunner);
-    this._reviewModalOpen = false;
+    this._closeReviewRequestModal();
     await this._resolve('request-extra-review', {
       reviewRequest: {
         extraLoopsRequested: request.loops.length,
@@ -695,8 +695,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     }
     this._acting = true;
     const payload = this._payload;
+    const requestingReview = ['request-extra-review', 'request-cross-runner-review'].includes(
+      actionId,
+    );
     const approving = isReadyPublicationApproval(actionId, !!payload?.prPackage);
-    this._actionMessage = readyDecisionSubmittingMessage(approving);
+    this._actionMessage = requestingReview
+      ? 'Requesting independent review…'
+      : readyDecisionSubmittingMessage(approving);
     this._actionTone = '';
     try {
       await gateway.request(
@@ -711,7 +716,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           selectionData: extraSelectionData,
         }),
       );
-      this._actionMessage = readyDecisionSuccessMessage(approving);
+      this._actionMessage = requestingReview
+        ? 'Review requested; preparing the reviewer.'
+        : readyDecisionSuccessMessage(approving);
       this._actionTone = 'success';
     } catch (err) {
       console.error('[ready-workspace] resolve failed:', err);

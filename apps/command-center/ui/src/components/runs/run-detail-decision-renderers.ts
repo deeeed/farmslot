@@ -20,6 +20,7 @@ import {
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
@@ -149,7 +150,14 @@ export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   // Show gate section for ANY unresolved decision (not just ones with payload)
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
-  if (!rawPending) return nothing;
+  if (!rawPending) {
+    const progress = readyReviewRequestProgress(run);
+    return progress
+      ? html`<section class="gate-section" role="status" data-testid="rdy-review-progress">
+          ${progress}
+        </section>`
+      : nothing;
+  }
   const pending = withGraftedGateSummary(rawPending, context.pendingDecisions);
 
   if (pending.payload?.kind === 'output-review') {

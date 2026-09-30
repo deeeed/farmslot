@@ -577,3 +577,19 @@ test('review recovery timeout performs cleanup before allowing a fresh reviewer'
     status: 'blocked',
   });
 });
+
+test('continuing base self-review uses its unscoped artifacts', () => {
+  const prefix = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/task',
+    loopNumber: 1,
+    artifactScope: 'independent-review-2',
+    priorArtifactScope: null,
+    priorLoopNumber: 1,
+    priorHeadSha: 'prior',
+    currentHeadSha: 'current',
+    resume: true,
+  });
+  assert.ok(prefix);
+  assert.match(prefix, /temp\/tasks\/task\/artifacts\/review-loop-1/);
+  assert.doesNotMatch(prefix, /artifacts\/independent-review-2/);
+});

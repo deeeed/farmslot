@@ -42,6 +42,7 @@ import {
   renderReadyPackagePanel,
   renderReadyResolvedBanner,
 } from './ready-workspace-package-renderers.js';
+import { readyReviewRequestProgress } from './ready-workspace-review-request-model.js';
 import {
   renderReadyDiffTab,
   renderReadyTabBar,
@@ -174,6 +175,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       open: this._reviewFlowModalOpen,
       reviews: payload.independentReviews ?? [],
       passingReviews: reviewCounts.trustedPassingReviews,
+      reviewProgress: readyReviewRequestProgress(this.run),
       unresolvedFindings: reviewCounts.unresolvedFindings,
       staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
       continuationActive: (this.run?.agentContexts ?? []).some(
@@ -224,6 +226,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       diffArtifact,
       fileDiffAvailable: Boolean(this._fileDiff),
       actionMessage: this._actionMessage,
+      reviewProgress: readyReviewRequestProgress(this.run),
       actionTone: this._actionTone,
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
