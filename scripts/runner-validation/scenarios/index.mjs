@@ -76,6 +76,7 @@ import * as terminalFenceRestart from './terminal-fence-restart.mjs';
 import * as terminalOrderSmoke from './terminal-order-smoke.mjs';
 import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
+import * as warmPublicationReview from './warm-publication-review.mjs';
 import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
 import * as workspaceReviewLifecycle from './workspace-review-lifecycle.mjs';
 
@@ -159,6 +160,7 @@ export const SCENARIOS = {
   'terminal-order-smoke': terminalOrderSmoke,
   'terminal-fence-restart': terminalFenceRestart,
   'token-usage-smoke': tokenUsageSmoke,
+  'warm-publication-review': warmPublicationReview,
   'warm-replacement-smoke': warmReplacementSmoke,
 };
 

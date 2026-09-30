@@ -225,3 +225,11 @@ export function effectiveReviewSessionIntent(
 ): ReviewSessionIntent {
   return intent === 'resume' && loopNumber === 1 && !hasPriorReview ? 'reset' : intent;
 }
+
+export function shouldRetainCompletedReviewer(
+  policy: ReviewSessionPolicy,
+  intent: ReviewSessionIntent | undefined,
+  hasReusableResult: boolean,
+): boolean {
+  return hasReusableResult && (policy === 'warm-per-reviewer' || intent === 'resume');
+}

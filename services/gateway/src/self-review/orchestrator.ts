@@ -100,6 +100,7 @@ import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
   type ReviewSessionPolicy,
+  shouldRetainCompletedReviewer,
 } from './session-policy.js';
 import {
   captureCurrentHeadSha,
@@ -508,9 +509,13 @@ async function executeOwnedSelfReview(
     // Completed reviewer sessions can be explicitly continued from the human gate, but
     // only after a valid review generation. A failed launch, timeout, or invalid
     // terminal artifact must not leave a claimable reviewer session behind.
-    const continuationEnabled =
-      sessionPolicy === 'warm-per-reviewer' || options.reviewSessionIntent === 'resume';
-    if (!(continuationEnabled && hasReusableReviewResult)) {
+    if (
+      !shouldRetainCompletedReviewer(
+        sessionPolicy,
+        options.reviewSessionIntent,
+        hasReusableReviewResult,
+      )
+    ) {
       invalidateWarmReviewerSessions(runId, reviewRunner);
     }
   }

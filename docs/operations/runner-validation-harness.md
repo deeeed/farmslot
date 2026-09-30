@@ -82,6 +82,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes              | skip         | skip              | **fixture**            |
 | `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                     | live         | skip              | skip                   |
 | `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)        | gateway E2E  | not repeated      | not repeated           |
+| `warm-publication-review`           | Publication RPC review after restart; disabled recovery must fail      | live         | skip              | skip                   |
 | `retained-handoff-smoke`            | Retained review delivery: native resume or argv relaunch + task signal | live         | **live argv**     | skip                   |
 | `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                 | live         | skip              | live                   |
 | `turn-boundary`                     | Stop after UserPromptSubmit                                            | live         | skip              | skip                   |

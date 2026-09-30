@@ -12,6 +12,7 @@ import {
   registerWarmReviewerSession,
   resetWarmReviewerSessionsForTest,
   shouldAttemptWarmResume,
+  shouldRetainCompletedReviewer,
   type WarmReviewerScope,
 } from './session-policy.js';
 import { reviewArtifactDir } from './snapshots.js';
@@ -268,4 +269,11 @@ test('first-time reviewers receive a full review instead of a fabricated continu
   assert.equal(effectiveReviewSessionIntent('resume', 1, true), 'resume');
   assert.equal(effectiveReviewSessionIntent('resume', 2, false), 'resume');
   assert.equal(effectiveReviewSessionIntent('reset', 1, true), 'reset');
+});
+
+test('valid base and publication reviewers retain the same continuation policy', () => {
+  assert.equal(shouldRetainCompletedReviewer('warm-per-reviewer', undefined, true), true);
+  assert.equal(shouldRetainCompletedReviewer('fresh-per-pass', 'resume', true), true);
+  assert.equal(shouldRetainCompletedReviewer('fresh-per-pass', undefined, true), false);
+  assert.equal(shouldRetainCompletedReviewer('warm-per-reviewer', 'resume', false), false);
 });

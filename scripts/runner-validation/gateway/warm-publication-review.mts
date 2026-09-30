@@ -154,23 +154,33 @@ const reviewPromise = runReviewAgent(
 );
 if (phase === 'negative') {
   const expectedSession = await readFile(path.join(fixture, 'prior-session'), 'utf8');
-  const { resolveRunnerSessionBinding } =
-    await import('../../../services/gateway/src/runners/session-process.js');
   for (let attempt = 0; attempt < 900; attempt++) {
     const current = getRun(runId)?.agentContexts?.find(
       (candidate) => candidate.role === 'self-review',
     );
     if (current?.target?.pane) {
-      const binding = await resolveRunnerSessionBinding(vars, 'claude', [], {
-        paneId: current.target.pane,
-        slotId: vars.slotId,
+      const snapshot = await readFile(
+        path.join(
+          vars.remoteRepo,
+          '.agent',
+          '.observability',
+          'panes',
+          `${encodeURIComponent(current.target.pane)}.json`,
+        ),
+        'utf8',
+      ).catch((error) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
       });
-      if (binding?.runnerSessionId) {
-        assert.equal(
-          binding.runnerSessionId,
-          expectedSession,
-          'Explicit warm publication review must reuse the persisted session after gateway restart',
-        );
+      if (snapshot) {
+        const hook = JSON.parse(snapshot);
+        if (hook.session_id) {
+          assert.equal(
+            hook.session_id,
+            expectedSession,
+            'Explicit warm publication review must reuse the persisted session after gateway restart',
+          );
+        }
       }
     }
     await delay(100);
