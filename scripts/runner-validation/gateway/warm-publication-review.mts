@@ -132,7 +132,9 @@ const priorSessionId = await readFile(path.join(fixture, 'prior-session'), 'utf8
     throw error;
   },
 );
-const prior = before.agentContexts?.find((context) => context.runner === 'claude');
+const prior = before.agentContexts?.find(
+  (context) => context.role === 'self-review' && context.runner === 'claude',
+);
 const result = await runReviewAgent(
   vars,
   'claude',
@@ -149,7 +151,9 @@ const result = await runReviewAgent(
 );
 assert.equal(result.verdict, 'pass');
 const after = getRun(runId)!;
-const context = after.agentContexts!.find((candidate) => candidate.runner === 'claude')!;
+const context = after.agentContexts!.find(
+  (candidate) => candidate.role === 'self-review' && candidate.runner === 'claude',
+)!;
 assert.ok(context.runnerSessionId);
 if (phase === 'first') {
   const checklist = await readFile(
