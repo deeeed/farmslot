@@ -5,15 +5,21 @@
 // `status: 'running'` and the work-graph node was never told; the scheduler only
 // discovered the stop later by polling and inferring it from run fields (#466).
 
-import { Events, isSlotFreedByPark, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
-import { cancelNativeRunWorkers, retireNativeWorkersForSlot } from '../runners/native/worker.js';
+import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import {
+  recordSlotTeardownBlocker,
+  releaseRunOwnedCapabilities,
+  releaseRunSlotOwnership,
+  stopRunOwnedTmuxAndWatches,
+} from './slot-teardown.js';
 import {
   effectFailed,
   type RunTransitionActor,
@@ -30,7 +36,7 @@ export interface CancelCollaborators {
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
   releaseCapabilities(run: Run): Promise<void>;
-  releaseSlot(run: Run): Promise<void>;
+  releaseSlot(run: Run): Promise<void | { skipped: string }>;
   releaseWorkspace?(run: Run): Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(event: string, payload: unknown): void | Promise<void>;
@@ -142,7 +148,8 @@ function cancelEffects(collaborators: CancelCollaborators): {
               detail: 'park already released slot ownership; the slot is free',
             };
           }
-          await collaborators.releaseSlot(run);
+          const result = await collaborators.releaseSlot(run);
+          if (result?.skipped) return { status: 'skipped' as const, detail: result.skipped };
           return 'ok';
         },
       },
@@ -227,32 +234,18 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
-      if (run.transport === 'native' && run.slotId) {
-        const { readSlotField } = await import('../core/index.js');
-        if ((await readSlotField(run.slotId, 'current_run_id')) !== run.id) return;
-      }
-      // ADR-054: cancel is a terminal boundary. The reconciler stops every run-
-      // and family-owned provider in dependency order, bypassing keep-warm, and
-      // records the effective posture on the run.
-      const { reconcileRunPosture } = await import('../run-engine/resource-posture.js');
-      const outcome = await reconcileRunPosture({ runId: run.id, boundary: 'cancel' });
-      if (outcome.error !== undefined) throw new Error(outcome.error);
-      const { transition } = outcome.result;
-      if (transition.rejection) throw new Error(transition.rejection.reason);
-      if (transition.failures.length > 0) {
-        throw new Error(
-          transition.failures
-            .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
-            .join('; '),
-        );
-      }
+      if (run.transport === 'native')
+        await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
+      await stopRunOwnedTmuxAndWatches(run);
+      const blocker = await recordSlotTeardownBlocker(run);
+      await releaseRunOwnedCapabilities(run, Boolean(blocker));
     },
     releaseSlot: async (run) => {
-      const { loadSlotVars, readSlotField, resetSlot, updateSlotStatusIf } =
-        await import('../core/index.js');
-      const { killAgentInSession, killAllAgentWindows } = await import('../methods/slot.js');
+      const { readSlotRow } = await import('../core/index.js');
+      const before = run.slotId ? await readSlotRow(run.slotId) : null;
+      const blocker = await recordSlotTeardownBlocker(run);
+      const { readSlotField, updateSlotStatusIf } = await import('../core/index.js');
       const { loadFleetStatus } = await import('../fleet/state.js');
-      const vars = await loadSlotVars(run.slotId!);
       if (run.transport === 'native') {
         await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
         // A completed handoff can leave the prior run cancellable while its successor
@@ -265,18 +258,10 @@ export function defaultCancelCollaborators(): CancelCollaborators {
           );
           return;
         }
-      } else {
-        await retireNativeWorkersForSlot(run.slotId!, run.id, undefined, {
-          machineTransitionHeld: true,
-        });
-        await killAgentInSession(
-          vars,
-          run.metrics.runner ?? undefined,
-          primaryRoleForFlow(run.flowType),
-        );
-        await killAllAgentWindows(vars);
       }
-      await resetSlot(run.slotId!, true);
+      const reset = await releaseRunSlotOwnership(run, before, blocker);
+      if (blocker) return { skipped: blocker };
+      if (!reset) return { skipped: 'Slot ownership changed during cancellation' };
       await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
     },

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retain bounded, redacted native crash diagnostics and process ownership evidence, and persist steering messages for delivery at the next turn boundary. Initialize existing task directories through the shared runtime producer.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.1 - 2026-09-29

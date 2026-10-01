@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover blocked native workers through their pending handoff decision, adopt verified external recoveries, and preserve shared slot resources during run cleanup. Surface native crash diagnostics and initialize the runtime for pre-written tasks.
+
+- Require absolute task paths for new runs and explain how to upgrade older clients. Upgrade the CLI on every node first, then the gateway. Existing stored runs with relative task paths remain readable.
+
 - Bound advisory difficulty grading and require API credentials so an unresponsive provider or uncancellable CLI fallback cannot indefinitely block task dispatch.
 
 - Recover completed same-run reviewer sessions for explicit warm rechecks after a gateway restart, and keep reviewers starting until their prompt is accepted.

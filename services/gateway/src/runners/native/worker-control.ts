@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
+import { NATIVE_WORKER_CONFIRM_STOPPED, NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
 import {
   type AgentRole,
   isTerminalRunStatus,
   Methods,
+  type NativeSessionInfo,
   type NativeSessionReadResult,
   type NativeSessionSendResult,
   type NativeWorkerSessionBinding,
@@ -13,7 +14,7 @@ import {
 import { selectAgentContext } from '../../agents/contexts.js';
 import { resolveNativeContext } from '../../agents/native-context.js';
 import { readSlotField } from '../../core/index.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
 import { routeNativeExecution } from './node.js';
@@ -80,7 +81,54 @@ export async function readNativeWorkerSnapshot(
   // The RPC may have overlapped a transfer, cancellation or explicit recovery.
   const latest = workerBinding(runId, role, contextId).binding;
   assertNativeWorkerSnapshot(latest, snapshot);
+  if (
+    snapshot.session.state === 'failed' &&
+    snapshot.session.error &&
+    !isTerminalRunStatus(getRun(runId)!.status)
+  ) {
+    const current = getRun(runId)!;
+    const message = snapshot.session.error.slice(0, 1000);
+    if (
+      current.error !== message ||
+      current.agentContexts?.some(
+        (item) =>
+          item.nativeSession?.sessionId === latest.sessionId &&
+          item.nativeSession.generation === latest.generation &&
+          item.error !== message,
+      )
+    )
+      updateRun(runId, {
+        error: message,
+        agentContexts: current.agentContexts?.map((item) =>
+          item.nativeSession?.sessionId === latest.sessionId &&
+          item.nativeSession.generation === latest.generation
+            ? { ...item, error: message }
+            : item,
+        ),
+      });
+  }
   return snapshot;
+}
+
+export async function confirmNativeWorkerStopped(runId: string, contextId?: string): Promise<void> {
+  const { binding } = workerBinding(runId, undefined, contextId);
+  const snapshot = await readNativeWorkerSnapshot(runId, undefined, contextId);
+  if (snapshot.session.processStopped) return;
+  const result = (await routeNativeExecution(
+    binding.ownerPrincipalId,
+    NATIVE_WORKER_CONFIRM_STOPPED,
+    {
+      sessionId: binding.sessionId,
+      executionNodeId: binding.executionNodeId,
+      generation: binding.generation,
+      leaseId: binding.leaseId,
+    },
+  )) as { session: NativeSessionInfo };
+  assertNativeWorkerSnapshot(workerBinding(runId, undefined, contextId).binding, {
+    ...snapshot,
+    session: result.session,
+  });
+  if (!result.session.processStopped) throw new Error('Native stop confirmation was not recorded');
 }
 
 export async function sendNativeWorkerInstruction(input: {
@@ -96,7 +144,7 @@ export async function sendNativeWorkerInstruction(input: {
   /** Self-review fix policy may execute at an operator gate. */
   allowOperatorWait?: boolean;
   assertCurrent?: () => void;
-}): Promise<'confirmed' | 'attempted' | 'not-attempted'> {
+}): Promise<'confirmed' | 'attempted' | 'queued' | 'not-attempted'> {
   input.assertCurrent?.();
   const { run, context, binding } = workerBinding(input.runId, input.role, input.contextId);
   const assertInstruction = (selected: typeof context) => {
@@ -148,5 +196,5 @@ export async function sendNativeWorkerInstruction(input: {
   })) as NativeSessionSendResult;
   if (result.commandId !== commandId)
     throw new Error('Native instruction returned another command receipt');
-  return result.accepted ? 'confirmed' : 'attempted';
+  return result.queued ? 'queued' : result.accepted ? 'confirmed' : 'attempted';
 }

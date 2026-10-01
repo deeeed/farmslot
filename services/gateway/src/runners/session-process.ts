@@ -387,6 +387,8 @@ export async function listRunnerSessionFiles(
   runner: string,
 ): Promise<string[]> {
   if (!runnerPersistsSessionFiles(runner)) return [];
+  const provider = getRunnerObservability(runner);
+  if (provider?.listSessionFiles) return provider.listSessionFiles(vars);
   const repo = vars.remoteRepo;
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
   const script = buildRunnerSessionDiscoveryCommand(repo, runner, runtimeDir);

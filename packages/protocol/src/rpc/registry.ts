@@ -322,6 +322,7 @@ export const Methods = {
   RUN_FORCE_COMPLETE: 'run.forceComplete',
   RUN_PAUSE: 'run.pause',
   RUN_RESUME: 'run.resume',
+  RUN_ADOPT: 'run.adopt',
   RUN_REPLAY_STEP: 'run.replayStep',
   RUN_ACTIVATE_ON_SLOT: 'run.activateOnSlot',
   RUN_AUTO_RECOVERY_STOP: 'run.autoRecovery.stop',

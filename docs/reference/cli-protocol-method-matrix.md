@@ -459,6 +459,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.forceComplete`          | typed-command | `farmslot run force-complete`     |     |                                                                                                |
 | `run.pause`                  | typed-command | `farmslot run pause`              |     |                                                                                                |
 | `run.resume`                 | typed-command | `farmslot run resume`             |     |                                                                                                |
+| `run.adopt`                  | typed-command | `farmslot run adopt`              |     |                                                                                                |
 | `run.replayStep`             | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.activateOnSlot`         | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.autoRecovery.stop`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |

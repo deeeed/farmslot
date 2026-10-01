@@ -138,13 +138,13 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             }
           }
         },
-        (error, processStopped) => {
+        (error, processStopped, evidence) => {
           closed = true;
           requests.clear();
           publish({
             type: 'session.closed',
             ...(error || protocolFailure ? { status: 'failed' as const } : {}),
-            data: { processStopped, ...(error ? { error: error.message } : {}) },
+            data: { processStopped, ...evidence, ...(error ? { error: error.message } : {}) },
           });
         },
       );

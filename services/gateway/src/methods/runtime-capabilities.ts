@@ -652,6 +652,13 @@ export async function releaseRuntimeCapabilitiesForSlot(
   return registry.releaseSlot(slotId);
 }
 
+export async function releaseRuntimeCapabilityOwnershipForRun(
+  slotId: string,
+  ownerRunId: string,
+): Promise<RuntimeCapabilityReleaseResult> {
+  return registry.releaseOwnership(slotId, ownerRunId);
+}
+
 /**
  * Map one warm-sweep summary onto the RPC result. Pure so every outcome —
  * including "cleanup failed, so we do not know" — is testable without a slot.

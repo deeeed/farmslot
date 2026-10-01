@@ -408,6 +408,8 @@ export class NativeSessionView extends LitElement {
               command.generation === this.localCommand?.generation,
           );
           if (
+            receipt?.queued ||
+            receipt?.accepted ||
             nativeCommandLockSettled(
               this.localCommand,
               page.session.generation,
@@ -521,12 +523,7 @@ export class NativeSessionView extends LitElement {
       !this.invalidDelivery &&
       !this.busy &&
       !this.localCommand &&
-      this.session?.state === 'idle' &&
-      !this.receipts.some(
-        (receipt) =>
-          receipt.generation === this.session?.generation &&
-          ['pending', 'unknown', 'accepted'].includes(receipt.state),
-      )
+      ['idle', 'running', 'waiting'].includes(this.session?.state ?? '')
     );
   }
 
@@ -1004,7 +1001,7 @@ ${JSON.stringify(
                         ?disabled=${!this.canSend || !this.draft.trim()}
                         @click=${this.send}
                       >
-                        Send
+                        ${session.state === 'idle' ? 'Send' : 'Queue message'}
                       </button>
                       <button
                         data-testid="native-stop"

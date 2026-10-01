@@ -62,6 +62,25 @@ const event = (sequence: number, commandId: string): NativeSessionEvent => ({
   text: commandId,
 });
 
+test('queued receipts remain visible only to their task lease before submission', () => {
+  const history = new NativeWorkerHistory();
+  const pending = {
+    ...receipt('queued'),
+    state: 'pending' as const,
+    submitted: false,
+    accepted: false,
+    queued: true,
+    text: 'private queued prompt',
+  };
+  history.observe({ info, commands: [pending] });
+  const before = history.read(info.workerLeaseId!, [], []);
+  assert.equal(before.commands[0]?.queued, true);
+  assert.ok(!JSON.stringify(before.commands).includes('private queued prompt'));
+  history.observe({ info: { ...info, workerLeaseId: 'next-lease' } });
+  assert.equal(history.read('next-lease', [], []).commands.length, 0);
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.queued, true);
+});
+
 test('scoped task history preserves version-based recovery restrictions', () => {
   for (const version of ['2.1.78 (Claude Code)', '2.1.269 (Claude Code)']) {
     const root = mkdtempSync(join(tmpdir(), 'native-history-version-'));

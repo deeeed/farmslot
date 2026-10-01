@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Events, type MachineParkRecord } from '@farmslot/protocol';
+import { Events, type MachineParkRecord, NATIVE_WORKER_RESUME_ACTION } from '@farmslot/protocol';
 
 import {
   withMachineRunTransition,
@@ -30,6 +30,79 @@ async function cleanupRun(runId: string): Promise<void> {
   });
   await deleteRun(runId);
 }
+
+test('blocked native resume routes through its retained recovery decision', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'resume-fixture-owner';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const run = createRun(
+    { flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-RESUME', transport: 'native' },
+    { nativeOwnerPrincipalId: 'resume-fixture-owner' },
+  );
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [
+      {
+        id: 'recovery-decision',
+        type: 'monitor_interactive_handoff',
+        title: 'Worker stopped',
+        description: 'Recover',
+        createdAt: new Date().toISOString(),
+        actions: [{ id: NATIVE_WORKER_RESUME_ACTION, label: 'Resume', style: 'primary' }],
+      },
+    ],
+  });
+  let resumed = false;
+  await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    {},
+    {
+      nudgeMonitor: async () => {
+        throw new Error('paused nudge must not run');
+      },
+      redrive: async () => {
+        throw new Error('paused redrive must not run');
+      },
+      replayGate: async () => {
+        throw new Error('gate replay must not run');
+      },
+      resumeBlockedDecision: async (id, decisionId) => {
+        assert.equal(id, run.id);
+        assert.equal(decisionId, 'recovery-decision');
+        resumed = true;
+        updateRun(id, { status: 'monitoring' });
+      },
+    },
+  );
+  assert.equal(resumed, true);
+});
+
+test('resume refusal names the pending decision, actions and executable resolution command', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-HINT' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [
+      {
+        id: 'pending-handoff',
+        type: 'monitor_interactive_handoff',
+        title: 'Continue',
+        description: 'Choose',
+        createdAt: new Date().toISOString(),
+        actions: [{ id: 'continue', label: 'Continue', style: 'primary' }],
+      },
+    ],
+  });
+  await assert.rejects(
+    runResume({ runId: run.id }, () => {}),
+    /Pending decision pending-handoff.*Actions: continue.*farmslot decision resolve pending-handoff continue/,
+  );
+});
 
 function parkedRecord(runId: string, slotId: string): MachineParkRecord {
   return {

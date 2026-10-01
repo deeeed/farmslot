@@ -913,6 +913,7 @@ function collectShadowedRecipes(
   resolution: RecipeLibraryResolution,
 ): RecipeLibrarySummary['shadowed'] {
   return [...resolution.recipes.values()]
+    .filter((recipe) => !recipe.aliasFor)
     .filter((recipe) => recipe.shadows.length > 0)
     .map((recipe) => ({
       ref: recipe.ref,

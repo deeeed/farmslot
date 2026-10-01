@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_METHODS,
   NATIVE_WORKER_READ,
@@ -196,6 +197,14 @@ export async function routeNativeExecution(
       : routeNativeSession(nativeSessionManager, owner, method, params);
   }
   const node = resolveNativeExecutionNode(owner, executionNodeId);
+  if (
+    method === NATIVE_WORKER_CONFIRM_STOPPED &&
+    !node.nativeSessions.supportsWorkerStopAttestation
+  )
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Execution node upgrade required for explicit stopped-process confirmation; existing sessions remain readable',
+    );
   if (needsProfiles && !node.nativeSessions.supportsProfiles)
     throw new GatewayMethodError(
       'NATIVE_SESSION_ERROR',
@@ -319,6 +328,7 @@ export async function routeNativeExecution(
       NATIVE_WORKER_ENSURE,
       NATIVE_WORKER_RESUME,
       NATIVE_WORKER_CLOSE,
+      NATIVE_WORKER_CONFIRM_STOPPED,
       NATIVE_WORKER_TRANSFER,
     ].some((candidate) => candidate === method) ||
     (method === NATIVE_WORKER_CANCEL &&

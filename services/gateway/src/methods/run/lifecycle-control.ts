@@ -342,17 +342,24 @@ export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boo
       handoff_run_id: null,
     });
   }
-  const { slotRelease } = await import('../slot.js');
+  const {
+    recordSlotTeardownBlocker,
+    releaseRunOwnedCapabilities,
+    releaseRunSlotOwnership,
+    stopRunOwnedTmuxAndWatches,
+  } = await import('../../run-lifecycle/slot-teardown.js');
+  const { readSlotRow } = await import('../../core/index.js');
+  const before = await readSlotRow(slotId);
+  await stopRunOwnedTmuxAndWatches(run);
+  const blocker = await recordSlotTeardownBlocker(run);
+  await releaseRunOwnedCapabilities(run, Boolean(blocker));
   const { broadcastEvent } = await import('../../server.js');
-  const result = await slotRelease(
-    { slotId, keepWork: true, expectedRunId: run.id },
-    broadcastEvent,
-  );
-  if (result.released) {
+  const released = await releaseRunSlotOwnership(run, before, blocker);
+  if (released) {
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
   }
-  return result;
+  return { released };
 }
 
 export async function publishCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
@@ -488,6 +495,7 @@ export interface RunResumeTransitionOptions {
 }
 
 export interface RunResumeTransitionDependencies {
+  resumeBlockedDecision?(runId: string, decisionId: string, emit: Emit): Promise<void>;
   nudgeMonitor(run: Run, emit: Emit): Promise<void>;
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
   /** Re-present a gate whose engine loop exited before the park was restored. */
@@ -595,7 +603,57 @@ export async function runResumeTransitionLocked(
     };
   }
   if (existing.status !== 'paused') {
-    throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
+    const { NATIVE_WORKER_RESUME_ACTION, runRecoveryHints } = await import('@farmslot/protocol');
+    const recovery =
+      existing.status === 'blocked' && existing.transport === 'native'
+        ? existing.decisions.filter(
+            (decision) =>
+              !decision.resolvedAt &&
+              decision.type === 'monitor_interactive_handoff' &&
+              decision.actions.some((action) => action.id === NATIVE_WORKER_RESUME_ACTION),
+          )
+        : [];
+    if (recovery.length === 1) {
+      const previousGeneration = existing.engineState?.generation ?? 0;
+      try {
+        if (params.confirmStopped === true) {
+          const { confirmNativeWorkerStopped } =
+            await import('../../runners/native/worker-control.js');
+          await confirmNativeWorkerStopped(existing.id);
+        }
+        if (deps.resumeBlockedDecision)
+          await deps.resumeBlockedDecision(existing.id, recovery[0].id, emit);
+        else {
+          const { resolveRunDecision } = await import('../run.js');
+          await resolveRunDecision(
+            {
+              runId: existing.id,
+              decisionId: recovery[0].id,
+              actionId: NATIVE_WORKER_RESUME_ACTION,
+            },
+            emit,
+          );
+        }
+      } catch (error) {
+        throw new Error(
+          `${(error as Error).message}. ${runRecoveryHints(getRun(existing.id)!).join(' ')}`,
+          { cause: error },
+        );
+      }
+      const current = getRun(existing.id)!;
+      const generation = current.engineState?.generation ?? 0;
+      return {
+        run: current,
+        previousGeneration,
+        generation,
+        stepName: 'monitor',
+        status: current.status,
+        acknowledgedAt: new Date().toISOString(),
+      };
+    }
+    throw new Error(
+      `Run ${params.runId} is not paused (status=${existing.status}). ${runRecoveryHints(existing).join(' ')}`.trim(),
+    );
   }
   if (!options.machineParkingRestore) assertNotMachineParkManaged(existing);
 
@@ -618,6 +676,12 @@ export async function runResumeTransitionLocked(
     );
   }
   if (currentStep.name === 'monitor' && !options.suppressMonitorNudge) {
+    if (params.confirmStopped === true) {
+      if (existing.transport !== 'native')
+        throw new Error('Stop confirmation requires a native worker');
+      const { confirmNativeWorkerStopped } = await import('../../runners/native/worker-control.js');
+      await confirmNativeWorkerStopped(existing.id);
+    }
     await deps.nudgeMonitor(existing, emit);
   }
 

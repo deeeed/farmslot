@@ -18,6 +18,7 @@ export class NativeWorkerHistory {
   private currentLease?: string;
   private sequence = 0;
   private commands = new Map<string, NativeCommandReceipt>();
+  private commandLeases = new Map<string, string | undefined>();
 
   assertNewLease(leaseId: string): void {
     if (this.windows.has(leaseId)) throw new Error('Native worker task lease cannot be reused');
@@ -44,8 +45,17 @@ export class NativeWorkerHistory {
     if (entry.info && lease) this.windows.get(lease)!.info = structuredClone(entry.info);
     for (const command of entry.commands ?? []) {
       // Journal commands also carry private prompt text. Never retain it in public receipts.
-      const { generation, commandId, state, submitted, accepted, outcome } = command;
-      this.commands.set(commandId, { generation, commandId, state, submitted, accepted, outcome });
+      const { generation, commandId, state, submitted, accepted, outcome, queued } = command;
+      this.commands.set(commandId, {
+        generation,
+        commandId,
+        state,
+        submitted,
+        accepted,
+        outcome,
+        ...(queued ? { queued } : {}),
+      });
+      this.commandLeases.set(commandId, this.currentLease);
     }
     if (entry.event) this.sequence = entry.event.sequence;
   }
@@ -86,7 +96,11 @@ export class NativeWorkerHistory {
       cursor: cursor + events.length,
       hasMore: cursor + events.length < endAt,
       commands: (window.commands ?? [...this.commands.values()])
-        .filter((command) => submitted.has(command.commandId))
+        .filter(
+          (command) =>
+            submitted.has(command.commandId) ||
+            (command.queued && this.commandLeases.get(command.commandId) === leaseId),
+        )
         .slice(-100)
         .map((command) => ({ ...command })),
       pendingRequests: released

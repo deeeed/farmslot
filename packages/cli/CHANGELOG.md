@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Resolve existing task paths against the caller's working directory and send absolute paths. Upgrade the CLI on every node before upgrading the gateway, which rejects new relative task paths. Existing stored runs remain readable.
+
 - Keep raw RPC calls for simulator boot and its Metro dependency open long enough for cold starts.
 
 - Remove `--review-validation-depth` from `run create` and `dispatch preview`; use `--flow-type qa` with `--qa-profile` for runtime validation.

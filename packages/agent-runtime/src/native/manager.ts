@@ -30,9 +30,18 @@ import {
   nativeProfileEnvironment,
   requireNativeProfile,
 } from './account-profiles.js';
+import type { ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
-import { durableWrite, privateDirectory, readJournal, readJson } from './storage.js';
+import {
+  alive,
+  durableWrite,
+  privateDirectory,
+  processGroupAlive,
+  processIdentityAlive,
+  readJournal,
+  readJson,
+} from './storage.js';
 import type { NativeAdapterSession, NativeEventInput } from './types.js';
 import { NativeWorkerHistory } from './worker-history.js';
 import {
@@ -152,8 +161,10 @@ function nativeEnvironment(
 }
 interface StoredCommand extends NativeCommandReceipt {
   text: string;
+  leaseId?: string;
 }
 interface JournalEntry {
+  processes?: ProcessIdentity[];
   info?: NativeSessionInfo;
   context?: Record<string, string>;
   commands?: StoredCommand[];
@@ -161,6 +172,7 @@ interface JournalEntry {
   event?: NativeSessionEvent;
 }
 interface SessionRecord {
+  processes?: ProcessIdentity[];
   workerHistory: NativeWorkerHistory;
   info: NativeSessionInfo;
   events: NativeSessionEvent[];
@@ -182,7 +194,13 @@ export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private persisted = new WeakMap<
     SessionRecord,
-    { info?: string; context?: string; pending?: string; commands: Map<string, string> }
+    {
+      info?: string;
+      context?: string;
+      pending?: string;
+      processes?: string;
+      commands: Map<string, string>;
+    }
   >();
 
   constructor(
@@ -197,6 +215,7 @@ export class NativeSessionManager {
       if (!entries.length) continue;
       let info: NativeSessionInfo | undefined;
       let context: Record<string, string> | undefined;
+      let processes: ProcessIdentity[] | undefined;
       let pending: NativeSessionEvent[] = [];
       const commands = new Map<string, StoredCommand>();
       const events: NativeSessionEvent[] = [];
@@ -205,6 +224,7 @@ export class NativeSessionManager {
         workerHistory.observe(entry);
         info = entry.info ?? info;
         context = entry.context ?? context;
+        processes = entry.processes ?? processes;
         pending = entry.pending ?? pending;
         for (const command of entry.commands ?? []) commands.set(command.commandId, command);
         if (entry.event) events.push(entry.event);
@@ -216,6 +236,7 @@ export class NativeSessionManager {
         workerHistory,
         info,
         context,
+        processes,
         commands,
         events,
         pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
@@ -224,6 +245,7 @@ export class NativeSessionManager {
       this.persisted.set(record, {
         info: JSON.stringify(info),
         context: JSON.stringify(context),
+        processes: JSON.stringify(processes),
         pending: JSON.stringify(pending),
         commands: new Map([...commands].map(([id, command]) => [id, JSON.stringify(command)])),
       });
@@ -233,7 +255,7 @@ export class NativeSessionManager {
         record.info.recovery =
           'Native host stopped. Verify the old process group is stopped, then explicitly resume the saved native identity.';
         for (const command of record.commands.values())
-          if (command.state === 'pending') command.state = 'unknown';
+          if (command.state === 'pending' && !command.queued) command.state = 'unknown';
         this.append(record, {
           type: 'session.closed',
           status: 'failed',
@@ -247,17 +269,27 @@ export class NativeSessionManager {
     const info = JSON.stringify(record.info);
     const context = JSON.stringify(record.context);
     const pending = JSON.stringify([...record.pendingRequests.values()]);
+    const processes = JSON.stringify(record.processes);
     const commands = [...record.commands.values()].filter(
       (command) => previous.commands.get(command.commandId) !== JSON.stringify(command),
     );
     const entry: JournalEntry = {
+      ...(processes !== previous.processes ? { processes: record.processes } : {}),
       ...(info !== previous.info ? { info: record.info } : {}),
       ...(context !== previous.context ? { context: record.context } : {}),
       ...(pending !== previous.pending ? { pending: [...record.pendingRequests.values()] } : {}),
       ...(commands.length ? { commands } : {}),
       event,
     };
-    if (!event && !entry.info && !entry.context && !entry.pending && !entry.commands) return;
+    if (
+      !event &&
+      !entry.info &&
+      !entry.context &&
+      !entry.pending &&
+      !entry.commands &&
+      !entry.processes
+    )
+      return;
     const fd = openSync(join(this.root, `${record.info.id}.journal`), 'a', 0o600);
     try {
       writeFileSync(fd, `${JSON.stringify(entry)}\n`);
@@ -273,7 +305,7 @@ export class NativeSessionManager {
     }
     for (const command of commands)
       previous.commands.set(command.commandId, JSON.stringify(command));
-    this.persisted.set(record, { info, context, pending, commands: previous.commands });
+    this.persisted.set(record, { info, context, pending, processes, commands: previous.commands });
     record.workerHistory.observe(entry);
   }
   create(
@@ -358,6 +390,7 @@ export class NativeSessionManager {
         );
       if (!previous || previous.info.ownerPrincipalId !== ownerPrincipalId)
         throw new Error('Resume requires an owned native session');
+      this.reconcileMissingProcess(previous);
       const unavailable = transport.adapter.resumeUnavailableReason?.(previous.info.version);
       if (unavailable) throw new Error(unavailable);
       if (!['closed', 'failed'].includes(previous.info.state))
@@ -521,6 +554,13 @@ export class NativeSessionManager {
       sending: false,
     };
     this.sessions.set(info.id, record);
+    for (const command of record.commands.values()) {
+      if (!command.queued) continue;
+      if (command.leaseId !== info.workerLeaseId) {
+        command.queued = false;
+        command.state = 'failed';
+      } else command.generation = info.generation;
+    }
     if (previous) {
       const saved = this.persisted.get(previous);
       if (saved) this.persisted.set(record, saved);
@@ -548,6 +588,10 @@ export class NativeSessionManager {
             info.processStopped = false;
             this.persist(record);
           },
+          onProcessSnapshot: (snapshot) => {
+            record.processes = snapshot;
+            this.persist(record);
+          },
           executable: resolved.executable,
           env: nativeEnvironment(resolved.executable, {
             ...environment,
@@ -569,6 +613,7 @@ export class NativeSessionManager {
         };
       if (info.state === 'starting') info.state = 'idle';
       this.persist(record);
+      this.scheduleQueuedInput(record);
       return this.snapshot(record);
     } catch (error) {
       info.state = 'failed';
@@ -648,6 +693,41 @@ export class NativeSessionManager {
   private assertWorkerNotCancelled(id: string): void {
     if (existsSync(join(this.root, 'cancelled-workers', `${id}.json`)))
       throw new Error('Native worker reservation was cancelled before launch');
+  }
+
+  /** Explicit operator attestation covers legacy journals without descendant evidence. */
+  confirmWorkerStopped(
+    owner: string,
+    id: string,
+    generation: string,
+    leaseId: string,
+  ): NativeSessionInfo {
+    this.assertWorkerLease(owner, id, generation, leaseId, true);
+    const record = this.owned(owner, id);
+    if (record.info.processStopped) return this.snapshot(record);
+    const pid = record.info.processPid;
+    if (
+      !pid ||
+      record.adapter ||
+      record.startup ||
+      !['closed', 'failed'].includes(record.info.state) ||
+      alive(pid) ||
+      processGroupAlive(pid)
+    )
+      throw new Error('Stop confirmation requires an absent native process and process group');
+    if (record.processes?.some((child) => processIdentityAlive(child.pid, child.identity)))
+      throw new Error('An observed native descendant is still alive; stop confirmation is refused');
+    this.append(record, {
+      type: 'session.closed',
+      status: 'failed',
+      text: 'Operator confirmed the missing native worker and its descendants are stopped',
+      data: {
+        processStopped: true,
+        processStopReason: 'process-missing-attested',
+        error: record.info.error,
+      },
+    });
+    return this.snapshot(record);
   }
 
   private resumeCancellationPath(id: string, leaseId: string, commandId: string): string {
@@ -784,7 +864,12 @@ export class NativeSessionManager {
       ['closed', 'failed'].includes(record.info.state) &&
       record.info.processStopped &&
       Boolean(record.info.nativeSessionId);
-    if ((record.info.state !== 'idle' && !stopped) || record.sending || record.pendingRequests.size)
+    if (
+      (record.info.state !== 'idle' && !stopped) ||
+      record.sending ||
+      record.pendingRequests.size ||
+      [...record.commands.values()].some((command) => command.queued)
+    )
       throw new Error(
         'Native worker handoff requires an idle session or a confirmed stopped session with no pending requests',
       );
@@ -828,13 +913,30 @@ export class NativeSessionManager {
     }
     if (event.type === 'session.closed') {
       if (event.data?.processStopped === true) record.info.processStopped = true;
+      if (event.data?.exitCode === null || typeof event.data?.exitCode === 'number')
+        record.info.exitCode = event.data.exitCode;
+      if (event.data?.signal === null || typeof event.data?.signal === 'string')
+        record.info.signal = event.data.signal;
+      if (Array.isArray(event.data?.stderrTail))
+        record.info.stderrTail = event.data.stderrTail
+          .filter((line): line is string => typeof line === 'string')
+          .slice(-50);
+      if (record.info.processStopped)
+        record.info.processStopReason =
+          event.data?.processStopReason === 'process-missing-attested'
+            ? 'process-missing-attested'
+            : event.data?.processStopReason === 'process-missing'
+              ? 'process-missing'
+              : 'process-exit';
       record.info.state = event.status === 'failed' ? 'failed' : 'closed';
+      if (event.status === 'failed')
+        record.info.error = typeof event.data?.error === 'string' ? event.data.error : event.text;
       if (event.status === 'failed')
         record.info.recovery ??= record.info.nativeSessionId
           ? 'Native runner stopped. Explicitly resume the saved identity after verifying its process group is stopped.'
           : 'Native runner stopped before its conversation identity was known. Automatic recovery is unavailable.';
       for (const command of record.commands.values())
-        if (command.state === 'pending') command.state = 'unknown';
+        if (command.state === 'pending' && !command.queued) command.state = 'unknown';
       record.pendingRequests.clear();
     }
     if (
@@ -856,13 +958,51 @@ export class NativeSessionManager {
       }
     }
     this.persist(record, enriched);
+    if (event.type === 'turn.completed') this.scheduleQueuedInput(record);
   }
 
   private owned(owner: string, id: string): SessionRecord {
     const record = this.sessions.get(id);
     if (!record || record.info.ownerPrincipalId !== owner)
       throw new Error('Native session not found for this principal');
+    this.reconcileMissingProcess(record);
     return record;
+  }
+
+  private reconcileMissingProcess(record: SessionRecord): void {
+    const pid = record.info.processPid;
+    // A live adapter owns descendant cleanup. A recovered journal has no
+    // adapter and needs absence of both the recorded PID and its group.
+    if (
+      !pid ||
+      record.info.processStopped ||
+      record.adapter ||
+      record.startup ||
+      (record.processes?.find((item) => item.pid === pid)?.identity
+        ? processIdentityAlive(pid, record.processes.find((item) => item.pid === pid)!.identity)
+        : alive(pid)) ||
+      processGroupAlive(pid)
+    )
+      return;
+    const recorded = record.processes;
+    if (!recorded) {
+      record.info.error ??=
+        'Native worker process is missing; descendant cleanup evidence is unavailable.';
+      this.persist(record);
+      return;
+    }
+    if (recorded.some((child) => processIdentityAlive(child.pid, child.identity))) return;
+    record.info.processStopped = true;
+    record.info.error ??= 'Native worker process is missing; its exit was not observed.';
+    this.append(record, {
+      type: 'session.closed',
+      status: 'failed',
+      data: {
+        processStopped: true,
+        processStopReason: 'process-missing',
+        error: record.info.error,
+      },
+    });
   }
   private snapshot(record: Pick<SessionRecord, 'info'>): NativeSessionInfo {
     const unavailable = adapters[record.info.runner]?.adapter.resumeUnavailableReason?.(
@@ -879,7 +1019,10 @@ export class NativeSessionManager {
   list(owner: string): NativeSessionInfo[] {
     return [...this.sessions.values()]
       .filter((record) => record.info.ownerPrincipalId === owner)
-      .map((record) => this.snapshot(record));
+      .map((record) => {
+        this.reconcileMissingProcess(record);
+        return this.snapshot(record);
+      });
   }
   read(owner: string, id: string, after = 0, limit = 200) {
     const record = this.owned(owner, id);
@@ -945,10 +1088,12 @@ export class NativeSessionManager {
         accepted: existing.accepted,
         state: existing.state,
         commandId,
+        ...(existing.queued ? { queued: true } : {}),
       };
     }
+    if (!record.adapter || ['starting', 'closing', 'closed', 'failed'].includes(record.info.state))
+      throw new Error('Native session cannot accept input in its current state');
     if (
-      !record.adapter ||
       record.info.state !== 'idle' ||
       record.sending ||
       [...record.commands.values()].some(
@@ -956,24 +1101,47 @@ export class NativeSessionManager {
           command.generation === record.info.generation &&
           ['pending', 'unknown', 'accepted'].includes(command.state),
       )
-    )
-      throw new Error('Native session is not idle');
-    record.sending = true;
-    record.info.state = 'waiting';
-    const command: StoredCommand = {
+    ) {
+      const queued: StoredCommand = {
+        text,
+        commandId,
+        generation: record.info.generation,
+        state: 'pending',
+        queued: true,
+        submitted: false,
+        accepted: false,
+        leaseId: record.info.workerLeaseId,
+      };
+      record.commands.set(commandId, queued);
+      this.persist(record);
+      return { commandId, queued: true, state: 'pending', submitted: false, accepted: false };
+    }
+    return this.submitCommand(record, {
       text,
       commandId,
       generation: record.info.generation,
-      // Reserve uncertainty and the visible prompt together before touching stdin.
       state: 'unknown',
       submitted: true,
       accepted: false,
-    };
+      leaseId: record.info.workerLeaseId,
+    });
+  }
+
+  private async submitCommand(
+    record: SessionRecord,
+    command: StoredCommand,
+  ): Promise<NativeSessionSendResult> {
+    record.sending = true;
+    record.info.state = 'waiting';
+    const { text, commandId } = command;
+    command.queued = false;
+    command.state = 'unknown';
+    command.submitted = true;
     record.commands.set(commandId, command);
     try {
       // A crash after this durable reservation must never trigger a resend.
       this.append(record, { type: 'command.submitted', commandId, text });
-      await record.adapter.send(text, commandId);
+      await record.adapter!.send(text, commandId);
       return {
         submitted: command.submitted,
         accepted: command.accepted,
@@ -985,7 +1153,57 @@ export class NativeSessionManager {
       throw error;
     } finally {
       record.sending = false;
+      this.scheduleQueuedInput(record);
     }
+  }
+
+  private scheduleQueuedInput(record: SessionRecord): void {
+    queueMicrotask(() => {
+      if (
+        this.sessions.get(record.info.id) !== record ||
+        !record.adapter ||
+        record.info.state !== 'idle' ||
+        record.sending ||
+        record.pendingRequests.size
+      )
+        return;
+      if (
+        [...record.commands.values()].some(
+          (command) =>
+            command.generation === record.info.generation &&
+            !command.queued &&
+            ['unknown', 'pending', 'accepted'].includes(command.state),
+        )
+      )
+        return;
+      const next = [...record.commands.values()].find(
+        (command) => command.queued && command.generation === record.info.generation,
+      );
+      if (!next) return;
+      try {
+        this.assertAccountCurrent(record);
+        if (next.leaseId !== record.info.workerLeaseId)
+          throw new Error('Queued input belongs to a different worker lease');
+      } catch (error) {
+        next.queued = false;
+        next.state = 'failed';
+        this.append(record, {
+          type: 'error',
+          commandId: next.commandId,
+          text: (error as Error).message,
+        });
+        return;
+      }
+      void this.submitCommand(record, next).catch((error) => {
+        // Delivery was reserved before touching stdin. Retain uncertainty and
+        // expose the failure instead of retrying input that may have been sent.
+        this.append(record, {
+          type: 'error',
+          commandId: next.commandId,
+          text: `Queued input delivery failed: ${(error as Error).message}`,
+        });
+      });
+    });
   }
   async respond(
     owner: string,
@@ -1018,6 +1236,14 @@ export class NativeSessionManager {
   }
   async close(owner: string, id: string): Promise<void> {
     const record = this.owned(owner, id);
+    for (const command of record.commands.values()) {
+      if (command.queued) {
+        command.queued = false;
+        command.state = 'failed';
+        command.outcome = 'interrupted';
+      }
+    }
+    this.persist(record);
     if (record.info.state === 'closed' || record.info.state === 'failed') {
       if (record.info.processPid && !record.info.processStopped)
         throw new Error('Native process cleanup is unconfirmed; close outcome is unknown');

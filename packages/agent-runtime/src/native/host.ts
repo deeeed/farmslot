@@ -8,6 +8,7 @@ import { privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_READ,
@@ -92,6 +93,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             break;
           case NATIVE_WORKER_CLOSE:
             value = await manager.closeWorker(p.owner, p.id, p.generation, p.leaseId);
+            break;
+          case NATIVE_WORKER_CONFIRM_STOPPED:
+            value = manager.confirmWorkerStopped(p.owner, p.id, p.generation, p.leaseId);
             break;
           case NATIVE_WORKER_INTERRUPT:
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);

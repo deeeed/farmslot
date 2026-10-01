@@ -111,6 +111,8 @@ export interface AgentContext {
   role: AgentRole;
   label: string;
   status: AgentContextStatus;
+  /** Concise execution failure, independent of the runner transcript. */
+  error?: string;
   slotId: string | null;
   runId: string;
   taskFile?: string | null;
@@ -146,6 +148,8 @@ export interface AgentContext {
    * evidence an operator reopens the session from.
    */
   runnerSessionCapturedAt?: string;
+  /** Verified external recovery; the gateway did not create this tmux session. */
+  adoptedAt?: string;
   /** Opaque recycle snapshot of this context's runner transcript, when the runner supports it. */
   runnerSessionArchive?: RunnerSessionArchiveRef;
   nudgeCount?: number;

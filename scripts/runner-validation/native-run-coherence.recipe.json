@@ -1,0 +1,39 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native run crash, recovery and ownership coherence",
+  "description": "Replay the incident through disposable production gateway RPCs, prove adapter selection through the CLI and verify that child-only regressions fail the corresponding claim. Every driver creates its own state and cleans up only its fixture resources.",
+  "workflow": {
+    "entry": "incident",
+    "nodes": {
+      "incident": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs",
+        "timeout_ms": 300000,
+        "intent": "Prove signal and redacted crash evidence, blocked conversation recovery, durable busy steering, stopped-worker adoption, normal task completion, foreign-slot preservation and pre-written runtime through gateway RPCs.",
+        "next": "legacy"
+      },
+      "legacy": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --legacy",
+        "timeout_ms": 360000,
+        "intent": "Reload a fixture host from a legacy journal, prove ordinary recovery refuses unknown descendants, then explicitly attest stop and resume the exact conversation.",
+        "next": "adapters"
+      },
+      "adapters": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/recipe-adapter-coherence.mjs",
+        "timeout_ms": 240000,
+        "intent": "Execute canonical and legacy custom-adapter references through the CLI and inspect the selected variant's side effect.",
+        "next": "controls"
+      },
+      "controls": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/native-coherence-controls.mjs",
+        "timeout_ms": 900000,
+        "intent": "Disable each repaired path only in a disposable child and require both a mutation receipt and failure of the intended claim.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

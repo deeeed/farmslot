@@ -13,6 +13,7 @@ import {
   type IntelligenceActionsSummaryParams,
   Methods,
   type RunActivateOnSlotParams,
+  type RunAdoptParams,
   type RunArchiveParams,
   type RunAutoRecoveryStopParams,
   type RunBulkDeleteParams,
@@ -80,6 +81,7 @@ import {
   runListTags,
   runSetTags,
 } from '../methods/run/admin.js';
+import { runAdopt } from '../methods/run/adopt.js';
 import {
   runForSlot,
   runGet,
@@ -191,6 +193,8 @@ export async function routeRunMethod(
       return handled(runPause(p as RunPauseParams, emit));
     case Methods.RUN_RESUME:
       return handled(runResume(p as RunResumeParams, emit));
+    case Methods.RUN_ADOPT:
+      return handled(runAdopt(p as RunAdoptParams, emit));
     case Methods.RUN_FOR_SLOT:
       return handled(runForSlot(p as RunForSlotParams));
     case Methods.RUN_RECIPE_RUNS_FOR_SLOT:

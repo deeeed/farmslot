@@ -263,6 +263,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'roadmap.refinementSession.get': { classification: 'admin' },
   'roadmap.save': { classification: 'admin' },
   'run.activateOnSlot': { classification: 'admin' },
+  'run.adopt': { classification: 'admin' },
   'run.archive': { classification: 'admin' },
   'run.autoRecovery.stop': { classification: 'admin' },
   'run.backfillSummaries': { classification: 'admin' },

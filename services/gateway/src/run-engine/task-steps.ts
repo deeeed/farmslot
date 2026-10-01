@@ -43,6 +43,7 @@ import {
   resolvePrepareProfile,
 } from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import { initializeExistingTaskRuntime } from '../tasks/existing-runtime.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
   PREVIOUS_REVIEW_JSON_INPUT,
@@ -501,6 +502,7 @@ export async function executeWriteTaskStep(
   };
   // Skip if taskFile already provided
   if (current.taskFile) {
+    await initializeExistingTaskRuntime(current);
     console.log(`[run-engine] taskFile already set, skipping write-task`);
     const templateName =
       current.templateProvenance?.templateName ??
@@ -533,7 +535,9 @@ export async function executeWriteTaskStep(
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       ...taskDocumentArtifacts(path.dirname(current.taskFile), {
-        includeChecklist: !isLightweightInteractiveDevRun(current),
+        includeChecklist:
+          !isLightweightInteractiveDevRun(current) ||
+          existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT)),
       }),
     ];
     const inputArtifacts = await captureReviewInputArtifactsForRun(current);

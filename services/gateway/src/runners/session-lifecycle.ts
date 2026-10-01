@@ -266,6 +266,7 @@ export async function inspectRunnerRecovery(
       runnerId,
       {
         paneId: pane.paneId,
+        runnerPid: runnerPid ?? undefined,
         slotId: options.vars.slotId,
         expectedSessionId: options.recoveryHandle.sessionId,
         expectedSessionPath: options.recoveryHandle.sessionPath,
@@ -390,6 +391,10 @@ export interface StopRunnerForParkOptions {
   vars: SlotVars;
   recoveryHandle: MachinePauseRecoveryHandle;
   timeoutMs?: number;
+  /** Run cleanup preserves the pane/session that an operator may have created. */
+  preservePane?: boolean;
+  /** Recheck lifecycle ownership after inspection, immediately before exit delivery. */
+  beforeExit?: () => Promise<void>;
   /**
    * Ceiling on the whole graceful-exit wait, however slow the probes are.
    * Defaults to {@link RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS}; the park step
@@ -544,6 +549,16 @@ export async function stopRunnerForPark(
       'stop budget exhausted before the graceful exit could be delivered',
     );
   }
+  if (options.preservePane) {
+    const preserved = await deps.exec(
+      options.vars,
+      tmuxShellSnippet(`set-option -p -t ${shellQuote(sendTarget)} remain-on-exit on`),
+      { timeout: sendBudget },
+    );
+    if (preserved.exitCode !== 0)
+      throw new Error('Cannot preserve the owned worker pane before stopping it');
+  }
+  await options.beforeExit?.();
   const sent = await deps.exec(
     options.vars,
     tmuxSendTextCommand(sendTarget, definition.gracefulExit!.command, {

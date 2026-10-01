@@ -33,11 +33,7 @@ import {
 } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
-import {
-  buildPrepareIdentityReapCommand,
-  clearStalePrepareProcess,
-  slotRelease,
-} from '../methods/slot.js';
+import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
@@ -427,8 +423,10 @@ async function routeAndRecordTerminalTransition(request: TerminalTransitionReque
 }
 
 async function runDeferredSlotRelease(release: SlotReleaseParams): Promise<void> {
-  const noopEmit = () => {};
-  await slotRelease(release, noopEmit);
+  const run = release.expectedRunId ? getRun(release.expectedRunId) : null;
+  if (!run || run.slotId !== release.slotId) return;
+  const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+  await releaseCompletedRunSlot(run);
 }
 
 /**

@@ -1479,6 +1479,10 @@
     "intelligence.triage.feedback": {
       "surface": "rpc-only",
       "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.feedback; shared typed gateway result, no arbitrary paths or terminal buffers."
+    },
+    "run.adopt": {
+      "surface": "typed-command",
+      "command": "farmslot run adopt"
     }
   }
 }

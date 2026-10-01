@@ -16,7 +16,6 @@ import { markSlotHeld } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { slotRelease } from '../methods/slot.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -178,17 +177,8 @@ export async function executeFinalizeStep(
   });
   try {
     if (noCodeDisposition) {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
+      const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+      await releaseCompletedRunSlot(current);
     } else {
       await markSlotHeld(current.slotId, 'ci-watch');
     }

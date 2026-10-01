@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show executable recovery hints for blocked runs and allow steering a busy native worker through a persisted message queue.
+
 - Default additional reviews to a warm static recheck and show requested, starting, and running review progress.
 
 - Default new Codex selections to GPT-6.1 Sol while preserving saved model choices.

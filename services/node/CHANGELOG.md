@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Support explicit stop confirmation for legacy native workers through the execution host, and report when an older node or host needs upgrading.
+
 - Preserve configured capture-helper executables during node deployment, with an explicit target-path override.
 
 - fix(auth): the node reports itself connected only after the gateway ACKs `node.connect`. Registration refusals (native-owner mismatch, machine assigned to another principal) now surface the gateway code and message and reconnect with bounded backoff instead of sitting silently on an open socket; gateway requests time out and settle on socket close or error with their listeners removed, a superseded handshake never touches the newer socket, and backoff resets on registration rather than on auth. Proof: `docs/examples/recipes/farmslot/node-registration-handshake.recipe.json`.

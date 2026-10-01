@@ -2,8 +2,11 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
-import { NativeProcessTree } from './process-tree.js';
+import type { NativeProcessExitEvidence } from '@farmslot/protocol';
+
+import { NativeProcessTree, type ProcessIdentity } from './process-tree.js';
 import type { NativeProcessSandbox } from './review-sandbox.js';
+import { NativeStderrCapture } from './stderr.js';
 
 // Wait for the host's durable process registration before executing the native binary.
 // Reading one byte leaves all subsequent native JSON on stdin untouched.
@@ -37,6 +40,9 @@ export class JsonLineProcess {
   private stopTimer?: NodeJS.Timeout;
   private closing = false;
   private failure?: Error;
+  private readonly stderr: NativeStderrCapture;
+  private exitCode: number | null = null;
+  private exitSignal: string | null = null;
   private pending = new Map<
     number,
     { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
@@ -49,12 +55,18 @@ export class JsonLineProcess {
       cwd: string;
       env?: NodeJS.ProcessEnv;
       onSpawn?: (pid: number, identity: string) => void;
+      onProcessSnapshot?: (snapshot: ProcessIdentity[]) => void;
       signal?: AbortSignal;
       processSandbox?: NativeProcessSandbox;
     },
     onMessage: (message: Record<string, unknown>) => void,
-    private readonly onExit: (error: Error | undefined, processStopped: boolean) => void,
+    private readonly onExit: (
+      error: Error | undefined,
+      processStopped: boolean,
+      evidence: NativeProcessExitEvidence,
+    ) => void,
   ) {
+    this.stderr = new NativeStderrCapture(options.env ?? process.env);
     const identity = `farmslot-native-${randomUUID()}`;
     this.child = spawn(
       process.execPath,
@@ -76,7 +88,8 @@ export class JsonLineProcess {
         detached: true,
       },
     );
-    this.child.stderr.resume();
+    this.child.stderr.on('data', (chunk: Buffer) => this.stderr.write(chunk));
+    this.child.stderr.on('end', () => this.stderr.end());
     const lines = createInterface({ input: this.child.stdout });
     lines.on('line', (line) => {
       if (this.closed) return;
@@ -114,6 +127,8 @@ export class JsonLineProcess {
       this.beginCleanup();
     });
     this.child.on('exit', (code, signal) => {
+      this.exitCode = code;
+      this.exitSignal = signal;
       this.fail(
         this.failure ??
           // Native signal handlers may return the conventional 128 + SIGTERM exit code.
@@ -135,8 +150,9 @@ export class JsonLineProcess {
         this.stopObservingTree = this.tree.observe((error) => {
           // Loss of process ownership evidence fails this session and its cleanup claim.
           this.beginCleanup(new Error('Native process census failed', { cause: error }));
-        });
+        }, options.onProcessSnapshot);
         options.onSpawn?.(this.child.pid, identity);
+        options.onProcessSnapshot?.(this.tree.snapshot());
       }
       this.child.stdin.write('\n');
       if (options.signal) {
@@ -228,12 +244,18 @@ export class JsonLineProcess {
 
   private settle(): void {
     this.stopObservingAbort?.();
+    this.stderr.end();
     // Detach host pipe handles even when cleanup failed and a descendant retained them.
     this.child.stdin.destroy();
     this.child.stdout.destroy();
     this.child.stderr.destroy();
     try {
-      this.onExit(this.cleanupError ?? this.failure, !this.cleanupError);
+      const failure = this.cleanupError ?? this.failure;
+      this.onExit(
+        failure ? new Error(this.stderr.redact(failure.message)) : undefined,
+        !this.cleanupError,
+        { exitCode: this.exitCode, signal: this.exitSignal, stderrTail: this.stderr.snapshot() },
+      );
     } catch (error) {
       // The owner could not record completion. Surface that failure to close's caller.
       this.cleanupError = new Error('Native process completion could not be recorded', {

@@ -23,6 +23,36 @@ const terminalRecipe = (title: string) => ({
   },
 });
 
+test('active custom adapters resolve directory variants and preserve legacy qualified refs', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-custom-adapter-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, {
+    'shared/perps/smoke.recipe.json': terminalRecipe('Shared'),
+    'terminal/perps/smoke.recipe.json': terminalRecipe('Terminal'),
+  });
+  const resolution = await loadRecipeLibraries([{ root }], { adapter: 'terminal' });
+  assert.equal(resolution.recipes.get('perps.smoke')?.adapter, 'terminal');
+  assert.equal(resolution.recipes.get('perps.smoke')?.document.title, 'Terminal');
+  assert.equal(resolution.recipes.get('terminal.perps.smoke')?.document.title, 'Terminal');
+});
+
+test('library manifests declare inactive custom platform folders', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-platform-manifest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, {
+    'shared/perps/smoke.recipe.json': terminalRecipe('Shared'),
+    'terminal/perps/smoke.recipe.json': terminalRecipe('Terminal'),
+    'desktop/perps/smoke.recipe.json': terminalRecipe('Desktop'),
+  });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    platforms: ['terminal', 'desktop'],
+  });
+  const resolution = await loadRecipeLibraries([{ root }], { adapter: 'mobile' });
+  assert.equal(resolution.recipes.get('perps.smoke')?.document.title, 'Shared');
+  assert.equal(resolution.recipes.has('terminal.perps.smoke'), false);
+  assert.equal(resolution.recipes.has('desktop.perps.smoke'), false);
+});
+
 async function createLibrary(
   root: string,
   recipes: Record<string, Record<string, unknown>>,

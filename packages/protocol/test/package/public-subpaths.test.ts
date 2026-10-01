@@ -254,6 +254,7 @@ for (const [name, actual, expected] of [
       forceComplete: Methods.RUN_FORCE_COMPLETE,
       pause: Methods.RUN_PAUSE,
       resume: Methods.RUN_RESUME,
+      adopt: Methods.RUN_ADOPT,
       replayStep: Methods.RUN_REPLAY_STEP,
       activateOnSlot: Methods.RUN_ACTIVATE_ON_SLOT,
       autoRecoveryStop: Methods.RUN_AUTO_RECOVERY_STOP,

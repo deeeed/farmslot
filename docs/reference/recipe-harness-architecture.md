@@ -74,6 +74,18 @@ Projects extend the system with:
 3. ordered recipe libraries;
 4. project hooks that launch or verify the runtime.
 
+A library can declare custom adapter folders in `recipe-library.json`:
+
+```json
+{ "platforms": ["terminal", "desktop"] }
+```
+
+With `terminal` selected, `recipes/terminal/perps/orders.recipe.json` is the
+`terminal` variant of `perps.orders`. The existing qualified reference
+`terminal.perps.orders` remains an alias. `core`, `extension` and `mobile` folders
+keep their existing behavior without a manifest. The active adapter also counts
+as an adapter folder. Manifest files must remain inside the library root.
+
 Do not extend the protocol for domain vocabulary, convenience wrappers, retry policy, or product state. Encode reusable domain behavior as a parameterized recipe; keep bounded polling inside the action that owns it.
 
 ## Non-goals

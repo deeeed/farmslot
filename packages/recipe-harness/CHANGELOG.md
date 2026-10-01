@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Recognize custom recipe adapter folders from the active adapter or a library's platform manifest, while preserving built-in adapters and legacy qualified references.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.21.1 - 2026-09-29

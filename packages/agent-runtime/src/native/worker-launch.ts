@@ -55,6 +55,7 @@ export const NATIVE_WORKER_RESUME = 'native.worker.resume';
 export const NATIVE_WORKER_SEND = 'native.worker.send';
 export const NATIVE_WORKER_RESPOND = 'native.worker.respond';
 export const NATIVE_WORKER_CLOSE = 'native.worker.close';
+export const NATIVE_WORKER_CONFIRM_STOPPED = 'native.worker.confirmStopped';
 export const NATIVE_WORKER_INTERRUPT = 'native.worker.interrupt';
 export const NATIVE_WORKER_TRANSFER = 'native.worker.transfer';
 export const NATIVE_WORKER_CANCEL = 'native.worker.cancel';
@@ -67,6 +68,7 @@ export const NATIVE_WORKER_METHODS: readonly string[] = [
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_RESPOND,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_TRANSFER,
   NATIVE_WORKER_CANCEL,

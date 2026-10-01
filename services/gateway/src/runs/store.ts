@@ -1063,7 +1063,41 @@ export function listRunTags(): Array<{ tag: string; count: number }> {
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
-export function updateRun(id: string, partial: Partial<Run>): Run {
+const workerAdoptionAuthorization = Symbol('verified worker adoption');
+
+/** Only the verified adoption operation may change an existing run's transport. */
+export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run {
+  const current = getRun(id);
+  if (
+    !current ||
+    !['paused', 'blocked'].includes(current.status) ||
+    partial.transport !== 'tmux' ||
+    !partial.agentContexts?.some(
+      (context) => context.adoptedAt && context.target?.paneId && context.runnerSessionId,
+    )
+  )
+    throw new Error(
+      'Verified worker adoption requires its paused/blocked run and exact tmux binding',
+    );
+  for (const context of current.agentContexts ?? []) {
+    if (!context.nativeSession || context.nativeSession.releasedAt) continue;
+    const replacement = partial.agentContexts.find((candidate) => candidate.id === context.id);
+    if (
+      replacement?.nativeSession ||
+      !replacement?.nativeSessionHistory?.some(
+        (binding) =>
+          binding.sessionId === context.nativeSession!.sessionId &&
+          binding.leaseId === context.nativeSession!.leaseId &&
+          binding.closedAt &&
+          binding.releasedAt,
+      )
+    )
+      throw new Error('Worker adoption must archive every retired native task lease');
+  }
+  return updateRun(id, partial, workerAdoptionAuthorization);
+}
+
+export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (
@@ -1086,7 +1120,11 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
       throw new Error('Automatic QA admission snapshot cannot be added, removed or changed');
     }
   }
-  if ('transport' in partial && (partial.transport ?? 'tmux') !== (run.transport ?? 'tmux'))
+  if (
+    'transport' in partial &&
+    (partial.transport ?? 'tmux') !== (run.transport ?? 'tmux') &&
+    authorization !== workerAdoptionAuthorization
+  )
     throw new Error('Worker transport is fixed for the run; create a new run to switch transport');
   if ('nativeProfile' in partial && !isDeepStrictEqual(partial.nativeProfile, run.nativeProfile))
     throw new Error(
