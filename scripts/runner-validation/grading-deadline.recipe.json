@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Advisory grading deadline through the gateway",
+  "description": "Replay grading on a disposable gateway with an unresponsive provider transport. Verify cancellation, recorded skip reason, absent grade and preserved worker selection. Run the driver with --negative-control to disable the deadline only in the child gateway and demonstrate the advancement assertion fails.",
+  "workflow": {
+    "entry": "grade-gateway",
+    "nodes": {
+      "grade-gateway": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/grading-deadline.mjs",
+        "timeout_ms": 240000,
+        "intent": "Use run.replayStep and run.get through an isolated production gateway to prove an unresponsive grading request is cancelled and the workflow completes grading without replacing the selected worker or fabricating a grade.",
+        "next": "no-auth-gateway"
+      },
+      "no-auth-gateway": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/grading-deadline.mjs --no-auth",
+        "timeout_ms": 240000,
+        "intent": "Prove grading without API credentials skips explicitly and never launches a CLI fallback; the unchanged summary path uses a fake executable. Run with --no-auth --cli-negative-control to demonstrate the no-fallback assertion fails.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
