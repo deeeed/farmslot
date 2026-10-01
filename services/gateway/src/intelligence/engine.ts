@@ -61,6 +61,8 @@ ${ticket.stepsToReproduce.length > 0 ? `\nSteps to Reproduce:\n${ticket.stepsToR
       model: cfg.intelligenceModel,
       provider: cfg.defaultProvider,
       signal: controller.signal,
+      // CLI fallback transports do not support cancellation.
+      allowCliFallback: false,
     }),
     GRADE_TIMEOUT_MS,
     'ticket grading',

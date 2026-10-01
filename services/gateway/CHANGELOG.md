@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Bound advisory difficulty grading so an unresponsive provider cannot indefinitely block task dispatch.
+- Bound advisory difficulty grading and require API credentials so an unresponsive provider or uncancellable CLI fallback cannot indefinitely block task dispatch.
 
 - Recover completed same-run reviewer sessions for explicit warm rechecks after a gateway restart, and keep reviewers starting until their prompt is accepted.
 

@@ -5,10 +5,12 @@ import type { RunTicketData } from '@farmslot/protocol';
 
 let capturedSignal: AbortSignal | undefined;
 let neverRespond = false;
+let capturedCliFallback: boolean | undefined;
 mock.module('../llm/index.js', {
   namedExports: {
-    callLLM: async (options: { signal?: AbortSignal }) => {
+    callLLM: async (options: { signal?: AbortSignal; allowCliFallback?: boolean }) => {
       capturedSignal = options.signal;
+      capturedCliFallback = options.allowCliFallback;
       if (neverRespond) return new Promise(() => {});
       return {
         text: JSON.stringify({
@@ -42,6 +44,7 @@ test('grading retains a timely structured provider response', async () => {
   assert.equal(result.grade.score, 2);
   assert.equal(result.grade.modelRecommendation, 'opus');
   assert.equal(capturedSignal?.aborted, false);
+  assert.equal(capturedCliFallback, false);
 });
 
 test('grading aborts and rejects after its deadline even if the provider never settles', async (t) => {
