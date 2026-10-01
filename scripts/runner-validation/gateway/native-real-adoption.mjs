@@ -235,7 +235,7 @@ export async function prepareRealAdoption({
   };
 }
 
-export async function proveRealAdoption({ fixture, rpc, wait, check }) {
+export async function proveRealAdoption({ fixture, rpc, wait, check, generationGuard, temporary }) {
   execFileSync('tmux', [
     'new-session',
     '-d',
@@ -289,15 +289,35 @@ export async function proveRealAdoption({ fixture, rpc, wait, check }) {
     (run) => run.steps.some((step) => step.outputs?.awaitingOperator),
     'real adopted worker monitored completion',
   );
-  assert.equal(
+  const finish = () =>
     rpc(Methods.RUN_INTERACTIVE_DEV_RESOLVE, {
       runId: fixture.runId,
       action: 'done-no-pr',
       reason: 'Read-only conversation proof',
-    }).ok,
-    true,
-  );
-  assert.equal(rpc('run.get', { runId: fixture.runId }).run.status, 'done');
+    });
+  if (generationGuard) {
+    const rows = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n');
+    const workers = rows.flatMap((line) => {
+      const [pid, ...argv] = line.trim().split(/\s+/);
+      const index = argv.indexOf('--resume');
+      return index >= 0 && argv[index + 1] === fixture.conversation ? [Number(pid)] : [];
+    });
+    assert.equal(workers.length, 1, 'Real saved conversation must have one live process');
+    assert.throws(
+      finish,
+      /ownership changed before stop/,
+      'Changed generation must refuse exit delivery',
+    );
+    assert.equal(
+      readFileSync(path.join(temporary, 'generation-fault-applied'), 'utf8'),
+      fixture.runId,
+    );
+    process.kill(workers[0], 0);
+    check('changed generation preserves the live saved conversation before exit delivery');
+  } else assert.equal(finish().ok, true);
+  const status = rpc('run.get', { runId: fixture.runId }).run.status;
+  if (generationGuard) assert.notEqual(status, 'done');
+  else assert.equal(status, 'done');
   execFileSync('tmux', ['has-session', '-t', `=${fixture.session}`]);
-  check('real adopted worker closes without destroying its operator session');
+  if (!generationGuard) check('real adopted worker closes without destroying its operator session');
 }

@@ -9,7 +9,9 @@ import { probeRunnerDescendantPid } from './session-process.js';
 
 /** Stop only the exact saved conversations this run owns, without removing sessions. */
 export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> {
-  for (const context of run.agentContexts ?? []) {
+  const expectedGeneration = run.engineState?.generation;
+  const contexts = structuredClone(run.agentContexts ?? []);
+  for (const context of contexts) {
     if (context.nativeSession || context.nativeSessionOwner || !context.target) continue;
     const slotId = context.slotId ?? run.slotId;
     const slot = slotId ? await readSlotRow(slotId) : null;
@@ -30,6 +32,8 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> 
     if (pane.exitCode === 1) continue; // A historical pane that no longer exists owns nothing live.
     if (pane.exitCode !== 0) return `Worker ${context.id} pane inspection failed; cleanup deferred`;
     const [session, paneId, panePid] = pane.stdout.trim().split('\t');
+    // Tmux can return exit 0 with empty fields for an absent exact target.
+    if (!session && !paneId && !panePid) continue;
     if (session !== context.target.session || paneId !== context.target.paneId)
       return `Worker ${context.id} pane ownership changed; cleanup deferred`;
     const live = await probeRunnerDescendantPid(vars, panePid, context.runner ?? undefined);
@@ -55,7 +59,7 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> 
           currentSlot?.current_run_id !== run.id ||
           currentSlot?.slot_epoch !== slot?.slot_epoch ||
           (currentSlot?.handoff_run_id && currentSlot.handoff_run_id !== run.id) ||
-          currentRun?.engineState?.generation !== run.engineState?.generation ||
+          currentRun?.engineState?.generation !== expectedGeneration ||
           !current ||
           current.nativeSession ||
           current.nativeSessionOwner ||

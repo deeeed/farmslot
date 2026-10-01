@@ -1,6 +1,6 @@
 // Faults run only in marked disposable gateways, never in the operator process.
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import path from 'node:path';
 
@@ -9,7 +9,17 @@ assert.ok(root && existsSync(path.join(root, '.coherence-fixture')));
 const fixtures = JSON.parse(process.env.FARMSLOT_COHERENCE_FAULTS);
 const ids = Object.fromEntries(fixtures.map((fixture) => [fixture.fault, fixture.runId]));
 const slots = Object.fromEntries(fixtures.map((fixture) => [fixture.fault, fixture.slotId]));
+globalThis.__coherenceGenerationFault = (run) => {
+  if (run?.id !== process.env.FARMSLOT_COHERENCE_GENERATION_RUN_ID) return;
+  run.engineState = { ...run.engineState, generation: 'coherence-changed-generation' };
+  writeFileSync(path.join(root, 'generation-fault-applied'), run.id);
+};
 const faults = [
+  [
+    'runners/owned-stop.ts',
+    /const currentRun = getRun\(run.id\);/,
+    '$& globalThis.__coherenceGenerationFault(currentRun);',
+  ],
   [
     'runners/session-archive.ts',
     /(async function archiveRunnerSessionsForSlotRelease\([^)]*\)\s*(?::[^\{]+)?\{)/,

@@ -11,6 +11,7 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['stop-generation', /Changed generation must refuse exit delivery/],
   ['provider-preexisting', /Idempotent boot must not claim the preexisting unleased server/],
   ['cancel-failure', /early-cancel must settle to held/],
   ['cancel-ancillary', /cancel-ancillary must settle to held/],
@@ -20,7 +21,10 @@ const controls = [
   ['provider-group', /Provider shutdown must verify recorded kernel identity/],
   ['cleanup-gone', /an empty owned slot can be released/],
   ['cleanup-handoff', /Handoff cleanup remains deferred/],
-  ['cleanup-pane', /Unverified live panes remain protected/],
+  [
+    'cleanup-pane',
+    /Unverified live panes remain protected|Recorded non-runner pane root remains occupied/,
+  ],
   ['owned-provider', /Owned server must record its kernel identity/],
   ['provider-expiry', /Already warm provider cleanup is deferred/],
   ['provider-claims', /Deferred exclusive claim remains held/],
@@ -54,6 +58,8 @@ async function lane() {
       ...(name === 'adapters' ? [] : [name]),
     ];
     if (name === 'attestation') args.push('--legacy');
+    if (name === 'stop-generation')
+      args.push('--guards-only', '--real-adoption', '--generation-guard');
     const guardsOnly = [
       'cancel-failure',
       'cancel-ancillary',

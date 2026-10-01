@@ -73,6 +73,7 @@ let uiRoute;
 const withUi = process.argv.includes('--ui');
 const legacy = process.argv.includes('--legacy');
 const realAdoption = process.argv.includes('--real-adoption');
+const generationGuard = process.argv.includes('--generation-guard');
 const guardsOnly = process.argv.includes('--guards-only');
 const providersOnly = process.argv.includes('--providers-only') || realAdoption || guardsOnly;
 let realFixture;
@@ -571,6 +572,7 @@ try {
     TSX_TSCONFIG_PATH: path.join(sourceRoot, 'services/gateway/tsconfig.json'),
     FARMSLOT_COHERENCE_FIXTURE: temporary,
     FARMSLOT_COHERENCE_FAULTS: JSON.stringify(cleanupGuards.filter((fixture) => fixture.fault)),
+    FARMSLOT_COHERENCE_GENERATION_RUN_ID: generationGuard ? realFixture?.runId : '',
     NODE_OPTIONS: `--import ${path.join(sourceRoot, 'scripts/runner-validation/gateway/native-cleanup-faults.mjs')}`,
   };
   delete env.CODEX_LB_API_KEY;
@@ -1147,7 +1149,8 @@ try {
     configFile,
     temporary,
   });
-  if (realFixture) await proveRealAdoption({ fixture: realFixture, rpc, wait, check });
+  if (realFixture)
+    await proveRealAdoption({ fixture: realFixture, rpc, wait, check, generationGuard, temporary });
   console.log(JSON.stringify({ passed: true, checks }, null, 2));
   if (withUi) writeJson(path.join(outDir, 'browser-proof.json'), { passed: true, checks });
 } catch (error) {

@@ -183,13 +183,9 @@ export function cancelPlan(
             : step,
         ),
         metrics: { ...run.metrics, outcome: 'cancelled' },
-        // Native teardown needs the durable generation/lease after the terminal mutation.
-        // Keep it afterward as well so an unconfirmed stop still owns its process and slot.
-        agentContexts: run.agentContexts?.some(
-          (context) => context.nativeSession || context.nativeSessionHistory?.length,
-        )
-          ? run.agentContexts
-          : [],
+        // Both transports need their exact worker identities during terminal cleanup.
+        // Keep them afterward so an unconfirmed stop retains its ownership evidence.
+        agentContexts: run.agentContexts ?? [],
       };
     },
     after,

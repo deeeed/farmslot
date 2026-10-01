@@ -11,6 +11,11 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'stop-generation': [
+    'services/gateway/src/runners/owned-stop.ts',
+    /currentRun\?\.engineState\?\.generation !== expectedGeneration/,
+    'currentRun?.engineState?.generation !== run.engineState?.generation',
+  ],
   'provider-preexisting': [
     'services/gateway/src/fleet/resource-manager.ts',
     /process &&\s*\(process.pid !== processBeforeBoot\?\.pid[\s\S]*?process.group !== processBeforeBoot\?\.group\)/,
@@ -48,8 +53,8 @@ const controls = {
   ],
   'cleanup-gone': [
     'services/gateway/src/runners/owned-stop.ts',
-    /if \(pane\.exitCode === 1\) continue/,
-    'if (false) continue',
+    /if \(!session && !paneId && !panePid\) continue/,
+    "if (!session && !paneId && !panePid) return 'Historical pane incorrectly blocks cleanup';",
   ],
   'cleanup-handoff': [
     'services/gateway/src/run-lifecycle/slot-teardown.ts',

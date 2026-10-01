@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document native run recovery and external adoption, absolute task paths, and the required CLI-before-gateway upgrade order.
+
 - Document runner catalog and visible-model preference RPCs.
 
 - Refresh the generated gateway API reference to protocol 0.33.0.

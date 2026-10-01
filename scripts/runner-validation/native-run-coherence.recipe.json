@@ -31,6 +31,13 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --guards-only",
         "timeout_ms": 240000,
         "intent": "Prove historical and unsupported-pane preservation, foreign handoff protection, failure settlement despite notification errors, and boot/cleanup process identity boundaries through gateway RPCs.",
+        "next": "generation-guard"
+      },
+      "generation-guard": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --guards-only --real-adoption --generation-guard",
+        "timeout_ms": 360000,
+        "intent": "Change the stored generation during verified stopping of a real saved conversation; prove the frozen ownership fence refuses exit and preserves its live process.",
         "next": "controls"
       },
       "controls": {

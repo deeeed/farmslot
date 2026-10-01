@@ -8,28 +8,31 @@ const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 export function prepareCleanupGuards({ temporary, project, gitInit }) {
   const fixtures = [];
-  for (const [index, runner] of ['cursor', 'scripted'].entries()) {
+  for (const [index, runner] of ['cursor', 'scripted', 'claude'].entries()) {
     const repo = path.join(temporary, `guard-${index}`);
     gitInit(repo);
     const executable = path.join(repo, runner === 'cursor' ? 'agent' : 'program.cjs');
     writeFileSync(executable, 'setInterval(()=>{},1000);\n');
     const session = `coherence-guard-${randomUUID()}`;
-    execFileSync('tmux', [
-      'new-session',
-      '-d',
-      '-s',
-      session,
-      '-c',
-      repo,
-      `${quote(process.execPath)} ${quote(executable)}`,
-    ]);
     const [paneId, panePid] = execFileSync(
       'tmux',
-      ['display-message', '-p', '-t', `=${session}`, '#{pane_id}\t#{pane_pid}'],
+      [
+        'new-session',
+        '-d',
+        '-P',
+        '-F',
+        '#{pane_id}\t#{pane_pid}',
+        '-s',
+        session,
+        '-c',
+        repo,
+        `exec ${quote(process.execPath)} ${quote(executable)}`,
+      ],
       { encoding: 'utf8' },
     )
       .trim()
       .split('\t');
+    assert.ok(paneId && panePid, 'Fixture must record its exact created pane');
     const slotId = `coherence-guard-slot-${randomUUID()}`;
     const runId = randomUUID();
     const now = new Date().toISOString();
@@ -288,6 +291,12 @@ export function proveCleanupGuards({
       assert.equal(slot.lifecycle, 'held');
       assert.equal(slot.phase, 'occupied');
       assert.ok(slot.held_reason);
+      if (fixture.runner === 'claude')
+        assert.match(
+          slot.held_reason,
+          /Recorded worker pane process/,
+          'Recorded non-runner pane root remains occupied',
+        );
       execFileSync('tmux', ['has-session', '-t', `=${fixture.session}`]);
       assert.equal(
         execFileSync('tmux', ['display-message', '-p', '-t', fixture.paneId, '#{pane_dead}'], {
@@ -302,12 +311,12 @@ export function proveCleanupGuards({
 
 export function prepareGoneContext(repo) {
   const session = `coherence-gone-${randomUUID()}`;
-  execFileSync('tmux', ['new-session', '-d', '-s', session, '-c', repo]);
   const paneId = execFileSync(
     'tmux',
-    ['display-message', '-p', '-t', `=${session}`, '#{pane_id}'],
+    ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', session, '-c', repo],
     { encoding: 'utf8' },
   ).trim();
+  assert.ok(paneId, 'Historical fixture must record its exact created pane');
   execFileSync('tmux', ['kill-session', '-t', `=${session}`]);
   return {
     id: 'historical',
