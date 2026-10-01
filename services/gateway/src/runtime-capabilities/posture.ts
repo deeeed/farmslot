@@ -371,6 +371,8 @@ function dispositionSatisfied(
 
 export interface ResourcePostureRequest {
   runId: string;
+  /** Internal run completion cannot terminate live sibling ownership. */
+  ownerOnly?: boolean;
   /** Omit to re-apply the run's persisted posture. */
   posture?: ResourcePosture;
   gateChoice?: ResourcePostureGateChoice;
@@ -438,7 +440,11 @@ export interface RunResourcePostureDeps {
     familyId?: string,
   ) => Promise<RuntimeCapabilityReleaseResult>;
   /** Stop providers a released lease is still keeping warm (ADR-054 terminal). */
-  stopWarmProviders: (slotId: string, capabilityIds: string[]) => Promise<PostureWarmSweepResult>;
+  stopWarmProviders: (
+    slotId: string,
+    capabilityIds: string[],
+    ownerRunId?: string,
+  ) => Promise<PostureWarmSweepResult>;
   machineForSlot: (slotId: string) => Promise<string | null>;
   parkPreview: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
@@ -463,6 +469,7 @@ interface ParkTarget {
 
 interface ResolvedContext {
   run: Run;
+  ownerOnly?: boolean;
   slotId: string;
   status: RuntimeCapabilityStatusResult;
   policy: EffectivePosturePolicy;
@@ -718,7 +725,9 @@ export class RunResourcePostureReconciler {
         (state) =>
           state.desiredDisposition === 'stopped' &&
           (context.leases.get(state.capabilityId) ?? []).some(
-            (lease) => lease.state === 'released' && lease.keepWarmUntil !== undefined,
+            (lease) =>
+              lease.state === 'released' &&
+              (lease.keepWarmUntil !== undefined || lease.providerCleanupDeferred !== undefined),
           ),
       )
       .map((state) => state.capabilityId);
@@ -727,7 +736,11 @@ export class RunResourcePostureReconciler {
     // `applied` while a provider it asked to stop is still running.
     const warmDeferred = new Set<string>();
     if (warmToStop.length > 0) {
-      const swept = await this.deps.stopWarmProviders(context.slotId, warmToStop);
+      const swept = await this.deps.stopWarmProviders(
+        context.slotId,
+        warmToStop,
+        context.ownerOnly ? context.run.id : undefined,
+      );
       for (const effect of swept.effects) effects.add(effect);
       for (const failure of swept.failures) {
         failures.push({
@@ -744,7 +757,11 @@ export class RunResourcePostureReconciler {
     // holding providers nothing will ever release.
     const released =
       context.policy.posture === 'terminal'
-        ? await this.deps.releaseRunTerminal(context.slotId, context.run.id, context.run.familyId)
+        ? await this.deps.releaseRunTerminal(
+            context.slotId,
+            context.run.id,
+            context.ownerOnly ? undefined : context.run.familyId,
+          )
         : dispositions.length > 0
           ? await this.deps.releaseForPosture(context.slotId, dispositions)
           : null;
@@ -1435,8 +1452,9 @@ export class RunResourcePostureReconciler {
     run: Run,
     status: RuntimeCapabilityStatusResult,
     posture: ResourcePosture,
+    ownerOnly = false,
   ): Map<string, RuntimeCapabilityLease[]> {
-    const includeFamily = posture === 'terminal' && Boolean(run.familyId);
+    const includeFamily = !ownerOnly && posture === 'terminal' && Boolean(run.familyId);
     const owned = status.leases.filter(
       (lease) =>
         lease.owner.runId === run.id || (includeFamily && lease.owner.familyId === run.familyId),
@@ -1533,7 +1551,7 @@ export class RunResourcePostureReconciler {
     }
     const posture = request.posture ?? run.resourcePosture?.posture ?? 'active';
     const status = await this.deps.capabilityStatus(run.slotId);
-    const leases = this.leasesForRun(run, status, posture);
+    const leases = this.leasesForRun(run, status, posture, request.ownerOnly);
     const proofRequirements =
       request.proofRequirements ?? status.proofPlans[run.id]?.requirements ?? [];
     const policy = resolveEffectivePosturePolicy({
@@ -1559,7 +1577,16 @@ export class RunResourcePostureReconciler {
       ),
     );
     return {
-      context: { run, slotId: run.slotId, status, policy, states, leases, proofRequirements },
+      context: {
+        run,
+        ownerOnly: request.ownerOnly,
+        slotId: run.slotId,
+        status,
+        policy,
+        states,
+        leases,
+        proofRequirements,
+      },
     };
   }
 
@@ -1567,7 +1594,7 @@ export class RunResourcePostureReconciler {
   private async refresh(context: ResolvedContext): Promise<ResolvedContext> {
     const run = this.deps.getRun(context.run.id) ?? context.run;
     const status = await this.deps.capabilityStatus(context.slotId);
-    const leases = this.leasesForRun(run, status, context.policy.posture);
+    const leases = this.leasesForRun(run, status, context.policy.posture, context.ownerOnly);
     const nowMs = this.now().getTime();
     const byId = new Map(status.catalog.map((entry) => [entry.id, entry]));
     const states = context.states.map((state) =>

@@ -865,6 +865,7 @@ test('legacy recovery and terminal close require descendant evidence even when t
         .map((line) => {
           const entry = JSON.parse(line);
           delete entry.processes;
+          delete entry.processesAdded;
           return JSON.stringify(entry);
         })
         .join('\n') + '\n',
@@ -909,6 +910,7 @@ test('legacy worker cleanup can be explicitly attested without discarding its co
       .map((line) => {
         const entry = JSON.parse(line);
         delete entry.processes;
+        delete entry.processesAdded;
         return entry;
       });
     entries.push({
@@ -1339,6 +1341,125 @@ test('a stopped worker transfers its lease before resuming the saved conversatio
     assert.equal(manager.read('owner', first.id).session.workerLeaseId, successor.leaseId);
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('an unconfirmed close preserves queued steering and a confirmed close cancels it', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    await manager.close('owner', session.id);
+    const stopped = manager.read('owner', session.id).session;
+    const journal = join(fixture.root, `${session.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        delete entry.processes;
+        delete entry.processesAdded;
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false },
+      commands: [
+        {
+          commandId: 'retained-steering',
+          text: 'keep this instruction',
+          generation: stopped.generation,
+          state: 'pending',
+          queued: true,
+          submitted: false,
+          accepted: false,
+        },
+      ],
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const restored = new NativeSessionManager(fixture.root);
+    await assert.rejects(restored.close('owner', session.id), /cleanup is unconfirmed/);
+    assert.equal(
+      new NativeSessionManager(fixture.root).read('owner', session.id).commands[0]?.queued,
+      true,
+    );
+    appendDurable(journal, { info: stopped });
+    const confirmed = new NativeSessionManager(fixture.root);
+    await confirmed.close('owner', session.id);
+    const command = new NativeSessionManager(fixture.root).read('owner', session.id).commands[0];
+    assert.equal(command?.queued, false);
+    assert.equal(command?.outcome, 'interrupted');
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('legacy stop attestation distinguishes a positively owned replacement generation from an unknown group', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  const foreign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  assert.ok(foreign.pid);
+  try {
+    const original = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd }, launch);
+    await manager.close('owner', original.id);
+    const stopped = manager.read('owner', original.id).session;
+    const journal = join(fixture.root, `${original.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        delete entry.processes;
+        delete entry.processesAdded;
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false, processPid: foreign.pid },
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const unknown = new NativeSessionManager(fixture.root);
+    assert.throws(
+      () => unknown.confirmWorkerStopped('owner', original.id, original.generation, launch.leaseId),
+      /absent native process and process group/,
+    );
+    assert.equal(alive(foreign.pid), true);
+    const replacement = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    appendDurable(journal, {
+      info: {
+        ...stopped,
+        state: 'failed',
+        processStopped: false,
+        processPid: replacement.processPid,
+      },
+    });
+    const restored = new NativeSessionManager(fixture.root);
+    const confirmed = restored.confirmWorkerStopped(
+      'owner',
+      original.id,
+      original.generation,
+      launch.leaseId,
+    );
+    assert.equal(confirmed.processStopReason, 'process-missing-attested');
+    assert.equal(
+      alive(replacement.processPid!),
+      true,
+      'Attestation must never signal the replacement generation',
+    );
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    const exited = once(foreign, 'exit');
+    foreign.kill('SIGTERM');
+    await exited;
     fixture.restore();
   }
 });

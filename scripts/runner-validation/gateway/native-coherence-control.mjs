@@ -11,6 +11,61 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'provider-preexisting': [
+    'services/gateway/src/fleet/resource-manager.ts',
+    /process &&\s*\(process.pid !== processBeforeBoot\?\.pid[\s\S]*?process.group !== processBeforeBoot\?\.group\)/,
+    'process',
+  ],
+  'cancel-failure': [
+    'services/gateway/src/run-lifecycle/cancel-transition.ts',
+    /cleanup.set\(run.id, state\);/,
+    'void state;',
+  ],
+  'cancel-ancillary': [
+    'services/gateway/src/run-lifecycle/cancel-transition.ts',
+    /await settleFailedRunSlotCleanup\(run, fence, error\);/,
+    'void error;',
+  ],
+  'completion-failure': [
+    'services/gateway/src/methods/run/lifecycle-control.ts',
+    /await settleFailedRunSlotCleanup\(run, fence, error\)/,
+    'String(error)',
+  ],
+  'failure-notification': [
+    'services/gateway/src/run-lifecycle/slot-teardown.ts',
+    /const updated = updateRun\(run.id, \{ slotTeardownSkipped: reason \}\);/,
+    "$& const { broadcastEvent: earlyBroadcast } = await import('../server.js'); earlyBroadcast(Events.RUN_UPDATED, {run:updated});",
+  ],
+  'provider-birth': [
+    'services/gateway/src/methods/runtime-capabilities.ts',
+    /current\?\.identity !== meta.process.identity \|\| current.group !== meta.process.group/,
+    'false',
+  ],
+  'provider-group': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /await this.options.checkProviderCleanup\?\.\([\s\S]*?\);/,
+    'null;',
+  ],
+  'cleanup-gone': [
+    'services/gateway/src/runners/owned-stop.ts',
+    /if \(pane\.exitCode === 1\) continue/,
+    'if (false) continue',
+  ],
+  'cleanup-handoff': [
+    'services/gateway/src/run-lifecycle/slot-teardown.ts',
+    /row\?\.handoff_run_id && row\.handoff_run_id !== run\.id/,
+    'false',
+  ],
+  'cleanup-pane': [
+    'services/gateway/src/run-lifecycle/slot-teardown.ts',
+    /return `Recorded worker pane process \$\{panePid\} is still occupied; cleanup deferred`/,
+    'continue',
+  ],
+  'owned-provider': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /lease\.state = 'acquired';\s*lease\.acquiredAt/,
+    "lease.providerProcesses = undefined; lease.state = 'acquired'; lease.acquiredAt",
+  ],
   'provider-expiry': [
     'services/gateway/src/runtime-capabilities/registry.ts',
     /\(blocksAcquisition\(lease\) \|\| runsProvider\(lease\)\)/,

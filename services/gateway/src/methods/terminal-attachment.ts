@@ -4,10 +4,10 @@
 // (local fs or the node binary write path, identically). Delivery is a separate call that
 // hands the staged path to the runner's registered attachment provider, so a completed
 // upload never implies the runner received the image.
-
 import {
   isTerminalAttachmentCleanupScope,
   normalizeRunner,
+  type Run,
   TERMINAL_ATTACHMENT_CLEANUP_SCOPES,
   type TerminalAttachmentCleanupParams,
   type TerminalAttachmentCleanupResult,
@@ -355,6 +355,33 @@ async function listAttachmentNames(vars: SlotVars, dir: string): Promise<string[
  * Lifecycle cleanup. `all` empties the slot's staging directory (called when the owning
  * run/session ends); `stale` applies only the bounded age policy.
  */
+/** Automatic completion deletes only uploads bound to this run's exact panes. */
+export async function terminalAttachmentCleanupForRun(
+  run: Run,
+  assertOwned?: () => Promise<void>,
+): Promise<void> {
+  if (!run.slotId) return;
+  const targets = new Set(
+    (run.agentContexts ?? []).flatMap((context) =>
+      [context.target?.paneId, context.target?.target].filter((target): target is string =>
+        Boolean(target),
+      ),
+    ),
+  );
+  if (!targets.size) return;
+  const vars = await loadSlotVars(run.slotId);
+  await assertOwned?.();
+  for (const [key, pending] of pendingUploads) {
+    if (pending.slotId === run.slotId && targets.has(pending.target)) pendingUploads.delete(key);
+  }
+  for (const [filePath, staged] of stagedTargets) {
+    if (staged.slotId !== run.slotId || !targets.has(staged.target)) continue;
+    await assertOwned?.();
+    await slotDeletePath(vars, filePath);
+    stagedTargets.delete(filePath);
+  }
+}
+
 export async function terminalAttachmentCleanup(
   params: TerminalAttachmentCleanupParams,
 ): Promise<TerminalAttachmentCleanupResult> {

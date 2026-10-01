@@ -35,6 +35,7 @@ function stickyBrowserPid(slotId: string, fallback: number | null): number | nul
 export type ScreenFrameHandler = (payload: Uint8Array, keyFrame: boolean) => void;
 
 interface ScreenSession {
+  ownerRunId?: string | null;
   proc: ChildProcess | null; // null for agent-mediated
   sessionKey: string;
   slotId: string;
@@ -173,6 +174,8 @@ function spawnAndroid(
       log('exit', sessionKey, `code=${code}`);
     }
   });
+
+  ss.ownerRunId = getCachedFleet()?.slots.find((slot) => slot.slot === slotId)?.currentRunId;
 
   sessions.set(sessionKey, ss);
   return ss;
@@ -380,6 +383,7 @@ export async function subscribeScreen(
         mode: 'node',
         machine,
       };
+      ss.ownerRunId = getCachedFleet()?.slots.find((slot) => slot.slot === slotId)?.currentRunId;
       sessions.set(key, ss);
     } else {
       // Direct fallback: existing spawn logic
@@ -422,9 +426,13 @@ export function unsubscribeAllScreens(handler: ScreenFrameHandler): void {
   }
 }
 
-export function killSlotScreenSessions(slotId: string): void {
+export function killSlotScreenSessions(slotId: string, ownerRunId?: string): void {
   for (const [key] of sessions) {
-    if (key.startsWith(slotId + ':')) killSession(key);
+    if (
+      key.startsWith(slotId + ':') &&
+      (ownerRunId === undefined || sessions.get(key)?.ownerRunId === ownerRunId)
+    )
+      killSession(key);
   }
 }
 

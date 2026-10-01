@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { claudeHookObservability } from './claude-observability.js';
+import {
+  buildClaudeSessionDiscoveryCommand,
+  claudeHookObservability,
+} from './claude-observability.js';
 import { makeVars } from './test-fixtures.js';
 
 test('exact resume arguments reject prompt spoofing and session forks without an open transcript', async (t) => {
@@ -42,4 +45,24 @@ test('exact resume arguments reject prompt spoofing and session forks without an
       await exited;
     }
   }
+});
+
+test('session discovery honors custom configuration, canonical roots and mtime order', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'claude-discovery_'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const repo = path.join(directory, 'repo_with_underscore');
+  const config = path.join(directory, 'configuration');
+  const projects = path.join(config, 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'));
+  await mkdir(projects, { recursive: true });
+  const paths = ['older', 'newer'].map((name) => path.join(projects, name + '.jsonl'));
+  for (const file of paths) await writeFile(file, '{}\n');
+  await utimes(paths[0], 1000, 1000);
+  await utimes(paths[1], 2000, 2000);
+  const actual = JSON.parse(
+    execFileSync('bash', ['-c', buildClaudeSessionDiscoveryCommand(repo, directory)], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: config },
+    }),
+  );
+  assert.deepEqual(actual, [await realpath(paths[1]), await realpath(paths[0])]);
 });

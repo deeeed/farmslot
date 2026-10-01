@@ -11,6 +11,17 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['provider-preexisting', /Idempotent boot must not claim the preexisting unleased server/],
+  ['cancel-failure', /early-cancel must settle to held/],
+  ['cancel-ancillary', /cancel-ancillary must settle to held/],
+  ['completion-failure', /complete-ancillary must settle to held/],
+  ['failure-notification', /notify must settle to held/],
+  ['provider-birth', /A stale sidecar must grant no provider ownership/],
+  ['provider-group', /Provider shutdown must verify recorded kernel identity/],
+  ['cleanup-gone', /an empty owned slot can be released/],
+  ['cleanup-handoff', /Handoff cleanup remains deferred/],
+  ['cleanup-pane', /Unverified live panes remain protected/],
+  ['owned-provider', /Owned server must record its kernel identity/],
   ['provider-expiry', /Already warm provider cleanup is deferred/],
   ['provider-claims', /Deferred exclusive claim remains held/],
   ['provider-cleanup', /Shared providers stop once in dependency order/],
@@ -43,7 +54,24 @@ async function lane() {
       ...(name === 'adapters' ? [] : [name]),
     ];
     if (name === 'attestation') args.push('--legacy');
-    if (name.startsWith('provider-')) args.push('--providers-only');
+    const guardsOnly = [
+      'cancel-failure',
+      'cancel-ancillary',
+      'completion-failure',
+      'failure-notification',
+      'provider-birth',
+      'provider-group',
+      'provider-preexisting',
+    ].includes(name);
+    if (
+      name.startsWith('provider-') ||
+      name === 'owned-provider' ||
+      name.startsWith('cleanup-') ||
+      ['cancel-failure', 'cancel-ancillary', 'completion-failure', 'failure-notification'].includes(
+        name,
+      )
+    )
+      args.push(guardsOnly ? '--guards-only' : '--providers-only');
     let log;
     try {
       await execute(process.execPath, args, {

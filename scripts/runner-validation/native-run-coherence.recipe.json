@@ -17,13 +17,20 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --legacy",
         "timeout_ms": 360000,
         "intent": "Reload a fixture host from a legacy journal, prove ordinary recovery refuses unknown descendants, then explicitly attest stop and resume the exact conversation.",
-        "next": "adapters"
+        "next": "real-adoption"
       },
       "adapters": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/recipe-adapter-coherence.mjs",
         "timeout_ms": 240000,
         "intent": "Execute canonical and legacy custom-adapter references through the CLI and inspect the selected variant's side effect.",
+        "next": "cleanup-guards"
+      },
+      "cleanup-guards": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --guards-only",
+        "timeout_ms": 240000,
+        "intent": "Prove historical and unsupported-pane preservation, foreign handoff protection, failure settlement despite notification errors, and boot/cleanup process identity boundaries through gateway RPCs.",
         "next": "controls"
       },
       "controls": {
@@ -33,7 +40,17 @@
         "intent": "Disable each repaired path only in a disposable child and require both a mutation receipt and failure of the intended claim.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "real-adoption": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --real-adoption",
+        "timeout_ms": 360000,
+        "intent": "Use a fresh, read-only installed runner in a disposable profile; assert its native resume hook and saved conversation, adopt through the gateway, then complete and preserve the operator session.",
+        "next": "adapters"
+      }
     }
   }
 }

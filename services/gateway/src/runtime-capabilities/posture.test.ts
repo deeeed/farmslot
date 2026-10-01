@@ -208,8 +208,8 @@ async function harness(t: TestContext, options: HarnessOptions) {
       : {}),
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
-    stopWarmProviders: async (slotId, capabilityIds) => {
-      const swept = await registry.stopWarmProviders(slotId, capabilityIds);
+    stopWarmProviders: async (slotId, capabilityIds, ownerRunId) => {
+      const swept = await registry.stopWarmProviders(slotId, capabilityIds, ownerRunId);
       return options.warmSweepResult ?? swept;
     },
     releaseRunTerminal: async (slotId, ownerRunId, familyId) =>
@@ -2493,4 +2493,35 @@ test('host pressure on a claim this run already holds is a wait, not a lost rese
   const completed = await prepareRunPostureForValidation('run-a', requirements, reconciler);
   assert.equal(completed.ok, true);
   assert.equal((await registry.status({ slotId: SLOT })).leases[0]?.state, 'acquired');
+});
+
+test('owner-only terminal cleanup preserves a live family sibling', async (t) => {
+  const { registry, reconciler, runs, actions } = await harness(t, {
+    capabilities: [entry('app', { sharePolicy: 'shared' })],
+  });
+  runs.set('run-b', makeRun({ id: 'run-b' }));
+  for (const ownerRunId of ['run-a', 'run-b']) {
+    assert.equal(
+      (
+        await registry.acquire({
+          slotId: SLOT,
+          capabilityId: 'app',
+          ownerRunId,
+          ownerFamilyId: 'fam-a',
+          proofRequirement: { capabilityId: 'app', reason: 'shared provider proof', mode: 'state' },
+        })
+      ).ok,
+      true,
+    );
+  }
+  actions.length = 0;
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal', ownerOnly: true });
+  assert.equal(result.ok, true);
+  assert.ok(!actions.includes('app.release'));
+  assert.equal(
+    (await registry.status({ slotId: SLOT })).leases.find((lease) => lease.owner.runId === 'run-b')
+      ?.state,
+    'acquired',
+  );
+  assert.equal(runs.get('run-a')?.familyId, 'fam-a');
 });

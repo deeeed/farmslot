@@ -18,7 +18,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  if(m.method==='turn/start') send({id:m.id,result:{turn:{id:'accepted-but-not-started'}}});
 });`;
 
-test('manager owns exact sessions and gates new input until the accepted turn runs', async () => {
+test('manager owns exact sessions and queues new input until the accepted turn runs', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'native-manager-test-'));
   const oldPath = process.env.PATH;
   const executable = join(cwd, 'codex');
@@ -43,7 +43,10 @@ test('manager owns exact sessions and gates new input until the accepted turn ru
     assert.equal(manager.read('owner', session.id).session.state, 'waiting');
     await manager.send('owner', session.id, 'first', 'hello');
     await assert.rejects(manager.send('owner', session.id, 'first', 'different'), /different text/);
-    await assert.rejects(manager.send('owner', session.id, 'second', 'next'), /not idle/);
+    const queued = await manager.send('owner', session.id, 'second', 'next');
+    assert.equal(queued.queued, true);
+    assert.equal(queued.submitted, false);
+    assert.equal(queued.accepted, false);
     await assert.rejects(
       manager.respond('owner', session.id, 'foreign', { decision: 'approve' }),
       /stale/,
@@ -51,7 +54,15 @@ test('manager owns exact sessions and gates new input until the accepted turn ru
     const closing = manager.close('owner', session.id);
     assert.equal(manager.read('owner', session.id).session.state, 'closing');
     await closing;
-    await assert.rejects(manager.send('owner', session.id, 'closed', 'next'), /not idle/);
+    const cancelled = manager
+      .read('owner', session.id)
+      .commands.find((command) => command.commandId === 'second');
+    assert.equal(cancelled?.queued, false);
+    assert.equal(cancelled?.outcome, 'interrupted');
+    await assert.rejects(
+      manager.send('owner', session.id, 'closed', 'next'),
+      /cannot accept input/,
+    );
     const resumed = await manager.create('owner', {
       runner: 'codex',
       cwd,
@@ -90,16 +101,26 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const manager = new NativeSessionManager(join(cwd, 'state'));
   const creating = manager.create('owner', { runner: 'codex', cwd });
   const cancelled = assert.rejects(creating, /Native runner closed/);
+  const terminateFixture = async () => {
+    if (!existsSync(pidFile)) return;
+    try {
+      process.kill(Number(await readFile(pidFile, 'utf8')), 'SIGTERM');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  };
   t.after(async () => {
     try {
       await writeFile(release, 'ready');
-      await cancelled;
-      for (const session of manager.list('owner')) await manager.close('owner', session.id);
-      // Clean the fixture even if a regression released its owner too early.
       try {
-        process.kill(Number(await readFile(pidFile, 'utf8')), 'SIGTERM');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        await cancelled;
+      } finally {
+        try {
+          for (const session of manager.list('owner')) await manager.close('owner', session.id);
+        } finally {
+          // Cleanup also runs when a startup assertion failed.
+          await terminateFixture();
+        }
       }
     } finally {
       if (oldPath === undefined) delete process.env.PATH;
@@ -107,7 +128,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await rm(cwd, { recursive: true, force: true });
     }
   });
-  for (let attempt = 0; !existsSync(pidFile) && attempt < 200; attempt++)
+  for (let attempt = 0; !existsSync(pidFile) && attempt < 1500; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 10));
   assert(existsSync(pidFile), 'Fixture must enter native initialization before close');
   const reserved = manager.list('owner')[0];

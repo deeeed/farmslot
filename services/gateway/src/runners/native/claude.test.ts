@@ -119,6 +119,9 @@ test('Claude records confirmed cleanup when resume initialization is rejected', 
   assert.deepEqual(closures[0]?.data, {
     processStopped: true,
     error: 'Claude closed before initialization',
+    exitCode: null,
+    signal: 'SIGTERM',
+    stderrTail: [],
   });
   const retried = await startSession(t, options, () => {});
   assert.equal(retried.nativeSessionId, options.resumeSessionId);

@@ -53,8 +53,8 @@ const reconciler = new RunResourcePostureReconciler({
     }),
   releaseForPosture: (slotId, dispositions) =>
     getRuntimeCapabilityRegistry().releaseForPosture(slotId, dispositions),
-  stopWarmProviders: (slotId, capabilityIds) =>
-    getRuntimeCapabilityRegistry().stopWarmProviders(slotId, capabilityIds),
+  stopWarmProviders: (slotId, capabilityIds, ownerRunId) =>
+    getRuntimeCapabilityRegistry().stopWarmProviders(slotId, capabilityIds, ownerRunId),
   releaseRunTerminal: (slotId, ownerRunId, familyId) =>
     getRuntimeCapabilityRegistry().releaseRunTerminal(slotId, ownerRunId, familyId),
   machineForSlot: async (slotId) => {

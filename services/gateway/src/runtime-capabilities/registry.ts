@@ -97,6 +97,16 @@ export interface RuntimeCapabilityClaimGrant {
 export interface RuntimeCapabilityRegistryOptions {
   store: RuntimeCapabilityStore;
   catalogForSlot: (slotId: string) => Promise<RuntimeCapabilityCatalogContext>;
+  captureProviderProcesses?: (
+    slotId: string,
+    entry: RuntimeCapabilityCatalogEntry,
+    ownerRunId: string,
+  ) => Promise<RuntimeCapabilityLease['providerProcesses']>;
+  checkProviderCleanup?: (
+    slotId: string,
+    entry: RuntimeCapabilityCatalogEntry,
+    processes: RuntimeCapabilityLease['providerProcesses'],
+  ) => Promise<string | null>;
   runAction: (
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
@@ -603,6 +613,26 @@ export class RuntimeCapabilityRegistry {
     }
   }
 
+  private async releaseProvider(
+    lease: RuntimeCapabilityLease,
+    entry: RuntimeCapabilityCatalogEntry,
+  ): Promise<RuntimeCapabilityActionResult> {
+    try {
+      const blocker = await this.options.checkProviderCleanup?.(
+        lease.slotId,
+        entry,
+        lease.providerProcesses,
+      );
+      if (blocker) return { ok: false, detail: blocker };
+      return this.runAction(lease.slotId, entry.actions.release, lease.parameters, entry);
+    } catch (error) {
+      return {
+        ok: false,
+        detail: `Provider cleanup ownership check failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   async list(slotId: string): Promise<RuntimeCapabilityListResult> {
     await this.initialize();
     const catalog = await this.options.catalogForSlot(slotId);
@@ -685,6 +715,12 @@ export class RuntimeCapabilityRegistry {
       ...(pressure ? { pressure: structuredClone(pressure) } : {}),
       ...(catalog.posture ? { posture: structuredClone(catalog.posture) } : {}),
     };
+  }
+
+  /** Lifecycle ownership inspection needs a snapshot after in-flight provider starts settle. */
+  async settledStatus(slotId: string): Promise<RuntimeCapabilityStatusResult> {
+    await this.mutationTail;
+    return this.status({ slotId });
   }
 
   async acquire(params: RuntimeCapabilityAcquireParams): Promise<RuntimeCapabilityAcquireResult> {
@@ -1042,9 +1078,7 @@ export class RuntimeCapabilityRegistry {
             candidate.capabilityId === sameOwner.capabilityId &&
             holdsProvider(candidate),
         );
-        const cleanup = otherHolders
-          ? { ok: true }
-          : await this.runAction(params.slotId, entry.actions.release, sameOwner.parameters, entry);
+        const cleanup = otherHolders ? { ok: true } : await this.releaseProvider(sameOwner, entry);
         sameOwner.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           sameOwner.state = 'error';
@@ -1408,12 +1442,7 @@ export class RuntimeCapabilityRegistry {
             },
           };
         }
-        const cleanup = await this.runAction(
-          params.slotId,
-          (staleEntry ?? entry).actions.release,
-          warmLease.parameters,
-          staleEntry ?? entry,
-        );
+        const cleanup = await this.releaseProvider(warmLease, staleEntry ?? entry);
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
           warmLease.state = 'error';
@@ -1516,6 +1545,14 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
+    lease.providerProcesses = shouldRunAcquire
+      ? await this.options.captureProviderProcesses?.(params.slotId, entry, params.ownerRunId)
+      : structuredClone(
+          warmProviderHealthy
+            ? warmLease?.providerProcesses
+            : active.find((candidate) => candidate.id !== lease.id && holdsProvider(candidate))
+                ?.providerProcesses,
+        );
     const health = await this.runAction(params.slotId, entry.actions.health, parameters, entry);
     if (!health.ok) {
       lease.updatedAt = this.timestamp();
@@ -2291,9 +2328,7 @@ export class RuntimeCapabilityRegistry {
       await this.persist(snapshot);
 
       const cleanup =
-        otherHolders || providerless
-          ? { ok: true }
-          : await this.runAction(lease.slotId, entry.actions.release, lease.parameters, entry);
+        otherHolders || providerless ? { ok: true } : await this.releaseProvider(lease, entry);
       lease.updatedAt = this.timestamp();
       if (!cleanup.ok) {
         lease.state = 'error';
@@ -2709,12 +2744,7 @@ export class RuntimeCapabilityRegistry {
           releaseActionRan = true;
           // The provider is going away, so any earlier warm deadline is void.
           lease.keepWarmUntil = undefined;
-          actionResult = await this.runAction(
-            slotId,
-            entry.actions.release,
-            lease.parameters,
-            entry,
-          );
+          actionResult = await this.releaseProvider(lease, entry);
         }
         if (!actionResult.ok) {
           lease.state = 'error';
@@ -2782,11 +2812,16 @@ export class RuntimeCapabilityRegistry {
    * deadline. A `terminal` posture must bypass keep-warm (ADR-054), and by then
    * the lease is already released, so the normal release path cannot see it.
    */
-  async stopWarmProviders(slotId: string, capabilityIds?: string[]): Promise<WarmSweepSummary> {
+  async stopWarmProviders(
+    slotId: string,
+    capabilityIds?: string[],
+    ownerRunId?: string,
+  ): Promise<WarmSweepSummary> {
     const wanted = capabilityIds ? new Set(capabilityIds) : null;
     return this.sweepWarmProviders(
       (lease) =>
         lease.slotId === slotId &&
+        (ownerRunId === undefined || lease.owner.runId === ownerRunId) &&
         (lease.keepWarmUntil !== undefined || lease.providerCleanupDeferred !== undefined) &&
         (!wanted || wanted.has(lease.capabilityId)),
     );
@@ -2908,12 +2943,7 @@ export class RuntimeCapabilityRegistry {
           );
           continue;
         }
-        const cleanup = await this.runAction(
-          node.slotId,
-          entry.actions.release,
-          node.parameters,
-          entry,
-        );
+        const cleanup = await this.releaseProvider(node, entry);
         if (!cleanup.ok) {
           fail(cleanup.detail ?? 'expired keep-warm cleanup failed', 'cleanup-failed');
           continue;
@@ -3136,9 +3166,7 @@ export class RuntimeCapabilityRegistry {
               (candidate) => candidate.id !== lease.id,
             );
             const cleanup =
-              otherHolders.length === 0
-                ? await this.runAction(slotId, entry.actions.release, lease.parameters, entry)
-                : { ok: true };
+              otherHolders.length === 0 ? await this.releaseProvider(lease, entry) : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
             if (cleanup.ok) {
@@ -3184,9 +3212,7 @@ export class RuntimeCapabilityRegistry {
             // A sibling that is NOT fenced still owns the running provider, so
             // stopping it here would tear it out from under a live run.
             const stopped = liveHolders.length === 0;
-            const cleanup = stopped
-              ? await this.runAction(slotId, entry.actions.release, lease.parameters, entry)
-              : { ok: true };
+            const cleanup = stopped ? await this.releaseProvider(lease, entry) : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
             // The detail states what actually happened to the PROVIDER, which
@@ -3257,12 +3283,7 @@ export class RuntimeCapabilityRegistry {
             });
             continue;
           }
-          const cleanup = await this.runAction(
-            slotId,
-            entry.actions.release,
-            lease.parameters,
-            entry,
-          );
+          const cleanup = await this.releaseProvider(lease, entry);
           lease.updatedAt = this.timestamp();
           lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: health.detail };
           if (cleanup.ok) {

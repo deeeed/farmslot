@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -36,6 +36,7 @@ import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandb
 import {
   alive,
   durableWrite,
+  matchesProcess,
   privateDirectory,
   processGroupAlive,
   processIdentityAlive,
@@ -165,6 +166,7 @@ interface StoredCommand extends NativeCommandReceipt {
 }
 interface JournalEntry {
   processes?: ProcessIdentity[];
+  processesAdded?: ProcessIdentity[];
   info?: NativeSessionInfo;
   context?: Record<string, string>;
   commands?: StoredCommand[];
@@ -198,7 +200,7 @@ export class NativeSessionManager {
       info?: string;
       context?: string;
       pending?: string;
-      processes?: string;
+      processes?: ProcessIdentity[];
       commands: Map<string, string>;
     }
   >();
@@ -222,9 +224,18 @@ export class NativeSessionManager {
       const workerHistory = new NativeWorkerHistory();
       for (const entry of entries) {
         workerHistory.observe(entry);
+        if (entry.info && info && entry.info.generation !== info.generation) processes = undefined;
         info = entry.info ?? info;
         context = entry.context ?? context;
         processes = entry.processes ?? processes;
+        if (entry.processesAdded) {
+          const identities = new Map(
+            (processes ?? []).map((process) => [`${process.pid}:${process.identity}`, process]),
+          );
+          for (const process of entry.processesAdded)
+            identities.set(`${process.pid}:${process.identity}`, process);
+          processes = [...identities.values()];
+        }
         pending = entry.pending ?? pending;
         for (const command of entry.commands ?? []) commands.set(command.commandId, command);
         if (entry.event) events.push(entry.event);
@@ -245,7 +256,7 @@ export class NativeSessionManager {
       this.persisted.set(record, {
         info: JSON.stringify(info),
         context: JSON.stringify(context),
-        processes: JSON.stringify(processes),
+        processes,
         pending: JSON.stringify(pending),
         commands: new Map([...commands].map(([id, command]) => [id, JSON.stringify(command)])),
       });
@@ -269,12 +280,14 @@ export class NativeSessionManager {
     const info = JSON.stringify(record.info);
     const context = JSON.stringify(record.context);
     const pending = JSON.stringify([...record.pendingRequests.values()]);
-    const processes = JSON.stringify(record.processes);
+    const processes = record.processes;
     const commands = [...record.commands.values()].filter(
       (command) => previous.commands.get(command.commandId) !== JSON.stringify(command),
     );
     const entry: JournalEntry = {
-      ...(processes !== previous.processes ? { processes: record.processes } : {}),
+      ...(processes !== previous.processes && processes
+        ? { processesAdded: processes.slice(previous.processes?.length ?? 0) }
+        : {}),
       ...(info !== previous.info ? { info: record.info } : {}),
       ...(context !== previous.context ? { context: record.context } : {}),
       ...(pending !== previous.pending ? { pending: [...record.pendingRequests.values()] } : {}),
@@ -287,7 +300,7 @@ export class NativeSessionManager {
       !entry.context &&
       !entry.pending &&
       !entry.commands &&
-      !entry.processes
+      !entry.processesAdded
     )
       return;
     const fd = openSync(join(this.root, `${record.info.id}.journal`), 'a', 0o600);
@@ -589,8 +602,19 @@ export class NativeSessionManager {
             this.persist(record);
           },
           onProcessSnapshot: (snapshot) => {
-            record.processes = snapshot;
-            this.persist(record);
+            const known = new Map(
+              (record.processes ?? []).map((process) => [
+                `${process.pid}:${process.identity}`,
+                process,
+              ]),
+            );
+            const count = known.size;
+            for (const process of snapshot)
+              known.set(`${process.pid}:${process.identity}`, process);
+            if (record.processes === undefined || known.size !== count) {
+              record.processes = [...known.values()];
+              this.persist(record);
+            }
           },
           executable: resolved.executable,
           env: nativeEnvironment(resolved.executable, {
@@ -695,6 +719,57 @@ export class NativeSessionManager {
       throw new Error('Native worker reservation was cancelled before launch');
   }
 
+  private recordedLeaderAlive(record: SessionRecord): boolean {
+    const pid = record.info.processPid;
+    if (!pid) return false;
+    const identity = record.processes?.find((process) => process.pid === pid)?.identity;
+    if (identity) return processIdentityAlive(pid, identity);
+    if (!record.info.processIdentity) return alive(pid);
+    try {
+      return matchesProcess(pid, record.info.processIdentity);
+    } catch (error) {
+      const probe = error as { status?: number; code?: string };
+      // Presence with unreadable identity blocks cleanup without breaking reads.
+      if (probe.status === 1 || probe.code === 'EPERM' || probe.code === 'EACCES') return true;
+      throw error;
+    }
+  }
+
+  private recordedGroupAlive(record: SessionRecord): boolean {
+    const pid = record.info.processPid;
+    if (!pid || !processGroupAlive(pid)) return false;
+    // Positive attribution to another native generation distinguishes a reused
+    // numeric group. Unknown groups still block; neither case receives a signal.
+    for (const candidate of this.sessions.values()) {
+      if (
+        candidate === record ||
+        candidate.info.generation === record.info.generation ||
+        candidate.info.processPid !== pid ||
+        candidate.info.processStopped ||
+        !candidate.info.processIdentity
+      )
+        continue;
+      try {
+        if (!matchesProcess(pid, candidate.info.processIdentity)) continue;
+        const observedGroup: string = execFileSync('ps', ['-p', String(pid), '-o', 'pgid='], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 5000,
+        });
+        if (
+          Number(observedGroup.trim()) === pid &&
+          matchesProcess(pid, candidate.info.processIdentity)
+        )
+          return false;
+      } catch (error) {
+        const probe = error as { status?: number; code?: string };
+        if (probe.status === 1 || probe.code === 'EPERM' || probe.code === 'EACCES') continue;
+        throw error;
+      }
+    }
+    return true;
+  }
+
   /** Explicit operator attestation covers legacy journals without descendant evidence. */
   confirmWorkerStopped(
     owner: string,
@@ -711,8 +786,8 @@ export class NativeSessionManager {
       record.adapter ||
       record.startup ||
       !['closed', 'failed'].includes(record.info.state) ||
-      alive(pid) ||
-      processGroupAlive(pid)
+      this.recordedLeaderAlive(record) ||
+      this.recordedGroupAlive(record)
     )
       throw new Error('Stop confirmation requires an absent native process and process group');
     if (record.processes?.some((child) => processIdentityAlive(child.pid, child.identity)))
@@ -978,10 +1053,8 @@ export class NativeSessionManager {
       record.info.processStopped ||
       record.adapter ||
       record.startup ||
-      (record.processes?.find((item) => item.pid === pid)?.identity
-        ? processIdentityAlive(pid, record.processes.find((item) => item.pid === pid)!.identity)
-        : alive(pid)) ||
-      processGroupAlive(pid)
+      this.recordedLeaderAlive(record) ||
+      this.recordedGroupAlive(record)
     )
       return;
     const recorded = record.processes;
@@ -1236,17 +1309,20 @@ export class NativeSessionManager {
   }
   async close(owner: string, id: string): Promise<void> {
     const record = this.owned(owner, id);
-    for (const command of record.commands.values()) {
-      if (command.queued) {
-        command.queued = false;
-        command.state = 'failed';
-        command.outcome = 'interrupted';
+    const cancelQueued = () => {
+      for (const command of record.commands.values()) {
+        if (command.queued) {
+          command.queued = false;
+          command.state = 'failed';
+          command.outcome = 'interrupted';
+        }
       }
-    }
-    this.persist(record);
+      this.persist(record);
+    };
     if (record.info.state === 'closed' || record.info.state === 'failed') {
       if (record.info.processPid && !record.info.processStopped)
         throw new Error('Native process cleanup is unconfirmed; close outcome is unknown');
+      cancelQueued();
       return;
     }
     record.info.state = 'closing';
@@ -1258,12 +1334,18 @@ export class NativeSessionManager {
       } catch (error) {
         // Startup rejection is expected after cancellation only when the process
         // adapter has independently confirmed that its entire owned tree stopped.
-        if (record.info.processStopped && ['closed', 'failed'].includes(record.info.state)) return;
+        if (record.info.processStopped && ['closed', 'failed'].includes(record.info.state)) {
+          cancelQueued();
+          return;
+        }
         throw error;
       }
     }
     const adapter = record.adapter ?? (await record.startup);
     await adapter?.close();
+    if (record.info.processPid && !record.info.processStopped)
+      throw new Error('Native process cleanup is unconfirmed; close outcome is unknown');
+    cancelQueued();
     if (!['closed', 'failed'].includes(this.owned(owner, id).info.state))
       this.append(record, { type: 'session.closed' });
   }

@@ -549,6 +549,7 @@ export async function stopRunnerForPark(
       'stop budget exhausted before the graceful exit could be delivered',
     );
   }
+  await options.beforeExit?.();
   if (options.preservePane) {
     const preserved = await deps.exec(
       options.vars,

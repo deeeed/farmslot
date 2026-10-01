@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Recover blocked native workers through their pending handoff decision, adopt verified external recoveries, and preserve shared slot resources during run cleanup. Surface native crash diagnostics and initialize the runtime for pre-written tasks.
+- Recover blocked native workers through their pending handoff decision, adopt verified external recoveries, and preserve shared slot resources during run cleanup. Require verified process ownership before provider shutdown. Surface native crash diagnostics, discover saved sessions under configured and canonical roots, and initialize authored task runtimes.
 
 - Require absolute task paths for new runs and explain how to upgrade older clients. Upgrade the CLI on every node first, then the gateway. Existing stored runs with relative task paths remain readable.
 

@@ -153,6 +153,7 @@ async function collectRunFileOffsets({
   const paths = new Set<string>();
   collectWatchLogPaths(paths, graph.nodes);
   for (const recipe of recipes.values()) {
+    if (recipe.aliasFor) continue;
     collectWatchLogPaths(paths, extractWorkflowGraph(recipe.document).nodes);
   }
   for (const relativePath of paths) {
@@ -931,7 +932,7 @@ function rootRecipeRef(
   if (sourceRecipePath) {
     const resolvedPath = path.resolve(sourceRecipePath);
     const match = [...recipes.values()].find(
-      (recipe) => path.resolve(recipe.path) === resolvedPath,
+      (recipe) => !recipe.aliasFor && path.resolve(recipe.path) === resolvedPath,
     );
     if (match) return match.ref;
     return rootResolutionRef(digest);

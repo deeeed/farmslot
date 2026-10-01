@@ -208,6 +208,12 @@ async function fixture(
       typeof RuntimeCapabilityRegistry
     >[0]['assertTargetAvailable'];
     now?: () => Date;
+    captureProviderProcesses?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['captureProviderProcesses'];
+    checkProviderCleanup?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['checkProviderCleanup'];
   } = {},
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
@@ -224,6 +230,8 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
+    captureProviderProcesses: options.captureProviderProcesses,
+    checkProviderCleanup: options.checkProviderCleanup,
     catalogForSlot: async (slotId) => ({
       slotId,
       project: 'test-project',
@@ -3578,3 +3586,54 @@ test('unavailable warm provider rolls back newly acquired dependencies without r
   assert.equal(preserved?.state, 'released');
   assert.ok(preserved?.keepWarmUntil, 'Unavailable health must retain the existing warm deadline');
 });
+
+test('provider identities survive shared and warm lease reuse without a new census', async (t) => {
+  let captures = 0;
+  const frame = { pid: 12345, group: 12345, identity: 'fixture-start' };
+  const { registry } = await fixture(t, [{ ...entry('app', 'shared'), keepWarmMs: 60000 }], {
+    captureProviderProcesses: async () => {
+      captures++;
+      return [frame];
+    },
+  });
+  const first = await acquire(registry, 'app', 'first');
+  const second = await acquire(registry, 'app', 'second');
+  assert.equal(first.ok && second.ok, true);
+  if (!first.ok || !second.ok) throw new Error('Fixture acquire failed');
+  assert.deepEqual(second.lease.providerProcesses, [frame]);
+  for (const ownerRunId of ['first', 'second'])
+    await registry.release({ slotId: SLOT, ownerRunId });
+  const next = await acquire(registry, 'app', 'next');
+  assert.equal(next.ok, true);
+  if (next.ok) assert.deepEqual(next.lease.providerProcesses, [frame]);
+  assert.equal(captures, 1);
+});
+
+for (const warm of [false, true]) {
+  test(`provider ownership refusal preserves ${warm ? 'warm' : 'active'} processes before shutdown`, async (t) => {
+    const frame = { pid: 12345, group: 12345, identity: 'fixture-start' };
+    const actions: string[] = [];
+    const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+      captureProviderProcesses: async () => [frame],
+      checkProviderCleanup: async (_slotId, _entry, processes) => {
+        assert.deepEqual(processes, [frame]);
+        return 'Provider process ownership changed';
+      },
+      runAction: async (_slotId, action) => {
+        if (action.kind === 'slot-action') actions.push(action.actionId);
+        return { ok: true };
+      },
+    });
+    assert.equal((await acquire(registry, 'app', 'owner')).ok, true);
+    if (warm) await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: true });
+    actions.length = 0;
+    if (warm) {
+      const result = await registry.stopWarmProviders(SLOT, undefined, 'owner');
+      assert.equal(result.failures.length, 1);
+    } else {
+      const result = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
+      assert.equal(result.ok, false);
+    }
+    assert.ok(!actions.includes('app.release'));
+  });
+}

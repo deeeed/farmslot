@@ -33,6 +33,7 @@ export type SlotPhase =
   | 'review-gate' // busy: Blocked on human decision
   | 'ci-watch' // held: Monitoring CI status
   | 'pr-watch' // held: Waiting for PR events (merge, review)
+  | 'occupied' // held: Cleanup deferred around another workspace occupant
   | null; // ready/manual/disabled — no active phase
 export type PoolSlotMode = 'dispatch' | 'custom' | 'disabled';
 
@@ -86,6 +87,8 @@ export interface SlotStatus {
   missingFromPool?: boolean;
   lifecycle: SlotLifecycle;
   phase: SlotPhase;
+  /** Why completed ownership was released while the workspace remains occupied. */
+  heldReason?: string;
   warm: boolean;
   taskId: string | null;
   taskFile: string | null;

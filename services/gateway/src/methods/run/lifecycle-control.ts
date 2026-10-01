@@ -115,7 +115,7 @@ export interface RunForceCompleteTransitionDependencies {
   attachPrNumber(runId: string, prNumber: number): Promise<void>;
   publish(run: Run): Promise<Run>;
   /** Advisory teardown runs after the public wrapper releases lifecycle locks. */
-  releaseSlot(run: Run): Promise<{ released: boolean }>;
+  releaseSlot(run: Run): Promise<{ released: boolean; skipped?: string }>;
 }
 
 const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = {
@@ -292,10 +292,16 @@ async function collectForceCompleteSlotReleaseEffect(
 ): Promise<RunForceCompleteResult['effects']> {
   if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
   try {
-    const { released } = await deps.releaseSlot(run);
+    const { released, skipped } = await deps.releaseSlot(run);
     return released
       ? [{ name: 'slot-release', status: 'ok' }]
-      : [{ name: 'slot-release', status: 'skipped', detail: 'already released or not owned' }];
+      : [
+          {
+            name: 'slot-release',
+            status: 'skipped',
+            detail: skipped ?? 'already released or not owned',
+          },
+        ];
   } catch (err) {
     const detail = (err as Error).message;
     console.warn(`[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
@@ -323,7 +329,9 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
-export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boolean }> {
+export async function releaseCompletedRunSlot(
+  run: Run,
+): Promise<{ released: boolean; skipped?: string }> {
   if (run.reviewWorkspace) {
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
     await teardownReviewWorkspace(run.id);
@@ -344,22 +352,30 @@ export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boo
   }
   const {
     recordSlotTeardownBlocker,
+    fenceRunSlotCleanup,
+    RunOwnedResourceCleanupError,
     releaseRunOwnedCapabilities,
     releaseRunSlotOwnership,
+    settleFailedRunSlotCleanup,
     stopRunOwnedTmuxAndWatches,
   } = await import('../../run-lifecycle/slot-teardown.js');
-  const { readSlotRow } = await import('../../core/index.js');
-  const before = await readSlotRow(slotId);
-  await stopRunOwnedTmuxAndWatches(run);
-  const blocker = await recordSlotTeardownBlocker(run);
-  await releaseRunOwnedCapabilities(run, Boolean(blocker));
-  const { broadcastEvent } = await import('../../server.js');
-  const released = await releaseRunSlotOwnership(run, before, blocker);
-  if (released) {
+  const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+  let blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+  const fence = await fenceRunSlotCleanup(run, blocker);
+  try {
+    await releaseRunOwnedCapabilities(run, Boolean(blocker));
+    const { broadcastEvent } = await import('../../server.js');
+    const released = await releaseRunSlotOwnership(run, fence, blocker);
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    return { released, ...(blocker ? { skipped: `Workspace cleanup deferred: ${blocker}` } : {}) };
+  } catch (error) {
+    // A failed effect must not strand our releasing fence or publish readiness.
+    // Record a held outcome, then retain the original unexpected failure.
+    const reason = await settleFailedRunSlotCleanup(run, fence, error);
+    if (!(error instanceof RunOwnedResourceCleanupError)) throw error;
+    return { released: false, skipped: `Workspace cleanup deferred: ${reason}` };
   }
-  return { released };
 }
 
 export async function publishCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {

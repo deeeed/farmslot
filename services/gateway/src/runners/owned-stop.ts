@@ -1,17 +1,41 @@
 import type { Run } from '@farmslot/protocol';
 
-import { loadSlotVars, readSlotRow } from '../core/index.js';
+import { execOnSlot, loadSlotVars, readSlotRow } from '../core/index.js';
+import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { getRun } from '../runs/store.js';
 
 import { stopRunnerForPark } from './session-lifecycle.js';
+import { probeRunnerDescendantPid } from './session-process.js';
 
 /** Stop only the exact saved conversations this run owns, without removing sessions. */
-export async function stopRunOwnedTmuxWorkers(run: Run): Promise<void> {
+export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> {
   for (const context of run.agentContexts ?? []) {
     if (context.nativeSession || context.nativeSessionOwner || !context.target) continue;
     const slotId = context.slotId ?? run.slotId;
     const slot = slotId ? await readSlotRow(slotId) : null;
     if (slot && slot.current_run_id !== run.id) continue;
+    if (slot?.handoff_run_id && slot.handoff_run_id !== run.id)
+      return 'Another native handoff owns this slot reservation; worker cleanup deferred';
+    if (!slotId) return `Worker ${context.id} has no slot ownership evidence`;
+    const vars = await loadSlotVars(slotId);
+    if (!context.target.paneId)
+      return `Worker ${context.id} has no exact pane identity; cleanup deferred`;
+    const pane = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `display-message -p -t ${shellQuote(context.target.paneId)} -F '#{session_name}\t#{pane_id}\t#{pane_pid}'`,
+      ),
+      { cwd: '/' },
+    );
+    if (pane.exitCode === 1) continue; // A historical pane that no longer exists owns nothing live.
+    if (pane.exitCode !== 0) return `Worker ${context.id} pane inspection failed; cleanup deferred`;
+    const [session, paneId, panePid] = pane.stdout.trim().split('\t');
+    if (session !== context.target.session || paneId !== context.target.paneId)
+      return `Worker ${context.id} pane ownership changed; cleanup deferred`;
+    const live = await probeRunnerDescendantPid(vars, panePid, context.runner ?? undefined);
+    if (live.state === 'absent') continue;
+    if (live.state === 'unknown')
+      return `Worker ${context.id} liveness is unknown; cleanup deferred`;
     if (
       !slotId ||
       !context.target.paneId ||
@@ -19,11 +43,9 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<void> {
       !context.runnerSessionId ||
       !context.runnerSessionPath
     )
-      throw new Error(
-        `Worker ${context.id} cannot be stopped without its exact pane and saved conversation identity`,
-      );
+      return `Worker ${context.id} cannot be stopped without its exact saved conversation identity; cleanup deferred`;
     const result = await stopRunnerForPark({
-      vars: await loadSlotVars(slotId),
+      vars,
       preservePane: true,
       beforeExit: async () => {
         const currentSlot = await readSlotRow(slotId);
@@ -32,6 +54,7 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<void> {
         if (
           currentSlot?.current_run_id !== run.id ||
           currentSlot?.slot_epoch !== slot?.slot_epoch ||
+          (currentSlot?.handoff_run_id && currentSlot.handoff_run_id !== run.id) ||
           currentRun?.engineState?.generation !== run.engineState?.generation ||
           !current ||
           current.nativeSession ||
@@ -56,6 +79,7 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<void> {
         capturedAt: run.createdAt,
       },
     });
-    if (!result.ok) throw new Error(`Worker ${context.id} stop was not confirmed: ${result.error}`);
+    if (!result.ok) return `Worker ${context.id} stop was not confirmed: ${result.error}`;
   }
+  return null;
 }

@@ -42,20 +42,23 @@ export async function sessionPaneMoveIsSafe(
   return (await resolvePane(vars, recordedPane)) !== recordedPane;
 }
 
-export const claudeHookObservability: RunnerObservability = {
-  async listSessionFiles(vars) {
-    const result = await execOnSlot(
-      vars,
-      `python3 - <<'PY'
-import json, os
+export function buildClaudeSessionDiscoveryCommand(repo: string, homeRoot?: string): string {
+  return `python3 - <<'PY'
+import json, os, re
 from pathlib import Path
-root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(Path.home() / '.claude'))
-repo = ${JSON.stringify(vars.remoteRepo)}
-directories = [root / 'projects' / name.replace('/', '-') for name in {repo, os.path.realpath(repo)}]
+home = Path(${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)})
+root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(home / '.claude'))
+repo = ${JSON.stringify(repo)}
+keys = {key for name in {repo, os.path.realpath(repo)} for key in {name.replace('/', '-'), re.sub(r'[^a-zA-Z0-9]', '-', name)}}
+directories = [root / 'projects' / key for key in keys]
 paths = {os.path.realpath(p) for directory in directories if directory.is_dir() for p in directory.glob('*.jsonl')}
 print(json.dumps(sorted(paths, key=lambda p: (os.path.getmtime(p), p), reverse=True)))
-PY`,
-    );
+PY`;
+}
+
+export const claudeHookObservability: RunnerObservability = {
+  async listSessionFiles(vars) {
+    const result = await execOnSlot(vars, buildClaudeSessionDiscoveryCommand(vars.remoteRepo));
     if (result.exitCode !== 0) throw new Error('Claude session discovery failed');
     return JSON.parse(result.stdout) as string[];
   },

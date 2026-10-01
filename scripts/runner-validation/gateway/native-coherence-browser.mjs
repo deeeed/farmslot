@@ -138,3 +138,21 @@ export async function proveSharedCleanup({ cdp, runId, outDir }) {
   cdp('screenshot', route, path.join(outDir, 'shared-slot-cleanup.png'));
   return { route, hint: text };
 }
+
+export async function proveHeldWorkspace({ cdp, slotId, outDir }) {
+  const route = `slot/${slotId}`;
+  cdp('goto', route);
+  const text = await waitFor(
+    () =>
+      cdp(
+        'eval',
+        route,
+        walk +
+          "return all.find(e=>e.matches('[data-testid=slot-held-reason]'))?.textContent.trim();",
+      ),
+    (value) => value?.includes('Workspace occupied'),
+    'visible held workspace reason',
+  );
+  cdp('screenshot', route, path.join(outDir, 'held-workspace.png'));
+  return { route, hint: text };
+}

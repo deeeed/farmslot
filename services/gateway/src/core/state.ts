@@ -250,7 +250,7 @@ type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review
  * refuses a slot carrying it. Centralized so the writers cannot drift.
  */
 export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
-type HeldPhase = 'ci-watch' | 'pr-watch';
+type HeldPhase = 'ci-watch' | 'pr-watch' | 'occupied';
 
 /**
  * When the releasing fence went up, as an ISO timestamp.
@@ -277,6 +277,8 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
   return {
     lifecycle: 'ready',
     phase: null,
+    held_reason: null,
+    cleanup_release_token: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,

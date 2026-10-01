@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   buildHandoffMetadata,
   ensureTaskRuntime,
+  type HandoffMetadata,
   portableProjectRepo,
 } from '@farmslot/agent-runtime';
 import {
@@ -25,13 +26,7 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   const project = await loadProjectVars(run.project);
   const slot = run.slotId ? await loadSlotVars(run.slotId) : undefined;
   const task = await readFile(run.taskFile, 'utf8');
-  let authored:
-    | {
-        domain?: string;
-        startedAt?: string;
-        task?: { ticket?: string; acceptanceCriteria?: string[] };
-      }
-    | undefined;
+  let authored: HandoffMetadata | undefined;
   try {
     authored = JSON.parse(
       await readFile(path.join(path.dirname(run.taskFile), 'inputs/handoff.json'), 'utf8'),
@@ -39,26 +34,41 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  const terminalContract = resolveWorkerTerminalContract(
-    readWorkerTerminalProjectConfig(project.projectJson as Record<string, unknown>),
-    run.flowType,
-    { mode: run.mode },
-  );
-  const handoff = buildHandoffMetadata({
-    attemptId: run.id,
-    surface: 'farmslot',
-    project: run.project,
-    flow: run.flowType,
-    domain: run.domain ?? authored?.domain,
-    repo: portableProjectRepo(project.projectJson as Record<string, unknown>),
-    title: run.ticketData?.title ?? run.ticketOrPr,
-    sourceKind: 'text',
-    acceptanceCriteria:
-      run.ticketData?.acceptanceCriteria ?? authored?.task?.acceptanceCriteria ?? [],
-    ticket: authored?.task?.ticket ?? run.ticketOrPr,
-    startedAt: authored?.startedAt,
-    terminalContract,
-  });
+  if (authored && (authored.project !== run.project || authored.flow !== run.flowType))
+    throw new Error('Existing task handoff belongs to a different project or flow');
+  let authoredContract: ReturnType<typeof resolveWorkerTerminalContract> | undefined;
+  try {
+    authoredContract = JSON.parse(
+      await readFile(
+        path.join(path.dirname(run.taskFile), 'inputs/worker-terminal-contract.json'),
+        'utf8',
+      ),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const terminalContract =
+    authoredContract ??
+    resolveWorkerTerminalContract(
+      readWorkerTerminalProjectConfig(project.projectJson as Record<string, unknown>),
+      run.flowType,
+      { mode: run.mode },
+    );
+  const handoff =
+    authored ??
+    buildHandoffMetadata({
+      attemptId: run.id,
+      surface: 'farmslot',
+      project: run.project,
+      flow: run.flowType,
+      domain: run.domain,
+      repo: portableProjectRepo(project.projectJson as Record<string, unknown>),
+      title: run.ticketData?.title ?? run.ticketOrPr,
+      sourceKind: 'text',
+      acceptanceCriteria: run.ticketData?.acceptanceCriteria ?? [],
+      ticket: run.ticketOrPr,
+      terminalContract,
+    });
   const lines = task.split('\n');
   const checklist = enumerateChecklistCheckboxes(task)
     .map((item) => lines[item.lineIndex])

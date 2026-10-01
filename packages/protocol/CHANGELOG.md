@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add optional native exit diagnostics, queued input receipts and recovery hints, plus an explicit external-worker adoption operation. Existing stored runs remain readable.
+- Add optional native exit diagnostics, queued input receipts, recovery hints and provider process identities, plus an explicit external-worker adoption operation. Existing stored runs remain readable.
 
 - Default Codex to GPT-6.1 Sol with reasoning levels through ultra while retaining GPT-6 Sol in model pickers. GPT-6.1 Sol cost remains unavailable until a verified rate is configured.
 
