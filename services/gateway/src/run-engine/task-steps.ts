@@ -434,6 +434,9 @@ export async function executeGradeStep(
       outputs.rationale = grade.rationale;
       outputs.llm = usage;
     } catch (err) {
+      // Difficulty grading is advisory; retain the chosen worker and ticket rather
+      // than fabricating a grade when the provider cannot complete the assessment.
+      outputs.gradingSkipped = (err as Error).message;
       console.warn(`[run-engine] grading failed (non-fatal): ${(err as Error).message}`);
     }
   }

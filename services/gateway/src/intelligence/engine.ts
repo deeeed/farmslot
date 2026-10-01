@@ -38,6 +38,8 @@ export interface GradeResult {
   usage: StepLLMUsage;
 }
 
+const GRADE_TIMEOUT_MS = 30_000;
+
 export async function gradeTicket(ticket: RunTicketData, project?: string): Promise<GradeResult> {
   const userPrompt = `Grade this bug:
 
@@ -51,12 +53,19 @@ ${ticket.stepsToReproduce.length > 0 ? `\nSteps to Reproduce:\n${ticket.stepsToR
   const systemPrompt = template ?? GRADE_SYSTEM_FALLBACK;
 
   const cfg = getLLMConfig();
-  const result: LLMCallResult = await callLLM({
-    systemPrompt,
-    userPrompt,
-    model: cfg.intelligenceModel,
-    provider: cfg.defaultProvider,
-  });
+  const controller = new AbortController();
+  const result: LLMCallResult = await withTimeout(
+    callLLM({
+      systemPrompt,
+      userPrompt,
+      model: cfg.intelligenceModel,
+      provider: cfg.defaultProvider,
+      signal: controller.signal,
+    }),
+    GRADE_TIMEOUT_MS,
+    'ticket grading',
+    () => controller.abort(),
+  );
 
   // Extract JSON from response (may have surrounding text)
   const jsonMatch = result.text.match(/\{[\s\S]*\}/);
