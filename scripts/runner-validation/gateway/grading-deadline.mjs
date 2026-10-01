@@ -213,7 +213,8 @@ process.stdout.write(JSON.stringify({ result: JSON.stringify({ summary: 'Correct
     JSON.stringify({ passed: true, runId, gradingSkipped: grade.outputs.gradingSkipped }),
   );
 } catch (error) {
-  console.error(readFileSync(path.join(temporaryRoot, 'gateway.log'), 'utf8').slice(-5000));
+  const logPath = path.join(temporaryRoot, 'gateway.log');
+  if (existsSync(logPath)) console.error(readFileSync(logPath, 'utf8').slice(-5000));
   throw error;
 } finally {
   if (gateway && gateway.exitCode === null) {
