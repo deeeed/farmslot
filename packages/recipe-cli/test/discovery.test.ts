@@ -9,6 +9,7 @@ import { loadRecipeLibraries } from '@farmslot/recipe-harness';
 
 import { runRecipeCli } from '../src/cli.js';
 import { buildDiscoveryIndex, findRecipe, shadowedRecipes } from '../src/discovery-index.js';
+import { assessRecipe } from '../src/index.js';
 import type {
   ActionsEnvelope,
   DescribeEnvelope,
@@ -804,4 +805,32 @@ test('all-platform search lists a shadowed id once when only a platform variant 
   };
   const { json } = await cli<SearchEnvelope>(['search', 'hello.greet'], env);
   assert.equal(json.results.filter((result) => result.id === 'hello.greet').length, 1);
+});
+
+test('hosts can assess a qualified alias by the document it resolves to', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-assess-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const high = path.join(root, 'high');
+  const low = path.join(root, 'low');
+  await writeJson(path.join(high, 'manifests', 'shared.action-manifest.json'), commandManifest());
+  await writeJson(
+    path.join(high, 'recipes', 'foo.recipe.json'),
+    recipe('Foo', { run: { action: 'command', cmd: 'true', next: 'done' } }),
+  );
+  await writeJson(path.join(low, 'recipe-library.json'), { platforms: ['web'] });
+  await writeJson(
+    path.join(low, 'recipes', 'web', 'foo.recipe.json'),
+    recipe('Low web foo', { bad: { action: 'low.bad', next: 'done' } }),
+  );
+  const index = await buildDiscoveryIndex({
+    env: { RECIPE_LIBRARY_PATH: `high=${high}:low=${low}` },
+    platform: 'web',
+  });
+  const alias = index.resolution.recipes.get('web.foo')!;
+  assert.equal(alias.aliasFor, 'foo');
+  assert.deepEqual(
+    assessRecipe(index, alias).map((problem) => problem.code),
+    ['recipe.action_not_declared_by_manifest'],
+  );
+  assert.deepEqual(assessRecipe(index, index.resolution.recipes.get('foo')!), []);
 });

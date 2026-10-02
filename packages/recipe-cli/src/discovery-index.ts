@@ -459,7 +459,7 @@ function validationProblems(
     .map((finding) => ({ code: finding.code, message: finding.message, path: finding.path }));
 }
 
-/** Readiness of any one recipe in this view, including a shadowed recipe selected by id. */
+/** Readiness of any one recipe in this view: a precedence winner, a qualified alias, or a shadowed recipe selected by id. */
 export function assessRecipe(
   index: RecipeDiscoveryIndex,
   recipe: ResolvedLibraryRecipe,

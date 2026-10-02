@@ -3,6 +3,7 @@ export { type DiscoveryCommandContext, registerDiscoveryCommands } from './comma
 export { explainRecipe, type RecipeComposition, recipeComposition } from './composition.js';
 export { DiscoveryError, type DiscoveryErrorCode } from './discovery-error.js';
 export {
+  assessRecipe,
   buildDiscoveryIndex,
   type DiscoveryOptions,
   findRecipe,
