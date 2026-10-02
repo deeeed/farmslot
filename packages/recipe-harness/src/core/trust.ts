@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
   digestRecipeDocument,
@@ -176,7 +178,12 @@ export function buildRecipeExecutionPlan({
     digestNodes.push({ plan: planNode, node: { recordVideo } });
   }
 
-  const executionContextDigest = digestValue({ projectRoot, artifactsDir, env, params });
+  const executionContextDigest = digestValue({
+    projectRoot,
+    artifactsDir,
+    env: planEnvironment(env),
+    params,
+  });
   const planBody = { schemaVersion: 1 as const, executionContextDigest, source, nodes };
   return {
     ...planBody,
@@ -360,6 +367,35 @@ function adapterSource(
     trust: 'unknown',
     name: action,
   };
+}
+
+/** Variables a package manager sets per invocation; they say nothing about what the run does. */
+const PACKAGE_MANAGER_ENV = /^(?:npm_|COREPACK_|BERRY_BIN_FOLDER$|INIT_CWD$|PROJECT_CWD$)/u;
+
+/**
+ * The environment an approval binds to. Package-manager variables are dropped, and so is the
+ * per-invocation shim folder Yarn puts first on PATH (BERRY_BIN_FOLDER), so `yarn <script>` and a
+ * direct invocation of the same run produce the same plan digest.
+ */
+export function planEnvironment(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string | undefined> {
+  const shims = env.BERRY_BIN_FOLDER;
+  return Object.fromEntries(
+    Object.entries(env)
+      .filter(([key]) => !PACKAGE_MANAGER_ENV.test(key))
+      .map(([key, value]) =>
+        key === 'PATH' && shims && value
+          ? [
+              key,
+              value
+                .split(path.delimiter)
+                .filter((entry) => entry !== shims)
+                .join(path.delimiter),
+            ]
+          : [key, value],
+      ),
+  );
 }
 
 function digestValue(value: unknown): string {

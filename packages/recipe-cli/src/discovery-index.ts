@@ -506,22 +506,27 @@ export function findRecipe(
 export async function shadowedRecipes(
   index: RecipeDiscoveryIndex,
 ): Promise<ResolvedLibraryRecipe[]> {
-  const shadowed = new Map<string, Set<string>>();
-  for (const recipe of index.recipes.values()) {
-    for (const library of recipe.shadows)
-      shadowed.set(library, (shadowed.get(library) ?? new Set()).add(recipe.ref));
-  }
-  const records: ResolvedLibraryRecipe[] = [];
-  for (const library of index.libraries) {
-    const refs = shadowed.get(library.info.name);
-    if (!refs) continue;
-    const own = await index.load([library.source], index.platform);
-    for (const ref of [...refs].sort()) {
-      const recipe = own.recipes.get(ref);
-      if (recipe && !recipe.aliasFor) records.push(recipe);
+  const sources = index.libraries.map((library) => library.source);
+  // The all-platform view must also scan each platform, or platform-only shadows are missed.
+  const views = index.platform ? [index.platform] : [null, ...index.platforms];
+  const records = new Map<string, ResolvedLibraryRecipe>();
+  for (const platform of views) {
+    const view = await index.load(sources, platform);
+    for (const winner of view.recipes.values()) {
+      if (winner.aliasFor) continue;
+      for (const shadow of winner.shadows) {
+        const id = `${shadow}.${winner.ref}`;
+        if (records.has(id)) continue;
+        const library = index.libraries.find((entry) => entry.info.name === shadow);
+        if (!library) continue;
+        const recipe = (await index.load([library.source], platform)).recipes.get(winner.ref);
+        if (recipe && !recipe.aliasFor) records.set(id, recipe);
+      }
     }
   }
-  return records;
+  return [...records.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, recipe]) => recipe);
 }
 
 /** Closest known names, for not-found guidance. */

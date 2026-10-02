@@ -768,3 +768,19 @@ test('a run selected by id logs and records the recipe it selected', async (t) =
     ['hello.greet', 'id', 'hello', 'recipes/greet.recipe.json'],
   );
 });
+
+test('all-platform search finds shadowed platform-only recipes by id', async (t) => {
+  const { root, env } = await shadowedHello(t);
+  // Both libraries ship the same web-only recipe, as an override copy of a team library would.
+  const wave = recipe('Wave', { wave: { action: 'hello.wave', name: 'Ada', next: 'done' } });
+  await writeJson(path.join(root, 'hello', 'recipes', 'web', 'wave.recipe.json'), wave);
+  await writeJson(path.join(root, 'a', 'recipes', 'web', 'wave.recipe.json'), {
+    ...wave,
+    title: 'A wave',
+  });
+  for (const extra of [[], ['--platform', 'web']]) {
+    const { json } = await cli<SearchEnvelope>(['search', 'hello.wave', ...extra], env);
+    const shadowed = json.results.find((result) => result.id === 'hello.wave');
+    assert.equal(shadowed?.source, 'hello', `search ${extra.join(' ')}`);
+  }
+});

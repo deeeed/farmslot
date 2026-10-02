@@ -83,6 +83,9 @@ farmslot-recipe run greet-twice guest=Ada \
   --action-manifest examples/recipe-library-hello/manifests/shared.action-manifest.json \
   --artifacts-dir /tmp/hello-run
 # review the plan, then rerun with --approve-plan <digest>
+# the digest is the same through `yarn <script>` and a direct call: package-manager
+# variables (npm_*, COREPACK_*, BERRY_BIN_FOLDER, INIT_CWD, PROJECT_CWD) and Yarn's
+# per-invocation PATH shim folder are not part of the approved environment
 ```
 
 ## Libraries and precedence
@@ -159,7 +162,7 @@ Every `--json` envelope has `schemaVersion: 1`, `command` and `status` (`ok` or 
 | `template`    | `kind`, `name`, `node`, `recipe`, `runCommand`                                                                                                                                               |
 | `libraries[]` | `rank`, `name`, `root`, `origin`, `overrides`, `digest`, `platforms`, `adapters`, `actionManifests`, `requires`                                                                              |
 
-Every failure prints `{ "status": "fail", "error": { "code", "message", "userAction" } }` under `--json`, and one `Error [code]` line otherwise. Exit code `2` means a usage or lookup problem: `DISCOVERY_USAGE` (including unknown options, missing arguments and a malformed `--library` value), `RECIPE_LIBRARY_PATH_INVALID` (a malformed `RECIPE_LIBRARY_PATH` entry), `DISCOVERY_NOT_FOUND`, `DISCOVERY_NAME_AMBIGUOUS`, `RECIPE_PLATFORM_REQUIRED` or `RECIPE_SHADOWED`. Exit code `1` means an invalid library or an unexpected failure: `RECIPE_LIBRARY_MANIFEST_INVALID`, `RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED`, `RECIPE_LIBRARY_RECIPE_INVALID`, `ACTION_MANIFEST_INVALID`, `RECIPE_SOURCE_INVALID`, other runner resolution errors, or `DISCOVERY_FAILED`.
+Every discovery failure prints `{ "status": "fail", "error": { "code", "message", "userAction" } }` under `--json`, and one `Error [code]` line otherwise. `run` and `validate` keep their own error JSON but use the same exit codes for library problems: `2` for a malformed `--library` or `RECIPE_LIBRARY_PATH` entry (and for unknown options or missing arguments), `1` for an invalid library. Exit code `2` means a usage or lookup problem: `DISCOVERY_USAGE` (including unknown options, missing arguments and a malformed `--library` value), `RECIPE_LIBRARY_PATH_INVALID` (a malformed `RECIPE_LIBRARY_PATH` entry), `DISCOVERY_NOT_FOUND`, `DISCOVERY_NAME_AMBIGUOUS`, `RECIPE_PLATFORM_REQUIRED` or `RECIPE_SHADOWED`. Exit code `1` means an invalid library or an unexpected failure: `RECIPE_LIBRARY_MANIFEST_INVALID`, `RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED`, `RECIPE_LIBRARY_RECIPE_INVALID`, `ACTION_MANIFEST_INVALID`, `RECIPE_SOURCE_INVALID`, other runner resolution errors, or `DISCOVERY_FAILED`.
 
 ## Limits
 

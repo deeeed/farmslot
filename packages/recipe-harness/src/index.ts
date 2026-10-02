@@ -53,6 +53,8 @@ export {
   listRecipeLibraryPlatforms,
   loadRecipeLibraries,
   logRecipeLibraryResolution,
+  logRecipeLibraryShadows,
+  logRecipeLibrarySources,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,

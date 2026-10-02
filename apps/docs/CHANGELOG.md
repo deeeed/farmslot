@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document stable plan digests under package managers and the shared `run`/`validate` exit codes for malformed library entries.
+
 - Add the Recipe discovery quickstart and reference (`farmslot-recipe actions/list/describe/explain`), and install `@farmslot/recipe-cli` wherever guides use the `farmslot-recipe` command.
 
 - Document native run recovery and external adoption, absolute task paths, and the required CLI-before-gateway upgrade order.

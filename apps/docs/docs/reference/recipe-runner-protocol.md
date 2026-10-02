@@ -34,7 +34,7 @@ List output stays compact and exact recipe detail expands only when requested. A
 
 ## Execution
 
-Before side effects, the runner validates the root, resolves the complete static call graph, applies and validates parameters, checks manifests and capabilities, and binds trust approval to the exact plan.
+Before side effects, the runner validates the root, resolves the complete static call graph, applies and validates parameters, checks manifests and capabilities, and binds trust approval to the exact plan. The plan covers the project root, artifact directory, parameters and run environment; package-manager variables (`npm_*`, `COREPACK_*`, `BERRY_BIN_FOLDER`, `INIT_CWD`, `PROJECT_CWD`) and Yarn's per-invocation PATH shim folder are excluded, so `yarn <script>` and a direct invocation approve the same digest.
 
 Adapters return `case`, `output`, `artifacts`, and `observations`. Recipes own routing and status. Declared teardown runs after main success or failure.
 
