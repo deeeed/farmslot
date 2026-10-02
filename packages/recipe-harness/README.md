@@ -61,6 +61,8 @@ Runner construction and preflight fail when a required action, adapter, precondi
 
 ## CLI
 
+The `farmslot-recipe` command ships in [`@farmslot/recipe-cli`](https://farmslot.io/docs/reference/recipe-discovery), which also adds library-wide discovery (`actions`, `list`, `describe`, `explain`, `search`, `template`). This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-harness/cli`.
+
 Discover first:
 
 ```bash

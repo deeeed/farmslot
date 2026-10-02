@@ -34,6 +34,7 @@ import { createRecipeInvocation } from './invocation.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   loadRecipeLibraries,
+  logRecipeLibraryResolution,
   type RecipeLibraryResolution,
   type ResolvedLibraryRecipe,
 } from './library.js';
@@ -237,7 +238,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       request.librarySources && request.librarySources.length > 0
         ? await loadRecipeLibraries(request.librarySources, {
             adapter: request.adapter,
-            logger: this.#logger,
+            ...(request.packageVersions ? { packageVersions: request.packageVersions } : {}),
           })
         : undefined;
     const recipes = libraryResolution?.recipes ?? new Map<string, ResolvedLibraryRecipe>();
@@ -266,6 +267,18 @@ class DefaultRecipeRunner implements RecipeRunner {
       rootSource: recipeSource,
       recipes,
     });
+    if (libraryResolution) {
+      // Warn only about shadowed refs this run executes, not every winner in the libraries.
+      logRecipeLibraryResolution(
+        this.#logger,
+        libraryResolution,
+        new Set([rootRef, ...dependencyResolution.recipes.keys()]),
+      );
+    }
+    if (request.selection) {
+      const { name, resolvedBy, source, file } = request.selection;
+      this.#logger.info(`Recipe ${name} selected by ${resolvedBy}: ${source} · ${file}`);
+    }
     for (const resolved of dependencyResolution.recipes.values()) {
       assertRecipeMatchesManifest(resolved.document, this.#actionManifest, {
         externalRecipeIds,
@@ -522,6 +535,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(libraryResolution
         ? { recipeLibraries: buildRecipeLibrarySummary(libraryResolution) }
         : {}),
+      ...(request.selection ? { recipeSelection: request.selection } : {}),
       ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
     };
     const summaryPath = await summaryWriter.write(summary);

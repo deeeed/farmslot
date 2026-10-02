@@ -1,0 +1,29 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "hello.wave": {
+      "description": "Wave at the visitor in the web app. A web platform adapter implements it.",
+      "execution_capabilities": ["app-mutation"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Who to wave at."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "result_cases": ["waved"],
+      "examples": [
+        {
+          "action": "hello.wave",
+          "intent": "Wave at Ada.",
+          "name": "Ada",
+          "next": "done"
+        }
+      ]
+    }
+  }
+}

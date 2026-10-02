@@ -32,6 +32,10 @@ export interface RecipeRunRequest {
   adapter?: string;
   /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: Readonly<Record<string, string>>;
+  /** How the caller chose a library recipe by name; recorded in the summary. */
+  selection?: RecipeSelection;
   /**
    * Partial execution: stop the root graph after this node succeeds, then run the recipe's
    * declared teardown. The node must be reachable from workflow.entry.
@@ -46,6 +50,24 @@ export interface RecipeLibrarySource {
   root: string;
   /** Trust comes from caller configuration, never from library contents. */
   provenance?: RecipeSourceProvenance;
+  /** Where the entry was configured: --library flag, RECIPE_LIBRARY_PATH, the personal default, or task-local. */
+  origin?: RecipeLibraryOrigin;
+  /** Root of the RECIPE_LIBRARY_PATH entry with the same name that a --library flag replaced. */
+  overrides?: string;
+}
+
+export type RecipeLibraryOrigin = 'flag' | 'env' | 'default' | 'task';
+
+/** A library recipe chosen by name: ref, qualified platform alias, or `<library>.<ref>` id. */
+export interface RecipeSelection {
+  /** The name as given. */
+  name: string;
+  resolvedBy: 'ref' | 'alias' | 'id';
+  /** Library that provided the recipe. */
+  source: string;
+  /** Recipe file relative to that library root. */
+  file: string;
+  path: string;
 }
 
 export interface LoadedRecipeLibrarySource {
@@ -326,6 +348,8 @@ export interface SummaryDocument {
   runner?: RecipeRunnerProvenance;
   /** Present when recipe library sources were configured for the run. */
   recipeLibraries?: RecipeLibrarySummary;
+  /** Present when the caller selected a library recipe by name. */
+  recipeSelection?: RecipeSelection;
   /** Present when the run was partial; the root graph stopped after this node. */
   stopAfterNode?: string;
 }

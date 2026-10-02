@@ -30,12 +30,27 @@ const packages = [
     name: '@farmslot/recipe-harness',
     dir: 'packages/recipe-harness',
     publicDoc: 'https://farmslot.io/docs/architecture/recipe-harness',
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/core/runner.ts'],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'dist/index.js',
+      'dist/index.d.ts',
+      'dist/cli/index.js',
+    ],
+    importCheck:
+      "const m = await import('./packages/recipe-harness/dist/cli/index.js'); if (typeof m.runRecipeHarnessCli !== 'function') throw new Error('missing runRecipeHarnessCli export');",
+  },
+  {
+    name: '@farmslot/recipe-cli',
+    dir: 'packages/recipe-cli',
+    publicDoc: 'https://farmslot.io/docs/reference/recipe-discovery',
     requiredFiles: [
       'README.md',
       'LICENSE',
       'bin/farmslot-recipe.mjs',
       'src/index.ts',
-      'src/core/runner.ts',
+      'src/cli.ts',
     ],
     packRequiredFiles: [
       'README.md',
@@ -43,10 +58,10 @@ const packages = [
       'bin/farmslot-recipe.mjs',
       'dist/index.js',
       'dist/index.d.ts',
-      'dist/cli/index.js',
+      'dist/cli.js',
     ],
     importCheck:
-      "const m = await import('./packages/recipe-harness/dist/cli/index.js'); if (typeof m.runRecipeHarnessCli !== 'function') throw new Error('missing runRecipeHarnessCli export');",
+      "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export');",
   },
   {
     name: '@farmslot/agent-runtime',

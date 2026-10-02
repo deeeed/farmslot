@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Add the Recipe discovery quickstart and reference (`farmslot-recipe actions/list/describe/explain`), and install `@farmslot/recipe-cli` wherever guides use the `farmslot-recipe` command.
+
 - Document native run recovery and external adoption, absolute task paths, and the required CLI-before-gateway upgrade order.
 
 - Document runner catalog and visible-model preference RPCs.

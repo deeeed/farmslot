@@ -3,14 +3,25 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
+import { validateRecipeCliInput } from '../src/cli/support.js';
 import { writeJsonFile } from '../src/core/json.js';
 import {
+  findLibraryRecipe,
+  listRecipeFiles,
+  listRecipeLibraryPlatforms,
   loadRecipeLibraries,
+  logRecipeLibraryResolution,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
+import {
+  digestRecipeLibrary,
+  listLibraryFiles,
+  readRecipeLibraryManifest,
+} from '../src/core/library-manifest.js';
 import { RecipeResolutionError } from '../src/core/resolution-error.js';
 
 const terminalRecipe = (title: string) => ({
@@ -99,10 +110,73 @@ test('parses ordered library sources and resolves the personal default', async (
       env: { RECIPE_LIBRARY_PATH: 'personal=/tmp/personal' },
     }),
     [
-      { name: 'team', root: '/tmp/team' },
-      { name: 'personal', root: '/tmp/personal' },
+      { name: 'team', root: '/tmp/team', origin: 'flag' },
+      { name: 'personal', root: '/tmp/personal', origin: 'env' },
     ],
   );
+});
+
+test('a --library entry replaces the RECIPE_LIBRARY_PATH entry with the same name', async () => {
+  assert.deepEqual(
+    await resolveRecipeLibrarySources({
+      cliEntries: ['team=/tmp/team-local'],
+      env: { RECIPE_LIBRARY_PATH: 'team=/tmp/team:other=/tmp/other' },
+    }),
+    [
+      { name: 'team', root: '/tmp/team-local', origin: 'flag', overrides: '/tmp/team' },
+      { name: 'other', root: '/tmp/other', origin: 'env' },
+    ],
+  );
+});
+
+test('recipe-library.json keys are optional and declared paths stay inside the library', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-manifest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('Generic') });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {});
+  assert.deepEqual(await readRecipeLibraryManifest(root), {});
+  assert.equal((await loadRecipeLibraries([{ root }])).recipes.has('smoke'), true);
+
+  await mkdir(path.join(root, 'plugins'), { recursive: true });
+  await writeFile(path.join(root, 'plugins', 'web.mjs'), 'export default {};\n');
+  await writeJsonFile(path.join(root, 'actions.json'), { actions: {} });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    platforms: ['web'],
+    adapters: { web: { module: './plugins/web.mjs', extends: 'browser' } },
+    actions: { shared: 'actions.json' },
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+    review: { ignored: true },
+  });
+  assert.deepEqual(await readRecipeLibraryManifest(root), {
+    platforms: ['web'],
+    adapters: { web: { module: './plugins/web.mjs', extends: 'browser' } },
+    actions: { shared: 'actions.json' },
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+  });
+  assert.deepEqual(await listRecipeLibraryPlatforms(root), ['core', 'extension', 'mobile', 'web']);
+
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    actions: { shared: '../outside.json' },
+  });
+  await writeJsonFile(path.join(path.dirname(root), 'outside.json'), {});
+  t.after(() => rm(path.join(path.dirname(root), 'outside.json'), { force: true }));
+  await assert.rejects(readRecipeLibraryManifest(root), /resolves outside its library root/u);
+
+  await writeJsonFile(path.join(root, 'recipe-library.json'), { requires: { x: 'not a range' } });
+  await assert.rejects(readRecipeLibraryManifest(root), /must be a semver range/u);
+});
+
+test('library digests cover recipes, manifests and actions only', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-digest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('One') });
+  const first = await digestRecipeLibrary(root);
+  assert.match(first, /^sha256:[a-f0-9]{64}$/u);
+  await mkdir(path.join(root, 'docs'), { recursive: true });
+  await writeFile(path.join(root, 'docs', 'notes.md'), 'not part of the digest\n');
+  assert.equal(await digestRecipeLibrary(root), first);
+  await writeJsonFile(path.join(root, 'recipes', 'smoke.recipe.json'), terminalRecipe('Two'));
+  assert.notEqual(await digestRecipeLibrary(root), first);
 });
 
 test('places an adjacent task recipe library before configured sources', async () => {
@@ -120,9 +194,10 @@ test('places an adjacent task recipe library before configured sources', async (
       {
         name: 'task-local',
         root: taskLibrary,
+        origin: 'task',
         provenance: { kind: 'task', trust: 'unknown', name: 'task-local' },
       },
-      { name: 'team', root: '/tmp/team' },
+      { name: 'team', root: '/tmp/team', origin: 'flag' },
     ]);
 
     const snapshotSources = await resolveRecipeLibrarySources({
@@ -364,4 +439,188 @@ test('rejects duplicate source names', async () => {
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+test('loading enforces requires and fails closed on packages the host cannot check', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-requires-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('Smoke') });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+  });
+  await assert.rejects(loadRecipeLibraries([{ name: 'lib', root }]), (error: unknown) => {
+    assert.ok(error instanceof RecipeResolutionError);
+    assert.equal(error.code, 'RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED');
+    assert.match(error.message, /cannot provide or check/u);
+    return true;
+  });
+  const loaded = await loadRecipeLibraries([{ name: 'lib', root }], {
+    packageVersions: { '@farmslot/recipe-cli': '0.1.0' },
+  });
+  assert.equal(loaded.recipes.has('smoke'), true);
+  await assert.rejects(
+    loadRecipeLibraries([{ name: 'lib', root }], {
+      packageVersions: { '@farmslot/recipe-cli': '0.0.9' },
+    }),
+    /requires @farmslot\/recipe-cli >=0\.1\.0; this host has 0\.0\.9/u,
+  );
+});
+
+test('invalid recipe-library.json fails with a typed error', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-invalid-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, {});
+  for (const content of [
+    'not json',
+    '[]',
+    '{"platforms":"web"}',
+    '{"actions":{"shared":"x.json"}}',
+  ]) {
+    await writeFile(path.join(root, 'recipe-library.json'), content);
+    await assert.rejects(readRecipeLibraryManifest(root), (error: unknown) => {
+      assert.ok(error instanceof RecipeResolutionError, content);
+      assert.equal(error.code, 'RECIPE_LIBRARY_MANIFEST_INVALID', content);
+      return true;
+    });
+  }
+  await mkdir(path.join(root, 'plugins'));
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    adapters: { web: { module: './plugins' } },
+  });
+  await assert.rejects(readRecipeLibraryManifest(root), /not a regular file/u);
+});
+
+test('one walker serves loading and digesting: skipped entries, symlinks and containment', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-walker-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-outside-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('Smoke') });
+  const digest = await digestRecipeLibrary(root);
+
+  await writeJsonFile(path.join(root, 'recipes', '.hidden.recipe.json'), terminalRecipe('Hidden'));
+  await writeJsonFile(
+    path.join(root, 'recipes', 'node_modules', 'nm.recipe.json'),
+    terminalRecipe('Module'),
+  );
+  await mkdir(path.join(root, 'manifests'));
+  await symlink('../manifests', path.join(root, 'recipes', 'linked'));
+  assert.deepEqual(await listRecipeFiles(root), ['smoke.recipe.json']);
+  assert.equal(await digestRecipeLibrary(root), digest);
+  assert.deepEqual([...(await loadRecipeLibraries([{ root }])).recipes.keys()], ['smoke']);
+
+  await writeJsonFile(path.join(outside, 'escape.json'), {});
+  await symlink(
+    path.join(outside, 'escape.json'),
+    path.join(root, 'manifests', 'x.action-manifest.json'),
+  );
+  await assert.rejects(digestRecipeLibrary(root), /resolves outside its library root/u);
+  assert.deepEqual(await listLibraryFiles(root, 'recipes'), ['recipes/smoke.recipe.json']);
+});
+
+test('library digests ignore CRLF versus LF line endings', async (t) => {
+  const lf = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-lf-'));
+  const crlf = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-crlf-'));
+  t.after(() => rm(lf, { recursive: true, force: true }));
+  t.after(() => rm(crlf, { recursive: true, force: true }));
+  const text = `${JSON.stringify(terminalRecipe('Same'), null, 2)}\n`;
+  for (const [root, content] of [
+    [lf, text],
+    [crlf, text.replaceAll('\n', '\r\n')],
+  ] as const) {
+    await mkdir(path.join(root, 'recipes'), { recursive: true });
+    await writeFile(path.join(root, 'recipes', 'same.recipe.json'), content);
+  }
+  assert.equal(await digestRecipeLibrary(crlf), await digestRecipeLibrary(lf));
+});
+
+test('findLibraryRecipe resolves refs, platform aliases and shadowed library ids', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-find-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const high = path.join(root, 'high');
+  const low = path.join(root, 'low');
+  await createLibrary(high, { 'perps/smoke.recipe.json': terminalRecipe('High') });
+  await createLibrary(low, {
+    'perps/smoke.recipe.json': terminalRecipe('Low'),
+    'terminal/perps/smoke.recipe.json': terminalRecipe('Low terminal'),
+  });
+  const sources = [
+    { name: 'high', root: high },
+    { name: 'low', root: low },
+  ];
+  const resolution = await loadRecipeLibraries(sources, { adapter: 'terminal' });
+  const byRef = await findLibraryRecipe('perps.smoke', sources, resolution, {
+    adapter: 'terminal',
+  });
+  assert.deepEqual([byRef?.resolvedBy, byRef?.recipe.document.title], ['ref', 'High']);
+  const alias = await findLibraryRecipe('terminal.perps.smoke', sources, resolution, {
+    adapter: 'terminal',
+  });
+  assert.deepEqual([alias?.resolvedBy, alias?.recipe.document.title], ['alias', 'Low terminal']);
+  const id = await findLibraryRecipe('low.perps.smoke', sources, resolution, {
+    adapter: 'terminal',
+  });
+  assert.deepEqual([id?.resolvedBy, id?.recipe.source], ['id', 'low']);
+  assert.equal(await findLibraryRecipe('nope.perps.smoke', sources, resolution), undefined);
+});
+
+test('the hello example loads in a host that provides only the harness', async () => {
+  const hello = fileURLToPath(new URL('../../../examples/recipe-library-hello', import.meta.url));
+  const result = await validateRecipeCliInput({
+    recipePath: path.join(hello, 'recipes', 'greet-twice.recipe.json'),
+    actionManifestPath: path.join(hello, 'manifests', 'shared.action-manifest.json'),
+    librarySources: [{ name: 'hello', root: hello }],
+    params: { guest: 'Ada' },
+  });
+  assert.equal(result.status, 'valid');
+  const loaded = await loadRecipeLibraries([{ name: 'hello', root: hello }]);
+  assert.equal(loaded.recipes.has('greet-twice'), true);
+});
+
+test('a malformed library path entry is a typed error', () => {
+  for (const value of ['team=', '=/tmp/team']) {
+    assert.throws(
+      () => parseRecipeLibraryPath(value),
+      (error: unknown) =>
+        error instanceof RecipeResolutionError && error.code === 'RECIPE_LIBRARY_PATH_INVALID',
+    );
+  }
+});
+
+test('digestRecipeLibrary rejects declared files outside the library on its own', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-digest-escape-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-digest-outside-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('Smoke') });
+  await writeJsonFile(path.join(outside, 'actions.json'), { actions: {} });
+  await symlink(path.join(outside, 'actions.json'), path.join(root, 'linked.json'));
+  // No reader validation first: the digest helper must refuse by itself.
+  await assert.rejects(
+    digestRecipeLibrary(root, { actions: { shared: 'linked.json' } }),
+    /resolves outside its library root/u,
+  );
+});
+
+test('run logging reports shadows only for the refs it uses', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-log-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const high = path.join(root, 'high');
+  const low = path.join(root, 'low');
+  await createLibrary(high, {
+    'used.recipe.json': terminalRecipe('H'),
+    'other.recipe.json': terminalRecipe('H'),
+  });
+  await createLibrary(low, {
+    'used.recipe.json': terminalRecipe('L'),
+    'other.recipe.json': terminalRecipe('L'),
+  });
+  const resolution = await loadRecipeLibraries([
+    { name: 'high', root: high },
+    { name: 'low', root: low },
+  ]);
+  const warnings: string[] = [];
+  const logger = { info() {}, warn: (line: string) => void warnings.push(line), error() {} };
+  logRecipeLibraryResolution(logger, resolution, new Set(['used']));
+  assert.deepEqual(warnings, ['Recipe used resolves from high and shadows low.']);
 });

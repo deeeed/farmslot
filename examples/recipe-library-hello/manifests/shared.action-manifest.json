@@ -1,0 +1,45 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "command": {
+      "description": "Run a shell command in the project root and record its exit code, stdout and stderr.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "cmd": { "type": "string", "description": "Shell command to run." },
+          "timeout_ms": { "type": "integer" },
+          "cwd": { "type": "string" },
+          "allow_failure": { "type": "boolean" }
+        },
+        "required": ["cmd"],
+        "additionalProperties": false
+      },
+      "examples": [
+        { "action": "command", "intent": "Print a greeting.", "cmd": "echo hello", "next": "done" }
+      ]
+    },
+    "assert_output": {
+      "description": "Assert that a previous node's output contains or matches text.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "description": "Node id whose output is checked." },
+          "stream": { "type": "string", "enum": ["stdout", "stderr"] },
+          "contains": { "type": "string" },
+          "match": { "type": "string" }
+        },
+        "required": ["source"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "assert_output",
+          "intent": "Confirm the greeting was printed.",
+          "source": "say",
+          "contains": "hello",
+          "next": "done"
+        }
+      ]
+    }
+  }
+}

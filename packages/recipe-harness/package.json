@@ -5,7 +5,6 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "farmslot-recipe": "./bin/farmslot-recipe.mjs",
     "farmslot-visual-review": "./bin/farmslot-visual-review.mjs"
   },
   "exports": {

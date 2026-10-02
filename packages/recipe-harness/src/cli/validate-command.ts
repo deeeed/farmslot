@@ -3,6 +3,7 @@ import { type Command } from 'commander';
 import { resolveRecipeLibrarySources } from '../core/library.js';
 
 import { isRecipeCliError, reportRecipeCliError } from './error-output.js';
+import type { RecipeCliCommandContext } from './run-command.js';
 import { validateRecipeCliInput } from './support.js';
 
 interface ValidateCommandOptions {
@@ -14,7 +15,10 @@ interface ValidateCommandOptions {
   json?: boolean;
 }
 
-export function registerValidateCommand(program: Command): void {
+export function registerValidateCommand(
+  program: Command,
+  context: RecipeCliCommandContext = {},
+): void {
   program
     .command('validate')
     .description('Validate a recipe and optional v1 artifact package')
@@ -25,7 +29,7 @@ export function registerValidateCommand(program: Command): void {
     .option('--artifact-dir <dir>', 'Artifact package directory')
     .option(
       '--library <entry>',
-      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home — same resolution as run.',
+      'Recipe library source as name=path or path (repeatable; earlier wins). Same resolution as run.',
       collectRepeatable,
       [] as string[],
     )
@@ -43,6 +47,7 @@ export function registerValidateCommand(program: Command): void {
           artifactManifestPath: options.artifactManifest,
           artifactDir: options.artifactDir,
           ...(librarySources.length > 0 ? { librarySources } : {}),
+          ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
         });
         if (options.json) {
           console.log(JSON.stringify(result, null, 2));

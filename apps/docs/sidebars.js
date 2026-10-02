@@ -87,6 +87,7 @@ const sidebars = {
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',
         'reference/recipe-runner-protocol',
+        'reference/recipe-discovery',
         'reference/recipe-composition-quality',
       ],
     },

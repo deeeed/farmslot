@@ -9,7 +9,7 @@ title: Expo / React Native project integration
 ## Install
 
 ```sh
-yarn add -D @farmslot/expo-recipe @farmslot/recipe-harness @farmslot/protocol
+yarn add -D @farmslot/expo-recipe @farmslot/recipe-harness @farmslot/recipe-cli @farmslot/protocol
 farmslot-expo-recipe init
 yarn recipe:doctor
 yarn recipe:validate

@@ -77,6 +77,15 @@ export const PATH_FILTERS = {
     'packages/protocol/**',
     'packages/recipe-harness/**',
   ],
+  recipe_cli: [
+    '.github/workflows/farmslot-quality.yml',
+    'package.json',
+    'yarn.lock',
+    'examples/recipe-library-hello/**',
+    'packages/protocol/**',
+    'packages/recipe-cli/**',
+    'packages/recipe-harness/**',
+  ],
   skills: [
     '.github/workflows/farmslot-quality.yml',
     'package.json',
@@ -147,6 +156,7 @@ export const TARGET_STEPS = {
   recipe_harness: [
     ['recipe-harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
   ],
+  recipe_cli: [['recipe-cli quality', ['yarn', 'workspace', '@farmslot/recipe-cli', 'quality']]],
   skills: [['skills quality', ['yarn', 'workspace', '@farmslot/skills', 'quality']]],
   theme: [['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']]],
   gateway: [['gateway quality', ['yarn', 'workspace', '@farmslot/gateway', 'quality']]],

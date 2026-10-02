@@ -9,10 +9,16 @@ import {
 import { createStandardCoreAdapters } from '../adapters/core.js';
 import {
   applyTaskLocalInvocationTrust,
+  findLibraryRecipe,
   loadRecipeLibraries,
   type ResolvedLibraryRecipe,
   resolveRecipeLibrarySources,
 } from '../core/library.js';
+import {
+  digestRecipeLibrary,
+  readRecipeLibraryManifest,
+  type RecipePackageVersions,
+} from '../core/library-manifest.js';
 import { createRecipeRunner } from '../core/runner.js';
 import { resolveRecipeTrustInput } from '../core/trust-input.js';
 import type { RecipeVideoRecordingOptions } from '../core/types.js';
@@ -50,18 +56,26 @@ interface RunCommandOptions {
   describe?: boolean;
 }
 
-export function registerRunCommand(program: Command): void {
+export interface RecipeCliCommandContext {
+  /** Package versions the host CLI provides for checking each library's `requires`. */
+  packageVersions?: RecipePackageVersions;
+}
+
+export function registerRunCommand(program: Command, context: RecipeCliCommandContext = {}): void {
   program
     .command('run')
     .description('Run a recipe and write a v1 artifact package')
-    .argument('[recipe]', 'Recipe id from the active libraries, or a recipe.json path')
+    .argument(
+      '[recipe]',
+      'Recipe ref, platform alias or <library>.<ref> id from the active libraries, or a recipe.json path',
+    )
     .argument('[params...]', 'Recipe parameters as key=value')
     .option('--artifacts-dir <dir>', 'Directory where artifacts are written')
     .option('--action-manifest <manifest>', 'Runner action manifest JSON')
     .option('--project-root <dir>', 'Project root used by command/artifact adapters')
     .option(
       '--library <entry>',
-      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home.',
+      'Recipe library source as name=path or path (repeatable; earlier wins). Entries go before RECIPE_LIBRARY_PATH and replace its entry with the same name; the personal library is used only when neither is set.',
       collectRepeatable,
       [] as string[],
     )
@@ -88,36 +102,48 @@ export function registerRunCommand(program: Command): void {
     .action(
       async (recipeInput: string | undefined, params: string[], options: RunCommandOptions) => {
         try {
+          const loadOptions = {
+            ...(options.adapter ? { adapter: options.adapter } : {}),
+            ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
+          };
           let librarySources = await resolveRecipeLibrarySources({
             cliEntries: options.library,
           });
-          let library = await loadRecipeLibraries(librarySources, {
-            adapter: options.adapter,
-          });
-          if (recipeInput && !library.recipes.has(recipeInput)) {
+          let library = await loadRecipeLibraries(librarySources, loadOptions);
+          let match = recipeInput
+            ? await findLibraryRecipe(recipeInput, librarySources, library, loadOptions)
+            : undefined;
+          if (recipeInput && !match) {
             librarySources = await resolveRecipeLibrarySources({
               cliEntries: options.library,
               recipePath: resolveRecipeCliPath(recipeInput),
             });
-            library = await loadRecipeLibraries(librarySources, {
-              adapter: options.adapter,
-            });
+            library = await loadRecipeLibraries(librarySources, loadOptions);
+            match = await findLibraryRecipe(recipeInput, librarySources, library, loadOptions);
           }
-          librarySources = librarySources.map((source) => ({
-            ...source,
-            provenance: source.provenance ?? {
-              kind: 'library' as const,
-              trust: 'unknown' as const,
-              name: source.name,
-              path: source.root,
-            },
-          }));
+          librarySources = await Promise.all(
+            librarySources.map(async (source) => ({
+              ...source,
+              provenance: {
+                ...(source.provenance ?? {
+                  kind: 'library' as const,
+                  trust: 'unknown' as const,
+                  name: source.name,
+                  path: source.root,
+                }),
+                digest: await digestRecipeLibrary(
+                  source.root,
+                  await readRecipeLibraryManifest(source.root),
+                ),
+              },
+            })),
+          );
           if (options.list) {
             printRecipeList(library.recipes, options.json === true);
             return;
           }
           if (!recipeInput) throw new Error('Missing recipe. Use --list to discover recipes.');
-          const selected = library.recipes.get(recipeInput);
+          const selected = match?.recipe;
           if (options.describe) {
             const document = selected
               ? selected.document
@@ -162,6 +188,18 @@ export function registerRunCommand(program: Command): void {
             params: parseRecipeParamAssignments(params),
             ...(options.adapter ? { adapter: options.adapter } : {}),
             ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
+            ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
+            ...(match
+              ? {
+                  selection: {
+                    name: recipeInput,
+                    resolvedBy: match.resolvedBy,
+                    source: match.recipe.source,
+                    file: match.recipe.file,
+                    path: match.recipe.path,
+                  },
+                }
+              : {}),
             ...trust,
             ...(!trust.source && selected ? { source: selected.provenance } : {}),
             ...(executionLibrarySources.length > 0

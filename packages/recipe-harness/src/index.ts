@@ -35,16 +35,42 @@ export {
   validateRecipeDependencyParams,
 } from './core/compose.js';
 export { RecipeExecutionError } from './core/failure.js';
+export { extractWorkflowGraph, type WorkflowGraph } from './core/graph.js';
 export { redactRecipeParams } from './core/invocation.js';
-export type { RecipeLibraryResolution, ResolvedLibraryRecipe } from './core/library.js';
+export type {
+  LibraryRecipeMatch,
+  RecipeLibraryEnv,
+  RecipeLibraryLoadOptions,
+  RecipeLibraryResolution,
+  ResolvedLibraryRecipe,
+} from './core/library.js';
 export {
   applyTaskLocalInvocationTrust,
+  BUILT_IN_RECIPE_PLATFORMS,
   defaultRecipeLibrarySources,
+  findLibraryRecipe,
+  listRecipeFiles,
+  listRecipeLibraryPlatforms,
   loadRecipeLibraries,
+  logRecipeLibraryResolution,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from './core/library.js';
+export {
+  checkRecipeLibraryRequirements,
+  digestRecipeLibrary,
+  listLibraryFiles,
+  readRecipeLibraryManifest,
+  RECIPE_LIBRARY_DIRECTORIES,
+  RECIPE_LIBRARY_MANIFEST_FILE,
+  type RecipeLibraryAdapterDeclaration,
+  type RecipeLibraryManifest,
+  type RecipeLibraryRequirement,
+  type RecipePackageVersions,
+  SHARED_RECIPE_SCOPE,
+} from './core/library-manifest.js';
+export { resolveRecipeParams, resolveRecipeValue } from './core/parameters.js';
 export { RecipeResolutionError } from './core/resolution-error.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export {
@@ -97,6 +123,7 @@ export {
   probeVideoTiming,
   writeRecordingTimeline,
 } from './recording/timeline.js';
+export { RECIPE_HARNESS_VERSION } from './version.js';
 export type {
   RecipeResolutionDependency,
   RecipeResolutionDocument,

@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -9,7 +9,14 @@ import {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { isRecord, readJsonFile } from './json.js';
+import { isRecord } from './json.js';
+import {
+  checkRecipeLibraryRequirements,
+  listLibraryFiles,
+  readRecipeLibraryManifest,
+  type RecipeLibraryManifest,
+  type RecipePackageVersions,
+} from './library-manifest.js';
 import { isPathWithin } from './path.js';
 import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource } from './trust-error.js';
@@ -17,43 +24,34 @@ import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } fro
 
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
-const LEGACY_RECIPE_ADAPTERS = new Set(['core', 'extension', 'mobile']);
 
-async function libraryAdapters(
-  root: string,
-  rootReal: string,
+/** Platforms whose variant folders every library recognizes without declaring them. */
+export const BUILT_IN_RECIPE_PLATFORMS: readonly string[] = ['core', 'extension', 'mobile'];
+
+/** Platform variant folders a library recognizes: the built-in set plus its declared platforms. */
+export async function listRecipeLibraryPlatforms(root: string): Promise<string[]> {
+  const manifest = await readRecipeLibraryManifest(root);
+  return [...new Set([...BUILT_IN_RECIPE_PLATFORMS, ...(manifest?.platforms ?? [])])].sort();
+}
+
+function libraryAdapters(
+  manifest: RecipeLibraryManifest | undefined,
   active?: string,
-): Promise<Set<string>> {
-  const adapters = new Set(LEGACY_RECIPE_ADAPTERS);
+): Set<string> {
+  const adapters = new Set([...BUILT_IN_RECIPE_PLATFORMS, ...(manifest?.platforms ?? [])]);
   if (active) adapters.add(active);
-  const file = path.join(root, 'recipe-library.json');
-  let manifestReal: string;
-  try {
-    manifestReal = await realpath(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return adapters;
-    throw error;
-  }
-  if (!isPathWithin(rootReal, manifestReal))
-    throw invalidRecipeSource(
-      'Recipe library manifest resolves outside its root.',
-      'move recipe-library.json inside its library root',
-    );
-  const manifest = await readJsonFile(manifestReal);
-  if (
-    !isRecord(manifest) ||
-    !Array.isArray(manifest.platforms) ||
-    manifest.platforms.some(
-      (platform) =>
-        typeof platform !== 'string' ||
-        !/^[a-z][a-z0-9-]*$/.test(platform) ||
-        platform === 'shared',
-    )
-  )
-    throw new Error(`${file} must declare platforms as adapter names.`);
-  for (const platform of manifest.platforms as string[]) adapters.add(platform);
   return adapters;
 }
+
+export interface RecipeLibraryLoadOptions {
+  /** Active platform: selects platform variants. */
+  adapter?: string;
+  logger?: RecipeLogger;
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: RecipePackageVersions;
+}
+
+const BUILT_IN_PLATFORM_SET: ReadonlySet<string> = new Set(BUILT_IN_RECIPE_PLATFORMS);
 
 export type RecipeLibraryEnv = Record<string, string | undefined>;
 
@@ -88,7 +86,11 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
       const name = entry.slice(0, separator).trim();
       const root = entry.slice(separator + 1).trim();
       if (!name || !root) {
-        throw new Error(`Recipe library entry ${JSON.stringify(entry)} must be name=path or path.`);
+        throw new RecipeResolutionError(
+          'RECIPE_LIBRARY_PATH_INVALID',
+          `Recipe library entry ${JSON.stringify(entry)} must be name=path or path.`,
+          'pass --library name=path (or a bare path), and check RECIPE_LIBRARY_PATH entries',
+        );
       }
       return { name, root: expandTilde(root) };
     });
@@ -106,17 +108,37 @@ export async function defaultRecipeLibrarySources(
   return [{ name: 'personal', root: personalRoot }];
 }
 
+/**
+ * Ordered library sources: --library entries, then RECIPE_LIBRARY_PATH, or the personal
+ * library when neither is set. A --library entry replaces the RECIPE_LIBRARY_PATH entry
+ * with the same name instead of conflicting with it.
+ */
 export async function resolveRecipeLibrarySources(options?: {
   cliEntries?: string[];
   env?: RecipeLibraryEnv;
   recipePath?: string;
 }): Promise<RecipeLibrarySource[]> {
   const env = options?.env ?? process.env;
-  const explicit = [
-    ...(options?.cliEntries ?? []).flatMap((entry) => parseRecipeLibraryPath(entry)),
-    ...(env.RECIPE_LIBRARY_PATH ? parseRecipeLibraryPath(env.RECIPE_LIBRARY_PATH) : []),
-  ];
-  const configured = explicit.length > 0 ? explicit : await defaultRecipeLibrarySources(env);
+  const flagged = (options?.cliEntries ?? [])
+    .flatMap((entry) => parseRecipeLibraryPath(entry))
+    .map((source) => ({ ...source, origin: 'flag' as const }));
+  const flaggedByName = new Map(flagged.map((source) => [librarySourceName(source), source]));
+  const environment = env.RECIPE_LIBRARY_PATH
+    ? parseRecipeLibraryPath(env.RECIPE_LIBRARY_PATH).flatMap((source) => {
+        const override = flaggedByName.get(librarySourceName(source));
+        if (!override) return [{ ...source, origin: 'env' as const }];
+        override.overrides = source.root;
+        return [];
+      })
+    : [];
+  const explicit = [...flagged, ...environment];
+  const configured =
+    explicit.length > 0
+      ? explicit
+      : (await defaultRecipeLibrarySources(env)).map((source) => ({
+          ...source,
+          origin: 'default' as const,
+        }));
   if (!options?.recipePath) return configured;
 
   const recipeDir = path.dirname(path.resolve(options.recipePath));
@@ -129,10 +151,15 @@ export async function resolveRecipeLibrarySources(options?: {
     {
       name: 'task-local',
       root: taskRoot,
+      origin: 'task',
       provenance: { kind: 'task', trust: 'unknown', name: 'task-local' },
     },
     ...configured,
   ];
+}
+
+function librarySourceName(source: RecipeLibrarySource): string {
+  return source.name ?? path.basename(path.resolve(source.root));
 }
 
 export function applyTaskLocalInvocationTrust(
@@ -155,7 +182,7 @@ export function applyTaskLocalInvocationTrust(
  */
 export async function loadRecipeLibraries(
   sources: readonly RecipeLibrarySource[],
-  options?: { adapter?: string; logger?: RecipeLogger },
+  options?: RecipeLibraryLoadOptions,
 ): Promise<RecipeLibraryResolution> {
   const loadedSources: LoadedRecipeLibrarySource[] = [];
   const recipes = new Map<string, ResolvedLibraryRecipe>();
@@ -165,7 +192,7 @@ export async function loadRecipeLibraries(
   for (const source of sources) {
     const root = path.resolve(expandTilde(source.root));
     const rootReal = await realpath(root);
-    const name = source.name ?? path.basename(root);
+    const name = librarySourceName(source);
     const sourceProvenance: RecipeSourceProvenance = source.provenance ?? {
       kind: 'library',
       trust: 'unknown',
@@ -180,32 +207,30 @@ export async function loadRecipeLibraries(
       );
     }
     seenNames.add(name);
+    const manifest = await readRecipeLibraryManifest(root);
+    checkRecipeLibraryRequirements(name, manifest, options?.packageVersions);
 
     const selected = new Map<string, ResolvedLibraryRecipe>();
-    const adapters = await libraryAdapters(root, rootReal, options?.adapter);
-    for (const relativeFile of await listRecipeFiles(root)) {
-      const identity = recipeIdentity(relativeFile, options?.adapter, adapters);
-      if (!identity) continue;
-      const absolutePath = path.join(root, LIBRARY_RECIPES_DIR, relativeFile);
-      const fileReal = await realpath(absolutePath);
-      if (!isPathWithin(rootReal, fileReal)) {
-        throw invalidRecipeSource(
-          `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} resolves outside its library root.`,
-          'move the recipe inside the library root or remove the escaping symlink',
-        );
-      }
-      const document = await readJsonFile(fileReal);
-      if (!isRecord(document)) throw new Error(`${fileReal} must contain a recipe object.`);
-      const validation = validateRecipeDocument(document, { skipRecipeCallResolution: true });
-      if (validation.status === 'invalid') {
-        throw new RecipeResolutionError(
-          'RECIPE_LIBRARY_RECIPE_INVALID',
-          `Library recipe ${fileReal} is invalid: ${validation.findings
-            .map((finding) => `${finding.code} ${finding.path}`)
-            .join(', ')}.`,
-          `fix ${fileReal} so it validates as Recipe v1`,
-        );
-      }
+    const adapters = libraryAdapters(manifest, options?.adapter);
+    // Read concurrently, then select in sorted file order so precedence stays deterministic.
+    const files = await Promise.all(
+      (await listRecipeFiles(root)).map(async (relativeFile) => {
+        const identity = recipeIdentity(relativeFile, options?.adapter, adapters);
+        if (!identity) return undefined;
+        const absolutePath = path.join(root, LIBRARY_RECIPES_DIR, relativeFile);
+        const fileReal = await realpath(absolutePath);
+        if (!isPathWithin(rootReal, fileReal)) {
+          throw invalidRecipeSource(
+            `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} resolves outside its library root.`,
+            'move the recipe inside the library root or remove the escaping symlink',
+          );
+        }
+        return { relativeFile, identity, fileReal, document: await readLibraryRecipe(fileReal) };
+      }),
+    );
+    for (const file of files) {
+      if (!file) continue;
+      const { relativeFile, identity, fileReal, document } = file;
       const previous = selected.get(identity.ref);
       const currentFile = path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/');
       if (previous && previous.adapter === identity.adapter) {
@@ -231,7 +256,7 @@ export async function loadRecipeLibraries(
     loadedSources.push({ name, root, recipeCount: selected.size, provenance: sourceProvenance });
 
     for (const [ref, resolved] of selected) {
-      if (resolved.adapter && !LEGACY_RECIPE_ADAPTERS.has(resolved.adapter)) {
+      if (resolved.adapter && !BUILT_IN_PLATFORM_SET.has(resolved.adapter)) {
         const alias = `${resolved.adapter}.${ref}`;
         if (!qualified.has(alias)) qualified.set(alias, { ...resolved, ref: alias, aliasFor: ref });
       }
@@ -246,34 +271,97 @@ export async function loadRecipeLibraries(
   for (const [alias, recipe] of qualified) if (!recipes.has(alias)) recipes.set(alias, recipe);
 
   const resolution = { sources: loadedSources, recipes };
-  if (options?.logger) logResolution(options.logger, resolution);
+  if (options?.logger) logRecipeLibraryResolution(options.logger, resolution);
   return resolution;
 }
 
-export async function listRecipeFiles(root: string): Promise<string[]> {
-  const recipesRoot = path.join(root, LIBRARY_RECIPES_DIR);
-  const files: string[] = [];
-  async function visit(relativeDir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(path.join(recipesRoot, relativeDir), { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' && relativeDir === '') return;
-      throw error;
-    }
-    for (const entry of entries) {
-      const relativePath = path.join(relativeDir, entry.name);
-      if (entry.isDirectory()) await visit(relativePath);
-      else if (
-        (entry.isFile() || entry.isSymbolicLink()) &&
-        entry.name.endsWith(RECIPE_FILE_SUFFIX)
-      ) {
-        files.push(relativePath);
-      }
-    }
+export interface LibraryRecipeMatch {
+  recipe: ResolvedLibraryRecipe;
+  /**
+   * `ref`: the precedence winner; `alias`: a qualified platform alias such as `web.greet`;
+   * `id`: a namespaced `<library>.<ref>` that selects that library's recipe even when shadowed.
+   */
+  resolvedBy: 'ref' | 'alias' | 'id';
+}
+
+/**
+ * Resolve a recipe name the way `run` and discovery both do: a ref or alias in the resolution
+ * first, then a namespaced `<library>.<ref>` id against that one library.
+ */
+export async function findLibraryRecipe(
+  name: string,
+  sources: readonly RecipeLibrarySource[],
+  resolution: RecipeLibraryResolution,
+  options?: RecipeLibraryLoadOptions & {
+    /** Loader for a single library, so callers can reuse loads they already made. */
+    load?: (source: RecipeLibrarySource) => Promise<RecipeLibraryResolution>;
+  },
+): Promise<LibraryRecipeMatch | undefined> {
+  const direct = resolution.recipes.get(name);
+  if (direct) return { recipe: direct, resolvedBy: direct.aliasFor ? 'alias' : 'ref' };
+  for (const source of sources) {
+    const prefix = `${librarySourceName(source)}.`;
+    if (!name.startsWith(prefix) || name.length === prefix.length) continue;
+    const own = options?.load
+      ? await options.load(source)
+      : await loadRecipeLibraries([source], {
+          ...(options?.adapter ? { adapter: options.adapter } : {}),
+          ...(options?.packageVersions ? { packageVersions: options.packageVersions } : {}),
+        });
+    const recipe = own.recipes.get(name.slice(prefix.length));
+    if (recipe && !recipe.aliasFor) return { recipe, resolvedBy: 'id' };
   }
-  await visit('');
-  return files.sort();
+  return undefined;
+}
+
+/** Recipe files under recipes/, relative to it, from the shared library walker. */
+export async function listRecipeFiles(root: string): Promise<string[]> {
+  const prefix = `${LIBRARY_RECIPES_DIR}/`;
+  return (await listLibraryFiles(root, LIBRARY_RECIPES_DIR))
+    .filter((file) => file.endsWith(RECIPE_FILE_SUFFIX))
+    .map((file) => file.slice(prefix.length));
+}
+
+const validatedRecipes = new Map<
+  string,
+  { mtimeMs: number; size: number; document: Record<string, unknown> }
+>();
+
+/** Read and validate one library recipe; validation is cached per process while the file is unchanged. */
+async function readLibraryRecipe(fileReal: string): Promise<Record<string, unknown>> {
+  const info = await stat(fileReal);
+  const cached = validatedRecipes.get(fileReal);
+  if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size)
+    return structuredClone(cached.document);
+  let document: unknown;
+  try {
+    document = JSON.parse(await readFile(fileReal, 'utf8'));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_RECIPE_INVALID',
+      `Library recipe ${fileReal} is not valid JSON: ${error.message}.`,
+      `fix ${fileReal} so it validates as Recipe v1`,
+    );
+  }
+  if (!isRecord(document))
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_RECIPE_INVALID',
+      `Library recipe ${fileReal} must contain a recipe object.`,
+      `fix ${fileReal} so it validates as Recipe v1`,
+    );
+  const validation = validateRecipeDocument(document, { skipRecipeCallResolution: true });
+  if (validation.status === 'invalid') {
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_RECIPE_INVALID',
+      `Library recipe ${fileReal} is invalid: ${validation.findings
+        .map((finding) => `${finding.code} ${finding.path}`)
+        .join(', ')}.`,
+      `fix ${fileReal} so it validates as Recipe v1`,
+    );
+  }
+  validatedRecipes.set(fileReal, { mtimeMs: info.mtimeMs, size: info.size, document });
+  return structuredClone(document);
 }
 
 function recipeIdentity(
@@ -291,7 +379,7 @@ function recipeIdentity(
     firstDirectory && adapters.has(firstDirectory) ? firstDirectory : undefined;
   const directoryScope = firstDirectory === 'shared' ? firstDirectory : directoryAdapter;
   const suffix = base.slice(base.lastIndexOf('.') + 1);
-  const filenameAdapter = LEGACY_RECIPE_ADAPTERS.has(suffix) ? suffix : undefined;
+  const filenameAdapter = BUILT_IN_PLATFORM_SET.has(suffix) ? suffix : undefined;
   if (directoryScope && filenameAdapter) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
@@ -317,13 +405,21 @@ function recipeIdentity(
   return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
 }
 
-function logResolution(logger: RecipeLogger, resolution: RecipeLibraryResolution): void {
+/**
+ * Log the resolved sources and shadowed recipes. With `refs`, only shadows among those refs are
+ * reported, so a run does not warn about a winner it never executes.
+ */
+export function logRecipeLibraryResolution(
+  logger: RecipeLogger,
+  resolution: RecipeLibraryResolution,
+  refs?: ReadonlySet<string>,
+): void {
   const summary = resolution.sources
     .map((source) => `${source.name}=${source.root} (${source.recipeCount} recipes)`)
     .join(', ');
   logger.info(`Recipe libraries: ${summary || 'none'}`);
   for (const recipe of resolution.recipes.values()) {
-    if (recipe.aliasFor) continue;
+    if (recipe.aliasFor || (refs && !refs.has(recipe.ref))) continue;
     if (recipe.shadows.length > 0) {
       logger.warn(
         `Recipe ${recipe.ref} resolves from ${recipe.source} and shadows ${recipe.shadows.join(', ')}.`,

@@ -82,7 +82,7 @@ Install the skills and use them to write or review recipes. The project may not 
 Add a small local script that can run one recipe and emit proof artifacts.
 
 ```bash
-npx @farmslot/recipe-harness run recipes/example.recipe.json
+npx -p @farmslot/recipe-cli farmslot-recipe run recipes/example.recipe.json
 ```
 
 For Expo / React Native projects, this may start with:
