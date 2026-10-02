@@ -460,7 +460,7 @@ async function checkDevServer(
   return steps;
 }
 
-async function checkHealth(
+export async function checkHealth(
   vars: SlotVars,
   projectJson: RawProjectJson,
   projectVars: ProjectVars | undefined,
@@ -482,13 +482,11 @@ async function checkHealth(
   let unlockFailure: string | null = null;
   if (unlockHook) {
     unlockFailure = await runUnlockHook(vars, unlockHook);
-    if (!unlockFailure) {
-      // Wait for unlock to take effect
-      await new Promise((r) => setTimeout(r, 3000));
-      healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
-      if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
-        return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
-      }
+    // Re-read health even after a failed unlock: the app can reach ready on its own.
+    await new Promise((r) => setTimeout(r, 3000));
+    healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
+    if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
+      return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
     }
   }
 
@@ -503,17 +501,20 @@ async function checkHealth(
 }
 
 /**
- * Run the project's unlock hook. Returns null when it exits 0, otherwise a
- * failure detail with the exit code and the tail of its output, so callers
- * report a failed unlock instead of retrying health as if it had run.
+ * Bound for one unlock hook run. A timeout reports as exit 124, not a throw
+ * (remote transport waits this budget plus a grace). Sized for a cold harness
+ * call on a physical Android slot, measured at ~85 s.
  */
-export async function runUnlockHook(
-  vars: SlotVars,
-  unlockHook: string,
-  options: { timeoutMs?: number } = {},
-): Promise<string | null> {
+export const UNLOCK_HOOK_TIMEOUT_MS = 120_000;
+
+/**
+ * Run the project's unlock hook. Returns null when it exits 0, otherwise a
+ * failure detail with the exit code and the tail of its output. Callers still
+ * re-read health afterwards and report the failure only if health stays down.
+ */
+export async function runUnlockHook(vars: SlotVars, unlockHook: string): Promise<string | null> {
   const result = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, {
-    timeout: options.timeoutMs,
+    timeout: UNLOCK_HOOK_TIMEOUT_MS,
   });
   if (result.exitCode === 0) return null;
   const tail = `${result.stdout}\n${result.stderr}`

@@ -29,6 +29,7 @@ import {
   type RawProjectJson,
   slotFileExists,
   slotReadFile,
+  type SlotVars,
   updateSlotStatus,
   withMachineEnv,
 } from '../../core/index.js';
@@ -58,7 +59,7 @@ import { NativeWorkerOperationUncertainError } from '../../runners/native/worker
 import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
-import { runHealthCheck } from './check.js';
+import { runHealthCheck, runUnlockHook } from './check.js';
 import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
@@ -113,6 +114,48 @@ import {
 } from './slot-tracking.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
+
+export interface PrepareHealthCommands {
+  /** Health hook as executed (env applied). */
+  health: string;
+  /** Unlock hook as executed (env applied); empty when the project has none. */
+  unlock: string;
+  parse: string;
+  /** Health hook as reported on failure. */
+  failedCommand: string;
+}
+
+/**
+ * Prepare's health phase. When health is not ready, run the unlock hook and
+ * re-read health whatever its exit (the app can reach ready on its own); a
+ * failed unlock is added to the error only when health is still not ready.
+ */
+export async function verifyPrepareHealth(
+  vars: SlotVars,
+  commands: PrepareHealthCommands,
+  readyIndicator: string,
+  step: (name: string, detail: string) => void,
+): Promise<string> {
+  let healthValue = await runHealthCheck(vars, commands.health, commands.parse);
+  if (!readyIndicator || healthValue === readyIndicator) return healthValue;
+
+  let unlockFailure: string | null = null;
+  if (commands.unlock) {
+    step('health', 'Trying unlock...');
+    unlockFailure = await runUnlockHook(vars, commands.unlock);
+    if (unlockFailure) step('health', `Unlock failed — ${unlockFailure}`);
+    await new Promise((r) => setTimeout(r, 3000));
+    healthValue = await runHealthCheck(vars, commands.health, commands.parse);
+  }
+  if (healthValue !== readyIndicator) {
+    const err: PrepareCommandError = new Error(
+      `Health not ready (value=${healthValue || 'none'}, expected ${readyIndicator})${unlockFailure ? `; ${unlockFailure}` : ''}`,
+    );
+    err.failedCommand = commands.failedCommand;
+    throw err;
+  }
+  return healthValue;
+}
 
 export async function slotPrepare(
   params: SlotPrepareParams,
@@ -1373,37 +1416,18 @@ async function slotPrepareInner(
   }
   if (healthHook) {
     step('health', 'Verifying health...');
-    const parseCmd = getProjectField(projectJson, 'health.parse_health');
-    let healthValue = await runHealthCheck(
+    const unlockHook = expandPrepareHook('unlock');
+    const healthValue = await verifyPrepareHealth(
       vars,
-      withProfileEnv(applyCommandEnv(healthHook)),
-      parseCmd,
+      {
+        health: withProfileEnv(applyCommandEnv(healthHook)),
+        unlock: unlockHook ? withProfileEnv(applyCommandEnv(unlockHook)) : '',
+        parse: getProjectField(projectJson, 'health.parse_health'),
+        failedCommand: healthHook,
+      },
+      readyIndicator,
+      step,
     );
-
-    if (readyIndicator && healthValue !== readyIndicator) {
-      // Try unlock
-      const unlockHook = expandPrepareHook('unlock');
-      if (unlockHook) {
-        step('health', 'Trying unlock...');
-        await execOnSlot(
-          vars,
-          `cd ${shellQuote(vars.remoteRepo)} && ${withProfileEnv(applyCommandEnv(unlockHook))} 2>&1`,
-        );
-        await new Promise((r) => setTimeout(r, 3000));
-        healthValue = await runHealthCheck(
-          vars,
-          withProfileEnv(applyCommandEnv(healthHook)),
-          parseCmd,
-        );
-      }
-      if (readyIndicator && healthValue !== readyIndicator) {
-        const err: PrepareCommandError = new Error(
-          `Health not ready (value=${healthValue || 'none'}, expected ${readyIndicator})`,
-        );
-        err.failedCommand = healthHook;
-        throw err;
-      }
-    }
     step('health', `Health check — ${healthValue}`);
   }
 

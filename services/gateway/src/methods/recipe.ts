@@ -769,10 +769,9 @@ export async function assertSlotHealthForRecipeRerun(
   const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
   let unlockFailure: string | null = null;
   if (unlockHook?.trim()) {
-    unlockFailure = await runUnlockHook(slotVars, unlockHook, { timeoutMs: 60_000 });
-    if (!unlockFailure) {
-      healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
-    }
+    unlockFailure = await runUnlockHook(slotVars, unlockHook);
+    // Re-read health even after a failed unlock: the app can reach ready on its own.
+    healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
   }
 
   if (!recipeReplayHealthReady(healthValue, readyIndicator)) {
