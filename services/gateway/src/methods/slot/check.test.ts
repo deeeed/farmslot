@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -103,7 +103,7 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
       undefined,
       'OK',
       '',
-      (p) => progress.push(p),
+      { onProgress: (p) => progress.push(p) },
     );
     assert.deepEqual(step, { name: 'health', status: 'pass', detail: 'Health after unlock — OK' });
     // Streaming clients (CLI no-activity timeout) see a step before the unlock runs.
@@ -114,6 +114,47 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         detail: 'Health not ready (value=LOCKED) — trying unlock...',
       },
     ]);
+  });
+
+  test('checkHealth heartbeats through the unlock and re-read, and stops when it returns', async (t) => {
+    const vars = await lockedSlot(t);
+    const heartbeatMs = 200;
+    const heartbeats: { at: number; detail: string }[] = [];
+    // The hook records when it exits, so the assertions use time, not tick counts.
+    const unlock = `sleep 1; printf OK > state; node -e "require('fs').writeFileSync('unlock-exited-at', String(Date.now()))"`;
+    const step = await checkHealth(vars, projectWithUnlock(unlock), undefined, 'OK', '', {
+      onProgress: (p) => {
+        if (p.detail !== 'Health not ready (value=LOCKED) — trying unlock...') {
+          heartbeats.push({ at: Date.now(), detail: p.detail });
+        }
+      },
+      heartbeatMs,
+    });
+    const returnedAt = Date.now();
+    assert.deepEqual(step, { name: 'health', status: 'pass', detail: 'Health after unlock — OK' });
+    const unlockExitedAt = Number(
+      await readFile(path.join(vars.remoteRepo, 'unlock-exited-at'), 'utf8'),
+    );
+
+    assert.ok(
+      heartbeats.some(
+        (h) => h.at < unlockExitedAt && h.detail.startsWith('Unlock still running ('),
+      ),
+      `expected a heartbeat while the unlock ran: ${JSON.stringify(heartbeats)}`,
+    );
+    // The 3 s settle wait and health re-read after the hook stay covered too.
+    assert.ok(
+      heartbeats.some(
+        (h) =>
+          h.at > unlockExitedAt + heartbeatMs &&
+          h.detail.startsWith('Re-checking health after unlock ('),
+      ),
+      `expected a heartbeat after the unlock exited: ${JSON.stringify(heartbeats)}`,
+    );
+    // Nothing fires once checkHealth has returned.
+    await new Promise((r) => setTimeout(r, heartbeatMs * 3));
+    const late = heartbeats.filter((h) => h.at > returnedAt);
+    assert.deepEqual(late, [], 'heartbeat kept running after checkHealth returned');
   });
 
   test('checkHealth appends the unlock failure when health stays down', async (t) => {

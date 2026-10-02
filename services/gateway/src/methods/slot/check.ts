@@ -112,7 +112,7 @@ export async function slotCheck(
       projectVars,
       readyIndicator,
       parseHealthCmd,
-      (step) => emitStep(emit, step),
+      { onProgress: (step) => emitStep(emit, step) },
     );
     if (healthStep) {
       checks.push(healthStep);
@@ -467,9 +467,10 @@ export async function checkHealth(
   projectVars: ProjectVars | undefined,
   readyIndicator: string,
   parseHealthCmd: string,
-  /** Progress before a long unlock, so streaming clients see activity. */
-  onProgress: (step: CheckStep) => void = () => {},
+  progress: HealthProgressOptions = {},
 ): Promise<CheckStep | null> {
+  const onProgress = progress.onProgress ?? (() => {});
+  const heartbeatMs = progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS;
   const healthHook = expandHook('health_check', projectJson, vars, projectVars);
   if (!healthHook) return null;
 
@@ -489,10 +490,23 @@ export async function checkHealth(
       status: 'warn',
       detail: `Health not ready (value=${healthValue || 'none'}) — trying unlock...`,
     });
-    unlockFailure = await runUnlockHook(vars, unlockHook);
-    // Re-read health even after a failed unlock: the app can reach ready on its own.
-    await new Promise((r) => setTimeout(r, 3000));
-    healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
+    // Heartbeat through the unlock, the settle wait and the re-read: no window
+    // may stay silent past the CLI's idle timeout.
+    const unlockStartedAt = Date.now();
+    let phase = 'Unlock still running';
+    const heartbeat = setInterval(() => {
+      const elapsedS = Math.round((Date.now() - unlockStartedAt) / 1000);
+      onProgress({ name: 'health', status: 'warn', detail: `${phase} (${elapsedS} s)` });
+    }, heartbeatMs);
+    try {
+      unlockFailure = await runUnlockHook(vars, unlockHook);
+      phase = 'Re-checking health after unlock';
+      // Re-read health even after a failed unlock: the app can reach ready on its own.
+      await new Promise((r) => setTimeout(r, 3000));
+      healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
+    } finally {
+      clearInterval(heartbeat);
+    }
     if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
       return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
     }
@@ -507,6 +521,20 @@ export async function checkHealth(
     detail: unlockFailure ? `${healthDetail}; ${unlockFailure}` : healthDetail,
   };
 }
+
+export interface HealthProgressOptions {
+  /** Progress before and during a long unlock, so streaming clients see activity. */
+  onProgress?: (step: CheckStep) => void;
+  /** Heartbeat interval while the unlock and its health re-read run. */
+  heartbeatMs?: number;
+}
+
+/**
+ * Progress interval while the unlock hook runs: under the CLI's 30 s
+ * no-activity timeout, which fleet broadcasts (also every 30 s) cannot be
+ * relied on to beat.
+ */
+export const UNLOCK_HEARTBEAT_MS = 15_000;
 
 /**
  * Bound for one unlock hook run. A timeout reports as exit 124, not a throw
