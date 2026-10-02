@@ -11,6 +11,16 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'park-owner': [
+    'services/gateway/src/machine-parking/service.ts',
+    /if \(slotClaimBlockedByRelease\(row\) !== null\)/,
+    'if (false)',
+  ],
+  'park-claim': [
+    'services/gateway/src/machine-parking/service.ts',
+    /(claimSlotOwnership: async \(run, slotId\) => \{[\s\S]*?)slot.lifecycle === 'ready' &&\s*slotClaimBlockedByRelease\(slot\) === null/,
+    '$1slot.phase !== SLOT_PHASE_RELEASING',
+  ],
   'held-claim': [
     'services/gateway/src/methods/dispatch/slot-scoring.ts',
     /slot.lifecycle === 'held' && slot.phase === 'occupied'/,

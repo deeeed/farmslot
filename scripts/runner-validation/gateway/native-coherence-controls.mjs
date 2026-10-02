@@ -11,6 +11,8 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['park-owner', /Occupied park owner must refuse restore/],
+  ['park-claim', /Occupied park restore must preserve the slot claim/],
   ['held-claim', /Occupied hold must refuse warm binding/],
   ['queued-transfer', /Handoff receipt must remain with its original task lease/],
   ['provider-empty-pid', /Boot after an invalid PID file must succeed/],
@@ -86,6 +88,7 @@ async function lane() {
     if (name === 'kernel-reuse') args.push('--kernel-reuse');
     if (name === 'authored-contract') args.push('--missing-contract');
     if (name === 'queued-receipt' || name === 'queued-transfer') args.push('--queued-close');
+    if (name === 'park-claim' || name === 'park-owner') args.push('--park-claim');
     if (name === 'held-reconcile' || name === 'held-claim') args.push('--reconcile-held');
     if (
       [

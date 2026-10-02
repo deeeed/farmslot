@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Recover blocked native workers through their pending decision and adopt verified external recoveries. Preserve occupied workspaces across cleanup and reconciliation, verify provider ownership before shutdown, and support explicit provider recovery. Surface crash diagnostics, discover saved sessions under configured roots, and preserve authored task runtimes.
+- Recover blocked native workers through their pending decision and adopt verified external recoveries. Preserve occupied workspaces across cleanup, reconciliation, and parked-run restore, verify provider ownership before shutdown, and support explicit provider recovery. Surface crash diagnostics, discover saved sessions under configured roots, and preserve authored task runtimes.
 
 - Require absolute task paths for new runs and explain how to upgrade older clients. Upgrade the CLI on every node first, then the gateway. Existing stored runs with relative task paths remain readable.
 

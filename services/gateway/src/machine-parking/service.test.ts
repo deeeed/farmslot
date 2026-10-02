@@ -2496,6 +2496,25 @@ async function previewFreedRestore(ctx: Harness) {
   return { preview, entry: preview.runs.find((item) => item.runId === 'run-gate')! };
 }
 
+test('restore refuses an occupied hold even when it still names the parked owner', async () => {
+  const ctx = await freedGateParkHarness();
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'held');
+  const slotRow = ctx.deps.slotRow;
+  ctx.deps.slotRow = async (slotId) => {
+    const row = await slotRow(slotId);
+    return row ? { ...row, phase: 'occupied' } : null;
+  };
+  ctx.calls.length = 0;
+  const result = await ctx.service.restoreForGateResolution('run-gate');
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result), /occupied/);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('claim-slot:')),
+    false,
+  );
+});
+
 test('restore brings a freed gate park back into its original slot', async () => {
   const ctx = await freedGateParkHarness();
 

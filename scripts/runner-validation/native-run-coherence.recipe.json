@@ -52,6 +52,13 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --reconcile-held",
         "timeout_ms": 300000,
         "intent": "Restart only the disposable gateway with reconciliation enabled and prove foreign workspace holds survive startup and a real periodic tick.",
+        "next": "park-claim"
+      },
+      "park-claim": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --park-claim",
+        "timeout_ms": 300000,
+        "intent": "Park through the production gateway, introduce a competing workspace occupant at restore's claim boundary, and preserve the held row, epoch and workspace.",
         "next": "generation-guard"
       },
       "generation-guard": {

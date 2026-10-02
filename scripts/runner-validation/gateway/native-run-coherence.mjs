@@ -37,6 +37,7 @@ import {
   proveRecoveryHint,
   proveSharedCleanup,
 } from './native-coherence-browser.mjs';
+import { proveParkOccupiedClaim } from './native-park-claim.mjs';
 import { proveProviderRecovery } from './native-provider-recovery.mjs';
 import { proveQueuedLeaseOwnership } from './native-queued-lease.mjs';
 import { prepareRealAdoption, proveRealAdoption } from './native-real-adoption.mjs';
@@ -58,6 +59,7 @@ let runtimeRunId;
 const externalSession = `coherence-adopt-${randomUUID()}`;
 const wrongSession = `coherence-wrong-${randomUUID()}`;
 const foreignSession = `coherence-foreign-${randomUUID()}`;
+const parkSession = `coherence-park-${randomUUID()}`;
 const repo = path.join(temporary, 'repo');
 const cancelRepo = path.join(temporary, 'cancel-repo');
 const emptyRepo = path.join(temporary, 'empty-repo');
@@ -80,6 +82,7 @@ const realAdoption = process.argv.includes('--real-adoption');
 const providerRecovery = process.argv.includes('--provider-recovery');
 const reconcileHeld = process.argv.includes('--reconcile-held');
 const queuedClose = process.argv.includes('--queued-close');
+const parkClaim = process.argv.includes('--park-claim');
 const missingContract = process.argv.includes('--missing-contract');
 const generationGuard = process.argv.includes('--generation-guard');
 const guardsOnly = process.argv.includes('--guards-only') || providerRecovery;
@@ -910,7 +913,20 @@ try {
         1,
       );
       check('busy send queues and delivers once');
-      if (queuedClose) {
+      if (parkClaim) {
+        await proveParkOccupiedClaim({
+          rpc,
+          runId,
+          slotId,
+          repo,
+          temporary,
+          root,
+          statusFile,
+          session: parkSession,
+          restartGateway,
+          check,
+        });
+      } else if (queuedClose) {
         mode({ holdMs: 45000 });
         rpc('native.session.send', { ...target(), commandId: 'receipt-hold', text: 'hold-turn' });
         const pending = rpc('native.session.send', {
@@ -1404,6 +1420,8 @@ async function cleanupFixture() {
     externalSession,
     wrongSession,
     foreignSession,
+    parkSession,
+    `${parkSession}-owner`,
     runtimeSlot,
     ...(realFixture ? [realFixture.session] : []),
     ...cleanupGuards.flatMap((fixture) => (fixture.session ? [fixture.session] : [])),
