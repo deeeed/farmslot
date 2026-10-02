@@ -5,11 +5,12 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import type { RecipeActionManifestDocument } from '@farmslot/protocol';
 import { loadRecipeLibraries } from '@farmslot/recipe-harness';
 
 import { runRecipeCli } from '../src/cli.js';
 import { buildDiscoveryIndex, findRecipe, shadowedRecipes } from '../src/discovery-index.js';
-import { assessRecipe } from '../src/index.js';
+import { assessRecipe, RECIPE_CLI_VERSION } from '../src/index.js';
 import type {
   ActionsEnvelope,
   DescribeEnvelope,
@@ -833,4 +834,59 @@ test('hosts can assess a qualified alias by the document it resolves to', async 
     ['recipe.action_not_declared_by_manifest'],
   );
   assert.deepEqual(assessRecipe(index, index.resolution.recipes.get('foo')!), []);
+});
+
+test('a host view judges readiness from one platform resolution and its own manifest', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-host-view-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const library = path.join(root, 'acme');
+  await writeJson(
+    path.join(library, 'recipes', 'extension', 'acme', 'nav.recipe.json'),
+    recipe('Nav', { run: { action: 'command', cmd: 'true', next: 'done' } }),
+  );
+  // A half-edited recipe for another platform.
+  await mkdir(path.join(library, 'recipes', 'mobile', 'acme'), { recursive: true });
+  await writeFile(path.join(library, 'recipes', 'mobile', 'acme', 'wip.recipe.json'), '{"title": ');
+  const sources = [{ name: 'acme', root: library }];
+
+  // The full index parses every platform, so the broken mobile file fails it.
+  await assert.rejects(
+    buildDiscoveryIndex({ env: { RECIPE_LIBRARY_PATH: `acme=${library}` }, platform: 'extension' }),
+    /not valid JSON/u,
+  );
+  // A single-platform view never reads it.
+  const resolution = await loadRecipeLibraries(sources, { adapter: 'extension' });
+  const nav = resolution.recipes.get('acme.nav')!;
+  const declared = commandManifest() as RecipeActionManifestDocument;
+  assert.deepEqual(assessRecipe({ resolution, manifest: declared }, nav), []);
+
+  // Readiness uses the injected manifest, not one recipe-cli merges itself.
+  const helloManifest = JSON.parse(
+    await readFile(path.join(HELLO, 'manifests', 'shared.action-manifest.json'), 'utf8'),
+  ) as RecipeActionManifestDocument;
+  delete helloManifest.actions.command;
+  assert.deepEqual(
+    assessRecipe({ resolution, manifest: helloManifest }, nav).map((problem) => problem.code),
+    ['recipe.action_not_declared_by_manifest'],
+  );
+});
+
+test('requires vouches only for the packages the host passes, like run', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-vouch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(HELLO, root, { recursive: true });
+  await writeJson(path.join(root, 'recipe-library.json'), {
+    platforms: ['web'],
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+  });
+  const env = { RECIPE_LIBRARY_PATH: `hello=${root}` };
+  // A host that does not provide recipe-cli: discovery and run both refuse.
+  await assert.rejects(buildDiscoveryIndex({ env }), /cannot provide or check/u);
+  await assert.rejects(loadRecipeLibraries([{ name: 'hello', root }]), /cannot provide or check/u);
+  // farmslot-recipe vouches for itself in both paths.
+  const packageVersions = { '@farmslot/recipe-cli': RECIPE_CLI_VERSION };
+  const index = await buildDiscoveryIndex({ env, packageVersions });
+  assert.equal(index.recipes.get('greet')?.runnable, true);
+  const listed = await cli<ListEnvelope>(['list'], env);
+  assert.equal(listed.json.status, 'ok');
 });
