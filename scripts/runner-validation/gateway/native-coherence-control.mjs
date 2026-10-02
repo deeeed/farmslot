@@ -11,6 +11,11 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'provider-rollback': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /const stillRequired = snapshot.leases.some\(([\s\S]*?)\(!selectedIds.has\(candidate.id\) \|\| stillHolding.has\(candidate.id\)\)/,
+    'const stillRequired = snapshot.leases.some($1!selectedIds.has(candidate.id)',
+  ],
   'provider-compaction': [
     'services/gateway/src/runtime-capabilities/store.ts',
     /\|\|\s*Boolean\(lease.providerCleanupDeferred\)/,

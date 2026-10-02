@@ -2308,6 +2308,7 @@ export class RuntimeCapabilityRegistry {
       (lease) => selectedIds.has(lease.id) && ACTIVE_STATES.has(lease.state),
     );
     const order = this.releaseOrder(snapshot, roots).filter((lease) => selectedIds.has(lease.id));
+    const stillHolding = new Set<string>();
 
     for (const lease of order) {
       const entry = catalog.capabilities.find((capability) => capability.id === lease.capabilityId);
@@ -2315,6 +2316,7 @@ export class RuntimeCapabilityRegistry {
         lease.state = 'error';
         lease.cleanupFailure = 'Provider is no longer in the project capability catalog';
         lease.updatedAt = this.timestamp();
+        stillHolding.add(lease.id);
         this.recordEvent(snapshot, {
           kind: 'cleanup-failed',
           slotId: lease.slotId,
@@ -2328,11 +2330,15 @@ export class RuntimeCapabilityRegistry {
       const stillRequired = snapshot.leases.some(
         (candidate) =>
           candidate.id !== lease.id &&
-          !selectedIds.has(candidate.id) &&
-          ACTIVE_STATES.has(candidate.state) &&
+          (!selectedIds.has(candidate.id) || stillHolding.has(candidate.id)) &&
+          holdsClaim(candidate) &&
           candidate.dependencyLeaseIds.includes(lease.id),
       );
-      if (stillRequired) continue;
+      if (stillRequired) {
+        // Failed cleanup retains the entire dependency chain, just as release does.
+        stillHolding.add(lease.id);
+        continue;
+      }
       const otherHolders = snapshot.leases.some(
         (candidate) =>
           candidate.id !== lease.id &&
@@ -2365,6 +2371,7 @@ export class RuntimeCapabilityRegistry {
       if (!cleanup.ok) {
         lease.state = 'error';
         lease.cleanupFailure = cleanup.detail ?? 'acquisition rollback failed';
+        stillHolding.add(lease.id);
         this.recordEvent(snapshot, {
           kind: 'cleanup-failed',
           slotId: lease.slotId,

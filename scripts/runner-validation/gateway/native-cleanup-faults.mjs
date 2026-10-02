@@ -9,6 +9,10 @@ assert.ok(root && existsSync(path.join(root, '.coherence-fixture')));
 const fixtures = JSON.parse(process.env.FARMSLOT_COHERENCE_FAULTS);
 const ids = Object.fromEntries(fixtures.map((fixture) => [fixture.fault, fixture.runId]));
 const slots = Object.fromEntries(fixtures.map((fixture) => [fixture.fault, fixture.slotId]));
+globalThis.__coherenceRollbackCleanupBlocked = (slotId, entry) =>
+  slotId === slots['capture-retained-provider'] &&
+  entry.id === 'rollback-parent' &&
+  !existsSync(path.join(root, 'rollback-cleanup-allowed'));
 globalThis.__coherenceGenerationFault = (run) => {
   if (run?.id !== process.env.FARMSLOT_COHERENCE_GENERATION_RUN_ID) return;
   run.engineState = { ...run.engineState, generation: 'coherence-changed-generation' };
@@ -18,7 +22,12 @@ const faults = [
   [
     'methods/runtime-capabilities.ts',
     /(async function captureProviderProcesses[\s\S]*?\{)/,
-    `$1 if(slotId===${JSON.stringify(slots['capture-provider'])}) throw new Error('Fixture identity capture failed');`,
+    `$1 if(slotId===${JSON.stringify(slots['capture-provider'])} || (slotId===${JSON.stringify(slots['capture-retained-provider'])} && entry.id==='rollback-parent')) throw new Error('Fixture identity capture failed');`,
+  ],
+  [
+    'methods/runtime-capabilities.ts',
+    /(async function checkProviderCleanup[\s\S]*?\{)/,
+    `$1 if(globalThis.__coherenceRollbackCleanupBlocked(slotId, entry)) return 'Fixture provider cleanup refused';`,
   ],
   [
     'runners/owned-stop.ts',

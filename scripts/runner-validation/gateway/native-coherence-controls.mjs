@@ -11,6 +11,7 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['provider-rollback', /Failed rollback must retain the dependency chain/],
   ['provider-compaction', /Deferred provider and dependency records must survive compaction/],
   ['provider-instance', /Warm sweep must select the current provider instance/],
   ['provider-capture', /Capture failure must settle acquisition/],
@@ -91,6 +92,7 @@ async function lane() {
         'provider-compaction',
         'provider-instance',
         'provider-capture',
+        'provider-rollback',
       ].includes(name)
     )
       args.push('--provider-recovery');

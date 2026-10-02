@@ -140,6 +140,7 @@ export function prepareCleanupGuards({ temporary, project, gitInit }) {
     'child-provider',
     'metadata-provider',
     'capture-provider',
+    'capture-retained-provider',
     'cycle-provider',
     'compact-provider',
   ]) {
@@ -208,6 +209,7 @@ export function proveCleanupGuards({
         'child-provider',
         'metadata-provider',
         'capture-provider',
+        'capture-retained-provider',
         'cycle-provider',
         'compact-provider',
       ].includes(fixture.fault)

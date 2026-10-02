@@ -1796,32 +1796,55 @@ test('warm cleanup uses the current provider instance after a cold release and r
 
 test('identity capture failure settles acquisition and records uncertain cleanup', async (t) => {
   const frame = { pid: 123, group: 123, identity: 'born' };
-  const { registry } = await fixture(t, [entry('dep'), entry('app', 'exclusive', ['dep'])], {
-    captureProviderProcesses: async (_slotId, entry) => {
-      if (entry.id === 'app') throw new Error('Node disconnected');
-      return [];
+  let cleanupBlocked = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('leaf'), entry('dep', 'exclusive', ['leaf']), entry('app', 'exclusive', ['dep'])],
+    {
+      captureProviderProcesses: async (_slotId, entry) => {
+        if (entry.id === 'app') throw new Error('Node disconnected');
+        return [];
+      },
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'app.acquire'
+          ? { ok: true, providerProcesses: [frame] }
+          : { ok: true },
+      checkProviderCleanup: async (_slotId, entry, frames) => {
+        if (entry.id === 'app') {
+          assert.deepEqual(frames, [frame]);
+          return cleanupBlocked ? 'Node unavailable' : null;
+        }
+        return null;
+      },
     },
-    runAction: async (_slotId, action) =>
-      action.kind === 'slot-action' && action.actionId === 'app.acquire'
-        ? { ok: true, providerProcesses: [frame] }
-        : { ok: true },
-    checkProviderCleanup: async (_slotId, entry, frames) => {
-      if (entry.id === 'app') {
-        assert.deepEqual(frames, [frame]);
-        return 'Node unavailable';
-      }
-      return null;
-    },
-  });
+  );
   const result = await acquire(registry, 'app', 'owner');
   assert.equal(result.ok, false);
   const leases = (await registry.status({ slotId: SLOT })).leases;
   const app = leases.find((lease) => lease.capabilityId === 'app');
   assert.equal(app?.state, 'error');
   assert.match(app?.cleanupFailure ?? '', /Node unavailable/);
+  assert.equal(leases.find((lease) => lease.capabilityId === 'dep')?.state, 'acquired');
+  assert.equal(leases.find((lease) => lease.capabilityId === 'leaf')?.state, 'acquired');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    [],
+  );
   assert.ok(
     leases.every((lease) => lease.state !== 'acquiring'),
     'No acquisition may remain unsettled',
+  );
+  cleanupBlocked = false;
+  assert.equal(
+    (await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false })).ok,
+    true,
+  );
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release', 'dep.release', 'leaf.release'],
+  );
+  assert.ok(
+    (await registry.status({ slotId: SLOT })).leases.every((lease) => lease.state === 'released'),
   );
 });
 

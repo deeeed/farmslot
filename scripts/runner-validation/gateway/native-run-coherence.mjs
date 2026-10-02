@@ -315,6 +315,7 @@ try {
       release: { kind: 'resource', resource_id: 'owned-server', action: 'shutdown' },
     },
   };
+  providers['rollback-parent'] = { ...providers['owned-server'], dependencies: ['app'] };
   const serverCommand = (action) =>
     `NATIVE_COHERENCE_CONFIG='${configFile}' '${executable}' --server-${action} owned-server.pid`;
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -1266,6 +1267,7 @@ try {
       check,
       executable,
       configFile,
+      temporary,
     });
   if (reconcileHeld) {
     const held = JSON.parse(readFileSync(statusFile, 'utf8')).slots.filter(

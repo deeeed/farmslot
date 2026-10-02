@@ -7,10 +7,12 @@ import path from 'node:path';
 const acquire = (rpc, fixture) =>
   rpc('runtime.capability.acquire', {
     slotId: fixture.slotId,
-    capabilityId: 'owned-server',
+    capabilityId:
+      fixture.fault === 'capture-retained-provider' ? 'rollback-parent' : 'owned-server',
     ownerRunId: fixture.runId,
     proofRequirement: {
-      capabilityId: 'owned-server',
+      capabilityId:
+        fixture.fault === 'capture-retained-provider' ? 'rollback-parent' : 'owned-server',
       reason: 'Provider ownership recovery proof',
       mode: 'state',
     },
@@ -26,6 +28,7 @@ export async function proveProviderRecovery({
   check,
   executable,
   configFile,
+  temporary,
 }) {
   for (const fixture of fixtures.filter((item) =>
     [
@@ -34,6 +37,7 @@ export async function proveProviderRecovery({
       'child-provider',
       'metadata-provider',
       'capture-provider',
+      'capture-retained-provider',
       'cycle-provider',
       'compact-provider',
     ].includes(item.fault),
@@ -44,11 +48,54 @@ export async function proveProviderRecovery({
     try {
       result = acquire(rpc, fixture);
     } catch (error) {
-      if (fixture.fault !== 'capture-provider') throw error;
+      if (!['capture-provider', 'capture-retained-provider'].includes(fixture.fault)) throw error;
       assert.match(String(error), /Fixture identity capture failed/);
       result = { ok: false };
     }
     const pid = Number(readFileSync(`${pidFile}.created`, 'utf8'));
+    if (fixture.fault === 'capture-retained-provider') {
+      assert.equal(result.ok, false);
+      const leases = rpc('runtime.capability.status', { slotId: fixture.slotId }).leases;
+      assert.equal(leases.find((lease) => lease.capabilityId === 'rollback-parent').state, 'error');
+      for (const id of ['app', 'dep'])
+        assert.equal(
+          leases.find((lease) => lease.capabilityId === id).state,
+          'acquired',
+          'Failed rollback must retain the dependency chain',
+        );
+      process.kill(pid, 0);
+      writeFileSync(path.join(temporary, 'rollback-cleanup-allowed'), 'operator retry');
+      assert.equal(
+        rpc('runtime.capability.release', {
+          slotId: fixture.slotId,
+          ownerRunId: fixture.runId,
+          keepWarm: false,
+        }).ok,
+        true,
+      );
+      assert.ok(
+        rpc('runtime.capability.status', { slotId: fixture.slotId }).leases.every(
+          (lease) => lease.state === 'released',
+        ),
+      );
+      await wait(
+        () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (error) {
+            if (error.code === 'ESRCH') return false;
+            throw error;
+          }
+        },
+        (alive) => !alive,
+        'explicit retry stops retained parent before releasing dependencies',
+      );
+      check(
+        'failed acquisition rollback preserves the dependency chain until explicit cleanup succeeds',
+      );
+      continue;
+    }
     if (fixture.fault === 'capture-provider') {
       assert.equal(result.ok, false);
       assert.ok(
