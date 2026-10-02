@@ -1,0 +1,33 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Greet a guest and the host",
+  "description": "Compose greet twice: once for the guest passed in, once for a fixed host.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "guest": { "type": "string", "description": "Guest to greet first." }
+    },
+    "required": ["guest"]
+  },
+  "workflow": {
+    "entry": "greet-guest",
+    "nodes": {
+      "greet-guest": {
+        "action": "call",
+        "ref": "greet",
+        "intent": "Greet the guest",
+        "params": { "name": "{{params.guest}}" },
+        "next": "greet-host"
+      },
+      "greet-host": {
+        "action": "call",
+        "ref": "greet",
+        "intent": "Greet the host",
+        "params": { "name": "host" },
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

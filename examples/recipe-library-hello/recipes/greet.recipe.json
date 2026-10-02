@@ -1,0 +1,31 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Greet someone",
+  "description": "Print a greeting for one name and prove it was printed.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": { "type": "string", "default": "world", "description": "Who to greet." }
+    }
+  },
+  "workflow": {
+    "entry": "say",
+    "nodes": {
+      "say": {
+        "action": "command",
+        "intent": "Print the greeting for {{params.name}}",
+        "cmd": "echo 'Hello, {{params.name}}!'",
+        "next": "check"
+      },
+      "check": {
+        "action": "assert_output",
+        "intent": "Prove the greeting names {{params.name}}",
+        "source": "say",
+        "contains": "Hello, {{params.name}}!",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

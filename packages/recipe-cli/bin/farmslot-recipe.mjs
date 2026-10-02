@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { runRecipeHarnessCli } from '../dist/cli/index.js';
+import { runRecipeCli } from '../dist/cli.js';
 
 try {
-  await runRecipeHarnessCli(process.argv.slice(2));
+  await runRecipeCli(process.argv.slice(2));
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(message);

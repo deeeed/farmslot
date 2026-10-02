@@ -1,0 +1,4 @@
+{
+  "platforms": ["web"],
+  "requires": { "@farmslot/recipe-cli": ">=0.1.0" }
+}

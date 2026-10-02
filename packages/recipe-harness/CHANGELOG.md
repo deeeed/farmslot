@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Recognize custom recipe adapter folders from the active adapter or a library's platform manifest. Preserve built-in adapters and qualified custom references across library precedence.
+- Move the `farmslot-recipe` bin to `@farmslot/recipe-cli`. `recipe-library.json` keys are all optional and gain `adapters`, `actions` and `requires`; a `--library` entry replaces the `RECIPE_LIBRARY_PATH` entry with the same name; `run` records each library's content digest in its provenance. Export the library manifest reader, library digest, platform list, workflow graph and parameter resolution helpers for discovery tools.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

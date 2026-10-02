@@ -46,7 +46,13 @@ export interface RecipeLibrarySource {
   root: string;
   /** Trust comes from caller configuration, never from library contents. */
   provenance?: RecipeSourceProvenance;
+  /** Where the entry was configured: --library flag, RECIPE_LIBRARY_PATH, the personal default, or task-local. */
+  origin?: RecipeLibraryOrigin;
+  /** Root of the RECIPE_LIBRARY_PATH entry with the same name that a --library flag replaced. */
+  overrides?: string;
 }
+
+export type RecipeLibraryOrigin = 'flag' | 'env' | 'default' | 'task';
 
 export interface LoadedRecipeLibrarySource {
   name: string;

@@ -6,11 +6,13 @@ import { test } from 'node:test';
 
 import { writeJsonFile } from '../src/core/json.js';
 import {
+  listRecipeLibraryPlatforms,
   loadRecipeLibraries,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
+import { digestRecipeLibrary, readRecipeLibraryManifest } from '../src/core/library-manifest.js';
 import { RecipeResolutionError } from '../src/core/resolution-error.js';
 
 const terminalRecipe = (title: string) => ({
@@ -99,10 +101,73 @@ test('parses ordered library sources and resolves the personal default', async (
       env: { RECIPE_LIBRARY_PATH: 'personal=/tmp/personal' },
     }),
     [
-      { name: 'team', root: '/tmp/team' },
-      { name: 'personal', root: '/tmp/personal' },
+      { name: 'team', root: '/tmp/team', origin: 'flag' },
+      { name: 'personal', root: '/tmp/personal', origin: 'env' },
     ],
   );
+});
+
+test('a --library entry replaces the RECIPE_LIBRARY_PATH entry with the same name', async () => {
+  assert.deepEqual(
+    await resolveRecipeLibrarySources({
+      cliEntries: ['team=/tmp/team-local'],
+      env: { RECIPE_LIBRARY_PATH: 'team=/tmp/team:other=/tmp/other' },
+    }),
+    [
+      { name: 'team', root: '/tmp/team-local', origin: 'flag', overrides: '/tmp/team' },
+      { name: 'other', root: '/tmp/other', origin: 'env' },
+    ],
+  );
+});
+
+test('recipe-library.json keys are optional and declared paths stay inside the library', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-manifest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('Generic') });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {});
+  assert.deepEqual(await readRecipeLibraryManifest(root), {});
+  assert.equal((await loadRecipeLibraries([{ root }])).recipes.has('smoke'), true);
+
+  await mkdir(path.join(root, 'plugins'), { recursive: true });
+  await writeFile(path.join(root, 'plugins', 'web.mjs'), 'export default {};\n');
+  await writeJsonFile(path.join(root, 'actions.json'), { actions: {} });
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    platforms: ['web'],
+    adapters: { web: { module: './plugins/web.mjs', extends: 'browser' } },
+    actions: { shared: 'actions.json' },
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+    review: { ignored: true },
+  });
+  assert.deepEqual(await readRecipeLibraryManifest(root), {
+    platforms: ['web'],
+    adapters: { web: { module: './plugins/web.mjs', extends: 'browser' } },
+    actions: { shared: 'actions.json' },
+    requires: { '@farmslot/recipe-cli': '>=0.1.0' },
+  });
+  assert.deepEqual(await listRecipeLibraryPlatforms(root), ['core', 'extension', 'mobile', 'web']);
+
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    actions: { shared: '../outside.json' },
+  });
+  await writeJsonFile(path.join(path.dirname(root), 'outside.json'), {});
+  t.after(() => rm(path.join(path.dirname(root), 'outside.json'), { force: true }));
+  await assert.rejects(readRecipeLibraryManifest(root), /resolves outside its library root/u);
+
+  await writeJsonFile(path.join(root, 'recipe-library.json'), { requires: { x: 'not a range' } });
+  await assert.rejects(readRecipeLibraryManifest(root), /must be a semver range/u);
+});
+
+test('library digests cover recipes, manifests and actions only', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-digest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('One') });
+  const first = await digestRecipeLibrary(root);
+  assert.match(first, /^sha256:[a-f0-9]{64}$/u);
+  await mkdir(path.join(root, 'docs'), { recursive: true });
+  await writeFile(path.join(root, 'docs', 'notes.md'), 'not part of the digest\n');
+  assert.equal(await digestRecipeLibrary(root), first);
+  await writeJsonFile(path.join(root, 'recipes', 'smoke.recipe.json'), terminalRecipe('Two'));
+  assert.notEqual(await digestRecipeLibrary(root), first);
 });
 
 test('places an adjacent task recipe library before configured sources', async () => {
@@ -120,9 +185,10 @@ test('places an adjacent task recipe library before configured sources', async (
       {
         name: 'task-local',
         root: taskLibrary,
+        origin: 'task',
         provenance: { kind: 'task', trust: 'unknown', name: 'task-local' },
       },
-      { name: 'team', root: '/tmp/team' },
+      { name: 'team', root: '/tmp/team', origin: 'flag' },
     ]);
 
     const snapshotSources = await resolveRecipeLibrarySources({

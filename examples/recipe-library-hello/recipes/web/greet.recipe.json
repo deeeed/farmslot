@@ -1,0 +1,24 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Greet someone in the web app",
+  "description": "Web variant of greet: wave in the app instead of printing.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": { "type": "string", "default": "world", "description": "Who to greet." }
+    }
+  },
+  "workflow": {
+    "entry": "wave",
+    "nodes": {
+      "wave": {
+        "action": "hello.wave",
+        "intent": "Wave at {{params.name}} in the web app",
+        "name": "{{params.name}}",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

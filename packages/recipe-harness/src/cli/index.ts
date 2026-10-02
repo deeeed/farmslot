@@ -9,14 +9,17 @@ import { registerValidateCommand } from './validate-command.js';
 
 export interface RecipeHarnessCliOptions {
   commandName?: string;
+  description?: string;
+  /** Version printed by --version; a host CLI reports its own. */
+  version?: string;
 }
 
 export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}): Command {
   const program = new Command();
   program
     .name(options.commandName ?? 'farmslot-recipe')
-    .description('Farmslot v1 recipe harness CLI')
-    .version(RECIPE_HARNESS_VERSION);
+    .description(options.description ?? 'Farmslot v1 recipe harness CLI')
+    .version(options.version ?? RECIPE_HARNESS_VERSION);
 
   registerValidateCommand(program);
   registerRunCommand(program);

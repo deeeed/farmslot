@@ -28,6 +28,8 @@ farmslot-recipe run --list --adapter <adapter> --json
 farmslot-recipe run <recipe> --describe --adapter <adapter> --json
 ```
 
+For library-wide discovery (actions, variants, call graphs, search), see [Recipe discovery](./recipe-discovery.md).
+
 List output stays compact and exact recipe detail expands only when requested. Action discovery belongs to the project runner because manifests and adapters are project-owned.
 
 ## Execution

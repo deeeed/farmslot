@@ -13,6 +13,7 @@ import {
   type ResolvedLibraryRecipe,
   resolveRecipeLibrarySources,
 } from '../core/library.js';
+import { digestRecipeLibrary, readRecipeLibraryManifest } from '../core/library-manifest.js';
 import { createRecipeRunner } from '../core/runner.js';
 import { resolveRecipeTrustInput } from '../core/trust-input.js';
 import type { RecipeVideoRecordingOptions } from '../core/types.js';
@@ -103,15 +104,23 @@ export function registerRunCommand(program: Command): void {
               adapter: options.adapter,
             });
           }
-          librarySources = librarySources.map((source) => ({
-            ...source,
-            provenance: source.provenance ?? {
-              kind: 'library' as const,
-              trust: 'unknown' as const,
-              name: source.name,
-              path: source.root,
-            },
-          }));
+          librarySources = await Promise.all(
+            librarySources.map(async (source) => ({
+              ...source,
+              provenance: {
+                ...(source.provenance ?? {
+                  kind: 'library' as const,
+                  trust: 'unknown' as const,
+                  name: source.name,
+                  path: source.root,
+                }),
+                digest: await digestRecipeLibrary(
+                  source.root,
+                  await readRecipeLibraryManifest(source.root),
+                ),
+              },
+            })),
+          );
           if (options.list) {
             printRecipeList(library.recipes, options.json === true);
             return;
