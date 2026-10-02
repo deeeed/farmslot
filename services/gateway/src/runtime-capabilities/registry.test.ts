@@ -1155,6 +1155,10 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
     releaseSlowAcquire = resolve;
   });
   let gateArmed = true;
+  let signalAcquireStarted = (): void => {};
+  const acquireStarted = new Promise<void>((resolve) => {
+    signalAcquireStarted = resolve;
+  });
   const { registry, actions } = await fixture(
     t,
     [entry('ios-simulator', 'exclusive', ['companion-metro']), entry('companion-metro')],
@@ -1166,6 +1170,7 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
           action.actionId === 'ios-simulator.acquire'
         ) {
           gateArmed = false;
+          signalAcquireStarted();
           await slowAcquire;
         }
         return { ok: true };
@@ -1175,7 +1180,7 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
 
   const acquiring = acquire(registry, 'ios-simulator', 'run-a', 'fam-a');
   // Let the acquire reach its slow provider action.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await acquireStarted;
 
   // Terminal cleanup starts while the acquire is still running.
   const terminal = registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
@@ -1745,6 +1750,26 @@ test('stopWarmProviders reports a cleanup failure instead of claiming stopped', 
   ]);
   const status = await registry.status({ slotId: SLOT });
   assert.equal(status.leases[0]?.cleanupFailure, 'metro shutdown exited 1');
+});
+
+test('explicit warm cleanup retries and clears a settled failure', async (t) => {
+  let blocked = true;
+  const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'app.release' && blocked
+        ? { ok: false, detail: 'Ownership is unconfirmed' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'app', 'owner')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: true });
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).failures.length, 1);
+  blocked = false;
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).released.length, 1);
+  const lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.state, 'released');
+  assert.equal(lease.cleanupFailure, undefined);
+  assert.equal(lease.providerCleanupDeferred, undefined);
+  assert.equal((await acquire(registry, 'app', 'next-owner')).ok, true);
 });
 
 test('a failed warm cleanup keeps the dependency it still holds', async (t) => {

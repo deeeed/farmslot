@@ -17,6 +17,13 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --legacy",
         "timeout_ms": 360000,
         "intent": "Reload a fixture host from a legacy journal, prove ordinary recovery refuses unknown descendants, then explicitly attest stop and resume the exact conversation.",
+        "next": "kernel-reuse"
+      },
+      "kernel-reuse": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --kernel-reuse",
+        "timeout_ms": 300000,
+        "intent": "Reload a stopped worker journal whose PID now names a real foreign process, verify the recorded kernel birth proves reuse, and recover without signalling that current owner.",
         "next": "real-adoption"
       },
       "adapters": {
@@ -31,6 +38,20 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --guards-only",
         "timeout_ms": 240000,
         "intent": "Prove historical and unsupported-pane preservation, foreign handoff protection, failure settlement despite notification errors, and boot/cleanup process identity boundaries through gateway RPCs.",
+        "next": "provider-recovery"
+      },
+      "provider-recovery": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --provider-recovery",
+        "timeout_ms": 300000,
+        "intent": "Prove legacy and out-of-band provider recovery through explicit operator endpoints, child lease attribution, and identity-preserving rollback when boot metadata fails.",
+        "next": "held-reconcile"
+      },
+      "held-reconcile": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --reconcile-held",
+        "timeout_ms": 300000,
+        "intent": "Restart only the disposable gateway with reconciliation enabled and prove foreign workspace holds survive startup and a real periodic tick.",
         "next": "generation-guard"
       },
       "generation-guard": {
@@ -38,12 +59,26 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --guards-only --real-adoption --generation-guard",
         "timeout_ms": 360000,
         "intent": "Change the stored generation during verified stopping of a real saved conversation; prove the frozen ownership fence refuses exit and preserves its live process.",
+        "next": "queued-receipt"
+      },
+      "queued-receipt": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --queued-close",
+        "timeout_ms": 300000,
+        "intent": "Queue steering during a busy task, close its worker before submission, and assert the interrupted receipt remains readable through the task-scoped gateway endpoint.",
+        "next": "authored-contract"
+      },
+      "authored-contract": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --missing-contract",
+        "timeout_ms": 300000,
+        "intent": "Dispatch an authored task whose terminal contract is missing, reconstruct the runtime through the gateway, and preserve its authored report and learning paths.",
         "next": "controls"
       },
       "controls": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/native-coherence-controls.mjs",
-        "timeout_ms": 900000,
+        "timeout_ms": 1200000,
         "intent": "Disable each repaired path only in a disposable child and require both a mutation receipt and failure of the intended claim.",
         "next": "done"
       },

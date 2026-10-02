@@ -37,6 +37,7 @@ import {
   proveRecoveryHint,
   proveSharedCleanup,
 } from './native-coherence-browser.mjs';
+import { proveProviderRecovery } from './native-provider-recovery.mjs';
 import { prepareRealAdoption, proveRealAdoption } from './native-real-adoption.mjs';
 
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -65,6 +66,7 @@ const configFile = path.join(temporary, 'mode.json');
 const bin = path.join(temporary, 'bin');
 let gateway;
 let ui;
+let kernelForeign;
 let logFd;
 let runId;
 let env;
@@ -72,10 +74,16 @@ let runtimeOriginal;
 let uiRoute;
 const withUi = process.argv.includes('--ui');
 const legacy = process.argv.includes('--legacy');
+const kernelReuse = process.argv.includes('--kernel-reuse');
 const realAdoption = process.argv.includes('--real-adoption');
+const providerRecovery = process.argv.includes('--provider-recovery');
+const reconcileHeld = process.argv.includes('--reconcile-held');
+const queuedClose = process.argv.includes('--queued-close');
+const missingContract = process.argv.includes('--missing-contract');
 const generationGuard = process.argv.includes('--generation-guard');
-const guardsOnly = process.argv.includes('--guards-only');
-const providersOnly = process.argv.includes('--providers-only') || realAdoption || guardsOnly;
+const guardsOnly = process.argv.includes('--guards-only') || providerRecovery;
+const providersOnly =
+  process.argv.includes('--providers-only') || realAdoption || guardsOnly || reconcileHeld;
 let realFixture;
 let cleanupGuards = [];
 let taskParams;
@@ -180,6 +188,29 @@ async function freePort() {
   const port = server.address().port;
   await new Promise((resolve) => server.close(resolve));
   return port;
+}
+
+async function restartGateway(mutate) {
+  const exited = once(gateway, 'exit');
+  gateway.kill('SIGTERM');
+  await exited;
+  await mutate?.();
+  gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
+    cwd: sourceRoot,
+    env,
+    stdio: ['ignore', logFd, logFd],
+  });
+  const deadline = Date.now() + 120000;
+  while (true) {
+    assert.equal(gateway.exitCode, null, 'isolated gateway exited during recovery restart');
+    try {
+      if ((await fetch(env.FARMSLOT_GATEWAY.replace('ws://', 'http://') + '/health')).ok) break;
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+    }
+    assert.ok(Date.now() < deadline, 'restarted isolated gateway must start');
+    await delay(250);
+  }
 }
 function gitInit(directory) {
   mkdirSync(directory, { recursive: true });
@@ -320,9 +351,13 @@ try {
       },
     },
     worker_terminal: {
-      complete: {
-        report: 'artifacts/configured-report.md',
-        artifacts: ['artifacts/configured-report.md', 'artifacts/learnings.md'],
+      flows: {
+        dev: {
+          complete: {
+            report: 'artifacts/configured-report.md',
+            artifacts: ['artifacts/configured-report.md', 'artifacts/learnings.md'],
+          },
+        },
       },
     },
   });
@@ -481,6 +516,10 @@ try {
       (file) => [file, readFileSync(path.join(runtimeTaskDir, file), 'utf8')],
     ),
   );
+  if (missingContract) {
+    rmSync(path.join(runtimeTaskDir, 'inputs/worker-terminal-contract.json'));
+    delete runtimeOriginal['inputs/worker-terminal-contract.json'];
+  }
   writeJson(path.join(root, '.runs', `${forceRunId}.json`), {
     id: forceRunId,
     project,
@@ -715,7 +754,16 @@ try {
       );
       assert.match(run.error, /Native runner exited/);
       assert.match(rpc('run.get', { runId }).recoveryHints.join(' '), /farmslot decision resolve/);
-      if (legacy) {
+      if (legacy || kernelReuse) {
+        if (kernelReuse) {
+          await delay(2100);
+          kernelForeign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+            cwd: temporary,
+            detached: true,
+            stdio: 'ignore',
+          });
+          assert.ok(kernelForeign.pid);
+        }
         const host = JSON.parse(readFileSync(path.join(temporary, 'native/host.json'), 'utf8'));
         assert.ok(
           matchesProcess(host.pid, path.join(temporary, 'native')),
@@ -734,11 +782,22 @@ try {
           .filter(Boolean)
           .map((line) => {
             const entry = JSON.parse(line);
-            delete entry.processes;
-            delete entry.processesAdded;
+            if (kernelReuse) {
+              for (const key of ['processes', 'processesAdded'])
+                for (const frame of entry[key] ?? []) {
+                  if (frame.pid === snapshot.session.processPid) frame.pid = kernelForeign.pid;
+                  if (frame.parent === snapshot.session.processPid)
+                    frame.parent = kernelForeign.pid;
+                  if (frame.group === snapshot.session.processPid) frame.group = kernelForeign.pid;
+                }
+            } else {
+              delete entry.processes;
+              delete entry.processesAdded;
+            }
             if (entry.info) {
               entry.info.state = 'failed';
               entry.info.processStopped = false;
+              if (kernelReuse) entry.info.processPid = kernelForeign.pid;
               delete entry.info.processStopReason;
             }
             return entry;
@@ -746,11 +805,20 @@ try {
         writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
         assert.equal(
           rpc('native.session.read', target()).session.processStopped,
-          false,
-          'legacy cleanup remains unconfirmed without operator attestation',
+          kernelReuse,
+          kernelReuse
+            ? 'Kernel birth evidence must distinguish the reused process group'
+            : 'legacy cleanup remains unconfirmed without operator attestation',
         );
-        assert.throws(() => rpc('run.resume', { runId }), /cleanup is unconfirmed/);
-        check('legacy cleanup requires explicit descendant confirmation');
+        if (kernelReuse) {
+          assert.ok(alive(kernelForeign.pid), 'The foreign reused group must remain alive');
+          check(
+            'recorded kernel birth distinguishes a reused group without signalling its current owner',
+          );
+        } else {
+          assert.throws(() => rpc('run.resume', { runId }), /cleanup is unconfirmed/);
+          check('legacy cleanup requires explicit descendant confirmation');
+        }
       }
       if (withUi) {
         mkdirSync(outDir, { recursive: true });
@@ -840,106 +908,131 @@ try {
         1,
       );
       check('busy send queues and delivers once');
-      rpc('run.pause', { runId });
-      assert.throws(
-        () => rpc('run.adopt', { runId, tmux: externalSession }),
-        /Another live native worker owns/,
-      );
-      check('adoption refuses a live native owner');
-      snapshot = rpc('native.session.read', target());
-      assert.ok(
-        matchesProcess(snapshot.session.processPid, executable),
-        'fixture process identity must match before signalling',
-      );
-      process.kill(snapshot.session.processPid, 'SIGTERM');
-      await wait(
-        () => rpc('native.session.read', target()),
-        (value) => value.session.processStopped,
-        'crashed worker stopped before adoption',
-      );
-      assert.ok(
-        !get().agentContexts.find((item) => item.id === context.id).nativeSession.closedAt,
-        'adoption starts from a crashed, unclosed gateway binding',
-      );
-      mode({ mode: 'external-hold' });
-      execFileSync('tmux', [
-        'new-session',
-        '-d',
-        '-s',
-        wrongSession,
-        '-c',
-        repo,
-        `env CLAUDE_CONFIG_DIR='${env.CLAUDE_CONFIG_DIR}' NATIVE_COHERENCE_CONFIG='${configFile}' '${executable}' --resume '${randomUUID()}' --append-system-prompt '--resume ${context.runnerSessionId}'`,
-      ]);
-      await wait(
-        () => existsSync(path.join(temporary, 'external-ready.json')),
-        Boolean,
-        'wrong-conversation worker ready',
-      );
-      assert.throws(
-        () => rpc('run.adopt', { runId, tmux: wrongSession }),
-        /Adoption requires one live worker/,
-      );
-      check('adoption refuses a different conversation with a misleading prompt argument');
-      execFileSync('tmux', ['kill-session', '-t', `=${wrongSession}`]);
-      rmSync(path.join(temporary, 'external-ready.json'));
-      execFileSync('tmux', [
-        'new-session',
-        '-d',
-        '-s',
-        externalSession,
-        '-c',
-        repo,
-        `env CLAUDE_CONFIG_DIR='${env.CLAUDE_CONFIG_DIR}' NATIVE_COHERENCE_CONFIG='${configFile}' '${executable}' --resume '${context.runnerSessionId}'`,
-      ]);
-      await wait(
-        () => existsSync(path.join(temporary, 'external-ready.json')),
-        Boolean,
-        'external worker ready',
-      );
-      const external = JSON.parse(
-        readFileSync(path.join(temporary, 'external-ready.json'), 'utf8'),
-      );
-      const openFiles = execFileSync('lsof', ['-a', '-p', String(external.pid), '-Fn'], {
-        encoding: 'utf8',
-      });
-      assert.ok(
-        !openFiles.split('\n').includes(`n${external.transcript}`),
-        'resumed worker must not require an open transcript handle',
-      );
-      rpc('run.adopt', { runId, tmux: externalSession });
-      run = get();
-      assert.equal(run.transport, 'tmux');
-      assert.equal(run.status, 'monitoring');
-      assert.equal(
-        run.agentContexts.find((item) => item.id === context.id).runnerSessionId,
-        context.runnerSessionId,
-      );
-      check('external recovery adopted');
-      mode({ mode: 'external-complete' });
-      run = await wait(
-        get,
-        (value) =>
-          value.steps.find((step) => step.name === 'monitor')?.outputs?.awaitingOperator === true ||
-          value.agentContexts.find((item) => item.id === context.id).status === 'done' ||
-          value.status === 'human-gating' ||
-          value.status === 'done',
-        'adopted signal completion',
-      );
-      assert.equal(
-        JSON.parse(readFileSync(path.join(repo, '.task/dev/COHERENCE-1/SIGNAL.json'), 'utf8'))
-          .outcome,
-        'success',
-      );
-      check('adopted task completes through mark and SIGNAL');
-      const completed = rpc(Methods.RUN_INTERACTIVE_DEV_RESOLVE, {
-        runId,
-        action: 'done-no-pr',
-        reason: 'Isolated task completion proof',
-      });
-      assert.equal(completed.ok, true);
-      assert.equal(get().status, 'done');
-      check('adopted task closes through the normal operator action');
+      if (queuedClose) {
+        mode({ holdMs: 45000 });
+        rpc('native.session.send', { ...target(), commandId: 'receipt-hold', text: 'hold-turn' });
+        const pending = rpc('native.session.send', {
+          ...target(),
+          commandId: 'receipt-cancelled',
+          text: 'unsubmitted steering',
+        });
+        assert.equal(pending.queued, true);
+        rpc('native.session.close', target());
+        const closed = rpc('native.session.read', target());
+        const receipt = closed.commands.find(
+          (command) => command.commandId === 'receipt-cancelled',
+        );
+        assert.equal(
+          receipt?.outcome,
+          'interrupted',
+          'Cancelled queued receipt must remain visible to its task lease',
+        );
+        assert.equal(receipt.submitted, false);
+        check('cancelled unsubmitted steering remains visible in task-scoped gateway reads');
+        rpc('run.cancel', { runId });
+      } else {
+        rpc('run.pause', { runId });
+        assert.throws(
+          () => rpc('run.adopt', { runId, tmux: externalSession }),
+          /Another live native worker owns/,
+        );
+        check('adoption refuses a live native owner');
+        snapshot = rpc('native.session.read', target());
+        assert.ok(
+          matchesProcess(snapshot.session.processPid, executable),
+          'fixture process identity must match before signalling',
+        );
+        process.kill(snapshot.session.processPid, 'SIGTERM');
+        await wait(
+          () => rpc('native.session.read', target()),
+          (value) => value.session.processStopped,
+          'crashed worker stopped before adoption',
+        );
+        assert.ok(
+          !get().agentContexts.find((item) => item.id === context.id).nativeSession.closedAt,
+          'adoption starts from a crashed, unclosed gateway binding',
+        );
+        mode({ mode: 'external-hold' });
+        execFileSync('tmux', [
+          'new-session',
+          '-d',
+          '-s',
+          wrongSession,
+          '-c',
+          repo,
+          `env CLAUDE_CONFIG_DIR='${env.CLAUDE_CONFIG_DIR}' NATIVE_COHERENCE_CONFIG='${configFile}' '${executable}' --resume '${randomUUID()}' --append-system-prompt '--resume ${context.runnerSessionId}'`,
+        ]);
+        await wait(
+          () => existsSync(path.join(temporary, 'external-ready.json')),
+          Boolean,
+          'wrong-conversation worker ready',
+        );
+        assert.throws(
+          () => rpc('run.adopt', { runId, tmux: wrongSession }),
+          /Adoption requires one live worker/,
+        );
+        check('adoption refuses a different conversation with a misleading prompt argument');
+        execFileSync('tmux', ['kill-session', '-t', `=${wrongSession}`]);
+        rmSync(path.join(temporary, 'external-ready.json'));
+        execFileSync('tmux', [
+          'new-session',
+          '-d',
+          '-s',
+          externalSession,
+          '-c',
+          repo,
+          `env CLAUDE_CONFIG_DIR='${env.CLAUDE_CONFIG_DIR}' NATIVE_COHERENCE_CONFIG='${configFile}' '${executable}' --resume '${context.runnerSessionId}'`,
+        ]);
+        await wait(
+          () => existsSync(path.join(temporary, 'external-ready.json')),
+          Boolean,
+          'external worker ready',
+        );
+        const external = JSON.parse(
+          readFileSync(path.join(temporary, 'external-ready.json'), 'utf8'),
+        );
+        const openFiles = execFileSync('lsof', ['-a', '-p', String(external.pid), '-Fn'], {
+          encoding: 'utf8',
+        });
+        assert.ok(
+          !openFiles.split('\n').includes(`n${external.transcript}`),
+          'resumed worker must not require an open transcript handle',
+        );
+        rpc('run.adopt', { runId, tmux: externalSession });
+        run = get();
+        assert.equal(run.transport, 'tmux');
+        assert.equal(run.status, 'monitoring');
+        assert.equal(
+          run.agentContexts.find((item) => item.id === context.id).runnerSessionId,
+          context.runnerSessionId,
+        );
+        check('external recovery adopted');
+        mode({ mode: 'external-complete' });
+        run = await wait(
+          get,
+          (value) =>
+            value.steps.find((step) => step.name === 'monitor')?.outputs?.awaitingOperator ===
+              true ||
+            value.agentContexts.find((item) => item.id === context.id).status === 'done' ||
+            value.status === 'human-gating' ||
+            value.status === 'done',
+          'adopted signal completion',
+        );
+        assert.equal(
+          JSON.parse(readFileSync(path.join(repo, '.task/dev/COHERENCE-1/SIGNAL.json'), 'utf8'))
+            .outcome,
+          'success',
+        );
+        check('adopted task completes through mark and SIGNAL');
+        const completed = rpc(Methods.RUN_INTERACTIVE_DEV_RESOLVE, {
+          runId,
+          action: 'done-no-pr',
+          reason: 'Isolated task completion proof',
+        });
+        assert.equal(completed.ok, true);
+        assert.equal(get().status, 'done');
+        check('adopted task closes through the normal operator action');
+      }
     }
     execFileSync('tmux', [
       'new-session',
@@ -1131,6 +1224,19 @@ try {
           contents,
           `Authored ${file} must survive runtime initialization`,
         );
+      if (missingContract) {
+        const handoff = JSON.parse(runtimeOriginal['inputs/handoff.json']);
+        const contract = JSON.parse(
+          readFileSync(path.join(runtimeTaskDir, 'inputs/worker-terminal-contract.json'), 'utf8'),
+        );
+        assert.equal(
+          contract.commands.complete.report,
+          handoff.report,
+          'Missing contract must retain the authored handoff report path',
+        );
+        assert.ok(contract.commands.complete.artifacts.includes(handoff.learnings));
+        check('authored handoff report survives reconstruction of a missing terminal contract');
+      }
       rpc('run.cancel', { runId: runtimeRunId });
       check('tmux pre-written runtime preserves the authored task and checklist');
       assert.ok(
@@ -1149,6 +1255,42 @@ try {
     configFile,
     temporary,
   });
+  if (providerRecovery)
+    await proveProviderRecovery({
+      fixtures: cleanupGuards,
+      rpc,
+      restartGateway,
+      capabilityFile: env.FARMSLOT_CAPABILITY_STORE_FILE,
+      readStatus: () => JSON.parse(readFileSync(statusFile, 'utf8')),
+      wait,
+      check,
+      executable,
+      configFile,
+    });
+  if (reconcileHeld) {
+    const held = JSON.parse(readFileSync(statusFile, 'utf8')).slots.filter(
+      (slot) => slot.lifecycle === 'held' && slot.phase === 'occupied',
+    );
+    assert.ok(held.length, 'Occupied fixtures must exist before reconciliation');
+    env.FARMSLOT_DISABLE_ORCHESTRATION = '0';
+    env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    await restartGateway();
+    await delay(65000);
+    const after = JSON.parse(readFileSync(statusFile, 'utf8')).slots;
+    for (const before of held) {
+      const slot = after.find((row) => row.slot === before.slot);
+      assert.equal(slot.lifecycle, 'held', 'Reconciliation must preserve occupied holds');
+      assert.equal(slot.phase, 'occupied');
+      assert.equal(slot.held_reason, before.held_reason);
+    }
+    const log = readFileSync(path.join(temporary, 'gateway.log'), 'utf8');
+    assert.ok(
+      log.split(`${held[0].slot} remains held for workspace occupants`).length >= 3,
+      'Startup and periodic reconciliation must both inspect the hold',
+    );
+    execFileSync('tmux', ['has-session', '-t', `=${foreignSession}`]);
+    check('occupied workspace protection survives gateway restart and a real reconciliation tick');
+  }
   if (realFixture)
     await proveRealAdoption({ fixture: realFixture, rpc, wait, check, generationGuard, temporary });
   console.log(JSON.stringify({ passed: true, checks }, null, 2));
@@ -1171,6 +1313,11 @@ try {
 }
 
 async function cleanupFixture() {
+  if (kernelForeign && kernelForeign.exitCode === null) {
+    const exited = once(kernelForeign, 'exit');
+    kernelForeign.kill('SIGTERM');
+    await exited;
+  }
   if (withUi && env?.FARMSLOT_UI_URL && runId) {
     try {
       cdp('close', uiRoute);

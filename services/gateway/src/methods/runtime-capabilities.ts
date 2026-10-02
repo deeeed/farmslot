@@ -262,6 +262,7 @@ async function runProviderAction(
   ref: RuntimeCapabilityProviderActionRef,
   parameters: Record<string, unknown>,
   declaredParameters: readonly string[],
+  ownerRunId?: string,
 ): Promise<RuntimeCapabilityActionResult> {
   const target = deviceTargetExtraVars(parameters, declaredParameters);
   if (!target.ok) return { ok: false, detail: target.reason };
@@ -298,7 +299,7 @@ async function runProviderAction(
       detail: `${ref.resourceId} is ${resource.status}`,
     };
   }
-  return executeResourceControl(slotId, ref.resourceId, ref.action, extraVars);
+  return executeResourceControl(slotId, ref.resourceId, ref.action, extraVars, ownerRunId);
 }
 
 /**

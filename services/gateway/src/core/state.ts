@@ -405,9 +405,17 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // fires the reset listeners only when the write actually applied, which is
   // what a separate pre-write loop got wrong — it ended warm reviewer sessions
   // for a reset that was then refused.
-  const applied = await resetSlotIf(slotId, (slot) => slot.phase !== SLOT_PHASE_RELEASING, warm);
+  const applied = await resetSlotIf(
+    slotId,
+    (slot) =>
+      slot.phase !== SLOT_PHASE_RELEASING &&
+      !(slot.lifecycle === 'held' && slot.phase === 'occupied'),
+    warm,
+  );
   if (!applied) {
-    console.log(`[state] slot ${slotId} is mid-release; leaving the reset to that teardown`);
+    console.log(
+      `[state] slot ${slotId} has protected cleanup or occupancy; leaving its state intact`,
+    );
   }
 }
 

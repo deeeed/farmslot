@@ -18,6 +18,7 @@ import {
   type ResourceWatchProvider,
   type ResourceWatchSetEnabledResult,
   type ResourceWatchType,
+  type RuntimeCapabilityLease,
   type SlotResource,
   type SlotStatus,
 } from '@farmslot/protocol';
@@ -1287,7 +1288,12 @@ export async function executeResourceControl(
    * to the leased device before falling back to the slot's configured one.
    */
   extraVars?: Record<string, string>,
-): Promise<{ ok: boolean; detail?: string }> {
+  ownerRunId?: string,
+): Promise<{
+  ok: boolean;
+  detail?: string;
+  providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+}> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
     return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
@@ -1341,7 +1347,11 @@ export async function executeResourceControl(
 
   // Execute via agent for remote machines, locally otherwise
   const { isLocal, machine } = await getSlotLocality(slotId);
-  let result: { ok: boolean; detail?: string };
+  let result: {
+    ok: boolean;
+    detail?: string;
+    providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+  };
 
   if (!isLocal) {
     const node = getNode(machine);
@@ -1412,7 +1422,7 @@ export async function executeResourceControl(
     // cause the gateway to write the sidecar under the gateway/node CWD while
     // the node reads `<remoteRepo>/<runtime_dir>/browser.pid.meta` — meta
     // never reaches readSidecarMeta and the stale/rollup path stays dark.
-    const runId = currentRunIdForSlot(slotId);
+    const runId = ownerRunId ?? currentRunIdForSlot(slotId);
     // Skip the sidecar entirely when the slot has no active run (keep-warm
     // boot, detached reconcile). node-side readSidecarMeta rejects any
     // sidecar whose runId is empty, so writing `runId: ''` would just leave
@@ -1441,7 +1451,17 @@ export async function executeResourceControl(
           process,
         };
         const metaPath = `${pidPath}.meta`;
-        await writeSidecarMeta(slotId, metaPath, meta);
+        try {
+          await writeSidecarMeta(slotId, metaPath, meta);
+        } catch (error) {
+          // Boot succeeded physically. Return its identity with the failed outcome
+          // so lease rollback can stop that exact process despite the missing sidecar.
+          result = {
+            ok: false,
+            detail: `Provider started but ownership metadata failed: ${error instanceof Error ? error.message : String(error)}`,
+            providerProcesses: [{ ...process, resourceId }],
+          };
+        }
       }
     }
   }

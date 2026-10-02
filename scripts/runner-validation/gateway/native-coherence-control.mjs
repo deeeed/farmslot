@@ -11,6 +11,53 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'kernel-reuse': [
+    'packages/agent-runtime/src/native/manager.ts',
+    /if \(leader && alive\(pid\) && !processIdentityAlive\(pid, leader.identity\) && alive\(pid\)\)\s*return false;/,
+    'if (false) return false;',
+  ],
+  'authored-contract': [
+    'services/gateway/src/tasks/existing-runtime.ts',
+    /withTerminalReportPath\(configuredContract, authored.report, \[authored.learnings\]\)/,
+    'configuredContract',
+  ],
+  'adapters-shadow': [
+    'packages/recipe-harness/src/core/library.ts',
+    /if \(!qualified.has\(alias\)\)/,
+    'if (!recipes.has(ref) && !qualified.has(alias))',
+  ],
+  'queued-receipt': [
+    'packages/agent-runtime/src/native/worker-history.ts',
+    /submitted.has\(command.commandId\) \|\|\s*this.commandLeases.get\(command.commandId\) === leaseId/,
+    'submitted.has(command.commandId) || (command.queued && this.commandLeases.get(command.commandId) === leaseId)',
+  ],
+  'held-reconcile': [
+    [
+      'services/gateway/src/run-engine/recovery.ts',
+      /slot.lifecycle === 'held' && slot.phase === 'occupied'/,
+      'false',
+    ],
+    [
+      'services/gateway/src/core/state.ts',
+      /!\(slot.lifecycle === 'held' && slot.phase === 'occupied'\)/,
+      'true',
+    ],
+  ],
+  'provider-owner': [
+    'services/gateway/src/fleet/resource-manager.ts',
+    /ownerRunId \?\? currentRunIdForSlot\(slotId\)/,
+    'currentRunIdForSlot(slotId)',
+  ],
+  'provider-metadata': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /if \(acquired.providerProcesses\) lease.providerProcesses = acquired.providerProcesses;/,
+    'void acquired;',
+  ],
+  'provider-retry': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /\(lease.state === 'released' \|\|\s*\(lease.state === 'error' && Boolean\(lease.cleanupFailure\)\)\)/,
+    "lease.state === 'released'",
+  ],
   'stop-generation': [
     'services/gateway/src/runners/owned-stop.ts',
     /currentRun\?\.engineState\?\.generation !== expectedGeneration/,
@@ -143,15 +190,21 @@ const controls = {
   ],
 };
 assert.ok(controls[name], `unknown coherence control ${name}`);
-const [file, pattern, replacement] = controls[name];
+const mutations = typeof controls[name][0] === 'string' ? [controls[name]] : controls[name];
 registerHooks({
   load(url, context, nextLoad) {
     const loaded = nextLoad(url, context);
-    if (!url.endsWith(`/${file}`)) return loaded;
-    const source = String(loaded.source);
-    const changed = source.replace(pattern, replacement);
-    assert.ok(changed !== source, `control must change ${file}`);
+    let source = String(loaded.source);
+    let applied = false;
+    for (const [file, pattern, replacement] of mutations) {
+      if (!url.endsWith(`/${file}`)) continue;
+      const changed = source.replace(pattern, replacement);
+      assert.ok(changed !== source, `control must change ${file}`);
+      source = changed;
+      applied = true;
+    }
+    if (!applied) return loaded;
     writeFileSync(process.env.FARMSLOT_COHERENCE_CONTROL_RECEIPT, name);
-    return { ...loaded, source: changed };
+    return { ...loaded, source };
   },
 });

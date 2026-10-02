@@ -71,6 +71,8 @@ export interface WarmSweepSummary {
 
 export interface RuntimeCapabilityActionResult {
   ok: boolean;
+  /** Newly started identities retained when ownership metadata cannot be written. */
+  providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
   /** Observation/transport unavailable; do not interpret as a stopped provider. */
   unavailable?: boolean;
   detail?: string;
@@ -124,6 +126,7 @@ export interface RuntimeCapabilityRegistryOptions {
      * `platform` would shadow the slot's auto-injected one.
      */
     declaredParameters: readonly string[],
+    ownerRunId?: string,
   ) => Promise<RuntimeCapabilityActionResult>;
   /**
    * Refuse a device target that is not usable on this fleet, before the provider
@@ -596,6 +599,7 @@ export class RuntimeCapabilityRegistry {
     parameters: Record<string, unknown>,
     /** The provider the action belongs to; its schema is the substitution allowlist. */
     entry: Pick<RuntimeCapabilityCatalogEntry, 'parameters'>,
+    ownerRunId?: string,
   ): Promise<RuntimeCapabilityActionResult> {
     try {
       return await this.options.runAction(
@@ -603,6 +607,7 @@ export class RuntimeCapabilityRegistry {
         action,
         parameters,
         declaredParameterNames(entry),
+        ownerRunId,
       );
     } catch (error) {
       return {
@@ -1517,7 +1522,9 @@ export class RuntimeCapabilityRegistry {
         entry.actions.acquire,
         parameters,
         entry,
+        params.ownerRunId,
       );
+      if (acquired.providerProcesses) lease.providerProcesses = acquired.providerProcesses;
       if (!acquired.ok) {
         lease.updatedAt = this.timestamp();
         lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: acquired.detail };
@@ -2768,6 +2775,7 @@ export class RuntimeCapabilityRegistry {
         }
         lease.state = 'released';
         lease.cleanupFailure = undefined;
+        if (releaseActionRan) lease.providerCleanupDeferred = undefined;
         lease.releasedAt = this.timestamp();
         lease.updatedAt = lease.releasedAt;
         lease.referenceCount = 0;
@@ -2822,7 +2830,9 @@ export class RuntimeCapabilityRegistry {
       (lease) =>
         lease.slotId === slotId &&
         (ownerRunId === undefined || lease.owner.runId === ownerRunId) &&
-        (lease.keepWarmUntil !== undefined || lease.providerCleanupDeferred !== undefined) &&
+        (lease.keepWarmUntil !== undefined ||
+          lease.providerCleanupDeferred !== undefined ||
+          (lease.state === 'error' && Boolean(lease.cleanupFailure))) &&
         (!wanted || wanted.has(lease.capabilityId)),
     );
   }
@@ -2851,7 +2861,10 @@ export class RuntimeCapabilityRegistry {
       };
       const snapshot = this.options.store.snapshot();
       const selected = snapshot.leases.filter(
-        (lease) => lease.state === 'released' && select(lease),
+        (lease) =>
+          (lease.state === 'released' ||
+            (lease.state === 'error' && Boolean(lease.cleanupFailure))) &&
+          select(lease),
       );
       summary.selected = selected.map((lease) => structuredClone(lease));
       const selectedIds = new Set(selected.map((lease) => lease.id));
@@ -2949,6 +2962,11 @@ export class RuntimeCapabilityRegistry {
           continue;
         }
         for (const lease of retiring) {
+          lease.state = 'released';
+          lease.cleanupFailure = undefined;
+          lease.releasedAt = this.timestamp();
+          lease.referenceCount = 0;
+          lease.wait = undefined;
           lease.keepWarmUntil = undefined;
           lease.providerCleanupDeferred = undefined;
           lease.updatedAt = this.timestamp();

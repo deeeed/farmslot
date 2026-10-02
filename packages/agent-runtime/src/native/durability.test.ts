@@ -1345,6 +1345,66 @@ test('a stopped worker transfers its lease before resuming the saved conversatio
   }
 });
 
+test('resume journals the early new-generation census before host reload', async () => {
+  const fixtureState = setup();
+  writeFileSync(
+    join(fixtureState.cwd, 'codex'),
+    fixture.replace(
+      "thread=m.params.threadId || 'thread-'+process.pid;",
+      "const early=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',detached:true});fs.writeFileSync('early-descendant',String(early.pid));thread=m.params.threadId || 'thread-'+process.pid;",
+    ),
+  );
+  const manager = new NativeSessionManager(fixtureState.root);
+  let restored: NativeSessionManager | undefined;
+  try {
+    const first = await manager.create('owner', { runner: 'codex', cwd: fixtureState.cwd });
+    const journal = join(fixtureState.root, `${first.id}.journal`);
+    const firstChild = Number(readFileSync(join(fixtureState.cwd, 'early-descendant'), 'utf8'));
+    await until(() => readFileSync(journal, 'utf8').includes(`"pid":${firstChild},`));
+    await manager.close('owner', first.id);
+    const resumed = await manager.create('owner', {
+      runner: 'codex',
+      cwd: fixtureState.cwd,
+      resumeSessionId: first.nativeSessionId,
+    });
+    const nextChild = Number(readFileSync(join(fixtureState.cwd, 'early-descendant'), 'utf8'));
+    await until(() => readFileSync(journal, 'utf8').includes(`"pid":${nextChild},`));
+    assert.notEqual(resumed.generation, first.generation);
+    // A stale leader pointer must not erase the early new-generation census.
+    // The first generation's actual leader has stopped, while the resumed tree lives.
+    assert.equal(alive(first.processPid!), false);
+    appendDurable(journal, {
+      info: { ...resumed, state: 'failed', processStopped: false, processPid: first.processPid },
+    });
+    restored = new NativeSessionManager(fixtureState.root);
+    assert.equal(
+      restored.read('owner', resumed.id).session.processStopped,
+      false,
+      'The early detached descendant remains owned after reload',
+    );
+    assert.equal(alive(nextChild), true);
+    await assert.rejects(
+      restored.create('owner', {
+        runner: 'codex',
+        cwd: fixtureState.cwd,
+        resumeSessionId: resumed.nativeSessionId,
+      }),
+      /cleanup is unconfirmed/,
+    );
+    await manager.close('owner', resumed.id);
+    await until(() => !alive(nextChild));
+    await restored.close('owner', resumed.id);
+  } finally {
+    try {
+      for (const session of manager.list('owner')) await manager.close('owner', session.id);
+      if (restored)
+        for (const session of restored.list('owner')) await restored.close('owner', session.id);
+    } finally {
+      fixtureState.restore();
+    }
+  }
+});
+
 test('an unconfirmed close preserves queued steering and a confirmed close cancels it', async () => {
   const fixture = setup();
   const manager = new NativeSessionManager(fixture.root);
@@ -1392,6 +1452,75 @@ test('an unconfirmed close preserves queued steering and a confirmed close cance
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
     fixture.restore();
+  }
+});
+
+test('kernel birth evidence permits attestation without signalling a reused PID group', async () => {
+  const fixtureState = setup();
+  const manager = new NativeSessionManager(fixtureState.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixtureState.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  let foreign: ReturnType<typeof spawn> | undefined;
+  try {
+    const original = await manager.create(
+      'owner',
+      { runner: 'codex', cwd: fixtureState.cwd },
+      launch,
+    );
+    await manager.close('owner', original.id);
+    const stopped = manager.read('owner', original.id).session;
+    // ps start identities have second precision; force a distinct real kernel birth.
+    await delay(2100);
+    foreign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    assert.ok(foreign.pid);
+    const journal = join(fixtureState.root, `${original.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        for (const key of ['processes', 'processesAdded'])
+          for (const frame of entry[key] ?? []) {
+            if (frame.pid === original.processPid) frame.pid = foreign!.pid;
+            if (frame.parent === original.processPid) frame.parent = foreign!.pid;
+            if (frame.group === original.processPid) frame.group = foreign!.pid;
+          }
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false, processPid: foreign.pid },
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const restored = new NativeSessionManager(fixtureState.root);
+    const confirmed = restored.confirmWorkerStopped(
+      'owner',
+      original.id,
+      original.generation,
+      launch.leaseId,
+    );
+    assert.equal(confirmed.processStopped, true);
+    assert.equal(
+      alive(foreign.pid),
+      true,
+      'Attestation must preserve the unrelated current process',
+    );
+  } finally {
+    try {
+      if (foreign?.pid && alive(foreign.pid)) {
+        const exited = once(foreign, 'exit');
+        foreign.kill('SIGTERM');
+        await exited;
+      }
+    } finally {
+      fixtureState.restore();
+    }
   }
 });
 

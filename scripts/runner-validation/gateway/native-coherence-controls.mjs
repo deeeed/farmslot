@@ -11,6 +11,14 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['kernel-reuse', /Kernel birth evidence must distinguish the reused process group/],
+  ['authored-contract', /Missing contract must retain the authored handoff report path/],
+  ['adapters-shadow', /Recipe terminal\.orders\.shadowed is not available/],
+  ['queued-receipt', /Cancelled queued receipt must remain visible to its task lease/],
+  ['held-reconcile', /Reconciliation must preserve occupied holds/],
+  ['provider-owner', /Child lease must own its actual provider/],
+  ['provider-metadata', /metadata failure rollback stops its newly started provider/],
+  ['provider-retry', /Verified explicit shutdown must clear retained ownership/],
   ['stop-generation', /Changed generation must refuse exit delivery/],
   ['provider-preexisting', /Idempotent boot must not claim the preexisting unleased server/],
   ['cancel-failure', /early-cancel must settle to held/],
@@ -44,20 +52,36 @@ const controls = [
 const results = [];
 // Each child owns a separate gateway, native host, pool, repo and tmux names.
 // Two lanes bound resource use without sharing fixture state.
-const pending = [...controls];
+const onlyIndex = process.argv.indexOf('--only');
+const requested = onlyIndex < 0 ? null : new Set(process.argv[onlyIndex + 1]?.split(','));
+if (requested) assert.ok(requested.size, '--only requires a nonempty list of control names');
+if (requested)
+  for (const name of requested)
+    assert.ok(
+      controls.some(([known]) => known === name),
+      `Unknown control ${name}`,
+    );
+const pending = controls.filter(([name]) => !requested || requested.has(name));
 async function lane() {
   while (pending.length) {
     const [name, failure] = pending.shift();
-    const driver =
-      name === 'adapters' ? 'recipe-adapter-coherence.mjs' : 'native-run-coherence.mjs';
+    const adapterControl = name === 'adapters' || name === 'adapters-shadow';
+    const driver = adapterControl ? 'recipe-adapter-coherence.mjs' : 'native-run-coherence.mjs';
     const args = [
       '--import',
       'tsx',
       `scripts/runner-validation/gateway/${driver}`,
       '--negative-control',
-      ...(name === 'adapters' ? [] : [name]),
+      ...(adapterControl ? [] : [name]),
     ];
+    if (name === 'adapters-shadow') args.push('--shadow-control');
     if (name === 'attestation') args.push('--legacy');
+    if (name === 'kernel-reuse') args.push('--kernel-reuse');
+    if (name === 'authored-contract') args.push('--missing-contract');
+    if (name === 'queued-receipt') args.push('--queued-close');
+    if (name === 'held-reconcile') args.push('--reconcile-held');
+    if (['provider-owner', 'provider-metadata', 'provider-retry'].includes(name))
+      args.push('--provider-recovery');
     if (name === 'stop-generation')
       args.push('--guards-only', '--real-adoption', '--generation-guard');
     const guardsOnly = [

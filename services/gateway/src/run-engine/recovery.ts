@@ -1027,6 +1027,10 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
   const freshFleet = await deps.loadFleetStatus(true);
   for (const slot of freshFleet.slots) {
     if (!['busy', 'held'].includes(slot.lifecycle) || activeSlotIds.has(slot.slot)) continue;
+    if (slot.lifecycle === 'held' && slot.phase === 'occupied') {
+      console.log(`[run-engine] reconcile: ${slot.slot} remains held for workspace occupants`);
+      continue;
+    }
     // A terminal run's slot is NOT orphaned while its teardown is still
     // running. ADR-053 publishes the terminal status before the teardown, and
     // `activeRunSlotIds` counts only non-terminal runs, so for that window the

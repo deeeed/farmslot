@@ -19,6 +19,7 @@ import { markCommandForSlot } from './checklist-target.js';
 import {
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
+  withTerminalReportPath,
 } from './worker-terminal-contract.js';
 
 export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
@@ -47,13 +48,17 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  const terminalContract =
-    authoredContract ??
-    resolveWorkerTerminalContract(
+  let terminalContract = authoredContract;
+  if (!terminalContract) {
+    const configuredContract = resolveWorkerTerminalContract(
       readWorkerTerminalProjectConfig(project.projectJson as Record<string, unknown>),
       run.flowType,
       { mode: run.mode },
     );
+    terminalContract = authored
+      ? withTerminalReportPath(configuredContract, authored.report, [authored.learnings])
+      : configuredContract;
+  }
   const handoff =
     authored ??
     buildHandoffMetadata({

@@ -135,6 +135,10 @@ export function prepareCleanupGuards({ temporary, project, gitInit }) {
     'provider-group',
     'preexisting-provider',
     'replaced-provider',
+    'legacy-provider',
+    'restarted-provider',
+    'child-provider',
+    'metadata-provider',
   ]) {
     const repo = path.join(temporary, `guard-${fault}`);
     gitInit(repo);
@@ -156,7 +160,12 @@ export function prepareCleanupGuards({ temporary, project, gitInit }) {
         mode: 'dispatch',
         resources: { 'owned-server': {} },
       },
-      status: { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
+      status: {
+        slot: slotId,
+        lifecycle: 'busy',
+        phase: 'working',
+        current_run_id: fault === 'child-provider' ? randomUUID() : runId,
+      },
       run: {
         id: runId,
         project,
@@ -189,6 +198,12 @@ export function proveCleanupGuards({
   temporary,
 }) {
   for (const fixture of fixtures) {
+    if (
+      ['legacy-provider', 'restarted-provider', 'child-provider', 'metadata-provider'].includes(
+        fixture.fault,
+      )
+    )
+      continue;
     if (fixture.fault) {
       if (
         ['stale-provider', 'provider-group', 'preexisting-provider', 'replaced-provider'].includes(

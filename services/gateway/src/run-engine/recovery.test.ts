@@ -1818,6 +1818,28 @@ test('an unstamped releasing fence keeps its protection rather than being reclai
   assert.deepEqual(reset, []);
 });
 
+test('orphan reconcile preserves a persisted occupied workspace without a run owner', async () => {
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        {
+          slot: 'occupied-fixture',
+          lifecycle: 'held',
+          phase: 'occupied',
+          heldReason: 'Foreign worker still alive',
+        },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+  for (let tick = 0; tick < 2; tick++) await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, []);
+});
+
 test('orphan reconcile still reclaims a genuinely abandoned slot', async () => {
   // The guard must not turn the reconciler off: a terminal run whose teardown
   // is NOT running — the gateway died mid-release and came back — is exactly

@@ -26,6 +26,7 @@ if (process.argv.some((arg) => arg.startsWith('--server-'))) {
     );
     server.listen(0, '127.0.0.1', () => {
       fs.writeFileSync(pidFile, String(process.pid));
+      fs.writeFileSync(pidFile + '.created', String(process.pid));
       fs.writeFileSync(pidFile + '.port', String(server.address().port));
     });
     process.on('SIGTERM', () => server.close(() => process.exit(0)));

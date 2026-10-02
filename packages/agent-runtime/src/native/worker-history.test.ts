@@ -81,6 +81,39 @@ test('queued receipts remain visible only to their task lease before submission'
   assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.queued, true);
 });
 
+test('cancelled unsubmitted steering retains its receipt in the owning task history', () => {
+  const history = new NativeWorkerHistory();
+  history.observe({
+    info,
+    commands: [
+      {
+        ...receipt('queued-cancelled'),
+        state: 'pending',
+        queued: true,
+        submitted: false,
+        accepted: false,
+      },
+    ],
+  });
+  history.observe({
+    info,
+    commands: [
+      {
+        ...receipt('queued-cancelled'),
+        state: 'failed',
+        queued: false,
+        submitted: false,
+        accepted: false,
+        outcome: 'interrupted',
+      },
+    ],
+  });
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.outcome, 'interrupted');
+  history.observe({ info: { ...info, workerLeaseId: 'next-lease' } });
+  assert.equal(history.read('next-lease', [], []).commands.length, 0);
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.outcome, 'interrupted');
+});
+
 test('scoped task history preserves version-based recovery restrictions', () => {
   for (const version of ['2.1.78 (Claude Code)', '2.1.269 (Claude Code)']) {
     const root = mkdtempSync(join(tmpdir(), 'native-history-version-'));

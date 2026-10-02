@@ -99,7 +99,7 @@ export class NativeWorkerHistory {
         .filter(
           (command) =>
             submitted.has(command.commandId) ||
-            (command.queued && this.commandLeases.get(command.commandId) === leaseId),
+            this.commandLeases.get(command.commandId) === leaseId,
         )
         .slice(-100)
         .map((command) => ({ ...command })),

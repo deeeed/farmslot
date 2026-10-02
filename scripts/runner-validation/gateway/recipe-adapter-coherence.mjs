@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const fixture = mkdtempSync(path.join(tmpdir(), 'recipe-adapter-coherence-'));
 const library = path.join(fixture, 'library');
+const priorityLibrary = path.join(fixture, 'priority-library');
 const writeJson = (file, value) => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
@@ -20,6 +21,7 @@ const recipe = (title, nodes, entry = 'prove') => ({
 });
 try {
   const control = process.argv.includes('--negative-control');
+  const controlName = process.argv.includes('--shadow-control') ? 'adapters-shadow' : 'adapters';
   writeFileSync(path.join(fixture, '.coherence-fixture'), 'disposable\n');
   writeJson(path.join(library, 'recipe-library.json'), { platforms: ['terminal', 'desktop'] });
   const leaf = (title) =>
@@ -38,6 +40,24 @@ try {
   writeJson(path.join(library, 'recipes/shared/orders/fixture.recipe.json'), leaf('Shared'));
   writeJson(path.join(library, 'recipes/terminal/orders/fixture.recipe.json'), leaf('Terminal'));
   writeJson(path.join(library, 'recipes/desktop/orders/fixture.recipe.json'), leaf('Desktop'));
+  const shadowLeaf = (file, value) =>
+    recipe('Shadow precedence proof', {
+      prove: {
+        action: 'command',
+        cmd: `node -e "require('node:fs').writeFileSync('${file}','${value}')"`,
+        intent: 'Prove the selected source by its actual side effect.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+  writeJson(
+    path.join(priorityLibrary, 'recipes/orders/shadowed.recipe.json'),
+    shadowLeaf('shadow-canonical.txt', 'high'),
+  );
+  writeJson(
+    path.join(library, 'recipes/terminal/orders/shadowed.recipe.json'),
+    shadowLeaf('shadow-qualified.txt', 'terminal'),
+  );
   writeJson(
     path.join(fixture, 'recipe.json'),
     recipe('Custom adapter selection', {
@@ -51,6 +71,18 @@ try {
         action: 'call',
         ref: 'terminal.orders.fixture',
         intent: 'Resolve the existing qualified custom adapter reference.',
+        next: 'shadow-canonical',
+      },
+      'shadow-canonical': {
+        action: 'call',
+        ref: 'orders.shadowed',
+        intent: 'Use the higher-priority generic recipe.',
+        next: 'shadow-qualified',
+      },
+      'shadow-qualified': {
+        action: 'call',
+        ref: 'terminal.orders.shadowed',
+        intent: 'Preserve the qualified lower-priority custom variant.',
         next: 'done',
       },
       done: { action: 'end', status: 'pass' },
@@ -108,6 +140,8 @@ try {
     '--adapter',
     'terminal',
     '--library-source',
+    `priority=${priorityLibrary}`,
+    '--library-source',
     `fixture=${library}`,
   ];
   const execute = (extra) =>
@@ -123,7 +157,7 @@ try {
         GW_URL: 'ws://127.0.0.1:9',
         ...(control
           ? {
-              FARMSLOT_COHERENCE_CONTROL: 'adapters',
+              FARMSLOT_COHERENCE_CONTROL: controlName,
               FARMSLOT_COHERENCE_FIXTURE: fixture,
               FARMSLOT_COHERENCE_CONTROL_RECEIPT: path.join(fixture, 'control-applied'),
               NODE_OPTIONS: `--import ${path.join(root, 'scripts/runner-validation/gateway/native-coherence-control.mjs')}`,
@@ -147,6 +181,8 @@ try {
     `custom adapter variant must execute successfully: ${result.stderr || result.stdout}`,
   );
   assert.equal(readFileSync(path.join(fixture, 'selected.txt'), 'utf8'), 'terminal');
+  assert.equal(readFileSync(path.join(fixture, 'shadow-canonical.txt'), 'utf8'), 'high');
+  assert.equal(readFileSync(path.join(fixture, 'shadow-qualified.txt'), 'utf8'), 'terminal');
   const summary = JSON.parse(readFileSync(path.join(fixture, 'artifacts/summary.json'), 'utf8'));
   assert.equal(summary.status, 'pass');
   console.log(

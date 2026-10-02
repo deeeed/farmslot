@@ -159,6 +159,7 @@ export async function loadRecipeLibraries(
 ): Promise<RecipeLibraryResolution> {
   const loadedSources: LoadedRecipeLibrarySource[] = [];
   const recipes = new Map<string, ResolvedLibraryRecipe>();
+  const qualified = new Map<string, ResolvedLibraryRecipe>();
   const seenNames = new Set<string>();
 
   for (const source of sources) {
@@ -230,6 +231,10 @@ export async function loadRecipeLibraries(
     loadedSources.push({ name, root, recipeCount: selected.size, provenance: sourceProvenance });
 
     for (const [ref, resolved] of selected) {
+      if (resolved.adapter && !LEGACY_RECIPE_ADAPTERS.has(resolved.adapter)) {
+        const alias = `${resolved.adapter}.${ref}`;
+        if (!qualified.has(alias)) qualified.set(alias, { ...resolved, ref: alias, aliasFor: ref });
+      }
       const winner = recipes.get(ref);
       if (winner) winner.shadows.push(name);
       else recipes.set(ref, resolved);
@@ -238,12 +243,7 @@ export async function loadRecipeLibraries(
 
   // Custom directories previously formed qualified generic IDs. Preserve those
   // references as aliases while offering the same logical ID as built-in adapters.
-  for (const recipe of [...recipes.values()]) {
-    if (recipe.adapter && !LEGACY_RECIPE_ADAPTERS.has(recipe.adapter)) {
-      const alias = `${recipe.adapter}.${recipe.ref}`;
-      if (!recipes.has(alias)) recipes.set(alias, { ...recipe, ref: alias, aliasFor: recipe.ref });
-    }
-  }
+  for (const [alias, recipe] of qualified) if (!recipes.has(alias)) recipes.set(alias, recipe);
 
   const resolution = { sources: loadedSources, recipes };
   if (options?.logger) logResolution(options.logger, resolution);

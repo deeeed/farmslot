@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Retain bounded, redacted native crash diagnostics and process ownership evidence, and persist steering messages for delivery at the next turn boundary. Initialize existing task directories through the shared runtime producer.
+- Retain bounded, redacted native crash diagnostics and kernel process identities. Persist busy steering and preserve cancelled receipts in their task history. Initialize existing task directories through the shared runtime producer.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

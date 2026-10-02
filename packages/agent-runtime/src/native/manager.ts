@@ -738,6 +738,12 @@ export class NativeSessionManager {
   private recordedGroupAlive(record: SessionRecord): boolean {
     const pid = record.info.processPid;
     if (!pid || !processGroupAlive(pid)) return false;
+    const leader = record.processes?.find((process) => process.pid === pid);
+    // A new kernel birth identity proves PID reuse. PID allocation reserves
+    // live group/session IDs, so this current group cannot be the old group.
+    // A changed argv/environment token alone cannot prove this: exec keeps its PID.
+    if (leader && alive(pid) && !processIdentityAlive(pid, leader.identity) && alive(pid))
+      return false;
     // Positive attribution to another native generation distinguishes a reused
     // numeric group. Unknown groups still block; neither case receives a signal.
     for (const candidate of this.sessions.values()) {

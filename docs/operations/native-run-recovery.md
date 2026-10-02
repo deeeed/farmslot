@@ -20,11 +20,23 @@ Steering a busy native session queues the message for the next turn boundary. Th
 
 Closing a session cancels its queued input after process cleanup is confirmed. A failed close preserves the queue for recovery. Task-lease transfer refuses queued input; close it to discard the queue or resume the same lease to deliver it.
 
-Cancellation and force-completion stop the run's native task leases. Capability release targets only that run and keeps providers warm. Slot ownership resets only while the owner and epoch still match. Cleanup is skipped when another run or process uses the repository, or when a tmux session has no run-owned creation identity. The run records `slotTeardownSkipped`. Use explicit slot controls only after checking its occupants.
+Cancellation and force-completion stop the run's task leases and verified saved conversations. Capability release targets only that run and follows its resource posture. Slot ownership resets only while the owner and epoch still match. Another run or unowned process defers cleanup. The run records `slotTeardownSkipped`. Use explicit slot controls only after checking its occupants.
 
-Tmux cleanup verifies and stops the run's exact saved conversation while preserving the pane and session. Confirmed missing historical panes are skipped. A live worker without verified identity or a supported stop capability leaves an explicit cleanup blocker. Preserved dead panes are retained for the operator and removed by a later explicit prepare, rather than destroying the adopted session at completion. Shared workspaces retain their busy state, but the terminal run's slot pointer and unused lease ownership are removed. Providers left running for unowned occupants carry `providerCleanupDeferred`; automatic reacquisition refuses them until an operator verifies occupancy and explicitly stops the retained provider. Watch and transcript cleanup stays scoped to the run. This narrows terminal cleanup under ADR-054 to the ownership the ending run can prove.
+Tmux cleanup verifies and stops the run's exact saved conversation while preserving the pane and session. Confirmed missing historical panes are skipped. A live worker without verified identity or a supported stop capability leaves an explicit cleanup blocker. Preserved dead panes are retained for the operator and removed by a later explicit prepare. Occupied workspaces remain `held`/`occupied` across reconciliation and restart, with a visible reason. The terminal run's slot pointer and unused lease ownership are removed. Providers left running for unowned occupants carry `providerCleanupDeferred`; automatic reacquisition refuses them until verified operator cleanup. Watch and transcript cleanup stays scoped to the run. This narrows terminal cleanup under ADR-054 to the ownership the ending run can prove.
 
 Provider ownership requires the kernel identity recorded at boot. An idempotent boot preserves an existing server's ownership; it cannot claim an unleased operator process. Active and warm-provider shutdown recheck that identity against the watched PID before invoking the release hook. Missing or mismatched ownership defers cleanup. Cleanup failures settle the run's release fence to a held workspace before notifying clients.
+
+Leases created before this upgrade remain readable. Their missing process identities cannot authorize automatic shutdown. A provider restarted outside the gateway needs the same operator recovery. After verifying the slot's occupants and the affected resource, stop that resource explicitly, clear its retained capability, then release the empty slot while preserving its work:
+
+```sh
+farmslot rpc resource.control '{"slotId":"SLOT","resourceId":"RESOURCE","action":"shutdown"}'
+farmslot rpc runtime.capability.stopWarm '{"slotId":"SLOT","capabilityId":"CAPABILITY"}'
+farmslot rpc slot.release '{"slotId":"SLOT","keepWork":true,"keepWarm":false}'
+```
+
+Do not use the slot-wide cleanup command while foreign work remains. If an active error lease still owns the resource, use `runtime.capability.release` with its `ownerRunId` and `keepWarm:false` after the explicit resource shutdown. `force` does not bypass process ownership checks.
+
+A different recorded kernel birth identity proves numeric PID reuse. A different argv or environment token alone does not, because `exec` preserves its PID and process group. Journals without birth evidence remain conservative about a surviving unknown group even with `--confirm-stopped`.
 
 ## Upgrade task-path handling
 
