@@ -87,7 +87,7 @@ the limitation and replacement validation here.
 
 - [ ] **10. Typecheck + gateway tests**:
   ```bash
-  cd apps/command-center && yarn typecheck
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
   cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
   Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.

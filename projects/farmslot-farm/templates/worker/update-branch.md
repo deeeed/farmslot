@@ -45,9 +45,10 @@ the concrete strategy you actually used in the outcome artifact.
 - [ ] **5. Update branch** — update from the base branch using the selected strategy and resolve any conflicts on `{{PR_BRANCH}}`.
 - [ ] **6. Validate** — run typecheck and focused tests:
   ```bash
-  cd apps/command-center && yarn typecheck
-  cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
+  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
+  Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
 - [ ] **7. Push** — publish the updated branch. For `rebase`, use `git push --force-with-lease`; for `merge`, a normal `git push`. Record the exact push command used.
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: **selected strategy** (rebase | merge), **validation notes** (typecheck + test results), **conflict resolution summary**, **push command used**, and **risk notes** (force-push impact, follow-up needed).
 - [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
