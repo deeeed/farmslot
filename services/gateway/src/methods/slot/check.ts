@@ -112,6 +112,7 @@ export async function slotCheck(
       projectVars,
       readyIndicator,
       parseHealthCmd,
+      (step) => emitStep(emit, step),
     );
     if (healthStep) {
       checks.push(healthStep);
@@ -466,6 +467,8 @@ export async function checkHealth(
   projectVars: ProjectVars | undefined,
   readyIndicator: string,
   parseHealthCmd: string,
+  /** Progress before a long unlock, so streaming clients see activity. */
+  onProgress: (step: CheckStep) => void = () => {},
 ): Promise<CheckStep | null> {
   const healthHook = expandHook('health_check', projectJson, vars, projectVars);
   if (!healthHook) return null;
@@ -481,6 +484,11 @@ export async function checkHealth(
   const unlockHook = expandHook('unlock', projectJson, vars, projectVars);
   let unlockFailure: string | null = null;
   if (unlockHook) {
+    onProgress({
+      name: 'health',
+      status: 'warn',
+      detail: `Health not ready (value=${healthValue || 'none'}) — trying unlock...`,
+    });
     unlockFailure = await runUnlockHook(vars, unlockHook);
     // Re-read health even after a failed unlock: the app can reach ready on its own.
     await new Promise((r) => setTimeout(r, 3000));
@@ -502,8 +510,10 @@ export async function checkHealth(
 
 /**
  * Bound for one unlock hook run. A timeout reports as exit 124, not a throw
- * (remote transport waits this budget plus a grace). Sized for a cold harness
- * call on a physical Android slot, measured at ~85 s.
+ * (remote transport waits this budget plus a grace). On iOS sim slots the call
+ * takes ~12 s; on a degraded physical Android slot (app detached) the harness
+ * took 83-186 s before the action, so this bound does not cover that slot and
+ * it reports the timeout instead.
  */
 export const UNLOCK_HOOK_TIMEOUT_MS = 120_000;
 

@@ -143,11 +143,11 @@ export async function verifyPrepareHealth(
   if (commands.unlock) {
     step('health', 'Trying unlock...');
     unlockFailure = await runUnlockHook(vars, commands.unlock);
-    if (unlockFailure) step('health', `Unlock failed — ${unlockFailure}`);
     await new Promise((r) => setTimeout(r, 3000));
     healthValue = await runHealthCheck(vars, commands.health, commands.parse);
   }
   if (healthValue !== readyIndicator) {
+    if (unlockFailure) step('health', `Unlock failed — ${unlockFailure}`);
     const err: PrepareCommandError = new Error(
       `Health not ready (value=${healthValue || 'none'}, expected ${readyIndicator})${unlockFailure ? `; ${unlockFailure}` : ''}`,
     );

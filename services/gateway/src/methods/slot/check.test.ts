@@ -96,14 +96,24 @@ const NO_PROJECT_VARS = undefined as unknown as ProjectVars;
 describe('unlock hook and health re-check', { concurrency: true }, () => {
   test('checkHealth re-reads health after a failed unlock and passes when ready', async (t) => {
     const vars = await lockedSlot(t);
+    const progress: unknown[] = [];
     const step = await checkHealth(
       vars,
       projectWithUnlock(UNLOCKS.failsButReady),
       undefined,
       'OK',
       '',
+      (p) => progress.push(p),
     );
     assert.deepEqual(step, { name: 'health', status: 'pass', detail: 'Health after unlock — OK' });
+    // Streaming clients (CLI no-activity timeout) see a step before the unlock runs.
+    assert.deepEqual(progress, [
+      {
+        name: 'health',
+        status: 'warn',
+        detail: 'Health not ready (value=LOCKED) — trying unlock...',
+      },
+    ]);
   });
 
   test('checkHealth appends the unlock failure when health stays down', async (t) => {
@@ -154,7 +164,8 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         (_name, detail) => steps.push(detail),
       );
       assert.equal(value, 'OK');
-      assert.equal(steps[0], 'Trying unlock...');
+      // A recovered prepare carries no unlock-failure step.
+      assert.deepEqual(steps, ['Trying unlock...']);
     }
   });
 
