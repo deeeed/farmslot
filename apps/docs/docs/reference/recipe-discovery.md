@@ -83,9 +83,8 @@ farmslot-recipe run greet-twice guest=Ada \
   --action-manifest examples/recipe-library-hello/manifests/shared.action-manifest.json \
   --artifacts-dir /tmp/hello-run
 # review the plan, then rerun with --approve-plan <digest>
-# the digest is the same through `yarn <script>` and a direct call: package-manager
-# variables (npm_*, COREPACK_*, BERRY_BIN_FOLDER, INIT_CWD, PROJECT_CWD) and Yarn's
-# per-invocation PATH shim folder are not part of the approved environment
+# repeated runs through the same command (here `farmslot-recipe run`) ask for the same
+# digest; see Recipe Runner Protocol for what the approved environment covers
 ```
 
 ## Libraries and precedence

@@ -784,3 +784,24 @@ test('all-platform search finds shadowed platform-only recipes by id', async (t)
     assert.equal(shadowed?.source, 'hello', `search ${extra.join(' ')}`);
   }
 });
+
+test('all-platform search lists a shadowed id once when only a platform variant is shadowed', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-dedupe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(HELLO, path.join(root, 'hello'), { recursive: true });
+  // The override library ships only the web greeting.
+  const webGreet = path.join(HELLO, 'recipes', 'web', 'greet.recipe.json');
+  await writeJson(path.join(root, 'web-only', 'recipe-library.json'), { platforms: ['web'] });
+  await writeJson(path.join(root, 'web-only', 'recipes', 'web', 'greet.recipe.json'), {
+    ...JSON.parse(await readFile(webGreet, 'utf8')),
+    title: 'Override web greeting',
+  });
+  await cp(path.join(HELLO, 'manifests'), path.join(root, 'web-only', 'manifests'), {
+    recursive: true,
+  });
+  const env = {
+    RECIPE_LIBRARY_PATH: `web-only=${path.join(root, 'web-only')}:hello=${path.join(root, 'hello')}`,
+  };
+  const { json } = await cli<SearchEnvelope>(['search', 'hello.greet'], env);
+  assert.equal(json.results.filter((result) => result.id === 'hello.greet').length, 1);
+});

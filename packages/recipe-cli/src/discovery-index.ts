@@ -510,13 +510,16 @@ export async function shadowedRecipes(
   // The all-platform view must also scan each platform, or platform-only shadows are missed.
   const views = index.platform ? [index.platform] : [null, ...index.platforms];
   const records = new Map<string, ResolvedLibraryRecipe>();
+  // An id already indexed (for example the generic recipe while a platform variant is shadowed)
+  // is searchable through that entry; listing it again would duplicate the result.
+  const indexed = new Set([...index.recipes.values()].map((recipe) => recipe.id));
   for (const platform of views) {
     const view = await index.load(sources, platform);
     for (const winner of view.recipes.values()) {
       if (winner.aliasFor) continue;
       for (const shadow of winner.shadows) {
         const id = `${shadow}.${winner.ref}`;
-        if (records.has(id)) continue;
+        if (records.has(id) || indexed.has(id)) continue;
         const library = index.libraries.find((entry) => entry.info.name === shadow);
         if (!library) continue;
         const recipe = (await index.load([library.source], platform)).recipes.get(winner.ref);

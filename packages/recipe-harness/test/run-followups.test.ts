@@ -88,7 +88,7 @@ async function planDigest(
   return '';
 }
 
-test('package-manager variables do not change the plan digest', async (t) => {
+test('volatile package-manager values do not change the plan digest; user settings do', async (t) => {
   const artifactsDir = await tempDir(t, 'recipe-plan-env-');
   const yarnEnv = (shim: string) => ({
     PATH: [shim, '/usr/bin', '/bin'].join(path.delimiter),
@@ -96,29 +96,46 @@ test('package-manager variables do not change the plan digest', async (t) => {
     BERRY_BIN_FOLDER: shim,
     npm_execpath: `${shim}/yarn`,
     npm_node_execpath: `${shim}/node`,
+    npm_config_user_agent: 'yarn/4.9.2 npm/? node/v22.12.0 darwin arm64',
     npm_package_name: '@farmslot/cli',
+    npm_package_version: '0.3.0',
     INIT_CWD: '/repo/packages/cli',
     PROJECT_CWD: '/repo',
     COREPACK_ROOT: '/corepack',
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: '0',
   });
+  // Two `yarn <script>` invocations differ only in the per-invocation shim folder.
   const first = await planDigest(t, artifactsDir, yarnEnv('/tmp/xfs-1111'));
   const second = await planDigest(t, artifactsDir, yarnEnv('/tmp/xfs-2222'));
-  const direct = await planDigest(t, artifactsDir, {
-    PATH: ['/usr/bin', '/bin'].join(path.delimiter),
-    HOME: '/home/user',
-  });
   assert.match(first, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(second, first);
-  assert.equal(direct, first);
 
-  // Variables that can change what the run does still change the digest.
-  const changed = await planDigest(t, artifactsDir, { ...yarnEnv('/tmp/xfs-1111'), HOME: '/x' });
-  assert.notEqual(changed, first);
+  // Settings that can change what the run does still bind the approval.
+  for (const [name, value] of [
+    ['HOME', '/x'],
+    ['npm_config_registry', 'https://registry.example.test/'],
+    ['npm_config_ignore_scripts', 'true'],
+    ['npm_config__authToken', 'token'],
+    ['COREPACK_NPM_REGISTRY', 'https://registry.example.test/'],
+    ['COREPACK_INTEGRITY_KEYS', '0'],
+  ] as const) {
+    const changed = await planDigest(t, artifactsDir, {
+      ...yarnEnv('/tmp/xfs-1111'),
+      [name]: value,
+    });
+    assert.notEqual(changed, first, name);
+  }
   const extraPath = await planDigest(t, artifactsDir, {
     ...yarnEnv('/tmp/xfs-1111'),
     PATH: ['/tmp/xfs-1111', '/opt/bin', '/usr/bin', '/bin'].join(path.delimiter),
   });
   assert.notEqual(extraPath, first);
+  // Only the shim entry at the front of PATH is dropped; the same folder later on PATH binds.
+  const laterShim = await planDigest(t, artifactsDir, {
+    ...yarnEnv('/tmp/xfs-1111'),
+    PATH: ['/usr/bin', '/tmp/xfs-1111', '/bin'].join(path.delimiter),
+  });
+  assert.notEqual(laterShim, first);
 });
 
 test('run and validate exit 2 for a malformed library entry', async (t) => {
