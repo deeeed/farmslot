@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -195,7 +195,7 @@ test('run create builds params from an existing task file source', () => {
       project: 'audiolab-farm',
       flowType: 'dev',
       ticketOrPr: 'DEMO-414',
-      taskFile: 'projects/audiolab-farm/tasks/dev/demo-414-0604/TASK.md',
+      taskFile: path.resolve('projects/audiolab-farm/tasks/dev/demo-414-0604/TASK.md'),
       slotId: 'mini-audiolab-1',
       skipPrepare: undefined,
       prepareProfile: undefined,
@@ -307,7 +307,7 @@ test('parseTaskPath reads the flow from handoff.json before the legacy provenanc
   assert.equal(parseTaskPath(taskFile).flowType, 'fix-bug');
 });
 
-test('run create canonicalizes an absolute task file to the gateway-relative path', () => {
+test('run create preserves the caller’s absolute task file path', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
   const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');
   mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
@@ -322,10 +322,24 @@ test('run create canonicalizes an absolute task file to the gateway-relative pat
     JSON.stringify({ githubIssue: 'deeeed/audiolab#414' }),
   );
 
-  assert.equal(
-    buildRunCreateParams({ task: taskFile }).taskFile,
-    'projects/audiolab-farm/tasks/feat/414-0604-141246/TASK.md',
-  );
+  assert.equal(buildRunCreateParams({ task: taskFile }).taskFile, taskFile);
+});
+
+test('run create resolves a relative task file against the caller working directory', (t) => {
+  const caller = mkdtempSync(path.join(tmpdir(), 'farmslot-task-caller-'));
+  const originalCwd = process.cwd();
+  t.after(() => {
+    process.chdir(originalCwd);
+    rmSync(caller, { recursive: true, force: true });
+  });
+  const relative = 'projects/example/tasks/dev/PROJ-123/TASK.md';
+  const absolute = path.join(caller, relative);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  writeFileSync(absolute, '# Caller task\n');
+  process.chdir(caller);
+  const params = buildRunCreateParams({ task: relative });
+  assert.equal(params.taskFile, realpathSync(absolute));
+  assert.equal(params.project, 'example');
 });
 
 test('parseTaskPath ignores unrelated parent directories named projects', () => {

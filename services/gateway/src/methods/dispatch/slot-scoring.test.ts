@@ -256,8 +256,13 @@ test('branchContainsJiraKey matches whole ticket slugs only', () => {
   assert.equal(branchContainsJiraKey('main', 'PROJ-123'), false);
 });
 
-test('slotClaimBlockedByRelease refuses only slots mid-release', () => {
+test('slotClaimBlockedByRelease refuses teardown and occupied holds', () => {
   assert.equal(slotClaimBlockedByRelease({ phase: 'releasing' }), 'slot is mid-release');
+  assert.equal(
+    slotClaimBlockedByRelease({ lifecycle: 'held', phase: 'occupied' }),
+    'slot remains occupied',
+  );
+  assert.equal(slotClaimBlockedByRelease({ lifecycle: 'held', phase: 'ci-watch' }), null);
   assert.equal(slotClaimBlockedByRelease({ phase: 'dispatching' }), null);
   assert.equal(slotClaimBlockedByRelease({ phase: 'working' }), null);
   assert.equal(slotClaimBlockedByRelease({}), null);

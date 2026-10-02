@@ -137,6 +137,32 @@ test('native cancel retains process ownership through failed teardown', async ()
   );
 });
 
+test('cancel preserves tmux worker ownership through cleanup', async () => {
+  const context = {
+    id: 'dev',
+    role: 'dev',
+    label: 'Dev',
+    slotId: 'mini-ff-1',
+    runId: 'run_1',
+    status: 'working',
+    updatedAt: NOW,
+    runner: 'claude',
+    runnerSessionId: 'saved-conversation',
+    runnerSessionPath: '/tmp/fixture/conversation.jsonl',
+    target: { session: 'fixture', paneId: '%123', target: '%123' },
+  } as NonNullable<Run['agentContexts']>[number];
+  const h = harness(run({ transport: 'tmux', agentContexts: [context] }), {
+    releaseCapabilities: async (current) => {
+      assert.deepEqual(current.agentContexts, [context]);
+    },
+    releaseSlot: async (current) => {
+      assert.deepEqual(current.agentContexts, [context]);
+    },
+  });
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  assert.deepEqual(result.run.agentContexts, [context]);
+});
+
 test('operator cancel settles the backlog and ticks the work graph', async () => {
   // Regression for the gap ADR-053 documents: run.cancel holds the per-request
   // emit, so the index.ts event interceptor never saw it and neither store moved.

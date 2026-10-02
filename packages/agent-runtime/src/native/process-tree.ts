@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 
-interface ProcessIdentity {
+export interface ProcessIdentity {
   pid: number;
   parent: number;
   group: number;
@@ -88,7 +88,19 @@ function scheduleCensus(): void {
           // A scan started before registration or disposal cannot update that tree.
           if (observers.get(token) !== observer) continue;
           if (error) observer.failed(error);
-          else observer.apply(snapshot!);
+          else {
+            try {
+              observer.apply(snapshot!);
+            } catch (observationError) {
+              // Journal failures stop this owner through its failure path.
+              // They must not escape the census callback or starve other trees.
+              observer.failed(
+                observationError instanceof Error
+                  ? observationError
+                  : new Error(String(observationError)),
+              );
+            }
+          }
         }
         scheduleCensus();
       },
@@ -128,9 +140,18 @@ export class NativeProcessTree {
   capture(): void {
     this.applySnapshot(processes());
   }
-  observe(failed: (error: Error) => void): () => void {
+  observe(
+    failed: (error: Error) => void,
+    observed?: (snapshot: ProcessIdentity[]) => void,
+  ): () => void {
     const token = Symbol('native-process-census');
-    observers.set(token, { apply: (snapshot) => this.applySnapshot(snapshot), failed });
+    observers.set(token, {
+      apply: (snapshot) => {
+        this.applySnapshot(snapshot);
+        observed?.(this.snapshot());
+      },
+      failed,
+    });
     if (stalledCensus) {
       const error = stalledCensus;
       queueMicrotask(() => {

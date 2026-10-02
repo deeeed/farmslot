@@ -19,6 +19,7 @@ import { alive, privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_METHODS,
@@ -140,6 +141,10 @@ export class NativeSessionClient {
       throw new Error(
         'Native host upgrade required for idempotent creation; existing sessions remain available',
       );
+    if (request.method === NATIVE_WORKER_CONFIRM_STOPPED && !host.supportsWorkerStopAttestation)
+      throw new Error(
+        'Native host upgrade required for explicit stopped-process confirmation; existing sessions remain readable',
+      );
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
@@ -203,6 +208,13 @@ export class NativeSessionClient {
   interruptWorker(owner: string, target: NativeWorkerTarget) {
     return this.call<void>({
       method: NATIVE_WORKER_INTERRUPT,
+      owner,
+      ...this.workerTarget(target),
+    });
+  }
+  confirmWorkerStopped(owner: string, target: NativeWorkerTarget) {
+    return this.call<NativeSessionInfo>({
+      method: NATIVE_WORKER_CONFIRM_STOPPED,
       owner,
       ...this.workerTarget(target),
     });

@@ -64,6 +64,9 @@ export function alive(pid: number): boolean {
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    // Permission denial still proves a process/group exists. It is never
+    // evidence of absence and must not make every read of its owner fail.
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
     throw error;
   }
 }
@@ -73,6 +76,36 @@ export function signalGroup(pid: number, signal: NodeJS.Signals): void {
   } catch (error) {
     // A group that already exited is the requested stopped outcome.
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
+
+export function processGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
+    throw error;
+  }
+}
+
+/** PID reuse never counts as the old descendant surviving. */
+export function processIdentityAlive(pid: number, identity: string): boolean {
+  if (!alive(pid)) return false;
+  try {
+    return (
+      execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 5000,
+      }).trim() === identity.trim()
+    );
+  } catch (error) {
+    if (!alive(pid)) return false;
+    // A living but unreadable PID is uncertain, never proof of cleanup.
+    if ((error as { status?: number }).status === 1) return true;
+    throw error;
   }
 }
 

@@ -56,6 +56,7 @@ export interface NativeExecutionNodeDeclaration {
   supportsEnsure?: boolean;
   /** Private worker launch contract, separate from ordinary session creation. */
   supportsWorkers?: boolean;
+  supportsWorkerStopAttestation?: boolean;
   supportsProfiles?: boolean;
 }
 export interface NativeSessionListResult {
@@ -73,6 +74,8 @@ export interface NativeSessionSendParams extends NativeSessionTargetParams {
 }
 export interface NativeSessionSendResult {
   commandId: string;
+  /** Durably queued for the next turn boundary; not submitted or accepted yet. */
+  queued?: boolean;
   /** Submission was attempted or may have occurred; this is not native acceptance. */
   submitted: boolean;
   state: NativeCommandState;
@@ -86,6 +89,7 @@ export interface NativeCommandReceipt {
   state: NativeCommandState;
   submitted: boolean;
   accepted: boolean;
+  queued?: boolean;
   outcome?: 'completed' | 'failed' | 'interrupted';
 }
 
@@ -97,7 +101,15 @@ export interface NativeSessionRespondParams
   extends NativeSessionTargetParams, NativeSessionResponse {
   requestId: string;
 }
-export interface NativeSessionInfo {
+export interface NativeProcessExitEvidence {
+  /** Null when the process exited by signal or its exit was not observed. */
+  exitCode: number | null;
+  signal: string | null;
+  /** Bounded diagnostic tail with credentials removed. */
+  stderrTail: string[];
+}
+
+export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   id: string;
   /** Host generation, distinct from the native conversation identity. */
   generation: string;
@@ -108,6 +120,8 @@ export interface NativeSessionInfo {
   processIdentity?: string;
   /** Wrapper group and observed descendants stopped; not exhaustive OS containment. */
   processStopped?: boolean;
+  processStopReason?: 'process-exit' | 'process-missing' | 'process-missing-attested';
+  error?: string;
   recovery?: string;
   runner: string;
   nativeSessionId: string;

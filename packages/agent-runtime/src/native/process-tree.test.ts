@@ -7,6 +7,37 @@ import test from 'node:test';
 import { NativeProcessTree } from './process-tree.js';
 import { alive } from './storage.js';
 
+test('a failed persistence observer reports failure without starving another owner', async (t) => {
+  const failedTree = new NativeProcessTree(process.pid);
+  const healthyTree = new NativeProcessTree(process.pid);
+  const errors: Error[] = [];
+  let observed = false;
+  const stopFailed = failedTree.observe(
+    (error) => errors.push(error),
+    () => {
+      throw new Error('Journal write failed');
+    },
+  );
+  const stopHealthy = healthyTree.observe(
+    (error) => {
+      throw error;
+    },
+    () => {
+      observed = true;
+    },
+  );
+  t.after(() => {
+    stopFailed();
+    stopHealthy();
+  });
+  const deadline = Date.now() + 5000;
+  while (!errors.length || !observed) {
+    assert.ok(Date.now() < deadline, 'both census owners must receive their outcome');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.match(errors[0]!.message, /Journal write failed/);
+});
+
 test('a stalled census fails observation before child closure and cannot start overlapping scans', async (t) => {
   const tree = new NativeProcessTree(process.pid);
   const before = tree.snapshot();

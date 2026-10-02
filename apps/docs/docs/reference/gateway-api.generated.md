@@ -287,6 +287,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `roadmap.refinementSession.get`         | roadmap          | read-only     | —      | —      | Roadmap RefinementSession Get gateway method.         |
 | `roadmap.save`                          | roadmap          | bounded-write | —      | —      | Roadmap Save gateway method.                          |
 | `run.activateOnSlot`                    | run              | bounded-write | —      | —      | Run ActivateOnSlot gateway method.                    |
+| `run.adopt`                             | run              | bounded-write | —      | —      | Run Adopt gateway method.                             |
 | `run.archive`                           | run              | bounded-write | —      | —      | Run Archive gateway method.                           |
 | `run.autoRecovery.stop`                 | run              | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.                 |
 | `run.backfillSummaries`                 | run              | bounded-write | —      | —      | Run BackfillSummaries gateway method.                 |

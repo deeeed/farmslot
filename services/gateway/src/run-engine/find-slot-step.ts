@@ -421,6 +421,8 @@ export async function executeFindSlotStep(
         `Warm-session reuse slot '${run.slotId}' is ${warmSlot.lifecycle}; cannot hand off`,
       );
     }
+    const blocked = slotClaimBlockedByRelease(warmSlot);
+    if (blocked) throw new Error(`Warm-session reuse slot '${run.slotId}' ${blocked}`);
     // Warm reuse still delivers a NEW task into the session. The same admission
     // gate as every other binding; the kill switch is the deliberate bypass.
     await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);

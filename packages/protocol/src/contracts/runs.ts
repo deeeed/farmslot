@@ -2299,6 +2299,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Run cleanup preserved resources whose ownership could not be proven. */
+  slotTeardownSkipped?: string;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */
   qaAfterReview?: import('./qa.js').QaAfterReview;
   /** Effective direct-dispatch policy retained from admission or its queued request. */

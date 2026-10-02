@@ -5,6 +5,7 @@ import type {
   SafetyTier,
 } from '@farmslot/protocol';
 
+import type { ProcessIdentity } from './process-tree.js';
 import type { NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
 
@@ -15,6 +16,7 @@ export type NativeEventInput = Omit<
 export interface NativeAdapterOptions {
   cwd: string;
   onSpawn?: (pid: number, identity: string) => void;
+  onProcessSnapshot?: (snapshot: ProcessIdentity[]) => void;
   signal?: AbortSignal;
   executable: string;
   model?: string;

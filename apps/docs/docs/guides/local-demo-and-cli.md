@@ -85,3 +85,11 @@ farmslot run create --task projects/audiolab-farm/tasks/dev/example/TASK.md \
 ## About the shell scripts
 
 The `scripts/*.sh` lifecycle commands are lower-level building blocks used by the gateway, CLI, and local debugging. They remain useful for development and recovery, but they are not the public getting-started surface.
+
+## Recover a worker
+
+`farmslot run get <runId>` shows recovery hints, including the pending decision and its resolution commands. `farmslot run resume <runId>` also handles a blocked native worker whose handoff decision supports saved-conversation recovery.
+
+If the saved worker conversation was resumed outside the gateway, use `farmslot run adopt <runId> --tmux <session>`. Adoption verifies its process and conversation identity, refuses another live owner, and resumes task monitoring. It does not create or restart that session.
+
+For `run create --task`, update the CLI on every node before upgrading the gateway. New clients send paths resolved from the caller's working directory. The updated gateway rejects new relative paths and tells older clients to upgrade. Historical runs remain readable.

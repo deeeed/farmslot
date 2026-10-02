@@ -845,7 +845,7 @@ test('old native hosts retain ordinary reads but refuse ensured creation before 
   }
 });
 
-test('recovery and terminal close require confirmed cleanup even when the wrapper is gone', async () => {
+test('legacy recovery and terminal close require descendant evidence even when the wrapper is gone', async () => {
   const fixture = setup();
   const manager = new NativeSessionManager(fixture.root);
   try {
@@ -854,7 +854,22 @@ test('recovery and terminal close require confirmed cleanup even when the wrappe
     const stopped = manager.read('owner', session.id).session;
     assert.equal(stopped.processStopped, true);
     assert.equal(alive(stopped.processPid!), false);
-    // Reproduce a durable cleanup failure after the wrapper has exited.
+    // Legacy records have no durable descendant identities. A missing wrapper
+    // alone cannot establish cleanup of an unobserved detached child.
+    const journal = join(fixture.root, `${session.id}.journal`);
+    writeFileSync(
+      journal,
+      readFileSync(journal, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const entry = JSON.parse(line);
+          delete entry.processes;
+          delete entry.processesAdded;
+          return JSON.stringify(entry);
+        })
+        .join('\n') + '\n',
+    );
     appendDurable(join(fixture.root, `${session.id}.journal`), {
       info: { ...stopped, state: 'failed', processStopped: false },
     });
@@ -870,6 +885,70 @@ test('recovery and terminal close require confirmed cleanup even when the wrappe
     );
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('legacy worker cleanup can be explicitly attested without discarding its conversation', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  let restored: NativeSessionManager | undefined;
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd }, launch);
+    await manager.close('owner', session.id);
+    const stopped = manager.read('owner', session.id).session;
+    const journal = join(fixture.root, `${session.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        delete entry.processes;
+        delete entry.processesAdded;
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false, processStopReason: undefined },
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    restored = new NativeSessionManager(fixture.root);
+    assert.equal(restored.read('owner', session.id).session.processStopped, false);
+    assert.throws(
+      () => restored!.confirmWorkerStopped('owner', session.id, 'stale', launch.leaseId),
+      /generation or task lease changed/,
+    );
+    const confirmed = restored.confirmWorkerStopped(
+      'owner',
+      session.id,
+      session.generation,
+      launch.leaseId,
+    );
+    assert.equal(confirmed.processStopped, true);
+    assert.equal(confirmed.processStopReason, 'process-missing-attested');
+    const cursor = restored.read('owner', session.id).cursor;
+    restored.confirmWorkerStopped('owner', session.id, session.generation, launch.leaseId);
+    assert.equal(restored.read('owner', session.id).cursor, cursor);
+    const resumed = await restored.create(
+      'owner',
+      { runner: 'codex', cwd: fixture.cwd, resumeSessionId: session.nativeSessionId },
+      launch,
+    );
+    assert.equal(resumed.nativeSessionId, session.nativeSessionId);
+    assert.notEqual(resumed.generation, session.generation);
+  } catch (error) {
+    console.error(`Legacy attestation regression: ${(error as Error).message}`);
+    throw error;
+  } finally {
+    for (const session of (restored ?? manager).list('owner')) {
+      if (!session.processStopped && session.processPid && !alive(session.processPid)) continue;
+      await (restored ?? manager).close('owner', session.id);
+    }
     fixture.restore();
   }
 });
@@ -1262,6 +1341,254 @@ test('a stopped worker transfers its lease before resuming the saved conversatio
     assert.equal(manager.read('owner', first.id).session.workerLeaseId, successor.leaseId);
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('resume journals the early new-generation census before host reload', async () => {
+  const fixtureState = setup();
+  writeFileSync(
+    join(fixtureState.cwd, 'codex'),
+    fixture.replace(
+      "thread=m.params.threadId || 'thread-'+process.pid;",
+      "const early=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',detached:true});fs.writeFileSync('early-descendant',String(early.pid));thread=m.params.threadId || 'thread-'+process.pid;",
+    ),
+  );
+  const manager = new NativeSessionManager(fixtureState.root);
+  let restored: NativeSessionManager | undefined;
+  try {
+    const first = await manager.create('owner', { runner: 'codex', cwd: fixtureState.cwd });
+    const journal = join(fixtureState.root, `${first.id}.journal`);
+    const firstChild = Number(readFileSync(join(fixtureState.cwd, 'early-descendant'), 'utf8'));
+    await until(() => readFileSync(journal, 'utf8').includes(`"pid":${firstChild},`));
+    await manager.close('owner', first.id);
+    const resumed = await manager.create('owner', {
+      runner: 'codex',
+      cwd: fixtureState.cwd,
+      resumeSessionId: first.nativeSessionId,
+    });
+    const nextChild = Number(readFileSync(join(fixtureState.cwd, 'early-descendant'), 'utf8'));
+    await until(() => readFileSync(journal, 'utf8').includes(`"pid":${nextChild},`));
+    assert.notEqual(resumed.generation, first.generation);
+    // A stale leader pointer must not erase the early new-generation census.
+    // The first generation's actual leader has stopped, while the resumed tree lives.
+    assert.equal(alive(first.processPid!), false);
+    appendDurable(journal, {
+      info: { ...resumed, state: 'failed', processStopped: false, processPid: first.processPid },
+    });
+    restored = new NativeSessionManager(fixtureState.root);
+    assert.equal(
+      restored.read('owner', resumed.id).session.processStopped,
+      false,
+      'The early detached descendant remains owned after reload',
+    );
+    assert.equal(alive(nextChild), true);
+    await assert.rejects(
+      restored.create('owner', {
+        runner: 'codex',
+        cwd: fixtureState.cwd,
+        resumeSessionId: resumed.nativeSessionId,
+      }),
+      /cleanup is unconfirmed/,
+    );
+    await manager.close('owner', resumed.id);
+    await until(() => !alive(nextChild));
+    await restored.close('owner', resumed.id);
+  } finally {
+    try {
+      for (const session of manager.list('owner')) await manager.close('owner', session.id);
+      if (restored)
+        for (const session of restored.list('owner')) await restored.close('owner', session.id);
+    } finally {
+      fixtureState.restore();
+    }
+  }
+});
+
+test('an unconfirmed close preserves queued steering and a confirmed close cancels it', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    await manager.close('owner', session.id);
+    const stopped = manager.read('owner', session.id).session;
+    const journal = join(fixture.root, `${session.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        delete entry.processes;
+        delete entry.processesAdded;
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false },
+      commands: [
+        {
+          commandId: 'retained-steering',
+          text: 'keep this instruction',
+          generation: stopped.generation,
+          state: 'pending',
+          queued: true,
+          submitted: false,
+          accepted: false,
+        },
+      ],
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const restored = new NativeSessionManager(fixture.root);
+    await assert.rejects(restored.close('owner', session.id), /cleanup is unconfirmed/);
+    assert.equal(
+      new NativeSessionManager(fixture.root).read('owner', session.id).commands[0]?.queued,
+      true,
+    );
+    appendDurable(journal, { info: stopped });
+    const confirmed = new NativeSessionManager(fixture.root);
+    await confirmed.close('owner', session.id);
+    const command = new NativeSessionManager(fixture.root).read('owner', session.id).commands[0];
+    assert.equal(command?.queued, false);
+    assert.equal(command?.outcome, 'interrupted');
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('kernel birth evidence permits attestation without signalling a reused PID group', async () => {
+  const fixtureState = setup();
+  const manager = new NativeSessionManager(fixtureState.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixtureState.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  let foreign: ReturnType<typeof spawn> | undefined;
+  try {
+    const original = await manager.create(
+      'owner',
+      { runner: 'codex', cwd: fixtureState.cwd },
+      launch,
+    );
+    await manager.close('owner', original.id);
+    const stopped = manager.read('owner', original.id).session;
+    // ps start identities have second precision; force a distinct real kernel birth.
+    await delay(2100);
+    foreign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    assert.ok(foreign.pid);
+    const journal = join(fixtureState.root, `${original.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        for (const key of ['processes', 'processesAdded'])
+          for (const frame of entry[key] ?? []) {
+            if (frame.pid === original.processPid) frame.pid = foreign!.pid;
+            if (frame.parent === original.processPid) frame.parent = foreign!.pid;
+            if (frame.group === original.processPid) frame.group = foreign!.pid;
+          }
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false, processPid: foreign.pid },
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const restored = new NativeSessionManager(fixtureState.root);
+    const confirmed = restored.confirmWorkerStopped(
+      'owner',
+      original.id,
+      original.generation,
+      launch.leaseId,
+    );
+    assert.equal(confirmed.processStopped, true);
+    assert.equal(
+      alive(foreign.pid),
+      true,
+      'Attestation must preserve the unrelated current process',
+    );
+  } finally {
+    try {
+      if (foreign?.pid && alive(foreign.pid)) {
+        const exited = once(foreign, 'exit');
+        foreign.kill('SIGTERM');
+        await exited;
+      }
+    } finally {
+      fixtureState.restore();
+    }
+  }
+});
+
+test('legacy stop attestation distinguishes a positively owned replacement generation from an unknown group', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  const foreign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  assert.ok(foreign.pid);
+  try {
+    const original = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd }, launch);
+    await manager.close('owner', original.id);
+    const stopped = manager.read('owner', original.id).session;
+    const journal = join(fixture.root, `${original.id}.journal`);
+    const entries = readFileSync(journal, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const entry = JSON.parse(line);
+        delete entry.processes;
+        delete entry.processesAdded;
+        return entry;
+      });
+    entries.push({
+      info: { ...stopped, state: 'failed', processStopped: false, processPid: foreign.pid },
+    });
+    writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    const unknown = new NativeSessionManager(fixture.root);
+    assert.throws(
+      () => unknown.confirmWorkerStopped('owner', original.id, original.generation, launch.leaseId),
+      /absent native process and process group/,
+    );
+    assert.equal(alive(foreign.pid), true);
+    const replacement = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    appendDurable(journal, {
+      info: {
+        ...stopped,
+        state: 'failed',
+        processStopped: false,
+        processPid: replacement.processPid,
+      },
+    });
+    const restored = new NativeSessionManager(fixture.root);
+    const confirmed = restored.confirmWorkerStopped(
+      'owner',
+      original.id,
+      original.generation,
+      launch.leaseId,
+    );
+    assert.equal(confirmed.processStopReason, 'process-missing-attested');
+    assert.equal(
+      alive(replacement.processPid!),
+      true,
+      'Attestation must never signal the replacement generation',
+    );
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    const exited = once(foreign, 'exit');
+    foreign.kill('SIGTERM');
+    await exited;
     fixture.restore();
   }
 });

@@ -260,6 +260,42 @@ test('stopRunnerForPark sends only the registry graceful-exit command and confir
   );
 });
 
+test('stopRunnerForPark refuses exit when ownership changes during inspection', async () => {
+  const commands: string[] = [];
+  await assert.rejects(
+    stopRunnerForPark(
+      {
+        vars,
+        recoveryHandle: handle,
+        preservePane: true,
+        beforeExit: async () => {
+          throw new Error('ownership changed');
+        },
+      },
+      {
+        exec: async (_vars, command) => {
+          commands.push(command);
+          return {
+            exitCode: 0,
+            stdout: command.includes('display-message') ? EXACT_PANE_ROW : '',
+            stderr: '',
+          };
+        },
+        findRunnerPid: async () => '202',
+        probeRunnerPid: paneStopped,
+        verifyLiveBinding: verifyPersistedLiveBinding,
+        respawnPane: async () => {},
+        sleep: async () => {},
+      },
+    ),
+    /ownership changed/,
+  );
+  assert.equal(
+    commands.some((command) => command.includes("'/exit'")),
+    false,
+  );
+});
+
 test('stopRunnerForPark applies the runner-owned Codex submit delay', async () => {
   const commands: string[] = [];
   const result = await stopRunnerForPark(

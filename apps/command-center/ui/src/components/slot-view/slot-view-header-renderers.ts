@@ -40,6 +40,11 @@ export function renderSlotViewHeader(
     <!-- Header -->
     <div class="sv-header">
       <button class="sv-back-btn" @click=${view._handleBack}>&larr;</button>
+      ${slot?.heldReason
+        ? html`<span role="status" data-testid="slot-held-reason"
+            >Workspace occupied: ${slot.heldReason}</span
+          >`
+        : nothing}
       <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
       ${view._linkedRun
         ? html`

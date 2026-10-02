@@ -38,6 +38,8 @@ const COMPANION_PREPARE_PROFILES = new Set([
   'companion-full',
 ]);
 
+type SlotClaimStatus = Readonly<Partial<Pick<SlotStatus, 'lifecycle' | 'phase'>>>;
+
 export function isFreeSlot(slot: SlotStatus): boolean {
   // Ghost slots (status-file entries absent from live pools) can never be
   // dispatched — selecting one fails run creation with SLOT_NOT_FOUND.
@@ -538,13 +540,11 @@ export function buildSlotClaimStatus(params: {
 }
 
 /**
- * Claim-side half of the release/claim CAS pair: a slot whose phase is
- * 'releasing' is mid-teardown — release CAS-marked it before killing tmux and
- * its finalize resets state unconditionally, so a claim accepted now would be
- * killed and then clobbered. Returns the refusal reason or null when the
- * claim may proceed.
+ * Refuse CAS claims during teardown or while retained workspace occupants
+ * hold the slot. A stale fleet selection must not overwrite either protection.
  */
-export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>>): string | null {
+export function slotClaimBlockedByRelease(slot: SlotClaimStatus): string | null {
+  if (slot.lifecycle === 'held' && slot.phase === 'occupied') return 'slot remains occupied';
   return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
 }
 

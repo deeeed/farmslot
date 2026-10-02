@@ -17,7 +17,43 @@ import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } fro
 
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
-const RECIPE_ADAPTERS = new Set(['core', 'extension', 'mobile']);
+const LEGACY_RECIPE_ADAPTERS = new Set(['core', 'extension', 'mobile']);
+
+async function libraryAdapters(
+  root: string,
+  rootReal: string,
+  active?: string,
+): Promise<Set<string>> {
+  const adapters = new Set(LEGACY_RECIPE_ADAPTERS);
+  if (active) adapters.add(active);
+  const file = path.join(root, 'recipe-library.json');
+  let manifestReal: string;
+  try {
+    manifestReal = await realpath(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return adapters;
+    throw error;
+  }
+  if (!isPathWithin(rootReal, manifestReal))
+    throw invalidRecipeSource(
+      'Recipe library manifest resolves outside its root.',
+      'move recipe-library.json inside its library root',
+    );
+  const manifest = await readJsonFile(manifestReal);
+  if (
+    !isRecord(manifest) ||
+    !Array.isArray(manifest.platforms) ||
+    manifest.platforms.some(
+      (platform) =>
+        typeof platform !== 'string' ||
+        !/^[a-z][a-z0-9-]*$/.test(platform) ||
+        platform === 'shared',
+    )
+  )
+    throw new Error(`${file} must declare platforms as adapter names.`);
+  for (const platform of manifest.platforms as string[]) adapters.add(platform);
+  return adapters;
+}
 
 export type RecipeLibraryEnv = Record<string, string | undefined>;
 
@@ -32,6 +68,8 @@ export interface ResolvedLibraryRecipe {
   provenance: RecipeSourceProvenance;
   /** Source names that also declare this ref at lower precedence. */
   shadows: string[];
+  /** Qualified compatibility reference; excluded from catalogs. */
+  aliasFor?: string;
 }
 
 export interface RecipeLibraryResolution {
@@ -121,6 +159,7 @@ export async function loadRecipeLibraries(
 ): Promise<RecipeLibraryResolution> {
   const loadedSources: LoadedRecipeLibrarySource[] = [];
   const recipes = new Map<string, ResolvedLibraryRecipe>();
+  const qualified = new Map<string, ResolvedLibraryRecipe>();
   const seenNames = new Set<string>();
 
   for (const source of sources) {
@@ -143,8 +182,9 @@ export async function loadRecipeLibraries(
     seenNames.add(name);
 
     const selected = new Map<string, ResolvedLibraryRecipe>();
+    const adapters = await libraryAdapters(root, rootReal, options?.adapter);
     for (const relativeFile of await listRecipeFiles(root)) {
-      const identity = recipeIdentity(relativeFile, options?.adapter);
+      const identity = recipeIdentity(relativeFile, options?.adapter, adapters);
       if (!identity) continue;
       const absolutePath = path.join(root, LIBRARY_RECIPES_DIR, relativeFile);
       const fileReal = await realpath(absolutePath);
@@ -191,11 +231,19 @@ export async function loadRecipeLibraries(
     loadedSources.push({ name, root, recipeCount: selected.size, provenance: sourceProvenance });
 
     for (const [ref, resolved] of selected) {
+      if (resolved.adapter && !LEGACY_RECIPE_ADAPTERS.has(resolved.adapter)) {
+        const alias = `${resolved.adapter}.${ref}`;
+        if (!qualified.has(alias)) qualified.set(alias, { ...resolved, ref: alias, aliasFor: ref });
+      }
       const winner = recipes.get(ref);
       if (winner) winner.shadows.push(name);
       else recipes.set(ref, resolved);
     }
   }
+
+  // Custom directories previously formed qualified generic IDs. Preserve those
+  // references as aliases while offering the same logical ID as built-in adapters.
+  for (const [alias, recipe] of qualified) if (!recipes.has(alias)) recipes.set(alias, recipe);
 
   const resolution = { sources: loadedSources, recipes };
   if (options?.logger) logResolution(options.logger, resolution);
@@ -231,6 +279,7 @@ export async function listRecipeFiles(root: string): Promise<string[]> {
 function recipeIdentity(
   relativeFile: string,
   adapter: string | undefined,
+  adapters: ReadonlySet<string>,
 ): { ref: string; adapter?: string } | undefined {
   const portable = relativeFile.split(path.sep).join('/');
   if (!portable.endsWith(RECIPE_FILE_SUFFIX)) return undefined;
@@ -239,10 +288,10 @@ function recipeIdentity(
   const firstSeparator = base.indexOf('/');
   const firstDirectory = firstSeparator < 0 ? undefined : base.slice(0, firstSeparator);
   const directoryAdapter =
-    firstDirectory && RECIPE_ADAPTERS.has(firstDirectory) ? firstDirectory : undefined;
+    firstDirectory && adapters.has(firstDirectory) ? firstDirectory : undefined;
   const directoryScope = firstDirectory === 'shared' ? firstDirectory : directoryAdapter;
   const suffix = base.slice(base.lastIndexOf('.') + 1);
-  const filenameAdapter = RECIPE_ADAPTERS.has(suffix) ? suffix : undefined;
+  const filenameAdapter = LEGACY_RECIPE_ADAPTERS.has(suffix) ? suffix : undefined;
   if (directoryScope && filenameAdapter) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
@@ -274,6 +323,7 @@ function logResolution(logger: RecipeLogger, resolution: RecipeLibraryResolution
     .join(', ');
   logger.info(`Recipe libraries: ${summary || 'none'}`);
   for (const recipe of resolution.recipes.values()) {
+    if (recipe.aliasFor) continue;
     if (recipe.shadows.length > 0) {
       logger.warn(
         `Recipe ${recipe.ref} resolves from ${recipe.source} and shadows ${recipe.shadows.join(', ')}.`,

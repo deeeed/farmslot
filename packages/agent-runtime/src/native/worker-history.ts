@@ -12,28 +12,36 @@ interface WorkerWindow {
   commands?: NativeCommandReceipt[];
 }
 
+interface WorkerCommandReceipt extends NativeCommandReceipt {
+  leaseId?: string;
+}
+
+interface WorkerHistoryEntry {
+  info?: NativeSessionInfo;
+  event?: NativeSessionEvent;
+  commands?: WorkerCommandReceipt[];
+}
+
 /** Rebuilt from durable journal ordering, including lease claims made by cancellation. */
 export class NativeWorkerHistory {
   private windows = new Map<string, WorkerWindow>();
   private currentLease?: string;
   private sequence = 0;
   private commands = new Map<string, NativeCommandReceipt>();
+  private commandLeases = new Map<string, string | undefined>();
 
   assertNewLease(leaseId: string): void {
     if (this.windows.has(leaseId)) throw new Error('Native worker task lease cannot be reused');
   }
 
-  observe(entry: {
-    info?: NativeSessionInfo;
-    event?: NativeSessionEvent;
-    commands?: NativeCommandReceipt[];
-  }): void {
+  observe(entry: WorkerHistoryEntry): void {
     const lease = entry.info?.workerLeaseId;
+    let releasedWindow: WorkerWindow | undefined;
     if (entry.info && lease !== this.currentLease) {
       const previous = this.currentLease && this.windows.get(this.currentLease);
       if (previous) {
         previous.endAt = this.sequence;
-        previous.commands = [...this.commands.values()].map((command) => ({ ...command }));
+        releasedWindow = previous;
       }
       if (lease) {
         if (this.windows.has(lease)) throw new Error('Native worker task lease cannot be reused');
@@ -44,9 +52,30 @@ export class NativeWorkerHistory {
     if (entry.info && lease) this.windows.get(lease)!.info = structuredClone(entry.info);
     for (const command of entry.commands ?? []) {
       // Journal commands also carry private prompt text. Never retain it in public receipts.
-      const { generation, commandId, state, submitted, accepted, outcome } = command;
-      this.commands.set(commandId, { generation, commandId, state, submitted, accepted, outcome });
+      const { generation, commandId, state, submitted, accepted, outcome, queued } = command;
+      this.commands.set(commandId, {
+        generation,
+        commandId,
+        state,
+        submitted,
+        accepted,
+        outcome,
+        ...(queued ? { queued } : {}),
+      });
+      if (!this.commandLeases.has(commandId))
+        this.commandLeases.set(commandId, command.leaseId ?? this.currentLease);
+      const ownerLease = this.commandLeases.get(commandId);
+      const frozen = ownerLease ? this.windows.get(ownerLease)?.commands : undefined;
+      const pendingIndex = frozen?.findIndex(
+        (receipt) => receipt.commandId === commandId && receipt.queued && !receipt.submitted,
+      );
+      // Handoff cancellation can settle an unsubmitted queue after its lease window closed.
+      if (frozen && pendingIndex !== undefined && pendingIndex >= 0 && state === 'failed')
+        frozen[pendingIndex] = { ...this.commands.get(commandId)! };
     }
+    // Resume can settle the prior lease's queue in the same entry that claims its successor.
+    if (releasedWindow)
+      releasedWindow.commands = [...this.commands.values()].map((command) => ({ ...command }));
     if (entry.event) this.sequence = entry.event.sequence;
   }
 
@@ -86,7 +115,11 @@ export class NativeWorkerHistory {
       cursor: cursor + events.length,
       hasMore: cursor + events.length < endAt,
       commands: (window.commands ?? [...this.commands.values()])
-        .filter((command) => submitted.has(command.commandId))
+        .filter(
+          (command) =>
+            submitted.has(command.commandId) ||
+            this.commandLeases.get(command.commandId) === leaseId,
+        )
         .slice(-100)
         .map((command) => ({ ...command })),
       pendingRequests: released

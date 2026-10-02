@@ -47,6 +47,11 @@ import { schedulerTick } from '../../work-graph/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
+interface SlotReleaseResult {
+  released: boolean;
+  skipped?: string;
+}
+
 /**
  * Takes no emitter: ADR-053 makes the transition own both store propagation and
  * global publication. Passing one in is what made a cancel's reach depend on
@@ -115,7 +120,7 @@ export interface RunForceCompleteTransitionDependencies {
   attachPrNumber(runId: string, prNumber: number): Promise<void>;
   publish(run: Run): Promise<Run>;
   /** Advisory teardown runs after the public wrapper releases lifecycle locks. */
-  releaseSlot(run: Run): Promise<{ released: boolean }>;
+  releaseSlot(run: Run): Promise<SlotReleaseResult>;
 }
 
 const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = {
@@ -292,10 +297,16 @@ async function collectForceCompleteSlotReleaseEffect(
 ): Promise<RunForceCompleteResult['effects']> {
   if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
   try {
-    const { released } = await deps.releaseSlot(run);
+    const { released, skipped } = await deps.releaseSlot(run);
     return released
       ? [{ name: 'slot-release', status: 'ok' }]
-      : [{ name: 'slot-release', status: 'skipped', detail: 'already released or not owned' }];
+      : [
+          {
+            name: 'slot-release',
+            status: 'skipped',
+            detail: skipped ?? 'already released or not owned',
+          },
+        ];
   } catch (err) {
     const detail = (err as Error).message;
     console.warn(`[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
@@ -323,7 +334,7 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
-export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boolean }> {
+export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
   if (run.reviewWorkspace) {
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
     await teardownReviewWorkspace(run.id);
@@ -342,17 +353,32 @@ export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boo
       handoff_run_id: null,
     });
   }
-  const { slotRelease } = await import('../slot.js');
-  const { broadcastEvent } = await import('../../server.js');
-  const result = await slotRelease(
-    { slotId, keepWork: true, expectedRunId: run.id },
-    broadcastEvent,
-  );
-  if (result.released) {
+  const {
+    recordSlotTeardownBlocker,
+    fenceRunSlotCleanup,
+    RunOwnedResourceCleanupError,
+    releaseRunOwnedCapabilities,
+    releaseRunSlotOwnership,
+    settleFailedRunSlotCleanup,
+    stopRunOwnedTmuxAndWatches,
+  } = await import('../../run-lifecycle/slot-teardown.js');
+  const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+  let blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+  const fence = await fenceRunSlotCleanup(run, blocker);
+  try {
+    await releaseRunOwnedCapabilities(run, Boolean(blocker));
+    const { broadcastEvent } = await import('../../server.js');
+    const released = await releaseRunSlotOwnership(run, fence, blocker);
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    return { released, ...(blocker ? { skipped: `Workspace cleanup deferred: ${blocker}` } : {}) };
+  } catch (error) {
+    // A failed effect must not strand our releasing fence or publish readiness.
+    // Record a held outcome, then retain the original unexpected failure.
+    const reason = await settleFailedRunSlotCleanup(run, fence, error);
+    if (!(error instanceof RunOwnedResourceCleanupError)) throw error;
+    return { released: false, skipped: `Workspace cleanup deferred: ${reason}` };
   }
-  return result;
 }
 
 export async function publishCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
@@ -488,6 +514,7 @@ export interface RunResumeTransitionOptions {
 }
 
 export interface RunResumeTransitionDependencies {
+  resumeBlockedDecision?(runId: string, decisionId: string, emit: Emit): Promise<void>;
   nudgeMonitor(run: Run, emit: Emit): Promise<void>;
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
   /** Re-present a gate whose engine loop exited before the park was restored. */
@@ -595,7 +622,57 @@ export async function runResumeTransitionLocked(
     };
   }
   if (existing.status !== 'paused') {
-    throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
+    const { NATIVE_WORKER_RESUME_ACTION, runRecoveryHints } = await import('@farmslot/protocol');
+    const recovery =
+      existing.status === 'blocked' && existing.transport === 'native'
+        ? existing.decisions.filter(
+            (decision) =>
+              !decision.resolvedAt &&
+              decision.type === 'monitor_interactive_handoff' &&
+              decision.actions.some((action) => action.id === NATIVE_WORKER_RESUME_ACTION),
+          )
+        : [];
+    if (recovery.length === 1) {
+      const previousGeneration = existing.engineState?.generation ?? 0;
+      try {
+        if (params.confirmStopped === true) {
+          const { confirmNativeWorkerStopped } =
+            await import('../../runners/native/worker-control.js');
+          await confirmNativeWorkerStopped(existing.id);
+        }
+        if (deps.resumeBlockedDecision)
+          await deps.resumeBlockedDecision(existing.id, recovery[0].id, emit);
+        else {
+          const { resolveRunDecision } = await import('../run.js');
+          await resolveRunDecision(
+            {
+              runId: existing.id,
+              decisionId: recovery[0].id,
+              actionId: NATIVE_WORKER_RESUME_ACTION,
+            },
+            emit,
+          );
+        }
+      } catch (error) {
+        throw new Error(
+          `${(error as Error).message}. ${runRecoveryHints(getRun(existing.id)!).join(' ')}`,
+          { cause: error },
+        );
+      }
+      const current = getRun(existing.id)!;
+      const generation = current.engineState?.generation ?? 0;
+      return {
+        run: current,
+        previousGeneration,
+        generation,
+        stepName: 'monitor',
+        status: current.status,
+        acknowledgedAt: new Date().toISOString(),
+      };
+    }
+    throw new Error(
+      `Run ${params.runId} is not paused (status=${existing.status}). ${runRecoveryHints(existing).join(' ')}`.trim(),
+    );
   }
   if (!options.machineParkingRestore) assertNotMachineParkManaged(existing);
 
@@ -618,6 +695,12 @@ export async function runResumeTransitionLocked(
     );
   }
   if (currentStep.name === 'monitor' && !options.suppressMonitorNudge) {
+    if (params.confirmStopped === true) {
+      if (existing.transport !== 'native')
+        throw new Error('Stop confirmation requires a native worker');
+      const { confirmNativeWorkerStopped } = await import('../../runners/native/worker-control.js');
+      await confirmNativeWorkerStopped(existing.id);
+    }
     await deps.nudgeMonitor(existing, emit);
   }
 

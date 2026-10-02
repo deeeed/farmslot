@@ -361,6 +361,7 @@ interface RawSlot {
   task_id?: string | null;
   task_file?: string | null;
   current_run_id?: string | null;
+  held_reason?: string;
   current_flow_type?: string | null;
   current_ticket_or_pr?: string | null;
   current_mode?: string | null;
@@ -469,6 +470,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     taskId: raw.task_id ?? null,
     taskFile: raw.task_file ?? null,
     currentRunId: raw.current_run_id ?? null,
+    ...(raw.held_reason ? { heldReason: raw.held_reason } : {}),
     currentFlowType: raw.current_flow_type ?? null,
     currentTicketOrPr: raw.current_ticket_or_pr ?? null,
     currentMode: raw.current_mode ?? null,

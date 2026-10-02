@@ -20,6 +20,144 @@ function holdsProviderForTest(lease: { state: string }): boolean {
   return ['acquiring', 'acquired', 'releasing'].includes(lease.state);
 }
 
+test('retiring run ownership preserves foreign leases and defers provider shutdown explicitly', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('shared', 'shared')]);
+  assert.equal((await acquire(registry, 'shared', 'ending-run')).ok, true);
+  assert.equal((await acquire(registry, 'shared', 'foreign-run')).ok, true);
+  actions.length = 0;
+  const result = await registry.releaseOwnership(SLOT, 'ending-run');
+  assert.equal(result.ok, true);
+  assert.equal(actions.length, 0);
+  assert.equal(result.released.length, 1);
+  assert.ok(result.released[0].providerCleanupDeferred);
+  const current = await registry.status({ slotId: SLOT });
+  assert.equal(
+    current.leases.find((lease) => lease.owner.runId === 'foreign-run')?.state,
+    'acquired',
+  );
+  const blocked = await registry.stopWarmProviders(SLOT);
+  assert.ok(blocked.stillHeld.length);
+  await registry.releaseOwnership(SLOT, 'foreign-run');
+  const refused = await acquire(registry, 'shared', 'next-run');
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.conflict.reason, /Provider cleanup is deferred/);
+  const stopped = await registry.stopWarmProviders(SLOT);
+  assert.equal(stopped.failures.length, 0);
+  assert.equal(actions.filter((action) => action === 'shared.release').length, 1);
+  assert.equal((await acquire(registry, 'shared', 'next-run')).ok, true);
+});
+
+test('foreign occupancy defers providers that were already warm', async (t) => {
+  let now = Date.parse('2026-08-11T00:00:00Z');
+  const { registry, actions } = await fixture(t, [{ ...entry('app'), keepWarmMs: 1000 }], {
+    now: () => new Date(now),
+  });
+  assert.equal((await acquire(registry, 'app', 'ending-run')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'ending-run' });
+  actions.length = 0;
+  await registry.releaseOwnership(SLOT, 'ending-run');
+  now += 2000;
+  await registry.cleanupExpiredWarmProviders();
+  assert.equal(actions.length, 0);
+  const lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.keepWarmUntil, undefined);
+  assert.ok(lease.providerCleanupDeferred);
+});
+
+test('ordinary foreign release preserves a deferred provider and its dependencies', async (t) => {
+  const { registry, actions } = await fixture(t, [
+    entry('dep', 'shared'),
+    entry('app', 'shared', ['dep']),
+  ]);
+  assert.equal((await acquire(registry, 'app', 'ending-run')).ok, true);
+  assert.equal((await acquire(registry, 'app', 'foreign-run')).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending-run');
+  actions.length = 0;
+  await registry.release({ slotId: SLOT, ownerRunId: 'foreign-run', keepWarm: false });
+  assert.equal(actions.length, 0);
+  const retained = (await registry.status({ slotId: SLOT })).leases.filter(
+    (lease) => lease.providerCleanupDeferred,
+  );
+  assert.equal(retained.length, 2);
+});
+
+test('deferred providers keep exclusive claims on the same slot', async (t) => {
+  const claim = { id: 'capture-helper', access: 'exclusive' as const, scope: 'slot' as const };
+  const { registry, actions } = await fixture(t, [
+    claimEntry('app', claim),
+    claimEntry('other', claim),
+  ]);
+  assert.equal((await acquire(registry, 'app', 'ending-run')).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending-run');
+  actions.length = 0;
+  assert.equal((await acquire(registry, 'other', 'next-run')).ok, false);
+  assert.equal(actions.length, 0);
+});
+
+test('deferred provider refusal precedes newly configured dependency startup', async (t) => {
+  const app = entry('app');
+  const { registry, actions } = await fixture(t, [app, entry('new-dep')]);
+  assert.equal((await acquire(registry, 'app', 'ending-run')).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending-run');
+  app.dependencies = ['new-dep'];
+  actions.length = 0;
+  assert.equal((await acquire(registry, 'app', 'next-run')).ok, false);
+  assert.equal(actions.length, 0);
+});
+
+test('shared provider cleanup unions dependency records and protects them after failure', async (t) => {
+  let failParent = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('dep', 'shared'), entry('app', 'shared', ['dep'])],
+    {
+      runAction: async (_slot, action) =>
+        action.kind === 'slot-action' && action.actionId === 'app.release' && failParent
+          ? { ok: false, detail: 'parent still running' }
+          : { ok: true },
+    },
+  );
+  for (const owner of ['first', 'second'])
+    assert.equal((await acquire(registry, 'app', owner)).ok, true);
+  for (const owner of ['first', 'second']) await registry.releaseOwnership(SLOT, owner);
+  actions.length = 0;
+  const failed = await registry.stopWarmProviders(SLOT);
+  assert.equal(failed.failures.length, 2);
+  assert.deepEqual(actions, ['app.release']);
+  assert.equal(failed.deferred.length, 2);
+  // Normal release retries failed provider cleanup. Its deferred dependencies
+  // remain protected until the parent is genuinely gone.
+  failParent = false;
+  for (const owner of ['first', 'second'])
+    await registry.release({ slotId: SLOT, ownerRunId: owner, keepWarm: false });
+  actions.length = 0;
+  const stopped = await registry.stopWarmProviders(SLOT);
+  assert.equal(stopped.failures.length, 0);
+  assert.deepEqual(actions, ['app.release', 'dep.release']);
+});
+
+test('a surviving shared holder can reuse healthy providers while cleanup is deferred', async (t) => {
+  const { registry, actions } = await fixture(t, [
+    entry('dep', 'shared'),
+    entry('app', 'shared', ['dep']),
+  ]);
+  for (const owner of ['ending-run', 'survivor'])
+    assert.equal((await acquire(registry, 'app', owner)).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending-run');
+  actions.length = 0;
+  assert.equal((await acquire(registry, 'app', 'survivor')).ok, true);
+  const result = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'survivor',
+    proofRequirement: { capabilityId: 'app', reason: 'recheck', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(actions, ['app.health', 'dep.health']);
+  assert.equal((await acquire(registry, 'app', 'new-owner')).ok, false);
+});
+
 function entry(
   id: string,
   sharePolicy: RuntimeCapabilityCatalogEntry['sharePolicy'] = 'exclusive',
@@ -70,6 +208,12 @@ async function fixture(
       typeof RuntimeCapabilityRegistry
     >[0]['assertTargetAvailable'];
     now?: () => Date;
+    captureProviderProcesses?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['captureProviderProcesses'];
+    checkProviderCleanup?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['checkProviderCleanup'];
   } = {},
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
@@ -86,6 +230,8 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
+    captureProviderProcesses: options.captureProviderProcesses,
+    checkProviderCleanup: options.checkProviderCleanup,
     catalogForSlot: async (slotId) => ({
       slotId,
       project: 'test-project',
@@ -1009,6 +1155,10 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
     releaseSlowAcquire = resolve;
   });
   let gateArmed = true;
+  let signalAcquireStarted = (): void => {};
+  const acquireStarted = new Promise<void>((resolve) => {
+    signalAcquireStarted = resolve;
+  });
   const { registry, actions } = await fixture(
     t,
     [entry('ios-simulator', 'exclusive', ['companion-metro']), entry('companion-metro')],
@@ -1020,6 +1170,7 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
           action.actionId === 'ios-simulator.acquire'
         ) {
           gateArmed = false;
+          signalAcquireStarted();
           await slowAcquire;
         }
         return { ok: true };
@@ -1029,7 +1180,7 @@ test('terminal cleanup releases a lease that only reaches acquired after it star
 
   const acquiring = acquire(registry, 'ios-simulator', 'run-a', 'fam-a');
   // Let the acquire reach its slow provider action.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await acquireStarted;
 
   // Terminal cleanup starts while the acquire is still running.
   const terminal = registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
@@ -1599,6 +1750,102 @@ test('stopWarmProviders reports a cleanup failure instead of claiming stopped', 
   ]);
   const status = await registry.status({ slotId: SLOT });
   assert.equal(status.leases[0]?.cleanupFailure, 'metro shutdown exited 1');
+});
+
+test('explicit warm cleanup retries and clears a settled failure', async (t) => {
+  let blocked = true;
+  const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'app.release' && blocked
+        ? { ok: false, detail: 'Ownership is unconfirmed' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'app', 'owner')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: true });
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).failures.length, 1);
+  blocked = false;
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).released.length, 1);
+  const lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.state, 'released');
+  assert.equal(lease.cleanupFailure, undefined);
+  assert.equal(lease.providerCleanupDeferred, undefined);
+  assert.equal((await acquire(registry, 'app', 'next-owner')).ok, true);
+});
+
+test('warm cleanup uses the current provider instance after a cold release and restart', async (t) => {
+  let generation = 0;
+  const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+    captureProviderProcesses: async () => [
+      { pid: ++generation, group: generation, identity: `birth-${generation}` },
+    ],
+    checkProviderCleanup: async (_slotId, _entry, frames) => {
+      assert.equal(
+        frames?.[0]?.pid,
+        generation,
+        'Only the current provider instance may be cleaned up',
+      );
+      return null;
+    },
+  });
+  assert.equal((await acquire(registry, 'app', 'first')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'first', keepWarm: false });
+  assert.equal((await acquire(registry, 'app', 'second')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'second', keepWarm: true });
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).failures.length, 0);
+});
+
+test('identity capture failure settles acquisition and records uncertain cleanup', async (t) => {
+  const frame = { pid: 123, group: 123, identity: 'born' };
+  let cleanupBlocked = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('leaf'), entry('dep', 'exclusive', ['leaf']), entry('app', 'exclusive', ['dep'])],
+    {
+      captureProviderProcesses: async (_slotId, entry) => {
+        if (entry.id === 'app') throw new Error('Node disconnected');
+        return [];
+      },
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'app.acquire'
+          ? { ok: true, providerProcesses: [frame] }
+          : { ok: true },
+      checkProviderCleanup: async (_slotId, entry, frames) => {
+        if (entry.id === 'app') {
+          assert.deepEqual(frames, [frame]);
+          return cleanupBlocked ? 'Node unavailable' : null;
+        }
+        return null;
+      },
+    },
+  );
+  const result = await acquire(registry, 'app', 'owner');
+  assert.equal(result.ok, false);
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  const app = leases.find((lease) => lease.capabilityId === 'app');
+  assert.equal(app?.state, 'error');
+  assert.match(app?.cleanupFailure ?? '', /Node unavailable/);
+  assert.equal(leases.find((lease) => lease.capabilityId === 'dep')?.state, 'acquired');
+  assert.equal(leases.find((lease) => lease.capabilityId === 'leaf')?.state, 'acquired');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    [],
+  );
+  assert.ok(
+    leases.every((lease) => lease.state !== 'acquiring'),
+    'No acquisition may remain unsettled',
+  );
+  cleanupBlocked = false;
+  assert.equal(
+    (await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false })).ok,
+    true,
+  );
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release', 'dep.release', 'leaf.release'],
+  );
+  assert.ok(
+    (await registry.status({ slotId: SLOT })).leases.every((lease) => lease.state === 'released'),
+  );
 });
 
 test('a failed warm cleanup keeps the dependency it still holds', async (t) => {
@@ -3440,3 +3687,54 @@ test('unavailable warm provider rolls back newly acquired dependencies without r
   assert.equal(preserved?.state, 'released');
   assert.ok(preserved?.keepWarmUntil, 'Unavailable health must retain the existing warm deadline');
 });
+
+test('provider identities survive shared and warm lease reuse without a new census', async (t) => {
+  let captures = 0;
+  const frame = { pid: 12345, group: 12345, identity: 'fixture-start' };
+  const { registry } = await fixture(t, [{ ...entry('app', 'shared'), keepWarmMs: 60000 }], {
+    captureProviderProcesses: async () => {
+      captures++;
+      return [frame];
+    },
+  });
+  const first = await acquire(registry, 'app', 'first');
+  const second = await acquire(registry, 'app', 'second');
+  assert.equal(first.ok && second.ok, true);
+  if (!first.ok || !second.ok) throw new Error('Fixture acquire failed');
+  assert.deepEqual(second.lease.providerProcesses, [frame]);
+  for (const ownerRunId of ['first', 'second'])
+    await registry.release({ slotId: SLOT, ownerRunId });
+  const next = await acquire(registry, 'app', 'next');
+  assert.equal(next.ok, true);
+  if (next.ok) assert.deepEqual(next.lease.providerProcesses, [frame]);
+  assert.equal(captures, 1);
+});
+
+for (const warm of [false, true]) {
+  test(`provider ownership refusal preserves ${warm ? 'warm' : 'active'} processes before shutdown`, async (t) => {
+    const frame = { pid: 12345, group: 12345, identity: 'fixture-start' };
+    const actions: string[] = [];
+    const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+      captureProviderProcesses: async () => [frame],
+      checkProviderCleanup: async (_slotId, _entry, processes) => {
+        assert.deepEqual(processes, [frame]);
+        return 'Provider process ownership changed';
+      },
+      runAction: async (_slotId, action) => {
+        if (action.kind === 'slot-action') actions.push(action.actionId);
+        return { ok: true };
+      },
+    });
+    assert.equal((await acquire(registry, 'app', 'owner')).ok, true);
+    if (warm) await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: true });
+    actions.length = 0;
+    if (warm) {
+      const result = await registry.stopWarmProviders(SLOT, undefined, 'owner');
+      assert.equal(result.failures.length, 1);
+    } else {
+      const result = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
+      assert.equal(result.ok, false);
+    }
+    assert.ok(!actions.includes('app.release'));
+  });
+}

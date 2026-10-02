@@ -87,6 +87,7 @@ export interface RunnerObservability {
   capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
   /** Resolve the runner-native session id stored inside one persisted session. */
   resolveSessionId?(vars: SlotVars, sessionPath: string): Promise<string | null>;
+  listSessionFiles?(vars: SlotVars): Promise<string[]>;
   /** Resolve the exact native session currently owned by one tmux target. */
   getSessionBinding?(
     vars: SlotVars,
@@ -112,16 +113,16 @@ export interface RunnerObservability {
     /** PID of the live runner process, already proven to sit under the pane. */
     runnerPid: string,
     expectedSessionId: string,
-    /** Canonical rollout path, for confirming the process holds it open. */
+    /** Canonical saved conversation path for the runner-owned identity check. */
     expectedSessionPath: string,
     /**
      * `indeterminate` means the provider could not decide — callers must degrade
      * to unknown liveness rather than treat it as a proven absence.
      */
     /**
-     * Diagnostic only. Providers must not let argv decide: `ps` flattens it, so
-     * a value containing spaces can both hide the real session argument and
-     * present a fake one.
+     * Flattened `ps` argv is diagnostic only: a value containing spaces can
+     * hide or imitate a session argument. OS argument vectors may certify an
+     * explicit resume when the provider parses its supported options exactly.
      */
   ): Promise<{
     ok: boolean;

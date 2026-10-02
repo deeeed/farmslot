@@ -116,6 +116,8 @@ export interface ResourceSidecarMeta {
   runId: string;
   slotId: string;
   startedAt: string;
+  /** Kernel identity recorded at boot; legacy sidecars grant no process cleanup ownership. */
+  process?: { pid: number; group: number; identity: string };
 }
 
 export interface ActiveResourcePointer {

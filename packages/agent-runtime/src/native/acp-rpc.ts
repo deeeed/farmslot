@@ -1,3 +1,5 @@
+import type { NativeProcessExitEvidence } from '@farmslot/protocol';
+
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapterOptions } from './types.js';
 
@@ -29,7 +31,11 @@ export class AcpRpc {
     options: NativeAdapterOptions,
     args: string[],
     onMessage: (message: AcpObject) => void,
-    onExit: (error: Error | undefined, stopped: boolean) => void,
+    onExit: (
+      error: Error | undefined,
+      stopped: boolean,
+      evidence: NativeProcessExitEvidence,
+    ) => void,
   ) {
     this.process = new JsonLineProcess(
       options.executable,
@@ -54,13 +60,13 @@ export class AcpRpc {
         if (failure) pending.reject(failure);
         else pending.resolve(message.result);
       },
-      (error, stopped) => {
+      (error, stopped, evidence) => {
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.reject(error ?? new Error('ACP process closed'));
         }
         this.pending.clear();
-        onExit(error, stopped);
+        onExit(error, stopped, evidence);
       },
     );
   }

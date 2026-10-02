@@ -232,6 +232,7 @@ function recipeSummary(ref: string, document: unknown, selected?: ResolvedLibrar
 
 function printRecipeList(recipes: ReadonlyMap<string, ResolvedLibraryRecipe>, json: boolean): void {
   const entries = [...recipes.values()]
+    .filter((recipe) => !recipe.aliasFor)
     .sort((left, right) => left.ref.localeCompare(right.ref))
     .map((entry) => recipeSummary(entry.ref, entry.document, entry));
   if (json) {

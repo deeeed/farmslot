@@ -81,6 +81,7 @@ import {
   findBestSlot,
   parkPreservedSlotIds,
   projectConfigsFromProjects,
+  slotClaimBlockedByRelease,
   type SlotScoringProjectConfig,
 } from '../methods/dispatch/slot-scoring.js';
 import { slotOwnershipFieldsForRun } from '../methods/fleet.js';
@@ -752,7 +753,8 @@ const defaultDependencies: MachineParkingDependencies = {
       slotId,
       (slot) =>
         !(typeof slot.current_run_id === 'string' && slot.current_run_id) &&
-        slot.phase !== SLOT_PHASE_RELEASING &&
+        slot.lifecycle === 'ready' &&
+        slotClaimBlockedByRelease(slot) === null &&
         !(typeof slot.handoff_run_id === 'string' && slot.handoff_run_id),
       slotOwnershipFieldsForRun(run),
     );
@@ -2300,6 +2302,9 @@ export class MachineParkingService {
     }
     if (row.phase === SLOT_PHASE_RELEASING) {
       return { ok: false, kind: 'transient', reason: `slot '${slotId}' is mid-release` };
+    }
+    if (slotClaimBlockedByRelease(row) !== null) {
+      return { ok: false, kind: 'transient', reason: `slot '${slotId}' remains occupied` };
     }
     const handoff = typeof row.handoff_run_id === 'string' ? row.handoff_run_id : '';
     if (handoff && handoff !== runId) {

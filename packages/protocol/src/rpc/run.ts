@@ -25,6 +25,7 @@ export const RunMethods = {
   forceComplete: Methods.RUN_FORCE_COMPLETE,
   pause: Methods.RUN_PAUSE,
   resume: Methods.RUN_RESUME,
+  adopt: Methods.RUN_ADOPT,
   replayStep: Methods.RUN_REPLAY_STEP,
   activateOnSlot: Methods.RUN_ACTIVATE_ON_SLOT,
   autoRecoveryStop: Methods.RUN_AUTO_RECOVERY_STOP,
@@ -83,6 +84,7 @@ export interface RunCreateParams {
   /** Static-review machine selection, mutually exclusive with slot placement. */
   reviewWorkspaceTarget?: import('../contracts/review-workspace.js').ReviewWorkspaceTarget;
   slotId?: string;
+  /** New requests require an absolute caller-resolved path. Stored legacy paths remain readable. */
   taskFile?: string;
   branch?: string;
   /** Pre-fetched/manual ticket payload used by the worker task renderer. */
@@ -220,6 +222,7 @@ export interface RunGetParams {
 
 export interface RunGetResult {
   run: Run;
+  recoveryHints?: string[];
 }
 
 export interface RunListParams {
@@ -323,6 +326,17 @@ export interface RunPauseResult {
 
 export interface RunResumeParams {
   runId: string;
+  /** Explicit confirmation of legacy cleanup after checking unrecorded descendants. */
+  confirmStopped?: boolean;
+}
+
+export interface RunAdoptParams {
+  runId: string;
+  tmux: string;
+  confirmStopped?: boolean;
+}
+export interface RunAdoptResult {
+  run: Run;
 }
 
 export interface RunResumeResult {

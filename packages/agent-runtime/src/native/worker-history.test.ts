@@ -62,6 +62,96 @@ const event = (sequence: number, commandId: string): NativeSessionEvent => ({
   text: commandId,
 });
 
+test('queued receipts remain visible only to their task lease before submission', () => {
+  const history = new NativeWorkerHistory();
+  const pending = {
+    ...receipt('queued'),
+    state: 'pending' as const,
+    submitted: false,
+    accepted: false,
+    queued: true,
+    text: 'private queued prompt',
+  };
+  history.observe({ info, commands: [pending] });
+  const before = history.read(info.workerLeaseId!, [], []);
+  assert.equal(before.commands[0]?.queued, true);
+  assert.ok(!JSON.stringify(before.commands).includes('private queued prompt'));
+  history.observe({ info: { ...info, workerLeaseId: 'next-lease' } });
+  assert.equal(history.read('next-lease', [], []).commands.length, 0);
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.queued, true);
+});
+
+test('resume settles the prior lease receipt without assigning it to its successor', () => {
+  const history = new NativeWorkerHistory();
+  const command = {
+    ...receipt('prior-queued'),
+    state: 'pending' as const,
+    queued: true,
+    submitted: false,
+    accepted: false,
+    leaseId: info.workerLeaseId,
+  };
+  history.observe({ info, commands: [command] });
+  history.observe({
+    info: { ...info, workerLeaseId: 'successor' },
+    commands: [{ ...command, queued: false, state: 'failed' }],
+  });
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.state, 'failed');
+  assert.deepEqual(history.read('successor', [], []).commands, []);
+});
+
+test('handoff cancellation settles an old queued receipt after its lease window closes', () => {
+  const history = new NativeWorkerHistory();
+  const command = {
+    ...receipt('prior-queued'),
+    state: 'pending' as const,
+    queued: true,
+    submitted: false,
+    accepted: false,
+    leaseId: info.workerLeaseId,
+  };
+  history.observe({ info, commands: [command] });
+  history.observe({ info: { ...info, workerLeaseId: 'successor' } });
+  history.observe({
+    commands: [{ ...command, queued: false, state: 'failed', outcome: 'interrupted' }],
+  });
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.outcome, 'interrupted');
+  assert.deepEqual(history.read('successor', [], []).commands, []);
+});
+
+test('cancelled unsubmitted steering retains its receipt in the owning task history', () => {
+  const history = new NativeWorkerHistory();
+  history.observe({
+    info,
+    commands: [
+      {
+        ...receipt('queued-cancelled'),
+        state: 'pending',
+        queued: true,
+        submitted: false,
+        accepted: false,
+      },
+    ],
+  });
+  history.observe({
+    info,
+    commands: [
+      {
+        ...receipt('queued-cancelled'),
+        state: 'failed',
+        queued: false,
+        submitted: false,
+        accepted: false,
+        outcome: 'interrupted',
+      },
+    ],
+  });
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.outcome, 'interrupted');
+  history.observe({ info: { ...info, workerLeaseId: 'next-lease' } });
+  assert.equal(history.read('next-lease', [], []).commands.length, 0);
+  assert.equal(history.read(info.workerLeaseId!, [], []).commands[0]?.outcome, 'interrupted');
+});
+
 test('scoped task history preserves version-based recovery restrictions', () => {
   for (const version of ['2.1.78 (Claude Code)', '2.1.269 (Claude Code)']) {
     const root = mkdtempSync(join(tmpdir(), 'native-history-version-'));

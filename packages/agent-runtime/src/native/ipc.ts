@@ -12,6 +12,7 @@ import {
   decodeNativeWorkerLaunch,
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_READ,
@@ -28,6 +29,7 @@ export interface HostIdentity {
   supportsEnsure?: boolean;
   supportsWorkers?: boolean;
   supportsWorkerResumeFence?: boolean;
+  supportsWorkerStopAttestation?: boolean;
   supportsWorkerRelocation?: boolean;
   supportsProfiles?: boolean;
   pid: number;
@@ -75,7 +77,10 @@ export type HostRequest =
       text: string;
     }
   | {
-      method: typeof NATIVE_WORKER_CLOSE | typeof NATIVE_WORKER_INTERRUPT;
+      method:
+        | typeof NATIVE_WORKER_CLOSE
+        | typeof NATIVE_WORKER_INTERRUPT
+        | typeof NATIVE_WORKER_CONFIRM_STOPPED;
       owner: string;
       id: string;
       generation: string;
@@ -200,6 +205,7 @@ export function decodeRequest(value: unknown): HostRequest {
     [
       NATIVE_WORKER_SEND,
       NATIVE_WORKER_CLOSE,
+      NATIVE_WORKER_CONFIRM_STOPPED,
       NATIVE_WORKER_INTERRUPT,
       NATIVE_WORKER_TRANSFER,
     ].includes(String(method))
@@ -214,7 +220,11 @@ export function decodeRequest(value: unknown): HostRequest {
       return { method, ...target, launch: decodeNativeWorkerLaunch(p.launch) };
     if (method === NATIVE_WORKER_SEND)
       return { method, ...target, commandId: string(p, 'commandId'), text: string(p, 'text') };
-    if (method === NATIVE_WORKER_CLOSE || method === NATIVE_WORKER_INTERRUPT)
+    if (
+      method === NATIVE_WORKER_CLOSE ||
+      method === NATIVE_WORKER_INTERRUPT ||
+      method === NATIVE_WORKER_CONFIRM_STOPPED
+    )
       return { method, ...target };
   }
   if (method === 'read' || method === NATIVE_WORKER_READ) {

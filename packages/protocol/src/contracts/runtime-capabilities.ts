@@ -257,6 +257,10 @@ export interface RuntimeCapabilityLease {
   updatedAt: string;
   releasedAt?: string;
   keepWarmUntil?: string;
+  /** Logical ownership ended while foreign occupancy forbade provider shutdown. */
+  providerCleanupDeferred?: string;
+  /** Kernel identities captured for this provider, preserved across warm reuse. */
+  providerProcesses?: Array<{ pid: number; group: number; identity: string; resourceId?: string }>;
   cleanupFailure?: string;
   /** Admission pressure retained while this lease is queued. */
   pressure?: RuntimeCapabilityLeasePressure;

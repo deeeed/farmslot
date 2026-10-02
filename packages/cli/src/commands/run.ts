@@ -229,7 +229,9 @@ export function parseTaskPath(taskFile: string): {
       ? ticketData.githubIssue
       : typeof ticketData?.jiraKey === 'string'
         ? ticketData.jiraKey
-        : ticketFolder.split('-').slice(0, 2).join('-').toUpperCase();
+        : typeof (handoff?.task as Record<string, unknown> | undefined)?.ticket === 'string'
+          ? (handoff!.task as Record<string, string>).ticket
+          : ticketFolder.split('-').slice(0, 2).join('-').toUpperCase();
 
   return { project, flowType, ticketOrPr, relativePath: relative };
 }
@@ -419,13 +421,18 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   };
 
   if (opts.task) {
-    const parsed = parseTaskPath(opts.task);
+    const taskFile = path.resolve(opts.task);
+    const parsed = parseTaskPath(taskFile);
+    const mode = readTaskJson(taskFile, 'inputs/worker-terminal-contract.json')?.mode;
     return {
       ...base,
+      ...(!opts.mode && ['interactive', 'autonomous', 'validation'].includes(String(mode))
+        ? { mode }
+        : {}),
       flowType: opts.flowType || parsed.flowType,
       project: opts.project || parsed.project,
       ticketOrPr: parsed.ticketOrPr,
-      taskFile: parsed.relativePath,
+      taskFile,
     };
   }
 
@@ -475,6 +482,32 @@ export function registerRunCommand(program: Command): void {
   const run = program.command('run').description('Run lifecycle operations');
 
   run
+    .command('adopt <runId>')
+    .description('Register a verified external recovery of the saved worker conversation')
+    .requiredOption('--tmux <session>', 'Existing tmux session holding the resumed worker')
+    .option(
+      '--confirm-stopped',
+      'Confirm legacy native descendants are stopped after checking them',
+    )
+    .action(
+      async (runId: string, opts: { tmux: string; confirmStopped?: boolean }, cmd: Command) => {
+        const { client, output } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          const result = await client.call<{ run: Run }>(Methods.RUN_ADOPT, {
+            runId,
+            tmux: opts.tmux,
+            ...(opts.confirmStopped ? { confirmStopped: true } : {}),
+          });
+          if (emit.machine) emit.ok(result);
+          else output.write(`Adopted worker for ${runId}; status=${result.run.status}\n`);
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
+
+  run
     .command('list')
     .description('List runs')
     .option('--limit <n>', 'Max runs', '20')
@@ -517,11 +550,17 @@ export function registerRunCommand(program: Command): void {
       try {
         const result = await withProgress(
           `Loading run ${runId.slice(0, 8)}`,
-          () => client.call<{ run: Record<string, unknown> }>('run.get', { runId }),
+          () =>
+            client.call<{ run: Record<string, unknown>; recoveryHints?: string[] }>('run.get', {
+              runId,
+            }),
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);
-        else output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+        else {
+          output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+          for (const hint of result.recoveryHints ?? []) output.write(`${hint}\n`);
+        }
       } catch (err) {
         emit.fail(err);
       }
@@ -726,13 +765,21 @@ export function registerRunCommand(program: Command): void {
   run
     .command('resume <runId>')
     .description('Resume a paused run')
-    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+    .option(
+      '--confirm-stopped',
+      'Confirm legacy native descendants are stopped after checking them',
+    )
+    .action(async (runId: string, opts: { confirmStopped?: boolean }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
         const result = await withProgress(
           `Resuming ${runId.slice(0, 8)}`,
-          () => client.call<RunResumeResult>('run.resume', { runId }),
+          () =>
+            client.call<RunResumeResult>('run.resume', {
+              runId,
+              ...(opts.confirmStopped ? { confirmStopped: true } : {}),
+            }),
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);

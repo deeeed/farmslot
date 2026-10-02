@@ -5,15 +5,24 @@
 // `status: 'running'` and the work-graph node was never told; the scheduler only
 // discovered the stop later by polling and inferring it from run fields (#466).
 
-import { Events, isSlotFreedByPark, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
-import { cancelNativeRunWorkers, retireNativeWorkersForSlot } from '../runners/native/worker.js';
+import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import {
+  fenceRunSlotCleanup,
+  recordSlotTeardownBlocker,
+  releaseRunOwnedCapabilities,
+  releaseRunSlotOwnership,
+  type RunSlotCleanupFence,
+  settleFailedRunSlotCleanup,
+  stopRunOwnedTmuxAndWatches,
+} from './slot-teardown.js';
 import {
   effectFailed,
   type RunTransitionActor,
@@ -24,13 +33,17 @@ import {
   type RunTransitionSyncEffect,
 } from './transition-router.js';
 
+interface SkippedSlotRelease {
+  skipped: string;
+}
+
 export interface CancelCollaborators {
   cancelEngine(runId: string): void;
   invalidateWarmSessions(runId: string): void;
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
   releaseCapabilities(run: Run): Promise<void>;
-  releaseSlot(run: Run): Promise<void>;
+  releaseSlot(run: Run): Promise<void | SkippedSlotRelease>;
   releaseWorkspace?(run: Run): Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(event: string, payload: unknown): void | Promise<void>;
@@ -142,7 +155,8 @@ function cancelEffects(collaborators: CancelCollaborators): {
               detail: 'park already released slot ownership; the slot is free',
             };
           }
-          await collaborators.releaseSlot(run);
+          const result = await collaborators.releaseSlot(run);
+          if (result?.skipped) return { status: 'skipped' as const, detail: result.skipped };
           return 'ok';
         },
       },
@@ -173,13 +187,9 @@ export function cancelPlan(
             : step,
         ),
         metrics: { ...run.metrics, outcome: 'cancelled' },
-        // Native teardown needs the durable generation/lease after the terminal mutation.
-        // Keep it afterward as well so an unconfirmed stop still owns its process and slot.
-        agentContexts: run.agentContexts?.some(
-          (context) => context.nativeSession || context.nativeSessionHistory?.length,
-        )
-          ? run.agentContexts
-          : [],
+        // Both transports need their exact worker identities during terminal cleanup.
+        // Keep them afterward so an unconfirmed stop retains its ownership evidence.
+        agentContexts: run.agentContexts ?? [],
       };
     },
     after,
@@ -217,6 +227,10 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
  * `core`/`methods/slot` chain out of the transition module's import graph.
  */
 export function defaultCancelCollaborators(): CancelCollaborators {
+  const cleanup = new Map<
+    string,
+    { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean }
+  >();
   return {
     releaseWorkspace: async (run) => {
       const { teardownReviewWorkspace } = await import('../review-workspaces/pipeline.js');
@@ -227,58 +241,57 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
-      if (run.transport === 'native' && run.slotId) {
-        const { readSlotField } = await import('../core/index.js');
-        if ((await readSlotField(run.slotId, 'current_run_id')) !== run.id) return;
-      }
-      // ADR-054: cancel is a terminal boundary. The reconciler stops every run-
-      // and family-owned provider in dependency order, bypassing keep-warm, and
-      // records the effective posture on the run.
-      const { reconcileRunPosture } = await import('../run-engine/resource-posture.js');
-      const outcome = await reconcileRunPosture({ runId: run.id, boundary: 'cancel' });
-      if (outcome.error !== undefined) throw new Error(outcome.error);
-      const { transition } = outcome.result;
-      if (transition.rejection) throw new Error(transition.rejection.reason);
-      if (transition.failures.length > 0) {
-        throw new Error(
-          transition.failures
-            .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
-            .join('; '),
-        );
-      }
+      const state = {
+        fence: { before: null } as RunSlotCleanupFence,
+        blocker: null as string | null,
+        succeeded: false,
+      };
+      cleanup.set(run.id, state);
+      const { readSlotRow } = await import('../core/index.js');
+      state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
+      if (run.transport === 'native')
+        await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
+      const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+      const blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+      state.fence = await fenceRunSlotCleanup(run, blocker);
+      state.blocker = blocker;
+      await releaseRunOwnedCapabilities(run, Boolean(blocker));
+      state.succeeded = true;
     },
     releaseSlot: async (run) => {
-      const { loadSlotVars, readSlotField, resetSlot, updateSlotStatusIf } =
-        await import('../core/index.js');
-      const { killAgentInSession, killAllAgentWindows } = await import('../methods/slot.js');
-      const { loadFleetStatus } = await import('../fleet/state.js');
-      const vars = await loadSlotVars(run.slotId!);
-      if (run.transport === 'native') {
-        await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
-        // A completed handoff can leave the prior run cancellable while its successor
-        // owns this slot. Stop only this run's leases and leave the successor's slot alone.
-        if ((await readSlotField(run.slotId!, 'current_run_id')) !== run.id) {
-          await updateSlotStatusIf(
-            run.slotId!,
-            (slot) => slot.current_run_id !== run.id && slot.handoff_run_id === run.id,
-            { handoff_run_id: null },
-          );
-          return;
+      const state = cleanup.get(run.id);
+      const blocker = state
+        ? state.succeeded
+          ? state.blocker
+          : 'Run-owned provider cleanup was not confirmed'
+        : await recordSlotTeardownBlocker(run);
+      const fence = state?.fence ?? (await fenceRunSlotCleanup(run, blocker));
+      cleanup.delete(run.id);
+      try {
+        const { readSlotField, updateSlotStatusIf } = await import('../core/index.js');
+        const { loadFleetStatus } = await import('../fleet/state.js');
+        if (run.transport === 'native') {
+          await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
+          // A completed handoff can leave the prior run cancellable while its successor
+          // owns this slot. Stop only this run's leases and leave the successor's slot alone.
+          if ((await readSlotField(run.slotId!, 'current_run_id')) !== run.id) {
+            await updateSlotStatusIf(
+              run.slotId!,
+              (slot) => slot.current_run_id !== run.id && slot.handoff_run_id === run.id,
+              { handoff_run_id: null },
+            );
+            return;
+          }
         }
-      } else {
-        await retireNativeWorkersForSlot(run.slotId!, run.id, undefined, {
-          machineTransitionHeld: true,
-        });
-        await killAgentInSession(
-          vars,
-          run.metrics.runner ?? undefined,
-          primaryRoleForFlow(run.flowType),
-        );
-        await killAllAgentWindows(vars);
+        const reset = await releaseRunSlotOwnership(run, fence, blocker);
+        if (blocker) return { skipped: blocker };
+        if (!reset) return { skipped: 'Slot ownership changed during cancellation' };
+        await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+        console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
+      } catch (error) {
+        await settleFailedRunSlotCleanup(run, fence, error);
+        throw error;
       }
-      await resetSlot(run.slotId!, true);
-      await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-      console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
     },
     // Returned, not fire-and-forget: the router awaits `onMutated`, so a failed
     // dynamic import or broadcast surfaces as a failed `publish` effect on the cancel

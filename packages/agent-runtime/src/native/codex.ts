@@ -205,11 +205,11 @@ export const codexNativeAdapter: NativeAdapter = {
             break;
         }
       },
-      (error, processStopped) =>
+      (error, processStopped, evidence) =>
         publish({
           type: 'session.closed',
           ...(error ? { status: 'failed' } : {}),
-          data: { processStopped, ...(error ? { error: error.message } : {}) },
+          data: { processStopped, ...evidence, ...(error ? { error: error.message } : {}) },
         }),
     );
     try {

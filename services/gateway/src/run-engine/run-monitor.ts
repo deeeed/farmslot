@@ -1952,7 +1952,7 @@ function buildNudgeMessage(violation: MonitorViolation): string {
  * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
  * cap and the worker would never hear about a real breach.
  */
-export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'not-attempted';
+export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
 
 /**
  * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount

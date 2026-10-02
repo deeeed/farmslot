@@ -24,7 +24,6 @@ import {
   readResultPackageManifest,
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { slotRelease } from '../methods/slot.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import {
   independentReviewPolicySatisfied,
@@ -1289,7 +1288,7 @@ export async function executeCompleteStep(
   // diffStat needs the slot's git tree; runs before slotRelease below.
   const diffStat = await getDiffStat(getRun(runId) ?? current);
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
-  let slotDisposition: 'ci-watch' | 'released' | 'release-deferred';
+  let slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'kept-shared-slot';
 
   if (!noCodeDisposition && hasCIWatch && completion.prNumber && completion.ciRepo) {
     // Keep slot alive for CI monitoring — worker is done so clear agent
@@ -1316,9 +1315,10 @@ export async function executeCompleteStep(
       // that has not happened, in the step I/O an operator reads.
       slotDisposition = 'release-deferred';
     } else {
-      const noopEmit = () => {};
-      await slotRelease(release, noopEmit);
-      slotDisposition = 'released';
+      const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+      slotDisposition = (await releaseCompletedRunSlot(current)).released
+        ? 'released'
+        : 'kept-shared-slot';
     }
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;

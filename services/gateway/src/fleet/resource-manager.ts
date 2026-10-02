@@ -18,6 +18,7 @@ import {
   type ResourceWatchProvider,
   type ResourceWatchSetEnabledResult,
   type ResourceWatchType,
+  type RuntimeCapabilityLease,
   type SlotResource,
   type SlotStatus,
 } from '@farmslot/protocol';
@@ -27,6 +28,7 @@ import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from 
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
+import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -34,6 +36,7 @@ import { deviceControlVerdict } from './device-inventory.js';
 import { getAllNodes, getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
 import { execResourceCommand, type ResourceCommandExec } from './resource-exec.js';
+import { probeResourceProcess } from './resource-process.js';
 import { getCachedFleet, loadFleetStatus } from './state.js';
 
 export function findUnresolvedPlaceholders(expanded: string): string[] {
@@ -1270,10 +1273,13 @@ export function resourceControlTimeoutMs(
   return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
 }
 
-/**
- * Execute a resource control hook (boot, shutdown, relaunch).
- * After control, immediately re-polls the slot's resources.
- */
+interface ResourceControlResult {
+  ok: boolean;
+  detail?: string;
+  providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+}
+
+/** Execute a control hook and immediately re-poll the slot's resources. */
 export async function executeResourceControl(
   slotId: string,
   resourceId: string,
@@ -1285,7 +1291,8 @@ export async function executeResourceControl(
    * to the leased device before falling back to the slot's configured one.
    */
   extraVars?: Record<string, string>,
-): Promise<{ ok: boolean; detail?: string }> {
+  ownerRunId?: string,
+): Promise<ResourceControlResult> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
     return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
@@ -1314,6 +1321,26 @@ export async function executeResourceControl(
     return { ok: true, detail: `skipped (${unresolved.join(', ')} not configured)` };
   }
 
+  const watchPath =
+    action === 'boot' && resourceDef.watch?.type === 'pid-file' && resourceDef.watch.path
+      ? expandTemplate(resourceDef.watch.path, slotVars, projectVars)
+      : undefined;
+  const pidPath =
+    watchPath && !hasUnresolvedPlaceholders(watchPath)
+      ? watchPath.startsWith('/')
+        ? watchPath
+        : `${slotVars.remoteRepo}/${watchPath}`
+      : undefined;
+  const pidBeforeBoot =
+    pidPath && (await slotFileExists(slotVars, pidPath))
+      ? Number((await slotReadFile(slotVars, pidPath)).trim())
+      : undefined;
+  // An empty or truncated PID file has no prior identity; shutdown verification stays strict.
+  const processBeforeBoot =
+    pidBeforeBoot !== undefined && Number.isSafeInteger(pidBeforeBoot) && pidBeforeBoot > 0
+      ? await probeResourceProcess(slotVars, pidBeforeBoot)
+      : undefined;
+
   // For shutdown: skip if health check says resource isn't running
   if (action === 'shutdown' && resourceDef.hooks?.health) {
     const health = await executeResourceHealth(slotId, resourceId, extraVars);
@@ -1324,7 +1351,7 @@ export async function executeResourceControl(
 
   // Execute via agent for remote machines, locally otherwise
   const { isLocal, machine } = await getSlotLocality(slotId);
-  let result: { ok: boolean; detail?: string };
+  let result: ResourceControlResult;
 
   if (!isLocal) {
     const node = getNode(machine);
@@ -1387,13 +1414,7 @@ export async function executeResourceControl(
   // this, every launched resource arrives at the gateway without meta, so
   // currentRunIdForSlot-based stale detection never triggers and a previous
   // run's leaked process keeps reporting `running` against the new run.
-  if (
-    action === 'boot' &&
-    result.ok &&
-    resourceDef.watch?.type === 'pid-file' &&
-    typeof resourceDef.watch.path === 'string'
-  ) {
-    const expanded = expandTemplate(resourceDef.watch.path, slotVars, projectVars);
+  if (result.ok && pidPath) {
     // sendWatchInstructions (:563) resolves relative watch.path against
     // slotVars.remoteRepo before handing it to the node watcher. Mirror that
     // resolution here so `<pidPath>.meta` lands next to the ACTUAL watched
@@ -1401,23 +1422,47 @@ export async function executeResourceControl(
     // cause the gateway to write the sidecar under the gateway/node CWD while
     // the node reads `<remoteRepo>/<runtime_dir>/browser.pid.meta` — meta
     // never reaches readSidecarMeta and the stale/rollup path stays dark.
-    const pidPath = expanded.startsWith('/') ? expanded : `${slotVars.remoteRepo}/${expanded}`;
-    if (!hasUnresolvedPlaceholders(pidPath)) {
-      const runId = currentRunIdForSlot(slotId);
-      // Skip the sidecar entirely when the slot has no active run (keep-warm
-      // boot, detached reconcile). node-side readSidecarMeta rejects any
-      // sidecar whose runId is empty, so writing `runId: ''` would just leave
-      // a stale file from a prior boot masquerading as current. Without a
-      // run, there is nothing for stale-orphan detection to mismatch against
-      // anyway — the sidecar is re-emitted on the next boot that has a run.
-      if (runId) {
-        const meta = { runId, slotId, startedAt: new Date().toISOString() };
+    const runId = ownerRunId ?? currentRunIdForSlot(slotId);
+    // Skip the sidecar entirely when the slot has no active run (keep-warm
+    // boot, detached reconcile). node-side readSidecarMeta rejects any
+    // sidecar whose runId is empty, so writing `runId: ''` would just leave
+    // a stale file from a prior boot masquerading as current. Without a
+    // run, there is nothing for stale-orphan detection to mismatch against
+    // anyway — the sidecar is re-emitted on the next boot that has a run.
+    if (runId) {
+      const process = (await slotFileExists(slotVars, pidPath))
+        ? await probeResourceProcess(
+            slotVars,
+            Number((await slotReadFile(slotVars, pidPath)).trim()),
+          )
+        : undefined;
+      // An idempotent boot must not claim an operator's existing server.
+      // Existing proven sidecars remain intact; warm reuse transfers lease identity.
+      if (
+        process &&
+        (process.pid !== processBeforeBoot?.pid ||
+          process.identity !== processBeforeBoot?.identity ||
+          process.group !== processBeforeBoot?.group)
+      ) {
+        const meta: ResourceSidecarMeta = {
+          runId,
+          slotId,
+          startedAt: new Date().toISOString(),
+          process,
+        };
         const metaPath = `${pidPath}.meta`;
-        writeSidecarMeta(slotId, metaPath, meta).catch((err) => {
-          console.warn(
-            `[resource-manager] sidecar write failed slot=${slotId} resource=${resourceId} path=${metaPath} err=${(err as Error).message}`,
-          );
-        });
+        result.providerProcesses = [{ ...process, resourceId }];
+        try {
+          await writeSidecarMeta(slotId, metaPath, meta);
+        } catch (error) {
+          // Boot succeeded physically. Return its identity with the failed outcome
+          // so lease rollback can stop that exact process despite the missing sidecar.
+          result = {
+            ok: false,
+            detail: `Provider started but ownership metadata failed: ${error instanceof Error ? error.message : String(error)}`,
+            providerProcesses: [{ ...process, resourceId }],
+          };
+        }
       }
     }
   }
@@ -1435,12 +1480,12 @@ export async function executeResourceControl(
 async function writeSidecarMeta(
   slotId: string,
   metaPath: string,
-  meta: { runId: string; slotId: string; startedAt: string },
+  meta: ResourceSidecarMeta,
 ): Promise<void> {
   const content = JSON.stringify(meta);
   const { isLocal, machine } = await getSlotLocality(slotId);
   if (isLocal) {
-    await mkdir(path.dirname(metaPath), { recursive: true }).catch(() => {});
+    await mkdir(path.dirname(metaPath), { recursive: true });
     await writeFile(metaPath, content, 'utf-8');
     return;
   }

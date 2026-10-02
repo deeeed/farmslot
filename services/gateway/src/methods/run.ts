@@ -1,4 +1,7 @@
 // methods/run.ts — run CRUD, lifecycle, grading, cleanup
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
@@ -349,6 +352,22 @@ export async function runCreate(
   emit: Emit,
   options: RunCreateInternalOptions = {},
 ): Promise<RunCreateResult> {
+  if (params.taskFile !== undefined && !path.isAbsolute(params.taskFile)) {
+    throw new Error(
+      'taskFile must be an absolute path resolved by the caller. Upgrade the Farmslot CLI on every node, then upgrade the gateway; older CLIs send relative task paths. Retry with the upgraded CLI or supply an absolute taskFile through RPC.',
+    );
+  }
+  if (params.taskFile !== undefined) {
+    try {
+      await access(params.taskFile, constants.R_OK);
+      if (!(await stat(params.taskFile)).isFile()) throw new Error('Task path is not a file');
+    } catch (error) {
+      throw new Error(
+        `taskFile is not a readable file on the gateway: ${params.taskFile}. Make the task available on the gateway filesystem before creating the run.`,
+        { cause: error },
+      );
+    }
+  }
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)
@@ -860,10 +879,8 @@ function skipStepAsOperator(runId: string, stepName: string, reason: string): vo
 
 async function releaseInteractiveDevSlot(run: Run): Promise<string> {
   if (!run.slotId) return 'none';
-  const { slotRelease } = await import('./slot.js');
-  const noopEmit = () => {};
-  await slotRelease({ slotId: run.slotId, keepWork: true, expectedRunId: run.id }, noopEmit);
-  return 'released-keep-work';
+  const { releaseCompletedRunSlot } = await import('./run/lifecycle-control.js');
+  return (await releaseCompletedRunSlot(run)).released ? 'released-keep-work' : 'kept-shared-slot';
 }
 
 async function markInteractiveDevDoneWithoutPr(
@@ -1588,10 +1605,10 @@ async function assertTriageDecisionReference(
     throw new Error('Triage assessment is stale; refresh this failed step before deciding');
 }
 
-async function resolveRunDecision(
+export async function resolveRunDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
-  dependencies: RunResolveDecisionDependencies,
+  dependencies: RunResolveDecisionDependencies = {},
 ): Promise<RunResolveDecisionResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);

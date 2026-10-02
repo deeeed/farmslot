@@ -24,6 +24,7 @@ import {
   reviewChainForRun,
   reviewPublicationPolicyForRun,
   runOutputCloseUnavailableReason,
+  runRecoveryHints,
 } from '@farmslot/protocol';
 
 import '../slot-view/worker-session-history.js';
@@ -674,6 +675,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
     </div>
     ${r.summary ? html`<div class="header-summary">${r.summary}</div>` : nothing}
+    ${r.slotTeardownSkipped
+      ? html`<p role="status" data-testid="run-slot-cleanup-hint">
+          Workspace cleanup deferred: ${r.slotTeardownSkipped}
+        </p>`
+      : nothing}
+    ${runRecoveryHints(r).map(
+      (hint) => html`<p role="status" data-testid="run-recovery-hint">${hint}</p>`,
+    )}
     ${r.flowType === 'review-pr' && publication
       ? html`<div class="review-publication" data-testid="run-review-publication">
           <strong

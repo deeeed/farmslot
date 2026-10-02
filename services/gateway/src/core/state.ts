@@ -250,7 +250,7 @@ type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review
  * refuses a slot carrying it. Centralized so the writers cannot drift.
  */
 export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
-type HeldPhase = 'ci-watch' | 'pr-watch';
+type HeldPhase = 'ci-watch' | 'pr-watch' | 'occupied';
 
 /**
  * When the releasing fence went up, as an ISO timestamp.
@@ -277,6 +277,8 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
   return {
     lifecycle: 'ready',
     phase: null,
+    held_reason: null,
+    cleanup_release_token: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,
@@ -403,9 +405,17 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // fires the reset listeners only when the write actually applied, which is
   // what a separate pre-write loop got wrong — it ended warm reviewer sessions
   // for a reset that was then refused.
-  const applied = await resetSlotIf(slotId, (slot) => slot.phase !== SLOT_PHASE_RELEASING, warm);
+  const applied = await resetSlotIf(
+    slotId,
+    (slot) =>
+      slot.phase !== SLOT_PHASE_RELEASING &&
+      !(slot.lifecycle === 'held' && slot.phase === 'occupied'),
+    warm,
+  );
   if (!applied) {
-    console.log(`[state] slot ${slotId} is mid-release; leaving the reset to that teardown`);
+    console.log(
+      `[state] slot ${slotId} has protected cleanup or occupancy; leaving its state intact`,
+    );
   }
 }
 

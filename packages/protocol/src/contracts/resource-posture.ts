@@ -25,6 +25,7 @@ export interface RuntimeCapabilityLeaseLike {
   state: RuntimeCapabilityLeaseState;
   health: { state: RuntimeCapabilityHealthState };
   keepWarmUntil?: string;
+  providerCleanupDeferred?: string;
   cleanupFailure?: string;
 }
 
@@ -325,6 +326,7 @@ export function observedStateForLease(
   if (lease.state === 'acquired')
     return lease.health.state === 'unhealthy' ? 'unhealthy' : 'running';
   // A released lease is not a stopped provider while keep-warm is still live.
+  if (lease.providerCleanupDeferred) return 'running';
   if (lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs) return 'running';
   // An elapsed warm deadline is a schedule, not an outcome: the sweeper may not
   // have run yet, so the provider's real state is not known until cleanup does.

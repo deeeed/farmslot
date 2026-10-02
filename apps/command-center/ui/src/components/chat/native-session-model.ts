@@ -29,6 +29,7 @@ export function appendNativePage(
 
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
+  if (receipt.queued) return 'Queued for the next turn';
   if (receipt.outcome === 'interrupted') return 'Interrupted';
   switch (receipt.state) {
     case 'pending':

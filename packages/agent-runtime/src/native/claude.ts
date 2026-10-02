@@ -378,7 +378,7 @@ export const claudeNativeAdapter: NativeAdapter = {
       ],
       options,
       onMessage,
-      (error, processStopped) => {
+      (error, processStopped, evidence) => {
         if (pendingInterrupt) {
           clearTimeout(pendingInterrupt.timer);
           pendingInterrupt.reject(
@@ -398,7 +398,7 @@ export const claudeNativeAdapter: NativeAdapter = {
         publish({
           type: 'session.closed',
           ...(failure ? { status: 'failed' } : {}),
-          data: { processStopped, ...(failure ? { error: failure.message } : {}) },
+          data: { processStopped, ...evidence, ...(failure ? { error: failure.message } : {}) },
         });
       },
     );

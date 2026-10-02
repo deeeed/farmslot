@@ -13,6 +13,7 @@ import {
   type RunRecipeRunsForRunResult,
   type RunRecipeRunsForSlotParams,
   type RunRecipeRunsForSlotResult,
+  runRecoveryHints,
 } from '@farmslot/protocol';
 
 import {
@@ -50,7 +51,7 @@ export function resolveBoundTerminalRunForSlot(
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
-  return { run: await presentRun(run) };
+  return { run: await presentRun(run), recoveryHints: runRecoveryHints(run) };
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {

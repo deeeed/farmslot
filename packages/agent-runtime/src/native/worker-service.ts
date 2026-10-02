@@ -4,6 +4,7 @@ import { NativeSessionMethodError } from './service.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_READ,
@@ -92,6 +93,7 @@ export async function routeNativeWorkerSession(
     if (
       request.method === NATIVE_WORKER_SEND ||
       request.method === NATIVE_WORKER_CLOSE ||
+      request.method === NATIVE_WORKER_CONFIRM_STOPPED ||
       request.method === NATIVE_WORKER_INTERRUPT ||
       request.method === NATIVE_WORKER_TRANSFER
     ) {
@@ -104,6 +106,8 @@ export async function routeNativeWorkerSession(
         return await client.sendWorker(owner, target, request.commandId, request.text);
       if (request.method === NATIVE_WORKER_CLOSE)
         return { closed: true, session: await client.closeWorker(owner, target) };
+      if (request.method === NATIVE_WORKER_CONFIRM_STOPPED)
+        return { session: await client.confirmWorkerStopped(owner, target) };
       if (request.method === NATIVE_WORKER_TRANSFER)
         return { session: await client.transferWorker(owner, target, request.launch) };
       await client.interruptWorker(owner, target);

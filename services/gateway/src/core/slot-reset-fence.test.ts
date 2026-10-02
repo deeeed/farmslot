@@ -87,6 +87,24 @@ test('a release that fences between the check and the write is not overwritten',
   assert.equal(row.lifecycle, 'busy');
 });
 
+test('resetSlot preserves occupancy recorded after an orphan fleet snapshot', async (t) => {
+  const statusPath = statusFileWith(t, {
+    slot: 'occupied-slot',
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    held_reason: 'Foreign worker',
+  });
+  await runAgainstStatusFile(
+    statusPath,
+    `const {resetSlot}=await import('./src/core/state.js');await resetSlot('occupied-slot');`,
+  );
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.lifecycle, 'held');
+  assert.equal(row.phase, 'occupied');
+  assert.equal(row.held_reason, 'Foreign worker');
+});
+
 test('resetSlot still resets a slot no release owns', async (t) => {
   // The fence must not turn the reset off: this is the ordinary path every
   // reclaim and cancel depends on.

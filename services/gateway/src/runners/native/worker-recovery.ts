@@ -218,7 +218,11 @@ async function resumeNativeWorkerExclusive(
       !binding.recovery &&
       !snapshot.session.processStopped
     )
-      throw new Error('Native worker is still running; use its input controls to continue');
+      throw new Error(
+        ['closed', 'failed'].includes(snapshot.session.state)
+          ? `Native worker cleanup is unconfirmed. Verify that its descendants have stopped, then run farmslot run resume ${runId} --confirm-stopped`
+          : 'Native worker is still running; use its input controls to continue',
+      );
   }
   if (!binding.recovery && nativeWorkerLiveStatus(snapshot) === 'working' && !continueLive) {
     if (options?.purpose === 'parking')

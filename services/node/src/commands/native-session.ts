@@ -23,6 +23,7 @@ export class NativeNodeSessions {
         ownerPrincipalId: owner.trim(),
         supportsEnsure: true,
         supportsWorkers: true,
+        supportsWorkerStopAttestation: true,
         supportsProfiles: true,
       };
     }
