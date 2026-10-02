@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- Retain bounded, redacted native crash diagnostics and kernel process identities. Persist busy steering and preserve cancelled receipts in their task history. Initialize existing task directories through the shared runtime producer.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.0 - 2026-10-02
+
+- Retain bounded, redacted native crash diagnostics and kernel process identities. Persist busy steering and preserve cancelled receipts in their task history. Initialize existing task directories through the shared runtime producer.
+- Publish with protocol 0.34.0 so consumers share the current task and runner contracts.
 
 ## 0.15.1 - 2026-09-29
 
