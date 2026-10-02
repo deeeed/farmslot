@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -27,14 +28,53 @@ export async function proveProviderRecovery({
   configFile,
 }) {
   for (const fixture of fixtures.filter((item) =>
-    ['legacy-provider', 'restarted-provider', 'child-provider', 'metadata-provider'].includes(
-      item.fault,
-    ),
+    [
+      'legacy-provider',
+      'restarted-provider',
+      'child-provider',
+      'metadata-provider',
+      'capture-provider',
+      'cycle-provider',
+      'compact-provider',
+    ].includes(item.fault),
   )) {
     const pidFile = path.join(fixture.repo, 'owned-server.pid');
     if (fixture.fault === 'metadata-provider') mkdirSync(`${pidFile}.meta`);
-    const result = acquire(rpc, fixture);
+    let result;
+    try {
+      result = acquire(rpc, fixture);
+    } catch (error) {
+      if (fixture.fault !== 'capture-provider') throw error;
+      assert.match(String(error), /Fixture identity capture failed/);
+      result = { ok: false };
+    }
     const pid = Number(readFileSync(`${pidFile}.created`, 'utf8'));
+    if (fixture.fault === 'capture-provider') {
+      assert.equal(result.ok, false);
+      assert.ok(
+        rpc('runtime.capability.status', { slotId: fixture.slotId }).leases.every(
+          (lease) => lease.state !== 'acquiring',
+        ),
+        'Capture failure must settle acquisition',
+      );
+      await wait(
+        () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (error) {
+            if (error.code === 'ESRCH') return false;
+            throw error;
+          }
+        },
+        (v) => !v,
+        'capture failure exact rollback',
+      );
+      check(
+        'post-boot identity capture failure settles acquisition and rolls back its owned process',
+      );
+      continue;
+    }
     if (fixture.fault === 'metadata-provider') {
       assert.equal(result.ok, false, 'Ownership metadata failure must reject acquisition');
       assert.match(JSON.stringify(result), /ownership metadata failed/);
@@ -55,6 +95,88 @@ export async function proveProviderRecovery({
       continue;
     }
     assert.equal(result.ok, true, JSON.stringify(result));
+    if (fixture.fault === 'cycle-provider') {
+      assert.equal(
+        rpc('runtime.capability.release', {
+          slotId: fixture.slotId,
+          ownerRunId: fixture.runId,
+          keepWarm: false,
+        }).ok,
+        true,
+      );
+      assert.equal(acquire(rpc, fixture).ok, true);
+      rpc('runtime.capability.release', {
+        slotId: fixture.slotId,
+        ownerRunId: fixture.runId,
+        keepWarm: true,
+      });
+      const currentPid = Number(readFileSync(pidFile, 'utf8'));
+      assert.equal(
+        rpc('runtime.capability.stopWarm', { slotId: fixture.slotId, capabilityId: 'owned-server' })
+          .outcome,
+        'stopped',
+        'Warm sweep must select the current provider instance',
+      );
+      await wait(
+        () => {
+          try {
+            process.kill(currentPid, 0);
+            return true;
+          } catch (error) {
+            if (error.code === 'ESRCH') return false;
+            throw error;
+          }
+        },
+        (v) => !v,
+        'current provider stopped',
+      );
+      check('cold restart followed by warm cleanup uses the current kernel identity');
+      continue;
+    }
+    if (fixture.fault === 'compact-provider') {
+      rpc('runtime.capability.acquire', {
+        slotId: fixture.slotId,
+        capabilityId: 'app',
+        ownerRunId: fixture.runId,
+        proofRequirement: {
+          capabilityId: 'app',
+          reason: 'Dependency retention proof',
+          mode: 'state',
+        },
+      });
+      const session = `coherence-churn-${randomUUID()}`;
+      fixture.session = session;
+      execFileSync('tmux', ['new-session', '-d', '-s', session, '-c', fixture.repo, 'sleep 600']);
+      rpc('run.forceComplete', { runId: fixture.runId });
+      const retained = rpc('runtime.capability.status', { slotId: fixture.slotId }).leases;
+      const ids = retained.map((lease) => lease.id);
+      await restartGateway(() => {
+        const store = JSON.parse(readFileSync(capabilityFile, 'utf8'));
+        for (let index = 0; index < 1050; index++)
+          store.leases.push({
+            ...retained[0],
+            id: `terminal-churn-${index}`,
+            owner: { runId: `churn-${index}` },
+            state: 'released',
+            keepWarmUntil: undefined,
+            providerCleanupDeferred: undefined,
+            providerProcesses: undefined,
+            dependencyLeaseIds: [],
+            updatedAt: new Date(Date.now() + index).toISOString(),
+          });
+        writeFileSync(capabilityFile, JSON.stringify(store));
+      });
+      rpc('runtime.capability.release', { slotId: fixture.slotId, ownerRunId: 'churn-noop' });
+      const compacted = rpc('runtime.capability.status', { slotId: fixture.slotId }).leases;
+      for (const id of ids)
+        assert.ok(
+          compacted.some((lease) => lease.id === id),
+          'Deferred provider and dependency records must survive compaction',
+        );
+      process.kill(pid, 0);
+      check('terminal history churn retains live deferred provider ownership and dependencies');
+      continue;
+    }
     if (fixture.fault === 'child-provider') {
       assert.ok(
         result.lease.providerProcesses.some((frame) => frame.pid === pid),

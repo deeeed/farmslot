@@ -11,6 +11,21 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'provider-compaction': [
+    'services/gateway/src/runtime-capabilities/store.ts',
+    /\|\|\s*Boolean\(lease.providerCleanupDeferred\)/,
+    '',
+  ],
+  'provider-instance': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /if \(!holdsClaim\(lease\) && !selectedIds.has\(lease.id\)\) continue;/,
+    'void lease;',
+  ],
+  'provider-capture': [
+    'services/gateway/src/runtime-capabilities/registry.ts',
+    /(catch \(error\) \{\s*)(const reason = `Provider identity capture failed:)/,
+    '$1 throw error; $2',
+  ],
   'kernel-reuse': [
     'packages/agent-runtime/src/native/manager.ts',
     /if \(leader && alive\(pid\) && !processIdentityAlive\(pid, leader.identity\) && alive\(pid\)\)\s*return false;/,

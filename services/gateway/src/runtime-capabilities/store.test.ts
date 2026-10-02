@@ -131,6 +131,30 @@ test('a warm provider and a cleanup failure survive compaction so reconnects sti
   assert.equal(byId.get('lease-failed')?.cleanupFailure, 'shutdown exited 1');
 });
 
+test('deferred providers and their full dependency chain survive terminal churn', () => {
+  const root = {
+    ...lease(0, 'released'),
+    providerCleanupDeferred: 'Foreign occupant',
+    dependencyLeaseIds: ['lease-1'],
+  };
+  const dependency = { ...lease(1, 'released'), dependencyLeaseIds: ['lease-2'] };
+  const leaf = lease(2, 'released');
+  const churn = Array.from({ length: RUNTIME_CAPABILITY_TERMINAL_LEASE_LIMIT + 50 }, (_, index) =>
+    lease(index + 100, 'released'),
+  );
+  const result = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [root, dependency, leaf, ...churn],
+    proofPlans: {},
+    events: [],
+  });
+  for (const id of ['lease-0', 'lease-1', 'lease-2'])
+    assert.ok(
+      result.leases.some((candidate) => candidate.id === id),
+      `Running provider dependency ${id} must remain recorded`,
+    );
+});
+
 test('a store file written before the terminal fence existed still loads', async (t: TestContext) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-store-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -16,6 +16,11 @@ globalThis.__coherenceGenerationFault = (run) => {
 };
 const faults = [
   [
+    'methods/runtime-capabilities.ts',
+    /(async function captureProviderProcesses[\s\S]*?\{)/,
+    `$1 if(slotId===${JSON.stringify(slots['capture-provider'])}) throw new Error('Fixture identity capture failed');`,
+  ],
+  [
     'runners/owned-stop.ts',
     /const currentRun = getRun\(run.id\);/,
     '$& globalThis.__coherenceGenerationFault(currentRun);',

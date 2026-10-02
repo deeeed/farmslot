@@ -139,6 +139,9 @@ export function prepareCleanupGuards({ temporary, project, gitInit }) {
     'restarted-provider',
     'child-provider',
     'metadata-provider',
+    'capture-provider',
+    'cycle-provider',
+    'compact-provider',
   ]) {
     const repo = path.join(temporary, `guard-${fault}`);
     gitInit(repo);
@@ -199,9 +202,15 @@ export function proveCleanupGuards({
 }) {
   for (const fixture of fixtures) {
     if (
-      ['legacy-provider', 'restarted-provider', 'child-provider', 'metadata-provider'].includes(
-        fixture.fault,
-      )
+      [
+        'legacy-provider',
+        'restarted-provider',
+        'child-provider',
+        'metadata-provider',
+        'capture-provider',
+        'cycle-provider',
+        'compact-provider',
+      ].includes(fixture.fault)
     )
       continue;
     if (fixture.fault) {

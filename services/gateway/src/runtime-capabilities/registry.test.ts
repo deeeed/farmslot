@@ -1772,6 +1772,59 @@ test('explicit warm cleanup retries and clears a settled failure', async (t) => 
   assert.equal((await acquire(registry, 'app', 'next-owner')).ok, true);
 });
 
+test('warm cleanup uses the current provider instance after a cold release and restart', async (t) => {
+  let generation = 0;
+  const { registry } = await fixture(t, [{ ...entry('app'), keepWarmMs: 60000 }], {
+    captureProviderProcesses: async () => [
+      { pid: ++generation, group: generation, identity: `birth-${generation}` },
+    ],
+    checkProviderCleanup: async (_slotId, _entry, frames) => {
+      assert.equal(
+        frames?.[0]?.pid,
+        generation,
+        'Only the current provider instance may be cleaned up',
+      );
+      return null;
+    },
+  });
+  assert.equal((await acquire(registry, 'app', 'first')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'first', keepWarm: false });
+  assert.equal((await acquire(registry, 'app', 'second')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'second', keepWarm: true });
+  assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).failures.length, 0);
+});
+
+test('identity capture failure settles acquisition and records uncertain cleanup', async (t) => {
+  const frame = { pid: 123, group: 123, identity: 'born' };
+  const { registry } = await fixture(t, [entry('dep'), entry('app', 'exclusive', ['dep'])], {
+    captureProviderProcesses: async (_slotId, entry) => {
+      if (entry.id === 'app') throw new Error('Node disconnected');
+      return [];
+    },
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'app.acquire'
+        ? { ok: true, providerProcesses: [frame] }
+        : { ok: true },
+    checkProviderCleanup: async (_slotId, entry, frames) => {
+      if (entry.id === 'app') {
+        assert.deepEqual(frames, [frame]);
+        return 'Node unavailable';
+      }
+      return null;
+    },
+  });
+  const result = await acquire(registry, 'app', 'owner');
+  assert.equal(result.ok, false);
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  const app = leases.find((lease) => lease.capabilityId === 'app');
+  assert.equal(app?.state, 'error');
+  assert.match(app?.cleanupFailure ?? '', /Node unavailable/);
+  assert.ok(
+    leases.every((lease) => lease.state !== 'acquiring'),
+    'No acquisition may remain unsettled',
+  );
+});
+
 test('a failed warm cleanup keeps the dependency it still holds', async (t) => {
   const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
   const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };

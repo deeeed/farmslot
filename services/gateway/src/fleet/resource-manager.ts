@@ -1451,6 +1451,7 @@ export async function executeResourceControl(
           process,
         };
         const metaPath = `${pidPath}.meta`;
+        result.providerProcesses = [{ ...process, resourceId }];
         try {
           await writeSidecarMeta(slotId, metaPath, meta);
         } catch (error) {

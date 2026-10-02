@@ -96,7 +96,8 @@ function leaseNeedsRetention(lease: RuntimeCapabilityLease): boolean {
     // ADR-054: a released lease with a keep-warm deadline still describes a
     // running provider. Evicting it under churn would lose both the deadline
     // and the only record of the process that must still be cleaned up.
-    Boolean(lease.keepWarmUntil)
+    Boolean(lease.keepWarmUntil) ||
+    Boolean(lease.providerCleanupDeferred)
   );
 }
 
@@ -161,11 +162,20 @@ export function compactRuntimeCapabilitySnapshot(
   const retainedOwners = new Set(
     snapshot.leases.filter(leaseNeedsRetention).map((lease) => lease.owner.runId),
   );
+  const byId = new Map(snapshot.leases.map((lease) => [lease.id, lease]));
   const protectedLeaseIds = new Set(
-    snapshot.leases
-      .filter(leaseNeedsRetention)
-      .flatMap((lease) => [lease.id, ...lease.dependencyLeaseIds]),
+    snapshot.leases.filter(leaseNeedsRetention).map((lease) => lease.id),
   );
+  const pending = [...protectedLeaseIds];
+  while (pending.length) {
+    const id = pending.pop();
+    const lease = id === undefined ? undefined : byId.get(id);
+    for (const id of lease?.dependencyLeaseIds ?? [])
+      if (!protectedLeaseIds.has(id)) {
+        protectedLeaseIds.add(id);
+        pending.push(id);
+      }
+  }
   const recentTerminalIds = new Set(
     snapshot.leases
       .filter((lease) => !leaseNeedsRetention(lease))

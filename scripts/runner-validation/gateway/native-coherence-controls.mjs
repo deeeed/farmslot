@@ -11,6 +11,9 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['provider-compaction', /Deferred provider and dependency records must survive compaction/],
+  ['provider-instance', /Warm sweep must select the current provider instance/],
+  ['provider-capture', /Capture failure must settle acquisition/],
   ['kernel-reuse', /Kernel birth evidence must distinguish the reused process group/],
   ['authored-contract', /Missing contract must retain the authored handoff report path/],
   ['adapters-shadow', /Recipe terminal\.orders\.shadowed is not available/],
@@ -80,7 +83,16 @@ async function lane() {
     if (name === 'authored-contract') args.push('--missing-contract');
     if (name === 'queued-receipt') args.push('--queued-close');
     if (name === 'held-reconcile') args.push('--reconcile-held');
-    if (['provider-owner', 'provider-metadata', 'provider-retry'].includes(name))
+    if (
+      [
+        'provider-owner',
+        'provider-metadata',
+        'provider-retry',
+        'provider-compaction',
+        'provider-instance',
+        'provider-capture',
+      ].includes(name)
+    )
       args.push('--provider-recovery');
     if (name === 'stop-generation')
       args.push('--guards-only', '--real-adoption', '--generation-guard');

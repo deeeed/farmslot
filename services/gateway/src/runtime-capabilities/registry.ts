@@ -1552,14 +1552,39 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
-    lease.providerProcesses = shouldRunAcquire
-      ? await this.options.captureProviderProcesses?.(params.slotId, entry, params.ownerRunId)
-      : structuredClone(
-          warmProviderHealthy
-            ? warmLease?.providerProcesses
-            : active.find((candidate) => candidate.id !== lease.id && holdsProvider(candidate))
-                ?.providerProcesses,
-        );
+    try {
+      lease.providerProcesses = shouldRunAcquire
+        ? ((await this.options.captureProviderProcesses?.(
+            params.slotId,
+            entry,
+            params.ownerRunId,
+          )) ?? lease.providerProcesses)
+        : structuredClone(
+            warmProviderHealthy
+              ? warmLease?.providerProcesses
+              : active.find((candidate) => candidate.id !== lease.id && holdsProvider(candidate))
+                  ?.providerProcesses,
+          );
+    } catch (error) {
+      const reason = `Provider identity capture failed: ${error instanceof Error ? error.message : String(error)}`;
+      lease.updatedAt = this.timestamp();
+      lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: reason };
+      this.recordEvent(snapshot, {
+        kind: 'health-changed',
+        slotId: params.slotId,
+        capabilityId: entry.id,
+        leaseId: lease.id,
+        owner: lease.owner,
+        detail: reason,
+      });
+      await this.rollbackLeases(snapshot, catalog, [
+        ...snapshot.leases
+          .filter((candidate) => !existingLeaseIds.has(candidate.id))
+          .map((candidate) => candidate.id),
+        lease.id,
+      ]);
+      return { ok: false, conflict: { kind: 'unavailable', capabilityId: entry.id, reason } };
+    }
     const health = await this.runAction(params.slotId, entry.actions.health, parameters, entry);
     if (!health.ok) {
       lease.updatedAt = this.timestamp();
@@ -2876,6 +2901,7 @@ export class RuntimeCapabilityRegistry {
       const byId = new Map(snapshot.leases.map((lease) => [lease.id, lease]));
       const groups = new Map<string, RuntimeCapabilityLease[]>();
       for (const lease of snapshot.leases) {
+        if (!holdsClaim(lease) && !selectedIds.has(lease.id)) continue;
         const key = providerKey(lease);
         groups.set(key, [...(groups.get(key) ?? []), lease]);
       }
