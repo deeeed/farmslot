@@ -86,9 +86,10 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 - [ ] **13. Confirm branch** — `git branch --show-current` matches `{{PR_BRANCH}}`.
 - [ ] **14. Typecheck + gateway tests:**
   ```bash
-  cd apps/command-center && yarn typecheck
-  cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
+  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
+  Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
 - [ ] **15. Re-run author recipe** [full + UI PR + CDP up] — when PR includes validation recipe or `artifacts/recipe.json` in inherited context:
   ```bash
   cd {{REPO}}
