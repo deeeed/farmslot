@@ -467,8 +467,9 @@ export async function checkHealth(
   projectVars: ProjectVars | undefined,
   readyIndicator: string,
   parseHealthCmd: string,
-  /** Progress before a long unlock, so streaming clients see activity. */
+  /** Progress before and during a long unlock, so streaming clients see activity. */
   onProgress: (step: CheckStep) => void = () => {},
+  heartbeatMs: number = UNLOCK_HEARTBEAT_MS,
 ): Promise<CheckStep | null> {
   const healthHook = expandHook('health_check', projectJson, vars, projectVars);
   if (!healthHook) return null;
@@ -489,7 +490,19 @@ export async function checkHealth(
       status: 'warn',
       detail: `Health not ready (value=${healthValue || 'none'}) — trying unlock...`,
     });
-    unlockFailure = await runUnlockHook(vars, unlockHook);
+    const unlockStartedAt = Date.now();
+    const heartbeat = setInterval(() => {
+      onProgress({
+        name: 'health',
+        status: 'warn',
+        detail: `Unlock still running (${Math.round((Date.now() - unlockStartedAt) / 1000)} s)`,
+      });
+    }, heartbeatMs);
+    try {
+      unlockFailure = await runUnlockHook(vars, unlockHook);
+    } finally {
+      clearInterval(heartbeat);
+    }
     // Re-read health even after a failed unlock: the app can reach ready on its own.
     await new Promise((r) => setTimeout(r, 3000));
     healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
@@ -507,6 +520,13 @@ export async function checkHealth(
     detail: unlockFailure ? `${healthDetail}; ${unlockFailure}` : healthDetail,
   };
 }
+
+/**
+ * Progress interval while the unlock hook runs: under the CLI's 30 s
+ * no-activity timeout, which fleet broadcasts (also every 30 s) cannot be
+ * relied on to beat.
+ */
+export const UNLOCK_HEARTBEAT_MS = 15_000;
 
 /**
  * Bound for one unlock hook run. A timeout reports as exit 124, not a throw

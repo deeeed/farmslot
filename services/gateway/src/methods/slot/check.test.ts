@@ -116,6 +116,28 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
     ]);
   });
 
+  test('checkHealth heartbeats while the unlock runs and stops when it returns', async (t) => {
+    const vars = await lockedSlot(t);
+    const details: string[] = [];
+    const step = await checkHealth(
+      vars,
+      projectWithUnlock('sleep 1; printf OK > state'),
+      undefined,
+      'OK',
+      '',
+      (p) => details.push(p.detail),
+      200,
+    );
+    assert.deepEqual(step, { name: 'health', status: 'pass', detail: 'Health after unlock — OK' });
+    const heartbeats = details.filter((d) => d.startsWith('Unlock still running ('));
+    assert.ok(
+      heartbeats.length >= 2,
+      `expected heartbeats during a 1 s unlock, got ${JSON.stringify(details)}`,
+    );
+    // The re-read after unlock waits 3 s; no heartbeat may fire once the unlock returned.
+    assert.ok(heartbeats.length <= 6, `heartbeat kept running after unlock: ${heartbeats.length}`);
+  });
+
   test('checkHealth appends the unlock failure when health stays down', async (t) => {
     const vars = await lockedSlot(t);
     const step = await checkHealth(
