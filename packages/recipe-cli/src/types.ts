@@ -2,6 +2,7 @@ import type { RecipeExecutionCapability, RecipeResolutionDocument } from '@farms
 import type {
   RecipeLibraryAdapterDeclaration,
   RecipeLibraryOrigin,
+  RecipeLibraryRequirement,
 } from '@farmslot/recipe-harness';
 
 /** Version of every `--json` envelope printed by the discovery commands. */
@@ -22,19 +23,16 @@ export interface DiscoveryEnvelope {
   status: 'ok' | 'fail';
 }
 
-export interface DiscoveryErrorEnvelope extends DiscoveryEnvelope {
+export interface DiscoveryErrorEnvelope {
+  schemaVersion: typeof DISCOVERY_SCHEMA_VERSION;
+  /** The command that failed, or null when the arguments named no command. */
+  command: string | null;
   status: 'fail';
   error: { code: string; message: string; userAction: string };
 }
 
-export interface DiscoveryRequirement {
-  package: string;
-  range: string;
-  /** Installed version, or null when this CLI cannot check the package. */
-  installed: string | null;
-  /** Null when unchecked. An unsatisfied checked requirement fails resolution. */
-  satisfied: boolean | null;
-}
+/** A satisfied `requires` entry; an unsatisfied or uncheckable one fails resolution. */
+export type DiscoveryRequirement = RecipeLibraryRequirement;
 
 export interface DiscoveryActionManifestFile {
   /** Platform id, or `shared` for every platform. */
@@ -143,8 +141,11 @@ export interface DiscoveryRecipe {
 
 export interface DiscoveryRecipeDetail extends DiscoveryRecipe {
   path: string;
-  /** How the name was resolved: by ref precedence or by an explicit `<library>.<ref>` id. */
-  resolvedBy: 'ref' | 'id';
+  /**
+   * How the name was resolved, exactly as `run` resolves it: `ref` (precedence winner), `alias`
+   * (qualified platform alias such as `web.greet`) or `id` (`<library>.<ref>`, shadowed or not).
+   */
+  resolvedBy: 'ref' | 'alias' | 'id';
   proofTargets: unknown;
   /** Actions used by the recipe and every recipe it calls. */
   actions: string[];
@@ -249,6 +250,8 @@ export interface ExplainEnvelope extends DiscoveryEnvelope {
 export interface SearchResult {
   kind: 'action' | 'recipe';
   name: string;
+  /** Namespaced `<library>.<ref>` id, for recipes. */
+  id?: string;
   score: number;
   source: string | null;
   description: string;
@@ -276,6 +279,9 @@ export interface TemplateEnvelope extends DiscoveryEnvelope {
 
 export interface CompletionsEnvelope extends DiscoveryEnvelope {
   command: 'completions';
-  kind: 'commands' | 'actions' | 'recipes';
-  candidates: string[];
+  /** `script` carries a shell script; the other kinds carry candidates. */
+  kind: 'commands' | 'actions' | 'recipes' | 'script';
+  candidates?: string[];
+  shell?: 'bash' | 'zsh';
+  script?: string;
 }

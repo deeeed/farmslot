@@ -12,6 +12,8 @@ export interface RecipeHarnessCliOptions {
   description?: string;
   /** Version printed by --version; a host CLI reports its own. */
   version?: string;
+  /** Package versions the host provides, checked against each library's `requires`. */
+  packageVersions?: Readonly<Record<string, string>>;
 }
 
 export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}): Command {
@@ -21,8 +23,9 @@ export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}
     .description(options.description ?? 'Farmslot v1 recipe harness CLI')
     .version(options.version ?? RECIPE_HARNESS_VERSION);
 
-  registerValidateCommand(program);
-  registerRunCommand(program);
+  const context = options.packageVersions ? { packageVersions: options.packageVersions } : {};
+  registerValidateCommand(program, context);
+  registerRunCommand(program, context);
   return program;
 }
 

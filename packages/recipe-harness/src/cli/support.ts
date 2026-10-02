@@ -36,6 +36,8 @@ interface RecipeValidationInputOptions {
   /** Library sources whose recipe refs count as resolvable, mirroring run resolution. */
   librarySources?: RecipeLibrarySource[];
   params?: Record<string, unknown>;
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: Readonly<Record<string, string>>;
 }
 
 interface RecipeCliRecordingTargetOptions {
@@ -170,6 +172,7 @@ export async function validateRecipeCliInput({
   baseDir = recipeCliBaseDir(),
   librarySources,
   params = {},
+  packageVersions,
 }: RecipeValidationInputOptions): Promise<RecipeValidationResult> {
   const recipe = await readRecipeCliJsonFile(recipePath, baseDir);
   const results: RecipeValidationResult[] = [];
@@ -229,7 +232,10 @@ export async function validateRecipeCliInput({
 
   const libraryResolution =
     librarySources && librarySources.length > 0
-      ? await loadRecipeLibraries(librarySources, { adapter })
+      ? await loadRecipeLibraries(librarySources, {
+          ...(adapter ? { adapter } : {}),
+          ...(packageVersions ? { packageVersions } : {}),
+        })
       : undefined;
   const externalRecipeIds = new Set(libraryResolution?.recipes.keys() ?? []);
   if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {

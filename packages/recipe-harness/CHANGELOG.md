@@ -5,7 +5,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Recognize custom recipe adapter folders from the active adapter or a library's platform manifest. Preserve built-in adapters and qualified custom references across library precedence.
-- Move the `farmslot-recipe` bin to `@farmslot/recipe-cli`. `recipe-library.json` keys are all optional and gain `adapters`, `actions` and `requires`; a `--library` entry replaces the `RECIPE_LIBRARY_PATH` entry with the same name; `run` records each library's content digest in its provenance. Export the library manifest reader, library digest, platform list, workflow graph and parameter resolution helpers for discovery tools.
+- **Breaking:** the `farmslot-recipe` bin moves to `@farmslot/recipe-cli`; install that package (or `npx -p @farmslot/recipe-cli farmslot-recipe`) instead of running it from `@farmslot/recipe-harness`. `recipe-library.json` keys are all optional and gain `adapters`, `actions` and `requires`; `requires` is enforced on every load and fails closed for packages the host cannot check. Library files load and digest through one walker that skips dot-entries, `node_modules` and symlinked directories and rejects files outside the library root. A `--library` entry replaces the `RECIPE_LIBRARY_PATH` entry with the same name, `run` accepts `<library>.<ref>` ids, and `run` records each library's content digest (line-ending independent) in its provenance. Export the library helpers discovery tools need.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -331,10 +331,15 @@ test('search, template and completions read the same index', async (t) => {
     env,
   );
   assert.deepEqual(recipes.json.candidates, [
+    'base.shop.setup',
+    'base.shop.smoke',
     'shop.broken',
     'shop.open',
     'shop.setup',
     'shop.smoke',
+    'team.shop.broken',
+    'team.shop.open',
+    'team.shop.smoke',
   ]);
   const commands = await cli<{ candidates: string[] }>(
     ['completions', '--candidates', 'commands'],
@@ -351,7 +356,19 @@ test('an unsatisfied requires range and an invalid action manifest fail closed',
     requires: { '@farmslot/recipe-cli': '>=99.0.0' },
   });
   const requires = await cli<DiscoveryErrorEnvelope>(['list'], env);
-  assert.equal(requires.json.error.code, 'LIBRARY_REQUIREMENT_UNSATISFIED');
+  assert.equal(requires.exitCode, 1);
+  assert.equal(requires.json.error.code, 'RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED');
+
+  // A package this CLI cannot check fails closed too, in discovery and in run.
+  await writeJson(path.join(team, 'recipe-library.json'), {
+    requires: { '@farmslot/adapter-sdk': '>=9' },
+  });
+  const unchecked = await cli<DiscoveryErrorEnvelope>(['describe', 'shop.smoke'], env);
+  assert.equal(unchecked.exitCode, 1);
+  assert.equal(unchecked.json.error.code, 'RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED');
+  const run = await cli<{ code: string }>(['run', 'shop.smoke', '--describe'], env);
+  assert.equal(run.exitCode, 1);
+  assert.equal(run.json.code, 'RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED');
 
   await writeJson(path.join(team, 'recipe-library.json'), { platforms: ['web'] });
   await writeJson(path.join(team, 'manifests', 'shared.action-manifest.json'), {
@@ -381,7 +398,10 @@ test('the hello example library lists, describes and explains without an adapter
   const web = await cli<ExplainEnvelope>(['explain', 'greet', '--platform', 'web'], env);
   assert.deepEqual(web.json.missing.handlers, ['hello.wave']);
   const index = await buildDiscoveryIndex({ env });
-  assert.equal(index.libraries[0]?.info.requires[0]?.satisfied, true);
+  assert.deepEqual(
+    index.libraries[0]?.info.requires.map((entry) => entry.package),
+    ['@farmslot/recipe-cli'],
+  );
 });
 
 test('the hello example runs through the same bin once its plan is approved', async (t) => {
@@ -433,4 +453,202 @@ test('the hello example runs through the same bin once its plan is approved', as
     summary.recipeLibraries?.sources[0]?.provenance.digest,
     index.libraries[0]?.info.digest,
   );
+});
+
+/** Two copies of the hello library: `a` shadows `hello`'s generic greet with its own title. */
+async function shadowedHello(
+  t: TestContext,
+): Promise<{ root: string; env: Record<string, string> }> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-ids-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(HELLO, path.join(root, 'hello'), { recursive: true });
+  await cp(HELLO, path.join(root, 'a'), { recursive: true });
+  const greet = path.join(root, 'a', 'recipes', 'greet.recipe.json');
+  await writeJson(greet, { ...JSON.parse(await readFile(greet, 'utf8')), title: 'A greet' });
+  return {
+    root,
+    env: { RECIPE_LIBRARY_PATH: `a=${path.join(root, 'a')}:hello=${path.join(root, 'hello')}` },
+  };
+}
+
+test('namespaced ids and platform aliases resolve the same way in run and discovery', async (t) => {
+  const { env } = await shadowedHello(t);
+  const described = await cli<DescribeEnvelope>(['describe', 'hello.greet'], env);
+  assert.equal(described.json.recipe?.resolvedBy, 'id');
+  assert.equal(described.json.recipe?.title, 'Greet someone');
+  assert.match(described.json.recipe?.runCommand ?? '', /run hello\.greet /u);
+
+  // The generated command resolves to the described recipe, not the shadow winner.
+  const run = await cli<{ source: string; title: string }>(
+    ['run', 'hello.greet', '--describe'],
+    env,
+  );
+  assert.equal(run.exitCode, 0);
+  assert.deepEqual([run.json.source, run.json.title], ['hello', 'Greet someone']);
+
+  const template = await cli<DiscoveryErrorEnvelope>(['template', 'hello.greet'], env);
+  assert.equal(template.exitCode, 2);
+  assert.equal(template.json.error.code, 'RECIPE_SHADOWED');
+
+  const alias = await cli<DescribeEnvelope>(['describe', 'web.greet', '--platform', 'web'], env);
+  assert.equal(alias.json.recipe?.resolvedBy, 'alias');
+  assert.equal(alias.json.recipe?.file, 'recipes/web/greet.recipe.json');
+  const aliasRun = await cli<{ file: string }>(
+    ['run', 'web.greet', '--describe', '--adapter', 'web'],
+    env,
+  );
+  assert.equal(aliasRun.json.file, 'recipes/web/greet.recipe.json');
+
+  const flagged = await cli<DescribeEnvelope>(
+    ['describe', 'greet', '--library', `extra=${HELLO}`],
+    env,
+  );
+  assert.match(flagged.json.recipe?.runCommand ?? '', new RegExp(`--library extra=${HELLO}`, 'u'));
+
+  const search = await cli<SearchEnvelope>(['search', 'greet'], env);
+  assert.ok(search.json.results.some((result) => result.id === 'a.greet'));
+  const candidates = await cli<{ candidates: string[] }>(
+    ['completions', '--candidates', 'recipes'],
+    env,
+  );
+  assert.ok(candidates.json.candidates.includes('hello.greet'));
+  assert.ok(candidates.json.candidates.includes('a.greet'));
+});
+
+test('an alias dependency is judged by the document it resolves to', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-alias-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const high = path.join(root, 'high');
+  const low = path.join(root, 'low');
+  await writeJson(path.join(high, 'manifests', 'shared.action-manifest.json'), commandManifest());
+  await writeJson(
+    path.join(high, 'recipes', 'foo.recipe.json'),
+    recipe('Foo', { run: { action: 'command', cmd: 'true', next: 'done' } }),
+  );
+  await writeJson(
+    path.join(high, 'recipes', 'parent.recipe.json'),
+    recipe('Parent', { call: { action: 'call', ref: 'web.foo', next: 'done' } }),
+  );
+  await writeJson(path.join(low, 'recipe-library.json'), { platforms: ['web'] });
+  await writeJson(
+    path.join(low, 'recipes', 'web', 'foo.recipe.json'),
+    recipe('Low web foo', { bad: { action: 'low.bad', next: 'done' } }),
+  );
+  const env = { RECIPE_LIBRARY_PATH: `high=${high}:low=${low}` };
+  const { json } = await cli<ListEnvelope>(['list', '--platform', 'web'], env);
+  const byRef = new Map(json.recipes.map((entry) => [entry.ref, entry]));
+  assert.equal(byRef.get('foo')?.runnable, true);
+  assert.equal(byRef.get('parent')?.runnable, false);
+  assert.deepEqual(
+    byRef.get('parent')?.problems.map((problem) => problem.code),
+    ['RECIPE_DEPENDENCY_NOT_RUNNABLE'],
+  );
+});
+
+test('library files must be contained regular files, walked the same way for load and digest', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-files-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const library = path.join(root, 'lib');
+  await cp(HELLO, library, { recursive: true });
+  const env = { RECIPE_LIBRARY_PATH: `lib=${library}` };
+  const before = await cli<ListEnvelope>(['list'], env);
+
+  // Dotfiles and node_modules are skipped by both the loader and the digest.
+  const greet = await readFile(path.join(library, 'recipes', 'greet.recipe.json'), 'utf8');
+  await writeFile(path.join(library, 'recipes', '.sneaky.recipe.json'), greet);
+  await mkdir(path.join(library, 'recipes', 'node_modules'));
+  await writeFile(path.join(library, 'recipes', 'node_modules', 'nm.recipe.json'), greet);
+  // A symlinked directory is not followed, so it neither crashes nor adds recipes.
+  await symlink('../manifests', path.join(library, 'recipes', 'linkdir'));
+  const after = await cli<ListEnvelope>(['list'], env);
+  assert.equal(after.json.status, 'ok');
+  assert.equal(after.json.libraries[0]?.digest, before.json.libraries[0]?.digest);
+  assert.deepEqual(
+    after.json.recipes.map((entry) => entry.ref),
+    ['greet', 'greet-twice'],
+  );
+  const run = await cli<{ ref: string }>(['run', 'greet', '--describe'], env);
+  assert.equal(run.exitCode, 0);
+
+  // A convention manifest that escapes the library is rejected, not read or digested.
+  await writeJson(path.join(root, 'outside.action-manifest.json'), commandManifest());
+  await symlink(
+    '../../outside.action-manifest.json',
+    path.join(library, 'manifests', 'evil.action-manifest.json'),
+  );
+  const escaped = await cli<DiscoveryErrorEnvelope>(['actions'], env);
+  assert.equal(escaped.exitCode, 1);
+  assert.equal(escaped.json.error.code, 'RECIPE_SOURCE_INVALID');
+});
+
+test('every failure prints the JSON envelope with the documented exit code', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-discovery-errors-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [index, content] of [
+    '{"platforms":"web"}',
+    '{"actions":{"shared":"missing.json"}}',
+    '[]',
+    'not json',
+  ].entries()) {
+    const library = path.join(root, `bad-${index}`);
+    await cp(HELLO, library, { recursive: true });
+    await writeFile(path.join(library, 'recipe-library.json'), content);
+    const result = await cli<DiscoveryErrorEnvelope>(['list'], {
+      RECIPE_LIBRARY_PATH: `bad=${library}`,
+    });
+    assert.equal(result.exitCode, 1, content);
+    assert.equal(result.json.error.code, 'RECIPE_LIBRARY_MANIFEST_INVALID', content);
+  }
+
+  const env = { RECIPE_LIBRARY_PATH: `hello=${HELLO}` };
+  const missingArgument = await cli<DiscoveryErrorEnvelope>(['describe'], env);
+  assert.deepEqual(
+    [missingArgument.exitCode, missingArgument.json.command, missingArgument.json.error.code],
+    [2, 'describe', 'DISCOVERY_USAGE'],
+  );
+  const unknownOption = await cli<DiscoveryErrorEnvelope>(['list', '--bogus'], env);
+  assert.deepEqual([unknownOption.exitCode, unknownOption.json.error.code], [2, 'DISCOVERY_USAGE']);
+  const badParam = await cli<DiscoveryErrorEnvelope>(
+    ['explain', 'greet', '--param', 'noequals'],
+    env,
+  );
+  assert.deepEqual([badParam.exitCode, badParam.json.error.code], [2, 'DISCOVERY_USAGE']);
+  const script = await cli<{ kind: string; shell: string; script: string }>(
+    ['completions', 'bash'],
+    env,
+  );
+  assert.equal(script.json.kind, 'script');
+  assert.match(script.json.script, /complete -F/u);
+  const platformRequired = await cli<DiscoveryErrorEnvelope>(['describe', 'shop.none'], env);
+  assert.equal(platformRequired.json.error.code, 'DISCOVERY_NOT_FOUND');
+});
+
+test('explain validates parameters the way run does', async () => {
+  const env = { RECIPE_LIBRARY_PATH: `hello=${HELLO}` };
+  const { json } = await cli<ExplainEnvelope>(
+    ['explain', 'greet-twice', '--param', 'guest=42', '--param', 'extra=1'],
+    env,
+  );
+  assert.deepEqual(
+    json.missing.problems.map((problem) => [problem.code, problem.path]),
+    [
+      ['RECIPE_PARAMS_INVALID', 'params.guest'],
+      ['RECIPE_PARAMS_INVALID', 'params.extra'],
+      ['RECIPE_PARAMS_INVALID', 'params.name'],
+    ],
+  );
+  const clean = await cli<ExplainEnvelope>(['explain', 'greet-twice', '--param', 'guest=Ada'], env);
+  assert.deepEqual(clean.json.missing.problems, []);
+});
+
+test('RECIPE_PLATFORM_REQUIRED suggests the command that was run', async (t) => {
+  const { env } = await fixture(t);
+  for (const command of ['describe', 'template', 'explain']) {
+    const result = await cli<DiscoveryErrorEnvelope>([command, 'shop.open'], env);
+    assert.equal(result.json.error.code, 'RECIPE_PLATFORM_REQUIRED');
+    assert.match(
+      result.json.error.userAction,
+      new RegExp(` ${command} shop\\.open --platform web`, 'u'),
+    );
+  }
 });

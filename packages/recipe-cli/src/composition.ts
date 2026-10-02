@@ -3,6 +3,7 @@ import {
   isRecord,
   normalizeRecipeRef,
   type RecipeExecutionCapability,
+  validateRecipeParams,
 } from '@farmslot/protocol';
 import {
   extractWorkflowGraph,
@@ -112,6 +113,18 @@ export function explainRecipe(
     stack: string[],
   ): ExplainRecipeNode => {
     const { parameters, values } = explainParameters(recipe, callerParams, templates);
+    // The same parameter check `run` applies; nested values may still hold caller templates.
+    const validation = validateRecipeParams(values, recipe.document.paramsSchema, {
+      allowTemplates: stack.length > 1,
+    });
+    for (const finding of validation.findings) {
+      if (finding.severity !== 'error' || finding.code === 'recipe.missing_param') continue;
+      problems.push({
+        code: 'RECIPE_PARAMS_INVALID',
+        message: `Recipe ${recipe.ref}: ${finding.message}`,
+        path: finding.path,
+      });
+    }
     for (const parameter of parameters) {
       if (parameter.from === 'missing')
         missingParameters.push({ recipe: recipe.ref, name: parameter.name });

@@ -10,7 +10,7 @@ export RECIPE_LIBRARY_PATH="hello=./recipe-library"
 npx farmslot-recipe list
 npx farmslot-recipe actions
 npx farmslot-recipe describe hello.greet
-npx farmslot-recipe explain hello.greet-twice --param name=Ada
+npx farmslot-recipe explain greet-twice --param guest=Ada
 ```
 
 | command                   | answers                                                                     |

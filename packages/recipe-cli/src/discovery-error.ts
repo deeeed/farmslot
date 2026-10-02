@@ -3,8 +3,8 @@ export type DiscoveryErrorCode =
   | 'DISCOVERY_NAME_AMBIGUOUS'
   | 'DISCOVERY_NOT_FOUND'
   | 'DISCOVERY_USAGE'
-  | 'LIBRARY_REQUIREMENT_UNSATISFIED'
-  | 'RECIPE_PLATFORM_REQUIRED';
+  | 'RECIPE_PLATFORM_REQUIRED'
+  | 'RECIPE_SHADOWED';
 
 /** A discovery failure with the next command the caller should run. */
 export class DiscoveryError extends Error {

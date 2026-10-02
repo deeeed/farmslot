@@ -4,6 +4,8 @@ import type { SearchResult } from './types.js';
 interface Searchable {
   kind: SearchResult['kind'];
   name: string;
+  /** Namespaced recipe id, matched like the name. */
+  id?: string;
   source: string | null;
   description: string;
   fields: string[];
@@ -24,6 +26,7 @@ export function searchIndex(index: RecipeDiscoveryIndex, query: string): SearchR
     ...[...index.recipes.values()].map((recipe) => ({
       kind: 'recipe' as const,
       name: recipe.ref,
+      id: recipe.id,
       source: recipe.source,
       description: [recipe.title, recipe.description].filter(Boolean).join(' '),
       fields: recipe.parameters.map((parameter) => parameter.name),
@@ -31,7 +34,12 @@ export function searchIndex(index: RecipeDiscoveryIndex, query: string): SearchR
   ];
   return entries
     .map((entry) => {
-      const scores = terms.map((term) => termScore(entry, term));
+      const scores = terms.map((term) =>
+        Math.max(
+          termScore(entry.name, entry, term),
+          entry.id ? termScore(entry.id, entry, term) : 0,
+        ),
+      );
       return { entry, scores, score: scores.reduce((total, value) => total + value, 0) };
     })
     .filter(({ scores }) => scores.every((value) => value > 0))
@@ -44,14 +52,15 @@ export function searchIndex(index: RecipeDiscoveryIndex, query: string): SearchR
     .map(({ entry, score }) => ({
       kind: entry.kind,
       name: entry.name,
+      ...(entry.id ? { id: entry.id } : {}),
       score,
       source: entry.source,
       description: entry.description,
     }));
 }
 
-function termScore(entry: Searchable, term: string): number {
-  const name = entry.name.toLowerCase();
+function termScore(label: string, entry: Searchable, term: string): number {
+  const name = label.toLowerCase();
   const segment = name.split('.').pop() ?? name;
   const domain = name.includes('.') ? name.split('.')[0]! : '';
   const nameTerms = searchTerms(name.replaceAll('.', ' ').replaceAll('_', ' '));

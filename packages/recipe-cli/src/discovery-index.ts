@@ -14,9 +14,13 @@ import {
 } from '@farmslot/protocol';
 import {
   createStandardCoreAdapters,
+  findLibraryRecipe,
+  type LibraryRecipeMatch,
   loadRecipeLibraries,
   type RecipeLibraryEnv,
+  type RecipeLibraryLoadOptions,
   type RecipeLibraryResolution,
+  type RecipePackageVersions,
   RecipeResolutionError,
   type ResolvedLibraryRecipe,
   resolveRecipeDependencies,
@@ -34,6 +38,7 @@ import type {
   DiscoveryRecipe,
   DiscoveryRecipeVariant,
 } from './types.js';
+import { RECIPE_CLI_PACKAGE_VERSIONS } from './version.js';
 
 const OFFICIAL_ACTIONS = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const RUNNER_ACTIONS = new Set(['call', 'end']);
@@ -46,6 +51,8 @@ export interface DiscoveryOptions {
   env?: RecipeLibraryEnv;
   /** Actions with a handler registered by the host CLI. Defaults to the standard core handlers. */
   handlers?: readonly string[];
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: RecipePackageVersions;
 }
 
 /** Internal action record: the public summary plus its schema and examples. */
@@ -59,6 +66,8 @@ export interface RecipeDiscoveryIndex {
   platform: string | null;
   platforms: string[];
   libraries: ResolvedDiscoveryLibrary[];
+  /** Load options for this view, shared with `run` resolution. */
+  loadOptions: RecipeLibraryLoadOptions;
   /** Resolution used by `run` for this view: precedence winners, keyed by ref. */
   resolution: RecipeLibraryResolution;
   /** Every declared action for this view, merged by precedence, as a runner manifest. */
@@ -72,7 +81,11 @@ export interface RecipeDiscoveryIndex {
 export async function buildDiscoveryIndex(
   options: DiscoveryOptions = {},
 ): Promise<RecipeDiscoveryIndex> {
-  const libraries = await resolveDiscoveryLibraries(options);
+  // Discovery vouches for its own package when a library declares `requires`.
+  const packageVersions = {
+    packageVersions: { ...RECIPE_CLI_PACKAGE_VERSIONS, ...options.packageVersions },
+  };
+  const libraries = await resolveDiscoveryLibraries({ ...options, ...packageVersions });
   const sources = libraries.map((library) => library.source);
   const platform = options.platform ?? null;
   const platforms = [
@@ -87,9 +100,21 @@ export async function buildDiscoveryIndex(
     ]),
   ].sort();
 
-  const resolution = await loadRecipeLibraries(sources, platform ? { adapter: platform } : {});
+  const loadOptions = { ...(platform ? { adapter: platform } : {}), ...packageVersions };
+  // One load per platform view per command; the view and the variant scan share them.
+  const loads = new Map<string, Promise<RecipeLibraryResolution>>();
+  const load = (adapter: string | null) => {
+    const key = adapter ?? '';
+    if (!loads.has(key))
+      loads.set(
+        key,
+        loadRecipeLibraries(sources, { ...(adapter ? { adapter } : {}), ...packageVersions }),
+      );
+    return loads.get(key)!;
+  };
+  const resolution = await load(platform);
   const documents = new Map([...resolution.recipes].filter(([, recipe]) => !recipe.aliasFor));
-  const variants = await recipeVariants(sources, platforms);
+  const variants = await recipeVariants(platforms, load);
   const { actions, manifest } = await indexActions(
     libraries,
     platform,
@@ -100,6 +125,7 @@ export async function buildDiscoveryIndex(
     platform,
     platforms,
     libraries,
+    loadOptions,
     resolution,
     manifest,
     actions,
@@ -120,8 +146,8 @@ interface RecipeImplementations {
 
 /** Every implementation of each ref: the generic recipe and each platform variant. */
 async function recipeVariants(
-  sources: ResolvedDiscoveryLibrary['source'][],
   platforms: readonly string[],
+  load: (adapter: string | null) => Promise<RecipeLibraryResolution>,
 ): Promise<Map<string, RecipeImplementations>> {
   const implementations = new Map<string, RecipeImplementations>();
   const add = (recipe: ResolvedLibraryRecipe, platform: string | null) => {
@@ -130,11 +156,9 @@ async function recipeVariants(
     if (existing) existing.variants.push(variant);
     else implementations.set(recipe.ref, { variants: [variant], representative: recipe });
   };
-  const generic = await loadRecipeLibraries(sources);
-  for (const recipe of generic.recipes.values()) if (!recipe.aliasFor) add(recipe, null);
+  for (const recipe of (await load(null)).recipes.values()) if (!recipe.aliasFor) add(recipe, null);
   for (const platform of platforms) {
-    const view = await loadRecipeLibraries(sources, { adapter: platform });
-    for (const recipe of view.recipes.values()) {
+    for (const recipe of (await load(platform)).recipes.values()) {
       if (!recipe.aliasFor && recipe.adapter === platform) add(recipe, platform);
     }
   }
@@ -358,7 +382,7 @@ export function recipeSummary(
   const document = recipe.document;
   return {
     ref: recipe.ref,
-    id: `${recipe.source}.${recipe.ref}`,
+    id: `${recipe.source}.${recipe.aliasFor ?? recipe.ref}`,
     ...(typeof document.title === 'string' && document.title.trim()
       ? { title: document.title.trim() }
       : {}),
@@ -375,7 +399,8 @@ export function recipeSummary(
 
 /**
  * A recipe is runnable when it validates against the view's declared actions and every recipe
- * it calls resolves and validates too (the same rule `mm-harness run --list` applies).
+ * it calls resolves and validates too. Validity is keyed by resolution entry, so a qualified
+ * alias is judged by the document it actually resolves to.
  */
 function recipeReadiness(
   documents: ReadonlyMap<string, ResolvedLibraryRecipe>,
@@ -384,16 +409,8 @@ function recipeReadiness(
 ): Map<string, { problems: DiscoveryProblem[] }> {
   const externalRecipeIds = new Set(resolution.recipes.keys());
   const own = new Map<string, DiscoveryProblem[]>();
-  for (const recipe of documents.values()) {
-    const validation = validateRecipeWithManifest(recipe.document, manifest, {
-      externalRecipeIds,
-    });
-    own.set(
-      recipe.ref,
-      validation.findings
-        .filter((finding) => finding.severity === 'error')
-        .map((finding) => ({ code: finding.code, message: finding.message, path: finding.path })),
-    );
+  for (const [key, recipe] of resolution.recipes) {
+    own.set(key, validationProblems(recipe.document, manifest, externalRecipeIds));
   }
   const readiness = new Map<string, { problems: DiscoveryProblem[] }>();
   for (const recipe of documents.values()) {
@@ -406,9 +423,7 @@ function recipeReadiness(
         recipes: resolution.recipes,
       });
       for (const ref of [...dependencies.recipes.keys()].sort()) {
-        const dependency = resolution.recipes.get(ref)!;
-        const target = dependency.aliasFor ?? ref;
-        if ((own.get(target) ?? []).length > 0)
+        if ((own.get(ref) ?? []).length > 0)
           problems.push({
             code: 'RECIPE_DEPENDENCY_NOT_RUNNABLE',
             message: `Called recipe ${ref} does not validate in this view.`,
@@ -423,25 +438,57 @@ function recipeReadiness(
   return readiness;
 }
 
-/** Resolve a recipe by ref (precedence) or by namespaced id `<library>.<ref>`. */
-export async function findRecipe(
+function validationProblems(
+  document: Record<string, unknown>,
+  manifest: RecipeActionManifestDocument,
+  externalRecipeIds: ReadonlySet<string>,
+): DiscoveryProblem[] {
+  return validateRecipeWithManifest(document, manifest, { externalRecipeIds })
+    .findings.filter((finding) => finding.severity === 'error')
+    .map((finding) => ({ code: finding.code, message: finding.message, path: finding.path }));
+}
+
+/** Readiness of any one recipe in this view, including a shadowed recipe selected by id. */
+export function assessRecipe(
+  index: RecipeDiscoveryIndex,
+  recipe: ResolvedLibraryRecipe,
+): DiscoveryProblem[] {
+  const externalRecipeIds = new Set(index.resolution.recipes.keys());
+  const problems = validationProblems(recipe.document, index.manifest, externalRecipeIds);
+  try {
+    const dependencies = resolveRecipeDependencies({
+      rootRef: recipe.ref,
+      root: recipe.document,
+      rootSource: recipe.provenance,
+      recipes: index.resolution.recipes,
+    });
+    for (const [ref, dependency] of [...dependencies.recipes].sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      if (validationProblems(dependency.document, index.manifest, externalRecipeIds).length > 0)
+        problems.push({
+          code: 'RECIPE_DEPENDENCY_NOT_RUNNABLE',
+          message: `Called recipe ${ref} does not validate in this view.`,
+        });
+    }
+  } catch (error) {
+    if (!(error instanceof RecipeResolutionError)) throw error;
+    problems.push({ code: error.code, message: error.message });
+  }
+  return problems;
+}
+
+/** Resolve a recipe name exactly as `run` does: ref, platform alias, or `<library>.<ref>` id. */
+export function findRecipe(
   index: RecipeDiscoveryIndex,
   name: string,
-): Promise<{ recipe: ResolvedLibraryRecipe; resolvedBy: 'ref' | 'id' } | undefined> {
-  const byRef = index.documents.get(name);
-  if (byRef) return { recipe: byRef, resolvedBy: 'ref' };
-  for (const library of index.libraries) {
-    const prefix = `${library.info.name}.`;
-    if (!name.startsWith(prefix)) continue;
-    const ref = name.slice(prefix.length);
-    const own = await loadRecipeLibraries(
-      [library.source],
-      index.platform ? { adapter: index.platform } : {},
-    );
-    const recipe = own.recipes.get(ref);
-    if (recipe && !recipe.aliasFor) return { recipe, resolvedBy: 'id' };
-  }
-  return undefined;
+): Promise<LibraryRecipeMatch | undefined> {
+  return findLibraryRecipe(
+    name,
+    index.libraries.map((library) => library.source),
+    index.resolution,
+    index.loadOptions,
+  );
 }
 
 /** Closest known names, for not-found guidance. */

@@ -59,6 +59,7 @@ test('selection is deterministic and order-independent for the same change set',
     'expo_recipe',
     'protocol',
     'recipe_harness',
+    'recipe_cli',
     'gateway',
     'node',
   ]);

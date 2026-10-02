@@ -32,6 +32,8 @@ export interface RecipeRunRequest {
   adapter?: string;
   /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: Readonly<Record<string, string>>;
   /**
    * Partial execution: stop the root graph after this node succeeds, then run the recipe's
    * declared teardown. The node must be reachable from workflow.entry.

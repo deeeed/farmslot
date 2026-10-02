@@ -3354,7 +3354,7 @@ test('validate reports escaping library symlinks with trust refusal guidance', a
       runRecipeHarnessCli(['validate', recipePath, '--library', `team=${libraryRoot}`]),
     );
     assert.match(output, /Error \[RECIPE_SOURCE_INVALID\]/u);
-    assert.match(output, /Next: move the recipe inside the library root/u);
+    assert.match(output, /Next: move the file inside the library root/u);
     assert.equal(process.exitCode, 1);
   } finally {
     process.exitCode = originalExitCode;

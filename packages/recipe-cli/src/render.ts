@@ -27,9 +27,7 @@ export function renderLibraries(
       lines.push(`     adapter ${id} → ${adapter.module} (declared, not loaded)`);
     for (const requirement of library.requires)
       lines.push(
-        `     requires ${requirement.package} ${requirement.range}: ${
-          requirement.satisfied === null ? 'unchecked' : `ok (${requirement.installed})`
-        }`,
+        `     requires ${requirement.package} ${requirement.range}: ok (${requirement.installed})`,
       );
   }
   if (rules) lines.push('Precedence:', ...rules.map((rule) => `  - ${rule}`));

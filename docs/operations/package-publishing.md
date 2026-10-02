@@ -10,6 +10,7 @@ ready for review, but the packages remain private until final publish approval. 
 | `@farmslot/protocol`       | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
 | `@farmslot/agent-runtime`  | Task lifecycle, artifact checks, and execution-template utilities.  | <https://farmslot.io/docs/reference/agent-runtime>      |
 | `@farmslot/recipe-harness` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-harness>  |
+| `@farmslot/recipe-cli`     | The `farmslot-recipe` command: run, validate and recipe discovery.  | <https://farmslot.io/docs/reference/recipe-discovery>   |
 | `@farmslot/expo-recipe`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
 | `@farmslot/skills`         | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
 | `@farmslot/capabilities`   | Machine-local capability primitives shared by node and gateway.     | `packages/capabilities/README.md`                       |
@@ -69,9 +70,10 @@ Publish Recipe Protocol packages in dependency order:
 2. `@farmslot/agent-runtime`
 3. `@farmslot/capabilities`
 4. `@farmslot/recipe-harness`
-5. `@farmslot/expo-recipe`
-6. `@farmslot/handoff`
-7. `@farmslot/skills`
+5. `@farmslot/recipe-cli`
+6. `@farmslot/expo-recipe`
+7. `@farmslot/handoff`
+8. `@farmslot/skills`
 
 The `npm` release group derives this set from every non-private package under `packages/`, dependency-first; a new public package joins it by not being `private`.
 
@@ -89,5 +91,6 @@ The packages now publish from `dist/` rather than TypeScript source.
 and `@farmslot/skills` build JavaScript and declaration files before pack, and
 `scripts/quality/check-farmslot-package-readiness.mjs` verifies required packed
 files plus built import contracts. The
-`@farmslot/recipe-harness` CLI bin imports `../dist/cli.js`, so local workspace
-CLI smoke testing requires `yarn workspace @farmslot/recipe-harness build` first.
+`farmslot-recipe` bin ships in `@farmslot/recipe-cli` and imports `../dist/cli.js`, so
+local workspace CLI smoke testing requires `yarn workspace @farmslot/recipe-cli build`
+first (it builds `@farmslot/recipe-harness` too).

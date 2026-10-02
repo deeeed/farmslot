@@ -238,6 +238,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         ? await loadRecipeLibraries(request.librarySources, {
             adapter: request.adapter,
             logger: this.#logger,
+            ...(request.packageVersions ? { packageVersions: request.packageVersions } : {}),
           })
         : undefined;
     const recipes = libraryResolution?.recipes ?? new Map<string, ResolvedLibraryRecipe>();

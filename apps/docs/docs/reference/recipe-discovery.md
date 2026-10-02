@@ -12,6 +12,7 @@ The repository ships a tiny library at `examples/recipe-library-hello`. From a F
 
 ```sh
 yarn install
+yarn workspace @farmslot/recipe-cli build
 export RECIPE_LIBRARY_PATH="hello=$PWD/examples/recipe-library-hello"
 alias farmslot-recipe="$PWD/node_modules/.bin/farmslot-recipe"
 ```
@@ -98,9 +99,11 @@ A library is a directory with `recipes/`, optional `manifests/`, and an optional
 - A `--library` entry replaces the `RECIPE_LIBRARY_PATH` entry with the same name, and the output records what it overrode.
 - The first library that declares a recipe ref or an action wins. Lower-ranked libraries that declare it too are listed as `shadows`.
 - Within one library, a platform variant (`recipes/<platform>/…`) wins over the generic recipe, and `manifests/<platform>.action-manifest.json` wins over `manifests/shared.action-manifest.json`.
-- Every recipe also has a namespaced id, `<library>.<ref>`. Use it to describe or explain a recipe from a specific library, even when another library shadows it.
+- Every recipe also has a namespaced id, `<library>.<ref>`. `run`, `describe` and `explain` accept it and select that library's recipe even when another library shadows it. With `--platform`, a qualified alias such as `web.greet` works the same way in `run --adapter web` and in discovery. A ref with the same name as an id wins.
+- Call nodes inside recipes still resolve refs by precedence, so `template` refuses a shadowed id (`RECIPE_SHADOWED`) instead of emitting a node that would call the winner.
+- Commands that discovery prints (`runCommand`) repeat the name as given, your `--library` entries and the platform, so they resolve the same recipe.
 
-Every library's content digest (`recipe-library.json`, `recipes/`, `manifests/`, `actions/` and declared files) is printed by discovery and recorded by `run` in the run summary's library provenance.
+Library files are read and digested by one walker. It covers `recipes/`, `manifests/` and `actions/`, skips dot-entries, `node_modules` and symlinked directories, and rejects any file (symlinked or not) that resolves outside the library root. The library's content digest covers those files plus `recipe-library.json` and the files it declares. Text files hash with LF line endings, so a CRLF checkout has the same digest. Discovery prints the digest, and `run` records it in the run summary's library provenance.
 
 ### `recipe-library.json`
 
@@ -117,28 +120,28 @@ Every key is optional.
 }
 ```
 
-| key         | meaning                                                                                                                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `platforms` | Platform folders under `recipes/`. `core`, `extension` and `mobile` are always recognized.                                                                                              |
-| `actions`   | Action manifest per platform or `shared`. Defaults to `manifests/<scope>.action-manifest.json`.                                                                                         |
-| `adapters`  | Platform adapter modules the library ships. Discovery validates and digests them but does not load code yet.                                                                            |
-| `requires`  | Package version ranges. `@farmslot/recipe-cli` and `@farmslot/recipe-harness` are checked, and discovery fails when they are not satisfied. Other packages are reported as `unchecked`. |
+| key         | meaning                                                                                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platforms` | Platform folders under `recipes/`. `core`, `extension` and `mobile` are always recognized.                                                                                                                                                                                                                           |
+| `actions`   | Action manifest per platform or `shared`. Defaults to `manifests/<scope>.action-manifest.json`.                                                                                                                                                                                                                      |
+| `adapters`  | Platform adapter modules the library ships. Discovery validates and digests them but does not load code yet.                                                                                                                                                                                                         |
+| `requires`  | Package version ranges, checked every time the library loads (`run`, `validate` and discovery). It fails closed: an out-of-range version, or a package the host cannot check, fails with `RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED`. `farmslot-recipe` provides `@farmslot/recipe-cli` and `@farmslot/recipe-harness`. |
 
-Declared paths must stay inside the library root.
+Declared paths must be regular files inside the library root. Invalid content fails with `RECIPE_LIBRARY_MANIFEST_INVALID`.
 
 ## Commands
 
 Every command accepts `--library name=path` (repeatable), `--platform <id>` and `--json`.
 
-| command                            | answers                                                                                                                                              |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `actions [--source lib]`           | Every action the libraries declare, plus the handlers this CLI registers: owner, scopes, parameters, capabilities, handler.                          |
-| `list [--source lib] [--runnable]` | Recipes with ref, id, source, variants and shadows, and whether each validates against the declared actions in this view.                            |
-| `describe <name> [--kind k]`       | A recipe's parameters, variants, transitive actions and calls, callers and a run command; or an action's schema, examples, result cases and callers. |
-| `explain <recipe> [--param k=v]`   | The resolved call tree with parameter flow, required actions and capabilities, and what is missing. Read-only; no target.                            |
-| `search <text…>`                   | Action and recipe ids, descriptions and parameter names, ranked. Every term must match.                                                              |
-| `template <name>`                  | A workflow node and a complete recipe skeleton for an action or recipe.                                                                              |
-| `completions [bash\|zsh]`          | A completion script. `--candidates commands\|actions\|recipes` prints the candidates.                                                                |
+| command                            | answers                                                                                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actions [--source lib]`           | Every action the libraries declare, plus the handlers this CLI registers: owner, scopes, parameters, capabilities, handler.                                                  |
+| `list [--source lib] [--runnable]` | Recipes with ref, id, source, variants and shadows, and whether each validates against the declared actions in this view.                                                    |
+| `describe <name> [--kind k]`       | A recipe's parameters, variants, transitive actions and calls, callers and a run command; or an action's schema, examples, result cases and callers.                         |
+| `explain <recipe> [--param k=v]`   | The resolved call tree with parameter flow, required actions and capabilities, and what is missing, including the parameter errors `run` would reject. Read-only; no target. |
+| `search <text…>`                   | Action and recipe ids, descriptions and parameter names, ranked. Every term must match.                                                                                      |
+| `template <name>`                  | A workflow node and a complete recipe skeleton for an action or recipe.                                                                                                      |
+| `completions [bash\|zsh]`          | A completion script (with `--json`, inside the envelope). `--candidates commands\|actions\|recipes` prints the candidates, ids and aliases included.                         |
 
 Without `--platform`, the view covers every platform: actions are merged from all scopes, but a recipe is only `runnable` against `shared` declarations, and a recipe that only exists as platform variants reports `runnable: null`. With `--platform`, the view matches what `run --adapter <platform>` resolves.
 
@@ -152,11 +155,11 @@ Every `--json` envelope has `schemaVersion: 1`, `command` and `status` (`ok` or 
 | `actions`     | `platform`, `libraries[]`, `actions[]` (`name`, `kind`, `parameters`, `capabilities`, `handler`, `declared`, `source`, `manifest`, `shadows`, `platforms`, `resultCases`)                    |
 | `describe`    | `kind` and `recipe` (adds `path`, `resolvedBy`, `proofTargets`, `actions`, `nestedRecipes`, `unresolvedRecipes`, `callers`, `runCommand`) or `action` (adds `schema`, `examples`, `callers`) |
 | `explain`     | `recipe` tree (`ref`, `source`, `parameters[]` with `from: input\|default\|missing`, `nodes[]`), `requiredActions[]`, `capabilities`, `missing`, `resolution`                                |
-| `search`      | `query`, `results[]` (`kind`, `name`, `score`, `source`, `description`)                                                                                                                      |
+| `search`      | `query`, `results[]` (`kind`, `name`, `id`, `score`, `source`, `description`)                                                                                                                |
 | `template`    | `kind`, `name`, `node`, `recipe`, `runCommand`                                                                                                                                               |
 | `libraries[]` | `rank`, `name`, `root`, `origin`, `overrides`, `digest`, `platforms`, `adapters`, `actionManifests`, `requires`                                                                              |
 
-Failures print `{ "status": "fail", "error": { "code", "message", "userAction" } }`. Exit code `2` means a usage or lookup problem (`DISCOVERY_NOT_FOUND`, `DISCOVERY_NAME_AMBIGUOUS`, `RECIPE_PLATFORM_REQUIRED`, `LIBRARY_REQUIREMENT_UNSATISFIED`, `DISCOVERY_USAGE`); `1` means an invalid library (`ACTION_MANIFEST_INVALID`, runner resolution or trust errors).
+Every failure prints `{ "status": "fail", "error": { "code", "message", "userAction" } }` under `--json`, and one `Error [code]` line otherwise. Exit code `2` means a usage or lookup problem: `DISCOVERY_USAGE` (including unknown options and missing arguments), `DISCOVERY_NOT_FOUND`, `DISCOVERY_NAME_AMBIGUOUS`, `RECIPE_PLATFORM_REQUIRED` or `RECIPE_SHADOWED`. Exit code `1` means an invalid library or an unexpected failure: `RECIPE_LIBRARY_MANIFEST_INVALID`, `RECIPE_LIBRARY_REQUIREMENT_UNSATISFIED`, `RECIPE_LIBRARY_RECIPE_INVALID`, `ACTION_MANIFEST_INVALID`, `RECIPE_SOURCE_INVALID`, other runner resolution errors, or `DISCOVERY_FAILED`.
 
 ## Limits
 

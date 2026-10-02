@@ -1,15 +1,16 @@
 import { type Command } from 'commander';
 
 import {
+  type LibraryRecipeMatch,
   RecipeResolutionError,
   RecipeTrustError,
-  type ResolvedLibraryRecipe,
 } from '@farmslot/recipe-harness';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
 
 import { actionCallers, explainRecipe, recipeCallers, recipeComposition } from './composition.js';
 import { DiscoveryError } from './discovery-error.js';
 import {
+  assessRecipe,
   buildDiscoveryIndex,
   findRecipe,
   type IndexedAction,
@@ -63,6 +64,8 @@ export interface DiscoveryCommandContext {
   commandName: string;
   /** Actions with a handler registered by the host CLI. */
   handlers?: readonly string[];
+  /** Package versions the host provides for checking each library's `requires`. */
+  packageVersions?: Readonly<Record<string, string>>;
 }
 
 export function registerDiscoveryCommands(
@@ -74,7 +77,13 @@ export function registerDiscoveryCommands(
       libraries: options.library,
       ...(options.platform ? { platform: options.platform } : {}),
       ...(context.handlers ? { handlers: context.handlers } : {}),
+      ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
     });
+  const invocation = (options: ViewOptions): Invocation => ({
+    commandName: context.commandName,
+    libraries: options.library,
+    platform: options.platform ?? null,
+  });
 
   viewOptions(program.command('actions'))
     .description('List every action the resolved libraries declare or this CLI handles')
@@ -131,14 +140,14 @@ export function registerDiscoveryCommands(
     .action(
       handle('describe', async (name: string, options: ViewOptions & { kind?: string }) => {
         const view = await index(options);
-        const target = await resolveTarget(view, name, options.kind, context.commandName);
+        const target = await resolveTarget(view, name, options.kind, 'describe', context);
         const envelope: DescribeEnvelope = {
           ...ok('describe'),
           platform: view.platform,
           libraries: libraryInfos(view),
           kind: target.kind,
           ...(target.kind === 'recipe'
-            ? { recipe: describeRecipe(view, target, context.commandName) }
+            ? { recipe: describeRecipe(view, target, invocation(options)) }
             : { action: describeAction(view, target.action) }),
         };
         print(options, envelope, () =>
@@ -151,17 +160,18 @@ export function registerDiscoveryCommands(
 
   viewOptions(program.command('explain'))
     .description('Show the resolved composition graph of a recipe without a target')
-    .argument('<recipe>', 'Recipe ref or <library>.<ref>')
+    .argument('<recipe>', 'Recipe ref, platform alias, or <library>.<ref>')
     .option('--param <key=value>', 'Root recipe parameter (repeatable)', collect, [] as string[])
     .action(
       handle('explain', async (name: string, options: ViewOptions & { param: string[] }) => {
         const view = await index(options);
-        const target = await resolveTarget(view, name, 'recipe', context.commandName);
+        const params = parseParams(options.param, context.commandName);
+        const target = await resolveTarget(view, name, 'recipe', 'explain', context);
         if (target.kind !== 'recipe') throw new Error('unreachable: explain resolves recipes only');
         const envelope: ExplainEnvelope = {
           ...ok('explain'),
           libraries: libraryInfos(view),
-          ...explainRecipe(view, target.recipe, parseRecipeParamAssignments(options.param)),
+          ...explainRecipe(view, target.match.recipe, params),
         };
         print(options, envelope, () => renderExplain(envelope));
       }),
@@ -191,11 +201,11 @@ export function registerDiscoveryCommands(
     .action(
       handle('template', async (name: string, options: ViewOptions & { kind?: string }) => {
         const view = await index(options);
-        const target = await resolveTarget(view, name, options.kind, context.commandName);
+        const target = await resolveTarget(view, name, options.kind, 'template', context);
         const envelope =
           target.kind === 'recipe'
-            ? recipeTemplate(view, target.recipe, context.commandName)
-            : actionTemplate(view, target.action, context.commandName);
+            ? recipeTemplate(view, target, invocation(options))
+            : actionTemplate(view, target.action, invocation(options));
         print(options, envelope, () => [
           'Node:',
           ...indent(JSON.stringify(envelope.node, null, 2)),
@@ -221,7 +231,14 @@ export function registerDiscoveryCommands(
                 `Unsupported shell ${shell}.`,
                 `${context.commandName} completions bash`,
               );
-            console.log(completionScript(context.commandName, shell));
+            const script = completionScript(context.commandName, shell);
+            const envelope: CompletionsEnvelope = {
+              ...ok('completions'),
+              kind: 'script',
+              shell,
+              script,
+            };
+            print(options, envelope, () => [script]);
             return;
           }
           const kind = options.candidates;
@@ -236,12 +253,23 @@ export function registerDiscoveryCommands(
               ? program.commands.map((command) => command.name()).sort()
               : kind === 'actions'
                 ? [...(await index(options)).actions.keys()]
-                : [...(await index(options)).recipes.keys()];
+                : recipeCandidates(await index(options));
           const envelope: CompletionsEnvelope = { ...ok('completions'), kind, candidates };
           print(options, envelope, () => candidates);
         },
       ),
     );
+}
+
+/** Every name `run`, `describe` and `explain` accept: refs, platform aliases and library ids. */
+function recipeCandidates(view: RecipeDiscoveryIndex): string[] {
+  const names = new Set(view.resolution.recipes.keys());
+  for (const recipe of view.recipes.values()) {
+    names.add(recipe.ref);
+    names.add(recipe.id);
+    for (const shadow of recipe.shadows) names.add(`${shadow}.${recipe.ref}`);
+  }
+  return [...names].sort();
 }
 
 function viewOptions(command: Command): Command {
@@ -256,21 +284,29 @@ function viewOptions(command: Command): Command {
     .option('--json', 'Print the stable JSON envelope');
 }
 
+/** Library context generated commands must carry so they resolve the same recipe. */
+interface Invocation {
+  commandName: string;
+  libraries: readonly string[];
+  platform: string | null;
+}
+
 type Target =
-  | { kind: 'recipe'; recipe: ResolvedLibraryRecipe; resolvedBy: 'ref' | 'id' }
+  | { kind: 'recipe'; name: string; match: LibraryRecipeMatch }
   | { kind: 'action'; action: IndexedAction };
 
 async function resolveTarget(
   view: RecipeDiscoveryIndex,
   name: string,
   kind: string | undefined,
-  commandName: string,
+  command: DiscoveryCommand,
+  context: DiscoveryCommandContext,
 ): Promise<Target> {
   if (kind !== undefined && kind !== 'recipe' && kind !== 'action')
     throw new DiscoveryError(
       'DISCOVERY_USAGE',
       `--kind must be recipe or action.`,
-      `--kind recipe`,
+      `${context.commandName} ${command} ${name} --kind recipe`,
     );
   const recipe = kind === 'action' ? undefined : await findRecipe(view, name);
   const action = kind === 'recipe' ? undefined : view.actions.get(name);
@@ -278,20 +314,20 @@ async function resolveTarget(
     throw new DiscoveryError(
       'DISCOVERY_NAME_AMBIGUOUS',
       `${name} is both a recipe and an action.`,
-      `add --kind recipe or --kind action`,
+      `${context.commandName} ${command} ${name} --kind recipe`,
     );
-  if (recipe) return { kind: 'recipe', recipe: recipe.recipe, resolvedBy: recipe.resolvedBy };
+  if (recipe) return { kind: 'recipe', name, match: recipe };
   if (action) return { kind: 'action', action };
   if (kind !== 'action' && view.recipes.get(name)?.runnable === null) {
     const platforms = view.recipes.get(name)!.variants.map((variant) => variant.platform);
     throw new DiscoveryError(
       'RECIPE_PLATFORM_REQUIRED',
       `Recipe ${name} only exists as platform variants: ${platforms.join(', ')}.`,
-      `${commandName} explain ${name} --platform ${platforms[0]}`,
+      `${context.commandName} ${command} ${name} --platform ${platforms[0]}`,
     );
   }
   const candidates = [
-    ...(kind === 'action' ? [] : view.recipes.keys()),
+    ...(kind === 'action' ? [] : recipeCandidates(view)),
     ...(kind === 'recipe' ? [] : view.actions.keys()),
   ];
   const suggestions = suggestNames(name, candidates);
@@ -299,18 +335,33 @@ async function resolveTarget(
     'DISCOVERY_NOT_FOUND',
     `No ${kind ?? 'recipe or action'} named ${name}${view.platform ? ` for platform ${view.platform}` : ''}.`,
     suggestions.length > 0
-      ? `did you mean ${suggestions.join(', ')}? Inspect: ${commandName} search ${shellQuote(name)}`
-      : `${commandName} search ${shellQuote(name)}`,
+      ? `did you mean ${suggestions.join(', ')}? Inspect: ${context.commandName} search ${shellQuote(name)}`
+      : `${context.commandName} search ${shellQuote(name)}`,
   );
+}
+
+/** Whether the matched recipe is what its plain ref resolves to in this view. */
+function isPrecedenceWinner(view: RecipeDiscoveryIndex, match: LibraryRecipeMatch): boolean {
+  return view.resolution.recipes.get(match.recipe.ref)?.path === match.recipe.path;
 }
 
 function recipeTemplate(
   view: RecipeDiscoveryIndex,
-  recipe: ResolvedLibraryRecipe,
-  commandName: string,
+  target: Extract<Target, { kind: 'recipe' }>,
+  invocation: Invocation,
 ): TemplateEnvelope {
+  const { recipe } = target.match;
+  if (!isPrecedenceWinner(view, target.match)) {
+    // Call nodes resolve refs by precedence, so a node cannot select a shadowed recipe.
+    const winner = view.resolution.recipes.get(recipe.ref)!;
+    throw new DiscoveryError(
+      'RECIPE_SHADOWED',
+      `${target.name} is shadowed by library ${winner.source}; a call node with ref ${recipe.ref} would run that recipe instead.`,
+      `rank ${recipe.source} first with --library ${recipe.source}=<path>, or rename the recipe`,
+    );
+  }
   const summary = recipeSummary(recipe);
-  const node = recipeTemplateNode(summary.ref, summary.parameters);
+  const node = recipeTemplateNode(recipe.ref, summary.parameters);
   return {
     ...ok('template'),
     platform: view.platform,
@@ -318,14 +369,14 @@ function recipeTemplate(
     name: recipe.ref,
     node,
     recipe: recipeSkeleton(`Calls ${recipe.ref}`, node),
-    runCommand: runCommand(commandName, recipe.ref, summary.parameters, view.platform),
+    runCommand: runCommand(invocation, target.name, summary.parameters),
   };
 }
 
 function actionTemplate(
   view: RecipeDiscoveryIndex,
   action: IndexedAction,
-  commandName: string,
+  invocation: Invocation,
 ): TemplateEnvelope {
   const node = actionTemplateNode(action);
   const file = `./${action.name.replaceAll(/[^A-Za-z0-9_-]+/gu, '-')}.recipe.json`;
@@ -336,33 +387,30 @@ function actionTemplate(
     name: action.name,
     node,
     recipe: recipeSkeleton(`Runs ${action.name}`, node),
-    runCommand: runCommand(commandName, file, [], view.platform),
+    runCommand: runCommand(invocation, file, []),
   };
 }
 
 function describeRecipe(
   view: RecipeDiscoveryIndex,
   target: Extract<Target, { kind: 'recipe' }>,
-  commandName: string,
+  invocation: Invocation,
 ): DiscoveryRecipeDetail {
-  const recipe = target.recipe;
-  // An id that names the precedence winner describes the same entry as its ref.
-  const winner = view.recipes.get(recipe.ref);
-  const indexed =
-    winner?.source === recipe.source && winner.file === recipe.file ? winner : undefined;
+  const { recipe, resolvedBy } = target.match;
   const summary = recipeSummary(recipe);
-  const composition = recipeComposition(recipe.document, view.resolution.recipes);
+  const indexed = view.recipes.get(recipe.aliasFor ?? recipe.ref);
+  const problems = assessRecipe(view, recipe);
   return {
     ...summary,
     variants: indexed?.variants ?? [],
-    runnable: indexed?.runnable ?? null,
-    problems: indexed?.problems ?? [],
+    runnable: problems.length === 0,
+    problems,
     path: recipe.path,
-    resolvedBy: target.resolvedBy,
+    resolvedBy,
     proofTargets: recipe.document.proofTargets ?? null,
-    ...composition,
+    ...recipeComposition(recipe.document, view.resolution.recipes),
     callers: recipeCallers(view, recipe.ref),
-    runCommand: runCommand(commandName, recipe.ref, summary.parameters, view.platform),
+    runCommand: runCommand(invocation, target.name, summary.parameters),
   };
 }
 
@@ -375,24 +423,42 @@ function summarizeAction(action: IndexedAction) {
   return summary;
 }
 
-/** `run` still selects platform variants with --adapter and needs an explicit action manifest. */
+/**
+ * A `run` command that resolves the same recipe: the name as given (ref, alias or id), the same
+ * --library entries, and the platform. `run` still selects variants with --adapter and needs an
+ * explicit action manifest.
+ */
 function runCommand(
-  commandName: string,
+  invocation: Invocation,
   recipe: string,
   parameters: readonly DiscoveryParameter[],
-  platform: string | null,
 ): string {
   return [
-    commandName,
+    invocation.commandName,
     'run',
     shellQuote(recipe),
     ...requiredAssignments(parameters),
+    ...invocation.libraries.flatMap((entry) => ['--library', shellQuote(entry)]),
     '--action-manifest',
     '<manifest.json>',
     '--artifacts-dir',
     '<dir>',
-    ...(platform ? ['--adapter', platform] : []),
+    ...(invocation.platform ? ['--adapter', invocation.platform] : []),
   ].join(' ');
+}
+
+function parseParams(assignments: readonly string[], commandName: string): Record<string, unknown> {
+  try {
+    return parseRecipeParamAssignments(assignments);
+  } catch (error) {
+    // The parser reports malformed key=value input; that is a usage error, not a crash.
+    if (!(error instanceof Error)) throw error;
+    throw new DiscoveryError(
+      'DISCOVERY_USAGE',
+      error.message,
+      `${commandName} explain <recipe> --param key=value`,
+    );
+  }
 }
 
 function ok<C extends DiscoveryCommand>(command: C) {
@@ -411,7 +477,18 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-/** Wrap an action so known failures print a stable error envelope instead of a stack. */
+const USAGE_CODES = new Set<string>([
+  'DISCOVERY_USAGE',
+  'DISCOVERY_NOT_FOUND',
+  'DISCOVERY_NAME_AMBIGUOUS',
+  'RECIPE_PLATFORM_REQUIRED',
+  'RECIPE_SHADOWED',
+]);
+
+/**
+ * Wrap an action so every failure prints the error envelope (`--json`) or one readable error.
+ * Exit 2 is a usage or lookup problem; exit 1 is an invalid library or an unexpected failure.
+ */
 function handle<A extends unknown[]>(
   command: DiscoveryCommand,
   action: (...args: A) => Promise<void>,
@@ -420,28 +497,42 @@ function handle<A extends unknown[]>(
     try {
       await action(...args);
     } catch (error) {
-      if (
-        !(error instanceof DiscoveryError) &&
-        !(error instanceof RecipeResolutionError) &&
-        !(error instanceof RecipeTrustError)
-      )
-        throw error;
       const options = args.find(
         (arg): arg is { json?: boolean } =>
           typeof arg === 'object' && arg !== null && !Array.isArray(arg),
       );
-      const envelope: DiscoveryErrorEnvelope = {
-        schemaVersion: DISCOVERY_SCHEMA_VERSION,
-        command,
-        status: 'fail',
-        error: { code: error.code, message: error.message, userAction: error.userAction },
-      };
-      if (options?.json) console.log(JSON.stringify(envelope, null, 2));
-      else console.error(`Error [${error.code}]: ${error.message}\nNext: ${error.userAction}`);
-      process.exitCode =
-        error instanceof DiscoveryError && error.code !== 'ACTION_MANIFEST_INVALID' ? 2 : 1;
+      const typed =
+        error instanceof DiscoveryError ||
+        error instanceof RecipeResolutionError ||
+        error instanceof RecipeTrustError;
+      const failure = typed
+        ? { code: error.code, message: error.message, userAction: error.userAction }
+        : {
+            code: 'DISCOVERY_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            userAction: 'fix the library or file named above, then rerun the command',
+          };
+      // An untyped failure keeps its stack on stderr so the cause is never hidden.
+      if (!typed) console.error(error instanceof Error ? error.stack : error);
+      printFailure(command, failure, options?.json === true);
+      process.exitCode = USAGE_CODES.has(failure.code) ? 2 : 1;
     }
   };
+}
+
+export function printFailure(
+  command: string | null,
+  error: DiscoveryErrorEnvelope['error'],
+  json: boolean,
+): void {
+  const envelope: DiscoveryErrorEnvelope = {
+    schemaVersion: DISCOVERY_SCHEMA_VERSION,
+    command,
+    status: 'fail',
+    error,
+  };
+  if (json) console.log(JSON.stringify(envelope, null, 2));
+  else console.error(`Error [${error.code}]: ${error.message}\nNext: ${error.userAction}`);
 }
 
 function completionScript(commandName: string, shell: 'bash' | 'zsh'): string {
