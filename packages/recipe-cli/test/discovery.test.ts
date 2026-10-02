@@ -5,8 +5,10 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { loadRecipeLibraries } from '@farmslot/recipe-harness';
+
 import { runRecipeCli } from '../src/cli.js';
-import { buildDiscoveryIndex } from '../src/discovery-index.js';
+import { buildDiscoveryIndex, findRecipe, shadowedRecipes } from '../src/discovery-index.js';
 import type {
   ActionsEnvelope,
   DescribeEnvelope,
@@ -400,7 +402,7 @@ test('the hello example library lists, describes and explains without an adapter
   const index = await buildDiscoveryIndex({ env });
   assert.deepEqual(
     index.libraries[0]?.info.requires.map((entry) => entry.package),
-    ['@farmslot/recipe-cli'],
+    ['@farmslot/recipe-harness'],
   );
 });
 
@@ -651,4 +653,118 @@ test('RECIPE_PLATFORM_REQUIRED suggests the command that was run', async (t) => 
       new RegExp(` ${command} shop\\.open --platform web`, 'u'),
     );
   }
+});
+
+test('a malformed --library entry is a usage error', async () => {
+  const env = { RECIPE_LIBRARY_PATH: `hello=${HELLO}` };
+  for (const entry of ['hello=', '=path']) {
+    const result = await cli<DiscoveryErrorEnvelope>(['list', '--library', entry], env);
+    assert.deepEqual([result.exitCode, result.json.error.code], [2, 'DISCOVERY_USAGE'], entry);
+  }
+  const fromEnv = await cli<DiscoveryErrorEnvelope>(['list'], { RECIPE_LIBRARY_PATH: 'hello=' });
+  assert.deepEqual([fromEnv.exitCode, fromEnv.json.error.code], [2, 'RECIPE_LIBRARY_PATH_INVALID']);
+});
+
+test('search finds shadowed recipes by their library id', async (t) => {
+  const { env } = await shadowedHello(t);
+  const { json } = await cli<SearchEnvelope>(['search', 'hello.greet'], env);
+  const shadowed = json.results.find((result) => result.id === 'hello.greet');
+  assert.deepEqual(
+    [shadowed?.source, shadowed?.description.startsWith('Greet someone')],
+    ['hello', true],
+  );
+});
+
+test('an index loads each library set once per platform, however many lookups follow', async (t) => {
+  const { env } = await shadowedHello(t);
+  const calls: string[] = [];
+  const index = await buildDiscoveryIndex({
+    env,
+    platform: 'web',
+    loadLibraries: (sources, options) => {
+      calls.push(`${sources.map((source) => source.name).join('+')}@${options?.adapter ?? '*'}`);
+      return loadRecipeLibraries(sources, options);
+    },
+  });
+  assert.deepEqual(calls.sort(), ['a+hello@*', 'a+hello@web']);
+  for (let round = 0; round < 3; round += 1) {
+    assert.equal((await findRecipe(index, 'hello.greet'))?.resolvedBy, 'id');
+    assert.deepEqual(
+      (await shadowedRecipes(index)).map((recipe) => recipe.ref),
+      ['greet', 'greet-twice'],
+    );
+  }
+  assert.deepEqual(calls.sort(), ['a+hello@*', 'a+hello@web', 'hello@web']);
+});
+
+test('explain --strict exits 3 when anything is missing', async () => {
+  const env = { RECIPE_LIBRARY_PATH: `hello=${HELLO}` };
+  const gaps = await cli<ExplainEnvelope>(['explain', 'greet-twice', '--strict'], env);
+  assert.deepEqual([gaps.exitCode, gaps.json.status], [3, 'ok']);
+  assert.deepEqual(gaps.json.missing.parameters, [{ recipe: 'greet-twice', name: 'guest' }]);
+  const clean = await cli<ExplainEnvelope>(
+    ['explain', 'greet-twice', '--param', 'guest=Ada', '--strict'],
+    env,
+  );
+  assert.equal(clean.exitCode, 0);
+});
+
+test('a run selected by id logs and records the recipe it selected', async (t) => {
+  const { env } = await shadowedHello(t);
+  const artifacts = await mkdtemp(path.join(os.tmpdir(), 'recipe-id-run-'));
+  t.after(() => rm(artifacts, { recursive: true, force: true }));
+  const previousExit = process.exitCode;
+  t.after(() => {
+    process.exitCode = previousExit;
+  });
+  const run = async (extra: string[]): Promise<string[]> => {
+    const lines: string[] = [];
+    const saved = { log: console.log, info: console.info, warn: console.warn };
+    const capture = (line: unknown) => void lines.push(String(line));
+    Object.assign(console, { log: capture, info: capture, warn: capture });
+    const previousEnv = process.env.RECIPE_LIBRARY_PATH;
+    process.env.RECIPE_LIBRARY_PATH = env.RECIPE_LIBRARY_PATH;
+    try {
+      await runRecipeCli([
+        'run',
+        'hello.greet',
+        'name=Ada',
+        '--action-manifest',
+        path.join(HELLO, 'manifests', 'shared.action-manifest.json'),
+        '--artifacts-dir',
+        artifacts,
+        ...extra,
+      ]);
+    } finally {
+      Object.assign(console, saved);
+      process.env.RECIPE_LIBRARY_PATH = previousEnv;
+    }
+    return lines;
+  };
+  const refusal = JSON.parse((await run(['--json'])).find((line) => line.startsWith('{'))!) as {
+    recipeDigest: string;
+  };
+  process.exitCode = 0;
+  const lines = await run(['--approve-plan', refusal.recipeDigest]);
+  assert.equal(process.exitCode ?? 0, 0);
+  assert.ok(lines.includes('Recipe hello.greet selected by id: hello · recipes/greet.recipe.json'));
+  assert.equal(
+    lines.some((line) => line.includes('shadows')),
+    false,
+    'the winner it did not run is not reported',
+  );
+  const summary = JSON.parse(await readFile(path.join(artifacts, 'summary.json'), 'utf8')) as {
+    status: string;
+    recipeSelection?: { name: string; resolvedBy: string; source: string; file: string };
+  };
+  assert.equal(summary.status, 'pass');
+  assert.deepEqual(
+    [
+      summary.recipeSelection?.name,
+      summary.recipeSelection?.resolvedBy,
+      summary.recipeSelection?.source,
+      summary.recipeSelection?.file,
+    ],
+    ['hello.greet', 'id', 'hello', 'recipes/greet.recipe.json'],
+  );
 });

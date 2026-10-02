@@ -4,7 +4,7 @@ A minimal recipe library for trying `farmslot-recipe` discovery. It needs no app
 platform adapter.
 
 ```text
-recipe-library.json                  platforms ["web"], requires @farmslot/recipe-cli
+recipe-library.json                  platforms ["web"], requires @farmslot/recipe-harness
 manifests/shared.action-manifest.json  command, assert_output (every platform)
 manifests/web.action-manifest.json     hello.wave (web only, implemented by a web adapter)
 recipes/greet.recipe.json              prints and checks a greeting

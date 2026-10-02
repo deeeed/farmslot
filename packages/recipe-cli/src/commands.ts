@@ -2,6 +2,7 @@ import { type Command } from 'commander';
 
 import {
   type LibraryRecipeMatch,
+  parseRecipeLibraryPath,
   RecipeResolutionError,
   RecipeTrustError,
 } from '@farmslot/recipe-harness';
@@ -17,6 +18,7 @@ import {
   libraryInfos,
   type RecipeDiscoveryIndex,
   recipeSummary,
+  shadowedRecipes,
   suggestNames,
 } from './discovery-index.js';
 import { PRECEDENCE_RULES } from './libraries.js';
@@ -72,13 +74,23 @@ export function registerDiscoveryCommands(
   program: Command,
   context: DiscoveryCommandContext,
 ): void {
-  const index = (options: ViewOptions) =>
-    buildDiscoveryIndex({
+  const index = (options: ViewOptions) => {
+    for (const entry of options.library) {
+      try {
+        parseRecipeLibraryPath(entry);
+      } catch (error) {
+        // A malformed --library value is an argument error, reported before any loading.
+        if (!(error instanceof RecipeResolutionError)) throw error;
+        throw new DiscoveryError('DISCOVERY_USAGE', error.message, error.userAction);
+      }
+    }
+    return buildDiscoveryIndex({
       libraries: options.library,
       ...(options.platform ? { platform: options.platform } : {}),
       ...(context.handlers ? { handlers: context.handlers } : {}),
       ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
     });
+  };
   const invocation = (options: ViewOptions): Invocation => ({
     commandName: context.commandName,
     libraries: options.library,
@@ -162,19 +174,31 @@ export function registerDiscoveryCommands(
     .description('Show the resolved composition graph of a recipe without a target')
     .argument('<recipe>', 'Recipe ref, platform alias, or <library>.<ref>')
     .option('--param <key=value>', 'Root recipe parameter (repeatable)', collect, [] as string[])
+    .option('--strict', 'Exit 3 when anything is missing (parameters, recipes, actions, problems)')
     .action(
-      handle('explain', async (name: string, options: ViewOptions & { param: string[] }) => {
-        const view = await index(options);
-        const params = parseParams(options.param, context.commandName);
-        const target = await resolveTarget(view, name, 'recipe', 'explain', context);
-        if (target.kind !== 'recipe') throw new Error('unreachable: explain resolves recipes only');
-        const envelope: ExplainEnvelope = {
-          ...ok('explain'),
-          libraries: libraryInfos(view),
-          ...explainRecipe(view, target.match.recipe, params),
-        };
-        print(options, envelope, () => renderExplain(envelope));
-      }),
+      handle(
+        'explain',
+        async (name: string, options: ViewOptions & { param: string[]; strict?: boolean }) => {
+          const view = await index(options);
+          const params = parseParams(options.param, context.commandName);
+          const target = await resolveTarget(view, name, 'recipe', 'explain', context);
+          if (target.kind !== 'recipe')
+            throw new Error('unreachable: explain resolves recipes only');
+          const envelope: ExplainEnvelope = {
+            ...ok('explain'),
+            libraries: libraryInfos(view),
+            ...explainRecipe(view, target.match.recipe, params),
+          };
+          print(options, envelope, () => renderExplain(envelope));
+          // Without --strict, explain is a report: callers must read missing.* themselves.
+          const { parameters, recipes, actions, problems } = envelope.missing;
+          if (
+            options.strict &&
+            parameters.length + recipes.length + actions.length + problems.length > 0
+          )
+            process.exitCode = 3;
+        },
+      ),
     );
 
   viewOptions(program.command('search'))
@@ -188,7 +212,7 @@ export function registerDiscoveryCommands(
           ...ok('search'),
           platform: view.platform,
           query,
-          results: searchIndex(view, query),
+          results: searchIndex(view, query, await shadowedRecipes(view)),
         };
         print(options, envelope, () => renderSearch(envelope.results, query));
       }),
@@ -483,6 +507,8 @@ const USAGE_CODES = new Set<string>([
   'DISCOVERY_NAME_AMBIGUOUS',
   'RECIPE_PLATFORM_REQUIRED',
   'RECIPE_SHADOWED',
+  // A malformed --library or RECIPE_LIBRARY_PATH entry is an argument problem.
+  'RECIPE_LIBRARY_PATH_INVALID',
 ]);
 
 /**

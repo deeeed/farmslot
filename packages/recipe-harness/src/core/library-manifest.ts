@@ -280,9 +280,18 @@ export async function digestRecipeLibrary(
     ...Object.values(manifest?.actions ?? {}),
     ...Object.values(manifest?.adapters ?? {}).map((adapter) => adapter.module),
   ];
+  const rootReal = await realpath(root);
   for (const file of declared) {
     const relative = path.relative(root, path.resolve(root, file)).split(path.sep).join('/');
-    if (await isRegularFile(path.join(root, relative))) files.add(relative);
+    // Declared files are checked here too, so the digest never covers content outside the library.
+    const fileReal = await existingRealpath(path.join(root, relative));
+    if (!fileReal) continue;
+    if (!isPathWithin(rootReal, fileReal))
+      throw invalidRecipeSource(
+        `Library file ${relative} resolves outside its library root.`,
+        'move the file inside the library root or remove the escaping symlink',
+      );
+    if ((await stat(fileReal)).isFile()) files.add(relative);
   }
   for (const directory of RECIPE_LIBRARY_DIRECTORIES) {
     for (const file of await listLibraryFiles(root, directory)) files.add(file);
@@ -309,12 +318,12 @@ async function fileDigest(file: string): Promise<string> {
   return digest;
 }
 
-async function isRegularFile(file: string): Promise<boolean> {
+async function existingRealpath(file: string): Promise<string | undefined> {
   try {
-    return (await stat(file)).isFile();
+    return await realpath(file);
   } catch (error) {
-    // recipe-library.json is optional; declared files were already checked by the reader.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    // recipe-library.json is optional; a missing declared file was already rejected by the reader.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
 }

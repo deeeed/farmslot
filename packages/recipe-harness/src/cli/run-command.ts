@@ -189,6 +189,17 @@ export function registerRunCommand(program: Command, context: RecipeCliCommandCo
             ...(options.adapter ? { adapter: options.adapter } : {}),
             ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
             ...(context.packageVersions ? { packageVersions: context.packageVersions } : {}),
+            ...(match
+              ? {
+                  selection: {
+                    name: recipeInput,
+                    resolvedBy: match.resolvedBy,
+                    source: match.recipe.source,
+                    file: match.recipe.file,
+                    path: match.recipe.path,
+                  },
+                }
+              : {}),
             ...trust,
             ...(!trust.source && selected ? { source: selected.provenance } : {}),
             ...(executionLibrarySources.length > 0

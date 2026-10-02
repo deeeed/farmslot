@@ -34,6 +34,8 @@ export interface RecipeRunRequest {
   librarySources?: RecipeLibrarySource[];
   /** Package versions the host provides for checking each library's `requires`. */
   packageVersions?: Readonly<Record<string, string>>;
+  /** How the caller chose a library recipe by name; recorded in the summary. */
+  selection?: RecipeSelection;
   /**
    * Partial execution: stop the root graph after this node succeeds, then run the recipe's
    * declared teardown. The node must be reachable from workflow.entry.
@@ -55,6 +57,18 @@ export interface RecipeLibrarySource {
 }
 
 export type RecipeLibraryOrigin = 'flag' | 'env' | 'default' | 'task';
+
+/** A library recipe chosen by name: ref, qualified platform alias, or `<library>.<ref>` id. */
+export interface RecipeSelection {
+  /** The name as given. */
+  name: string;
+  resolvedBy: 'ref' | 'alias' | 'id';
+  /** Library that provided the recipe. */
+  source: string;
+  /** Recipe file relative to that library root. */
+  file: string;
+  path: string;
+}
 
 export interface LoadedRecipeLibrarySource {
   name: string;
@@ -334,6 +348,8 @@ export interface SummaryDocument {
   runner?: RecipeRunnerProvenance;
   /** Present when recipe library sources were configured for the run. */
   recipeLibraries?: RecipeLibrarySummary;
+  /** Present when the caller selected a library recipe by name. */
+  recipeSelection?: RecipeSelection;
   /** Present when the run was partial; the root graph stopped after this node. */
   stopAfterNode?: string;
 }

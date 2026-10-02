@@ -20,6 +20,7 @@ import {
   type RecipeLibraryEnv,
   type RecipeLibraryLoadOptions,
   type RecipeLibraryResolution,
+  type RecipeLibrarySource,
   type RecipePackageVersions,
   RecipeResolutionError,
   type ResolvedLibraryRecipe,
@@ -53,6 +54,8 @@ export interface DiscoveryOptions {
   handlers?: readonly string[];
   /** Package versions the host provides for checking each library's `requires`. */
   packageVersions?: RecipePackageVersions;
+  /** Library loader; defaults to the runner's. Every load an index needs goes through it once. */
+  loadLibraries?: typeof loadRecipeLibraries;
 }
 
 /** Internal action record: the public summary plus its schema and examples. */
@@ -68,6 +71,11 @@ export interface RecipeDiscoveryIndex {
   libraries: ResolvedDiscoveryLibrary[];
   /** Load options for this view, shared with `run` resolution. */
   loadOptions: RecipeLibraryLoadOptions;
+  /** Memoized loader for one or more of this index's libraries; each set loads once. */
+  load: (
+    sources: readonly RecipeLibrarySource[],
+    adapter: string | null,
+  ) => Promise<RecipeLibraryResolution>;
   /** Resolution used by `run` for this view: precedence winners, keyed by ref. */
   resolution: RecipeLibraryResolution;
   /** Every declared action for this view, merged by precedence, as a runner manifest. */
@@ -101,20 +109,22 @@ export async function buildDiscoveryIndex(
   ].sort();
 
   const loadOptions = { ...(platform ? { adapter: platform } : {}), ...packageVersions };
-  // One load per platform view per command; the view and the variant scan share them.
+  // Each (libraries, platform) pair loads once per index: the view, the variant scan, id lookups
+  // and search all share these.
+  const loadLibraries = options.loadLibraries ?? loadRecipeLibraries;
   const loads = new Map<string, Promise<RecipeLibraryResolution>>();
-  const load = (adapter: string | null) => {
-    const key = adapter ?? '';
+  const load = (selected: readonly RecipeLibrarySource[], adapter: string | null) => {
+    const key = `${selected.map((source) => source.name).join('\0')}|${adapter ?? ''}`;
     if (!loads.has(key))
       loads.set(
         key,
-        loadRecipeLibraries(sources, { ...(adapter ? { adapter } : {}), ...packageVersions }),
+        loadLibraries(selected, { ...(adapter ? { adapter } : {}), ...packageVersions }),
       );
     return loads.get(key)!;
   };
-  const resolution = await load(platform);
+  const resolution = await load(sources, platform);
   const documents = new Map([...resolution.recipes].filter(([, recipe]) => !recipe.aliasFor));
-  const variants = await recipeVariants(platforms, load);
+  const variants = await recipeVariants(platforms, (adapter) => load(sources, adapter));
   const { actions, manifest } = await indexActions(
     libraries,
     platform,
@@ -126,6 +136,7 @@ export async function buildDiscoveryIndex(
     platforms,
     libraries,
     loadOptions,
+    load,
     resolution,
     manifest,
     actions,
@@ -487,8 +498,30 @@ export function findRecipe(
     name,
     index.libraries.map((library) => library.source),
     index.resolution,
-    index.loadOptions,
+    { ...index.loadOptions, load: (source) => index.load([source], index.platform) },
   );
+}
+
+/** Recipes that lower-ranked libraries declare under a ref another library wins. */
+export async function shadowedRecipes(
+  index: RecipeDiscoveryIndex,
+): Promise<ResolvedLibraryRecipe[]> {
+  const shadowed = new Map<string, Set<string>>();
+  for (const recipe of index.recipes.values()) {
+    for (const library of recipe.shadows)
+      shadowed.set(library, (shadowed.get(library) ?? new Set()).add(recipe.ref));
+  }
+  const records: ResolvedLibraryRecipe[] = [];
+  for (const library of index.libraries) {
+    const refs = shadowed.get(library.info.name);
+    if (!refs) continue;
+    const own = await index.load([library.source], index.platform);
+    for (const ref of [...refs].sort()) {
+      const recipe = own.recipes.get(ref);
+      if (recipe && !recipe.aliasFor) records.push(recipe);
+    }
+  }
+  return records;
 }
 
 /** Closest known names, for not-found guidance. */

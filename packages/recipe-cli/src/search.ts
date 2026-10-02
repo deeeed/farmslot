@@ -1,4 +1,6 @@
-import { levenshtein, type RecipeDiscoveryIndex } from './discovery-index.js';
+import type { ResolvedLibraryRecipe } from '@farmslot/recipe-harness';
+
+import { levenshtein, type RecipeDiscoveryIndex, recipeSummary } from './discovery-index.js';
 import type { SearchResult } from './types.js';
 
 interface Searchable {
@@ -12,7 +14,12 @@ interface Searchable {
 }
 
 /** Rank actions and recipes by id, parameter names and description; every term must match. */
-export function searchIndex(index: RecipeDiscoveryIndex, query: string): SearchResult[] {
+export function searchIndex(
+  index: RecipeDiscoveryIndex,
+  query: string,
+  /** Shadowed library recipes, searchable by their `<library>.<ref>` id. */
+  shadowed: readonly ResolvedLibraryRecipe[] = [],
+): SearchResult[] {
   const terms = searchTerms(query);
   if (terms.length === 0) return [];
   const entries: Searchable[] = [
@@ -31,6 +38,17 @@ export function searchIndex(index: RecipeDiscoveryIndex, query: string): SearchR
       description: [recipe.title, recipe.description].filter(Boolean).join(' '),
       fields: recipe.parameters.map((parameter) => parameter.name),
     })),
+    ...shadowed.map((record) => {
+      const recipe = recipeSummary(record);
+      return {
+        kind: 'recipe' as const,
+        name: recipe.ref,
+        id: recipe.id,
+        source: recipe.source,
+        description: [recipe.title, recipe.description].filter(Boolean).join(' '),
+        fields: recipe.parameters.map((parameter) => parameter.name),
+      };
+    }),
   ];
   return entries
     .map((entry) => {

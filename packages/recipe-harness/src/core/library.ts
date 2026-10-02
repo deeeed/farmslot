@@ -86,7 +86,11 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
       const name = entry.slice(0, separator).trim();
       const root = entry.slice(separator + 1).trim();
       if (!name || !root) {
-        throw new Error(`Recipe library entry ${JSON.stringify(entry)} must be name=path or path.`);
+        throw new RecipeResolutionError(
+          'RECIPE_LIBRARY_PATH_INVALID',
+          `Recipe library entry ${JSON.stringify(entry)} must be name=path or path.`,
+          'pass --library name=path (or a bare path), and check RECIPE_LIBRARY_PATH entries',
+        );
       }
       return { name, root: expandTilde(root) };
     });
@@ -267,7 +271,7 @@ export async function loadRecipeLibraries(
   for (const [alias, recipe] of qualified) if (!recipes.has(alias)) recipes.set(alias, recipe);
 
   const resolution = { sources: loadedSources, recipes };
-  if (options?.logger) logResolution(options.logger, resolution);
+  if (options?.logger) logRecipeLibraryResolution(options.logger, resolution);
   return resolution;
 }
 
@@ -288,17 +292,22 @@ export async function findLibraryRecipe(
   name: string,
   sources: readonly RecipeLibrarySource[],
   resolution: RecipeLibraryResolution,
-  options?: RecipeLibraryLoadOptions,
+  options?: RecipeLibraryLoadOptions & {
+    /** Loader for a single library, so callers can reuse loads they already made. */
+    load?: (source: RecipeLibrarySource) => Promise<RecipeLibraryResolution>;
+  },
 ): Promise<LibraryRecipeMatch | undefined> {
   const direct = resolution.recipes.get(name);
   if (direct) return { recipe: direct, resolvedBy: direct.aliasFor ? 'alias' : 'ref' };
   for (const source of sources) {
     const prefix = `${librarySourceName(source)}.`;
     if (!name.startsWith(prefix) || name.length === prefix.length) continue;
-    const own = await loadRecipeLibraries([source], {
-      ...(options?.adapter ? { adapter: options.adapter } : {}),
-      ...(options?.packageVersions ? { packageVersions: options.packageVersions } : {}),
-    });
+    const own = options?.load
+      ? await options.load(source)
+      : await loadRecipeLibraries([source], {
+          ...(options?.adapter ? { adapter: options.adapter } : {}),
+          ...(options?.packageVersions ? { packageVersions: options.packageVersions } : {}),
+        });
     const recipe = own.recipes.get(name.slice(prefix.length));
     if (recipe && !recipe.aliasFor) return { recipe, resolvedBy: 'id' };
   }
@@ -396,13 +405,21 @@ function recipeIdentity(
   return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
 }
 
-function logResolution(logger: RecipeLogger, resolution: RecipeLibraryResolution): void {
+/**
+ * Log the resolved sources and shadowed recipes. With `refs`, only shadows among those refs are
+ * reported, so a run does not warn about a winner it never executes.
+ */
+export function logRecipeLibraryResolution(
+  logger: RecipeLogger,
+  resolution: RecipeLibraryResolution,
+  refs?: ReadonlySet<string>,
+): void {
   const summary = resolution.sources
     .map((source) => `${source.name}=${source.root} (${source.recipeCount} recipes)`)
     .join(', ');
   logger.info(`Recipe libraries: ${summary || 'none'}`);
   for (const recipe of resolution.recipes.values()) {
-    if (recipe.aliasFor) continue;
+    if (recipe.aliasFor || (refs && !refs.has(recipe.ref))) continue;
     if (recipe.shadows.length > 0) {
       logger.warn(
         `Recipe ${recipe.ref} resolves from ${recipe.source} and shadows ${recipe.shadows.join(', ')}.`,

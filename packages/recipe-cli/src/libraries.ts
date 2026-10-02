@@ -2,10 +2,10 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  BUILT_IN_RECIPE_PLATFORMS,
   checkRecipeLibraryRequirements,
   digestRecipeLibrary,
   listLibraryFiles,
-  listRecipeLibraryPlatforms,
   readRecipeLibraryManifest,
   type RecipeLibraryEnv,
   type RecipeLibraryManifest,
@@ -99,7 +99,7 @@ async function presentPlatforms(
   const declared = new Set(manifest?.platforms ?? []);
   const scopes = new Set((await actionManifestFiles(root, manifest)).map((file) => file.scope));
   const present: string[] = [];
-  for (const platform of await listRecipeLibraryPlatforms(root)) {
+  for (const platform of new Set([...BUILT_IN_RECIPE_PLATFORMS, ...declared])) {
     if (
       declared.has(platform) ||
       scopes.has(platform) ||
@@ -107,7 +107,7 @@ async function presentPlatforms(
     )
       present.push(platform);
   }
-  return present;
+  return present.sort();
 }
 
 async function isDirectory(target: string): Promise<boolean> {

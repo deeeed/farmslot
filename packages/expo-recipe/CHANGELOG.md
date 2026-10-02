@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- Provide `@farmslot/expo-recipe` to recipe libraries that declare it in `requires`.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.2 - 2026-09-29
