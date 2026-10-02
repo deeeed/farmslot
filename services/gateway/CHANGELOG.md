@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Report a failed project `unlock` hook in slot check, recipe replay and prepare health failures, with its exit code and output tail. Health is still re-read after a failed unlock, slot check reports progress before and every 15 s during the unlock (so `farmslot slot check` no longer hits its 30 s idle timeout), and unlock runs are bounded to 120 s.
+- Report a failed project `unlock` hook in slot check, recipe replay and prepare health failures, with its exit code and output tail. Health is still re-read after a failed unlock, slot check reports progress before the unlock and every 15 s through the unlock and its health re-read (so `farmslot slot check` no longer hits its 30 s idle timeout), and unlock runs are bounded to 120 s.
 
 - Recover blocked native workers through their pending decision and adopt verified external recoveries. Preserve occupied workspaces across cleanup, reconciliation, and parked-run restore, verify provider ownership before shutdown, and support explicit provider recovery. Surface crash diagnostics, discover saved sessions under configured roots, and preserve authored task runtimes.
 
