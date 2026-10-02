@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- `assessRecipe` accepts any `{ resolution, manifest }` view, so a host can judge readiness on its own single-platform resolution against the manifest its runner executes. `buildDiscoveryIndex` vouches only for the `packageVersions` the host passes, so a library's `requires` gives discovery and the host's `run` the same answer; `farmslot-recipe` still vouches for itself.
+
 - Export `assessRecipe` so host CLIs can judge any resolved recipe, a qualified alias included, with the same readiness rule as `list`.
 
 - `search` without `--platform` finds shadowed platform-only recipes by their `<library>.<ref>` id, listing each id once.

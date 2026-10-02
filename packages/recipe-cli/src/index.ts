@@ -9,6 +9,7 @@ export {
   findRecipe,
   type IndexedAction,
   type RecipeDiscoveryIndex,
+  type RecipeReadinessView,
 } from './discovery-index.js';
 export {
   type DiscoveryLibraryOptions,

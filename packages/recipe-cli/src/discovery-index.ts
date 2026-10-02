@@ -39,7 +39,6 @@ import type {
   DiscoveryRecipe,
   DiscoveryRecipeVariant,
 } from './types.js';
-import { RECIPE_CLI_PACKAGE_VERSIONS } from './version.js';
 
 const OFFICIAL_ACTIONS = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const RUNNER_ACTIONS = new Set(['call', 'end']);
@@ -89,10 +88,11 @@ export interface RecipeDiscoveryIndex {
 export async function buildDiscoveryIndex(
   options: DiscoveryOptions = {},
 ): Promise<RecipeDiscoveryIndex> {
-  // Discovery vouches for its own package when a library declares `requires`.
-  const packageVersions = {
-    packageVersions: { ...RECIPE_CLI_PACKAGE_VERSIONS, ...options.packageVersions },
-  };
+  // Vouch only for what the host passes, so a library's `requires` gives discovery and the
+  // host's own run the same answer. farmslot-recipe passes @farmslot/recipe-cli itself.
+  const packageVersions = options.packageVersions
+    ? { packageVersions: options.packageVersions }
+    : {};
   const libraries = await resolveDiscoveryLibraries({ ...options, ...packageVersions });
   const sources = libraries.map((library) => library.source);
   const platform = options.platform ?? null;
@@ -459,9 +459,15 @@ function validationProblems(
     .map((finding) => ({ code: finding.code, message: finding.message, path: finding.path }));
 }
 
+/**
+ * What readiness needs: a host can pass a recipe-cli index, or its own single-platform resolution
+ * (`loadRecipeLibraries(sources, { adapter })`) with the manifest its runner will execute against.
+ */
+export type RecipeReadinessView = Pick<RecipeDiscoveryIndex, 'resolution' | 'manifest'>;
+
 /** Readiness of any one recipe in this view: a precedence winner, a qualified alias, or a shadowed recipe selected by id. */
 export function assessRecipe(
-  index: RecipeDiscoveryIndex,
+  index: RecipeReadinessView,
   recipe: ResolvedLibraryRecipe,
 ): DiscoveryProblem[] {
   const externalRecipeIds = new Set(index.resolution.recipes.keys());
