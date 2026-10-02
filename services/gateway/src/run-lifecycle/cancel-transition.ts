@@ -33,13 +33,17 @@ import {
   type RunTransitionSyncEffect,
 } from './transition-router.js';
 
+interface SkippedSlotRelease {
+  skipped: string;
+}
+
 export interface CancelCollaborators {
   cancelEngine(runId: string): void;
   invalidateWarmSessions(runId: string): void;
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
   releaseCapabilities(run: Run): Promise<void>;
-  releaseSlot(run: Run): Promise<void | { skipped: string }>;
+  releaseSlot(run: Run): Promise<void | SkippedSlotRelease>;
   releaseWorkspace?(run: Run): Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(event: string, payload: unknown): void | Promise<void>;

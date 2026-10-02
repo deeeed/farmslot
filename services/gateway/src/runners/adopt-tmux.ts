@@ -13,12 +13,18 @@ import {
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
 
+interface AdoptableTmuxWorker {
+  paneId: string;
+  runnerSessionId: string;
+  runnerSessionPath: string;
+}
+
 /** Adoption requires process/argv and runner-owned session evidence, never pane text. */
 export async function observeAdoptableTmuxWorker(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   context: AgentContext,
   session: string,
-): Promise<{ paneId: string; runnerSessionId: string; runnerSessionPath: string }> {
+): Promise<AdoptableTmuxWorker> {
   if (!context.runner || !context.runnerSessionId)
     throw new Error('Adoption requires the saved runner conversation identity');
   const listed = await execOnSlot(
@@ -33,8 +39,7 @@ export async function observeAdoptableTmuxWorker(
   const paths = context.runnerSessionPath
     ? [context.runnerSessionPath]
     : await listRunnerSessionFiles(vars, context.runner);
-  const candidates: Array<{ paneId: string; runnerSessionId: string; runnerSessionPath: string }> =
-    [];
+  const candidates: AdoptableTmuxWorker[] = [];
   for (const line of listed.stdout.trim().split('\n')) {
     const [paneId, panePid, cwd] = line.split('\t');
     if (!paneId || !panePid || !cwd || (await slotRealpath(vars, cwd)) !== repository) continue;

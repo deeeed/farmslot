@@ -1273,10 +1273,13 @@ export function resourceControlTimeoutMs(
   return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
 }
 
-/**
- * Execute a resource control hook (boot, shutdown, relaunch).
- * After control, immediately re-polls the slot's resources.
- */
+interface ResourceControlResult {
+  ok: boolean;
+  detail?: string;
+  providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+}
+
+/** Execute a control hook and immediately re-poll the slot's resources. */
 export async function executeResourceControl(
   slotId: string,
   resourceId: string,
@@ -1289,11 +1292,7 @@ export async function executeResourceControl(
    */
   extraVars?: Record<string, string>,
   ownerRunId?: string,
-): Promise<{
-  ok: boolean;
-  detail?: string;
-  providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
-}> {
+): Promise<ResourceControlResult> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
     return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
@@ -1352,11 +1351,7 @@ export async function executeResourceControl(
 
   // Execute via agent for remote machines, locally otherwise
   const { isLocal, machine } = await getSlotLocality(slotId);
-  let result: {
-    ok: boolean;
-    detail?: string;
-    providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
-  };
+  let result: ResourceControlResult;
 
   if (!isLocal) {
     const node = getNode(machine);

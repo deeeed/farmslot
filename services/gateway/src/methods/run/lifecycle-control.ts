@@ -47,6 +47,11 @@ import { schedulerTick } from '../../work-graph/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
+interface SlotReleaseResult {
+  released: boolean;
+  skipped?: string;
+}
+
 /**
  * Takes no emitter: ADR-053 makes the transition own both store propagation and
  * global publication. Passing one in is what made a cancel's reach depend on
@@ -115,7 +120,7 @@ export interface RunForceCompleteTransitionDependencies {
   attachPrNumber(runId: string, prNumber: number): Promise<void>;
   publish(run: Run): Promise<Run>;
   /** Advisory teardown runs after the public wrapper releases lifecycle locks. */
-  releaseSlot(run: Run): Promise<{ released: boolean; skipped?: string }>;
+  releaseSlot(run: Run): Promise<SlotReleaseResult>;
 }
 
 const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = {
@@ -329,9 +334,7 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
-export async function releaseCompletedRunSlot(
-  run: Run,
-): Promise<{ released: boolean; skipped?: string }> {
+export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
   if (run.reviewWorkspace) {
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
     await teardownReviewWorkspace(run.id);
