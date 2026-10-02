@@ -38,11 +38,50 @@ export async function proveProviderRecovery({
       'metadata-provider',
       'capture-provider',
       'capture-retained-provider',
+      'empty-provider',
       'cycle-provider',
       'compact-provider',
     ].includes(item.fault),
   )) {
     const pidFile = path.join(fixture.repo, 'owned-server.pid');
+    if (fixture.fault === 'empty-provider') {
+      for (const content of ['', 'truncated-pid']) {
+        writeFileSync(pidFile, content);
+        let result;
+        assert.doesNotThrow(() => {
+          result = acquire(rpc, fixture);
+        }, 'Boot after an invalid PID file must succeed');
+        assert.equal(result.ok, true, 'Boot after an invalid PID file must succeed');
+        const pid = Number(readFileSync(`${pidFile}.created`, 'utf8'));
+        process.kill(pid, 0);
+        assert.ok(result.lease.providerProcesses.some((frame) => frame.pid === pid));
+        assert.equal(
+          rpc('runtime.capability.release', {
+            slotId: fixture.slotId,
+            ownerRunId: fixture.runId,
+            keepWarm: false,
+          }).ok,
+          true,
+        );
+        await wait(
+          () => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (error) {
+              if (error.code === 'ESRCH') return false;
+              throw error;
+            }
+          },
+          (alive) => !alive,
+          'booted provider cleanup after invalid PID recovery',
+        );
+      }
+      check(
+        'empty and truncated PID files allow boot while new process identity still governs cleanup',
+      );
+      continue;
+    }
     if (fixture.fault === 'metadata-provider') mkdirSync(`${pidFile}.meta`);
     let result;
     try {

@@ -20,7 +20,7 @@ import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Methods } from '@farmslot/protocol';
+import { FLOW_STEPS, Methods } from '@farmslot/protocol';
 
 import { alive, matchesProcess } from '../../../packages/agent-runtime/src/native/storage.ts';
 import { taskInit } from '../../../packages/agent-runtime/src/task-init/index.ts';
@@ -38,6 +38,7 @@ import {
   proveSharedCleanup,
 } from './native-coherence-browser.mjs';
 import { proveProviderRecovery } from './native-provider-recovery.mjs';
+import { proveQueuedLeaseOwnership } from './native-queued-lease.mjs';
 import { prepareRealAdoption, proveRealAdoption } from './native-real-adoption.mjs';
 
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -931,6 +932,7 @@ try {
         assert.equal(receipt.submitted, false);
         check('cancelled unsubmitted steering remains visible in task-scoped gateway reads');
         rpc('run.cancel', { runId });
+        await proveQueuedLeaseOwnership({ env, repo, configFile, mode, check });
       } else {
         rpc('run.pause', { runId });
         assert.throws(
@@ -1292,6 +1294,65 @@ try {
     );
     execFileSync('tmux', ['has-session', '-t', `=${foreignSession}`]);
     check('occupied workspace protection survives gateway restart and a real reconciliation tick');
+    const occupied = after.find((row) => row.slot === held[0].slot);
+    const claimRunId = randomUUID();
+    env.FARMSLOT_DISABLE_RUN_ENGINE_START = '0';
+    await restartGateway(() => {
+      writeJson(path.join(root, '.runs', `${claimRunId}.json`), {
+        id: claimRunId,
+        project,
+        ticketOrPr: `COHERENCE-HELD-${claimRunId}`,
+        flowType: 'dev',
+        mode: 'interactive',
+        transport: 'tmux',
+        status: 'slot-finding',
+        slotId: occupied.slot,
+        taskFile: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        decisions: [],
+        metrics: { nudgeCount: 0, runner: 'claude', model: 'fixture' },
+        engineState: {
+          generation: randomUUID(),
+          flags: { warmSessionReuse: true, skipPrepare: true },
+        },
+        steps: FLOW_STEPS.dev.map((name, index) => ({
+          name,
+          status:
+            name === 'find-slot'
+              ? 'running'
+              : index < FLOW_STEPS.dev.indexOf('find-slot')
+                ? 'done'
+                : 'pending',
+        })),
+      });
+    });
+    const claimRun = await wait(
+      () => rpc('run.get', { runId: claimRunId }).run,
+      (run) =>
+        !['pending', 'running'].includes(
+          run.steps.find((step) => step.name === 'find-slot').status,
+        ),
+      'warm binding claim refusal',
+    );
+    assert.match(
+      JSON.stringify(claimRun),
+      /Warm-session reuse slot.*slot remains occupied/,
+      'Occupied hold must refuse warm binding',
+    );
+    const stillOccupied = JSON.parse(readFileSync(statusFile, 'utf8')).slots.find(
+      (row) => row.slot === occupied.slot,
+    );
+    for (const key of [
+      'lifecycle',
+      'phase',
+      'current_run_id',
+      'handoff_run_id',
+      'held_reason',
+      'slot_epoch',
+    ])
+      assert.equal(stillOccupied[key], occupied[key], `Refused warm binding preserves ${key}`);
+    check('warm binding refuses occupied holds without changing their ownership or cleanup fence');
   }
   if (realFixture)
     await proveRealAdoption({ fixture: realFixture, rpc, wait, check, generationGuard, temporary });
@@ -1362,7 +1423,7 @@ async function cleanupFixture() {
       const serverPidFile = path.join(directory, name);
       if (existsSync(serverPidFile)) {
         const providerPid = Number(readFileSync(serverPidFile, 'utf8'));
-        if (alive(providerPid)) {
+        if (Number.isSafeInteger(providerPid) && providerPid > 0 && alive(providerPid)) {
           assert.ok(
             matchesProcess(providerPid, path.join(bin, 'claude')),
             'Fixture provider identity changed',

@@ -1553,18 +1553,22 @@ export class RuntimeCapabilityRegistry {
       }
     }
     try {
-      lease.providerProcesses = shouldRunAcquire
-        ? ((await this.options.captureProviderProcesses?.(
+      if (shouldRunAcquire) {
+        // Capture is authoritative when supported. Otherwise retain the boot action's identities.
+        if (this.options.captureProviderProcesses)
+          lease.providerProcesses = await this.options.captureProviderProcesses(
             params.slotId,
             entry,
             params.ownerRunId,
-          )) ?? lease.providerProcesses)
-        : structuredClone(
-            warmProviderHealthy
-              ? warmLease?.providerProcesses
-              : active.find((candidate) => candidate.id !== lease.id && holdsProvider(candidate))
-                  ?.providerProcesses,
           );
+      } else {
+        lease.providerProcesses = structuredClone(
+          warmProviderHealthy
+            ? warmLease?.providerProcesses
+            : active.find((candidate) => candidate.id !== lease.id && holdsProvider(candidate))
+                ?.providerProcesses,
+        );
+      }
     } catch (error) {
       const reason = `Provider identity capture failed: ${error instanceof Error ? error.message : String(error)}`;
       lease.updatedAt = this.timestamp();

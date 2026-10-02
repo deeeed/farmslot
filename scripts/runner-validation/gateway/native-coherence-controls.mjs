@@ -11,6 +11,9 @@ const output =
   process.env.FARMSLOT_COHERENCE_OUT ?? path.join(root, 'temp/native-coherence-controls');
 mkdirSync(output, { recursive: true });
 const controls = [
+  ['held-claim', /Occupied hold must refuse warm binding/],
+  ['queued-transfer', /Handoff receipt must remain with its original task lease/],
+  ['provider-empty-pid', /Boot after an invalid PID file must succeed/],
   ['provider-rollback', /Failed rollback must retain the dependency chain/],
   ['provider-compaction', /Deferred provider and dependency records must survive compaction/],
   ['provider-instance', /Warm sweep must select the current provider instance/],
@@ -82,8 +85,8 @@ async function lane() {
     if (name === 'attestation') args.push('--legacy');
     if (name === 'kernel-reuse') args.push('--kernel-reuse');
     if (name === 'authored-contract') args.push('--missing-contract');
-    if (name === 'queued-receipt') args.push('--queued-close');
-    if (name === 'held-reconcile') args.push('--reconcile-held');
+    if (name === 'queued-receipt' || name === 'queued-transfer') args.push('--queued-close');
+    if (name === 'held-reconcile' || name === 'held-claim') args.push('--reconcile-held');
     if (
       [
         'provider-owner',
@@ -93,6 +96,7 @@ async function lane() {
         'provider-instance',
         'provider-capture',
         'provider-rollback',
+        'provider-empty-pid',
       ].includes(name)
     )
       args.push('--provider-recovery');

@@ -1332,9 +1332,14 @@ export async function executeResourceControl(
         ? watchPath
         : `${slotVars.remoteRepo}/${watchPath}`
       : undefined;
-  const processBeforeBoot =
+  const pidBeforeBoot =
     pidPath && (await slotFileExists(slotVars, pidPath))
-      ? await probeResourceProcess(slotVars, Number((await slotReadFile(slotVars, pidPath)).trim()))
+      ? Number((await slotReadFile(slotVars, pidPath)).trim())
+      : undefined;
+  // An empty or truncated PID file has no prior identity; shutdown verification stays strict.
+  const processBeforeBoot =
+    pidBeforeBoot !== undefined && Number.isSafeInteger(pidBeforeBoot) && pidBeforeBoot > 0
+      ? await probeResourceProcess(slotVars, pidBeforeBoot)
       : undefined;
 
   // For shutdown: skip if health check says resource isn't running

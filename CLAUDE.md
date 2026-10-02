@@ -17,6 +17,10 @@ farmslot/
 
 ## Key Rules
 
+### Prefer Named Types
+
+Reuse existing domain types before defining new ones. Prefer named interfaces or type aliases for domain object shapes, function parameters, and nontrivial unions or intersections instead of inlining them. Keep small one-off annotations when naming them would add noise, and apply this rule to touched code without refactoring unrelated files.
+
 ### Never Amend Commits — HARD RULE
 
 **Never use `git commit --amend`.** Always create new commits. Follow-up fixes get their own commit — history matters more than a clean graph.

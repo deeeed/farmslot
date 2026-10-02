@@ -11,6 +11,21 @@ assert.ok(
   'control requires a disposable fixture marker',
 );
 const controls = {
+  'held-claim': [
+    'services/gateway/src/methods/dispatch/slot-scoring.ts',
+    /slot.lifecycle === 'held' && slot.phase === 'occupied'/,
+    'false',
+  ],
+  'queued-transfer': [
+    'packages/agent-runtime/src/native/worker-history.ts',
+    /if \(!this.commandLeases.has\(commandId\)\)\s*this.commandLeases.set\(commandId, command.leaseId \?\? this.currentLease\);/,
+    'this.commandLeases.set(commandId, this.currentLease);',
+  ],
+  'provider-empty-pid': [
+    'services/gateway/src/fleet/resource-manager.ts',
+    /pidBeforeBoot !== undefined && Number.isSafeInteger\(pidBeforeBoot\) && pidBeforeBoot > 0/,
+    'pidBeforeBoot !== undefined',
+  ],
   'provider-rollback': [
     'services/gateway/src/runtime-capabilities/registry.ts',
     /const stillRequired = snapshot.leases.some\(([\s\S]*?)\(!selectedIds.has\(candidate.id\) \|\| stillHolding.has\(candidate.id\)\)/,

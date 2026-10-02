@@ -32,12 +32,16 @@ if (process.argv.some((arg) => arg.startsWith('--server-'))) {
     process.on('SIGTERM', () => server.close(() => process.exit(0)));
   } else if (flag === '--server-boot') {
     if (fs.existsSync(pidFile)) {
-      try {
-        process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 0);
-        process.exit(0);
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error;
+      const priorPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      if (Number.isSafeInteger(priorPid) && priorPid > 0) {
+        try {
+          process.kill(priorPid, 0);
+          process.exit(0);
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error;
+        }
       }
+      fs.rmSync(pidFile, { force: true });
     }
     const child = spawn(process.execPath, [__filename, '--server-host', pidFile], {
       detached: true,
