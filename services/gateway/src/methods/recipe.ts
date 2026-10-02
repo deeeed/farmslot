@@ -73,7 +73,7 @@ import {
 } from '../runtime-capabilities/device-target.js';
 import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
 
-import { runHealthCheck } from './slot/check.js';
+import { runHealthCheck, runUnlockHook } from './slot/check.js';
 import { getRuntimeCapabilityRegistry } from './runtime-capabilities.js';
 
 type EmitFn = (event: string, payload: unknown) => void;
@@ -767,16 +767,17 @@ export async function assertSlotHealthForRecipeRerun(
   if (recipeReplayHealthReady(healthValue, readyIndicator)) return;
 
   const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
+  let unlockFailure: string | null = null;
   if (unlockHook?.trim()) {
-    await execOnSlot(slotVars, `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`, {
-      timeout: 60_000,
-    });
-    healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
+    unlockFailure = await runUnlockHook(slotVars, unlockHook, { timeoutMs: 60_000 });
+    if (!unlockFailure) {
+      healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
+    }
   }
 
   if (!recipeReplayHealthReady(healthValue, readyIndicator)) {
     throw new Error(
-      `Slot ${slotVars.slotId} is not ready for recipe replay (health=${healthValue || 'none'}, expected ${readyIndicator}). ` +
+      `Slot ${slotVars.slotId} is not ready for recipe replay (health=${healthValue || 'none'}, expected ${readyIndicator}${unlockFailure ? `; ${unlockFailure}` : ''}). ` +
         'Run ensure-js-runtime prepare (or slot check) so Metro, the app, and CDP reach WalletView.',
     );
   }

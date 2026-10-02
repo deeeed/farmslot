@@ -479,27 +479,51 @@ async function checkHealth(
 
   // Try unlock + retry
   const unlockHook = expandHook('unlock', projectJson, vars, projectVars);
+  let unlockFailure: string | null = null;
   if (unlockHook) {
-    try {
-      await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`);
+    unlockFailure = await runUnlockHook(vars, unlockHook);
+    if (!unlockFailure) {
       // Wait for unlock to take effect
       await new Promise((r) => setTimeout(r, 3000));
       healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
       if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
         return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
       }
-    } catch {
-      /* unlock failed, fall through */
     }
   }
 
+  const healthDetail = healthValue
+    ? `Health responds but value=${healthValue} (expected ${readyIndicator})`
+    : 'Health not responding';
   return {
     name: 'health',
     status: 'fail',
-    detail: healthValue
-      ? `Health responds but value=${healthValue} (expected ${readyIndicator})`
-      : 'Health not responding',
+    detail: unlockFailure ? `${healthDetail}; ${unlockFailure}` : healthDetail,
   };
+}
+
+/**
+ * Run the project's unlock hook. Returns null when it exits 0, otherwise a
+ * failure detail with the exit code and the tail of its output, so callers
+ * report a failed unlock instead of retrying health as if it had run.
+ */
+export async function runUnlockHook(
+  vars: SlotVars,
+  unlockHook: string,
+  options: { timeoutMs?: number } = {},
+): Promise<string | null> {
+  const result = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, {
+    timeout: options.timeoutMs,
+  });
+  if (result.exitCode === 0) return null;
+  const tail = `${result.stdout}\n${result.stderr}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-3)
+    .join(' | ');
+  console.log(`[unlock] ${vars.slotId}: hook exited ${result.exitCode}: ${tail}`);
+  return `unlock hook exited ${result.exitCode}${tail ? `: ${tail}` : ''}`;
 }
 
 async function checkCleanup(vars: SlotVars): Promise<CheckStep> {

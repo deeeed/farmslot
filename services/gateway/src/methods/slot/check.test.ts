@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
 
-import { isOptionalFixtureAbsence, runHealthCheck } from './check.js';
+import { isOptionalFixtureAbsence, runHealthCheck, runUnlockHook } from './check.js';
 
 function makeSlotVars(remoteRepo: string): SlotVars {
   return {
@@ -47,6 +47,20 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   );
 
   assert.equal(result, '');
+});
+
+test('runUnlockHook reports a failed unlock with its exit code and output tail', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-unlock-'));
+  t.after(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+  const vars = makeSlotVars(repo);
+
+  assert.equal(await runUnlockHook(vars, 'echo unlocked'), null);
+  assert.equal(
+    await runUnlockHook(vars, `printf '%s\\n' one two three 'call x: fail'; exit 4`),
+    'unlock hook exited 4: two | three | call x: fail',
+  );
 });
 
 test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeholders', () => {
