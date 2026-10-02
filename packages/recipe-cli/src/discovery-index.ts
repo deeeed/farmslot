@@ -463,7 +463,10 @@ function validationProblems(
  * What readiness needs: a host can pass a recipe-cli index, or its own single-platform resolution
  * (`loadRecipeLibraries(sources, { adapter })`) with the manifest its runner will execute against.
  */
-export type RecipeReadinessView = Pick<RecipeDiscoveryIndex, 'resolution' | 'manifest'>;
+export interface RecipeReadinessView {
+  resolution: RecipeLibraryResolution;
+  manifest: RecipeActionManifestDocument;
+}
 
 /** Readiness of any one recipe in this view: a precedence winner, a qualified alias, or a shadowed recipe selected by id. */
 export function assessRecipe(

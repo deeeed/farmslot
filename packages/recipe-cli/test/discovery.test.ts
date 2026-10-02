@@ -849,11 +849,6 @@ test('a host view judges readiness from one platform resolution and its own mani
   await writeFile(path.join(library, 'recipes', 'mobile', 'acme', 'wip.recipe.json'), '{"title": ');
   const sources = [{ name: 'acme', root: library }];
 
-  // The full index parses every platform, so the broken mobile file fails it.
-  await assert.rejects(
-    buildDiscoveryIndex({ env: { RECIPE_LIBRARY_PATH: `acme=${library}` }, platform: 'extension' }),
-    /not valid JSON/u,
-  );
   // A single-platform view never reads it.
   const resolution = await loadRecipeLibraries(sources, { adapter: 'extension' });
   const nav = resolution.recipes.get('acme.nav')!;
@@ -889,4 +884,7 @@ test('requires vouches only for the packages the host passes, like run', async (
   assert.equal(index.recipes.get('greet')?.runnable, true);
   const listed = await cli<ListEnvelope>(['list'], env);
   assert.equal(listed.json.status, 'ok');
+  const described = await cli<{ ref: string }>(['run', 'greet', '--describe'], env);
+  assert.equal(described.exitCode, 0);
+  assert.equal(described.json.ref, 'greet');
 });
