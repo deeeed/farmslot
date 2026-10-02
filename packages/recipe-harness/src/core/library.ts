@@ -12,6 +12,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isRecord } from './json.js';
 import {
   checkRecipeLibraryRequirements,
+  libraryRootReal,
   listLibraryFiles,
   readRecipeLibraryManifest,
   type RecipeLibraryManifest,
@@ -191,7 +192,7 @@ export async function loadRecipeLibraries(
 
   for (const source of sources) {
     const root = path.resolve(expandTilde(source.root));
-    const rootReal = await realpath(root);
+    const rootReal = await libraryRootReal(root);
     const name = librarySourceName(source);
     const sourceProvenance: RecipeSourceProvenance = source.provenance ?? {
       kind: 'library',
@@ -414,10 +415,27 @@ export function logRecipeLibraryResolution(
   resolution: RecipeLibraryResolution,
   refs?: ReadonlySet<string>,
 ): void {
+  logRecipeLibrarySources(logger, resolution);
+  logRecipeLibraryShadows(logger, resolution, refs);
+}
+
+/** The `Recipe libraries: …` line; log it as soon as libraries load, before anything can fail. */
+export function logRecipeLibrarySources(
+  logger: RecipeLogger,
+  resolution: RecipeLibraryResolution,
+): void {
   const summary = resolution.sources
     .map((source) => `${source.name}=${source.root} (${source.recipeCount} recipes)`)
     .join(', ');
   logger.info(`Recipe libraries: ${summary || 'none'}`);
+}
+
+/** Shadow warnings, limited to `refs` when given. */
+export function logRecipeLibraryShadows(
+  logger: RecipeLogger,
+  resolution: RecipeLibraryResolution,
+  refs?: ReadonlySet<string>,
+): void {
   for (const recipe of resolution.recipes.values()) {
     if (recipe.aliasFor || (refs && !refs.has(recipe.ref))) continue;
     if (recipe.shadows.length > 0) {

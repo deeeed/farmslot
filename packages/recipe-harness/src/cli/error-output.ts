@@ -22,5 +22,6 @@ export function reportRecipeCliError(error: RecipeCliError, json: boolean): void
     console.error(`Error [${error.code}]: ${error.message}`);
     console.error(`Next: ${error.userAction}`);
   }
-  process.exitCode = 1;
+  // A malformed --library or RECIPE_LIBRARY_PATH entry is a usage error, as in discovery.
+  process.exitCode = error.code === 'RECIPE_LIBRARY_PATH_INVALID' ? 2 : 1;
 }

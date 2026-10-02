@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
   digestRecipeDocument,
@@ -176,7 +178,12 @@ export function buildRecipeExecutionPlan({
     digestNodes.push({ plan: planNode, node: { recordVideo } });
   }
 
-  const executionContextDigest = digestValue({ projectRoot, artifactsDir, env, params });
+  const executionContextDigest = digestValue({
+    projectRoot,
+    artifactsDir,
+    env: planEnvironment(env),
+    params,
+  });
   const planBody = { schemaVersion: 1 as const, executionContextDigest, source, nodes };
   return {
     ...planBody,
@@ -360,6 +367,44 @@ function adapterSource(
     trust: 'unknown',
     name: action,
   };
+}
+
+/**
+ * Values Yarn (via Corepack) sets on every `yarn <script>` that say nothing about what the run does:
+ * the per-invocation shim paths, and package metadata. Everything else, including user-set
+ * `npm_config_*` and `COREPACK_*` settings such as a registry, stays bound to the approval.
+ */
+const VOLATILE_PACKAGE_MANAGER_ENV = new Set([
+  'BERRY_BIN_FOLDER',
+  'npm_execpath',
+  'npm_node_execpath',
+  'npm_config_user_agent',
+  'INIT_CWD',
+  'PROJECT_CWD',
+  'COREPACK_ROOT',
+  'COREPACK_ENABLE_DOWNLOAD_PROMPT',
+]);
+const PACKAGE_METADATA_ENV = /^npm_package_/u;
+
+/**
+ * The environment an approval binds to. Only the volatile package-manager values above are
+ * dropped, plus the per-invocation shim folder Yarn puts first on PATH, so repeated runs through
+ * the same invocation path (for example `yarn farmslot recipe run`) approve the same digest.
+ */
+export function planEnvironment(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string | undefined> {
+  const shims = env.BERRY_BIN_FOLDER;
+  return Object.fromEntries(
+    Object.entries(env)
+      .filter(([key]) => !VOLATILE_PACKAGE_MANAGER_ENV.has(key) && !PACKAGE_METADATA_ENV.test(key))
+      .map(([key, value]) => {
+        if (key !== 'PATH' || !shims || !value) return [key, value];
+        const [first, ...rest] = value.split(path.delimiter);
+        // Only Yarn's own shim entry at the front of PATH is volatile.
+        return [key, first === shims ? rest.join(path.delimiter) : value];
+      }),
+  );
 }
 
 function digestValue(value: unknown): string {

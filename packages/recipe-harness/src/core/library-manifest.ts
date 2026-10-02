@@ -54,11 +54,25 @@ export interface RecipeLibraryRequirement {
   installed: string;
 }
 
+/** Real path of a configured library root; a missing root is a configuration error, not a crash. */
+export async function libraryRootReal(root: string): Promise<string> {
+  try {
+    return await realpath(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_PATH_INVALID',
+      `Recipe library root ${root} does not exist.`,
+      'fix the --library or RECIPE_LIBRARY_PATH entry so it names a library directory',
+    );
+  }
+}
+
 /** Read and validate a library's recipe-library.json; undefined when the library has none. */
 export async function readRecipeLibraryManifest(
   root: string,
 ): Promise<RecipeLibraryManifest | undefined> {
-  const rootReal = await realpath(root);
+  const rootReal = await libraryRootReal(root);
   const file = path.join(root, RECIPE_LIBRARY_MANIFEST_FILE);
   let manifestReal: string;
   try {
@@ -218,7 +232,7 @@ async function declaredLibraryFile(
  * directories, and rejects any file that resolves outside the library root.
  */
 export async function listLibraryFiles(root: string, directory: string): Promise<string[]> {
-  const rootReal = await realpath(root);
+  const rootReal = await libraryRootReal(root);
   const visit = async (relativeDir: string): Promise<string[]> => {
     let entries;
     try {
@@ -280,7 +294,7 @@ export async function digestRecipeLibrary(
     ...Object.values(manifest?.actions ?? {}),
     ...Object.values(manifest?.adapters ?? {}).map((adapter) => adapter.module),
   ];
-  const rootReal = await realpath(root);
+  const rootReal = await libraryRootReal(root);
   for (const file of declared) {
     const relative = path.relative(root, path.resolve(root, file)).split(path.sep).join('/');
     // Declared files are checked here too, so the digest never covers content outside the library.

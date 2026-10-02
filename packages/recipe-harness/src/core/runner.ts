@@ -34,7 +34,8 @@ import { createRecipeInvocation } from './invocation.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   loadRecipeLibraries,
-  logRecipeLibraryResolution,
+  logRecipeLibraryShadows,
+  logRecipeLibrarySources,
   type RecipeLibraryResolution,
   type ResolvedLibraryRecipe,
 } from './library.js';
@@ -241,6 +242,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             ...(request.packageVersions ? { packageVersions: request.packageVersions } : {}),
           })
         : undefined;
+    if (libraryResolution) logRecipeLibrarySources(this.#logger, libraryResolution);
     const recipes = libraryResolution?.recipes ?? new Map<string, ResolvedLibraryRecipe>();
     const externalRecipeIds = new Set(recipes.keys());
     assertRecipeMatchesManifest(recipe, this.#actionManifest, {
@@ -269,7 +271,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     });
     if (libraryResolution) {
       // Warn only about shadowed refs this run executes, not every winner in the libraries.
-      logRecipeLibraryResolution(
+      logRecipeLibraryShadows(
         this.#logger,
         libraryResolution,
         new Set([rootRef, ...dependencyResolution.recipes.keys()]),
