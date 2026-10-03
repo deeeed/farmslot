@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- `@farmslot/recipe-harness/cli` no longer uses top-level await, so CommonJS consumers can `require()` it and every other package entry, `@farmslot/recipe-cli` included. Running `dist/cli/index.js` directly still starts the CLI and exits 1 with the error message on failure.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.1 - 2026-10-03
+
+- `@farmslot/recipe-harness/cli` no longer uses top-level await, so CommonJS consumers can `require()` it and every other package entry, `@farmslot/recipe-cli` included. Running `dist/cli/index.js` directly still starts the CLI and exits 1 with the error message on failure.
 
 ## 0.22.0 - 2026-10-02
 
