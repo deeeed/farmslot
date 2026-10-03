@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.1 - 2026-10-03
+
+- `@farmslot/recipe-harness/cli` no longer uses top-level await, so CommonJS consumers can `require()` it and every other package entry, `@farmslot/recipe-cli` included. Running `dist/cli/index.js` directly still starts the CLI and exits 1 with the error message on failure.
+
 ## 0.22.0 - 2026-10-02
 
 - Keep run plan digests stable across repeated `yarn <script>` runs: only the values Yarn changes per invocation or derives from the package (its shim paths, `npm_package_*`, user agent, `INIT_CWD`/`PROJECT_CWD`, Corepack root) leave the approved environment; user-set `npm_config_*` and `COREPACK_*` settings stay bound. Log the `Recipe libraries:` line as soon as libraries load, so early failures keep it. `run` and `validate` exit 2 for a malformed `--library` or `RECIPE_LIBRARY_PATH` entry, and a library root that does not exist fails with `RECIPE_LIBRARY_PATH_INVALID` instead of a raw ENOENT.

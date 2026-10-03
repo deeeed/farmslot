@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (
   specifier: string,
@@ -58,4 +60,32 @@ test('package exports block internal harness modules', async () => {
       `${blocked} should remain internal`,
     );
   }
+});
+
+const packageRoot = fileURLToPath(new URL('..', import.meta.url));
+
+// A node process without the test runner's loader is a real CommonJS consumer.
+function plainNode(args: string[]) {
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  return spawnSync(process.execPath, args, { cwd: packageRoot, env, encoding: 'utf8' });
+}
+
+test('every package export loads with require() from CommonJS', () => {
+  const result = plainNode([
+    '-e',
+    `for (const subpath of Object.keys(require('./package.json').exports)) {
+      require('@farmslot/recipe-harness' + subpath.slice(1));
+    }`,
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('the cli entry still runs as a program when executed directly', () => {
+  const version = plainNode(['dist/cli/index.js', '--version']);
+  assert.equal(version.status, 0, version.stderr);
+  assert.match(version.stdout, /^\d+\.\d+\.\d+/u);
+  const failed = plainNode(['dist/cli/index.js', 'validate', '/nonexistent/missing.recipe.json']);
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /Failed to read JSON/u);
 });

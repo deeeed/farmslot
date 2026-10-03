@@ -6,6 +6,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.1 - 2026-10-03
+
+- Publish with recipe-harness 0.22.1 so consumers share one recipe-harness copy.
+
 ## 0.13.0 - 2026-10-02
 
 - Provide `@farmslot/expo-recipe` to recipe libraries that declare it in `requires`.

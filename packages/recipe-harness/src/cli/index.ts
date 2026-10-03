@@ -36,12 +36,12 @@ export async function runRecipeHarnessCli(
   await createRecipeHarnessProgram(options).parseAsync(argv, { from: 'user' });
 }
 
+// No top-level await: this module is a library entry too, and a CommonJS consumer can only
+// require() an ES module that loads synchronously.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    await runRecipeHarnessCli(process.argv.slice(2));
-  } catch (error) {
+  runRecipeHarnessCli(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);
     process.exit(1);
-  }
+  });
 }
