@@ -1,8 +1,9 @@
 {
-  "version": "0.19.0",
-  "date": "2026-09-29",
+  "version": "0.20.0",
+  "date": "2026-10-02",
   "items": [
-    "View command stages and output freshness beside worker progress, with refreshable and followable operation logs",
-    "Restore selectable runner catalogs and per-user visible models and default-model settings in Dispatch and related pickers; default Cursor to Claude Opus 5.5 high while preserving existing choices"
+    "View recovery hints for blocked runs and steer a busy native worker through a persisted message queue",
+    "Additional reviews default to a warm static recheck, with requested, starting and running progress",
+    "New Codex selections default to GPT-6.1 Sol; saved model choices are kept"
   ]
 }

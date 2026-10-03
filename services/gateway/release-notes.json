@@ -1,9 +1,9 @@
 {
-  "version": "0.19.0",
-  "date": "2026-09-29",
+  "version": "0.20.0",
+  "date": "2026-10-02",
   "items": [
-    "Keep remote resource commands on their owning node and retain device leases when restart health checks cannot reach that node",
-    "Project task-local command activity and refresh clients as operation records change",
-    "Restore runner catalog and per-user model preference APIs, including editable defaults, Cursor catalog-command discovery through the runner capability and Claude Opus 5.5 high as its built-in default"
+    "Recover blocked native workers through their pending decision, adopt verified external recoveries, and keep occupied workspaces across cleanup and restore",
+    "Report a failed project unlock hook, with its exit code and output tail, in slot check, replay and prepare health",
+    "New runs require absolute task paths: upgrade the CLI on every node first, then the gateway"
   ]
 }

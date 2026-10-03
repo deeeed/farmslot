@@ -4,13 +4,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add optional native exit diagnostics, queued input receipts, recovery hints and provider process identities, plus an explicit external-worker adoption operation. Existing stored runs remain readable.
-
-- Default Codex to GPT-6.1 Sol with reasoning levels through ultra while retaining GPT-6 Sol in model pickers. GPT-6.1 Sol cost remains unavailable until a verified rate is configured.
-
-- Share static-review replay eligibility between clients and the gateway while preserving saved-report recovery.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.34.0 - 2026-10-02
+
+- Add optional native exit diagnostics, queued input receipts, recovery hints and provider process identities, plus an explicit external-worker adoption operation. Existing stored runs remain readable.
+- Default Codex to GPT-6.1 Sol with reasoning levels through ultra while retaining GPT-6 Sol in model pickers. GPT-6.1 Sol cost remains unavailable until a verified rate is configured.
+- Share static-review replay eligibility between clients and the gateway while preserving saved-report recovery.
 
 ## 0.33.0 - 2026-09-29
 

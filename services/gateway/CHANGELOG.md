@@ -4,23 +4,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Report a failed project `unlock` hook in slot check, recipe replay and prepare health failures, with its exit code and output tail. Health is still re-read after a failed unlock, slot check reports progress before the unlock and every 15 s through the unlock and its health re-read (so `farmslot slot check` no longer hits its 30 s idle timeout), and unlock runs are bounded to 120 s.
-
-- Recover blocked native workers through their pending decision and adopt verified external recoveries. Preserve occupied workspaces across cleanup, reconciliation, and parked-run restore, verify provider ownership before shutdown, and support explicit provider recovery. Surface crash diagnostics, discover saved sessions under configured roots, and preserve authored task runtimes.
-
-- Require absolute task paths for new runs and explain how to upgrade older clients. Upgrade the CLI on every node first, then the gateway. Existing stored runs with relative task paths remain readable.
-
-- Bound advisory difficulty grading and require API credentials so an unresponsive provider or uncancellable CLI fallback cannot indefinitely block task dispatch.
-
-- Recover completed same-run reviewer sessions for explicit warm rechecks after a gateway restart, and keep reviewers starting until their prompt is accepted.
-
-- Use GPT-6.1 Sol when a Codex task omits its model.
-
-- Distinguish retired worker terminals from windows that are still starting when terminal attachment finds a missing target.
-
-- Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.0 - 2026-10-02
+
+- Report a failed project `unlock` hook in slot check, recipe replay and prepare health failures, with its exit code and output tail. Health is still re-read after a failed unlock, slot check reports progress before the unlock and every 15 s through the unlock and its health re-read (so `farmslot slot check` no longer hits its 30 s idle timeout), and unlock runs are bounded to 120 s.
+- Recover blocked native workers through their pending decision and adopt verified external recoveries. Preserve occupied workspaces across cleanup, reconciliation, and parked-run restore, verify provider ownership before shutdown, and support explicit provider recovery. Surface crash diagnostics, discover saved sessions under configured roots, and preserve authored task runtimes.
+- Require absolute task paths for new runs and explain how to upgrade older clients. Upgrade the CLI on every node first, then the gateway. Existing stored runs with relative task paths remain readable.
+- Bound advisory difficulty grading and require API credentials so an unresponsive provider or uncancellable CLI fallback cannot indefinitely block task dispatch.
+- Recover completed same-run reviewer sessions for explicit warm rechecks after a gateway restart, and keep reviewers starting until their prompt is accepted.
+- Use GPT-6.1 Sol when a Codex task omits its model.
+- Distinguish retired worker terminals from windows that are still starting when terminal attachment finds a missing target.
+- Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.
 
 ## 0.19.0 - 2026-09-29
 

@@ -4,19 +4,16 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Show executable recovery hints for blocked runs and allow steering a busy native worker through a persisted message queue.
-
-- Default additional reviews to a warm static recheck and show requested, starting, and running review progress.
-
-- Default new Codex selections to GPT-6.1 Sol while preserving saved model choices.
-
-- Show closed historical worker terminals without a recovery loop, with saved run details and an explicit action to open the current slot terminal.
-
-- Improve worker progress readability with higher-contrast checklist text and shared, visible operation-log links across run and slot views.
-
-- Replace unsafe static-review setup retries with a link to request another review of the same PR.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.0 - 2026-10-02
+
+- Show executable recovery hints for blocked runs and allow steering a busy native worker through a persisted message queue.
+- Default additional reviews to a warm static recheck and show requested, starting, and running review progress.
+- Default new Codex selections to GPT-6.1 Sol while preserving saved model choices.
+- Show closed historical worker terminals without a recovery loop, with saved run details and an explicit action to open the current slot terminal.
+- Improve worker progress readability with higher-contrast checklist text and shared, visible operation-log links across run and slot views.
+- Replace unsafe static-review setup retries with a link to request another review of the same PR.
 
 ## 0.19.0 - 2026-09-29
 
