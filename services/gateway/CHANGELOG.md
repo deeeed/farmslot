@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Stop stranding slots in `busy/releasing`: fleet refresh now keeps a release fence's timestamp and cleanup token (and an occupied slot's held reason), and the reconciler stamps a fence it finds with no timestamp so the 30-minute stale-release reclaim applies to it.
 
 ## 0.20.0 - 2026-10-02
 

@@ -148,6 +148,12 @@ export interface RunRecoveryCollaborators {
     slotId: string,
     predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
   ) => Promise<boolean>;
+  /** Conditional field write, for stamping a releasing fence that carries no age. */
+  updateSlotStatusIf: (
+    slotId: string,
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+    fields: Record<string, unknown>,
+  ) => Promise<boolean>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
@@ -1004,9 +1010,10 @@ export const STALE_RELEASE_RECLAIM_MS = 30 * 60 * 1000;
  * How long a releasing fence has been standing, or null when it carries no
  * usable stamp.
  *
- * Null means a fence written before the stamp existed, or by something that
- * does not stamp: unknown age is NOT treated as stale, so an unstamped fence
- * keeps its old protection instead of being reclaimed on the next tick.
+ * Null means a fence written before the stamp existed, or one whose stamp a
+ * fleet refresh dropped before refresh carried it. Unknown age is NOT treated
+ * as stale: the reconciler stamps the fence instead, so it keeps the full
+ * bound from the moment it was first seen orphaned.
  */
 function releasingFenceAgeMs(since: unknown, nowMs: number): number | null {
   if (typeof since !== 'string') return null;
@@ -1055,7 +1062,26 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
       // bookkeeping and does not belong on the client-facing slot contract.
       const observedSince = await deps.readSlotField(slot.slot, SLOT_RELEASING_SINCE);
       const stalledFor = releasingFenceAgeMs(observedSince, Date.now());
-      if (stalledFor === null || stalledFor < STALE_RELEASE_RECLAIM_MS) {
+      if (stalledFor === null) {
+        // Skipping an unstamped fence forever is the strand the stamp exists
+        // to prevent. Start its clock now, under the same conditions as the
+        // reclaim below, and let the bound run from here.
+        const stamped = await deps.updateSlotStatusIf(
+          slot.slot,
+          (row) =>
+            row.phase === SLOT_PHASE_RELEASING &&
+            releasingFenceAgeMs(row[SLOT_RELEASING_SINCE], Date.now()) === null &&
+            !deps.isTerminalTeardownInFlight(slot.slot),
+          { [SLOT_RELEASING_SINCE]: new Date().toISOString() },
+        );
+        console.log(
+          stamped
+            ? `[run-engine] reconcile: ${slot.slot} fenced 'releasing' with no stamp; stamped, reclaim after ${STALE_RELEASE_RECLAIM_MS / 60_000}m`
+            : `[run-engine] reconcile: ${slot.slot} release fence moved while stamping; left alone`,
+        );
+        continue;
+      }
+      if (stalledFor < STALE_RELEASE_RECLAIM_MS) {
         console.log(`[run-engine] reconcile: ${slot.slot} left alone; a release owns it`);
         continue;
       }

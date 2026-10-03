@@ -627,6 +627,62 @@ test('buildRefreshSlotRow carries the harness readiness record through a refresh
   );
 });
 
+test('buildRefreshSlotRow carries teardown bookkeeping while its phase survives', () => {
+  // Refresh rebuilds every row from probes plus a fixed list of carried
+  // fields. The releasing stamp and cleanup token were missing from that list,
+  // so a refresh during a teardown erased both: the teardown's finalize CAS
+  // then refused (token mismatch) and the reconciler could not age the fence.
+  // That left macpro-mm-4 and macpro-mm-6 fenced 'releasing' for good.
+  const probe = {
+    slot: 'macpro-mm-4',
+    machine: 'macpro',
+    platform: 'ios',
+    project: 'metamask-mobile-farm',
+    ssh: 'OK',
+    dev: 'sim:OK',
+    devserver: 'OK',
+    device: 'mm-4',
+    cdp: 'OFF',
+    fixtures: '7/10',
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: false,
+  };
+  const since = '2026-10-03T21:00:00.000Z';
+  const fenced = buildRefreshSlotRow(probe, {
+    lifecycle: 'busy',
+    phase: 'releasing',
+    current_run_id: 'run-tearing-down',
+    releasing_since: since,
+    cleanup_release_token: 'token-1',
+  });
+  assert.equal(fenced.phase, 'releasing');
+  assert.equal(fenced.releasing_since, since, 'stamp survives refresh');
+  assert.equal(fenced.cleanup_release_token, 'token-1', 'finalize token survives refresh');
+
+  const disabled = buildRefreshSlotRow(
+    { ...probe, mode: 'disabled' },
+    { lifecycle: 'busy', phase: 'releasing', releasing_since: since, cleanup_release_token: 't' },
+  );
+  assert.equal(disabled.phase, null);
+  assert.equal('releasing_since' in disabled, false, 'no fence, no stamp');
+  assert.equal('cleanup_release_token' in disabled, false);
+
+  const occupied = buildRefreshSlotRow(probe, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    held_reason: 'Tmux session x uses the slot repository',
+  });
+  assert.equal(occupied.held_reason, 'Tmux session x uses the slot repository');
+  assert.equal(
+    'held_reason' in buildRefreshSlotRow(probe, { lifecycle: 'ready', held_reason: 'stale' }),
+    false,
+    'a reason outlives nothing it no longer explains',
+  );
+});
+
 test('fleet refresh leaves the slot free when a gate park released its ownership', () => {
   const gateParkedRun: Run = {
     ...makeRun({
