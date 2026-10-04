@@ -18,6 +18,9 @@
  *
  * Counted rather than a plain set so two overlapping teardowns on one slot
  * cannot have the first to finish clear the second's protection.
+ *
+ * `slotRelease` registers here too: an operator release is no terminal run,
+ * but it is a teardown the reconciler must not reclaim from under itself.
  */
 const teardownsBySlot = new Map<string, number>();
 

@@ -34,6 +34,7 @@ import {
   renderFixtureTemplate,
   rewriteStatusFile,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -146,6 +147,9 @@ interface PreviousSlotStatus {
   slot_epoch?: unknown;
   handoff_run_id?: unknown;
   readiness?: ReadinessRecord | null;
+  releasing_since?: unknown;
+  cleanup_release_token?: unknown;
+  held_reason?: unknown;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -499,6 +503,17 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     // Written by prepare, read from the slot runtime dir; a probe refresh knows
     // nothing about it and must not erase it.
     ...(prev.readiness !== undefined ? { readiness: prev.readiness } : {}),
+    // Teardown bookkeeping written next to the phase it describes. Dropping it
+    // while the phase survives strands the slot: without the token the
+    // teardown's own finalize CAS refuses, and without the stamp the
+    // reconciler cannot tell a dead release from a live one.
+    ...(phase === SLOT_PHASE_RELEASING
+      ? {
+          [SLOT_RELEASING_SINCE]: prev.releasing_since ?? null,
+          cleanup_release_token: prev.cleanup_release_token ?? null,
+        }
+      : {}),
+    ...(phase === 'occupied' && prev.held_reason ? { held_reason: prev.held_reason } : {}),
     ...(r.resources ? { resources: r.resources } : {}),
   };
 }

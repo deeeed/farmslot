@@ -10,6 +10,7 @@ import {
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
   updateSlotStatusIf,
 } from '../core/index.js';
@@ -311,7 +312,7 @@ export async function releaseRunSlotOwnership(
     phase: 'occupied',
     held_reason: blocker,
     cleanup_release_token: null,
-    releasing_since: null,
+    [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
   });

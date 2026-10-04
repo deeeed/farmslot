@@ -251,6 +251,44 @@ test('concurrent slotRelease calls for one slot coalesce onto a single in-flight
   );
 });
 
+test('a slot release is visible to the reconciler for as long as it runs', async (t) => {
+  // The reconciler reclaims a releasing fence older than its bound unless a
+  // teardown is registered. An operator release must register, or one that
+  // outlives the bound is reset to ready mid-teardown.
+  const { isTerminalTeardownInFlight } =
+    await import('../../run-engine/terminal-teardown-registry.js');
+  const slotId = 'demo-work-1';
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-registry`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+    ],
+    decisions: [
+      {
+        id: 'decision-registry',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: 'Review package',
+        actions: [],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const release = slotRelease({ slotId }, noopEmit);
+  assert.equal(isTerminalTeardownInFlight(slotId), true, 'registered while running');
+  await assert.rejects(release, /gate-held/);
+  assert.equal(isTerminalTeardownInFlight(slotId), false, 'cleared once settled, even on failure');
+});
+
 // ─── ADR-054 free-slot at an operator wait ───
 
 function freedGateParkRecord(runId: string, slotId: string) {
