@@ -36,6 +36,7 @@ import {
 
 const MM_HOST = {
   name: 'mm-harness',
+  product: 'MetaMask',
   envPrefix: 'MM_HARNESS',
   packageName: '@deeeed/metamask-harness',
   packageRoot: '/opt/mm-harness',

@@ -53,6 +53,107 @@ export interface PlatformAdapter {
   diagnostics?: AdapterDiagnostics;
   // Source fingerprint of the checkout root, when the platform has its own.
   sourceFingerprint?(root: string): string;
+  // `launch` for this platform. The command owns the shared grammar (--heal,
+  // adapter resolution, the checkout lock, the --json-stream envelope); the
+  // platform owns the rest and returns the exit code.
+  launch(context: AdapterLaunchContext): Promise<number>;
+  // How a host recognises this platform's checkout when --adapter is absent.
+  // Any adapter's remote match beats any adapter's file match; within a pass,
+  // registration order decides.
+  detect?: AdapterDetect;
+  // Positional platform targets this adapter accepts (`launch ios`), which also
+  // select it when passed as --platform.
+  targets?: readonly string[];
+  // Boolean CLI flags this platform adds, so the host parses `--flag value` as
+  // a flag followed by a positional.
+  flags?: AdapterFlags;
+  // Output patterns that classify a failure for bounded healing. Hosts match
+  // every registered adapter's patterns.
+  failurePatterns?: AdapterFailurePatterns;
+}
+
+export interface AdapterDetect {
+  // Matches the checkout's `remote.origin.url`.
+  remote?(url: string): boolean;
+  // Matches the checkout's files.
+  files?(target: string): boolean;
+}
+
+export interface AdapterFlags {
+  // Flags `launch` accepts for this platform.
+  launch?: readonly string[];
+  // Flags the other commands accept for this platform.
+  commands?: readonly string[];
+}
+
+// Failure classes in the order a host tests them; the first match wins and an
+// unmatched failure is app logic (never healed).
+export interface AdapterFailurePatterns {
+  // The screen refuses capture, so a screenshot can't be evidence. The platform
+  // words the explanation and the next step.
+  captureProtected?: { pattern: RegExp; message: string; userAction: string };
+  // Transport failures that would otherwise read as wallet state.
+  transportFirst?: RegExp;
+  // Wallet or fixture state the harness never changes on its own.
+  walletState?: RegExp;
+  // Transport and dev-server failures a relaunch can heal.
+  transport?: RegExp;
+}
+
+// --heal: off disables every recovery, infra-only and auto allow one bounded
+// transport recovery per invocation.
+export type HealPolicy = 'off' | 'infra-only' | 'auto';
+
+export interface HealMutation {
+  type: string;
+  action: string;
+  [key: string]: unknown;
+}
+
+export interface HealState {
+  recovered: string[];
+  mutations: HealMutation[];
+  attemptedRecoveries: string[];
+}
+
+export interface HealBoundViolation {
+  code: string;
+  exitCode: number;
+  message: string;
+  userAction?: string;
+  // The original failure output, carried verbatim next to the classification.
+  originalError?: string;
+}
+
+// The --json-stream events a command and its platform emit while it runs.
+export interface CommandEventStream {
+  readonly enabled: boolean;
+  emit(event: string, fields?: Record<string, unknown>): void;
+  phase(phase: string, fields?: Record<string, unknown>): void;
+  mutation(mutation: Record<string, unknown>): void;
+  recovery(code: string): void;
+  error(error: Record<string, unknown>): void;
+  complete(
+    status: 'pass' | 'fail' | 'unknown',
+    exitCode: number,
+    fields?: Record<string, unknown>,
+  ): void;
+}
+
+export interface AdapterLaunchContext {
+  adapter: string;
+  target: string;
+  options: Record<string, string | boolean>;
+  // One of the adapter's `targets`, from the positional or --platform.
+  platformTarget?: string;
+  heal: HealPolicy;
+  // --json without --json-stream: print one JSON document.
+  jsonOutput: boolean;
+  // --json or --json-stream: no interactive progress.
+  machine: boolean;
+  stream: CommandEventStream;
+  // Report a usage error in the launch envelope and return its exit code.
+  usage(message: string, userAction: string): number;
 }
 
 // Read-only runtime readiness, normalized across platforms so `doctor` renders

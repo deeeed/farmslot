@@ -4,6 +4,7 @@
     "noEmit": false,
     "rootDir": "src",
     "paths": {
+      "@farmslot/adapter-sdk": ["../adapter-sdk/dist/index.d.ts"],
       "@farmslot/agent-runtime": ["../agent-runtime/dist/index.d.ts"],
       "@farmslot/protocol": ["../protocol/dist/index.d.ts"],
       "@farmslot/protocol/*": ["../protocol/dist/*"],

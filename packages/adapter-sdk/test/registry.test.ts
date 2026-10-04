@@ -34,6 +34,7 @@ function adapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdap
       verify: () => ({ error: 'no verify' }),
     },
     runtimeContext: { forbiddenFields: [] },
+    launch: async () => 0,
     ...extra,
   };
 }
