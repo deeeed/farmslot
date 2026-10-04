@@ -6,6 +6,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Rename the recipe harness package pages to `@farmslot/recipe-runner` (`/docs/architecture/recipe-runner`).
 - Add the Adapter SDK reference (`@farmslot/adapter-sdk`: `PlatformAdapter`, `defineAdapter`, the adapter registry).
+- Add the `@farmslot/adapter-web` reference page.
 
 - Document which package-manager values leave the approved plan environment and the shared `run`/`validate` exit codes for malformed library entries.
 
