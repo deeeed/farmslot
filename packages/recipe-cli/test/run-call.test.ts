@@ -496,6 +496,7 @@ describe('engine door', () => {
     const recipe = synthesizeOneNodeRecipe('shop.ping', {
       intent: 'human supplied',
       count: 2,
+      status: 'running',
       action: 'malicious.override',
       next: 'malicious-node',
     });
@@ -503,6 +504,7 @@ describe('engine door', () => {
     assert.deepEqual((recipe.workflow as { nodes: Record<string, unknown> }).nodes.call, {
       intent: 'human supplied',
       count: 2,
+      status: 'running',
       action: 'shop.ping',
       next: 'done',
     });
@@ -811,8 +813,9 @@ describe('network observation', () => {
 
     const context = { artifactsDir: artifacts, nodeId: 'capture' } as Parameters<
       typeof runNetworkCaptureAction
-    >[1];
+    >[2];
     const started = await runNetworkCaptureAction(
+      'web',
       { phase: 'start', id: 'focus', url_includes: ['/api'] },
       context,
     );
@@ -821,12 +824,12 @@ describe('network observation', () => {
       phase: 'start',
       started: 'focus',
     });
-    const ended = await runNetworkCaptureAction({ phase: 'end', id: 'focus' }, context);
+    const ended = await runNetworkCaptureAction('web', { phase: 'end', id: 'focus' }, context);
     assert.deepEqual(ended.artifacts, [
       { path: 'network/focus-summary.json', type: 'report', nodeId: 'capture' },
     ]);
     await assert.rejects(
-      runNetworkCaptureAction({ phase: 'middle', id: 'focus' }, context),
+      runNetworkCaptureAction('web', { phase: 'middle', id: 'focus' }, context),
       /phase=start\|end and a non-empty id/u,
     );
 
@@ -851,9 +854,37 @@ describe('network observation', () => {
     });
     assert.deepEqual(calls.members, ['network.close']);
     await assert.rejects(
-      runNetworkCaptureAction({ phase: 'start', id: 'late' }, context),
-      /^Error: Network observation is unavailable: run observer was not started\.$/u,
+      runNetworkCaptureAction('web', { phase: 'start', id: 'late' }, context),
+      /^Error: Web network observation is unavailable: run observer was not started\.$/u,
     );
+  });
+
+  test('names the adapter whose session failed to start, else the dispatching one', async () => {
+    const registry = createAdapterRegistry();
+    registry.register(webAdapter(calls));
+    registry.register(
+      shopAdapter('kiosk', calls, {
+        observation: {
+          network: {
+            backend: async () => {
+              throw new Error('no CDP port');
+            },
+            actions: true,
+          },
+        },
+      }),
+    );
+    configureHarnessAdapters(registry);
+    const artifacts = tempRoot('recipe-cli-network-broken-');
+    const observer = await startRunNetworkObservation('kiosk', artifacts, artifacts, {});
+    const context = { artifactsDir: artifacts, nodeId: 'capture' } as Parameters<
+      typeof runNetworkCaptureAction
+    >[2];
+    await assert.rejects(
+      runNetworkCaptureAction('web', { phase: 'start', id: 'focus' }, context),
+      /^Error: Kiosk network observation is unavailable: no CDP port\.$/u,
+    );
+    await observer?.finalize();
   });
 
   test("the host's AUTO_NETWORK_CAPTURE=0 skips the whole-run capture", async () => {

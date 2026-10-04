@@ -21,6 +21,8 @@ interface NodeEvent {
 }
 
 interface ObservationSession {
+  // The adapter whose backend the session opened; it names the observation in errors.
+  adapter: string;
   artifactsDir: string;
   backend?: NetworkCaptureBackend;
   setupError?: string;
@@ -53,6 +55,7 @@ export async function startRunNetworkObservation(
   const autoCapture = runtimeEnv[hostEnvName('AUTO_NETWORK_CAPTURE')] !== '0';
   const key = path.resolve(artifactsDir);
   const session: ObservationSession = {
+    adapter,
     artifactsDir: key,
     autoStarted: false,
     autoStartedAt: Date.now(),
@@ -115,9 +118,12 @@ export async function startRunNetworkObservation(
 
 /**
  * `app.network_capture phase=start|end id=<id>` on the run's session: start a
- * filtered capture window, or end it and write its summary artifact.
+ * filtered capture window, or end it and write its summary artifact. `adapter`
+ * is the platform dispatching the action; it names the observation when the
+ * run opened no session.
  */
 export async function runNetworkCaptureAction(
+  adapter: string,
   node: Record<string, unknown>,
   context: ActionExecutionContext,
 ): Promise<ActionResult> {
@@ -130,7 +136,7 @@ export async function runNetworkCaptureAction(
   const session = sessions.get(path.resolve(context.artifactsDir));
   if (!session?.backend) {
     throw new Error(
-      `Network observation is unavailable: ${session?.setupError ?? 'run observer was not started'}.`,
+      `${capitalize(session?.adapter ?? adapter)} network observation is unavailable: ${session?.setupError ?? 'run observer was not started'}.`,
     );
   }
   if (phase === 'start') {
@@ -233,6 +239,10 @@ async function writeSummary(
     `${JSON.stringify(summary, null, 2)}\n`,
     'Network artifact',
   );
+}
+
+function capitalize(value: string): string {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function boundedError(error: unknown): string {
