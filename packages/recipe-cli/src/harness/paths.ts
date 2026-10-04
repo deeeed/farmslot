@@ -1,0 +1,43 @@
+import path from 'node:path';
+
+import { harnessHost, hostEnvName, validateRelativeRecipePath } from './host.js';
+
+// The checkout layout every host and shell leaf shares (`temp/recipe/runtime/<adapter>/`).
+export const DEFAULT_RECIPE_RUNTIME_DIR = 'temp/recipe/runtime';
+export const DEFAULT_RECIPE_HARNESS_ROOT = 'temp/recipe/harness';
+
+/** The checkout-relative runtime directory: `RECIPE_RUNTIME_DIR`, else the default. */
+export function recipeRuntimeDir(): string {
+  return validateRelativeRecipePath(
+    'RECIPE_RUNTIME_DIR',
+    process.env.RECIPE_RUNTIME_DIR || DEFAULT_RECIPE_RUNTIME_DIR,
+  );
+}
+
+/** The checkout-relative overlay directory: `RECIPE_HARNESS_ROOT`, else the default. */
+export function recipeHarnessRoot(): string {
+  return validateRelativeRecipePath(
+    'RECIPE_HARNESS_ROOT',
+    process.env.RECIPE_HARNESS_ROOT || DEFAULT_RECIPE_HARNESS_ROOT,
+  );
+}
+
+export function recipeRuntimePath(projectRoot: string, ...segments: string[]): string {
+  return path.join(projectRoot, recipeRuntimeDir(), ...segments);
+}
+
+export function recipeHarnessPath(projectRoot: string, ...segments: string[]): string {
+  return path.join(projectRoot, recipeHarnessRoot(), ...segments);
+}
+
+/**
+ * The host executable serving this run. The host bin exports its own resolved
+ * path as `<envPrefix>_EXECUTABLE`, so a command that re-enters the harness
+ * reaches the install a task locked onto rather than whatever PATH resolves to.
+ */
+export function harnessExecutable(): string {
+  const host = harnessHost();
+  return path.resolve(
+    process.env[hostEnvName('EXECUTABLE')] ?? path.join(host.packageRoot, 'bin', host.name),
+  );
+}

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Add `@farmslot/recipe-cli/harness`, the generic support a harness CLI runs its commands on: the host identity (`configureHarnessHost`: bin name, env prefix, package and runtime-path defaults), runtime paths (`recipeRuntimeDir`, `recipeRuntimePath`, `harnessExecutable`), the resumability journal (`withCommandJournal`, `readCommandJournal`, argument redaction), the checkout lock (`acquireCheckoutLock`, `trackCheckoutChild`), `JsonStreamWriter`, colour helpers, contained artifact writes, Git library provenance and shell-leaf invocation. Moved from mm-harness; a product preset keeps its own env names (`MM_HARNESS_*`) through the host identity.
 - Export the action catalog helpers a host CLI needs on top of its own action manifest: `actionCategory`, `fuzzyResolveActions`, `shortActionNames`, `searchActions`, `findRelatedActions`, `summarizeActionCategories`, `actionCapabilityMatrix`, `resolveActionCapabilityRefusal` and `missingActionCapabilities`. `search` ranks with the same scorer, so its results are unchanged.
 
 ## 0.1.1 - 2026-10-03
