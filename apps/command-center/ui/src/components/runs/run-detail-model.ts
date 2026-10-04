@@ -10,6 +10,7 @@ import type {
   Run,
   RunDecision,
   RunStep,
+  TaskOperation,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
@@ -20,6 +21,8 @@ import {
 } from '@farmslot/protocol';
 
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
+
+import { collectRunEvidenceArtifacts } from './run-utils.js';
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -689,4 +692,50 @@ export function runBootstrapBlocksActions(
   return (
     bootstrapFailed && (verified?.runId !== runId || verified.connectionEpoch !== connectionEpoch)
   );
+}
+
+/** Run evidence plus each worker command's task-local log, the files a run-detail link may open. */
+export function runArtifactsWithOperationLogs(
+  run: Run,
+  operations: readonly TaskOperation[],
+): FamilyObservabilityArtifact[] {
+  const artifacts = collectRunEvidenceArtifacts(run);
+  for (const operation of operations) {
+    if (!artifacts.some((entry) => entry.path === operation.logPath)) {
+      artifacts.push({
+        runId: run.id,
+        familyId: run.familyId,
+        path: operation.logPath,
+        purpose: 'other',
+        source: 'task-artifact',
+      });
+    }
+  }
+  return artifacts;
+}
+
+export type EvidenceArtifactLookup =
+  | { index: number }
+  | { unavailable: { path: string; reason: string } };
+
+/**
+ * Where an artifact link points among the run's files. A link that cannot be
+ * opened gets a reason the page shows; it never resolves to nothing.
+ */
+export function locateEvidenceArtifact(
+  artifacts: readonly FamilyObservabilityArtifact[],
+  path: string,
+  workerProgressLoaded: boolean,
+): EvidenceArtifactLookup {
+  const index = artifacts.findIndex((candidate) => candidate.path === path);
+  if (index >= 0) return { index };
+  return {
+    unavailable: {
+      path,
+      reason:
+        path.startsWith('artifacts/operations/') && !workerProgressLoaded
+          ? 'worker progress has not loaded yet; the log opens when it arrives.'
+          : "it is not among this run's evidence files or worker command logs.",
+    },
+  };
 }

@@ -26,10 +26,12 @@ import {
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
+  locateEvidenceArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   reviewTerminalUnavailableReason,
+  runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
@@ -821,4 +823,51 @@ test('direct run snapshot recovers actions after list failure only for its run a
   assert.equal(runBootstrapBlocksActions(true, 'selected', verified, 3), true);
   assert.equal(runBootstrapBlocksActions(true, 'selected', null, 2), true);
   assert.equal(runBootstrapBlocksActions(false, 'selected', null, 2), false);
+});
+
+// The "View operation log" link from the runs panel, exactly as Arthur clicked it.
+const OPERATION_LOG_HASH =
+  '#run/ba646bae-62a2-490b-86bb-0d5c3edcb9de?artifactRun=ba646bae-62a2-490b-86bb-0d5c3edcb9de&artifact=artifacts%2Foperations%2Fbac623d2-897a-46a4-a6c0-dd477efe0bc7.log';
+
+test('an operation log link resolves to the worker command log of an active run', async () => {
+  const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
+  const selection = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);
+  assert.equal(selection.artifactRun, 'ba646bae-62a2-490b-86bb-0d5c3edcb9de');
+  const run = makeRun({ id: 'ba646bae-62a2-490b-86bb-0d5c3edcb9de', status: 'monitoring' });
+  const operations = [
+    {
+      schemaVersion: 1 as const,
+      id: 'bac623d2-897a-46a4-a6c0-dd477efe0bc7',
+      command: 'run',
+      target: '/repo',
+      pid: 1,
+      processStartedAt: 'x',
+      startedAt: '2026-10-04T07:00:00Z',
+      updatedAt: '2026-10-04T07:00:05Z',
+      status: 'running' as const,
+      logPath: 'artifacts/operations/bac623d2-897a-46a4-a6c0-dd477efe0bc7.log',
+    },
+  ];
+  const artifacts = runArtifactsWithOperationLogs(run, operations);
+  const lookup = locateEvidenceArtifact(artifacts, selection.artifact!, true);
+  assert.ok('index' in lookup);
+  assert.equal(artifacts[lookup.index]!.path, operations[0]!.logPath);
+  assert.equal(artifacts[lookup.index]!.source, 'task-artifact');
+});
+
+test('an artifact link that cannot open says why instead of doing nothing', async () => {
+  const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
+  const { artifact } = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);
+  const run = makeRun({ status: 'monitoring' });
+  const beforeProgress = locateEvidenceArtifact(
+    runArtifactsWithOperationLogs(run, []),
+    artifact!,
+    false,
+  );
+  assert.ok('unavailable' in beforeProgress);
+  assert.match(beforeProgress.unavailable.reason, /worker progress has not loaded yet/);
+  const unknown = locateEvidenceArtifact(runArtifactsWithOperationLogs(run, []), artifact!, true);
+  assert.ok('unavailable' in unknown);
+  assert.equal(unknown.unavailable.path, artifact);
+  assert.match(unknown.unavailable.reason, /not among this run's evidence files/);
 });

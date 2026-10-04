@@ -267,6 +267,22 @@ export const runDetailStyles = css`
     font-size: 12px;
     padding: 4px 0;
   }
+  .evidence-unavailable {
+    position: fixed;
+    right: ${unsafeCSS(spacing.lg)};
+    bottom: ${unsafeCSS(spacing.lg)};
+    z-index: 20;
+    display: flex;
+    gap: ${unsafeCSS(spacing.md)};
+    align-items: center;
+    max-width: min(640px, calc(100vw - 32px));
+    padding: ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.lg)};
+    border: 1px solid ${unsafeCSS(colors.statusWarn)};
+    border-radius: ${unsafeCSS(radii.md)};
+    background: ${unsafeCSS(colors.bgSurface)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    overflow-wrap: anywhere;
+  }
   .evidence-empty {
     color: ${unsafeCSS(colors.textMuted)};
     padding-top: ${unsafeCSS(spacing.sm)};

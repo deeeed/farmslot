@@ -198,6 +198,7 @@ export interface RunEvidenceRenderContext {
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
   evidenceLightboxIndex: number;
+  evidenceArtifactUnavailable?: { path: string; reason: string } | null;
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
   onEvidenceArtifactClick: (
     event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
@@ -217,7 +218,9 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
     return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runEvidenceSummary(run, artifacts);
-  if (!evidence.shouldRender) return nothing;
+  // A worker command log link opens here while the run is still active and has
+  // no results card yet, so the lightbox renders either way.
+  if (!evidence.shouldRender) return renderEvidenceLightbox(ctx);
   const review = [...run.decisions]
     .reverse()
     .find(
@@ -343,14 +346,24 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
 }
 
 function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
-  return html`<media-lightbox
-    .items=${ctx.evidenceLightboxItems}
-    .open=${ctx.evidenceLightboxOpen}
-    .selectedIndex=${ctx.evidenceLightboxIndex}
-    scopeLabel="Run output"
-    @lightbox-close=${() => ctx.closeEvidenceLightbox()}
-    @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
-  ></media-lightbox>`;
+  const unavailable = ctx.evidenceArtifactUnavailable;
+  return html`${unavailable
+      ? html`<div
+          class="evidence-unavailable"
+          role="alert"
+          data-testid="evidence-artifact-unavailable"
+        >
+          <span>Cannot open <code>${unavailable.path}</code>: ${unavailable.reason}</span>
+          <button type="button" @click=${() => ctx.closeEvidenceLightbox()}>Dismiss</button>
+        </div>`
+      : nothing}<media-lightbox
+      .items=${ctx.evidenceLightboxItems}
+      .open=${ctx.evidenceLightboxOpen}
+      .selectedIndex=${ctx.evidenceLightboxIndex}
+      scopeLabel="Run output"
+      @lightbox-close=${() => ctx.closeEvidenceLightbox()}
+      @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
+    ></media-lightbox>`;
 }
 
 export function renderRunGrade(grade: RunGrade): unknown {

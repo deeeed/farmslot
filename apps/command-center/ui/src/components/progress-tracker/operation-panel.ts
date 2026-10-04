@@ -7,7 +7,7 @@ import {
   unsafeCSS,
 } from 'lit';
 
-import type { TaskProgressStructured } from '@farmslot/protocol';
+import type { TaskOperation, TaskProgressStructured } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
@@ -36,6 +36,12 @@ export const operationPanelStyles = css`
     align-items: baseline;
     gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.lg)};
   }
+  .operation-title {
+    margin: 0;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    font-weight: 600;
+  }
   .operation-command {
     font-size: ${unsafeCSS(fonts.sizeMd)};
   }
@@ -53,6 +59,11 @@ export const operationPanelStyles = css`
   .operation-status.fail,
   .operation-error {
     color: ${unsafeCSS(colors.statusFail)};
+  }
+  /* A failed command inside a run that is still working is not a run failure. */
+  .operation-status.fail.in-progress,
+  .operation-in-progress {
+    color: ${unsafeCSS(colors.statusWarn)};
   }
   .operation-stage,
   .operation-freshness {
@@ -88,6 +99,48 @@ function age(at: string, now: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+const STALE_STATUS_MS = 30_000;
+
+const STATUS_LABEL: Record<TaskOperation['status'], string> = {
+  running: 'Command running',
+  pass: 'Command completed',
+  fail: 'Command failed',
+};
+
+/**
+ * The command as a reader would type it. Harness runtimes record only their
+ * subcommand (`run`, `call`), and a bare `run` next to a status badge reads as
+ * the Farmslot run's verdict, so a bare word is shown as a harness subcommand.
+ */
+function commandLabel(command: string): string {
+  return /\s/.test(command.trim()) ? command : `harness ${command}`;
+}
+
+/**
+ * What the panel shows: the latest command to start, whatever its status or
+ * heartbeat, plus any other running command still reporting.
+ *
+ * By start time, not list order or heartbeat. Filtering running commands by
+ * heartbeat age made the panel fall back to an older failed command whenever a
+ * heartbeat was late, so the badge flipped between running and failed. The
+ * latest command now always stays, marked "No recent status update" when its
+ * heartbeat is old. An older running record with an old heartbeat is left out:
+ * a harness killed mid-command never finalizes its record, and showing it as
+ * running would bury what the worker did since.
+ */
+export function selectOperations(
+  operations: readonly TaskOperation[],
+  now = Date.now(),
+): TaskOperation[] {
+  const byStart = [...operations].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const latest = byStart.at(-1);
+  return byStart.filter(
+    (operation) =>
+      operation === latest ||
+      (operation.status === 'running' && now - Date.parse(operation.updatedAt) <= STALE_STATUS_MS),
+  );
+}
+
 export function renderOperationPanel(
   progress: TaskProgressStructured,
   runId?: string | null,
@@ -95,73 +148,74 @@ export function renderOperationPanel(
 ) {
   if (progress.operationsError)
     return html`<p class="operation-error" role="status">${progress.operationsError}</p>`;
-  const operations = progress.operations ?? [];
-  const active = operations.filter(
-    (operation) =>
-      operation.status === 'running' && now - Date.parse(operation.updatedAt) <= 30_000,
-  );
-  const selected = active.length ? active : operations.slice(-1);
+  const selected = selectOperations(progress.operations ?? [], now);
   if (!selected.length) return nothing;
+  // The worker still has a checklist step open: a failed command is a step it
+  // may retry, not the run's outcome.
+  const runInProgress = progress.phases.some((phase) =>
+    phase.steps.some((step) => step.status === 'running'),
+  );
   return html`<section
     class="operation-panel"
-    aria-label="Command activity"
+    aria-label="Last worker command"
     data-testid="operation-panel"
   >
-    ${selected.map(
-      (operation) =>
-        html`<div class="operation-item">
-          <div class="operation-heading">
-            <strong class="operation-command">${operation.command}</strong>
-            <span class="operation-status ${operation.status}"
-              >${operation.status === 'running'
-                ? 'Running reported'
-                : operation.status === 'pass'
-                  ? 'Completed'
-                  : 'Failed'}</span
-            >
-            <span>
-              ·
-              ${age(
-                operation.startedAt,
-                operation.finishedAt ? Date.parse(operation.finishedAt) : now,
-              )}
-              elapsed</span
-            >
-            ${operation.parentId ? html`<span>· Nested command</span>` : nothing}
-          </div>
-          ${operation.stage
-            ? html`<div class="operation-stage">
-                Stage:
-                ${operation.stage}${operation.stageStartedAt
-                  ? ` · ${age(operation.stageStartedAt, operation.finishedAt ? Date.parse(operation.finishedAt) : now)} elapsed`
-                  : nothing}
-              </div>`
+    <h4 class="operation-title">Last worker command</h4>
+    ${selected.map((operation) => {
+      const softened = operation.status === 'fail' && runInProgress;
+      return html`<div class="operation-item">
+        <div class="operation-heading">
+          <strong class="operation-command">${commandLabel(operation.command)}</strong>
+          <span class="operation-status ${operation.status}${softened ? ' in-progress' : ''}"
+            >${STATUS_LABEL[operation.status]}</span
+          >
+          ${softened
+            ? html`<span class="operation-in-progress">· run still in progress</span>`
             : nothing}
-          <div class="operation-freshness">
-            <span
-              >Last output:
-              ${operation.lastOutputAt
-                ? `${age(operation.lastOutputAt, now)} ago`
-                : 'none recorded'}</span
-            >
-            <span>· Status update: ${age(operation.updatedAt, now)} ago</span>
-            ${operation.status === 'running' && now - Date.parse(operation.updatedAt) > 30_000
-              ? html`<strong class="operation-stale">· No recent status update</strong>`
-              : nothing}
-          </div>
-          ${runId
-            ? html`<a
-                class="operation-log"
-                href=${runDetailEvidenceArtifactHash(
-                  runId,
-                  { path: operation.logPath },
-                  `#run/${encodeURIComponent(runId)}`,
-                )}
-                >View operation log</a
-              >`
-            : html`<code>${operation.logPath}</code>`}
-        </div>`,
-    )}
+          <span>
+            ·
+            ${age(
+              operation.startedAt,
+              operation.finishedAt ? Date.parse(operation.finishedAt) : now,
+            )}
+            elapsed</span
+          >
+          ${operation.parentId ? html`<span>· Nested command</span>` : nothing}
+        </div>
+        ${operation.stage
+          ? html`<div class="operation-stage">
+              Stage:
+              ${operation.stage}${operation.stageStartedAt
+                ? ` · ${age(operation.stageStartedAt, operation.finishedAt ? Date.parse(operation.finishedAt) : now)} elapsed`
+                : nothing}
+            </div>`
+          : nothing}
+        <div class="operation-freshness">
+          <span
+            >Last output:
+            ${operation.lastOutputAt
+              ? `${age(operation.lastOutputAt, now)} ago`
+              : 'none recorded'}</span
+          >
+          <span>· Status update: ${age(operation.updatedAt, now)} ago</span>
+          ${operation.status === 'running' &&
+          now - Date.parse(operation.updatedAt) > STALE_STATUS_MS
+            ? html`<strong class="operation-stale">· No recent status update</strong>`
+            : nothing}
+        </div>
+        ${runId
+          ? html`<a
+              class="operation-log"
+              href=${runDetailEvidenceArtifactHash(
+                runId,
+                { path: operation.logPath },
+                `#run/${encodeURIComponent(runId)}`,
+              )}
+              >View operation log</a
+            >`
+          : html`<code>${operation.logPath}</code>`}
+      </div>`;
+    })}
   </section>`;
 }
 

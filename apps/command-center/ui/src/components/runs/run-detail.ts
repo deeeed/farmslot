@@ -74,9 +74,11 @@ import {
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
+  locateEvidenceArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
@@ -133,11 +135,7 @@ import {
   selectedStepNameFromRunDetailHash,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
-import {
-  collectRunEvidenceArtifacts,
-  collectRunInteractivePacketArtifacts,
-  sortRunsForFamilyView,
-} from './run-utils.js';
+import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -863,6 +861,7 @@ export class RunDetail extends RunDetailState {
     if (!this.run) return;
     const { artifactRun, artifact } = artifactSelectionFromRunDetailHash();
     if (!artifact) {
+      this._evidenceArtifactUnavailable = null;
       if (this._evidenceLightboxOpen) {
         this._evidenceLightboxOpen = false;
         this._evidenceLightboxItems = [];
@@ -877,20 +876,16 @@ export class RunDetail extends RunDetailState {
       this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact
     )
       return;
-    const artifacts = collectRunEvidenceArtifacts(this.run);
-    for (const operation of this.taskProgress?.operations ?? []) {
-      if (!artifacts.some((entry) => entry.path === operation.logPath)) {
-        artifacts.push({
-          runId: this.runId,
-          familyId: this.run.familyId,
-          path: operation.logPath,
-          purpose: 'other',
-          source: 'task-artifact',
-        });
-      }
+    const artifacts = runArtifactsWithOperationLogs(this.run, this.taskProgress?.operations ?? []);
+    // Re-applied when the run or worker progress updates, so a link that
+    // arrives before progress loads still opens; until then, say so.
+    const lookup = locateEvidenceArtifact(artifacts, artifact, Boolean(this.taskProgress));
+    if ('unavailable' in lookup) {
+      this._evidenceArtifactUnavailable = lookup.unavailable;
+      return;
     }
-    const index = artifacts.findIndex((candidate) => candidate.path === artifact);
-    if (index < 0) return;
+    const { index } = lookup;
+    this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
     const params = new URLSearchParams(location.hash.split('?')[1]);
     const traceIndex = params.get('artifactTrace');
@@ -1041,6 +1036,7 @@ export class RunDetail extends RunDetailState {
 
   private _closeEvidenceLightbox(): void {
     this._evidenceLightboxOpen = false;
+    this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
   }
 
@@ -1113,6 +1109,7 @@ export class RunDetail extends RunDetailState {
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,
       evidenceLightboxIndex: this._evidenceLightboxIndex,
+      evidenceArtifactUnavailable: this._evidenceArtifactUnavailable,
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
