@@ -110,10 +110,12 @@ test('related actions rank by category, then shared name terms, then name', () =
     'metamask.perps.close_position',
     'metamask.perps.cancel_order',
   ]);
-  // A generic operation term ('close') counts 5, not 30.
-  assert.deepEqual(findRelatedActions(related, related[5]!), [
-    'metamask.wallet.open_position_sheet',
-    'metamask.perps.close_position',
+  // A generic operation term ('close') counts 5, a specific one ('position') 30: position_badge
+  // outranks close_all, which would win the name tie-break if both counted 30.
+  const closePosition = related[1]!;
+  assert.deepEqual(findRelatedActions([closePosition, related[5]!, related[8]!], closePosition), [
+    'ui.position_badge',
+    'metamask.wallet.close_all',
   ]);
 });
 
