@@ -281,7 +281,13 @@ export const runDetailStyles = css`
     border-radius: ${unsafeCSS(radii.md)};
     background: ${unsafeCSS(colors.bgSurface)};
     color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .evidence-unavailable span {
     overflow-wrap: anywhere;
+  }
+  .evidence-unavailable button {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .evidence-empty {
     color: ${unsafeCSS(colors.textMuted)};

@@ -48,6 +48,16 @@ export function runDetailStepHash(
   hash: string = location.hash,
 ): string {
   const { route, params } = parseHashRoute(hash);
+  // Choosing another step closes the file the last step had open. Only here:
+  // back/forward lands on a URL whose step and file already belong together.
+  if (
+    params.get(ARTIFACT_VIEW_PARAM) === STEP_ARTIFACT_VIEW &&
+    params.get(STEP_PARAM) !== stepName
+  ) {
+    params.delete(ARTIFACT_RUN_PARAM);
+    params.delete(ARTIFACT_PARAM);
+    params.delete(ARTIFACT_VIEW_PARAM);
+  }
   if (stepName) {
     params.set(STEP_PARAM, stepName);
   } else {

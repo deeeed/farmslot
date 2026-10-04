@@ -124,3 +124,17 @@ test('leaving run detail drops the step inspector artifact marker too', () => {
   );
   assert.doesNotMatch(next, /artifactView|artifact=/);
 });
+
+test('choosing another step closes the file the last step had open; history entries keep theirs', () => {
+  const taskOpen =
+    '#run/run-1?step=write-task&artifactRun=run-1&artifact=TASK.md&artifactView=step';
+  const toMonitor = runDetailStepHash('run-1', 'monitor', taskOpen);
+  assert.equal(selectedStepNameFromRunDetailHash(toMonitor), 'monitor');
+  assert.equal(artifactSelectionFromRunDetailHash(toMonitor).artifact, null);
+  assert.equal(artifactSelectionFromRunDetailHash(toMonitor).artifactView, null);
+  // Same step (a URL reached by back/forward re-syncing): the file stays.
+  assert.equal(runDetailStepHash('run-1', 'write-task', taskOpen), taskOpen);
+  // A run-detail artifact is not the step's to drop.
+  const runOwned = '#run/run-1?step=write-task&artifactRun=run-1&artifact=artifacts%2Fa.log';
+  assert.match(runDetailStepHash('run-1', 'monitor', runOwned), /artifact=artifacts%2Fa\.log/);
+});

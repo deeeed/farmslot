@@ -33,6 +33,7 @@ import {
   ARTIFACT_RUN_PARAM,
   ARTIFACT_VIEW_PARAM,
   artifactSelectionFromRunDetailHash,
+  selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
 import { formatDuration, stepStatusColor } from './run-utils.js';
@@ -719,26 +720,27 @@ export class StepInspector extends StepInspectorState {
     this._updateArtifactHash(null);
   }
 
-  /** Reopen a step file named by the URL, or say why it cannot open. */
+  /**
+   * Make the step viewer match the URL: open the step file it names, or close.
+   * The URL is the source of truth, so back/forward and reloads land where the
+   * history entry was, and a run-detail artifact never sits under a step file.
+   */
   private _restoreArtifactFromHash(): void {
     if (!this.step) return;
     const selection = artifactSelectionFromRunDetailHash();
-    if (selection.artifactView !== STEP_ARTIFACT_VIEW || !selection.artifact) {
-      this._artifactUnavailable = null;
+    const lookup = locateStepArtifact(selection, this._stepArtifacts(), {
+      runId: this.run?.id,
+      stepName: this.step.name,
+      urlStepName: selectedStepNameFromRunDetailHash(),
+    });
+    if (!lookup || 'unavailable' in lookup) {
+      this._lightboxOpen = false;
+      this._artifactUnavailable = lookup ? lookup.unavailable : null;
       return;
     }
     if (this._lightboxOpen && this._lightboxItems[this._lightboxIndex]?.path === selection.artifact)
       return;
     const artifacts = this._stepArtifacts();
-    const lookup = locateStepArtifact(selection, artifacts, {
-      runId: this.run?.id,
-      stepName: this.step.name,
-    });
-    if (!lookup) return;
-    if ('unavailable' in lookup) {
-      this._artifactUnavailable = lookup.unavailable;
-      return;
-    }
     this._artifactUnavailable = null;
     this._lightboxItems = artifacts.map((a) => ({
       url: this._artifactUrl(a),
@@ -757,16 +759,6 @@ export class StepInspector extends StepInspectorState {
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    const previous = changed.get('step') as RunStep | undefined;
-    if (changed.has('step') && previous && previous.name !== this.step?.name) {
-      // Moving to another step: the file open in the URL belonged to the last one.
-      if (artifactSelectionFromRunDetailHash().artifactView === STEP_ARTIFACT_VIEW) {
-        this._lightboxOpen = false;
-        this._artifactUnavailable = null;
-        this._updateArtifactHash(null);
-      }
-      return;
-    }
     // Run data can arrive trimmed first; retry as it fills in.
     if (changed.has('step') || changed.has('run')) this._restoreArtifactFromHash();
   }

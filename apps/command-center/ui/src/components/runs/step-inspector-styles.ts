@@ -512,6 +512,12 @@ export const stepInspectorStyles = css`
     border-radius: 6px;
     background: ${unsafeCSS(colors.bgSurface)};
     color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .artifact-unavailable span {
     overflow-wrap: anywhere;
+  }
+  .artifact-unavailable button {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 `;

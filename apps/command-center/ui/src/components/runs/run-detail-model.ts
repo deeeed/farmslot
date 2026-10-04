@@ -772,9 +772,15 @@ export function locateEvidenceArtifact(
 export function locateStepArtifact(
   selection: { artifactRun: string | null; artifact: string | null; artifactView: string | null },
   stepArtifacts: readonly FamilyObservabilityArtifact[],
-  context: { runId: string | undefined; stepName: string },
+  context: {
+    runId: string | undefined;
+    stepName: string;
+    /** The step the URL names; a file opened from another step is not this one's. */
+    urlStepName?: string | null;
+  },
 ): EvidenceArtifactLookup | null {
   if (selection.artifactView !== 'step' || !selection.artifact) return null;
+  if (context.urlStepName && context.urlStepName !== context.stepName) return null;
   if (selection.artifactRun && context.runId && selection.artifactRun !== context.runId)
     return null;
   const index = stepArtifacts.findIndex((candidate) => candidate.path === selection.artifact);

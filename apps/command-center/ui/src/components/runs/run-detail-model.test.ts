@@ -907,4 +907,16 @@ test('a step-owned artifact link reopens in the step inspector, or says why it c
     "run detail's links are not the inspector's to answer",
   );
   assert.equal(locateStepArtifact({ ...owned, artifactRun: 'run-2' }, stepFiles, ctx), null);
+  assert.equal(
+    locateStepArtifact(owned, stepFiles, {
+      ...ctx,
+      stepName: 'monitor',
+      urlStepName: 'write-task',
+    }),
+    null,
+    "another step's file closes the viewer quietly, no false notice",
+  );
+  assert.deepEqual(locateStepArtifact(owned, stepFiles, { ...ctx, urlStepName: 'write-task' }), {
+    index: 0,
+  });
 });
