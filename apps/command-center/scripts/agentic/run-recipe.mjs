@@ -594,7 +594,9 @@ async function placeRecipeWindow(cdpPort, uiUrl, bounds) {
   }
 }
 
-/** capture-helper cannot record off-screen windows; bring Chrome on-screen before record.video. */
+// A minimized or off-display window records nothing: place the recipe window on a
+// display, then hand capture-helper its window id. Chrome stays in the background,
+// so capture-helper may report it onScreen: false; it still records it.
 async function ensureCapturableRecordingTarget(target, placeRecordingWindow) {
   if (process.platform !== 'darwin') return target;
 
@@ -607,33 +609,9 @@ async function ensureCapturableRecordingTarget(target, placeRecordingWindow) {
 
   try {
     await placeRecordingWindow(RECORDING_WINDOW_BOUNDS);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const parsed = await resolveCaptureHelperTarget(selectorArgs);
-      if (parsed.selected?.onScreen === true) {
-        if (parsed.selected?.id != null) {
-          return { kind: 'window-id', windowId: String(parsed.selected.id) };
-        }
-        return target;
-      }
-
-      console.warn(
-        `[run-recipe] CDP Chrome window is off-screen (${parsed.selected?.title ?? 'unknown'}); repositioning for capture-helper (attempt ${attempt + 1}/3)`,
-      );
-      await placeRecordingWindow({
-        ...RECORDING_WINDOW_BOUNDS,
-        left: RECORDING_WINDOW_BOUNDS.left + attempt * 40,
-        top: RECORDING_WINDOW_BOUNDS.top + attempt * 40,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 700));
-    }
-
-    const finalResolve = await resolveCaptureHelperTarget(selectorArgs);
-    if (finalResolve.selected?.id != null) {
-      console.warn(
-        `[run-recipe] using window-id ${finalResolve.selected.id} for capture-helper after reposition attempts`,
-      );
-      return { kind: 'window-id', windowId: String(finalResolve.selected.id) };
+    const parsed = await resolveCaptureHelperTarget(selectorArgs);
+    if (parsed.selected?.id != null) {
+      return { kind: 'window-id', windowId: String(parsed.selected.id) };
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
