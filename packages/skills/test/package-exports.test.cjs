@@ -34,4 +34,12 @@ const list = spawnSync(
 assert.equal(list.status, 0, list.stderr || list.stdout);
 assert.match(list.stdout, /recipe-cook/);
 
+// Every CommonJS library subpath gives ESM importers the names require() returns.
+const exportCheck = spawnSync(
+  process.execPath,
+  [path.resolve(packageRoot, '../../scripts/quality/check-cjs-esm-exports.mjs'), packageRoot],
+  { encoding: 'utf8' },
+);
+assert.equal(exportCheck.status, 0, exportCheck.stderr || exportCheck.stdout);
+
 process.stdout.write('package-exports tests: ok\n');

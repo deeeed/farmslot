@@ -24,7 +24,7 @@ Docs: https://farmslot.io/docs/reference/adapter-web
 | `validation-process-ownership` | find and stop the processes that own a slot profile                                                            |
 | `validation-launch-supervisor` | supervised child for one validation launch: port lease, quarantine and cleanup                                 |
 
-Sources are CommonJS (`src/*.cjs`) and ship as is; `yarn build` emits `.d.cts` declarations.
+Sources are CommonJS (`src/*.cjs`) and ship as is; `yarn build` emits `.d.cts` declarations. Every library subpath can be `require`d or `import`ed with named imports, except `validation-launch-supervisor`: it is a child-process entry (it runs when loaded), so hosts `require.resolve` it and fork it.
 
 ## Maintenance rules
 

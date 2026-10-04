@@ -1145,6 +1145,19 @@ async function main(argv) {
   throw new Error(USAGE);
 }
 
+// Re-exported from browser-cdp by name: a member expression in the export literal
+// hides every later name from ESM importers (cjs-module-lexer stops reading there).
+const {
+  assertCdpOwnedByProfile,
+  cdpListenerPids,
+  cdpOwner,
+  waitForCdpOwner,
+  connectBrowserCdp,
+  expectedExtensionId,
+  loadUnpackedExtension,
+  loadUnpackedOverPort,
+} = cdp;
+
 // CLI entry, exported so a host can keep its own script path (process identity, manifests).
 function runCli(argv = process.argv.slice(2)) {
   main(argv).then(
@@ -1166,23 +1179,23 @@ module.exports = {
   SPAWN,
   TRANSIENT_VERDICT_TTL_MS,
   UNLAUNCHABLE_MARKER,
-  assertCdpOwnedByProfile: cdp.assertCdpOwnedByProfile,
-  cdpListenerPids: cdp.cdpListenerPids,
-  cdpOwner: cdp.cdpOwner,
-  waitForCdpOwner: cdp.waitForCdpOwner,
+  assertCdpOwnedByProfile,
+  cdpListenerPids,
+  cdpOwner,
+  waitForCdpOwner,
   brandedChromeCandidates,
   browserMode,
   browserVersion,
-  connectBrowserCdp: cdp.connectBrowserCdp,
+  connectBrowserCdp,
   defaultCachePath,
   describeBrowser,
   effectiveLaunchMethod,
-  expectedExtensionId: cdp.expectedExtensionId,
+  expectedExtensionId,
   extensionLaunchArgs,
   extensionLoadingFor,
   isBrandedChrome,
-  loadUnpackedExtension: cdp.loadUnpackedExtension,
-  loadUnpackedOverPort: cdp.loadUnpackedOverPort,
+  loadUnpackedExtension,
+  loadUnpackedOverPort,
   playwrightChromiumExecutable,
   probeCacheKey,
   probeLaunch,
