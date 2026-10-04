@@ -14,6 +14,12 @@ export interface HarnessHost {
   product: string;
   /** Prefix of the host's own environment variables: `<envPrefix>_OPERATION_ID`. */
   envPrefix: string;
+  /**
+   * Prefix of the variables recipe processes and library actions read:
+   * `<recipeEnvPrefix>_ADAPTER_INPUT`. Libraries outside the host depend on
+   * them, so they are spelled apart from the host's own `envPrefix`.
+   */
+  recipeEnvPrefix: string;
   /** The npm package that ships the bin. */
   packageName: string;
   /** The installed package root. */
@@ -28,6 +34,7 @@ const defaultHost: HarnessHost = {
   name: 'farmslot-recipe',
   product: 'project',
   envPrefix: 'FARMSLOT_RECIPE',
+  recipeEnvPrefix: 'RECIPE',
   packageName: '@farmslot/recipe-cli',
   packageRoot: fileURLToPath(new URL('../..', import.meta.url)),
   bin: 'bin/farmslot-recipe.mjs',
@@ -48,8 +55,10 @@ export type HarnessHostConfig = Omit<HarnessHost, 'journaledCommands'> & {
  */
 export function configureHarnessHost(host: HarnessHostConfig): HarnessHost {
   const next: HarnessHost = { ...host, journaledCommands: host.journaledCommands ?? [] };
-  if (!/^[A-Z][A-Z0-9_]*$/u.test(next.envPrefix)) {
-    throw new Error(`envPrefix must be an upper-case identifier: ${next.envPrefix}`);
+  for (const field of ['envPrefix', 'recipeEnvPrefix'] as const) {
+    if (!/^[A-Z][A-Z0-9_]*$/u.test(next[field])) {
+      throw new Error(`${field} must be an upper-case identifier: ${next[field]}`);
+    }
   }
   current = next;
   return current;
@@ -62,6 +71,11 @@ export function harnessHost(): HarnessHost {
 /** The host-owned environment variable `<envPrefix>_<suffix>`. */
 export function hostEnvName(suffix: string): string {
   return `${current.envPrefix}_${suffix}`;
+}
+
+/** The recipe-process environment variable `<recipeEnvPrefix>_<suffix>`. */
+export function recipeEnvName(suffix: string): string {
+  return `${current.recipeEnvPrefix}_${suffix}`;
 }
 
 /** Throws unless `value` is a non-empty, safe, checkout-relative path. */

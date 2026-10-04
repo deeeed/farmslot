@@ -24,6 +24,7 @@ import {
   missingShellLeafMessage,
   readCommandJournal,
   readContainedJsonArtifact,
+  recipeEnvName,
   recipeRuntimeDir,
   recipeRuntimePath,
   recordCommandEvidence,
@@ -38,6 +39,7 @@ const MM_HOST = {
   name: 'mm-harness',
   product: 'MetaMask',
   envPrefix: 'MM_HARNESS',
+  recipeEnvPrefix: 'METAMASK_RECIPE',
   packageName: '@deeeed/metamask-harness',
   packageRoot: '/opt/mm-harness',
   bin: 'bin/mm-harness',
@@ -81,6 +83,7 @@ describe('host identity', () => {
     const host = harnessHost();
     assert.equal(host.name, 'farmslot-recipe');
     assert.equal(hostEnvName('OPERATION_ID'), 'FARMSLOT_RECIPE_OPERATION_ID');
+    assert.equal(recipeEnvName('ADAPTER_INPUT'), 'RECIPE_ADAPTER_INPUT');
     assert.equal(recipeRuntimeDir(), 'temp/recipe/runtime');
     assert.ok(fs.existsSync(path.join(host.packageRoot, 'package.json')));
     assert.ok(fs.existsSync(harnessExecutable()), 'the default executable is the shipped bin');
@@ -89,6 +92,7 @@ describe('host identity', () => {
   test('a product host keeps its own names and env prefix', () => {
     configureHarnessHost(MM_HOST);
     assert.equal(hostEnvName('OPERATION_ID'), 'MM_HARNESS_OPERATION_ID');
+    assert.equal(recipeEnvName('ADAPTER_INPUT'), 'METAMASK_RECIPE_ADAPTER_INPUT');
     assert.equal(harnessExecutable(), path.resolve('/opt/mm-harness/bin/mm-harness'));
     process.env.MM_HARNESS_EXECUTABLE = '/elsewhere/bin/mm-harness';
     assert.equal(harnessExecutable(), '/elsewhere/bin/mm-harness');
@@ -112,6 +116,10 @@ describe('host identity', () => {
     assert.throws(
       () => configureHarnessHost({ ...MM_HOST, envPrefix: 'mm-harness' }),
       /upper-case identifier/u,
+    );
+    assert.throws(
+      () => configureHarnessHost({ ...MM_HOST, recipeEnvPrefix: 'metamask_recipe' }),
+      /recipeEnvPrefix must be an upper-case identifier/u,
     );
     process.env.RECIPE_RUNTIME_DIR = '../out';
     assert.throws(() => recipeRuntimeDir(), /unsafe path component/u);

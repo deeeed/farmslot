@@ -94,3 +94,33 @@ test('defineAdapter keeps the host-specific members of an extended adapter type'
   registry.register(host);
   assert.deepEqual(registry.get('host').fixtures.operations, ['init']);
 });
+
+test('an adapter with its own run options and browser record fits a plain registry', async () => {
+  interface WebPlatform {
+    reuseBrowser?: boolean;
+  }
+  interface WebBrowser {
+    boundTo: string;
+    version?: string;
+  }
+  const prepared: Array<boolean | undefined> = [];
+  const web = defineAdapter<PlatformAdapter<WebPlatform, WebBrowser>>({
+    ...(adapter('web') as PlatformAdapter<WebPlatform, WebBrowser>),
+    run: {
+      platformOptions: (options) => ({ reuseBrowser: options.reuseBrowser === true }),
+      async prepareRuntime(_root, options) {
+        prepared.push(options.platform?.reuseBrowser);
+      },
+      launchedBrowser: () => ({ boundTo: 'slot', version: '1.0' }),
+      browserProvenance: (browser) => ({ browser_version: browser.version }),
+    },
+  });
+  const registry = createAdapterRegistry();
+  registry.register(web);
+  const run = registry.get('web').run;
+  const platform = run?.platformOptions?.({ reuseBrowser: true });
+  await run?.prepareRuntime?.('/checkout', { platform });
+  assert.deepEqual(prepared, [true]);
+  const browser = run?.launchedBrowser?.('/checkout', '/artifacts', '9222');
+  assert.deepEqual(browser && run?.browserProvenance?.(browser), { browser_version: '1.0' });
+});

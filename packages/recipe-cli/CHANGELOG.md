@@ -4,6 +4,17 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Add run evidence to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through the registered adapters and the host identity:
+  - execution provenance (`captureExecutionProvenance` with `runnerIncludes`, `executionProvenanceDrift`, `writeExecutionProvenance`, `ProvenanceDriftError`); the runner root defaults to the host package root;
+  - the framed recorder (`startRecipeRecording`, `stopRecipeRecording`, `captureActiveRecipeRecordingSnapshot`), `createRecordingTargetProvider` and the capture-helper capability checks;
+  - run diagnostics (`beginRunDiagnostics`, `finishRunDiagnostics`, `collectRunDiagnostics`, `verifyConsoleCapture`, `readRunDiagnosticsDocument`, `formatRunDiagnosticsForHuman`), with the console rules injected as a `ConsoleClassifier`;
+  - the run report and provenance (`writeRunReport`, `indexProductProvenanceArtifact`, `executedBrowser`, `recipeCdpPorts`);
+  - live adapter scripts (`prepareLiveAdapterScript`, `runLiveAdapterScript`, `resolveLiveAdapter`, `liveAdapterProcessTimeoutMs`), with the action `namespace`, input `contextExtras` and extra `tsxCandidates` per call;
+  - run options (`recipeRunOptionsFromCli`), recipe trust input and failures (`explicitRecipeTrustOptions`, `recipeTrustFailure`), behavioral proof checks (`validateRuntimeProof`, `validateRuntimeProofPlan`) and `closest`.
+- **BREAKING:** the host identity requires `recipeEnvPrefix`, the prefix of the variables recipe processes and library actions read (`recipeEnvName('ADAPTER_INPUT')`); `farmslot-recipe` uses `RECIPE`.
+- Add `adapterPortFlags`: the dev-server port options every registered adapter adds.
+- Depend on `esbuild` and `es-module-lexer` (live adapter bundling).
+
 - Add the lifecycle commands to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through `@farmslot/adapter-sdk` adapters the host registers (`configureHarnessAdapters`): `handleLaunch`, `handleReload`, `handleStop` (with a `companions` hook for host processes), `handleLast`, and `handleHarness` for `install`/`verify`/`cleanup` (with `usage` and `install`-variant hooks). They come with their shared modules: adapter detection and resolution (`detectAdapter`, `adapterForPlatform`, `resolveAdapter`, `assertAdapter`), option parsing (`parseArgs`, `parseFlags`, `CliError`), leaf spawning (`spawnScript`, `spawnScriptStreaming`, `spawnInherit`), teaching errors (`usageOut`, `checkoutBusyOut`, `EXIT`) and bounded healing (`parseHeal`, `ensureOverlay`, `classifyFailure`, `checkHealBounds`). Platform policy comes from the adapters (`detect`, `targets`, `flags`, `failurePatterns`), and names from the host (new `product` field, required).
 - Add `@farmslot/recipe-cli/harness`, the generic support a harness CLI runs its commands on: the host identity (`configureHarnessHost`: name, env prefix, package, executable, journaled commands), runtime paths (`recipeRuntimeDir`, `recipeRuntimePath`, `recipeHarnessRoot`, `recipeHarnessPath`, `harnessExecutable`), the resumability journal (`withCommandJournal`, `readCommandJournal`, argument redaction), the checkout lock (`acquireCheckoutLock`, `trackCheckoutChild`), `JsonStreamWriter`, colour helpers, contained artifact writes, Git library provenance and shell-leaf invocation. Moved from mm-harness; a product preset keeps its own env names (`MM_HARNESS_*`) through the host identity.
 

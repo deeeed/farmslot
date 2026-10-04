@@ -5,8 +5,13 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - **BREAKING:** `PlatformAdapter` requires `launch(context: AdapterLaunchContext)`: the platform's part of `launch` after the host resolved the adapter, `--heal`, the checkout lock and the `--json-stream` envelope.
+- **BREAKING:** `AdapterRecording.framed` requires `activePidEnv`, the environment variable that names the recorded browser pid to actions while the recording runs.
+- **BREAKING:** `AdapterDiagnostics.walletLog` is replaced by `requestLog: { path(projectRoot), findings(lines) }`; the platform turns its log lines into findings.
 - Add optional `PlatformAdapter` members `detect` (match a checkout by `remote.origin.url` or files; any remote match beats any file match), `targets` (positional platform targets such as `ios` that also select the adapter), `flags` (boolean flags the platform adds to `launch` and the other commands) and `failurePatterns` (patterns that classify a failure for bounded healing).
 - Add optional `devServer.portEnv`: more environment names the dev server reads its port from, set when a port is given explicitly.
+- Add the optional `PlatformAdapter` member `run` (`AdapterRun`), moved from the metamask-harness surface: what `run` and `call` need from a platform (`platformOptions`, `pinnedEnv`, `activateEnv`, `envKeys`, `childEnv`, `autoHud`, `teardown`, `prepareRuntime`, `runtimeCheck`, `dependencyBlock`, `violationUserAction`, `launchedBrowser`, `browserProvenance`). `PlatformAdapter<TPlatform, TBrowser>` and `AdapterRun<TPlatform, TBrowser>` take the platform's own run options and browser record as type parameters; `run` members are methods, so such an adapter still fits a registry of `PlatformAdapter`.
+- Add the run types `CommandOptions`, `RecipeNodeEvent`, `RecipeRunOptions<TPlatform>`, `AdapterBrowser`, `AdapterRunPrepareContext`, `AdapterDependencyBlock` and `AdapterLogFinding`.
+- Add optional `devServer.portFlags`: option names that give the dev-server port to `run` and `call` after `--watcher-port`.
 - Add the shared types `AdapterLaunchContext`, `CommandEventStream` (the `--json-stream` events platforms emit: `phase`, `mutation`, `recovery`, `error`, `complete`), `HealPolicy`, `HealState`, `HealMutation` and `HealBoundViolation`.
 
 ## 0.1.0 - 2026-10-04
