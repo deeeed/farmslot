@@ -283,7 +283,8 @@ export function readOperatorScope(
 ): string | undefined {
   if (opts.scope !== undefined && opts.scopeFile !== undefined)
     throw new Error('Use either --scope or --scope-file, not both.');
-  const raw = opts.scopeFile ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : opts.scope;
+  const raw =
+    opts.scopeFile !== undefined ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : opts.scope;
   const scope = raw?.trim();
   if (raw !== undefined && !scope) throw new Error('--scope / --scope-file is empty.');
   if (scope && opts.task)

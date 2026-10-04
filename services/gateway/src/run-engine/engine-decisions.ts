@@ -480,6 +480,8 @@ export function buildCollisionSuccessorParams(
     effort: current.effort,
     safetyTier: current.safetyTier,
     app: current.app,
+    // Same task, another lane: the operator's scope applies to it too.
+    ...(current.operatorScope ? { operatorScope: current.operatorScope } : {}),
     prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
     parentRunId: current.id,
     backlogItemId: current.backlogItemId,

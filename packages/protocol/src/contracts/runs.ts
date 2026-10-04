@@ -2368,7 +2368,9 @@ export interface Run {
    * Operator scope for this run, set at create (`run create --scope`): what to
    * do and what to leave alone, e.g. "flip slice only, AC1/AC2". write-task
    * renders it into TASK.md as `## Operator scope`, so the worker reads it in
-   * the task it starts from rather than in an edit made after dispatch.
+   * the task it starts from rather than in an edit made after dispatch. A
+   * collision comparison lane keeps it (same task); chained runs such as
+   * pr-complete, ci-watch and re-reviews do not, since they carry other work.
    */
   operatorScope?: string;
   effort?: string;

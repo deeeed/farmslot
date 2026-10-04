@@ -371,6 +371,8 @@ export async function materializeReviewWorkspaceTask(
         description: subject.body,
         acceptanceCriteria: [],
         addendum: instructions,
+        // Static reviews write their own TASK.md; write-task never runs for them.
+        ...(run.operatorScope ? { operatorScope: run.operatorScope } : {}),
         hasTicketData: false,
       }),
     });

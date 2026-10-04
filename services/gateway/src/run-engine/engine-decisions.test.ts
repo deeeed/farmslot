@@ -155,6 +155,21 @@ test('collision successor retains backlog and work-graph ownership', () => {
   assert.deepEqual(params.allowedSlots, ['slot-1']);
 });
 
+test('a comparison lane started from a collision keeps the operator scope', () => {
+  // "Start comparison lane" creates a new run through write-task; without the
+  // scope the operator is back to editing TASK.md after dispatch.
+  const scoped = buildCollisionSuccessorParams(
+    { ...makeRun(), operatorScope: 'flip slice only, AC1/AC2' },
+    'family-2',
+    'collision-120000',
+  );
+  assert.equal(scoped.operatorScope, 'flip slice only, AC1/AC2');
+  assert.equal(
+    'operatorScope' in buildCollisionSuccessorParams(makeRun(), 'family-2', 'collision-120000'),
+    false,
+  );
+});
+
 test('findLatestPriorReviewRun matches canonical PR identity and completion order', () => {
   const current = makeRun({
     id: 'current',

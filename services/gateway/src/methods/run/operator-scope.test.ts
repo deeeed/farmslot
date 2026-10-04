@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
-import { runCreate } from '../run.js';
+import { normalizeOperatorScope, OPERATOR_SCOPE_MAX_CHARS, runCreate } from '../run.js';
 
 test('the operator scope is stored on the run it was created with', async () => {
   const run = createRun({
@@ -55,5 +55,20 @@ test('a non-string operator scope is refused', async () => {
       () => {},
     ),
     /operatorScope must be a string/,
+  );
+});
+
+test('the operator scope is trimmed, a blank one is dropped, and an oversized one refused', () => {
+  const base = { flowType: 'fix-bug' as const, project: 'example', ticketOrPr: 'TAT-3405' };
+  const trimmed = { ...base, operatorScope: '  flip slice only  ' };
+  normalizeOperatorScope(trimmed);
+  assert.equal(trimmed.operatorScope, 'flip slice only');
+  const blank: { operatorScope?: string } & typeof base = { ...base, operatorScope: '   ' };
+  normalizeOperatorScope(blank);
+  assert.equal('operatorScope' in blank, false);
+  assert.throws(
+    () =>
+      normalizeOperatorScope({ ...base, operatorScope: 'x'.repeat(OPERATOR_SCOPE_MAX_CHARS + 1) }),
+    /keep it under 8000/,
   );
 });

@@ -185,6 +185,21 @@ test('materialization preserves canonical checklist, freezes offline guidance/pr
   });
 });
 
+test('a static review TASK.md carries the operator scope from run create', async () => {
+  // Static reviews write their own TASK.md (write-task never runs for them), so
+  // a scope given with --review-machine must be rendered here or it is lost.
+  await withFixture(async (f) => {
+    f.run.operatorScope = 'gateway change only';
+    const written = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const task = await readFile(written.taskFile, 'utf8');
+    assert.match(task, /## Operator scope\n\n[^\n]+\n\ngateway change only\n/);
+    assert.doesNotMatch(
+      await readFile(path.join(f.task, 'CHECKLIST.md'), 'utf8'),
+      /Operator scope/,
+    );
+  });
+});
+
 test('tmux startup requires a fresh signal belonging to its reviewer attempt', async () => {
   await withFixture(async (f) => {
     f.run.transport = 'tmux';

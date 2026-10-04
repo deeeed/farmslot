@@ -630,13 +630,22 @@ test('writeTaskFile allows comparison siblings with different variants', async (
 test('a single-file interactive task carries the operator scope too', async (t) => {
   // Lightweight interactive dev renders the project template as the whole
   // TASK.md; the scope follows it under the same heading.
-  const run = { ...makeRun(`SCOPE-${Date.now()}`, 'scope'), operatorScope: 'AC1 only' };
+  const run: Run = {
+    ...makeRun(`SCOPE-${Date.now()}`, 'scope'),
+    devInteractiveProfile: DEFAULT_DEV_INTERACTIVE_PROFILE,
+    operatorScope: 'AC1 only',
+  };
   let taskFile = '';
   t.after(async () => {
     if (taskFile) await rm(path.dirname(taskFile), { recursive: true, force: true });
   });
   taskFile = await writeTaskFile(run);
   const task = await readFile(taskFile, 'utf-8');
+  assert.doesNotMatch(
+    task,
+    /^# dev:/m,
+    'the project template is the document, not the split layout',
+  );
   assert.match(
     task,
     /## Operator scope\n\nSet by the operator when this task was created\.[^\n]*\n\nAC1 only\n/,

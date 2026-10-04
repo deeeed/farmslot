@@ -347,6 +347,33 @@ export function assertExpectedExecutionTemplate(
   }
 }
 
+/** Operator scope stays a note, not a document: it is stored on the run and sent with every update. */
+export const OPERATOR_SCOPE_MAX_CHARS = 8_000;
+
+/**
+ * Trim the operator scope, drop it when blank, and refuse what cannot reach a
+ * worker: a non-string, one past the size cap, or one with an existing task
+ * file (write-task, which renders the scope, never runs for those).
+ */
+export function normalizeOperatorScope(params: RunCreateParams): void {
+  if (params.operatorScope === undefined) return;
+  if (typeof params.operatorScope !== 'string') throw new Error('operatorScope must be a string');
+  const operatorScope = params.operatorScope.trim();
+  if (!operatorScope) {
+    delete params.operatorScope;
+    return;
+  }
+  if (operatorScope.length > OPERATOR_SCOPE_MAX_CHARS)
+    throw new Error(
+      `operatorScope is ${operatorScope.length} characters; keep it under ${OPERATOR_SCOPE_MAX_CHARS} and put longer guidance in the ticket.`,
+    );
+  if (params.taskFile !== undefined)
+    throw new Error(
+      'operatorScope is rendered into the TASK.md that write-task writes; with an existing taskFile, put the scope in that file.',
+    );
+  params.operatorScope = operatorScope;
+}
+
 export async function runCreate(
   params: RunCreateParams,
   emit: Emit,
@@ -368,20 +395,7 @@ export async function runCreate(
       );
     }
   }
-  if (params.operatorScope !== undefined) {
-    if (typeof params.operatorScope !== 'string') throw new Error('operatorScope must be a string');
-    const operatorScope = params.operatorScope.trim();
-    if (!operatorScope) {
-      delete params.operatorScope;
-    } else if (params.taskFile !== undefined) {
-      // write-task, which renders the scope, never runs for an existing task.
-      throw new Error(
-        'operatorScope is rendered into the TASK.md that write-task writes; with an existing taskFile, put the scope in that file.',
-      );
-    } else {
-      params.operatorScope = operatorScope;
-    }
-  }
+  normalizeOperatorScope(params);
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)

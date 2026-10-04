@@ -376,6 +376,10 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
   assert.notEqual(both.status, 0);
   assert.match(both.stderr, /either --scope or --scope-file/);
 
+  const blank = init(path.join(work, 'blank'), templates, ['--scope', '   ']);
+  assert.notEqual(blank.status, 0, 'a blank scope is refused, as on the farm');
+  assert.match(blank.stderr, /--scope \/ --scope-file is empty/);
+
   const none = init(path.join(work, 'none'), templates);
   assert.equal(none.status, 0, none.stderr);
   assert.doesNotMatch(readFileSync(path.join(work, 'none', 'TASK.md'), 'utf8'), /Operator scope/);
