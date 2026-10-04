@@ -51,7 +51,7 @@ echo ok
   return {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-    MM_HARNESS_FOCUS_HOLD: '1',
+    FARMSLOT_FOCUS_HOLD: '1',
     ...extra,
   };
 }
@@ -106,11 +106,8 @@ describe('macOS focus restore after a background launch', () => {
     assert.deepStrictEqual(lines('activations.log'), []);
   });
 
-  it('makes no tool call at all with MM_HARNESS_FOCUS_HOLD=0', () => {
-    assert.deepStrictEqual(restoreTwice(env('ours', { MM_HARNESS_FOCUS_HOLD: '0' })), [
-      'off',
-      'off',
-    ]);
+  it('makes no tool call at all with FARMSLOT_FOCUS_HOLD=0', () => {
+    assert.deepStrictEqual(restoreTwice(env('ours', { FARMSLOT_FOCUS_HOLD: '0' })), ['off', 'off']);
     assert.deepStrictEqual(lines('lsappinfo.log'), []);
     assert.deepStrictEqual(lines('activations.log'), []);
   });

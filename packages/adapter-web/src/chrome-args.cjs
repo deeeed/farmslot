@@ -4,15 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const RUNTIME_IDENTITY_FILENAME = 'extension-runtime-identity.json';
-const RUNTIME_NONCE_PREFIX = '--mm-harness-runtime-nonce=';
-const DETACHED_LAUNCH_UNPROVEN_FILENAME = '.mm-harness-detached-launch-unproven';
+const RUNTIME_NONCE_PREFIX = '--farmslot-runtime-nonce=';
+const DETACHED_LAUNCH_UNPROVEN_FILENAME = '.farmslot-detached-launch-unproven';
 // chrome-args.cjs — single source of truth for the remote-debugging launch flags
 // shared by BOTH extension launchers: the fresh spawn (launch-browser.cjs) and the
 // reopen path (ensure-browser.sh → reopen-browser.sh). Keeping the debug-port trio
 // here means `--remote-allow-origins` can never drift away from the port it scopes:
 // the two are declared once and always travel together. Without the allow-origins
 // entry Chrome 403s every browser DevTools WebSocket on the debug port and
-// `mm-harness debug` cannot attach a visible console.
+// a debugger cannot attach a visible console.
 
 // The exact origin allowed is the locally-served bundled DevTools frontend, which
 // Chrome serves at http://127.0.0.1:<cdpPort>. Scoped to that origin — never `*`.
@@ -69,7 +69,7 @@ function validationPortQuarantineRoot() {
     throw new Error('Extension validation port quarantine requires a POSIX user identity.');
   }
   const uid = process.getuid();
-  const root = path.join(fs.realpathSync('/tmp'), `mm-harness-extension-validation-${uid}`);
+  const root = path.join(fs.realpathSync('/tmp'), `farmslot-browser-validation-${uid}`);
   try {
     fs.mkdirSync(root, { mode: 0o700 });
   } catch (error) {

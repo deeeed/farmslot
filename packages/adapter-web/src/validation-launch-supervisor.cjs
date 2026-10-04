@@ -236,7 +236,7 @@ function startLaunch(message) {
     cwd: message.cwd,
     env: {
       ...message.env,
-      MM_HARNESS_VALIDATION_PORT_LEASE: lease,
+      FARMSLOT_VALIDATION_PORT_LEASE: lease,
     },
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],

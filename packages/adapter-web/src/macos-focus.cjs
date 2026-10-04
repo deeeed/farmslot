@@ -6,7 +6,7 @@
 // back to the app that had it, once, by pid. Anything else in front (the
 // operator's own Chrome included, whatever its bundle) is left alone. A restore
 // only activates an already-running app (never `open -a`, which can launch).
-// MM_HARNESS_FOCUS_HOLD=0 makes every function here a no-op (tests).
+// FARMSLOT_FOCUS_HOLD=0 makes every function here a no-op (tests).
 
 const { execFileSync } = require('node:child_process');
 
@@ -25,8 +25,8 @@ const ACTIVATE_BY_PID = [
 function macFocusDisabled() {
   return (
     process.platform !== 'darwin' ||
-    process.env.MM_HARNESS_FOCUS_HOLD === '0' ||
-    process.env.MM_HARNESS_FOCUS_BROWSER === '1'
+    process.env.FARMSLOT_FOCUS_HOLD === '0' ||
+    process.env.FARMSLOT_FOCUS_BROWSER === '1'
   );
 }
 

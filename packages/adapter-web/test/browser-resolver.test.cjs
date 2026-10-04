@@ -991,7 +991,7 @@ describe('browser resolver', () => {
       assertMatch(resolution, {
         bin: chrome,
         source: 'auto-recorded',
-        warning: contains('mm-harness fixtures set'),
+        warning: contains('reset the slot profile'),
       });
       assert.deepStrictEqual(resolution.managedChrome.forcedExtensions, [
         { id: FORCED[0], name: 'JumpCloud Go' },
@@ -1249,7 +1249,7 @@ describe('probeLaunch against a fake browser', () => {
 
   function profilesLeft() {
     try {
-      return execFileSync('pgrep', ['-f', 'mm-harness-browser-probe-'], {
+      return execFileSync('pgrep', ['-f', 'farmslot-browser-probe-'], {
         encoding: 'utf8',
       }).trim();
     } catch {

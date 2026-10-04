@@ -320,7 +320,7 @@ function browserMode(env = process.env) {
 function defaultCachePath(env = process.env) {
   if (env.RECIPE_HARNESS_BROWSER_CACHE) return path.resolve(env.RECIPE_HARNESS_BROWSER_CACHE);
   const base = env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
-  return path.join(base, 'mm-harness', 'browser-probe.json');
+  return path.join(base, 'farmslot', 'browser-probe.json');
 }
 
 // How the caller starts the browser decides whether Chrome for Testing
@@ -569,7 +569,7 @@ async function probeLaunch(
   } = {},
 ) {
   const method = effectiveLaunchMethod(executable, launchMethod);
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-harness-browser-probe-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-browser-probe-'));
   activeProbeProfiles.add(profile);
   const startedAt = Date.now();
   const verdict = (ok, reason, transient = false) => ({
@@ -902,7 +902,7 @@ async function resolveBrowser({
     if (!exists(previous.bin)) {
       throw resolutionError(
         `[recipe-harness] This slot profile was created with ${recordedKind} at ${previous.bin}, which no longer exists. ` +
-          'Next: reinstall it, reset the profile (mm-harness fixtures set), or choose a browser with RECIPE_HARNESS_BROWSER.',
+          'Next: reinstall it, reset the slot profile, or choose a browser with RECIPE_HARNESS_BROWSER.',
       );
     }
     const managedNow = recordedKind === 'google-chrome' ? managedPolicy() : null;
@@ -915,7 +915,7 @@ async function resolveBrowser({
             managedChrome: managedNow,
             warning:
               `${describeManagedChrome(managedNow)} and this slot profile was created on it, so forced extensions may open windows that take the front. ` +
-              'Next: reset the profile (mm-harness fixtures set) to move the slot to Chrome for Testing.',
+              'Next: reset the slot profile to move the slot to Chrome for Testing.',
           }
         : {}),
       recordedFrom,

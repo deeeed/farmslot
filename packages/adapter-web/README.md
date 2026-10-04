@@ -29,7 +29,7 @@ Sources are CommonJS (`src/*.cjs`) and ship as is; `yarn build` emits `.d.cts` d
 ## Maintenance rules
 
 1. No product knowledge. A product's build locks, titles, fixtures and wallet state stay in its harness and reach these modules as arguments.
-2. Process and on-disk identity strings (runtime nonce flag, launch markers, probe cache path) are contracts with running browsers and existing profiles. Change them only with a migration that still recognises the old values.
+2. Process and on-disk identity strings (runtime nonce flag, launch markers, probe cache path) are how a launched browser and its profile are recognised. Changing one makes browsers started under the old name unrecognised; call that out in the release notes.
 3. Every CDP call has a deadline. Never add an unbounded wait.
 4. Never steal focus. A headed launch restores the previous frontmost app; window activation goes by pid, not by app name.
 

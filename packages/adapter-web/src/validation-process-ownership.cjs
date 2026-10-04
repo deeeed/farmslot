@@ -93,7 +93,7 @@ function stopProfileProcessesSync(
   if (remaining.length > 0) {
     throw new Error(
       `Owned Chrome processes survived stop (pid ${remaining.join(', ')}). ` +
-        'Next: mm-harness stop --adapter extension --target <checkout>',
+        'Next: stop the runtime that owns this profile, then rerun.',
     );
   }
 }
