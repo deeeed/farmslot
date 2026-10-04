@@ -45,7 +45,7 @@ function progress(
 }
 
 test('keeps reported execution and output freshness distinct from proof success', () => {
-  const text = litText(renderOperationPanel(progress(operation), 'run-id', now));
+  const text = litText(renderOperationPanel(progress(operation), 'run-id', { now }));
   assert.match(text, /Last worker command/);
   assert.match(text, /Command running/);
   assert.match(text, /No recent status update/);
@@ -58,7 +58,7 @@ test('completed command duration stops at completion', () => {
     renderOperationPanel(
       progress({ ...operation, status: 'pass', finishedAt: '2026-09-29T01:00:05Z' }),
       'run-id',
-      now,
+      { now },
     ),
   );
   assert.match(text, /Command completed/);
@@ -71,7 +71,7 @@ test('a bare harness subcommand never reads as the run verdict', () => {
     renderOperationPanel(
       progress({ ...operation, command: 'run', status: 'fail', finishedAt: operation.updatedAt }),
       'run-id',
-      now,
+      { now },
     ),
   );
   assert.match(text, /Last worker command/);
@@ -80,27 +80,35 @@ test('a bare harness subcommand never reads as the run verdict', () => {
   assert.doesNotMatch(text, />\s*Failed\s*</, 'no bare Failed badge');
   assert.doesNotMatch(text, /run still in progress/, 'no open step, so no softening');
   const full = litText(
-    renderOperationPanel(progress({ ...operation, command: 'mm-harness run' }), 'run-id', now),
+    renderOperationPanel(progress({ ...operation, command: 'mm-harness run' }), 'run-id', { now }),
   );
   assert.match(full, /mm-harness run/);
   assert.doesNotMatch(full, /harness mm-harness/);
 });
 
-test('a failed command while the worker still has a step open is not shown as a run failure', () => {
+test('a failed command is softened only while the run itself is still working', () => {
   const failed = {
     ...operation,
     command: 'run',
     status: 'fail' as const,
     finishedAt: operation.updatedAt,
   };
-  const result = renderOperationPanel(progress(failed, 'running'), 'run-id', now);
-  const text = litText(result);
-  assert.match(text, /Command failed/);
-  assert.match(text, /run still in progress/);
-  assert.match(text, /operation-status fail in-progress/, 'amber, not red');
+  const active = litText(
+    renderOperationPanel(progress(failed, 'running'), 'run-id', { now, runActive: true }),
+  );
+  assert.match(active, /Command failed/);
+  assert.match(active, /run still in progress/);
+  assert.match(active, /operation-status fail in-progress/, 'amber, not red');
+  // A cancelled or failed run keeps its open checklist step: still a plain failure.
+  const terminal = litText(
+    renderOperationPanel(progress(failed, 'running'), 'run-id', { now, runActive: false }),
+  );
+  assert.match(terminal, /Command failed/);
+  assert.doesNotMatch(terminal, /in-progress|run still in progress/);
   assert.doesNotMatch(
-    litText(renderOperationPanel(progress(failed, 'done'), 'run-id', now)),
+    litText(renderOperationPanel(progress(failed, 'done'), 'run-id', { now, runActive: true })),
     /in-progress/,
+    'no open step, no softening',
   );
 });
 
@@ -134,7 +142,7 @@ test('a late heartbeat never swaps the running command for an older failed one',
     [failedA, runningB],
     [runningB, failedA],
   ]) {
-    const text = litText(renderOperationPanel(progress(order), 'run-id', now));
+    const text = litText(renderOperationPanel(progress(order), 'run-id', { now }));
     assert.match(text, /Command running/);
     assert.match(text, /No recent status update/);
     assert.doesNotMatch(text, /Command failed/);
@@ -200,4 +208,56 @@ test('a killed command whose record still says running does not bury the current
     ['doctor'],
     'when it is the latest thing that happened, it is shown (marked stale)',
   );
+});
+
+test('a running parent stays beside its newer failed child whatever its heartbeat', () => {
+  // The order the gateway sends: by start. `run` is still in teardown while a
+  // nested `call` it ran has failed. Showing the parent only while its heartbeat
+  // was fresh would flip the panel between running+failed and failed alone.
+  const parent: TaskOperation = {
+    ...operation,
+    id: 'parent',
+    command: 'run',
+    status: 'running',
+    startedAt: '2026-09-29T00:59:00Z',
+    updatedAt: '2026-09-29T00:59:55Z', // 45 s old
+  };
+  const child: TaskOperation = {
+    ...operation,
+    id: 'child',
+    parentId: 'parent',
+    command: 'call',
+    status: 'fail',
+    startedAt: '2026-09-29T00:59:20Z',
+    updatedAt: '2026-09-29T00:59:30Z',
+    finishedAt: '2026-09-29T00:59:30Z',
+  };
+  assert.deepEqual(
+    selectOperations([parent, child], now).map((op) => op.id),
+    ['parent', 'child'],
+  );
+});
+
+test('start times compare as instants, and an empty command still names the harness', () => {
+  const zulu = {
+    ...operation,
+    id: 'zulu',
+    startedAt: '2026-09-29T01:00:00Z',
+    status: 'pass' as const,
+  };
+  const offset = {
+    ...operation,
+    id: 'offset',
+    startedAt: '2026-09-29T02:30:00+02:00', // 00:30Z, earlier despite sorting later as text
+    status: 'pass' as const,
+  };
+  assert.deepEqual(
+    selectOperations([offset, zulu], now).map((op) => op.id),
+    ['zulu'],
+  );
+  const text = litText(
+    renderOperationPanel(progress({ ...operation, command: '' }), 'run-id', { now }),
+  );
+  assert.match(text, /harness/);
+  assert.doesNotMatch(text, /harness\s+Command/, 'no dangling space before the badge');
 });

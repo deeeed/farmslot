@@ -27,6 +27,8 @@ import {
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import { isTaskProgressRunActive } from './run-detail-model.js';
+import { ARTIFACT_VIEW_PARAM, STEP_ARTIFACT_VIEW } from './run-detail-url-state.js';
 import { formatDuration, stepStatusColor } from './run-utils.js';
 import { renderStepInspectorCiWatchBanner } from './step-inspector-ci-watch-renderer.js';
 import {
@@ -342,7 +344,9 @@ export class StepInspector extends StepInspectorState {
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>
-        ${renderOperationPanel(tp, this.run?.id)}
+        ${renderOperationPanel(tp, this.run?.id, {
+          runActive: this.run ? isTaskProgressRunActive(this.run) : false,
+        })}
         ${tp.phases.map(
           (phase) => html`
             <div class="task-phase">
@@ -678,9 +682,11 @@ export class StepInspector extends StepInspectorState {
     if (item) {
       if (this.run?.id) params.set('artifactRun', this.run.id);
       params.set('artifact', item.path);
+      params.set(ARTIFACT_VIEW_PARAM, STEP_ARTIFACT_VIEW);
     } else {
       params.delete('artifactRun');
       params.delete('artifact');
+      params.delete(ARTIFACT_VIEW_PARAM);
     }
     const qs = params.toString();
     const next = `#${base}${qs ? `?${qs}` : ''}`;

@@ -4,6 +4,7 @@ import { parseGitHubRef, reviewResultForRun, type Run } from '@farmslot/protocol
 
 import '../progress-tracker/progress-tracker.js';
 
+import { isTaskProgressRunActive } from './run-detail-model.js';
 import type { RunEvidenceRenderContext } from './run-detail-renderers.js';
 
 /** Optional explanation backed by the run's frozen inputs and existing progress/artifact viewers. */
@@ -52,7 +53,11 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
     </p>
     <div class="evidence-title">Task progress</div>
     ${ctx.taskProgress
-      ? html`<progress-tracker .structured=${ctx.taskProgress} .runId=${run.id}></progress-tracker>`
+      ? html`<progress-tracker
+          .structured=${ctx.taskProgress}
+          .runId=${run.id}
+          .runActive=${isTaskProgressRunActive(run)}
+        ></progress-tracker>`
       : html`<p>Waiting for task progress.</p>`}
     <p>
       The task checklist tracks the overall work. The detailed review checklist records what was

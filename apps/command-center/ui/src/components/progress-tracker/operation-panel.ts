@@ -113,48 +113,68 @@ const STATUS_LABEL: Record<TaskOperation['status'], string> = {
  * the Farmslot run's verdict, so a bare word is shown as a harness subcommand.
  */
 function commandLabel(command: string): string {
-  return /\s/.test(command.trim()) ? command : `harness ${command}`;
+  const trimmed = command.trim();
+  if (!trimmed) return 'harness';
+  return /\s/.test(trimmed) ? trimmed : `harness ${trimmed}`;
 }
 
 /**
- * What the panel shows: the latest command to start, whatever its status or
- * heartbeat, plus any other running command still reporting.
+ * What the panel shows: the latest command to start and the commands it runs
+ * under, whatever their status or heartbeat, plus any other running command
+ * still reporting.
  *
- * By start time, not list order or heartbeat. Filtering running commands by
- * heartbeat age made the panel fall back to an older failed command whenever a
- * heartbeat was late, so the badge flipped between running and failed. The
- * latest command now always stays, marked "No recent status update" when its
- * heartbeat is old. An older running record with an old heartbeat is left out:
- * a harness killed mid-command never finalizes its record, and showing it as
- * running would bury what the worker did since.
+ * By start time, not list position or heartbeat. Filtering running commands by
+ * heartbeat age made a running command drop out whenever its heartbeat was
+ * late, so the badge flipped between running and failed: a running `run` with
+ * a failed nested `call` showed only the failure on every late beat. The
+ * latest command and its parents now stay, marked "No recent status update"
+ * when the heartbeat is old. An unrelated older record that still says running
+ * with an old heartbeat is left out: a harness killed mid-command never
+ * finalizes its record, and showing it would bury what the worker did since.
  */
 export function selectOperations(
   operations: readonly TaskOperation[],
   now = Date.now(),
 ): TaskOperation[] {
-  const byStart = [...operations].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const byStart = [...operations].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const latest = byStart.at(-1);
+  const keep = new Set<TaskOperation>();
+  const byId = new Map(byStart.map((operation) => [operation.id, operation]));
+  for (let current = latest; current && !keep.has(current); ) {
+    keep.add(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
   return byStart.filter(
     (operation) =>
-      operation === latest ||
+      keep.has(operation) ||
       (operation.status === 'running' && now - Date.parse(operation.updatedAt) <= STALE_STATUS_MS),
   );
+}
+
+export interface OperationPanelOptions {
+  now?: number;
+  /**
+   * Whether the run is still working. Only then does a failed command inside
+   * an open checklist step read as "run still in progress"; a cancelled or
+   * failed run keeps its open steps, and must not be softened.
+   */
+  runActive?: boolean;
 }
 
 export function renderOperationPanel(
   progress: TaskProgressStructured,
   runId?: string | null,
-  now = Date.now(),
+  { now = Date.now(), runActive = false }: OperationPanelOptions = {},
 ) {
   if (progress.operationsError)
     return html`<p class="operation-error" role="status">${progress.operationsError}</p>`;
   const selected = selectOperations(progress.operations ?? [], now);
   if (!selected.length) return nothing;
-  // The worker still has a checklist step open: a failed command is a step it
-  // may retry, not the run's outcome.
-  const runInProgress = progress.phases.some((phase) =>
-    phase.steps.some((step) => step.status === 'running'),
-  );
+  // The run is working and its worker still has a checklist step open: a failed
+  // command is something it may retry, not the run's outcome.
+  const runInProgress =
+    runActive &&
+    progress.phases.some((phase) => phase.steps.some((step) => step.status === 'running'));
   return html`<section
     class="operation-panel"
     aria-label="Last worker command"

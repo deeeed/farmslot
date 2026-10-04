@@ -133,6 +133,7 @@ import {
   runDetailStepHash,
   runInventoryHashFromDetail,
   selectedStepNameFromRunDetailHash,
+  STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './run-utils.js';
@@ -187,7 +188,7 @@ export class RunDetail extends RunDetailState {
     }
     // The direct run.get snapshot may arrive after hashchange and after the
     // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
-    if (changed.has('run') || changed.has('taskProgress'))
+    if (changed.has('run') || changed.has('taskProgress') || changed.has('selectedStepProgress'))
       this._applyEvidenceArtifactFromHash(true);
   }
 
@@ -859,8 +860,9 @@ export class RunDetail extends RunDetailState {
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
-    const { artifactRun, artifact } = artifactSelectionFromRunDetailHash();
-    if (!artifact) {
+    const { artifactRun, artifact, artifactView } = artifactSelectionFromRunDetailHash();
+    if (!artifact || artifactView === STEP_ARTIFACT_VIEW) {
+      // No artifact, or one the step inspector opened in its own viewer.
       this._evidenceArtifactUnavailable = null;
       if (this._evidenceLightboxOpen) {
         this._evidenceLightboxOpen = false;
@@ -876,11 +878,22 @@ export class RunDetail extends RunDetailState {
       this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact
     )
       return;
-    const artifacts = runArtifactsWithOperationLogs(this.run, this.taskProgress?.operations ?? []);
+    // Operation logs come from the live progress or, for a finished run, the
+    // selected step's progress (the panel that rendered the link).
+    const operations = [
+      ...(this.taskProgress?.operations ?? []),
+      ...(this.selectedStepProgress?.operations ?? []),
+    ];
+    const artifacts = runArtifactsWithOperationLogs(this.run, operations);
     // Re-applied when the run or worker progress updates, so a link that
     // arrives before progress loads still opens; until then, say so.
-    const lookup = locateEvidenceArtifact(artifacts, artifact, Boolean(this.taskProgress));
+    const lookup = locateEvidenceArtifact(artifacts, artifact, {
+      loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
+      runActive: isTaskProgressRunActive(this.run, { includeCompleting: true }),
+    });
     if ('unavailable' in lookup) {
+      // Never leave a previous artifact showing under the notice.
+      this._evidenceLightboxOpen = false;
       this._evidenceArtifactUnavailable = lookup.unavailable;
       return;
     }

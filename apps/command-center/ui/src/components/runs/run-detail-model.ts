@@ -725,17 +725,25 @@ export type EvidenceArtifactLookup =
 export function locateEvidenceArtifact(
   artifacts: readonly FamilyObservabilityArtifact[],
   path: string,
-  workerProgressLoaded: boolean,
+  progress: {
+    /** A worker-progress snapshot with its operations is loaded. */
+    loaded: boolean;
+    /** The run is active, so run detail keeps fetching worker progress. */
+    runActive: boolean;
+  },
 ): EvidenceArtifactLookup {
   const index = artifacts.findIndex((candidate) => candidate.path === path);
   if (index >= 0) return { index };
+  const operationLog = path.startsWith('artifacts/operations/');
   return {
     unavailable: {
       path,
       reason:
-        path.startsWith('artifacts/operations/') && !workerProgressLoaded
+        operationLog && !progress.loaded && progress.runActive
           ? 'worker progress has not loaded yet; the log opens when it arrives.'
-          : "it is not among this run's evidence files or worker command logs.",
+          : operationLog && !progress.loaded
+            ? 'this run has finished and its worker progress is not loaded here; select the monitor step to list its command logs.'
+            : "it is not among this run's evidence files or worker command logs.",
     },
   };
 }

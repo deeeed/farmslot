@@ -849,7 +849,10 @@ test('an operation log link resolves to the worker command log of an active run'
     },
   ];
   const artifacts = runArtifactsWithOperationLogs(run, operations);
-  const lookup = locateEvidenceArtifact(artifacts, selection.artifact!, true);
+  const lookup = locateEvidenceArtifact(artifacts, selection.artifact!, {
+    loaded: true,
+    runActive: true,
+  });
   assert.ok('index' in lookup);
   assert.equal(artifacts[lookup.index]!.path, operations[0]!.logPath);
   assert.equal(artifacts[lookup.index]!.source, 'task-artifact');
@@ -859,14 +862,16 @@ test('an artifact link that cannot open says why instead of doing nothing', asyn
   const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
   const { artifact } = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);
   const run = makeRun({ status: 'monitoring' });
-  const beforeProgress = locateEvidenceArtifact(
-    runArtifactsWithOperationLogs(run, []),
-    artifact!,
-    false,
-  );
-  assert.ok('unavailable' in beforeProgress);
-  assert.match(beforeProgress.unavailable.reason, /worker progress has not loaded yet/);
-  const unknown = locateEvidenceArtifact(runArtifactsWithOperationLogs(run, []), artifact!, true);
+  const none = runArtifactsWithOperationLogs(run, []);
+  const loading = locateEvidenceArtifact(none, artifact!, { loaded: false, runActive: true });
+  assert.ok('unavailable' in loading);
+  assert.match(loading.unavailable.reason, /has not loaded yet; the log opens when it arrives/);
+  // A finished run never fetches live progress: no promise that it will arrive.
+  const finished = locateEvidenceArtifact(none, artifact!, { loaded: false, runActive: false });
+  assert.ok('unavailable' in finished);
+  assert.match(finished.unavailable.reason, /has finished[\s\S]*select the monitor step/);
+  assert.doesNotMatch(finished.unavailable.reason, /opens when it arrives/);
+  const unknown = locateEvidenceArtifact(none, artifact!, { loaded: true, runActive: true });
   assert.ok('unavailable' in unknown);
   assert.equal(unknown.unavailable.path, artifact);
   assert.match(unknown.unavailable.reason, /not among this run's evidence files/);
