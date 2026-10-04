@@ -10,7 +10,7 @@ import {
   createStandardCoreAdapters,
   freezeRecipeSuiteScope,
   finalizeRecipeSuite,
-} from '../../packages/recipe-harness/src/index.js';
+} from '../../packages/recipe-runner/src/index.js';
 import { digestRecipeDocument } from '../../packages/protocol/src/index.js';
 
 const scenario = process.argv[2];

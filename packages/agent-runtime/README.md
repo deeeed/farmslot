@@ -13,7 +13,7 @@ This package owns the reusable task-dir runtime surface:
 - `recipe-quality.json` builder/generator for worker-authored quality artifacts.
 
 It does not execute recipes. Recipe graph execution belongs in
-`@farmslot/recipe-harness`, and schemas/validators belong in `@farmslot/protocol`.
+`@farmslot/recipe-runner`, and schemas/validators belong in `@farmslot/protocol`.
 
 ## CLI
 

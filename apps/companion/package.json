@@ -103,7 +103,7 @@
   "devDependencies": {
     "@babel/core": "^7.29.0",
     "@farmslot/expo-recipe": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*",
+    "@farmslot/recipe-runner": "workspace:*",
     "@types/babel__core": "^7",
     "@types/node": "^25.9.1",
     "@types/react": "~19.2.10",

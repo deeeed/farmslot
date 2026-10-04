@@ -36,7 +36,7 @@ const sidebars = {
         'architecture/resource-management-and-streaming',
         'architecture/multi-node-security',
         'architecture/gateway-api-protocol',
-        'architecture/recipe-harness',
+        'architecture/recipe-runner',
         'architecture/protocol-boundaries',
       ],
     },

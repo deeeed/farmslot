@@ -25,7 +25,7 @@ export const STEPS = [
   ['review-loop validation contract', ['yarn', 'quality:review-loop']],
   ['package/service workspace quality', ['yarn', 'quality:workspaces']],
   ['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']],
-  ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
+  ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-runner', 'quality']],
   ['protocol tests', ['yarn', 'test:protocol']],
   ['worker template contract', ['node', 'scripts/quality/worker-terminal-contract.test.cjs']],
   [
@@ -64,7 +64,7 @@ export const STEPS = [
     'runner observability installer tests',
     ['node', '--test', 'scripts/install-runner-observability.test.mjs'],
   ],
-  ['recipe harness tests', ['yarn', 'test:recipe-harness']],
+  ['recipe runner tests', ['yarn', 'test:recipe-runner']],
   ['ui tests', ['yarn', 'test:ui']],
   ['recipe operational gates', ['yarn', 'test:recipe-operational-gates']],
   ['companion tests', ['yarn', '--cwd', 'apps/companion', 'test:lib']],

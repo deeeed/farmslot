@@ -3,7 +3,7 @@ import type {
   RecipeLibraryAdapterDeclaration,
   RecipeLibraryOrigin,
   RecipeLibraryRequirement,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 /** Version of every `--json` envelope printed by the discovery commands. */
 export const DISCOVERY_SCHEMA_VERSION = 1 as const;

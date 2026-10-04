@@ -42,7 +42,7 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 ## Maintenance rules
 
 - Discovery is generic. Product names, platforms and actions come from libraries, never from this package.
-- Library loading, recipe identity and precedence belong to `@farmslot/recipe-harness`; this package reads them and must not re-implement them.
+- Library loading, recipe identity and precedence belong to `@farmslot/recipe-runner`; this package reads them and must not re-implement them.
 - `--json` envelopes are a contract: add fields freely, but bump `DISCOVERY_SCHEMA_VERSION` before removing or renaming one.
 - Discovery never runs actions or loads adapter code.
 

@@ -1,10 +1,10 @@
 # Changelog
 
-All notable changes to `@farmslot/recipe-harness` are tracked here.
+All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe-harness` up to 0.22.1) are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- **Breaking:** renamed from `@farmslot/recipe-harness`. Run provenance, the bundled recipe source and the packages a library's `requires` can name now report `@farmslot/recipe-runner`. `RECIPE_HARNESS_VERSION`, `runRecipeHarnessCli`, `createRecipeHarnessProgram` and `RecipeHarnessCliOptions` are now `RECIPE_RUNNER_VERSION`, `runRecipeRunnerCli`, `createRecipeRunnerProgram` and `RecipeRunnerCliOptions`. There is no `@farmslot/recipe-harness` alias package.
 
 ## 0.22.1 - 2026-10-03
 

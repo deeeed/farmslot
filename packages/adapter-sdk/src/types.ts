@@ -11,9 +11,9 @@ import type {
   StandardUiAction,
   UiActionTransport,
   VideoRecorder,
-} from '@farmslot/recipe-harness';
-import type { CreateCdpWebUiTransportOptions } from '@farmslot/recipe-harness/runtime/cdp';
-import type { CreateReactNativeBridgeUiTransportOptions } from '@farmslot/recipe-harness/runtime/react-native-bridge';
+} from '@farmslot/recipe-runner';
+import type { CreateCdpWebUiTransportOptions } from '@farmslot/recipe-runner/runtime/cdp';
+import type { CreateReactNativeBridgeUiTransportOptions } from '@farmslot/recipe-runner/runtime/react-native-bridge';
 
 /** The adapter SDK major version a host implements. */
 export const ADAPTER_SDK_VERSION = 1;

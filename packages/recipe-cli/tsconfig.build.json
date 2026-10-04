@@ -6,9 +6,9 @@
     "paths": {
       "@farmslot/protocol": ["../protocol/dist/index.d.ts"],
       "@farmslot/protocol/*": ["../protocol/dist/*"],
-      "@farmslot/recipe-harness": ["../recipe-harness/dist/index.d.ts"],
-      "@farmslot/recipe-harness/cli": ["../recipe-harness/dist/cli/index.d.ts"],
-      "@farmslot/recipe-harness/*": ["../recipe-harness/dist/*"]
+      "@farmslot/recipe-runner": ["../recipe-runner/dist/index.d.ts"],
+      "@farmslot/recipe-runner/cli": ["../recipe-runner/dist/cli/index.d.ts"],
+      "@farmslot/recipe-runner/*": ["../recipe-runner/dist/*"]
     }
   },
   "include": ["src/**/*.ts"]

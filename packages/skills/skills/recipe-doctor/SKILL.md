@@ -22,7 +22,7 @@ Check how far a project can go with recipes today.
 
 1. Inspect package scripts and repo docs for recipe commands.
 2. Look for recipe files, runner manifests, action manifests, schemas, or artifact conventions.
-3. Check whether `@farmslot/recipe-harness`, an app-specific runner, or a custom script is installed.
+3. Check whether `@farmslot/recipe-runner`, an app-specific runner, or a custom script is installed.
 4. Identify proof surfaces: state/log artifacts, screenshots, traces, browser control, mobile bridge, or command output.
 5. Report the smallest useful next step.
 

@@ -21,7 +21,7 @@
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/credential-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*",
+    "@farmslot/recipe-runner": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",
     "commander": "^12.0.0",

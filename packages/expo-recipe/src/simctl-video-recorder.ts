@@ -9,7 +9,7 @@ import {
   type VideoRecorder,
   type VideoRecorderDoctorResult,
   type VideoRecorderStartRequest,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 const DEFAULT_STOP_TIMEOUT_MS = 20_000;
 

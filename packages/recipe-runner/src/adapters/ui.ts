@@ -93,7 +93,7 @@ export function createStandardUiAdapters(
     source: {
       kind: 'bundled' as const,
       trust: 'trusted' as const,
-      name: '@farmslot/recipe-harness',
+      name: '@farmslot/recipe-runner',
     },
     async execute(node, context) {
       if (

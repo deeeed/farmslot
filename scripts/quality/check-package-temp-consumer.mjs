@@ -22,14 +22,14 @@ async function linkWorkspacePackage(tempRoot, packageName, packagePath) {
 }
 
 async function main() {
-  run('yarn', ['workspace', '@farmslot/recipe-harness', 'build']);
+  run('yarn', ['workspace', '@farmslot/recipe-runner', 'build']);
   run('yarn', ['workspace', '@farmslot/skills', 'build']);
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-package-consumer-'));
   try {
     await mkdir(path.join(tempRoot, 'src'), { recursive: true });
     await linkWorkspacePackage(tempRoot, 'protocol', 'packages/protocol');
-    await linkWorkspacePackage(tempRoot, 'recipe-harness', 'packages/recipe-harness');
+    await linkWorkspacePackage(tempRoot, 'recipe-runner', 'packages/recipe-runner');
     await linkWorkspacePackage(tempRoot, 'skills', 'packages/skills');
 
     await writeFile(
@@ -79,12 +79,12 @@ import {
   createStandardCoreAdapters,
   createStandardUiAdapters,
   type ActionAdapter,
-} from '@farmslot/recipe-harness';
-import { runRecipeHarnessCli } from '@farmslot/recipe-harness/cli';
-import { validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
-import { JsonArtifactWriter } from '@farmslot/recipe-harness/writers';
-import { dataTestId } from '@farmslot/recipe-harness/runtime/cdp';
-import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-harness/runtime/react-native-bridge';
+} from '@farmslot/recipe-runner';
+import { runRecipeRunnerCli } from '@farmslot/recipe-runner/cli';
+import { validateRecipeCliInput } from '@farmslot/recipe-runner/cli/support';
+import { JsonArtifactWriter } from '@farmslot/recipe-runner/writers';
+import { dataTestId } from '@farmslot/recipe-runner/runtime/cdp';
+import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runtime/react-native-bridge';
 import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
 
 const result = validateRecipeDocument({
@@ -111,7 +111,7 @@ void createRecipeRunner;
 void createStandardUiAdapters;
 void COMMAND_CENTER_SURFACES;
 void buildCommandCenterContext;
-void runRecipeHarnessCli;
+void runRecipeRunnerCli;
 void validateRecipeCliInput;
 void JsonArtifactWriter;
 void dataTestId;
@@ -124,16 +124,16 @@ void FARMSLOT_SKILL_NAMES;
       `import { validateRecipeDocument } from '@farmslot/protocol';
 import { RunMethods } from '@farmslot/protocol/rpc/run';
 import { COMMAND_CENTER_SURFACES } from '@farmslot/protocol/surfaces/command-center';
-import { createStandardCoreAdapters } from '@farmslot/recipe-harness';
-import { runRecipeHarnessCli } from '@farmslot/recipe-harness/cli';
-import { dataTestId } from '@farmslot/recipe-harness/runtime/cdp';
+import { createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import { runRecipeRunnerCli } from '@farmslot/recipe-runner/cli';
+import { dataTestId } from '@farmslot/recipe-runner/runtime/cdp';
 import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
 
 if (validateRecipeDocument({}).status !== 'invalid') throw new Error('recipe validator smoke failed');
 if (RunMethods.get !== 'run.get') throw new Error('run RPC smoke failed');
 if (!COMMAND_CENTER_SURFACES.length) throw new Error('surface registry smoke failed');
 if (!createStandardCoreAdapters({ actions: ['wait'] }).length) throw new Error('harness root smoke failed');
-if (typeof runRecipeHarnessCli !== 'function') throw new Error('harness cli smoke failed');
+if (typeof runRecipeRunnerCli !== 'function') throw new Error('harness cli smoke failed');
 if (dataTestId('x') !== '[data-testid="x"]') throw new Error('harness cdp smoke failed');
 if (!FARMSLOT_SKILL_NAMES.includes('recipe-cook')) throw new Error('skills import smoke failed');
 `,

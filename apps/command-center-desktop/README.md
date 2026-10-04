@@ -187,7 +187,7 @@ In a second terminal at the same root, load the two env files as above, then bui
 
 ```sh
 yarn workspace @farmslot/protocol build
-yarn workspace @farmslot/recipe-harness build
+yarn workspace @farmslot/recipe-runner build
 node apps/command-center/scripts/agentic/run-recipe.mjs \
   docs/examples/recipes/farmslot/electron-client.recipe.json \
   --project-root "$PWD" --artifacts-dir temp/electron-recipe \

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.ts';
+} from '../packages/recipe-runner/src/index.ts';
 import {
   getRecipeActionManifestActionNames,
   isRecord,

@@ -30,7 +30,7 @@ import {
   STANDARD_UI_ACTIONS,
   type UiActionTransport,
 } from '../src/adapters/ui.js';
-import { runRecipeHarnessCli } from '../src/cli/index.js';
+import { runRecipeRunnerCli } from '../src/cli/index.js';
 import { parseRecipeParamAssignments, validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { writeFileWithinRoot } from '../src/core/path.js';
@@ -47,7 +47,7 @@ import {
   createReactNativeBridgeUiTransport,
   type ReactNativeBridgeCommand,
 } from '../src/runtime/react-native-bridge.js';
-import { RECIPE_HARNESS_VERSION } from '../src/version.js';
+import { RECIPE_RUNNER_VERSION } from '../src/version.js';
 
 const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 
@@ -325,7 +325,7 @@ function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]
 }
 
 async function createTempRoot(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-harness-'));
+  return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-runner-'));
 }
 
 async function waitForFile(filePath: string, timeoutMs = 5_000): Promise<void> {
@@ -521,7 +521,7 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     assert.equal((summary as { status?: string }).status, 'pass');
     assert.equal(
       (summary as { harness?: { version?: string } }).harness?.version,
-      RECIPE_HARNESS_VERSION,
+      RECIPE_RUNNER_VERSION,
     );
 
     const packageResult = validateRecipeArtifactPackage({
@@ -675,7 +675,7 @@ test('validates executed parameters without overriding or rewriting the recipe',
         .status,
       'valid',
     );
-    await runRecipeHarnessCli([
+    await runRecipeRunnerCli([
       'validate',
       result.recipePath,
       '--artifact-dir',
@@ -3151,7 +3151,7 @@ test('runs and validates recipes through the harness CLI entrypoint', async () =
     await writeJsonFile(manifestPath, coreActionManifest);
 
     const runOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         recipePath,
         '--artifacts-dir',
@@ -3167,7 +3167,7 @@ test('runs and validates recipes through the harness CLI entrypoint', async () =
     assert.ok((await listRelativeFiles(artifactsDir)).includes('artifact-manifest.json'));
 
     const validateOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'validate',
         recipePath,
         '--action-manifest',
@@ -3230,7 +3230,7 @@ test('validates composed artifact packages from their retained dependency graph'
     );
     await writeJsonFile(manifestPath, coreActionManifest);
 
-    await runRecipeHarnessCli([
+    await runRecipeRunnerCli([
       'run',
       recipePath,
       'market=BTC',
@@ -3283,7 +3283,7 @@ test('validate resolves canonical adapter-specific recipe dependencies', async (
     await writeJsonFile(manifestPath, coreActionManifest);
 
     const output = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'validate',
         recipePath,
         '--action-manifest',
@@ -3315,7 +3315,7 @@ test('validate reports adapter declaration conflicts with recovery guidance', as
     process.exitCode = undefined;
 
     const output = await captureConsoleError(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'validate',
         recipePath,
         '--adapter',
@@ -3351,7 +3351,7 @@ test('validate reports escaping library symlinks with trust refusal guidance', a
     process.exitCode = undefined;
 
     const output = await captureConsoleError(() =>
-      runRecipeHarnessCli(['validate', recipePath, '--library', `team=${libraryRoot}`]),
+      runRecipeRunnerCli(['validate', recipePath, '--library', `team=${libraryRoot}`]),
     );
     assert.match(output, /Error \[RECIPE_SOURCE_INVALID\]/u);
     assert.match(output, /Next: move the file inside the library root/u);
@@ -3406,7 +3406,7 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
     await writeJsonFile(manifestPath, coreActionManifest);
 
     const listOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         '--list',
         '--library',
@@ -3421,7 +3421,7 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
     assert.match(listOutput, /"shadows": \[\s*"personal"\s*\]/);
 
     const humanListOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         '--list',
         '--library',
@@ -3433,7 +3433,7 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
     assert.match(humanListOutput, /demo\.check.*\(shadows: personal\)/);
 
     const describeOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         'demo.check',
         '--describe',
@@ -3446,7 +3446,7 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
     assert.match(describeOutput, /"name": "delay"/);
 
     const runOutput = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         'demo.check',
         'delay=0',
@@ -3477,7 +3477,7 @@ test('CLI rejects proof-window video mode until focused clips are implemented', 
 
     await assert.rejects(
       () =>
-        runRecipeHarnessCli([
+        runRecipeRunnerCli([
           'run',
           recipePath,
           '--artifacts-dir',
@@ -3491,7 +3491,7 @@ test('CLI rejects proof-window video mode until focused clips are implemented', 
     );
     await assert.rejects(
       () =>
-        runRecipeHarnessCli([
+        runRecipeRunnerCli([
           'run',
           recipePath,
           '--artifacts-dir',

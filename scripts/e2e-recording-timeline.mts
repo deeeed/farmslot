@@ -11,16 +11,16 @@ import {
   type RecipeActionManifestDocument,
   type RecipeRecordingTimelineDocument,
 } from '@farmslot/protocol';
-import { createRecipeRunner } from '../packages/recipe-harness/src/core/runner.js';
-import { createStandardCoreAdapters } from '../packages/recipe-harness/src/adapters/core.js';
-import { createStandardUiAdapters } from '../packages/recipe-harness/src/adapters/ui.js';
+import { createRecipeRunner } from '../packages/recipe-runner/src/core/runner.js';
+import { createStandardCoreAdapters } from '../packages/recipe-runner/src/adapters/core.js';
+import { createStandardUiAdapters } from '../packages/recipe-runner/src/adapters/ui.js';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
   type CdpTargetInfo,
-} from '../packages/recipe-harness/src/runtime/cdp.js';
-import { createCdpVideoRecorder } from '../packages/recipe-harness/src/recording/cdp-video-recorder.js';
-import { createCaptureHelperVideoRecorder } from '../packages/recipe-harness/src/recording/capture-helper.js';
+} from '../packages/recipe-runner/src/runtime/cdp.js';
+import { createCdpVideoRecorder } from '../packages/recipe-runner/src/recording/cdp-video-recorder.js';
+import { createCaptureHelperVideoRecorder } from '../packages/recipe-runner/src/recording/capture-helper.js';
 
 const cdpPort = Number(process.env.FARMSLOT_CDP_PORT ?? 19223);
 assert.ok([19222, 19223, 19224].includes(cdpPort), 'Use an isolated Agent Chrome profile');

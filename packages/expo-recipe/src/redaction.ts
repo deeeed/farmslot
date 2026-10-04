@@ -2,7 +2,7 @@ import {
   type ActionAdapter,
   type ActionResult,
   createStandardCoreAdapters,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 const SENSITIVE_OUTPUT_KEY_PATTERN =
   /(token|secret|password|api[_-]?key|private[_-]?key|auth(?:key|token|secret)|credential)/iu;

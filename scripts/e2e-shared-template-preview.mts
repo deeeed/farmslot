@@ -20,7 +20,7 @@ import type { DispatchPreviewResult } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 
 // Input packs and expected references are supplied by the caller. This proves
 // preview resolution only; fixture slot readiness is not application proof.

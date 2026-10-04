@@ -11,7 +11,7 @@ import {
   type ResolvedLibraryRecipe,
   resolveRecipeDependencies,
   resolveRecipeValue,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 import type { RecipeDiscoveryIndex } from './discovery-index.js';
 import type {

@@ -1,4 +1,4 @@
-# Recipe harness architecture
+# Recipe runner architecture
 
 This document records component boundaries. [Recipe Protocol v1](recipe-protocol-v1.md) is the field-level authority.
 
@@ -9,7 +9,7 @@ The harness is a small protocol executor between a recipe and project-owned capa
 ```text
 CLI / Farmslot gateway / Command Center
                   │
-          recipe harness
+          recipe runner
    ┌──────────────┼──────────────┐
 validator      resolver       executor
    │              │              │

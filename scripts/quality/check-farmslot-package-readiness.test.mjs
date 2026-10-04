@@ -10,7 +10,7 @@ const script = path.join(repoRoot, 'scripts/quality/check-farmslot-package-readi
 function runStrictCheck(userAgent) {
   return spawnSync(
     process.execPath,
-    [script, '--publish', '--packages', '@farmslot/recipe-harness'],
+    [script, '--publish', '--packages', '@farmslot/recipe-runner'],
     {
       cwd: repoRoot,
       encoding: 'utf8',

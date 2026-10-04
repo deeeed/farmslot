@@ -6,7 +6,7 @@ import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type { RecipeActionManifestDocument } from '@farmslot/protocol';
-import { loadRecipeLibraries } from '@farmslot/recipe-harness';
+import { loadRecipeLibraries } from '@farmslot/recipe-runner';
 
 import { runRecipeCli } from '../src/cli.js';
 import { buildDiscoveryIndex, findRecipe, shadowedRecipes } from '../src/discovery-index.js';
@@ -404,7 +404,7 @@ test('the hello example library lists, describes and explains without an adapter
   const index = await buildDiscoveryIndex({ env });
   assert.deepEqual(
     index.libraries[0]?.info.requires.map((entry) => entry.package),
-    ['@farmslot/recipe-harness'],
+    ['@farmslot/recipe-runner'],
   );
 });
 

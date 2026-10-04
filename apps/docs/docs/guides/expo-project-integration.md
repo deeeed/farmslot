@@ -9,7 +9,7 @@ title: Expo / React Native project integration
 ## Install
 
 ```sh
-yarn add -D @farmslot/expo-recipe @farmslot/recipe-harness @farmslot/recipe-cli @farmslot/protocol
+yarn add -D @farmslot/expo-recipe @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
 farmslot-expo-recipe init
 yarn recipe:doctor
 yarn recipe:validate
@@ -27,7 +27,7 @@ Wrap the app root with the generated `RecipeBridgeProvider` and enable it only i
 ## Ownership
 
 - `@farmslot/protocol` owns recipe validation.
-- `@farmslot/recipe-harness` owns graph execution, evidence, and generic actions.
+- `@farmslot/recipe-runner` owns graph execution, evidence, and generic actions.
 - `@farmslot/expo-recipe` owns Expo scaffolding and integration checks.
 - the app owns its bridge configuration, product actions, fixtures, and recipes.
 

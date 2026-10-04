@@ -2,12 +2,12 @@ import { pathToFileURL } from 'node:url';
 
 import { Command } from 'commander';
 
-import { RECIPE_HARNESS_VERSION } from '../version.js';
+import { RECIPE_RUNNER_VERSION } from '../version.js';
 
 import { registerRunCommand } from './run-command.js';
 import { registerValidateCommand } from './validate-command.js';
 
-export interface RecipeHarnessCliOptions {
+export interface RecipeRunnerCliOptions {
   commandName?: string;
   description?: string;
   /** Version printed by --version; a host CLI reports its own. */
@@ -16,12 +16,12 @@ export interface RecipeHarnessCliOptions {
   packageVersions?: Readonly<Record<string, string>>;
 }
 
-export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}): Command {
+export function createRecipeRunnerProgram(options: RecipeRunnerCliOptions = {}): Command {
   const program = new Command();
   program
     .name(options.commandName ?? 'farmslot-recipe')
     .description(options.description ?? 'Farmslot v1 recipe harness CLI')
-    .version(options.version ?? RECIPE_HARNESS_VERSION);
+    .version(options.version ?? RECIPE_RUNNER_VERSION);
 
   const context = options.packageVersions ? { packageVersions: options.packageVersions } : {};
   registerValidateCommand(program, context);
@@ -29,17 +29,17 @@ export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}
   return program;
 }
 
-export async function runRecipeHarnessCli(
+export async function runRecipeRunnerCli(
   argv: string[],
-  options: RecipeHarnessCliOptions = {},
+  options: RecipeRunnerCliOptions = {},
 ): Promise<void> {
-  await createRecipeHarnessProgram(options).parseAsync(argv, { from: 'user' });
+  await createRecipeRunnerProgram(options).parseAsync(argv, { from: 'user' });
 }
 
 // No top-level await: this module is a library entry too, and a CommonJS consumer can only
 // require() an ES module that loads synchronously.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runRecipeHarnessCli(process.argv.slice(2)).catch((error: unknown) => {
+  runRecipeRunnerCli(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);
     process.exit(1);
