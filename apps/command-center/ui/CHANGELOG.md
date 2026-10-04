@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Label worker command activity as "Last worker command" with "Command running/completed/failed" badges, so a failed `harness run` no longer reads as the run failing; while the run is still working and a checklist step is open, a failed command is shown in amber with "run still in progress". The panel keeps the latest command and its parents instead of flipping to an older failed one when a heartbeat is late. "View operation log" now opens the log (from the monitor step on a finished run), step files reopen from their link, and a link that cannot open says why.
 
 ## 0.20.0 - 2026-10-02
 

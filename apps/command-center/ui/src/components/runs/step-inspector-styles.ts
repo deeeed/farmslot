@@ -498,4 +498,26 @@ export const stepInspectorStyles = css`
     background: ${unsafeCSS(colors.statusOk)}12;
     border-color: ${unsafeCSS(colors.statusOk)}35;
   }
+  .artifact-unavailable {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 20;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    max-width: min(640px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border: 1px solid ${unsafeCSS(colors.statusWarn)};
+    border-radius: 6px;
+    background: ${unsafeCSS(colors.bgSurface)};
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .artifact-unavailable span {
+    overflow-wrap: anywhere;
+  }
+  .artifact-unavailable button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 `;

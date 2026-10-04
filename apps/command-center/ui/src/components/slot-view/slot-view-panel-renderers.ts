@@ -7,7 +7,11 @@ import '../chat/native-session-view.js';
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { NativeWorkerViewTarget } from '../chat/native-worker-target.js';
-import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
+import {
+  buildRerunAlongsideHref,
+  canReplayRunSteps,
+  isRunWorking,
+} from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
@@ -153,6 +157,7 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     return html`<progress-tracker
       .structured=${view._structuredProgress}
       .runId=${view._linkedRun?.id}
+      .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
     ></progress-tracker>`;
   }
 
