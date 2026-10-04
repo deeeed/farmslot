@@ -4,7 +4,8 @@ import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   acquireCheckoutLock,
@@ -18,9 +19,11 @@ import {
   harnessExecutable,
   harnessHost,
   hostEnvName,
+  indexArtifactManifest,
   JsonStreamWriter,
   missingShellLeafMessage,
   readCommandJournal,
+  readContainedJsonArtifact,
   recipeRuntimeDir,
   recipeRuntimePath,
   recordCommandEvidence,
@@ -28,6 +31,7 @@ import {
   stripAnsi,
   trackCheckoutChild,
   withCommandJournal,
+  writeContainedArtifact,
 } from '../src/harness/index.js';
 
 const MM_HOST = {
@@ -35,6 +39,7 @@ const MM_HOST = {
   envPrefix: 'MM_HARNESS',
   packageName: '@deeeed/metamask-harness',
   packageRoot: '/opt/mm-harness',
+  bin: 'bin/mm-harness',
   journaledCommands: ['run', 'call', 'launch', 'fixtures'],
 };
 
@@ -49,6 +54,7 @@ const touchedEnv = [
   'RECIPE_RUNTIME_DIR',
   'RECIPE_COLOR',
   'NO_COLOR',
+  'RECIPE_NO_COLOR',
   'MM_HARNESS_EXECUTABLE',
   'MM_HARNESS_OPERATION_ID',
   'MM_HARNESS_CHECKOUT_LOCK_TOKEN',
@@ -73,6 +79,7 @@ describe('host identity', () => {
     assert.equal(hostEnvName('OPERATION_ID'), 'FARMSLOT_RECIPE_OPERATION_ID');
     assert.equal(recipeRuntimeDir(), 'temp/recipe/runtime');
     assert.ok(fs.existsSync(path.join(host.packageRoot, 'package.json')));
+    assert.ok(fs.existsSync(harnessExecutable()), 'the default executable is the shipped bin');
   });
 
   test('a product host keeps its own names and env prefix', () => {
@@ -105,6 +112,17 @@ describe('host identity', () => {
 });
 
 describe('command journal', () => {
+  beforeEach(() => {
+    configureHarnessHost({ journaledCommands: ['run', 'call', 'launch'] });
+  });
+
+  test('the default host journals nothing', async () => {
+    configureHarnessHost({});
+    const target = tempRoot();
+    assert.equal(await withCommandJournal('run', ['run', '--target', target], async () => 0), 0);
+    assert.equal(fs.existsSync(path.dirname(commandJournalPath(target))), false);
+  });
+
   test('redacts option, assignment, URL, and structured secrets without hiding evidence', () => {
     assert.deepEqual(
       redactCommandArgs([
@@ -273,6 +291,130 @@ describe('checkout lock', () => {
   });
 });
 
+describe('checkout lock ownership across processes', () => {
+  test('keeps an orphaned child reservation after its owner dies, then reclaims it', async () => {
+    const target = tempRoot();
+    const harnessModule = new URL('../src/harness/index.ts', import.meta.url).href;
+    const childPidFile = path.join(target, 'child.pid');
+    const owner = spawn(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        `
+        import fs from 'node:fs';
+        import { spawn } from 'node:child_process';
+        import { acquireCheckoutLock, trackCheckoutChild } from ${JSON.stringify(harnessModule)};
+        const target = process.argv[1];
+        const lock = acquireCheckoutLock(target, 'build');
+        if ('message' in lock) throw new Error(lock.message);
+        const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},30000)'], { stdio: 'ignore' });
+        child.on('spawn', () => {
+          trackCheckoutChild(target, child.pid);
+          fs.writeFileSync(process.argv[2], String(child.pid));
+        });
+        setInterval(() => {}, 1000);
+      `,
+        target,
+        childPidFile,
+      ],
+      { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore' },
+    );
+    let childPid: number | undefined;
+    try {
+      for (let i = 0; i < 600 && !fs.existsSync(childPidFile); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      childPid = Number(fs.readFileSync(childPidFile, 'utf8'));
+      const exited = once(owner, 'exit');
+      owner.kill('SIGKILL');
+      await exited;
+      const refused = acquireCheckoutLock(target, 'contender') as CheckoutLockFailure;
+      assert.match(refused.message, /surviving child/u);
+      process.kill(childPid, 'SIGKILL');
+      for (let i = 0; i < 100; i += 1) {
+        try {
+          process.kill(childPid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      const reclaimed = acquireCheckoutLock(target, 'next');
+      assert.ok('release' in reclaimed, 'the lock is reclaimed once the child exits');
+      reclaimed.release();
+    } finally {
+      owner.kill('SIGKILL');
+      if (childPid) {
+        try {
+          process.kill(childPid, 'SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
+    }
+  });
+});
+
+describe('contained artifacts', () => {
+  test('writes and reads inside artifactsDir and replaces manifest entries by path', async () => {
+    const dir = tempRoot();
+    await writeContainedArtifact(dir, 'perf/summary.json', '{"ok":true}', 'summary');
+    assert.equal(fs.statSync(path.join(dir, 'perf/summary.json')).mode & 0o777, 0o600);
+    assert.deepEqual(await readContainedJsonArtifact(dir, 'perf/summary.json', 1024, 'summary'), {
+      ok: true,
+    });
+    const manifest = path.join(dir, 'manifest.json');
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({
+        run: 1,
+        artifacts: [{ path: 'perf/summary.json', label: 'old', type: 'json' }],
+      }),
+    );
+    await indexArtifactManifest(manifest, [
+      { path: 'perf/summary.json', label: 'new', type: 'json' },
+    ]);
+    const indexed = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
+      run: number;
+      artifacts: Array<{ label: string }>;
+    };
+    assert.equal(indexed.run, 1);
+    assert.deepEqual(
+      indexed.artifacts.map((artifact) => artifact.label),
+      ['new'],
+    );
+  });
+
+  test('refuses escapes, symlinks and oversized reads', async () => {
+    const dir = tempRoot();
+    const outside = tempRoot();
+    fs.writeFileSync(path.join(outside, 'keep.json'), '{"keep":true}');
+    await assert.rejects(
+      writeContainedArtifact(dir, '../x.json', '{}', 'escape'),
+      /inside artifactsDir/u,
+    );
+    fs.symlinkSync(path.join(outside, 'keep.json'), path.join(dir, 'linked.json'));
+    await assert.rejects(
+      writeContainedArtifact(dir, 'linked.json', '{}', 'linked'),
+      /symbolic link/u,
+    );
+    fs.symlinkSync(outside, path.join(dir, 'linked-dir'));
+    await assert.rejects(
+      writeContainedArtifact(dir, 'linked-dir/keep.json', '{}', 'parent'),
+      /parent must stay inside/u,
+    );
+    assert.equal(fs.readFileSync(path.join(outside, 'keep.json'), 'utf8'), '{"keep":true}');
+    fs.writeFileSync(path.join(dir, 'big.json'), JSON.stringify({ data: 'x'.repeat(2048) }));
+    await assert.rejects(
+      readContainedJsonArtifact(dir, 'big.json', 1024, 'big'),
+      /bounded regular file/u,
+    );
+  });
+});
+
 describe('library provenance', () => {
   function git(root: string, ...args: string[]): string {
     return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
@@ -331,6 +473,8 @@ describe('output', () => {
   });
 
   test('colour honours RECIPE_COLOR and NO_COLOR', () => {
+    delete process.env.NO_COLOR;
+    delete process.env.RECIPE_NO_COLOR;
     process.env.RECIPE_COLOR = '1';
     const painted = color('ok', 'pass');
     assert.notEqual(painted, 'pass');

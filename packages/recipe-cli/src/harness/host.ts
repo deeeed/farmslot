@@ -14,32 +14,22 @@ export interface HarnessHost {
   envPrefix: string;
   /** The npm package that ships the bin. */
   packageName: string;
-  /** The installed package root; `bin/<name>` lives under it. */
+  /** The installed package root. */
   packageRoot: string;
+  /** The host executable, relative to `packageRoot`. */
+  bin: string;
   /** Commands the resumability journal records. */
   journaledCommands: readonly string[];
 }
-
-const DEFAULT_JOURNALED_COMMANDS = [
-  'call',
-  'checklist',
-  'cleanup',
-  'doctor',
-  'install',
-  'launch',
-  'prepare',
-  'recipe-quality',
-  'run',
-  'stop',
-  'verify',
-];
 
 const defaultHost: HarnessHost = {
   name: 'farmslot-recipe',
   envPrefix: 'FARMSLOT_RECIPE',
   packageName: '@farmslot/recipe-cli',
   packageRoot: fileURLToPath(new URL('../..', import.meta.url)),
-  journaledCommands: DEFAULT_JOURNALED_COMMANDS,
+  bin: 'bin/farmslot-recipe.mjs',
+  // farmslot-recipe journals nothing yet; a host lists the commands it journals.
+  journaledCommands: [],
 };
 
 let current: HarnessHost = defaultHost;
