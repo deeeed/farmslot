@@ -1,10 +1,10 @@
-# @farmslot/recipe-harness
+# @farmslot/recipe-runner
 
 Generic Recipe Protocol v1 runner. It executes parameterized recipe graphs through registered actions and writes portable evidence.
 
 Canonical references:
 
-- [Recipe harness architecture](https://farmslot.io/docs/architecture/recipe-harness)
+- [Recipe runner architecture](https://farmslot.io/docs/architecture/recipe-runner)
 - [Recipe Protocol v1](https://farmslot.io/docs/reference/recipe-protocol-v1)
 - [Recipe Runner Protocol](https://farmslot.io/docs/reference/recipe-runner-protocol)
 - [Recipe composition quality](https://farmslot.io/docs/reference/recipe-composition-quality)
@@ -12,9 +12,9 @@ Canonical references:
 ## Install
 
 ```bash
-yarn add @farmslot/recipe-harness @farmslot/protocol
+yarn add @farmslot/recipe-runner @farmslot/protocol
 # or
-npm install @farmslot/recipe-harness @farmslot/protocol
+npm install @farmslot/recipe-runner @farmslot/protocol
 ```
 
 ## Model
@@ -37,7 +37,7 @@ The harness owns graph execution, standard actions, library resolution, trust pr
 ## Minimal runner
 
 ```ts
-import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-harness';
+import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 
 const runner = createRecipeRunner({
@@ -61,7 +61,7 @@ Runner construction and preflight fail when a required action, adapter, precondi
 
 ## CLI
 
-The `farmslot-recipe` command ships in [`@farmslot/recipe-cli`](https://farmslot.io/docs/reference/recipe-discovery), which also adds library-wide discovery (`actions`, `list`, `describe`, `explain`, `search`, `template`). This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-harness/cli`.
+The `farmslot-recipe` command ships in [`@farmslot/recipe-cli`](https://farmslot.io/docs/reference/recipe-discovery), which also adds library-wide discovery (`actions`, `list`, `describe`, `explain`, `search`, `template`). This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-runner/cli`.
 
 Discover first:
 
@@ -148,7 +148,7 @@ finalizer copies retained summaries into one portable suite package; it never
 schedules cases or invents non-execution reasons.
 
 ```ts
-import { finalizeRecipeSuite, freezeRecipeSuiteScope } from '@farmslot/recipe-harness';
+import { finalizeRecipeSuite, freezeRecipeSuiteScope } from '@farmslot/recipe-runner';
 
 const frozen = freezeRecipeSuiteScope(scopeJson);
 const suite = await finalizeRecipeSuite({
@@ -169,7 +169,7 @@ const suite = await finalizeRecipeSuite({
 ## Custom action
 
 ```ts
-import { defineActionAdapter } from '@farmslot/recipe-harness';
+import { defineActionAdapter } from '@farmslot/recipe-runner';
 
 export const echoAdapter = defineActionAdapter({
   action: 'example.echo',
@@ -186,7 +186,7 @@ Declare `example.echo` in the action manifest. Keep action names durable and nam
 ## UI transport
 
 ```ts
-import { createStandardUiAdapters } from '@farmslot/recipe-harness';
+import { createStandardUiAdapters } from '@farmslot/recipe-runner';
 
 const uiAdapters = createStandardUiAdapters({
   actions: ['ui.press', 'ui.set_input', 'ui.scroll', 'ui.screenshot', 'app.hud'],
@@ -223,7 +223,7 @@ surface and capture ids; `feedbackDraftFromDocument` is the same restore for cod
 
 ## Public imports
 
-- `@farmslot/recipe-harness`
+- `@farmslot/recipe-runner`
 - `/runner`, `/types`, `/writers`
 - `/adapters/core`, `/adapters/ui`
 - `/runtime/cdp`, `/runtime/react-native-bridge`, `/runtime/browser-extension`
@@ -249,8 +249,8 @@ Keep generic execution here and product/domain behavior in project adapters. Upd
 ## Local quality
 
 ```bash
-yarn workspace @farmslot/recipe-harness quality
-yarn test:recipe-harness
+yarn workspace @farmslot/recipe-runner quality
+yarn test:recipe-runner
 ```
 
 Do not publish unless protocol, docs, exports, and tests agree.

@@ -27,9 +27,9 @@ const packages = [
       "const m = await import('./packages/protocol/dist/index.js'); if (!m.PROTOCOL_VERSION) throw new Error('missing PROTOCOL_VERSION export');",
   },
   {
-    name: '@farmslot/recipe-harness',
-    dir: 'packages/recipe-harness',
-    publicDoc: 'https://farmslot.io/docs/architecture/recipe-harness',
+    name: '@farmslot/recipe-runner',
+    dir: 'packages/recipe-runner',
+    publicDoc: 'https://farmslot.io/docs/architecture/recipe-runner',
     requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/core/runner.ts'],
     packRequiredFiles: [
       'README.md',
@@ -39,7 +39,7 @@ const packages = [
       'dist/cli/index.js',
     ],
     importCheck:
-      "const m = await import('./packages/recipe-harness/dist/cli/index.js'); if (typeof m.runRecipeHarnessCli !== 'function') throw new Error('missing runRecipeHarnessCli export');",
+      "const m = await import('./packages/recipe-runner/dist/cli/index.js'); if (typeof m.runRecipeRunnerCli !== 'function') throw new Error('missing runRecipeRunnerCli export');",
   },
   {
     name: '@farmslot/recipe-cli',

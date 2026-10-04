@@ -4,7 +4,7 @@ const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: unknown };
 
 if (typeof packageJson.version !== 'string' || !packageJson.version) {
-  throw new Error('@farmslot/recipe-harness package version is missing.');
+  throw new Error('@farmslot/recipe-runner package version is missing.');
 }
 
-export const RECIPE_HARNESS_VERSION = packageJson.version;
+export const RECIPE_RUNNER_VERSION = packageJson.version;

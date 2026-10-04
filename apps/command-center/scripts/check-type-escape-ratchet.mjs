@@ -13,7 +13,7 @@ const productionRoots = [
   'services/gateway/src',
   'services/node/src',
   'packages/protocol/src',
-  'packages/recipe-harness/src',
+  'packages/recipe-runner/src',
   'apps/command-center/ui/src',
 ];
 const ignoredSegments = new Set(['node_modules', 'dist', 'coverage']);

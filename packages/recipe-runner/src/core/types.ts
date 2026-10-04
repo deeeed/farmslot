@@ -341,7 +341,7 @@ export interface SummaryDocument {
   endedAt: string;
   durationMs: number;
   harness: {
-    name: '@farmslot/recipe-harness';
+    name: '@farmslot/recipe-runner';
     version: string;
     action_manifest_schema: string;
   };

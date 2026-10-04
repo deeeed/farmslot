@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { RecipeVideoRecordingOptions } from '@farmslot/recipe-harness';
+import type { RecipeVideoRecordingOptions } from '@farmslot/recipe-runner';
 import {
   parsePositiveInteger,
   parseRecipeParamAssignments,
   parseRecordingTarget,
-} from '@farmslot/recipe-harness/cli/support';
+} from '@farmslot/recipe-runner/cli/support';
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { printDoctorResult, runExpoRecipeDoctor } from './doctor.js';

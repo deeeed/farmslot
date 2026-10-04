@@ -10,7 +10,7 @@ import {
   OperationOutputTail,
   OperationRecord,
   readOperations,
-} from '../../../../packages/recipe-harness/src/runtime/operation.js';
+} from '../../../../packages/recipe-runner/src/runtime/operation.js';
 
 import { attachOperations } from './operations.js';
 

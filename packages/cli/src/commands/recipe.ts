@@ -22,14 +22,14 @@ import {
   createStandardCoreAdapters,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 import {
   parseRecipeParamAssignments,
   readRecipeCliJsonFile,
   readRecipeCliJsonFileWithinRoot,
   resolveRecipeCliPath,
   validateRecipeCliInput,
-} from '@farmslot/recipe-harness/cli/support';
+} from '@farmslot/recipe-runner/cli/support';
 
 import { green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';

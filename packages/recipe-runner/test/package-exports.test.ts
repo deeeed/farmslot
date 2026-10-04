@@ -9,13 +9,13 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 ) => Promise<Record<string, unknown>>;
 
 test('package exports expose stable public harness subpaths', async () => {
-  const root = await dynamicImport('@farmslot/recipe-harness');
-  const runner = await dynamicImport('@farmslot/recipe-harness/runner');
-  const adapters = await dynamicImport('@farmslot/recipe-harness/adapters/core');
-  const appLifecycle = await dynamicImport('@farmslot/recipe-harness/adapters/app-lifecycle');
-  const cdp = await dynamicImport('@farmslot/recipe-harness/runtime/cdp');
-  const cli = await dynamicImport('@farmslot/recipe-harness/cli');
-  const cliSupport = await dynamicImport('@farmslot/recipe-harness/cli/support');
+  const root = await dynamicImport('@farmslot/recipe-runner');
+  const runner = await dynamicImport('@farmslot/recipe-runner/runner');
+  const adapters = await dynamicImport('@farmslot/recipe-runner/adapters/core');
+  const appLifecycle = await dynamicImport('@farmslot/recipe-runner/adapters/app-lifecycle');
+  const cdp = await dynamicImport('@farmslot/recipe-runner/runtime/cdp');
+  const cli = await dynamicImport('@farmslot/recipe-runner/cli');
+  const cliSupport = await dynamicImport('@farmslot/recipe-runner/cli/support');
 
   assert.equal(typeof root.createRecipeRunner, 'function');
   assert.equal(typeof root.createAppLifecycleAdapters, 'function');
@@ -23,9 +23,9 @@ test('package exports expose stable public harness subpaths', async () => {
   assert.equal(typeof adapters.createStandardCoreAdapters, 'function');
   assert.equal(typeof appLifecycle.createAppLifecycleAdapter, 'function');
   assert.equal(typeof cdp.createCdpWebUiTransport, 'function');
-  assert.equal(typeof cli.runRecipeHarnessCli, 'function');
+  assert.equal(typeof cli.runRecipeRunnerCli, 'function');
   assert.equal(typeof cliSupport.validateRecipeCliInput, 'function');
-  assert.equal(root.runRecipeHarnessCli, undefined);
+  assert.equal(root.runRecipeRunnerCli, undefined);
   assert.equal(root.createCdpWebUiTransport, undefined);
 });
 
@@ -46,13 +46,13 @@ test('package exports are explicit and extensionless', () => {
 
 test('package exports block internal harness modules', async () => {
   for (const blocked of [
-    '@farmslot/recipe-harness/core/json.js',
-    '@farmslot/recipe-harness/core/flows.js',
-    '@farmslot/recipe-harness/node/writers.js',
-    '@farmslot/recipe-harness/cli-support',
-    '@farmslot/recipe-harness/runner.js',
-    '@farmslot/recipe-harness/adapters/core.js',
-    '@farmslot/recipe-harness/tests/recipe-harness.test.js',
+    '@farmslot/recipe-runner/core/json.js',
+    '@farmslot/recipe-runner/core/flows.js',
+    '@farmslot/recipe-runner/node/writers.js',
+    '@farmslot/recipe-runner/cli-support',
+    '@farmslot/recipe-runner/runner.js',
+    '@farmslot/recipe-runner/adapters/core.js',
+    '@farmslot/recipe-runner/tests/recipe-runner.test.js',
   ]) {
     await assert.rejects(
       dynamicImport(blocked),
@@ -75,7 +75,7 @@ test('every package export loads with require() from CommonJS', () => {
   const result = plainNode([
     '-e',
     `for (const subpath of Object.keys(require('./package.json').exports)) {
-      require('@farmslot/recipe-harness' + subpath.slice(1));
+      require('@farmslot/recipe-runner' + subpath.slice(1));
     }`,
   ]);
   assert.equal(result.status, 0, result.stderr);

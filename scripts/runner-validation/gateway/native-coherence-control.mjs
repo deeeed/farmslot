@@ -67,7 +67,7 @@ const controls = {
     'configuredContract',
   ],
   'adapters-shadow': [
-    'packages/recipe-harness/src/core/library.ts',
+    'packages/recipe-runner/src/core/library.ts',
     /if \(!qualified.has\(alias\)\)/,
     'if (!recipes.has(ref) && !qualified.has(alias))',
   ],
@@ -229,7 +229,7 @@ const controls = {
     'void current',
   ],
   adapters: [
-    'packages/recipe-harness/src/core/library.ts',
+    'packages/recipe-runner/src/core/library.ts',
     /(async function libraryAdapters\([^)]*\)\s*(?::[^\{]+)?\{)/,
     '$1 return new Set(LEGACY_RECIPE_ADAPTERS);',
   ],

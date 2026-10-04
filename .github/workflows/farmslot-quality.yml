@@ -37,7 +37,7 @@ jobs:
       agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
       capabilities: ${{ steps.filter.outputs.capabilities }}
       protocol: ${{ steps.filter.outputs.protocol }}
-      recipe_harness: ${{ steps.filter.outputs.recipe_harness }}
+      recipe_runner: ${{ steps.filter.outputs.recipe_runner }}
       recipe_cli: ${{ steps.filter.outputs.recipe_cli }}
       adapter_sdk: ${{ steps.filter.outputs.adapter_sdk }}
       skills: ${{ steps.filter.outputs.skills }}
@@ -72,7 +72,7 @@ jobs:
               - 'apps/command-center/**'
               - 'packages/cli/**'
               - 'packages/protocol/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
               - 'packages/theme/**'
               - 'services/gateway/**'
               - 'services/node/**'
@@ -92,7 +92,7 @@ jobs:
               - 'apps/companion/**'
               - 'packages/expo-recipe/**'
               - 'packages/protocol/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
               - 'packages/theme/**'
             docs:
               - '.github/workflows/farmslot-quality.yml'
@@ -113,14 +113,14 @@ jobs:
               - 'yarn.lock'
               - 'packages/cli/**'
               - 'packages/protocol/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
             expo_recipe:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/expo-recipe/**'
               - 'packages/protocol/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
             agent_runtime:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -138,12 +138,12 @@ jobs:
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
-            recipe_harness:
+            recipe_runner:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
             recipe_cli:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -151,14 +151,14 @@ jobs:
               - 'examples/recipe-library-hello/**'
               - 'packages/protocol/**'
               - 'packages/recipe-cli/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
             adapter_sdk:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
               - 'packages/adapter-sdk/**'
-              - 'packages/recipe-harness/**'
+              - 'packages/recipe-runner/**'
             skills:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -345,7 +345,7 @@ jobs:
         run: yarn install --immutable
 
       - name: Build recipe harness package
-        run: yarn workspace @farmslot/recipe-harness build
+        run: yarn workspace @farmslot/recipe-runner build
 
       - name: Command Center quality
         working-directory: apps/command-center
@@ -553,10 +553,10 @@ jobs:
       - name: Capabilities quality
         run: yarn workspace @farmslot/capabilities quality
 
-  recipe-harness:
-    name: Recipe harness package quality
+  recipe-runner:
+    name: Recipe runner package quality
     needs: changes
-    if: needs.changes.outputs.recipe_harness == 'true'
+    if: needs.changes.outputs.recipe_runner == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -573,8 +573,8 @@ jobs:
         run: corepack enable
       - name: Install workspace dependencies
         run: yarn install --immutable
-      - name: Recipe harness quality
-        run: yarn workspace @farmslot/recipe-harness quality
+      - name: Recipe runner quality
+        run: yarn workspace @farmslot/recipe-runner quality
 
   recipe-cli:
     name: Recipe CLI package quality

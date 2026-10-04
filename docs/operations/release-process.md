@@ -20,11 +20,11 @@ Or invoke the **`fs-release-cut`** agent skill for a succinct NO / SOON / YES si
 
 ## Release groups
 
-| Group       | Workspaces                                                             | Typical ship path                                                  |
-| ----------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `hosted-cc` | `command-center-ui`, `command-center`, `gateway`, `protocol`           | Merge → GitHub Pages (`farmslot.io/cc`)                            |
-| `companion` | `companion`                                                            | EAS update / build via `apps/companion/scripts/release/release.sh` |
-| `npm`       | `protocol`, `agent-runtime`, `recipe-harness`, `expo-recipe`, `skills` | Manual `yarn npm publish` after strict checks                      |
+| Group       | Workspaces                                                                                         | Typical ship path                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hosted-cc` | `command-center-ui`, `command-center`, `gateway`, `protocol`                                       | Merge → GitHub Pages (`farmslot.io/cc`)                            |
+| `companion` | `companion`                                                                                        | EAS update / build via `apps/companion/scripts/release/release.sh` |
+| `npm`       | `protocol`, `agent-runtime`, `recipe-runner`, `recipe-cli`, `adapter-sdk`, `expo-recipe`, `skills` | Manual `yarn npm publish` after strict checks                      |
 
 ## Cut workflow
 

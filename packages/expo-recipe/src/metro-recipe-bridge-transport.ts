@@ -1,9 +1,9 @@
-import type { ActionExecutionContext, UiActionTransport } from '@farmslot/recipe-harness';
+import type { ActionExecutionContext, UiActionTransport } from '@farmslot/recipe-runner';
 import {
   createReactNativeBridgeUiTransport,
   type ReactNativeBridge,
   type ReactNativeBridgeCommand,
-} from '@farmslot/recipe-harness/runtime/react-native-bridge';
+} from '@farmslot/recipe-runner/runtime/react-native-bridge';
 
 export interface MetroRecipeBridgeTransportOptions {
   host?: string;

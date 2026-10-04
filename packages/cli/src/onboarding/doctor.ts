@@ -295,13 +295,13 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
     hint: depsInstalled ? undefined : `run: yarn --cwd ${root} install`,
   });
   const protocolDist = join(root, 'packages', 'protocol', 'dist', 'index.js');
-  const harnessDist = join(root, 'packages', 'recipe-harness', 'dist', 'index.js');
+  const harnessDist = join(root, 'packages', 'recipe-runner', 'dist', 'index.js');
   const built = existsSync(protocolDist) && existsSync(harnessDist);
   checks.push({
     name: 'workspace packages built',
     ok: built,
-    detail: built ? 'protocol + recipe-harness dist present' : 'missing dist output',
-    hint: built ? undefined : `run: yarn --cwd ${root} workspace @farmslot/recipe-harness build`,
+    detail: built ? 'protocol + recipe-runner dist present' : 'missing dist output',
+    hint: built ? undefined : `run: yarn --cwd ${root} workspace @farmslot/recipe-runner build`,
   });
   if (depsInstalled) {
     const lock = join(root, 'yarn.lock');

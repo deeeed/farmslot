@@ -2,7 +2,7 @@
   "schema_version": 1,
   "root": {
     "ref": "documentation-onboarding",
-    "digest": "sha256:1c2d48f52295d8b30b9267efc7d7cda5b3eab869bc27fbdea835721bdd495f0f"
+    "digest": "sha256:db0502d8747955d15d644efacb65985e19cf05d3d1ee75dad590144406ea3d39"
   },
   "dependencies": [],
   "edges": []

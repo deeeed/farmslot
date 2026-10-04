@@ -19,7 +19,7 @@ import {
   type UiActionTransport,
   type UiPoint,
   type UiTransportResult,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 const execFileAsync = promisify(execFile);
 

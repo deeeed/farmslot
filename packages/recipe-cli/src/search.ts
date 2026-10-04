@@ -1,4 +1,4 @@
-import type { ResolvedLibraryRecipe } from '@farmslot/recipe-harness';
+import type { ResolvedLibraryRecipe } from '@farmslot/recipe-runner';
 
 import { catalogTermScore, searchTerms } from './action-catalog.js';
 import { type RecipeDiscoveryIndex, recipeSummary } from './discovery-index.js';

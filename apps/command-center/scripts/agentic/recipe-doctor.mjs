@@ -12,8 +12,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { createCdpVideoRecorder } from '@farmslot/recipe-harness';
-import { listCdpTargets } from '@farmslot/recipe-harness/runtime/cdp';
+import { createCdpVideoRecorder } from '@farmslot/recipe-runner';
+import { listCdpTargets } from '@farmslot/recipe-runner/runtime/cdp';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

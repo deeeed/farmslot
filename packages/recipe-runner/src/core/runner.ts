@@ -18,7 +18,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 import { writeRecordingTimeline } from '../recording/timeline.js';
-import { RECIPE_HARNESS_VERSION } from '../version.js';
+import { RECIPE_RUNNER_VERSION } from '../version.js';
 
 import {
   type ResolvedRecipeDependencies,
@@ -529,8 +529,8 @@ class DefaultRecipeRunner implements RecipeRunner {
       endedAt: endedAt.toISOString(),
       durationMs: endedAt.getTime() - startedAt.getTime(),
       harness: {
-        name: '@farmslot/recipe-harness',
-        version: RECIPE_HARNESS_VERSION,
+        name: '@farmslot/recipe-runner',
+        version: RECIPE_RUNNER_VERSION,
         action_manifest_schema: this.#actionManifest.$schema,
       },
       ...(this.#runnerProvenance ? { runner: this.#runnerProvenance } : {}),

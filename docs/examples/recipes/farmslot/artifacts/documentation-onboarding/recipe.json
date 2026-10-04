@@ -33,7 +33,7 @@
       },
       "validate-self-fixtures": {
         "action": "command",
-        "cmd": "cd apps/command-center && yarn test:protocol && yarn test:recipe-harness",
+        "cmd": "cd apps/command-center && yarn test:protocol && yarn test:recipe-runner",
         "next": "index-artifacts",
         "intent": "Validate every Farmslot self-validation recipe package and ensure it emits summary, trace, manifest, and resolved recipe artifacts."
       },

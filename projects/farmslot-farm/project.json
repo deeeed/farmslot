@@ -34,7 +34,7 @@
     }
   },
   "hooks": {
-    "post_merge_install": "yarn install && yarn workspace @farmslot/recipe-harness build",
+    "post_merge_install": "yarn install && yarn workspace @farmslot/recipe-runner build",
     "preflight": "cd apps/command-center && yarn typecheck",
     "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
     "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",

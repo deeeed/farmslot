@@ -21,7 +21,7 @@ import type { QueueItem } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 import { startReviewInterfaceServers } from './e2e-static-review-interface.mts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));

@@ -3,7 +3,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { RECIPE_HARNESS_VERSION } from '../version.js';
+import { RECIPE_RUNNER_VERSION } from '../version.js';
 
 import { isRecord } from './json.js';
 import { isPathWithin } from './path.js';
@@ -173,7 +173,7 @@ export function checkRecipeLibraryRequirements(
   packageVersions: RecipePackageVersions = {},
 ): RecipeLibraryRequirement[] {
   const installed: RecipePackageVersions = {
-    '@farmslot/recipe-harness': RECIPE_HARNESS_VERSION,
+    '@farmslot/recipe-runner': RECIPE_RUNNER_VERSION,
     ...packageVersions,
   };
   return Object.entries(manifest?.requires ?? {}).map(([name, range]) => {

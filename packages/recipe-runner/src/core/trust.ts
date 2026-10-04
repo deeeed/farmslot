@@ -26,7 +26,7 @@ const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const bundledSource: RecipeSourceProvenance = {
   kind: 'bundled',
   trust: 'trusted',
-  name: '@farmslot/recipe-harness',
+  name: '@farmslot/recipe-runner',
 };
 
 export function recipeSourceForRequest(

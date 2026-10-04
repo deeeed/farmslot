@@ -47,7 +47,7 @@ This is already useful even before the recipe is executable: it turns vague conf
 
 Once the proof plan looks right, add only enough runner support to execute that one recipe repeatedly.
 
-The runner can wrap existing project tooling: Playwright, Jest, pytest, curl, simulator scripts, native test commands, or a small `@farmslot/recipe-harness` command. The important part is the output: a Recipe Protocol v1 evidence package with a summary, trace, and artifact manifest.
+The runner can wrap existing project tooling: Playwright, Jest, pytest, curl, simulator scripts, native test commands, or a small `@farmslot/recipe-runner` command. The important part is the output: a Recipe Protocol v1 evidence package with a summary, trace, and artifact manifest.
 
 Do not model the whole product. Do not add fleet infrastructure. Just prove one behavior.
 

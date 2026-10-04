@@ -36,7 +36,7 @@ export function createStandardCoreAdapters(
     source: {
       kind: 'bundled' as const,
       trust: 'trusted' as const,
-      name: '@farmslot/recipe-harness',
+      name: '@farmslot/recipe-runner',
     },
   }));
   if (!options.actions) return bundled;

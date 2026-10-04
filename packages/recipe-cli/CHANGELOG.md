@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Depend on `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
 
 ## 0.1.2 - 2026-10-04
 

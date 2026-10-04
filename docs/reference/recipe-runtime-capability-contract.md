@@ -7,13 +7,13 @@
 
 ## Boundary summary
 
-| Layer                      | Owns                                                                                                | Must not own                                                                     |
-| -------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Farmslot protocol          | Recipe schema, action manifest schema, official action names, trace/summary/artifact package shape. | Product concepts such as wallets, Perps, app routes, fixture secrets, selectors. |
-| `@farmslot/recipe-harness` | Graph execution, core adapters, official `ui.*` adapter host, generic runtime capability helpers.   | Project-specific target discovery, account setup, domain assertions.             |
-| Base runtime helpers       | CDP sessions, web page UI driver, browser-extension target helpers, React Native bridge contract.   | Example App extension IDs, Example App profile seeding, Perps controller calls.  |
-| Project runner             | Composes base helpers with app-specific target providers and custom actions.                        | A second recipe schema or graph executor.                                        |
-| Skill                      | Resolves/installs/runs the runner and reads manifests.                                              | Harness runtime implementation.                                                  |
+| Layer                     | Owns                                                                                                | Must not own                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Farmslot protocol         | Recipe schema, action manifest schema, official action names, trace/summary/artifact package shape. | Product concepts such as wallets, Perps, app routes, fixture secrets, selectors. |
+| `@farmslot/recipe-runner` | Graph execution, core adapters, official `ui.*` adapter host, generic runtime capability helpers.   | Project-specific target discovery, account setup, domain assertions.             |
+| Base runtime helpers      | CDP sessions, web page UI driver, browser-extension target helpers, React Native bridge contract.   | Example App extension IDs, Example App profile seeding, Perps controller calls.  |
+| Project runner            | Composes base helpers with app-specific target providers and custom actions.                        | A second recipe schema or graph executor.                                        |
+| Skill                     | Resolves/installs/runs the runner and reads manifests.                                              | Harness runtime implementation.                                                  |
 
 ## Capability families
 
@@ -90,7 +90,7 @@ Migration: `delta_y` always means relative movement. Adapters that forwarded
 `offset_y` for that and move by `delta_y` from the current offset.
 
 Authoritative evidence is the node's trace output (`UiScrollToObservation` in
-`@farmslot/recipe-harness`). A screenshot or Fiber presence alone does not prove the
+`@farmslot/recipe-runner`). A screenshot or Fiber presence alone does not prove the
 target was reviewable. A package from a `--stop-after-node` run validates with an
 `artifact_package.partial_run` warning, and gateway QA refuses it as proof.
 
