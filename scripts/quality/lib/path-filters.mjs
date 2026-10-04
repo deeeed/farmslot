@@ -159,7 +159,7 @@ export const TARGET_STEPS = {
     ['generated gateway API docs', ['yarn', 'quality:gateway-api-docs']],
   ],
   cli: [['cli quality', ['yarn', 'workspace', '@farmslot/cli', 'quality']]],
-  adapter_rn: [['adapter-rn $1', ['yarn', 'workspace', '@farmslot/adapter-rn', 'quality']]],
+  adapter_rn: [['adapter-rn quality', ['yarn', 'workspace', '@farmslot/adapter-rn', 'quality']]],
   protocol: [['protocol quality', ['yarn', 'workspace', '@farmslot/protocol', 'quality']]],
   recipe_runner: [
     ['recipe-runner quality', ['yarn', 'workspace', '@farmslot/recipe-runner', 'quality']],

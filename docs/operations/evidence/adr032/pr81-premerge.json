@@ -89,7 +89,7 @@
       "completedAt": "2026-06-27T08:28:44Z",
       "conclusion": "SKIPPED",
       "detailsUrl": "https://github.com/deeeed/farmslot/actions/runs/28283888732/job/83804406966",
-      "name": "React Native adapter package quality",
+      "name": "Expo recipe package quality",
       "startedAt": "2026-06-27T08:28:45Z",
       "status": "COMPLETED",
       "workflowName": "Farmslot Quality"
