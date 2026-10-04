@@ -4,8 +4,21 @@ import { mock, test } from 'node:test';
 let localCalls = 0;
 let node: unknown;
 let remoteError: Error | undefined;
+const sentCmds: string[] = [];
+let bundlePending = false;
+class NodeSupportPendingError extends Error {}
+mock.module('../node-support/remote-command.js', {
+  namedExports: {
+    NodeSupportPendingError,
+    resolveSlotFarmCommand: async (_slotId: string, cmd: string) => {
+      if (bundlePending) throw new NodeSupportPendingError('still being delivered');
+      return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
+    },
+  },
+});
 mock.module('../core/exec.js', {
   namedExports: {
+    EXEC_TIMEOUT_EXIT_CODE: 124,
     execLocal: async () => {
       localCalls++;
       return { stdout: '', stderr: '', exitCode: 0 };
@@ -16,7 +29,8 @@ mock.module('./machine-registry.js', { namedExports: { getNode: () => node } });
 mock.module('./node-rpc.js', {
   namedExports: {
     getSlotLocality: async () => ({ isLocal: false, machine: 'remote' }),
-    sendNodeRequest: async () => {
+    sendNodeRequest: async (_node: unknown, _method: string, params: { cmd: string }) => {
+      sentCmds.push(params.cmd);
       if (remoteError) throw remoteError;
       return { stdout: 'remote', stderr: '', exitCode: 0 };
     },
@@ -42,4 +56,30 @@ test('remote commands never execute locally across disconnect and reconnect', as
   remoteError = undefined;
   assert.equal((await execResourceCommand('slot', '/tmp', 'echo proof', 1000)).stdout, 'remote');
   assert.equal(localCalls, 0);
+});
+
+test('resource hooks that call farm scripts run them from the bundle (ledger F15)', async () => {
+  node = {};
+  remoteError = undefined;
+  sentCmds.length = 0;
+  await execResourceCommand(
+    'slot',
+    '/tmp',
+    "bash ~/farmslot-node/projects/x/scripts/physical-android-health.sh 'serial'",
+    5_000,
+  );
+  assert.deepEqual(sentCmds, [
+    "bash ~/farmslot-node/support/h/projects/x/scripts/physical-android-health.sh 'serial'",
+  ]);
+
+  bundlePending = true;
+  const timedOut = await execResourceCommand(
+    'slot',
+    '/tmp',
+    'bash ~/farmslot-node/scripts/x.sh',
+    5_000,
+  );
+  bundlePending = false;
+  assert.equal(timedOut.exitCode, 124, 'a 5 s health probe times out rather than waiting');
+  assert.equal(sentCmds.length, 1, 'and nothing ran from the stale copy');
 });

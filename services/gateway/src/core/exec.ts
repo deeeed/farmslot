@@ -232,12 +232,23 @@ export async function execOnSlot(
   // Every remote command that calls a farm script runs it from the support
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
+  let timeout = opts.timeout;
   if (cmd.includes('~/farmslot-node')) {
-    const { resolveRemoteFarmCommand } = await import('../node-support/remote-command.js');
-    cmd = await resolveRemoteFarmCommand(slotVars, cmd);
+    const startedAt = Date.now();
+    const { NodeSupportPendingError, resolveRemoteFarmCommand } =
+      await import('../node-support/remote-command.js');
+    try {
+      cmd = await resolveRemoteFarmCommand(slotVars, cmd, { budgetMs: timeout });
+    } catch (error) {
+      // A bounded probe must not wait out a first bundle delivery: it times
+      // out like any slow command, and the delivery finishes for the next one.
+      if (!(error instanceof NodeSupportPendingError)) throw error;
+      return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
+    }
+    if (timeout !== undefined) timeout = Math.max(1, timeout - (Date.now() - startedAt));
   }
   return nodeExec(slotVars.machine, cmd, cwd, {
-    timeout: opts.timeout,
+    timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
   });

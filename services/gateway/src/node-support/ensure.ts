@@ -162,6 +162,8 @@ export async function ensureNodeSupportBundle(
      * exist; a matching manifest over missing files is reported, never used.
      */
     verify?: 'full' | 'presence';
+    /** The bundle already read for this project; reused when its paths still match. */
+    collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   const step = options.step ?? (() => {});
@@ -175,7 +177,10 @@ export async function ensureNodeSupportBundle(
     return { supportDir: farmslotRoot, hash: null, published: false, paths: supportPaths };
   }
 
-  const { files, manifest } = await collectNodeSupportBundle(vars.projectName, supportPaths);
+  const { files, manifest } =
+    options.collected && options.collected.manifest.paths.join('\0') === supportPaths.join('\0')
+      ? options.collected
+      : await collectNodeSupportBundle(vars.projectName, supportPaths);
   const supportDir = nodeSupportDir(manifest.hash);
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 

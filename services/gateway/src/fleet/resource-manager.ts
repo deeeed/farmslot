@@ -30,6 +30,7 @@ import { expandTemplate } from '../core/hooks.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
+import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { deviceControlVerdict } from './device-inventory.js';
@@ -1093,6 +1094,12 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
             delete expandedWatch.port;
           }
 
+          // The node runs watch commands itself, so resolve farm refs now. The
+          // bundle is immutable: the watch keeps working after a later fast-
+          // forward and moves to the new bundle with the next watch set.
+          if (expandedWatch.cmd) {
+            expandedWatch.cmd = await resolveRemoteFarmCommand(slotVars, expandedWatch.cmd);
+          }
           watchInstructions.push({ id, watch: expandedWatch });
         }
 
@@ -1362,7 +1369,11 @@ export async function executeResourceControl(
       const execResult = (await sendNodeRequest(
         node,
         'exec',
-        { cmd: expanded, cwd: slotVars.repo, timeout: timeoutMs },
+        {
+          cmd: await resolveRemoteFarmCommand(slotVars, expanded, { budgetMs: timeoutMs }),
+          cwd: slotVars.repo,
+          timeout: timeoutMs,
+        },
         { timeout: timeoutMs + 10_000 },
       )) as { stdout: string; stderr: string; exitCode: number };
       if (execResult.exitCode === 0) {

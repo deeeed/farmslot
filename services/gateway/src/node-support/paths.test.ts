@@ -96,16 +96,32 @@ test('legacy farmslot_dir hook refs are inferred for migration', () => {
 });
 
 test('farm refs outside hooks are bundled too', () => {
-  // Resource health commands and slot actions run on the node through the same
-  // remote exec as hooks, so a script they call must ship with the config.
+  // Resource hooks and watches, and slot actions, run on the node and resolve
+  // against this bundle like hooks do, so a script they call must ship with
+  // the config. Shapes as in real project.json files.
   const result = resolveNodeSupportPaths(
     'example-mobile-farm',
     {
       hooks: {},
       resources: {
-        device: { health: 'bash {{farmslot_dir}}/projects/example-mobile-farm/scripts/health.sh' },
+        'android-device': {
+          type: 'android-device',
+          hooks: {
+            health:
+              "bash {{farmslot_dir}}/projects/example-mobile-farm/scripts/health.sh '{{adb_serial}}'",
+          },
+          watch: {
+            type: 'cmd',
+            cmd: 'bash {{farmslot_dir}}/projects/example-mobile-farm/watch/probe.sh',
+          },
+        },
       },
-      actions: [{ command: 'bash {{farmslot_dir}}/projects/example-mobile-farm/tools/fix.sh' }],
+      slot_actions: {
+        repair: {
+          label: 'Repair',
+          command: 'bash {{farmslot_dir}}/projects/example-mobile-farm/tools/fix.sh',
+        },
+      },
     } as unknown as Parameters<typeof resolveNodeSupportPaths>[1],
     root,
   );
@@ -114,6 +130,7 @@ test('farm refs outside hooks are bundled too', () => {
     'projects/example-mobile-farm/project.json',
     'projects/example-mobile-farm/scripts',
     'projects/example-mobile-farm/tools',
+    'projects/example-mobile-farm/watch',
     'scripts',
   ]);
 });

@@ -6,7 +6,7 @@
  * inventory for its post-control device-state check, and a cycle between the two
  * would be resolved by module order rather than by design.
  */
-import { execLocal } from '../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execLocal } from '../core/exec.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { getNode } from './machine-registry.js';
@@ -36,11 +36,26 @@ export async function execResourceCommand(
   if (!isLocal) {
     const node = getNode(machine);
     if (node) {
+      const startedAt = Date.now();
+      let remoteCmd = cmd;
+      if (cmd.includes('~/farmslot-node')) {
+        // Resource hooks call farm scripts too; run them from the bundle that
+        // matches this config, not the node's last deploy (ledger F15). Loaded
+        // only when needed: node-support executes through core/exec.
+        const { NodeSupportPendingError, resolveSlotFarmCommand } =
+          await import('../node-support/remote-command.js');
+        try {
+          remoteCmd = await resolveSlotFarmCommand(slotId, cmd, timeout);
+        } catch (err) {
+          if (!(err instanceof NodeSupportPendingError)) throw err;
+          return { stdout: '', stderr: err.message, exitCode: EXEC_TIMEOUT_EXIT_CODE };
+        }
+      }
       try {
         return (await sendNodeRequest(node, 'exec', {
-          cmd,
+          cmd: remoteCmd,
           cwd,
-          timeout,
+          timeout: Math.max(1, timeout - (Date.now() - startedAt)),
         })) as ResourceCommandResult;
       } catch (err) {
         throw new ResourceCommandUnavailableError(

@@ -9,7 +9,7 @@
 // bundle; this does the same for every remote command, so config and scripts
 // always travel together and rollout order stops mattering.
 
-import type { RawProjectJson, SlotVars } from '../core/index.js';
+import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
 
 import {
   collectNodeSupportBundle,
@@ -39,13 +39,33 @@ const VERIFIED_TTL_MS = 10 * 60_000;
 /** Coalesces the local re-hash across a burst (fleet refresh checks every slot at once). */
 const LOCAL_HASH_TTL_MS = 2_000;
 
+type CollectedBundle = Awaited<ReturnType<typeof collectNodeSupportBundle>>;
+interface LocalBundle {
+  hash: string;
+  paths: string[];
+  collected: CollectedBundle;
+}
+
 const verifiedBundles = new Map<string, number>();
-/** One publish per slot at a time; concurrent hooks wait on the same one. */
+/**
+ * One ensure per slot and bundle at a time. Keyed by the hash too, so a hook
+ * expanded after a fast-forward never joins a publish of the older bundle.
+ */
 const pendingEnsures = new Map<string, Promise<NodeSupportBundleState | null>>();
-const localBundles = new Map<
-  string,
-  { at: number; bundle: Promise<{ hash: string; paths: string[] }> }
->();
+/**
+ * The ensure currently uploading a bundle to a machine. Other slots on that
+ * machine wait for it and then only verify and record their selection, rather
+ * than each uploading the same files.
+ */
+const machinePublishes = new Map<string, Promise<NodeSupportBundleState | null>>();
+const localBundles = new Map<string, { at: number; bundle: Promise<LocalBundle> }>();
+
+/**
+ * The caller's time budget ran out while the bundle was still being delivered.
+ * The delivery keeps going for the next command; this one reports a timeout,
+ * as it would had the node been slow to run it.
+ */
+export class NodeSupportPendingError extends Error {}
 
 const HAS_REMOTE_FARM_REF = new RegExp(REMOTE_FARM_REF.source);
 
@@ -71,13 +91,14 @@ export function remapRemoteFarmRefs(command: string, supportDir: string, paths: 
 async function currentLocalBundle(
   projectName: string,
   projectJson: RawProjectJson,
-): Promise<{ hash: string; paths: string[] }> {
+): Promise<LocalBundle> {
   const cached = localBundles.get(projectName);
   if (cached && Date.now() - cached.at < LOCAL_HASH_TTL_MS) return cached.bundle;
   const paths = nodeSupportBundlePaths(projectName, projectJson);
-  const bundle = collectNodeSupportBundle(projectName, paths).then(({ manifest }) => ({
-    hash: manifest.hash,
+  const bundle = collectNodeSupportBundle(projectName, paths).then((collected) => ({
+    hash: collected.manifest.hash,
     paths,
+    collected,
   }));
   localBundles.set(projectName, { at: Date.now(), bundle });
   try {
@@ -86,6 +107,72 @@ async function currentLocalBundle(
     // A failed read must not be served to the next caller from the cache.
     localBundles.delete(projectName);
     throw error;
+  }
+}
+
+function ensureOnce(
+  vars: SlotVars,
+  projectVars: ProjectVars,
+  local: LocalBundle,
+  io: NodeSupportIo | undefined,
+): Promise<NodeSupportBundleState | null> {
+  const slotKey = `${vars.slotId}\0${local.hash}`;
+  const existing = pendingEnsures.get(slotKey);
+  if (existing) return existing;
+  const machineKey = `${vars.machine}\0${local.hash}`;
+  const upload = machinePublishes.get(machineKey);
+  const pending: Promise<NodeSupportBundleState | null> = (async () => {
+    try {
+      if (upload) {
+        // That upload's failure is reported to its own caller. This slot then
+        // runs its own ensure, which retries the publish if it is still needed.
+        await upload.then(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
+        projectVars,
+        io,
+        collected: local.collected,
+      });
+    } finally {
+      pendingEnsures.delete(slotKey);
+      // Only the slot that found no upload registered one, and nothing else
+      // replaces an entry while it stands.
+      if (!upload) machinePublishes.delete(machineKey);
+    }
+  })();
+  pendingEnsures.set(slotKey, pending);
+  if (!upload) machinePublishes.set(machineKey, pending);
+  return pending;
+}
+
+async function withinBudget<T>(
+  work: Promise<T>,
+  budgetMs: number | undefined,
+  slotId: string,
+): Promise<T> {
+  if (budgetMs === undefined) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new NodeSupportPendingError(
+            `node support bundle for ${slotId} still being delivered after ${budgetMs}ms`,
+          ),
+        ),
+      budgetMs,
+    );
+  });
+  try {
+    // A delivery that fails after the budget ran out is not lost: the pending
+    // entry clears and the next command on the slot runs it again and gets
+    // the error.
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -98,7 +185,11 @@ async function currentLocalBundle(
 export async function resolveRemoteFarmCommand(
   vars: SlotVars,
   command: string,
-  options: { io?: NodeSupportIo } = {},
+  options: {
+    io?: NodeSupportIo;
+    /** Wall-clock the caller gave the whole command; the delivery wait counts against it. */
+    budgetMs?: number;
+  } = {},
 ): Promise<string> {
   if (!hasRemoteFarmRef(command)) return command;
   // No project config means no bundle to run from; the command keeps the
@@ -106,23 +197,32 @@ export async function resolveRemoteFarmCommand(
   const projectVars = await loadProjectVarsIfAny(vars.projectName);
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
-  const key = `${vars.slotId}\0${local.hash}`;
-  const verifiedAt = verifiedBundles.get(key);
+  const verifiedAt = verifiedBundles.get(`${vars.slotId}\0${local.hash}`);
   if (verifiedAt !== undefined && Date.now() - verifiedAt < VERIFIED_TTL_MS) {
     return remapRemoteFarmRefs(command, nodeSupportDir(local.hash), local.paths);
   }
-  let pending = pendingEnsures.get(vars.slotId);
-  if (!pending) {
-    pending = ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
-      projectVars,
-      io: options.io,
-    }).finally(() => pendingEnsures.delete(vars.slotId));
-    pendingEnsures.set(vars.slotId, pending);
-  }
-  const state = await pending;
+  const state = await withinBudget(
+    ensureOnce(vars, projectVars, local, options.io),
+    options.budgetMs,
+    vars.slotId,
+  );
   if (!state?.hash) return command;
   verifiedBundles.set(`${vars.slotId}\0${state.hash}`, Date.now());
   return remapRemoteFarmRefs(command, state.supportDir, state.paths);
+}
+
+/**
+ * Slot-id entry point for the call sites that send `exec` to a node directly
+ * instead of through `execOnSlot` (resource commands, slot actions).
+ */
+export async function resolveSlotFarmCommand(
+  slotId: string,
+  command: string,
+  budgetMs?: number,
+): Promise<string> {
+  if (!hasRemoteFarmRef(command)) return command;
+  const { loadSlotVars } = await import('../core/index.js');
+  return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }
 
 /** Test seam: forget what this process verified. */
@@ -130,4 +230,5 @@ export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
   localBundles.clear();
   pendingEnsures.clear();
+  machinePublishes.clear();
 }

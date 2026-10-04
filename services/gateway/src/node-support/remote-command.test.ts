@@ -6,6 +6,7 @@ import type { SlotVars } from '../core/index.js';
 import type { NodeSupportIo } from './ensure.js';
 import {
   hasRemoteFarmRef,
+  NodeSupportPendingError,
   remapRemoteFarmRefs,
   resetRemoteFarmCommandCache,
   resolveRemoteFarmCommand,
@@ -181,4 +182,182 @@ test('a slot without project config keeps the node copy', async () => {
   const vars = { ...remoteVars(), projectName: 'no-such-project-farm' } as SlotVars;
   assert.equal(await resolveRemoteFarmCommand(vars, HOOK, { io: node.io }), HOOK);
   assert.deepEqual(node.calls, []);
+});
+
+// ─── Delivery races, against a farm this test owns ───
+
+async function withTempFarm(t: test.TestContext): Promise<{
+  name: string;
+  editScript: (body: string) => void;
+}> {
+  const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  const { farmslotRoot } = await import('../core/index.js');
+  const name = `remote-command-test-${process.pid}-${Date.now()}-farm`;
+  const dir = path.join(farmslotRoot, 'projects', name);
+  mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    path.join(dir, 'project.json'),
+    JSON.stringify({
+      hooks: { health_check: `bash {{farmslot_dir}}/projects/${name}/scripts/h.sh` },
+    }),
+  );
+  const script = path.join(dir, 'scripts', 'h.sh');
+  writeFileSync(script, 'echo v1\n');
+  return { name, editScript: (body) => writeFileSync(script, body) };
+}
+
+/** A node whose bundle uploads wait until released. */
+function gatedNode(opts: { failUpload?: boolean } = {}) {
+  const uploads: string[] = [];
+  const manifests = new Map<string, string>();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const io: NodeSupportIo = {
+    exec: async (_vars, cmd) =>
+      cmd.includes('mktemp -d')
+        ? {
+            exitCode: 0,
+            stdout: `/h/farmslot-node/support/.incoming/x${uploads.length}\n`,
+            stderr: '',
+          }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    fileExists: async (_vars, file) => manifests.has(file),
+    readFile: async (_vars, file) => {
+      const body = manifests.get(file) ?? [...manifests.values()].at(-1);
+      if (!body) throw new Error(`unexpected read ${file}`);
+      return body;
+    },
+    writeFile: async (_vars, file, data) => {
+      // The incoming manifest; the publish moves it to support/<hash>/.
+      const hash = (JSON.parse(data) as { hash: string }).hash;
+      manifests.set(`~/farmslot-node/support/${hash}/manifest.json`, data);
+    },
+    writeFiles: async (_vars, base) => {
+      if (!base.includes('.incoming')) return; // the slot's selection record
+      uploads.push(base);
+      await gate;
+      if (opts.failUpload) throw new Error('upload failed');
+    },
+  };
+  return { io, uploads, release };
+}
+
+const farmVars = (name: string, slotId: string, machine = 'mini'): SlotVars =>
+  ({ ...remoteVars(slotId), machine, projectName: name }) as SlotVars;
+
+test('a hook expanded after a fast-forward never joins the older publish', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  const before = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  farm.editScript('echo v2\n');
+  await new Promise((resolve) => setTimeout(resolve, 2_100)); // past the local re-hash window
+  const after = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
+  // Hold the first upload until the second has started its own (or clearly
+  // never will), so the second call meets the first still in flight.
+  for (let waited = 0; node.uploads.length < 2 && waited < 2_000; waited += 20) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  node.release();
+
+  const [oldCmd, newCmd] = await Promise.all([before, after]);
+  assert.notEqual(oldCmd, newCmd, 'the new config runs from its own bundle');
+  assert.equal(node.uploads.length, 2, 'both bundles were delivered');
+});
+
+test('slots on one machine share one upload of the same bundle', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const all = Promise.all(
+    ['mini-x-1', 'mini-x-2', 'mini-x-3'].map((slot) =>
+      resolveRemoteFarmCommand(farmVars(farm.name, slot), cmd, { io: node.io }),
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  node.release();
+  const results = await all;
+  assert.equal(new Set(results).size, 1);
+  assert.equal(node.uploads.length, 1, 'one upload per machine and bundle');
+});
+
+test('a budget that runs out leaves the delivery running for the next command', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, budgetMs: 100 }),
+    NodeSupportPendingError,
+  );
+  const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  node.release();
+  assert.match(await next, /support\/[0-9a-f]{64}\//);
+  assert.equal(node.uploads.length, 1, 'the next command joined the same delivery');
+});
+
+test('a delivery that fails after its budget ran out is reported to the next command', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode({ failUpload: true });
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, budgetMs: 50 }),
+    NodeSupportPendingError,
+  );
+  node.release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // No unhandled rejection above; the retry surfaces the failure.
+  await assert.rejects(resolveRemoteFarmCommand(vars, cmd, { io: node.io }), /upload failed/);
+});
+
+test('every direct node exec sender is reviewed for farm script references', async () => {
+  // execOnSlot resolves farm refs for everything routed through it. A new call
+  // site that sends `exec` to a node directly would bypass that and reopen F15
+  // for whatever commands it carries. Adding one means deciding: resolve its
+  // command, or list it here because it only sends gateway-built commands.
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const path = await import('node:path');
+  const src = path.resolve(import.meta.dirname, '..');
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) return walk(full);
+      return /\.ts$/.test(entry) && !/\.test\.ts$/.test(entry) ? [full] : [];
+    });
+  const senders = walk(src)
+    .filter((file) =>
+      /sendNodeRequest(?:Streaming)?\(\s*[\w.]+,\s*'exec'/.test(readFileSync(file, 'utf8')),
+    )
+    .map((file) => path.relative(src, file))
+    .sort();
+  const resolvesFarmRefs = [
+    'fleet/node-rpc.ts', // nodeExec, reached through execOnSlot
+    'fleet/resource-exec.ts',
+    'fleet/resource-manager.ts',
+    'methods/slot-actions.ts',
+  ];
+  const gatewayBuiltOnly = [
+    'methods/tmux-workers.ts',
+    'run-engine/remote-probes.ts',
+    'runtime/screen-session.ts',
+  ];
+  assert.deepEqual(senders, [...resolvesFarmRefs, ...gatewayBuiltOnly].sort());
+  for (const file of resolvesFarmRefs.slice(1)) {
+    assert.match(
+      readFileSync(path.join(src, file), 'utf8'),
+      /resolve(?:Remote|Slot)FarmCommand/,
+      `${file} resolves farm refs`,
+    );
+  }
 });
