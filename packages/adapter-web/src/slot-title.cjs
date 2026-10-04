@@ -81,8 +81,11 @@ function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
     const id = window.__farmslotSlotId;
     if (!id) return document.title;
     const base = stripSlotPrefixes(document.title);
-    // A bare id is this stamp's own output for an untitled page; never prefix it again.
-    return base && base !== id ? `${id} — ${base}` : id;
+    if (base && base !== id) return `${id} — ${base}`;
+    // A bare id is this stamp's own output for an untitled page: never prefix it
+    // with itself, but complete it once the page title is known.
+    const fallback = window.__farmslotSlotFallbackTitle;
+    return fallback ? `${id} — ${fallback}` : id;
   };
 
   const setTitle = () => {

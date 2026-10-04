@@ -144,6 +144,9 @@ describe('applyPersistentSlotTitle', () => {
     vm.runInContext(buildStampExpression('slot-a'), page.context);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(page.document.title, 'slot-a');
+    // A later stamp that knows the page title completes the bare one.
+    vm.runInContext(buildStampExpression('slot-a', 'Product'), page.context);
+    assert.equal(page.document.title, 'slot-a — Product');
   });
 
   it('re-applies a title reset that arrives while the observer is locked', () => {
@@ -269,9 +272,9 @@ describe('stampHomeTabsViaCdp', () => {
       const output = execFileSync(
         process.execPath,
         [
-          '--no-experimental-websocket',
           '-e',
-          `const t = require('./slot-title.cjs');
+          `delete globalThis.WebSocket;
+           const t = require('./slot-title.cjs');
            process.env.RECIPE_SLOT_ID = 'slot-a';
            console.log(typeof WebSocket, t.readSlotId(), t.buildStampExpression('slot-a', 'P').length > 0);`,
         ],

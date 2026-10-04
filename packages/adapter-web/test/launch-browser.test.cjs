@@ -249,6 +249,30 @@ describe('launchBrowser', () => {
     assert.throws(() => launchBrowser(options(dir, port)), /then rerun the launch$/u);
   });
 
+  it('names the rerun command when the extension does not load over CDP, and stops the browser', async () => {
+    const dir = runtime('cdp-load');
+    const port = await freePort();
+    // A resolver record for this binary that selects CDP loading (branded Chrome).
+    const record = path.join(dir, 'resolver.json');
+    fs.writeFileSync(
+      record,
+      JSON.stringify({ bin: chromeBin, browser: 'chrome', extensionLoading: 'cdp-load-unpacked' }),
+    );
+    process.env.FAKE_CDP_MODE = 'wrong-id';
+    try {
+      assert.throws(
+        () =>
+          launchBrowser(
+            options(dir, port, { browserResolution: record, rerunCommand: 'host launch' }),
+          ),
+        /did not load over CDP[\s\S]*set RECIPE_HARNESS_BROWSER=cft to use Chrome for Testing, then rerun: host launch$/u,
+      );
+    } finally {
+      delete process.env.FAKE_CDP_MODE;
+    }
+    assert.deepEqual(cdpListenerPids(port), []);
+  });
+
   it('treats a browser loading an extension under the caller owner root as its own', async () => {
     const first = runtime('owner-a');
     const second = runtime('owner-b');
