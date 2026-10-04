@@ -368,6 +368,20 @@ export async function runCreate(
       );
     }
   }
+  if (params.operatorScope !== undefined) {
+    if (typeof params.operatorScope !== 'string') throw new Error('operatorScope must be a string');
+    const operatorScope = params.operatorScope.trim();
+    if (!operatorScope) {
+      delete params.operatorScope;
+    } else if (params.taskFile !== undefined) {
+      // write-task, which renders the scope, never runs for an existing task.
+      throw new Error(
+        'operatorScope is rendered into the TASK.md that write-task writes; with an existing taskFile, put the scope in that file.',
+      );
+    } else {
+      params.operatorScope = operatorScope;
+    }
+  }
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)

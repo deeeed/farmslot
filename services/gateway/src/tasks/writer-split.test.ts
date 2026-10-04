@@ -110,6 +110,29 @@ function makeSplitRun(ticket: string): Run {
   };
 }
 
+test('the operator scope from run create is in TASK.md, right after the acceptance criteria', async (t) => {
+  // Written by write-task before dispatch, so it is there when the worker
+  // starts: no TASK.md edit after dispatch races a fast warm prepare.
+  const run = { ...makeSplitRun(`SCOPE-${Date.now()}`), operatorScope: 'flip slice only, AC1/AC2' };
+  let taskFile = '';
+  t.after(async () => {
+    if (taskFile) await rm(path.dirname(taskFile), { recursive: true, force: true });
+  });
+  taskFile = await writeTaskFile(run);
+  const taskDocument = await readFile(taskFile, 'utf-8');
+  assert.match(
+    taskDocument,
+    /and keeps focus\n\n## Operator scope\n\nSet by the operator when this task was created\.[^\n]*\n\nflip slice only, AC1\/AC2\n/,
+  );
+  assert.equal(taskDocument.match(/## Operator scope/g)?.length, 1);
+  const checklist = await readFile(path.join(path.dirname(taskFile), 'CHECKLIST.md'), 'utf-8');
+  assert.doesNotMatch(
+    checklist,
+    /Operator scope/,
+    'the checklist stays the template, byte for byte',
+  );
+});
+
 test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document', async (t) => {
   const run = makeSplitRun(`SPLIT-${Date.now()}`);
   let taskFile = '';

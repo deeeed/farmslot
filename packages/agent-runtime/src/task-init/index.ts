@@ -84,6 +84,8 @@ export interface TaskInitSpec {
     title: string;
     description?: string;
     acceptanceCriteria?: ReadonlyArray<string>;
+    /** Operator scope (`--scope`): rendered into TASK.md as `## Operator scope`. */
+    operatorScope?: string;
     sourceKind: HandoffSourceKind;
     ticket?: string;
     sourceRef?: string;
@@ -178,6 +180,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     vars,
     description: spec.task.description ?? '',
     acceptanceCriteria: spec.task.acceptanceCriteria ?? [],
+    ...(spec.task.operatorScope ? { operatorScope: spec.task.operatorScope } : {}),
     addendum: spec.addendum
       ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
       : null,

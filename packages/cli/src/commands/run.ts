@@ -270,6 +270,27 @@ export interface RunCreateCliOptions {
   pressureMachine?: string;
   pressureGeneration?: string;
   pressureOverrideReason?: string;
+  scope?: string;
+  scopeFile?: string;
+}
+
+/**
+ * `--scope` / `--scope-file`: the operator's scope for this run, sent with the
+ * create so write-task renders it into TASK.md before the worker starts.
+ */
+export function readOperatorScope(
+  opts: Pick<RunCreateCliOptions, 'scope' | 'scopeFile' | 'task'>,
+): string | undefined {
+  if (opts.scope !== undefined && opts.scopeFile !== undefined)
+    throw new Error('Use either --scope or --scope-file, not both.');
+  const raw = opts.scopeFile ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : opts.scope;
+  const scope = raw?.trim();
+  if (raw !== undefined && !scope) throw new Error('--scope / --scope-file is empty.');
+  if (scope && opts.task)
+    throw new Error(
+      '--scope applies to the TASK.md write-task renders; with --task, put the scope in that file.',
+    );
+  return scope || undefined;
 }
 
 function optionalPositiveInteger(value: string | undefined, field: string): number | undefined {
@@ -394,6 +415,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   }
 
   const scripted = buildScriptedConfig(opts);
+  const operatorScope = readOperatorScope(opts);
 
   const base = {
     slotId: opts.slot || undefined,
@@ -417,6 +439,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     familyRootTicketOrPr: opts.familyRootTicketOrPr || undefined,
     lane: opts.lane || undefined,
     variant: opts.variant || undefined,
+    ...(operatorScope ? { operatorScope } : {}),
     ...buildPressureAdmissionParams(opts),
   };
 
@@ -924,6 +947,11 @@ export function registerRunCommand(program: Command): void {
       'Farm-owned QA profile for --flow-type qa (otherwise farm default)',
     )
     .option('--qa-inputs <json>', 'JSON object of skill inputs for --flow-type qa')
+    .option(
+      '--scope <text>',
+      'Operator scope for this run (e.g. "flip slice only, AC1/AC2"), rendered into TASK.md',
+    )
+    .option('--scope-file <path>', 'Read the operator scope from a file instead of --scope')
     .option('--effort <effort>', 'Runner effort override')
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(

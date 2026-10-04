@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `task init --scope` / `--scope-file` and `taskInit({ task: { operatorScope } })` render the operator scope into TASK.md as `## Operator scope`, the same section the farm's write-task writes.
 
 ## 0.16.0 - 2026-10-02
 

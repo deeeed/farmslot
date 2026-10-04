@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import {
   buildHandoffMetadata,
+  buildOperatorScopeSection,
   buildTaskDocument,
   executionTemplateReference,
   type HandoffSourceKind,
@@ -1271,6 +1272,7 @@ export async function writeTaskFile(
       linkedDescriptionsMarkdown: vars.LINKED_DESCRIPTIONS,
       commentSummaryMarkdown: vars.COMMENT_SUMMARY,
       addendum: renderedAddendum,
+      operatorScope: run.operatorScope,
       hasTicketData: Boolean(run.ticketData),
     });
     // Artifact-only replays neutralize publication steps inside the checklist
@@ -1280,7 +1282,11 @@ export async function writeTaskFile(
     checklistContent = applyArtifactOnlyTaskPolicy(content, run, taskDocument);
     finalContent = applyArtifactOnlyTaskPolicy(await appendTaskContext(taskDocument), run);
   } else {
-    const withPlanningContext = await appendTaskContext(content);
+    // A project template is the whole TASK.md here; the scope follows it.
+    const withScope = run.operatorScope?.trim()
+      ? `${content.trimEnd()}\n\n${buildOperatorScopeSection(run.operatorScope)}\n`
+      : content;
+    const withPlanningContext = await appendTaskContext(withScope);
     finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
   }
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {

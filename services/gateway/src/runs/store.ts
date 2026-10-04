@@ -848,6 +848,7 @@ export function createRun(
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     ...(params.waitPolicy ? { waitPolicy: params.waitPolicy } : {}),
     ...(params.branchUpdateStrategy ? { branchUpdateStrategy: params.branchUpdateStrategy } : {}),
+    ...(params.operatorScope ? { operatorScope: params.operatorScope } : {}),
     effort: params.effort,
     scripted: params.scripted,
     slotId: params.slotId ?? null,

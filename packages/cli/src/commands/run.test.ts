@@ -175,6 +175,40 @@ test('run create omits the domain key entirely unless --domain is given', () => 
   assert.equal(withDomain.domain, 'blue');
 });
 
+test('run create sends the operator scope from --scope or --scope-file', () => {
+  const base = { project: 'metamask-mobile-farm', flowType: 'fix-bug', ticket: 'TAT-3405' };
+  assert.equal('operatorScope' in buildRunCreateParams(base), false, 'no key without a scope');
+  assert.equal(
+    buildRunCreateParams({ ...base, scope: '  flip slice only, AC1/AC2  ' }).operatorScope,
+    'flip slice only, AC1/AC2',
+  );
+  const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-scope-'));
+  try {
+    const file = path.join(dir, 'scope.md');
+    writeFileSync(file, 'Leave the fee banner alone.\nAC1 only.\n');
+    assert.equal(
+      buildRunCreateParams({ ...base, scopeFile: file }).operatorScope,
+      'Leave the fee banner alone.\nAC1 only.',
+    );
+    assert.throws(
+      () => buildRunCreateParams({ ...base, scope: 'a', scopeFile: file }),
+      /either --scope or --scope-file/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.throws(() => buildRunCreateParams({ ...base, scope: '   ' }), /is empty/);
+  // An existing TASK.md skips write-task, so the scope would never reach it.
+  assert.throws(
+    () =>
+      buildRunCreateParams({
+        task: 'projects/audiolab-farm/tasks/dev/demo-414-0604/TASK.md',
+        scope: 'AC1 only',
+      }),
+    /with --task, put the scope in that file/,
+  );
+});
+
 test('run create carries an exact execution-template id only when requested', () => {
   const params = buildRunCreateParams({
     project: 'example',

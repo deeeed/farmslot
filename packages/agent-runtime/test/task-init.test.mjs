@@ -338,4 +338,47 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
   assert.doesNotMatch(task, /- \[[ xX]\]/, 'TASK.md never carries a checkbox');
 }
 
+// 9. Operator scope: given at init, rendered as `## Operator scope` right after
+//    the acceptance criteria, so it is in TASK.md before the worker starts. The
+//    farm's write-task renders the same section through the same builder.
+{
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-task-init-scope-'));
+  const templates = catalog(PLAIN_TEMPLATE);
+  const inline = init(path.join(work, 'inline'), templates, [
+    '--acceptance',
+    'AC1 slice flips',
+    '--scope',
+    '  flip slice only, AC1/AC2  ',
+  ]);
+  assert.equal(inline.status, 0, inline.stderr);
+  const task = readFileSync(path.join(work, 'inline', 'TASK.md'), 'utf8');
+  assert.match(
+    task,
+    /## Acceptance Criteria\n\n- AC1 slice flips\n\n## Operator scope\n\n.+\n\nflip slice only, AC1\/AC2\n/,
+  );
+  assert.equal(task.match(/## Operator scope/g)?.length, 1);
+
+  const scopeFile = path.join(work, 'scope.md');
+  writeFileSync(scopeFile, 'Leave the fee banner alone.\nAC1 only.\n');
+  const fromFile = init(path.join(work, 'file'), templates, ['--scope-file', scopeFile]);
+  assert.equal(fromFile.status, 0, fromFile.stderr);
+  assert.match(
+    readFileSync(path.join(work, 'file', 'TASK.md'), 'utf8'),
+    /## Operator scope\n\n.+\n\nLeave the fee banner alone\.\nAC1 only\.\n/,
+  );
+
+  const both = init(path.join(work, 'both'), templates, [
+    '--scope',
+    'a',
+    '--scope-file',
+    scopeFile,
+  ]);
+  assert.notEqual(both.status, 0);
+  assert.match(both.stderr, /either --scope or --scope-file/);
+
+  const none = init(path.join(work, 'none'), templates);
+  assert.equal(none.status, 0, none.stderr);
+  assert.doesNotMatch(readFileSync(path.join(work, 'none', 'TASK.md'), 'utf8'), /Operator scope/);
+}
+
 process.stdout.write('agent-runtime task init tests: ok\n');

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Add `operatorScope` to `RunCreateParams` and `Run`: the operator's scope for a run, rendered into TASK.md as `## Operator scope`.
 
 ## 0.34.0 - 2026-10-02
 

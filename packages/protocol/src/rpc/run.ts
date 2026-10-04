@@ -141,6 +141,12 @@ export interface RunCreateParams {
    * (not the prepare-time ADR-042 `merge_main_strategy`).
    */
   branchUpdateStrategy?: import('../contracts/index.js').BranchUpdateStrategy;
+  /**
+   * Operator scope for this run, rendered into TASK.md as `## Operator scope`
+   * by write-task. Not accepted with `taskFile`: an existing task file skips
+   * write-task, so the scope belongs in that file.
+   */
+  operatorScope?: string;
   /** Branch-affinity nudge — operator picked "Nudge worker" in the dispatch wizard for a
    * busy slot already on this PR's branch. Engine binds `slotId`, skips PREPARE, and routes
    * DISPATCH through `nudgeDispatch` (send-keys into the existing tmux session) instead of

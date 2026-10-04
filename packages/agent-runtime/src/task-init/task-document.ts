@@ -113,7 +113,24 @@ export interface TaskDocumentInput {
   commentSummaryMarkdown?: string;
   /** Rendered project addendum (`templates/task-document.md`), if the project ships one. */
   addendum?: string | null;
+  /** Operator scope given when the task was created; rendered with the ticket. */
+  operatorScope?: string;
   hasTicketData: boolean;
+}
+
+/**
+ * The operator's scope for this task, e.g. "flip slice only, AC1/AC2". One
+ * heading on every surface, so a worker finds it in the same place whether the
+ * farm or a skill wrote TASK.md, and it is there before the worker starts.
+ */
+export function buildOperatorScopeSection(scope: string): string {
+  return [
+    '## Operator scope',
+    '',
+    'Set by the operator when this task was created. Where it is narrower than the ticket or the checklist, it decides what this task covers.',
+    '',
+    scope.trim(),
+  ].join('\n');
 }
 
 export function buildTaskDocument(input: TaskDocumentInput): string {
@@ -141,6 +158,9 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     renderAcceptanceCriteria(input.acceptanceCriteria),
   );
+  if (input.operatorScope?.trim()) {
+    sections.push('', buildOperatorScopeSection(input.operatorScope));
+  }
 
   if (input.affectedArea && input.affectedArea !== '_Not specified_') {
     sections.push('', '## Affected Area', '', input.affectedArea);

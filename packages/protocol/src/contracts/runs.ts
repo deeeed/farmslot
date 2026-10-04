@@ -2364,6 +2364,13 @@ export interface Run {
    * (Distinct from the prepare-time ADR-042 `merge_main_strategy`.)
    */
   branchUpdateStrategy?: BranchUpdateStrategy;
+  /**
+   * Operator scope for this run, set at create (`run create --scope`): what to
+   * do and what to leave alone, e.g. "flip slice only, AC1/AC2". write-task
+   * renders it into TASK.md as `## Operator scope`, so the worker reads it in
+   * the task it starts from rather than in an edit made after dispatch.
+   */
+  operatorScope?: string;
   effort?: string;
   /** Worker scripted-runner config when metrics.runner='scripted'. */
   scripted?: ScriptedRunnerConfig;

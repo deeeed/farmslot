@@ -19,6 +19,7 @@ function usage(exitCode = 0) {
     '  Run:              [--run-mode m] — run mode used to match project default rules',
     '  Task:             --title t [--task-text s | --task-file path] [--ticket key] [--source-ref url]',
     '                    [--acceptance "criterion"]... — one per criterion; position N becomes ledger id AC-N',
+    '                    [--scope "text" | --scope-file path] — operator scope, rendered as ## Operator scope',
     '  Identity:         [--surface s] [--project name] [--repo owner/name] [--attempt-id id]',
     '  Rendering:        [--var KEY=VALUE]... [--task-dir-label label] [--mode-preamble text]',
     '                    [--addendum-file path] [--mark-command "cmd"] [--json]',
@@ -45,6 +46,8 @@ function parseArgs(args) {
     ticket: null,
     sourceRef: null,
     acceptance: [],
+    scope: null,
+    scopeFile: null,
     surface: 'cli',
     project: null,
     repo: null,
@@ -68,6 +71,8 @@ function parseArgs(args) {
     else if (arg === '--ticket') opts.ticket = takeValue(args, i++, arg);
     else if (arg === '--source-ref') opts.sourceRef = takeValue(args, i++, arg);
     else if (arg === '--acceptance') opts.acceptance.push(takeValue(args, i++, arg));
+    else if (arg === '--scope') opts.scope = takeValue(args, i++, arg);
+    else if (arg === '--scope-file') opts.scopeFile = takeValue(args, i++, arg);
     else if (arg === '--surface') opts.surface = takeValue(args, i++, arg);
     else if (arg === '--project') opts.project = takeValue(args, i++, arg);
     else if (arg === '--repo') opts.repo = takeValue(args, i++, arg);
@@ -90,6 +95,8 @@ function parseArgs(args) {
   if (!opts.taskDir) throw new Error('task init requires <task-dir>');
   if (!opts.template) throw new Error('task init requires --template <id>');
   if (!opts.title) throw new Error('task init requires --title');
+  if (opts.scope !== null && opts.scopeFile !== null)
+    throw new Error('Use either --scope or --scope-file, not both.');
   const catalog = parseCatalogArgs([...catalogArgs, '--id', opts.template]);
   if (!catalog.flow) throw new Error('task init requires --flow');
   if (!catalog.platform) throw new Error('task init requires --platform');
@@ -126,6 +133,9 @@ async function main() {
   // Rendered inside taskInit with the same vars as the checklist, so an addendum
   // that works on the farm works here.
   const addendum = opts.addendumFile ? readFileSync(path.resolve(opts.addendumFile), 'utf8') : null;
+  const operatorScope = (
+    opts.scopeFile ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : (opts.scope ?? '')
+  ).trim();
 
   const result = await runtime.taskInit({
     taskDir: path.resolve(opts.taskDir),
@@ -140,6 +150,7 @@ async function main() {
       description,
       sourceKind: opts.taskFile ? 'file' : 'text',
       ...(opts.acceptance.length > 0 ? { acceptanceCriteria: opts.acceptance } : {}),
+      ...(operatorScope ? { operatorScope } : {}),
       ...(opts.ticket ? { ticket: opts.ticket } : {}),
       ...(opts.sourceRef ? { sourceRef: opts.sourceRef } : {}),
     },
