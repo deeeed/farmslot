@@ -29,6 +29,7 @@ import {
   hasUnresolvedPlaceholders,
   pollSlotResources,
 } from '../fleet/resource-manager.js';
+import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 
 const ACTION_ID_RE = /^[A-Za-z0-9._-]+$/;
 const PLACEMENTS: SlotActionPlacement[] = ['slot-header', 'resource-panel'];
@@ -175,15 +176,27 @@ async function executeExpandedCommand(
     if (!node) {
       throw new ResourceCommandUnavailableError(`Resource node ${machine} is disconnected`);
     }
+    // Slot actions call farm scripts too; run them from the bundle that matches
+    // this config, not the node's last deploy (ledger F15).
+    const startedAt = Date.now();
+    const remoteCommand = await resolveRemoteFarmCommand(slotVars, command, {
+      budgetMs: timeoutMs,
+    }).catch((error: unknown) => {
+      throw new ResourceCommandUnavailableError(
+        `Resource command unavailable on ${machine}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    });
+    const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
     const execResult = (await sendNodeRequest(
       node,
       'exec',
       {
-        cmd: command,
+        cmd: remoteCommand,
         cwd: slotVars.remoteRepo,
-        timeout: timeoutMs,
+        timeout: remainingMs,
       },
-      { timeout: timeoutMs },
+      { timeout: remainingMs },
     ).catch((error: unknown) => {
       throw new ResourceCommandUnavailableError(
         `Resource command unavailable on ${machine}: ${error instanceof Error ? error.message : String(error)}`,

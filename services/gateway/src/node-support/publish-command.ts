@@ -71,32 +71,32 @@ export function buildNodeSupportPublishCommand({
   ].join(' && ');
 }
 
+const shellSingleQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * One `shasum` and one `stat` over the whole file set, compared against the
+ * manifest's expected lines. A per-file loop spawned four processes per file
+ * (shasum is a perl script on macOS), which made a 500-file bundle take about
+ * a minute to verify, twice per publish.
+ */
 export function buildNodeSupportVerifyCommand({
   manifestPath,
   supportDir,
   files,
 }: NodeSupportVerifyCommandParams): string {
-  const commands = [
-    `[ -f ${shellExpressionForRemotePath(manifestPath)} ]`,
-    'count=0',
-    'hash_file() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha256sum "$1"; fi | awk \'{print $1}\'; }',
-    'stat_mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }',
-    'stat_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }',
-  ];
-  for (const file of files) {
-    const filePath = path.posix.join(supportDir, file.relativePath);
-    const quotedPath = shellExpressionForRemotePath(filePath);
-    commands.push(
-      `[ -f ${quotedPath} ]`,
-      `actual_sha="$(hash_file ${quotedPath})"`,
-      `[ "$actual_sha" = '${file.sha256}' ]`,
-      `actual_mode="$(stat_mode ${quotedPath})"`,
-      `[ "$actual_mode" = '${file.mode.toString(8)}' ]`,
-      `actual_size="$(stat_size ${quotedPath})"`,
-      `[ "$actual_size" = '${file.size}' ]`,
-      'count=$((count + 1))',
-    );
-  }
-  commands.push(`[ "$count" -eq ${files.length} ]`);
-  return commands.join(' && ');
+  const manifestCheck = `[ -f ${shellExpressionForRemotePath(manifestPath)} ]`;
+  // shasum with no file operands would read stdin and hang.
+  if (files.length === 0) return manifestCheck;
+  const operands = files.map((file) => shellSingleQuote(file.relativePath)).join(' ');
+  const expectedSha = files.map((file) => `${file.sha256}  ${file.relativePath}`).join('\n');
+  const expectedStat = files.map((file) => `${file.mode.toString(8)} ${file.size}`).join('\n');
+  return [
+    manifestCheck,
+    `cd ${shellExpressionForRemotePath(supportDir)}`,
+    `if command -v shasum >/dev/null 2>&1; then actual_sha="$(shasum -a 256 -- ${operands})"; else actual_sha="$(sha256sum -- ${operands})"; fi`,
+    `[ "$actual_sha" = ${shellSingleQuote(expectedSha)} ]`,
+    // GNU stat takes -c; BSD stat has no -c and takes -f.
+    `if stat -c %s / >/dev/null 2>&1; then actual_stat="$(stat -c '%a %s' -- ${operands})"; else actual_stat="$(stat -f '%Lp %z' -- ${operands})"; fi`,
+    `[ "$actual_stat" = ${shellSingleQuote(expectedStat)} ]`,
+  ].join(' && ');
 }

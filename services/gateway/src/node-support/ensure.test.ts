@@ -68,7 +68,7 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
 const kind = (cmd: string) =>
   cmd.includes('mktemp -d')
     ? 'incoming'
-    : cmd.includes('hash_file()')
+    : cmd.includes('shasum -a 256')
       ? 'verify'
       : cmd.includes('.locks')
         ? 'publish'
@@ -85,7 +85,14 @@ test('a local slot uses the checkout directly and touches no node', async () => 
     '.agent',
     { projectVars, io },
   );
-  assert.deepEqual(state, { supportDir: farmslotRoot, hash: null, published: false });
+  assert.equal(state?.supportDir, farmslotRoot);
+  assert.equal(state?.hash, null);
+  assert.equal(state?.published, false);
+  assert.deepEqual(
+    state?.paths,
+    [...RUNNER_OBSERVABILITY_SUPPORT_PATHS].sort(),
+    'a project without farm refs still carries the runner installer',
+  );
   assert.equal(rec.execs.length, 0);
   assert.equal(rec.written.length, 0);
 });
