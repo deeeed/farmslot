@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   COMMAND_CENTER_RECIPE_SOURCE,
   gatewayTokenSeedScript,
+  pidListeningOnPort,
   resolveCommandCenterRecipeTrust,
   resolveRecordingTarget,
   withCapturableRecordingTarget,
@@ -145,5 +146,43 @@ describe('gatewayTokenSeedScript', () => {
     // The token must be embedded as a valid JSON string literal.
     assert.ok(script.includes(JSON.stringify('a"b\\c')));
     assert.doesNotMatch(script, /token', 'a"b/);
+  });
+});
+
+describe('pidListeningOnPort', () => {
+  const timeout = () => {
+    throw Object.assign(new Error('lsof ran out of its time budget.'), { code: 'CDP_TIMEOUT' });
+  };
+
+  it('returns the first listener pid within a bounded lsof wait', async () => {
+    let deadline;
+    const pid = await pidListeningOnPort(9324, (port, exec, options) => {
+      assert.equal(port, 9324);
+      deadline = options.deadline;
+      return [4242, 5151];
+    });
+    assert.equal(pid, 4242);
+    assert.ok(deadline - Date.now() <= 5000);
+  });
+
+  it('fails instead of falling back to the shared window title when lsof times out', async () => {
+    await assert.rejects(pidListeningOnPort(9324, timeout), /lsof timed out.*--record-pid/u);
+    await assert.rejects(
+      resolveRecordingTarget(
+        { cdpPort: 9324, recordPid: 0, recordAppName: 'Google Chrome' },
+        { pidListeningOnPort: (port) => pidListeningOnPort(port, timeout) },
+      ),
+      /lsof timed out/u,
+    );
+  });
+
+  it('falls back to the window target when nothing listens or lsof is missing', async () => {
+    assert.equal(await pidListeningOnPort(9324, () => []), undefined);
+    assert.equal(
+      await pidListeningOnPort(9324, () => {
+        throw new Error('lsof is required');
+      }),
+      undefined,
+    );
   });
 });

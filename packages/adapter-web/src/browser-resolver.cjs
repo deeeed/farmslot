@@ -298,6 +298,11 @@ function describeBrowser(executable) {
 
 // Extra launch arguments for the chosen loading method. Branded Chrome must
 // not get --disable-extensions-except: it disables the CDP-loaded extension.
+/**
+ * @param {string} extensionDir
+ * @param {string} extensionLoading
+ * @returns {string[]}
+ */
 function extensionLaunchArgs(extensionDir, extensionLoading) {
   if (extensionLoading === CDP_LOAD_UNPACKED) {
     // --load-extension is ignored by branded Chrome but kept on the command

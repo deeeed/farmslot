@@ -470,12 +470,19 @@ async function resolveGatewayToken(projectRoot) {
   return '';
 }
 
-async function pidListeningOnPort(port) {
+// The recipe Chrome's pid on its CDP port. lsof runs synchronously, so its wait is
+// bounded. A timeout fails the recording: falling back to the shared window title
+// could record the operator's own Command Center window instead.
+export async function pidListeningOnPort(port, listenerPids = cdpListenerPids) {
   try {
-    // Synchronous lsof: keep the wait short; the window fallback covers a timeout.
-    return cdpListenerPids(port, undefined, { deadline: Date.now() + 5000 })[0];
-  } catch {
-    // No listener proof (lsof missing or timed out): record by window instead.
+    return listenerPids(port, undefined, { deadline: Date.now() + 5000 })[0];
+  } catch (error) {
+    if (error?.code === 'CDP_TIMEOUT') {
+      throw new Error(
+        `Could not prove which process holds CDP port ${port} (lsof timed out), so the recording window is unknown. Next: rerun, or pass --record-pid <pid> or --record-window-name <name>.`,
+      );
+    }
+    // No listener proof (lsof missing or nothing listening): record by window instead.
     return undefined;
   }
 }

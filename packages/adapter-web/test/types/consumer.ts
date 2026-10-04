@@ -41,7 +41,10 @@ export async function consumerCalls(
     display: browserResolver.HEADFUL,
     recorded: null,
   });
-  browserResolver.extensionLaunchArgs(resolution, dist);
+  const launchArgs: string[] = browserResolver.extensionLaunchArgs(
+    dist,
+    resolution.extensionLoading,
+  );
   browserResolver.waitForCdpOwner(9222, profile, { timeoutMs: 15000 });
   chromeArgs.writeRuntimeIdentity(runtimeDir, {
     nonce: chromeArgs.createRuntimeIdentityNonce(),
@@ -64,5 +67,5 @@ export async function consumerCalls(
   await playwrightCdp.evaluatePageViaCdp(page, () => document.title);
   await playwrightCdp.evaluatePageViaCdp(page, (slot: string) => slot, 'ff-1');
   extensionId.extensionIdFromExtensionDir(dist);
-  return { pids, owner, waited, loaded, selected, ownedPids };
+  return { pids, owner, waited, loaded, selected, ownedPids, launchArgs };
 }
