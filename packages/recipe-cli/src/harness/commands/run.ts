@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { RecipeNodeEvent, RunObserver } from '@farmslot/adapter-sdk';
+import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import type { RecipeValidationFinding } from '@farmslot/protocol';
 import { type RecipeLibrarySource, redactRecipeParams } from '@farmslot/recipe-runner';
 
@@ -19,10 +19,9 @@ import { acquireCheckoutLock } from '../checkout-lock.js';
 import { color } from '../cli-color.js';
 import { recordCommandEvidence } from '../command-journal.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
-import { recipeRunning } from '../heal-bounds.js';
+import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
-import { startRunNetworkObservation } from '../network-observation.js';
 import {
   type CliOptions,
   isRecord,
@@ -53,10 +52,11 @@ import {
   type RecipeEngineRunOptions,
   runRecipe,
 } from '../run-engine.js';
+import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
 import { indexProductProvenanceArtifact, writeRunReport } from '../run-report.js';
 import { checkoutBusyOut, EXIT, usageOut, writeInteractiveProgress } from '../shared.js';
-import { recipeTrustFailure } from '../trust.js';
+import { type RecipeTrustFailure, recipeTrustFailure } from '../trust.js';
 
 /**
  * Resolve and pin the device a `run` or `call` drives, before the engine reads
@@ -144,13 +144,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     return exitCode;
   } catch (error) {
     if (error instanceof ProvenanceDriftError) {
-      const failure = {
-        code: error.code,
-        message: error.message,
-        userAction: error.userAction,
-        provenancePath: error.provenancePath,
-        drift: error.drift,
-      };
+      const failure = provenanceFailure(error);
       if (stream.enabled) {
         stream.error(failure);
         stream.complete('fail', error.exitCode);
@@ -179,24 +173,8 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       if (stream.enabled) {
         stream.error(trustFailure);
         stream.complete('fail', EXIT.validation);
-      } else if (optionFlag(parsed.options, 'json')) {
-        console.log(
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              command: 'run',
-              status: 'fail',
-              error: trustFailure,
-              exitCode: EXIT.validation,
-            },
-            null,
-            2,
-          ),
-        );
       } else {
-        console.error(`✗ ${host} run: ${trustFailure.message}`);
-        printBlockedPlanNodes(trustFailure.details?.blocked);
-        console.error(`  Next: ${trustFailure.userAction}`);
+        reportTrustFailure('run', trustFailure, optionFlag(parsed.options, 'json'));
       }
       return EXIT.validation;
     }
@@ -219,29 +197,57 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
   }
 }
 
-/** The restricted plan nodes a trust failure blocked, at most ten. */
-export function printBlockedPlanNodes(
-  blocked:
-    | ReadonlyArray<{
-        nodeId: string;
-        action: string;
-        capabilities: string[];
-        source: string;
-        implementation?: { kind?: string; digest?: string };
-      }>
-    | undefined,
+/** The drift a provenance failure reports in an envelope's `error`. */
+export function provenanceFailure(error: ProvenanceDriftError): Record<string, unknown> {
+  return {
+    code: error.code,
+    message: error.message,
+    userAction: error.userAction,
+    provenancePath: error.provenancePath,
+    drift: error.drift,
+  };
+}
+
+/**
+ * A recipe trust or approval failure: the `--json` envelope, or the human
+ * error with at most ten restricted plan nodes.
+ */
+export function reportTrustFailure(
+  command: 'run' | 'call',
+  failure: RecipeTrustFailure,
+  json: boolean,
 ): void {
-  if (!blocked?.length) return;
-  console.error('  Restricted plan nodes:');
-  for (const node of blocked.slice(0, 10)) {
-    const implementation = node.implementation?.digest
-      ? ` implementation=${node.implementation.kind ?? 'custom'}@${node.implementation.digest}`
-      : '';
-    console.error(
-      `  - ${node.nodeId}: ${node.action} [${node.capabilities.join(', ')}] source=${node.source}${implementation}`,
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          command,
+          status: 'fail',
+          error: failure,
+          exitCode: EXIT.validation,
+        },
+        null,
+        2,
+      ),
     );
+    return;
   }
-  if (blocked.length > 10) console.error(`  - … ${blocked.length - 10} more (use --json)`);
+  console.error(`✗ ${harnessHost().name} ${command}: ${failure.message}`);
+  const blocked = failure.details?.blocked;
+  if (blocked?.length) {
+    console.error('  Restricted plan nodes:');
+    for (const node of blocked.slice(0, 10)) {
+      const implementation = node.implementation?.digest
+        ? ` implementation=${node.implementation.kind ?? 'custom'}@${node.implementation.digest}`
+        : '';
+      console.error(
+        `  - ${node.nodeId}: ${node.action} [${node.capabilities.join(', ')}] source=${node.source}${implementation}`,
+      );
+    }
+    if (blocked.length > 10) console.error(`  - … ${blocked.length - 10} more (use --json)`);
+  }
+  console.error(`  Next: ${failure.userAction}`);
 }
 
 async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
@@ -415,8 +421,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   // Reuse the sources validateRunRecipeStatic already resolved (same --library
   // input) instead of a second resolution.
   const librarySources = validated.librarySources;
-  let networkObservation: RunObserver | undefined;
-  let performanceObservation: RunObserver | undefined;
+  let observers: RunObservers | undefined;
   const runtimeOptions: RecipeEngineRunOptions = {
     ...recipeRunOptionsFromCli(adapter, options),
     cli: options,
@@ -425,8 +430,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     stdoutIsMachineContract: machine,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {
       stream.node(nodeId, action, status);
-      networkObservation?.onActionEvent({ nodeId, action, status });
-      performanceObservation?.onActionEvent({ nodeId, action, status });
+      observers?.onActionEvent({ nodeId, action, status });
     },
   };
   stream.phase('authorize');
@@ -470,19 +474,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     );
 
     const ports = { cdpPort: runtimeOptions.cdpPort, watcherPort: runtimeOptions.watcherPort };
-    networkObservation = await startRunNetworkObservation(
-      adapter,
-      target,
-      artifactsDir,
-      process.env,
-      ports,
-    );
-    performanceObservation = await harnessAdapter(adapter).observation?.performance?.start({
-      target,
-      artifactsDir,
-      env: process.env,
-      ports,
-    });
+    const started = await startRunObservers(adapter, target, artifactsDir, ports);
+    observers = started;
     stream.phase('execute');
     let executionResult;
     try {
@@ -508,17 +501,13 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         state,
       );
     } catch (error) {
-      await networkObservation?.finalize().catch(() => undefined);
-      networkObservation = undefined;
-      await performanceObservation?.finalize().catch(() => undefined);
-      performanceObservation = undefined;
+      await started.abandon();
+      observers = undefined;
       throw error;
     }
     const { result, violation } = executionResult;
-    await networkObservation?.finalize(result.artifactManifestPath);
-    networkObservation = undefined;
-    await performanceObservation?.finalize(result.artifactManifestPath);
-    performanceObservation = undefined;
+    await started.finalize(result.artifactManifestPath);
+    observers = undefined;
     for (const mutation of state.mutations) stream.mutation(mutation);
     for (const recovery of state.recovered) stream.recovery(recovery);
     persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
@@ -914,9 +903,7 @@ function emitPlanUsageError(
 
 function emitRunRecipeRunning(json: boolean, stream: JsonStreamWriter, target: string): number {
   const host = harnessHost().name;
-  const message =
-    'a recipe is currently running — refusing to start while another recipe executes.';
-  const userAction = `inspect the checkout state with: ${host} status --target ${shellQuote(target)} --json; retry after the active recipe finishes`;
+  const { message, userAction } = recipeRunningRefusal(shellQuote(target));
   stream.error({ code: 'RECIPE_RUNNING', message, userAction, recoverable: false });
   if (json) {
     console.log(

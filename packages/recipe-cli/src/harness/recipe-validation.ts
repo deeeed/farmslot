@@ -248,7 +248,7 @@ export async function validateRunRecipeStatic(
         code: 'RECIPE_NOT_FOUND',
         message:
           resolved.notFound +
-          (await actionInsteadOfRecipeHint(catalog, recipeArg, adapter, options)),
+          (await actionInsteadOfRecipeHint(catalog, recipeArg, adapter, options, librarySources)),
       },
     };
   }
@@ -320,16 +320,17 @@ export async function validateRunRecipeStatic(
   };
 }
 
-// A bare name that is one action, not a recipe: the `call` that runs it.
+// A bare name that is one action, not a recipe: the `call` that runs it,
+// judged against the library sources the recipe lookup already resolved.
 async function actionInsteadOfRecipeHint(
   catalog: RecipeCatalog,
   recipeArg: string,
   adapter: string,
   options: CliOptions,
+  librarySources: RecipeLibrarySource[],
 ): Promise<string> {
   if (recipeArg.includes('/') || recipeArg.includes(path.sep)) return '';
   try {
-    const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
     const { manifest } = await catalog.resolveActionManifest(
       adapter,
       optionString(options, 'actionManifest'),

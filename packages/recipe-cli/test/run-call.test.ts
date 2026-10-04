@@ -521,11 +521,15 @@ describe('engine door', () => {
         password: 'secret',
         nested: { privateKey: '0xsecret', address: '0xpublic' },
         accounts: [{ mnemonic: 'seed words', name: 'dev1' }],
+        apiKey: 'api-secret',
+        vault: 'encrypted-secret',
       }),
       {
         password: '<redacted>',
         nested: { privateKey: '<redacted>', address: '0xpublic' },
         accounts: [{ mnemonic: '<redacted>', name: 'dev1' }],
+        apiKey: '<redacted>',
+        vault: '<redacted>',
       },
     );
     assert.equal(redactCallValue('plain', 'apiKey'), '<redacted>');

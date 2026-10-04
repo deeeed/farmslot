@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { RecipeNodeEvent, RunObserver } from '@farmslot/adapter-sdk';
+import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 
 import { fuzzyResolveActions, resolveActionCapabilityRefusal } from '../../action-catalog.js';
@@ -27,21 +27,19 @@ import {
   redactStructuredValue,
 } from '../command-journal.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
-import { conciseFailureForHuman, recipeRunning } from '../heal-bounds.js';
+import { conciseFailureForHuman, recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost, hostEnvName } from '../host.js';
-import { startRunNetworkObservation } from '../network-observation.js';
 import {
   type CliOptions,
   isRecord,
   optionFlag,
   optionString,
-  optionStrings,
   parseArgs,
   resolveAdapter,
   shellQuote,
   usageError,
 } from '../parse-args.js';
-import { resolveLibrarySources } from '../recipe-library.js';
+import { resolveCommandManifest } from '../recipe-library.js';
 import { validateRecipeAdapterAware } from '../recipe-validation.js';
 import {
   type ConsoleAllowlist,
@@ -60,12 +58,13 @@ import {
   runRecipe,
   synthesizeOneNodeRecipe,
 } from '../run-engine.js';
+import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
 import { checkoutBusyOut, EXIT, usageOut } from '../shared.js';
 import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
-import { type DeviceTargeting, printBlockedPlanNodes } from './run.js';
+import { type DeviceTargeting, provenanceFailure, reportTrustFailure } from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
@@ -108,12 +107,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     let discovery = `${host} actions`;
     try {
       const { adapter } = resolveAdapter(options);
-      const librarySources = await resolveLibrarySources(engine, optionStrings(options, 'library'));
-      const { manifest } = await engine.resolveActionManifest(
-        adapter,
-        optionString(options, 'actionManifest'),
-        librarySources,
-      );
+      const { manifest } = await resolveCommandManifest(engine, adapter, options);
       const names = getRecipeActionManifestActionNames(manifest);
       const exampleAction =
         commandOptions.exampleAction?.(names) ??
@@ -176,8 +170,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   }
 
   if (recipeRunning(target)) {
-    const msg = 'a recipe is currently running — refusing to start while another recipe executes.';
-    const userAction = `inspect the checkout state with: ${host} status --target ${shellQuote(target)} --json; retry after the active recipe finishes`;
+    const { message: msg, userAction } = recipeRunningRefusal(shellQuote(target));
     if (json) {
       console.log(
         JSON.stringify(
@@ -199,11 +192,10 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   }
 
   const actionManifestOverride = optionString(options, 'actionManifest');
-  const librarySources = await resolveLibrarySources(engine, optionStrings(options, 'library'));
-  const { manifest, actionSources } = await engine.resolveActionManifest(
+  const { manifest, actionSources, librarySources } = await resolveCommandManifest(
+    engine,
     adapter,
-    actionManifestOverride,
-    librarySources,
+    options,
   );
   const names = getRecipeActionManifestActionNames(manifest);
 
@@ -383,8 +375,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     process.env.FARMSLOT_RECIPE_SOURCE_KIND ||
     process.env.FARMSLOT_RECIPE_SOURCE_NAME ||
     process.env.FARMSLOT_RECIPE_SOURCE_DIGEST;
-  let networkObservation: RunObserver | undefined;
-  let performanceObservation: RunObserver | undefined;
+  let observers: RunObservers | undefined;
   const callRuntimeOptions: RecipeEngineRunOptions = {
     ...requestedRuntimeOptions,
     cli: options,
@@ -393,8 +384,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     suppressLibraryResolutionLogs: true,
     stdoutIsMachineContract: json,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {
-      networkObservation?.onActionEvent({ nodeId, action, status });
-      performanceObservation?.onActionEvent({ nodeId, action, status });
+      observers?.onActionEvent({ nodeId, action, status });
     },
     ...(requestedRuntimeOptions.source
       ? { source: requestedRuntimeOptions.source }
@@ -430,25 +420,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         `directory and execution environment, then set ` +
         `FARMSLOT_RECIPE_APPROVE_PLAN=${shellQuote(planDigest)}`;
     }
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            status: 'fail',
-            error: trustFailure,
-            exitCode: EXIT.validation,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      console.error(`✗ ${host} call: ${trustFailure.message}`);
-      printBlockedPlanNodes(trustFailure.details?.blocked);
-      console.error(`  Next: ${trustFailure.userAction}`);
-    }
+    reportTrustFailure('call', trustFailure, json);
     return EXIT.validation;
   }
 
@@ -477,19 +449,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       cdpPort: callRuntimeOptions.cdpPort,
       watcherPort: callRuntimeOptions.watcherPort,
     };
-    networkObservation = await startRunNetworkObservation(
-      adapter,
-      target,
-      artifactsDir,
-      process.env,
-      ports,
-    );
-    performanceObservation = await harnessAdapter(adapter).observation?.performance?.start({
-      target,
-      artifactsDir,
-      env: process.env,
-      ports,
-    });
+    const started = await startRunObservers(adapter, target, artifactsDir, ports);
+    observers = started;
     let executionResult;
     try {
       executionResult = await executeWithHealBounds(
@@ -512,18 +473,10 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         state,
       );
     } catch (error) {
-      await networkObservation?.finalize().catch(() => undefined);
-      networkObservation = undefined;
-      await performanceObservation?.finalize().catch(() => undefined);
-      performanceObservation = undefined;
+      await started.abandon();
+      observers = undefined;
       if (error instanceof ProvenanceDriftError) {
-        const failure = {
-          code: error.code,
-          message: error.message,
-          userAction: error.userAction,
-          provenancePath: error.provenancePath,
-          drift: error.drift,
-        };
+        const failure = provenanceFailure(error);
         if (json) {
           console.log(
             JSON.stringify(
@@ -550,10 +503,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       throw error;
     }
     const { result, violation } = executionResult;
-    await networkObservation?.finalize(result.artifactManifestPath);
-    networkObservation = undefined;
-    await performanceObservation?.finalize(result.artifactManifestPath);
-    performanceObservation = undefined;
+    await started.finalize(result.artifactManifestPath);
+    observers = undefined;
     persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
     if (violation !== null) {
       const conciseFailure = violation.originalError
@@ -792,12 +743,7 @@ export async function handleCallHelp(
     new Map();
   try {
     ({ adapter } = resolveAdapter(options));
-    const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
-    const resolution = await catalog.resolveActionManifest(
-      adapter,
-      optionString(options, 'actionManifest'),
-      librarySources,
-    );
+    const resolution = await resolveCommandManifest(catalog, adapter, options);
     manifest = resolution.manifest;
     actionSources = resolution.actionSources;
   } catch {

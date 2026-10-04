@@ -14,10 +14,16 @@ import {
 import { recipeComposition } from '../composition.js';
 import { assessRecipe } from '../discovery-index.js';
 
-import type { RecipeCatalog } from './catalog.js';
+import type { RecipeCatalog, ResolvedActionManifest } from './catalog.js';
 import { harnessHost } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
-import { isRecord, usageError } from './parse-args.js';
+import {
+  type CliOptions,
+  isRecord,
+  optionString,
+  optionStrings,
+  usageError,
+} from './parse-args.js';
 
 export interface RecipeParameterSummary {
   name: string;
@@ -91,6 +97,24 @@ export async function resolveLibrarySources(
       };
     }),
   );
+}
+
+/**
+ * The library sources a command's `--library` names, and the adapter's action
+ * manifest over them (or its `--action-manifest`).
+ */
+export async function resolveCommandManifest(
+  catalog: RecipeCatalog,
+  adapter: string,
+  options: CliOptions,
+): Promise<ResolvedActionManifest & { librarySources: RecipeLibrarySource[] }> {
+  const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
+  const resolution = await catalog.resolveActionManifest(
+    adapter,
+    optionString(options, 'actionManifest'),
+    librarySources,
+  );
+  return { ...resolution, librarySources };
 }
 
 function isRecipeFile(p: string): boolean {

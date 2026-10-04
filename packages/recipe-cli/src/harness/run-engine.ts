@@ -38,6 +38,7 @@ import {
   newHealState,
   parseHeal,
   recipeRunning,
+  recipeRunningRefusal,
 } from './heal-bounds.js';
 import { harnessHost, hostEnvName, recipeEnvName } from './host.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
@@ -720,8 +721,7 @@ export async function prepareHeal(
 ): Promise<PreparedHeal | number> {
   const host = harnessHost().name;
   if (recipeRunning(target)) {
-    const msg = 'a recipe is currently running — refusing to start while another recipe executes.';
-    const userAction = `inspect the checkout state with: ${host} status --target ${shellQuoteArg(target)} --json; retry after the active recipe finishes`;
+    const { message: msg, userAction } = recipeRunningRefusal(shellQuoteArg(target));
     if (json) {
       console.log(
         JSON.stringify(
