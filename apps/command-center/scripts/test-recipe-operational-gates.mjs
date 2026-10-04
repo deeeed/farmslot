@@ -10,6 +10,12 @@ const GATEWAY_GATE_TESTS = [
 // Hook/template expansion moved to @farmslot/slot-config (Phase 2 extraction).
 const SLOT_CONFIG_GATE_TESTS = ['src/hooks.test.ts'];
 
+// Command Center's own recipe runner (the second adopter of @farmslot/adapter-web).
+const RECIPE_RUNNER_TESTS = [
+  'scripts/agentic/run-recipe.test.mjs',
+  'scripts/agentic/recording-target.test.mjs',
+];
+
 function run(command) {
   const result = spawnSync(command[0], command.slice(1), { stdio: 'inherit' });
   if (result.error) throw result.error;
@@ -36,3 +42,4 @@ run([
   ...SLOT_CONFIG_GATE_TESTS,
 ]);
 run(['yarn', 'workspace', '@farmslot/cli', 'test']);
+run(['node', '--test', ...RECIPE_RUNNER_TESTS]);

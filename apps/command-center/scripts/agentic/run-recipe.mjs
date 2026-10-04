@@ -24,6 +24,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { cdpListenerPids, connectBrowserCdp, placeWindow } from '@farmslot/adapter-web/browser-cdp';
+import { selectPageTarget } from '@farmslot/adapter-web/page-target';
 import {
   applyTaskLocalInvocationTrust,
   createCaptureHelperVideoRecorder,
@@ -424,27 +426,12 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
 
 export function selectCommandCenterTarget(targets, uiUrl, preferredHash) {
   const origin = new URL(uiUrl).origin;
-  const pages = targets.filter((target) => {
-    if (target.type !== 'page' || !target.url) return false;
-    try {
-      return new URL(target.url).origin === origin;
-    } catch {
-      return false;
-    } // Browser-internal targets without a URL cannot host this client.
-  });
-  if (pages.length === 0) {
+  const selected = selectPageTarget(targets, { origin, hash: preferredHash });
+  if (!selected) {
     throw new Error(
       `No Command Center tab for ${origin}. Open the configured UI before running its recipe.`,
     );
   }
-
-  let selected = pages[0];
-  if (preferredHash) {
-    const needle = preferredHash.startsWith('#') ? preferredHash : `#${preferredHash}`;
-    const matched = pages.find((target) => target.url?.includes(needle));
-    if (matched) selected = matched;
-  }
-
   return selected;
 }
 
@@ -483,12 +470,19 @@ async function resolveGatewayToken(projectRoot) {
   return '';
 }
 
-async function pidListeningOnPort(port) {
+// The recipe Chrome's pid on its CDP port. lsof runs synchronously, so its wait is
+// bounded. A timeout fails the recording: falling back to the shared window title
+// could record the operator's own Command Center window instead.
+export async function pidListeningOnPort(port, listenerPids = cdpListenerPids) {
   try {
-    const { stdout } = await execFileAsync('lsof', [`-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
-    const pid = Number(stdout.trim().split('\n')[0]);
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-  } catch {
+    return listenerPids(port, undefined, { deadline: Date.now() + 5000 })[0];
+  } catch (error) {
+    if (error?.code === 'CDP_TIMEOUT') {
+      throw new Error(
+        `Could not prove which process holds CDP port ${port} (lsof timed out), so the recording window is unknown. Next: rerun, or pass --record-pid <pid> or --record-window-name <name>.`,
+      );
+    }
+    // No listener proof (lsof missing or nothing listening): record by window instead.
     return undefined;
   }
 }
@@ -553,6 +547,13 @@ export async function resolveRecordingTarget(options, deps = {}) {
   };
 }
 
+// The run needs a recording target for any recorder, but only capture-helper uses it:
+// the CDP recorder captures by port, so it gets the descriptor without the lsof lookup.
+export async function resolveRunRecordingTarget(recorderName, options, deps = {}) {
+  if (recorderName === 'capture-helper') return resolveRecordingTarget(options, deps);
+  return resolveRecordingTarget(options, { ...deps, pidListeningOnPort: async () => undefined });
+}
+
 function parseCaptureHelperJson(stdout, stderr = '') {
   const combined = `${stdout}\n${stderr}`.trim();
   if (!combined) return null;
@@ -594,25 +595,24 @@ async function resolveCaptureHelperTarget(selectorArgs) {
   return parsed;
 }
 
-async function activateCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
-  const right = bounds.x + bounds.width;
-  const bottom = bounds.y + bounds.height;
-  await execFileAsync('osascript', [
-    '-e',
-    'tell application "Google Chrome" to activate',
-    '-e',
-    `tell application "Google Chrome" to set index of front window to 1`,
-    '-e',
-    `tell application "Google Chrome" to set bounds of front window to {${bounds.x}, ${bounds.y}, ${right}, ${bottom}}`,
-  ]);
+const RECORDING_WINDOW_BOUNDS = { left: 200, top: 150, width: 1200, height: 800 };
+
+// Move the recipe's own Chrome window over its CDP port: no lookup by app name
+// (which picks whichever Chrome is frontmost) and no activation.
+async function placeRecipeWindow(cdpPort, uiUrl, bounds) {
+  const target = selectCommandCenterTarget(await listCdpTargets('127.0.0.1', cdpPort), uiUrl, '');
+  const browser = await connectBrowserCdp(cdpPort, { timeoutMs: 5000 });
+  try {
+    await placeWindow(browser.send, target.id, bounds);
+  } finally {
+    browser.close();
+  }
 }
 
-async function repositionCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
-  await activateCdpChromeWindow(bounds);
-}
-
-/** capture-helper cannot record off-screen windows; bring Chrome on-screen before record.video. */
-async function ensureCapturableRecordingTarget(target) {
+// A minimized or off-display window records nothing: place the recipe window on a
+// display, then hand capture-helper its window id. Chrome stays in the background,
+// so capture-helper may report it onScreen: false; it still records it.
+async function ensureCapturableRecordingTarget(target, placeRecordingWindow) {
   if (process.platform !== 'darwin') return target;
 
   const selectorArgs =
@@ -623,35 +623,10 @@ async function ensureCapturableRecordingTarget(target) {
         : ['--app-name', target.appName, '--window-name', target.windowName];
 
   try {
-    await activateCdpChromeWindow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const parsed = await resolveCaptureHelperTarget(selectorArgs);
-      if (parsed.selected?.onScreen === true) {
-        if (parsed.selected?.id != null) {
-          return { kind: 'window-id', windowId: String(parsed.selected.id) };
-        }
-        return target;
-      }
-
-      console.warn(
-        `[run-recipe] CDP Chrome window is off-screen (${parsed.selected?.title ?? 'unknown'}); repositioning for capture-helper (attempt ${attempt + 1}/3)`,
-      );
-      await repositionCdpChromeWindow({
-        x: 200 + attempt * 40,
-        y: 150 + attempt * 40,
-        width: 1200,
-        height: 800,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 700));
-    }
-
-    const finalResolve = await resolveCaptureHelperTarget(selectorArgs);
-    if (finalResolve.selected?.id != null) {
-      console.warn(
-        `[run-recipe] using window-id ${finalResolve.selected.id} for capture-helper after reposition attempts`,
-      );
-      return { kind: 'window-id', windowId: String(finalResolve.selected.id) };
+    await placeRecordingWindow(RECORDING_WINDOW_BOUNDS);
+    const parsed = await resolveCaptureHelperTarget(selectorArgs);
+    if (parsed.selected?.id != null) {
+      return { kind: 'window-id', windowId: String(parsed.selected.id) };
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -660,10 +635,7 @@ async function ensureCapturableRecordingTarget(target) {
   return target;
 }
 
-export function withCapturableRecordingTarget(
-  recorder,
-  prepareTarget = ensureCapturableRecordingTarget,
-) {
+export function withCapturableRecordingTarget(recorder, prepareTarget) {
   return {
     ...recorder,
     doctor: recorder.doctor?.bind(recorder),
@@ -784,10 +756,16 @@ async function main() {
   const webVideoRecorder = options.recordVideo
     ? await resolveWebVideoRecorder(options.cdpPort, captureHelperBin())
     : undefined;
-  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  const recordingTarget = options.recordVideo
+    ? await resolveRunRecordingTarget(webVideoRecorder?.name, options)
+    : undefined;
   const videoRecorder =
     webVideoRecorder?.name === 'capture-helper'
-      ? withCapturableRecordingTarget(webVideoRecorder)
+      ? withCapturableRecordingTarget(webVideoRecorder, (target) =>
+          ensureCapturableRecordingTarget(target, (bounds) =>
+            placeRecipeWindow(options.cdpPort, uiUrl, bounds),
+          ),
+        )
       : webVideoRecorder;
 
   const trust = resolveCommandCenterRecipeTrust();

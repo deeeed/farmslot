@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  buildPreconditions,
   COMMAND_CENTER_RECIPE_SOURCE,
   gatewayTokenSeedScript,
+  pidListeningOnPort,
   resolveCommandCenterRecipeTrust,
   resolveRecordingTarget,
+  resolveRunRecordingTarget,
   withCapturableRecordingTarget,
 } from './run-recipe.mjs';
 
@@ -17,24 +18,6 @@ describe('recipe trust provenance', () => {
       trust: 'trusted',
       name: '@farmslot/command-center',
     });
-  });
-
-  it('marks every built-in precondition as trusted bundled code with no restricted capability', () => {
-    const preconditions = buildPreconditions({
-      uiUrl: 'http://127.0.0.1:5173',
-      gatewayPort: 7801,
-      cdpPort: 9324,
-    });
-
-    assert.equal(preconditions.length, 3);
-    for (const precondition of preconditions) {
-      assert.deepEqual(precondition.capabilities, []);
-      assert.deepEqual(precondition.source, {
-        kind: 'bundled',
-        trust: 'trusted',
-        name: '@farmslot/command-center/preconditions',
-      });
-    }
   });
 
   it('preserves inherited untrusted recipe provenance and approval', () => {
@@ -164,5 +147,79 @@ describe('gatewayTokenSeedScript', () => {
     // The token must be embedded as a valid JSON string literal.
     assert.ok(script.includes(JSON.stringify('a"b\\c')));
     assert.doesNotMatch(script, /token', 'a"b/);
+  });
+});
+
+describe('pidListeningOnPort', () => {
+  const timeout = () => {
+    throw Object.assign(new Error('lsof ran out of its time budget.'), { code: 'CDP_TIMEOUT' });
+  };
+
+  it('returns the first listener pid within a bounded lsof wait', async () => {
+    let deadline;
+    const pid = await pidListeningOnPort(9324, (port, exec, options) => {
+      assert.equal(port, 9324);
+      deadline = options.deadline;
+      return [4242, 5151];
+    });
+    assert.equal(pid, 4242);
+    assert.ok(deadline - Date.now() <= 5000);
+  });
+
+  it('fails instead of falling back to the shared window title when lsof times out', async () => {
+    await assert.rejects(pidListeningOnPort(9324, timeout), /lsof timed out.*--record-pid/u);
+    await assert.rejects(
+      resolveRecordingTarget(
+        { cdpPort: 9324, recordPid: 0, recordAppName: 'Google Chrome' },
+        { pidListeningOnPort: (port) => pidListeningOnPort(port, timeout) },
+      ),
+      /lsof timed out/u,
+    );
+  });
+
+  it('falls back to the window target when nothing listens or lsof is missing', async () => {
+    assert.equal(await pidListeningOnPort(9324, () => []), undefined);
+    assert.equal(
+      await pidListeningOnPort(9324, () => {
+        throw new Error('lsof is required');
+      }),
+      undefined,
+    );
+  });
+});
+
+describe('resolveRunRecordingTarget', () => {
+  const options = {
+    cdpPort: 9324,
+    recordPid: 0,
+    recordWindowName: '',
+    recordAppName: 'Google Chrome',
+  };
+  const timedOut = async () => {
+    throw new Error('Could not prove which process holds CDP port 9324 (lsof timed out)');
+  };
+
+  it('resolves the recipe Chrome pid for capture-helper and fails when that lookup times out', async () => {
+    assert.deepEqual(
+      await resolveRunRecordingTarget('capture-helper', options, {
+        pidListeningOnPort: async () => 4242,
+      }),
+      { kind: 'pid', pid: 4242 },
+    );
+    await assert.rejects(
+      resolveRunRecordingTarget('capture-helper', options, { pidListeningOnPort: timedOut }),
+      /lsof timed out/u,
+    );
+  });
+
+  it('never runs the lsof lookup for the CDP recorder, which captures by port', async () => {
+    const target = await resolveRunRecordingTarget('cdp-screencast', options, {
+      pidListeningOnPort: timedOut,
+    });
+    assert.deepEqual(target, {
+      kind: 'app-window',
+      appName: 'Google Chrome',
+      windowName: 'Farmslot Command Center',
+    });
   });
 });
