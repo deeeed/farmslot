@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The recipe runner places its recording window over its own CDP port (`@farmslot/adapter-web`) instead of AppleScript on whichever "Google Chrome" is frontmost, so it no longer activates Chrome or moves the operator's window. Page selection and the CDP browser pid come from the same package.
 
 ## 0.13.0 - 2026-09-27
 

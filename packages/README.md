@@ -7,6 +7,7 @@
 | `protocol/`       | Shared Farmslot API, event, run, slot, recipe, manifest, and artifact contracts.           |
 | `recipe-harness/` | Generic Recipe Protocol v1 runner, adapters, CLI runner support, and artifact writers.     |
 | `recipe-cli/`     | The `farmslot-recipe` command: run, validate, and library-wide recipe/action discovery.    |
+| `adapter-web/`    | Web platform pieces: browser resolve/launch, CDP-port ownership, extension loading, focus. |
 | `expo-recipe/`    | Expo/React Native scaffold that wires projects into the generic recipe harness.            |
 | `cli/`            | Human/operator CLI for talking to a running Gateway and validating recipe artifacts.       |
 | `theme/`          | Shared color, label, lifecycle, flow, and runner presentation tokens for Farmslot clients. |
@@ -25,6 +26,7 @@
 yarn workspace @farmslot/protocol quality
 yarn workspace @farmslot/recipe-harness quality
 yarn workspace @farmslot/recipe-cli quality
+yarn workspace @farmslot/adapter-web quality
 yarn workspace @farmslot/expo-recipe quality
 yarn workspace @farmslot/cli quality
 yarn workspace @farmslot/theme quality
@@ -35,6 +37,7 @@ yarn workspace @farmslot/theme quality
 - Put shared schemas, RPC method names, event names, and cross-process data shapes in `protocol/`.
 - Put recipe execution mechanics and generic adapters in `recipe-harness/`.
 - Put the `farmslot-recipe` command and recipe/action discovery in `recipe-cli/`.
+- Put browser process and CDP mechanics for web platforms in `adapter-web/`.
 - Put Expo project scaffolding and checks in `expo-recipe/`.
 - Put Gateway operator commands in `cli/`.
 - Put UI-neutral visual tokens in `theme/`.

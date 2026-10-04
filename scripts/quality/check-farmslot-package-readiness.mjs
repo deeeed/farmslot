@@ -64,6 +64,21 @@ const packages = [
       "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export');",
   },
   {
+    name: '@farmslot/adapter-web',
+    dir: 'packages/adapter-web',
+    publicDoc: 'https://farmslot.io/docs/reference/adapter-web',
+    requiredFiles: ['README.md', 'LICENSE', 'src/browser-cdp.cjs', 'src/browser-resolver.cjs'],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/browser-cdp.cjs',
+      'src/browser-resolver.cjs',
+      'dist/browser-cdp.d.cts',
+    ],
+    importCheck:
+      "const m = await import('./packages/adapter-web/src/browser-cdp.cjs'); if (typeof m.default.connectBrowserCdp !== 'function') throw new Error('missing connectBrowserCdp export');",
+  },
+  {
     name: '@farmslot/agent-runtime',
     dir: 'packages/agent-runtime',
     publicDoc: 'https://farmslot.io/docs/reference/agent-runtime',

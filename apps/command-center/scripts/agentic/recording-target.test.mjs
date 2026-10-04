@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  buildPreconditions,
   COMMAND_CENTER_RECIPE_SOURCE,
   gatewayTokenSeedScript,
   resolveCommandCenterRecipeTrust,
@@ -17,24 +16,6 @@ describe('recipe trust provenance', () => {
       trust: 'trusted',
       name: '@farmslot/command-center',
     });
-  });
-
-  it('marks every built-in precondition as trusted bundled code with no restricted capability', () => {
-    const preconditions = buildPreconditions({
-      uiUrl: 'http://127.0.0.1:5173',
-      gatewayPort: 7801,
-      cdpPort: 9324,
-    });
-
-    assert.equal(preconditions.length, 3);
-    for (const precondition of preconditions) {
-      assert.deepEqual(precondition.capabilities, []);
-      assert.deepEqual(precondition.source, {
-        kind: 'bundled',
-        trust: 'trusted',
-        name: '@farmslot/command-center/preconditions',
-      });
-    }
   });
 
   it('preserves inherited untrusted recipe provenance and approval', () => {

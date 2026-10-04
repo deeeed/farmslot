@@ -88,6 +88,7 @@ const sidebars = {
         'reference/recipe-protocol-v1',
         'reference/recipe-runner-protocol',
         'reference/recipe-discovery',
+        'reference/adapter-web',
         'reference/recipe-composition-quality',
       ],
     },
