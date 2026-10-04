@@ -95,6 +95,29 @@ test('legacy farmslot_dir hook refs are inferred for migration', () => {
   assert.deepEqual(result.undeclaredHookPaths, result.paths);
 });
 
+test('farm refs outside hooks are bundled too', () => {
+  // Resource health commands and slot actions run on the node through the same
+  // remote exec as hooks, so a script they call must ship with the config.
+  const result = resolveNodeSupportPaths(
+    'example-mobile-farm',
+    {
+      hooks: {},
+      resources: {
+        device: { health: 'bash {{farmslot_dir}}/projects/example-mobile-farm/scripts/health.sh' },
+      },
+      actions: [{ command: 'bash {{farmslot_dir}}/projects/example-mobile-farm/tools/fix.sh' }],
+    } as unknown as Parameters<typeof resolveNodeSupportPaths>[1],
+    root,
+  );
+
+  assert.deepEqual(result.paths, [
+    'projects/example-mobile-farm/project.json',
+    'projects/example-mobile-farm/scripts',
+    'projects/example-mobile-farm/tools',
+    'scripts',
+  ]);
+});
+
 test('farm-side refs hidden behind project vars are inferred', () => {
   const result = resolveNodeSupportPaths(
     'example-browser-farm',

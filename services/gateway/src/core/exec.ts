@@ -228,6 +228,14 @@ export async function execOnSlot(
   // requires the node agent to support abort, which is not yet implemented.
   // For now, aborting a remote exec clears the activeReruns tracking but the
   // remote process may continue until its timeout expires.
+  //
+  // Every remote command that calls a farm script runs it from the support
+  // bundle matching this gateway's config, never from the node's last deploy
+  // (ledger F15). Loaded lazily: node-support itself executes through here.
+  if (cmd.includes('~/farmslot-node')) {
+    const { resolveRemoteFarmCommand } = await import('../node-support/remote-command.js');
+    cmd = await resolveRemoteFarmCommand(slotVars, cmd);
+  }
   return nodeExec(slotVars.machine, cmd, cwd, {
     timeout: opts.timeout,
     onOutput: opts.onOutput,
