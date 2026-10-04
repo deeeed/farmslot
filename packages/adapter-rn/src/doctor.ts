@@ -155,7 +155,7 @@ async function checkBridgeContract(
     findings.push(
       errorFinding(
         'bridge_missing_provider',
-        'Manifest declares app/UI bridge actions but src/farmslot/RecipeBridgeProvider.tsx is missing. Run farmslot-expo-recipe init --with-bridge --force or remove bridge actions.',
+        'Manifest declares app/UI bridge actions but src/farmslot/RecipeBridgeProvider.tsx is missing. Run farmslot-adapter-rn init --with-bridge --force or remove bridge actions.',
         BRIDGE_PROVIDER_PATH,
       ),
     );

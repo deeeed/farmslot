@@ -18,7 +18,7 @@ stronger automation only after the first evidence loop is useful.
 
 | Project type              | Why it fits Farmslot                                                                                         | Minimal first integration                                                                   |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| Expo / React Native       | Cross-platform UI, simulator/device evidence, screenshots, logs, and recipe replay are especially valuable.  | Use `@farmslot/expo-recipe`; `apps/companion` is the in-repo example.                       |
+| Expo / React Native       | Cross-platform UI, simulator/device evidence, screenshots, logs, and recipe replay are especially valuable.  | Use `@farmslot/adapter-rn`; `apps/companion` is the in-repo example.                        |
 | Web app                   | Browser automation, CDP/Playwright evidence, visual diffs, and PR review artifacts map naturally to recipes. | Wrap Playwright or app-specific smoke checks in a v1 recipe.                                |
 | Backend/API               | Recipes can prove API behavior with pytest/Jest/curl/load-test output without UI evidence.                   | Use `@farmslot/recipe-runner`; `services/gateway` is the natural in-repo example candidate. |
 | CLI/package/library       | Recipes can prove commands, build output, type checks, and fixture snapshots.                                | Use `@farmslot/recipe-runner`; `packages/cli` and package workspaces are natural examples.  |
@@ -70,7 +70,7 @@ A team may layer additional conventions on top of lightweight Farmslot support: 
 ## Project-type guide map
 
 - [Expo / React Native project integration](./expo-project-integration.md)
-- [Expo Recipe integration](./expo-recipe.md)
+- [React Native adapter (Expo)](./adapter-rn.md)
 - [Headless Recipe integration](./headless-recipe.md)
 - [Write a recipe](./write-a-recipe.md)
 - [Import a project](./import-a-project.md)

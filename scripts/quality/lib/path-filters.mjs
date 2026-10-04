@@ -33,7 +33,7 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'scripts/quality/check-companion-structure.mjs',
     'apps/companion/**',
-    'packages/expo-recipe/**',
+    'packages/adapter-rn/**',
     'packages/protocol/**',
     'packages/recipe-runner/**',
     'packages/theme/**',
@@ -56,11 +56,11 @@ export const PATH_FILTERS = {
     'packages/protocol/**',
     'packages/recipe-runner/**',
   ],
-  expo_recipe: [
+  adapter_rn: [
     '.github/workflows/farmslot-quality.yml',
     'package.json',
     'yarn.lock',
-    'packages/expo-recipe/**',
+    'packages/adapter-rn/**',
     'packages/protocol/**',
     'packages/recipe-runner/**',
   ],
@@ -159,7 +159,7 @@ export const TARGET_STEPS = {
     ['generated gateway API docs', ['yarn', 'quality:gateway-api-docs']],
   ],
   cli: [['cli quality', ['yarn', 'workspace', '@farmslot/cli', 'quality']]],
-  expo_recipe: [['expo-recipe quality', ['yarn', 'workspace', '@farmslot/expo-recipe', 'quality']]],
+  adapter_rn: [['adapter-rn $1', ['yarn', 'workspace', '@farmslot/adapter-rn', 'quality']]],
   protocol: [['protocol quality', ['yarn', 'workspace', '@farmslot/protocol', 'quality']]],
   recipe_runner: [
     ['recipe-runner quality', ['yarn', 'workspace', '@farmslot/recipe-runner', 'quality']],

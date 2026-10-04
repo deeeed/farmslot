@@ -43,7 +43,7 @@ import {
 } from './metro-recipe-bridge-transport.js';
 import { createRedactingCoreAdapters } from './redaction.js';
 import { createSimctlVideoRecorder } from './simctl-video-recorder.js';
-import { EXPO_RECIPE_PACKAGE_VERSIONS } from './version.js';
+import { ADAPTER_RN_PACKAGE_VERSIONS } from './version.js';
 
 export interface ExpoRecipeRunOptions {
   projectRoot?: string;
@@ -73,7 +73,7 @@ export async function validateExpoRecipeDocument(
     artifactDir: options.artifactsDir,
     ...(librarySources.length ? { librarySources } : {}),
     ...(options.params ? { params: options.params } : {}),
-    packageVersions: EXPO_RECIPE_PACKAGE_VERSIONS,
+    packageVersions: ADAPTER_RN_PACKAGE_VERSIONS,
   });
 }
 
@@ -119,13 +119,13 @@ export async function runExpoRecipeDocument(
     defaultSource: {
       kind: 'operator',
       trust: 'trusted',
-      name: '@farmslot/expo-recipe',
+      name: '@farmslot/adapter-rn',
     },
     hud: false,
     runner: {
-      source: '@farmslot/expo-recipe',
+      source: '@farmslot/adapter-rn',
       git_ref: 'package',
-      name: '@farmslot/expo-recipe',
+      name: '@farmslot/adapter-rn',
     },
     logger: console,
     recording: {
@@ -140,7 +140,7 @@ export async function runExpoRecipeDocument(
       artifactsDir,
       projectRoot,
       ...(librarySources.length ? { librarySources } : {}),
-      packageVersions: EXPO_RECIPE_PACKAGE_VERSIONS,
+      packageVersions: ADAPTER_RN_PACKAGE_VERSIONS,
       ...(options.params ? { params: options.params } : {}),
       ...(platform ? { adapter: platform } : {}),
       env: {
@@ -162,7 +162,7 @@ async function assertNativeRecipeContext(
   const root = await readJsonFile(recipePath);
   if (!isRecord(root)) return;
   const libraries = await loadRecipeLibraries(librarySources, {
-    packageVersions: EXPO_RECIPE_PACKAGE_VERSIONS,
+    packageVersions: ADAPTER_RN_PACKAGE_VERSIONS,
   });
   const digest = digestRecipeDocument(root);
   const dependencies = resolveRecipeDependencies({

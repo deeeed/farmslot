@@ -1,10 +1,10 @@
 ---
-title: Expo Recipe integration
+title: React Native adapter (Expo)
 ---
 
-# Expo Recipe integration
+# React Native adapter (Expo)
 
-`@farmslot/expo-recipe` is the convenience Expo/React Native package on top of `@farmslot/recipe-runner`. It does not define a separate protocol or custom base actions; it scaffolds an Expo app so it can use the same Recipe Protocol v1 and official harness actions as other Farmslot-compatible projects. The Companion app in this repository is the canonical Expo example.
+`@farmslot/adapter-rn` is the convenience Expo/React Native package on top of `@farmslot/recipe-runner`. It does not define a separate protocol or custom base actions; it scaffolds an Expo app so it can use the same Recipe Protocol v1 and official harness actions as other Farmslot-compatible projects. The Companion app in this repository is the canonical Expo example.
 
 For backend, CLI, library, or other non-UI projects, start with the
 [Headless Recipe integration](./headless-recipe.md) guide instead.
@@ -25,15 +25,15 @@ That keeps app code stable when the protocol evolves.
 
 - `@farmslot/protocol` defines Recipe Protocol v1 schemas, official action names, and artifact contracts.
 - `@farmslot/recipe-runner` implements the generic runner, official core/UI actions, and CDP/React Native transport helpers.
-- `@farmslot/expo-recipe` wraps those pieces for Expo projects by installing scripts, a default manifest/recipe, and optional dev-only bridge/HUD components.
+- `@farmslot/adapter-rn` wraps those pieces for Expo projects by installing scripts, a default manifest/recipe, and optional dev-only bridge/HUD components.
 
 That means Expo projects should not reimplement generic actions like `ui.press`, `ui.set_input`, `ui.scroll`, `app.hud`, or `app.status`. Add only project/domain actions in the app-specific layer when the official actions are not enough.
 
 ## Install into an Expo app
 
 ```bash
-yarn add -D @farmslot/expo-recipe @farmslot/recipe-runner @farmslot/protocol
-farmslot-expo-recipe init
+yarn add -D @farmslot/adapter-rn @farmslot/recipe-runner @farmslot/protocol
+farmslot-adapter-rn init
 yarn recipe:doctor
 ```
 
@@ -73,7 +73,7 @@ When asserting command output that may be redacted, prefer stable substrings or 
 If a project wants in-app status or a human-readable HUD, install the bridge scaffold:
 
 ```bash
-farmslot-expo-recipe init --with-bridge
+farmslot-adapter-rn init --with-bridge
 ```
 
 Then wrap the app root:
@@ -109,7 +109,7 @@ Expose the runner through a thin project hook:
 }
 ```
 
-The reusable behavior belongs in `@farmslot/expo-recipe`. Project-specific behavior belongs in small domain manifests and bridge actions owned by that project.
+The reusable behavior belongs in `@farmslot/adapter-rn`. Project-specific behavior belongs in small domain manifests and bridge actions owned by that project.
 
 ## Quality rules
 

@@ -33,7 +33,7 @@ jobs:
       companion: ${{ steps.filter.outputs.companion }}
       docs: ${{ steps.filter.outputs.docs }}
       cli: ${{ steps.filter.outputs.cli }}
-      expo_recipe: ${{ steps.filter.outputs.expo_recipe }}
+      adapter_rn: ${{ steps.filter.outputs.adapter_rn }}
       agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
       capabilities: ${{ steps.filter.outputs.capabilities }}
       protocol: ${{ steps.filter.outputs.protocol }}
@@ -90,7 +90,7 @@ jobs:
               - 'yarn.lock'
               - 'scripts/quality/check-companion-structure.mjs'
               - 'apps/companion/**'
-              - 'packages/expo-recipe/**'
+              - 'packages/adapter-rn/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
               - 'packages/theme/**'
@@ -114,11 +114,11 @@ jobs:
               - 'packages/cli/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
-            expo_recipe:
+            adapter_rn:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
-              - 'packages/expo-recipe/**'
+              - 'packages/adapter-rn/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
             agent_runtime:
@@ -461,10 +461,10 @@ jobs:
       - name: CLI quality
         run: yarn workspace @farmslot/cli quality
 
-  expo-recipe:
-    name: Expo recipe package quality
+  adapter-rn:
+    name: React Native adapter package quality
     needs: changes
-    if: needs.changes.outputs.expo_recipe == 'true'
+    if: needs.changes.outputs.adapter_rn == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -481,8 +481,8 @@ jobs:
         run: corepack enable
       - name: Install workspace dependencies
         run: yarn install --immutable
-      - name: Expo recipe quality
-        run: yarn workspace @farmslot/expo-recipe quality
+      - name: React Native adapter quality
+        run: yarn workspace @farmslot/adapter-rn quality
 
   protocol:
     name: Protocol package quality

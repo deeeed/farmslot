@@ -110,7 +110,7 @@ if [[ -n "${FARMSLOT_SLOT_ID:-}" && -n "${PLATFORM_VALUE}" ]]; then
   ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
 fi
 
-ARGS=(farmslot-expo-recipe run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
+ARGS=(farmslot-adapter-rn run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   ARGS+=(--dry-run)
 fi

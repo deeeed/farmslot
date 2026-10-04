@@ -4,13 +4,13 @@ title: Expo / React Native project integration
 
 # Expo / React Native project integration
 
-`@farmslot/expo-recipe` is the thin Expo integration over the shared Recipe v1 harness. It scaffolds project-owned files; it does not define another protocol.
+`@farmslot/adapter-rn` is the thin Expo integration over the shared Recipe v1 harness. It scaffolds project-owned files; it does not define another protocol.
 
 ## Install
 
 ```sh
-yarn add -D @farmslot/expo-recipe @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
-farmslot-expo-recipe init
+yarn add -D @farmslot/adapter-rn @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
+farmslot-adapter-rn init
 yarn recipe:doctor
 yarn recipe:validate
 yarn recipe:run
@@ -19,7 +19,7 @@ yarn recipe:run
 For live UI, bridge, and HUD support:
 
 ```sh
-farmslot-expo-recipe init --with-bridge
+farmslot-adapter-rn init --with-bridge
 ```
 
 Wrap the app root with the generated `RecipeBridgeProvider` and enable it only in development with `EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1`.
@@ -28,7 +28,7 @@ Wrap the app root with the generated `RecipeBridgeProvider` and enable it only i
 
 - `@farmslot/protocol` owns recipe validation.
 - `@farmslot/recipe-runner` owns graph execution, evidence, and generic actions.
-- `@farmslot/expo-recipe` owns Expo scaffolding and integration checks.
+- `@farmslot/adapter-rn` owns Expo scaffolding and integration checks.
 - the app owns its bridge configuration, product actions, fixtures, and recipes.
 
 Do not add wallet, product, or ticket-specific behavior to the Expo package. Put durable product capabilities in the app's namespaced action manifest and reusable journeys in its recipe library.
@@ -40,8 +40,8 @@ Start from the generated smoke recipe or another working recipe:
 ```sh
 farmslot-recipe run --list --adapter mobile --json
 farmslot-recipe run <closest-recipe> --describe --adapter mobile --json
-farmslot-expo-recipe validate ./proof.recipe.json --param key=value
-farmslot-expo-recipe run ./proof.recipe.json --param key=value
+farmslot-adapter-rn validate ./proof.recipe.json --param key=value
+farmslot-adapter-rn run ./proof.recipe.json --param key=value
 ```
 
 Task-only dependencies beside `artifacts/recipe.json` belong in `artifacts/recipe-library/`; no library flag is required.

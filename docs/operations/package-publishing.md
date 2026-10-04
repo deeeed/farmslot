@@ -12,7 +12,7 @@ ready for review, but the packages remain private until final publish approval. 
 | `@farmslot/recipe-runner` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-runner>   |
 | `@farmslot/recipe-cli`    | The `farmslot-recipe` command: run, validate and recipe discovery.  | <https://farmslot.io/docs/reference/recipe-discovery>   |
 | `@farmslot/adapter-sdk`   | The platform adapter contract and registry.                         | <https://farmslot.io/docs/reference/adapter-sdk>        |
-| `@farmslot/expo-recipe`   | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
+| `@farmslot/adapter-rn`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/adapter-rn>            |
 | `@farmslot/skills`        | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
 | `@farmslot/capabilities`  | Machine-local capability primitives shared by node and gateway.     | `packages/capabilities/README.md`                       |
 | `@farmslot/handoff`       | Task handoff records, closeout and learning packages.               | <https://farmslot.io/docs/guides/learning-package>      |
@@ -73,7 +73,7 @@ Publish Recipe Protocol packages in dependency order:
 4. `@farmslot/recipe-runner`
 5. `@farmslot/recipe-cli`
 6. `@farmslot/adapter-sdk`
-7. `@farmslot/expo-recipe`
+7. `@farmslot/adapter-rn`
 8. `@farmslot/handoff`
 9. `@farmslot/skills`
 

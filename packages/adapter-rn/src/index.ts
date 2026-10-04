@@ -1,5 +1,5 @@
 export { createAgentDeviceUiTransport, NATIVE_UI_ACTIONS } from './agent-device-ui-transport.js';
-export { runExpoRecipeCli } from './cli.js';
+export { runAdapterRnCli } from './cli.js';
 export {
   BRIDGE_HUD_PATH,
   BRIDGE_INDEX_PATH,

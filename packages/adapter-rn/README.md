@@ -1,14 +1,14 @@
-# @farmslot/expo-recipe
+# @farmslot/adapter-rn
 
 Convenience Expo/React Native integration package built on top of `@farmslot/recipe-runner`. It does not define a second protocol or runner; it scaffolds an Expo project so it can use the same Recipe Protocol v1 and official harness actions as other Farmslot projects.
 
-Public docs: <https://farmslot.io/docs/guides/expo-recipe>
+Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 
 ## Source layout
 
 | Path               | Owns                                                          |
 | ------------------ | ------------------------------------------------------------- |
-| `bin/`             | Published `farmslot-expo-recipe` executable shim.             |
+| `bin/`             | Published `farmslot-adapter-rn` executable shim.              |
 | `src/cli.ts`       | Init command parsing and CLI entrypoint.                      |
 | `src/scaffold.ts`  | File-copy and package-script scaffolding.                     |
 | `src/doctor.ts`    | Project integration checks.                                   |
@@ -18,11 +18,11 @@ Public docs: <https://farmslot.io/docs/guides/expo-recipe>
 
 ## Relationship to the harness
 
-`@farmslot/expo-recipe` is a thin integration layer:
+`@farmslot/adapter-rn` is a thin integration layer:
 
 - `@farmslot/protocol` owns Recipe Protocol v1 schemas, action names, and validation.
 - `@farmslot/recipe-runner` owns the generic runner, official core actions, UI actions, and CDP/React Native transports.
-- `@farmslot/expo-recipe` only adds Expo-friendly scaffolding: package scripts, a default recipe, optional dev-only React Native bridge/HUD files, and integration checks.
+- `@farmslot/adapter-rn` only adds Expo-friendly scaffolding: package scripts, a default recipe, optional dev-only React Native bridge/HUD files, and integration checks.
 
 Do not add project-specific actions such as wallet, perps, or meetings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions. Generic whole-run video proof stays in the shared harness capability surface.
 
@@ -48,8 +48,8 @@ This does not prepare a cold XCTest runner or bound snapshot latency.
 
 ```bash
 # Published package path, once @farmslot packages are public.
-yarn add -D @farmslot/expo-recipe @farmslot/recipe-runner @farmslot/protocol
-farmslot-expo-recipe init
+yarn add -D @farmslot/adapter-rn @farmslot/recipe-runner @farmslot/protocol
+farmslot-adapter-rn init
 yarn recipe:doctor
 yarn recipe:validate
 yarn recipe:dry-run
@@ -72,7 +72,7 @@ Metro-backed action runs, so headless and native-only recipes do not need it.
 
 When asserting command output that may be redacted, prefer stable substrings or structured fields over exact pretty-printed JSON whitespace.
 
-For motion-sensitive visual proof, `farmslot-expo-recipe run --record-video`
+For motion-sensitive visual proof, `farmslot-adapter-rn run --record-video`
 records one whole-recipe MP4 through `capture-helper`. By default it targets the
 macOS Simulator window; override with `--record-pid`, `--record-window-id`, or
 `--record-app-name` plus `--record-window-name`.
@@ -80,7 +80,7 @@ macOS Simulator window; override with `--record-pid`, `--record-window-id`, or
 For a UI/HUD-capable app scaffold:
 
 ```bash
-farmslot-expo-recipe init --with-bridge
+farmslot-adapter-rn init --with-bridge
 ```
 
 Then wrap the app root with `RecipeBridgeProvider` and enable it only in development:
@@ -135,7 +135,7 @@ For a completely custom overlay, pass `renderHud`.
 ## Local quality
 
 ```bash
-yarn workspace @farmslot/expo-recipe quality
+yarn workspace @farmslot/adapter-rn quality
 ```
 
 ## License

@@ -88,7 +88,7 @@ npx -p @farmslot/recipe-cli farmslot-recipe run recipes/example.recipe.json
 For Expo / React Native projects, this may start with:
 
 ```bash
-npx @farmslot/expo-recipe init
+npx @farmslot/adapter-rn init
 ```
 
 ### Level 2 — Project recipe layer

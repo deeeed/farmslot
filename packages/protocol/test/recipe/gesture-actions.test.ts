@@ -381,8 +381,8 @@ test('one target-only companion recipe validates unchanged against every declari
 
   for (const manifestPath of [
     'apps/companion/scripts/agentic/recipe/action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
   ]) {
     const manifest = JSON.parse(
       await readFile(path.join(repoRoot, manifestPath), 'utf8'),

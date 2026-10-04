@@ -57,12 +57,12 @@ export async function installExpoRecipeScaffold(
 
 export function packageScripts(): Record<string, string> {
   return {
-    recipe: 'farmslot-expo-recipe',
-    'recipe:manifest': 'farmslot-expo-recipe manifest',
-    'recipe:doctor': 'farmslot-expo-recipe doctor',
-    'recipe:validate': 'farmslot-expo-recipe validate',
-    'recipe:dry-run': 'farmslot-expo-recipe run --dry-run',
-    'recipe:run': 'farmslot-expo-recipe run',
+    recipe: 'farmslot-adapter-rn',
+    'recipe:manifest': 'farmslot-adapter-rn manifest',
+    'recipe:doctor': 'farmslot-adapter-rn doctor',
+    'recipe:validate': 'farmslot-adapter-rn validate',
+    'recipe:dry-run': 'farmslot-adapter-rn run --dry-run',
+    'recipe:run': 'farmslot-adapter-rn run',
   };
 }
 
@@ -111,5 +111,5 @@ async function updatePackageScripts(
 function resolveTemplateRoot(): string {
   const packageRootCandidate = path.join(PACKAGE_ROOT, 'templates');
   if (existsSync(packageRootCandidate)) return packageRootCandidate;
-  return path.resolve(process.cwd(), 'packages/expo-recipe/templates');
+  return path.resolve(process.cwd(), 'packages/adapter-rn/templates');
 }

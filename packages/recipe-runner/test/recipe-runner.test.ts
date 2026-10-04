@@ -182,8 +182,8 @@ test('tracked core action manifests match the bundled adapter contract', async (
     'docs/examples/recipes/example-browser-v1.action-manifest.json',
     'docs/examples/recipes/example-mobile-v1.action-manifest.json',
     'docs/examples/recipes/farmslot-v1.action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
   ];
   const adapters = new Map(
     createStandardCoreAdapters().map((adapter) => [adapter.action, adapter] as const),

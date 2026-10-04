@@ -303,8 +303,8 @@ test('validates every tracked action manifest and its copyable examples', async 
     'docs/examples/recipes/example-browser-v1.action-manifest.json',
     'docs/examples/recipes/example-mobile-v1.action-manifest.json',
     'docs/examples/recipes/farmslot-v1.action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.json',
-    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.json',
+    'packages/adapter-rn/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
   ]) {
     const document = await readJson(manifestPath);
     assert.equal(

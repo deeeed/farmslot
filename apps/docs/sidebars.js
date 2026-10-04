@@ -62,7 +62,7 @@ const sidebars = {
         'guides/farmslot-monorepo-example',
         'guides/project-type-onboarding',
         'guides/expo-project-integration',
-        'guides/expo-recipe',
+        'guides/adapter-rn',
         'guides/headless-recipe',
         'guides/customize-worker-prompts',
         'guides/write-a-recipe',

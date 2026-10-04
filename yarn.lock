@@ -4713,6 +4713,30 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@farmslot/adapter-rn@workspace:*, @farmslot/adapter-rn@workspace:packages/adapter-rn":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/adapter-rn@workspace:packages/adapter-rn"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    "@types/pngjs": "npm:^6.0.5"
+    agent-device: "npm:0.19.3"
+    eslint: "npm:^10.3.0"
+    pngjs: "npm:^7.0.0"
+    prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
+    typescript: "npm:^5.6.0"
+  peerDependencies:
+    agent-device: ">=0.19.3"
+  peerDependenciesMeta:
+    agent-device:
+      optional: true
+  bin:
+    farmslot-adapter-rn: ./bin/farmslot-adapter-rn.mjs
+  languageName: unknown
+  linkType: soft
+
 "@farmslot/adapter-sdk@workspace:*, @farmslot/adapter-sdk@workspace:packages/adapter-sdk":
   version: 0.0.0-use.local
   resolution: "@farmslot/adapter-sdk@workspace:packages/adapter-sdk"
@@ -4877,30 +4901,6 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/expo-recipe@workspace:*, @farmslot/expo-recipe@workspace:packages/expo-recipe":
-  version: 0.0.0-use.local
-  resolution: "@farmslot/expo-recipe@workspace:packages/expo-recipe"
-  dependencies:
-    "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-runner": "workspace:*"
-    "@types/node": "npm:^22.0.0"
-    "@types/pngjs": "npm:^6.0.5"
-    agent-device: "npm:0.19.3"
-    eslint: "npm:^10.3.0"
-    pngjs: "npm:^7.0.0"
-    prettier: "npm:^3.8.3"
-    tsx: "npm:^4.19.0"
-    typescript: "npm:^5.6.0"
-  peerDependencies:
-    agent-device: ">=0.19.3"
-  peerDependenciesMeta:
-    agent-device:
-      optional: true
-  bin:
-    farmslot-expo-recipe: ./bin/farmslot-expo-recipe.mjs
-  languageName: unknown
-  linkType: soft
-
 "@farmslot/gateway@workspace:services/gateway":
   version: 0.0.0-use.local
   resolution: "@farmslot/gateway@workspace:services/gateway"
@@ -4950,7 +4950,7 @@ __metadata:
     "@babel/runtime": "npm:^7.29.2"
     "@expo/log-box": "npm:^57.0.2"
     "@expo/vector-icons": "npm:^15.0.3"
-    "@farmslot/expo-recipe": "workspace:*"
+    "@farmslot/adapter-rn": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/theme": "workspace:*"

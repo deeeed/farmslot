@@ -55,7 +55,7 @@ if [[ -z "${ARTIFACTS_DIR}" ]]; then
   exit 1
 fi
 
-ARGS=(farmslot-expo-recipe run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
+ARGS=(farmslot-adapter-rn run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   ARGS+=(--dry-run)
 fi
