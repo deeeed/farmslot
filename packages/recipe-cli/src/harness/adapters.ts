@@ -35,6 +35,9 @@ function registered(): PlatformAdapter[] {
  * match beats any adapter's file match; within a pass, registration order decides.
  */
 export function detectAdapter(target: string): string | undefined {
+  // An empty registry would detect nothing for every checkout; that is a host
+  // wiring error, not an unknown checkout.
+  assertAdaptersRegistered();
   let remote = '';
   try {
     remote = execFileSync('git', ['-C', target, 'config', '--get', 'remote.origin.url'], {
@@ -73,14 +76,18 @@ export function undetectedAdapterMessage(target: string): string {
   return `could not detect the ${harnessHost().product} repo type for ${target}`;
 }
 
-/** Throws unless `adapter` is a registered id. An empty registry is an internal error. */
-export function assertAdapter(adapter: unknown): asserts adapter is string {
-  const ids = registry.list();
-  if (ids.length === 0) {
+function assertAdaptersRegistered(): void {
+  if (registry.list().length === 0) {
     throw new Error(
-      'internal: no adapters are registered yet; the host registers its adapters before validating one',
+      'internal: no adapters are registered yet; the host registers its adapters before resolving one',
     );
   }
+}
+
+/** Throws unless `adapter` is a registered id. An empty registry is an internal error. */
+export function assertAdapter(adapter: unknown): asserts adapter is string {
+  assertAdaptersRegistered();
+  const ids = registry.list();
   if (typeof adapter !== 'string' || !registry.has(adapter)) {
     const choices =
       ids.length > 1 ? `${ids.slice(0, -1).join(', ')}, or ${ids.at(-1)}` : ids.join('');

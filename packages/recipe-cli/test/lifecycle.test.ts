@@ -35,6 +35,7 @@ import {
   resolveAdapter,
   resolveFlagsAdapter,
   undetectedAdapterMessage,
+  writeInteractiveProgress,
 } from '../src/harness/index.js';
 
 const DEFAULT_HOST = harnessHost();
@@ -171,8 +172,12 @@ describe('adapter resolution', () => {
     );
   });
 
-  test('an empty registry is an internal error', () => {
+  test('an empty registry is an internal error, not an unknown checkout', () => {
     assert.throws(() => assertAdapter('web'), /^Error: internal: no adapters are registered yet/u);
+    assert.throws(
+      () => detectAdapter(tempRoot()),
+      /^Error: internal: no adapters are registered yet/u,
+    );
   });
 });
 
@@ -187,6 +192,24 @@ describe('argument parsing', () => {
     // A launch-only flag still takes a value elsewhere.
     assert.equal(parseArgs(['--headless', 'no']).options.headless, 'no');
     assert.deepEqual(parseFlags(['--x', '--y=1'], new Set(['x'])).options, { x: true, y: '1' });
+  });
+});
+
+describe('interactive progress', () => {
+  test('writes only to an interactive terminal, never in JSON or piped mode', () => {
+    let output = '';
+    const stream = {
+      write: (chunk: string) => {
+        output += chunk;
+        return true;
+      },
+    };
+    assert.equal(writeInteractiveProgress(false, 'working', { stdoutIsTTY: true, stream }), true);
+    assert.equal(output, 'working\n');
+    output = '';
+    assert.equal(writeInteractiveProgress(true, 'noise', { stdoutIsTTY: true, stream }), false);
+    assert.equal(writeInteractiveProgress(false, 'noise', { stdoutIsTTY: false, stream }), false);
+    assert.equal(output, '');
   });
 });
 
