@@ -1,6 +1,6 @@
 // browser-cdp.cjs — browser-level CDP client with deadlines, and the extension
 // operations the launchers build on it: proof that a CDP port belongs to a
-// slot profile, Extensions.loadUnpacked, and isolation of the wallet from
+// slot profile, Extensions.loadUnpacked, and isolation of the loaded extension from
 // other user extensions in that profile.
 //
 // Every command has a deadline and every pending command fails when the
@@ -334,6 +334,10 @@ function cdpOwner(
 
 // Re-prove ownership after connecting: same pid, same start time (no pid reuse,
 // no browser swapped in between the check and the connection).
+/**
+ * @param {{ pid: number, startedAt: string, profile: string, cdpPort: number }} owner
+ * @param {{ exec?: typeof defaultExec, timeoutMs?: number }} [options]
+ */
 function assertSameOwner(owner, { exec = defaultExec, timeoutMs } = {}) {
   const current = cdpOwner(owner.cdpPort, owner.profile, {
     exec,
@@ -347,6 +351,11 @@ function assertSameOwner(owner, { exec = defaultExec, timeoutMs } = {}) {
   return current;
 }
 
+/**
+ * @param {number} port
+ * @param {string} profile
+ * @param {{ exec?: typeof defaultExec, timeoutMs?: number }} [options]
+ */
 function assertCdpOwnedByProfile(port, profile, options = {}) {
   return cdpOwner(port, profile, options);
 }
@@ -438,21 +447,21 @@ async function loadUnpackedExtension(
 }
 
 // Branded Chrome runs without --disable-extensions-except (it would disable the
-// CDP-loaded wallet), so External Extensions and enterprise force-installs
+// CDP-loaded extension), so External Extensions and enterprise force-installs
 // reach a slot profile. chrome://extensions lists user extensions (component
 // extensions excluded). Every other extension the user may modify is disabled
 // in the slot profile, matching what --disable-extensions-except does for
 // Chrome for Testing. Extensions an enterprise policy pins (mustRemainInstalled,
 // not user-modifiable) cannot be disabled by any client; they are returned so
 // the caller records them in the run evidence. Anything left enabled that is
-// neither the wallet nor policy-pinned fails the load.
+// neither the loaded extension nor policy-pinned fails the load.
 const LIST_EXTENSIONS =
   'new Promise((resolve, reject) => chrome.developerPrivate.getExtensionsInfo({ includeDisabled: true, includeTerminated: true }, (items) => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(items.map(({ id, name, location, state, mustRemainInstalled, userMayModify }) => ({ id, name, location, state, mustRemainInstalled, userMayModify })))))';
 
 const SET_DISABLED =
   'function (id) { return new Promise((resolve) => chrome.management.setEnabled(id, false, () => resolve(chrome.runtime.lastError ? chrome.runtime.lastError.message : "ok"))); }';
 
-async function isolateWalletExtension(send, walletId, { timeoutMs = 15000 } = {}) {
+async function isolateExtension(send, extensionId, { timeoutMs = 15000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   const left = () => Math.max(1, deadline - Date.now());
   // A background tab (or, in a browser with no window yet, a background
@@ -487,7 +496,7 @@ async function isolateWalletExtension(send, walletId, { timeoutMs = 15000 } = {}
       let lastError = null;
       while (Date.now() < deadline) {
         try {
-          return (await evaluate(LIST_EXTENSIONS)).filter((entry) => entry.id !== walletId);
+          return (await evaluate(LIST_EXTENSIONS)).filter((entry) => entry.id !== extensionId);
         } catch (error) {
           lastError = error;
           await sleep(Math.min(250, left()));
@@ -529,7 +538,7 @@ async function isolateWalletExtension(send, walletId, { timeoutMs = 15000 } = {}
     );
     if (stillEnabled.length > 0) {
       throw new Error(
-        `The slot profile keeps user extensions besides the wallet enabled: ${stillEnabled.map((entry) => `${entry.id} (${entry.name}, ${entry.location})`).join(', ')}. ` +
+        `The slot profile keeps user extensions besides the loaded extension enabled: ${stillEnabled.map((entry) => `${entry.id} (${entry.name}, ${entry.location})`).join(', ')}. ` +
           'Remove them from External Extensions, or use RECIPE_HARNESS_BROWSER=cft.',
       );
     }
@@ -571,8 +580,9 @@ async function ensureBackgroundWindow(send, remaining) {
   await openBackgroundWindow(send, 'about:blank', remaining());
 }
 
-// Move a target's window to `bounds` without activating the browser, so a
-// minimized or off-display window becomes recordable and the operator keeps focus.
+// Move a target's window to `bounds` over CDP, so an off-display window becomes
+// recordable. A visible window moves without activating the browser; restoring a
+// minimized one can bring Chrome to the front on macOS.
 async function placeWindow(send, targetId, bounds, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS) {
   const { windowId } = await send('Browser.getWindowForTarget', { targetId }, undefined, timeoutMs);
   // Chrome refuses a position or size change on a minimized window.
@@ -612,6 +622,11 @@ async function openUrl(send, url, remaining) {
 // caller's browser record. Callers own stopping the browser when this throws.
 const OWNER_SETTLE_MS = 5000;
 
+/**
+ * @param {number} port
+ * @param {string} extensionDir
+ * @param {{ profile: string, expectedId?: string | null, url?: string | null, timeoutMs?: number, exec?: typeof defaultExec }} options
+ */
 async function loadUnpackedOverPort(
   port,
   extensionDir,
@@ -665,11 +680,11 @@ async function loadUnpackedOverPort(
     });
     // A browser started without a window gets a blank background window
     // first; other extensions are disabled before the start page (a dapp, or
-    // the wallet home) loads in it.
+    // the extension home) loads in it.
     step = 'opening a background window';
     await ensureBackgroundWindow(client.send, remaining);
-    step = 'isolating the wallet from other extensions';
-    const otherExtensions = await isolateWalletExtension(client.send, loaded.id, {
+    step = 'isolating the loaded extension from other extensions';
+    const otherExtensions = await isolateExtension(client.send, loaded.id, {
       timeoutMs: remaining(),
     });
     step = 'opening the start page';
@@ -712,7 +727,7 @@ module.exports = {
   loadUnpackedExtension,
   loadUnpackedOverPort,
   ensureBackgroundWindow,
-  isolateWalletExtension,
+  isolateExtension,
   openBackgroundWindow,
   openUrl,
   placeWindow,

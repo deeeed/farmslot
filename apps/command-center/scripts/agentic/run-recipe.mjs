@@ -472,7 +472,8 @@ async function resolveGatewayToken(projectRoot) {
 
 async function pidListeningOnPort(port) {
   try {
-    return cdpListenerPids(port)[0];
+    // Synchronous lsof: keep the wait short; the window fallback covers a timeout.
+    return cdpListenerPids(port, undefined, { deadline: Date.now() + 5000 })[0];
   } catch {
     // No listener proof (lsof missing or timed out): record by window instead.
     return undefined;

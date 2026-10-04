@@ -72,6 +72,10 @@ function uniquePids(pids) {
 // Reap every live process that still owns this profile, then refuse to continue
 // if any survive. `open -n` otherwise starts a second headed Chrome on the same
 // user-data-dir while the previous instance is still dying.
+/**
+ * @param {string} profile
+ * @param {{ extraPids?: number[], timeoutMs?: number, waitForAppearanceMs?: number }} [options]
+ */
 function stopProfileProcessesSync(
   profile,
   { extraPids = [], timeoutMs = 5_000, waitForAppearanceMs = 0 } = {},

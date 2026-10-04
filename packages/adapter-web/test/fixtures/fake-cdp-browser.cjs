@@ -27,7 +27,7 @@ const { WebSocketServer } = require('ws');
 const mode = process.env.FAKE_CDP_MODE || 'ok';
 const portArg = process.argv.find((arg) => arg.startsWith('--remote-debugging-port='));
 const requestedPort = portArg ? Number(portArg.split('=')[1]) : 0;
-const walletId = process.env.FAKE_CDP_EXTENSION_ID || 'hebhblbkkdabgoldnojllkipeoacjioc';
+const loadedExtensionId = process.env.FAKE_CDP_EXTENSION_ID || 'hebhblbkkdabgoldnojllkipeoacjioc';
 // Hold the profile like Chrome's process singleton: <profile>/SingletonLock -> <host>-<pid>.
 const profileArg = process.argv.find((arg) => arg.startsWith('--user-data-dir='));
 if (profileArg) {
@@ -70,7 +70,7 @@ if (mode === 'crash') {
     process.env.FAKE_CDP_WINDOWLESS === '1' || process.argv.includes('--no-startup-window');
   const pages = windowless ? [] : [{ targetId: 'page-1', type: 'page', url: 'about:blank' }];
   let attached = null;
-  // User extensions besides the wallet, per mode.
+  // User extensions besides the loaded extension, per mode.
   const others = [
     ...(mode === 'foreign' || mode === 'stuck'
       ? [
@@ -108,7 +108,7 @@ if (mode === 'crash') {
       const reply = (result) => socket.send(JSON.stringify({ id: message.id, result }));
       switch (message.method) {
         case 'Extensions.loadUnpacked':
-          loadedId = mode === 'wrong-id' ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' : walletId;
+          loadedId = mode === 'wrong-id' ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' : loadedExtensionId;
           reply({ id: loadedId });
           return;
         case 'Target.getTargets':
@@ -170,7 +170,7 @@ if (mode === 'crash') {
                 value: [
                   {
                     id: loadedId,
-                    name: 'MetaMask',
+                    name: 'Test Wallet',
                     location: 'UNPACKED',
                     state: 'ENABLED',
                     mustRemainInstalled: false,

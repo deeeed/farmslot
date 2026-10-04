@@ -4,7 +4,7 @@ title: Web adapter
 
 # Web adapter
 
-`@farmslot/adapter-web` holds the browser side of a web platform: pick and launch an isolated Chromium, prove which process owns a CDP port, load an unpacked extension, select the page a recipe drives, and place windows without taking the operator's focus. It has no product knowledge. A harness passes its own build locks, titles and fixtures in as arguments.
+`@farmslot/adapter-web` holds the browser side of a web platform: pick and launch an isolated Chromium, prove which process owns a CDP port, load an unpacked extension, select the page a recipe drives, and move windows over CDP: a visible window moves without taking the operator's focus. It has no product knowledge. A harness passes its own build locks, titles and fixtures in as arguments.
 
 ```js
 const { resolveBrowser } = require('@farmslot/adapter-web/browser-resolver');

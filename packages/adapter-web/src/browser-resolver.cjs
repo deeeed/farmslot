@@ -801,6 +801,22 @@ function readRecorded(file) {
 // cft() returns { executable } or { error }; probe(bin, options) returns a
 // verdict. `recorded` names the browser-resolution.json of an existing slot
 // profile: auto keeps that kind of browser (see below).
+/**
+ * @param {{
+ *   env?: NodeJS.ProcessEnv,
+ *   cft?: () => { executable?: string, error?: string },
+ *   probe?: typeof probeLaunch,
+ *   cachePath?: string,
+ *   chromeCandidates?: string[],
+ *   exists?: (file: string) => boolean,
+ *   describe?: typeof describeBrowser,
+ *   now?: () => Date,
+ *   launchMethod?: string,
+ *   display?: string,
+ *   recorded?: string | null,
+ *   managedChrome?: typeof readManagedChromePolicy,
+ * }} [options]
+ */
 async function resolveBrowser({
   env = process.env,
   cft,

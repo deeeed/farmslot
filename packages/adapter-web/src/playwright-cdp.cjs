@@ -26,6 +26,11 @@ function buildEvaluationExpression(callbackOrExpression, argument) {
     : `(${callbackOrExpression.toString()})(${JSON.stringify(argument)})`;
 }
 
+/**
+ * @param {any} page Playwright page
+ * @param {string | ((...args: any[]) => unknown)} callbackOrExpression
+ * @param {unknown} [argument]
+ */
 async function evaluatePageViaCdp(page, callbackOrExpression, argument) {
   const session = await page.context().newCDPSession(page);
   try {

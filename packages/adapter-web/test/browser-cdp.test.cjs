@@ -92,7 +92,7 @@ async function startFakeBrowser(mode, profile, extraEnv = {}) {
   };
 }
 
-function walletDist() {
+function unpackedDist() {
   const dist = path.join(root, 'dist');
   fs.mkdirSync(dist, { recursive: true });
   // Any base64 key; the expected id is derived from it.
@@ -345,7 +345,7 @@ describe('CDP port ownership', () => {
       const written = new Date(Date.now() - 3600_000);
       fs.lutimesSync(path.join(slot, 'SingletonLock'), written, written);
       await assert.rejects(
-        cdp.loadUnpackedOverPort(fake.port, walletDist(), {
+        cdp.loadUnpackedOverPort(fake.port, unpackedDist(), {
           profile: slot,
           timeoutMs: LSOF_BUDGET,
         }),
@@ -354,7 +354,7 @@ describe('CDP port ownership', () => {
       // Lock written after the foreign browser started: still not the profile's holder.
       fs.lutimesSync(path.join(slot, 'SingletonLock'), new Date(), new Date());
       await assert.rejects(
-        cdp.loadUnpackedOverPort(fake.port, walletDist(), {
+        cdp.loadUnpackedOverPort(fake.port, unpackedDist(), {
           profile: slot,
           timeoutMs: LSOF_BUDGET,
         }),
@@ -459,7 +459,7 @@ describe('CDP port ownership', () => {
         return checks === 1 ? EARLIER : 'Mon Jan  5 10:00:01 2026';
       };
       await assert.rejects(
-        cdp.loadUnpackedOverPort(port, walletDist(), {
+        cdp.loadUnpackedOverPort(port, unpackedDist(), {
           profile,
           exec: swapping,
           timeoutMs: 5000,
@@ -532,7 +532,7 @@ describe('loadUnpackedExtension', () => {
 
   it('derives the expected id from the manifest key with the shared helper', () => {
     const extensionIds = require('../src/extension-id.cjs');
-    const dir = walletDist();
+    const dir = unpackedDist();
     assert.equal(cdp.expectedExtensionId(dir), extensionIds.extensionIdFromExtensionDir(dir));
   });
 });
@@ -544,7 +544,7 @@ describe('loadUnpackedOverPort', () => {
     async () => {
       const fake = await startFakeBrowser('ok', path.join(root, 'someone-else'));
       await assert.rejects(
-        cdp.loadUnpackedOverPort(fake.port, walletDist(), {
+        cdp.loadUnpackedOverPort(fake.port, unpackedDist(), {
           profile: path.join(root, 'slot-profile'),
           timeoutMs: LSOF_BUDGET,
         }),
@@ -559,7 +559,7 @@ describe('loadUnpackedOverPort', () => {
     { timeout: 150000 },
     async () => {
       const profile = path.join(root, 'slot-profile');
-      const dist = walletDist();
+      const dist = unpackedDist();
       const id = cdp.expectedExtensionId(dist);
       const fake = await startFakeBrowser('ok', profile, {
         FAKE_CDP_EXTENSION_ID: id,
@@ -592,7 +592,7 @@ describe('loadUnpackedOverPort', () => {
     { timeout: 150000 },
     async () => {
       const profile = path.join(root, 'slot-profile');
-      const dist = walletDist();
+      const dist = unpackedDist();
       const id = cdp.expectedExtensionId(dist);
       const sideloaded = await startFakeBrowser('foreign', profile, {
         FAKE_CDP_EXTENSION_ID: id,
@@ -646,7 +646,7 @@ describe('loadUnpackedOverPort', () => {
     { timeout: 150000 },
     async () => {
       const profile = path.join(root, 'slot-profile');
-      const dist = walletDist();
+      const dist = unpackedDist();
       const id = cdp.expectedExtensionId(dist);
       const fake = await startFakeBrowser('foreign', profile, {
         FAKE_CDP_EXTENSION_ID: id,
@@ -690,7 +690,7 @@ describe('loadUnpackedOverPort', () => {
     { timeout: 150000 },
     async () => {
       const profile = path.join(root, 'slot-profile');
-      const dist = walletDist();
+      const dist = unpackedDist();
       const fake = await startFakeBrowser('ok', profile, {
         FAKE_CDP_EXTENSION_ID: cdp.expectedExtensionId(dist),
         FAKE_CDP_WINDOWLESS: '1',
@@ -710,7 +710,7 @@ describe('loadUnpackedOverPort', () => {
 
   it('fails when another user extension stays enabled', { timeout: 150000 }, async () => {
     const profile = path.join(root, 'slot-profile');
-    const dist = walletDist();
+    const dist = unpackedDist();
     const fake = await startFakeBrowser('stuck', profile, {
       FAKE_CDP_EXTENSION_ID: cdp.expectedExtensionId(dist),
     });
@@ -719,13 +719,13 @@ describe('loadUnpackedOverPort', () => {
         profile,
         timeoutMs: LSOF_BUDGET,
       }),
-      /keeps user extensions besides the wallet enabled: cjpalhdlnbpafiamejdnhcphjbkeiagm \(Sideloaded, THIRD_PARTY\)/u,
+      /keeps user extensions besides the loaded extension enabled: cjpalhdlnbpafiamejdnhcphjbkeiagm \(Sideloaded, THIRD_PARTY\)/u,
     );
   });
 
   it('holds the whole load to one deadline', { timeout: 150000 }, async () => {
     const profile = path.join(root, 'slot-profile');
-    const dist = walletDist();
+    const dist = unpackedDist();
     // The fake never answers Runtime.evaluate, so isolation stalls: whatever
     // step the budget runs out in, the load fails at the budget, not later.
     const fake = await startFakeBrowser('noframes', profile, {
@@ -774,7 +774,7 @@ describe('loadUnpackedOverPort', () => {
       };
       const started = Date.now();
       await assert.rejects(
-        cdp.loadUnpackedOverPort(server.address().port, walletDist(), {
+        cdp.loadUnpackedOverPort(server.address().port, unpackedDist(), {
           profile,
           exec: owned,
           timeoutMs: 300,
@@ -787,14 +787,14 @@ describe('loadUnpackedOverPort', () => {
 
   it('requires the owning profile', { timeout: 150000 }, async () => {
     await assert.rejects(
-      cdp.loadUnpackedOverPort(9, walletDist(), {}),
+      cdp.loadUnpackedOverPort(9, unpackedDist(), {}),
       /requires the slot profile/u,
     );
   });
 });
 
 describe('placeWindow', () => {
-  it('restores the window, then moves it, without activating the browser', async () => {
+  it('restores the window, then moves it', async () => {
     const calls = [];
     const send = async (method, params) => {
       calls.push([method, params]);

@@ -31,7 +31,7 @@ Sources are CommonJS (`src/*.cjs`) and ship as is; `yarn build` emits `.d.cts` d
 1. No product knowledge. A product's build locks, titles, fixtures and wallet state stay in its harness and reach these modules as arguments.
 2. Process and on-disk identity strings (runtime nonce flag, launch markers, probe cache path) are how a launched browser and its profile are recognised. Changing one makes browsers started under the old name unrecognised; call that out in the release notes.
 3. Every CDP call has a deadline. Never add an unbounded wait.
-4. Never steal focus. A headed launch restores the previous frontmost app; window activation goes by pid, not by app name.
+4. Never steal focus. A headed launch restores the previous frontmost app; window activation goes by pid, not by app name. `placeWindow` moves a visible window without activating it (restoring a minimized one can).
 
 ## Local quality
 
