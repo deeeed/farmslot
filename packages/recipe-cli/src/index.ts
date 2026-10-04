@@ -1,3 +1,22 @@
+export {
+  actionCapabilityMatrix,
+  type ActionCapabilityRefusal,
+  actionCategory,
+  type ActionCategorySummary,
+  type ActionMatrixRow,
+  type ActionSupport,
+  type AdapterActionCatalog,
+  type CatalogAction,
+  catalogTermScore,
+  findRelatedActions,
+  fuzzyResolveActions,
+  missingActionCapabilities,
+  resolveActionCapabilityRefusal,
+  searchActions,
+  searchTerms,
+  shortActionNames,
+  summarizeActionCategories,
+} from './action-catalog.js';
 export { createRecipeCliProgram, type RecipeCliOptions, runRecipeCli } from './cli.js';
 export { type DiscoveryCommandContext, registerDiscoveryCommands } from './commands.js';
 export { explainRecipe, type RecipeComposition, recipeComposition } from './composition.js';

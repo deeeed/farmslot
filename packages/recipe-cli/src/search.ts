@@ -1,6 +1,7 @@
 import type { ResolvedLibraryRecipe } from '@farmslot/recipe-harness';
 
-import { levenshtein, type RecipeDiscoveryIndex, recipeSummary } from './discovery-index.js';
+import { catalogTermScore, searchTerms } from './action-catalog.js';
+import { type RecipeDiscoveryIndex, recipeSummary } from './discovery-index.js';
 import type { SearchResult } from './types.js';
 
 interface Searchable {
@@ -79,28 +80,10 @@ export function searchIndex(
 
 function termScore(label: string, entry: Searchable, term: string): number {
   const name = label.toLowerCase();
-  const segment = name.split('.').pop() ?? name;
-  const domain = name.includes('.') ? name.split('.')[0]! : '';
-  const nameTerms = searchTerms(name.replaceAll('.', ' ').replaceAll('_', ' '));
-  const fields = entry.fields.map((field) => field.toLowerCase());
-  if (name === term) return 120;
-  if (segment === term) return 110;
-  if (domain === term) return 100;
-  if (fields.includes(term)) return 90;
-  if (nameTerms.includes(term)) return 80;
-  if (name.includes(term)) return 70;
-  if (fields.some((field) => field.includes(term))) return 60;
-  if (entry.description.toLowerCase().includes(term)) return 50;
-  if ([...nameTerms, ...fields].some((candidate) => fuzzyMatch(term, candidate))) return 40;
-  return 0;
-}
-
-function fuzzyMatch(term: string, candidate: string): boolean {
-  if (term.length < 4 || candidate.length < 4) return false;
-  const threshold = Math.max(1, Math.floor(Math.max(term.length, candidate.length) / 4));
-  return levenshtein(term, candidate) <= threshold;
-}
-
-function searchTerms(value: string): string[] {
-  return value.toLowerCase().match(/[a-z0-9]+/gu) ?? [];
+  // A recipe or action id ranks its first segment (its domain) like a category.
+  const category = name.includes('.') ? name.split('.')[0]! : '';
+  return catalogTermScore(
+    { name, category, fields: entry.fields, description: entry.description },
+    term,
+  );
 }
