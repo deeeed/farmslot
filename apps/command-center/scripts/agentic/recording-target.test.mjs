@@ -7,6 +7,7 @@ import {
   pidListeningOnPort,
   resolveCommandCenterRecipeTrust,
   resolveRecordingTarget,
+  resolveRunRecordingTarget,
   withCapturableRecordingTarget,
 } from './run-recipe.mjs';
 
@@ -184,5 +185,41 @@ describe('pidListeningOnPort', () => {
       }),
       undefined,
     );
+  });
+});
+
+describe('resolveRunRecordingTarget', () => {
+  const options = {
+    cdpPort: 9324,
+    recordPid: 0,
+    recordWindowName: '',
+    recordAppName: 'Google Chrome',
+  };
+  const timedOut = async () => {
+    throw new Error('Could not prove which process holds CDP port 9324 (lsof timed out)');
+  };
+
+  it('resolves the recipe Chrome pid for capture-helper and fails when that lookup times out', async () => {
+    assert.deepEqual(
+      await resolveRunRecordingTarget('capture-helper', options, {
+        pidListeningOnPort: async () => 4242,
+      }),
+      { kind: 'pid', pid: 4242 },
+    );
+    await assert.rejects(
+      resolveRunRecordingTarget('capture-helper', options, { pidListeningOnPort: timedOut }),
+      /lsof timed out/u,
+    );
+  });
+
+  it('never runs the lsof lookup for the CDP recorder, which captures by port', async () => {
+    const target = await resolveRunRecordingTarget('cdp-screencast', options, {
+      pidListeningOnPort: timedOut,
+    });
+    assert.deepEqual(target, {
+      kind: 'app-window',
+      appName: 'Google Chrome',
+      windowName: 'Farmslot Command Center',
+    });
   });
 });

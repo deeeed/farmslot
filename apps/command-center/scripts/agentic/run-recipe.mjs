@@ -547,6 +547,13 @@ export async function resolveRecordingTarget(options, deps = {}) {
   };
 }
 
+// The run needs a recording target for any recorder, but only capture-helper uses it:
+// the CDP recorder captures by port, so it gets the descriptor without the lsof lookup.
+export async function resolveRunRecordingTarget(recorderName, options, deps = {}) {
+  if (recorderName === 'capture-helper') return resolveRecordingTarget(options, deps);
+  return resolveRecordingTarget(options, { ...deps, pidListeningOnPort: async () => undefined });
+}
+
 function parseCaptureHelperJson(stdout, stderr = '') {
   const combined = `${stdout}\n${stderr}`.trim();
   if (!combined) return null;
@@ -749,7 +756,9 @@ async function main() {
   const webVideoRecorder = options.recordVideo
     ? await resolveWebVideoRecorder(options.cdpPort, captureHelperBin())
     : undefined;
-  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  const recordingTarget = options.recordVideo
+    ? await resolveRunRecordingTarget(webVideoRecorder?.name, options)
+    : undefined;
   const videoRecorder =
     webVideoRecorder?.name === 'capture-helper'
       ? withCapturableRecordingTarget(webVideoRecorder, (target) =>
