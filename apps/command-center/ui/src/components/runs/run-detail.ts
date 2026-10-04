@@ -73,6 +73,7 @@ import {
   currentRunCiStatus,
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
+  isRunWorking,
   isTaskProgressRunActive,
   locateEvidenceArtifact,
   mergeTrimmedRunDetail,
@@ -861,8 +862,8 @@ export class RunDetail extends RunDetailState {
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
     const { artifactRun, artifact, artifactView } = artifactSelectionFromRunDetailHash();
-    if (!artifact || artifactView === STEP_ARTIFACT_VIEW) {
-      // No artifact, or one the step inspector opened in its own viewer.
+    if (!artifact || (artifactView === STEP_ARTIFACT_VIEW && this.selectedStep)) {
+      // No artifact, or one the step inspector (showing) answers for.
       this._evidenceArtifactUnavailable = null;
       if (this._evidenceLightboxOpen) {
         this._evidenceLightboxOpen = false;
@@ -889,7 +890,7 @@ export class RunDetail extends RunDetailState {
     // arrives before progress loads still opens; until then, say so.
     const lookup = locateEvidenceArtifact(artifacts, artifact, {
       loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
-      runActive: isTaskProgressRunActive(this.run, { includeCompleting: true }),
+      runActive: isRunWorking(this.run),
     });
     if ('unavailable' in lookup) {
       // Never leave a previous artifact showing under the notice.

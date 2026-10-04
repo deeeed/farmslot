@@ -10,7 +10,7 @@ import type { NativeWorkerViewTarget } from '../chat/native-worker-target.js';
 import {
   buildRerunAlongsideHref,
   canReplayRunSteps,
-  isTaskProgressRunActive,
+  isRunWorking,
 } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
@@ -157,7 +157,7 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     return html`<progress-tracker
       .structured=${view._structuredProgress}
       .runId=${view._linkedRun?.id}
-      .runActive=${view._linkedRun ? isTaskProgressRunActive(view._linkedRun) : false}
+      .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
     ></progress-tracker>`;
   }
 

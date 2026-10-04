@@ -25,8 +25,10 @@ import {
   isActiveInteractiveDevRun,
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
+  isRunWorking,
   isTaskProgressRunActive,
   locateEvidenceArtifact,
+  locateStepArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
@@ -875,4 +877,34 @@ test('an artifact link that cannot open says why instead of doing nothing', asyn
   assert.ok('unavailable' in unknown);
   assert.equal(unknown.unavailable.path, artifact);
   assert.match(unknown.unavailable.reason, /not among this run's evidence files/);
+});
+
+test('a run cancelled or blocked during a self-review fix is not working', () => {
+  // The fix keeps a differing active task file, which keeps progress refreshing,
+  // but the run is no longer in progress.
+  const fixing = { taskFile: '/t/TASK.md', activeTaskFile: '/t/fix/TASK.md' };
+  assert.equal(isTaskProgressRunActive(makeRun({ status: 'cancelled', ...fixing })), true);
+  assert.equal(isRunWorking(makeRun({ status: 'cancelled', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'blocked', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'failed', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'monitoring' })), true);
+  assert.equal(isRunWorking(makeRun({ status: 'self-reviewing', ...fixing })), true);
+});
+
+test('a step-owned artifact link reopens in the step inspector, or says why it cannot', () => {
+  const stepFiles: FamilyObservabilityArtifact[] = [
+    { runId: 'run-1', familyId: 'f', path: 'TASK.md', purpose: 'other', source: 'task-artifact' },
+  ];
+  const owned = { artifactRun: 'run-1', artifact: 'TASK.md', artifactView: 'step' };
+  const ctx = { runId: 'run-1', stepName: 'write-task' };
+  assert.deepEqual(locateStepArtifact(owned, stepFiles, ctx), { index: 0 });
+  const gone = locateStepArtifact({ ...owned, artifact: 'gone.md' }, stepFiles, ctx);
+  assert.ok(gone && 'unavailable' in gone);
+  assert.match(gone.unavailable.reason, /not among the write-task step's files/);
+  assert.equal(
+    locateStepArtifact({ ...owned, artifactView: null }, stepFiles, ctx),
+    null,
+    "run detail's links are not the inspector's to answer",
+  );
+  assert.equal(locateStepArtifact({ ...owned, artifactRun: 'run-2' }, stepFiles, ctx), null);
 });

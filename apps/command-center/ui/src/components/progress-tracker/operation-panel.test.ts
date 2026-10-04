@@ -261,3 +261,23 @@ test('start times compare as instants, and an empty command still names the harn
   assert.match(text, /harness/);
   assert.doesNotMatch(text, /harness\s+Command/, 'no dangling space before the badge');
 });
+
+test('an operation log link keeps the step it was clicked from', () => {
+  // A finished run lists its command logs only through the selected step's
+  // progress; dropping the step would drop the log.
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    value: new URL('http://localhost/#run/run-id?step=monitor'),
+    configurable: true,
+  });
+  try {
+    const text = litText(renderOperationPanel(progress(operation), 'run-id', { now }));
+    assert.match(
+      text,
+      /#run\/run-id\?step=monitor&artifactRun=run-id&artifact=artifacts%2Foperations%2Fexample\.log/,
+    );
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'location', descriptor);
+    else delete (globalThis as { location?: unknown }).location;
+  }
+});

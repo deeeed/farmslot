@@ -9,8 +9,8 @@ export interface RunDetailArtifactSelection {
 }
 
 const STEP_PARAM = 'step';
-const ARTIFACT_RUN_PARAM = 'artifactRun';
-const ARTIFACT_PARAM = 'artifact';
+export const ARTIFACT_RUN_PARAM = 'artifactRun';
+export const ARTIFACT_PARAM = 'artifact';
 /**
  * Marks an artifact the step inspector opened in its own viewer. Both viewers
  * share `artifactRun`/`artifact`, and run detail must not answer for a step
@@ -98,6 +98,7 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     'step',
     'artifactRun',
     'artifact',
+    ARTIFACT_VIEW_PARAM,
     'artifactTrace',
     'artifactPhase',
   ]) {

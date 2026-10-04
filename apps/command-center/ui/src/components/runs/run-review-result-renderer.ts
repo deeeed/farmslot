@@ -4,7 +4,7 @@ import { parseGitHubRef, reviewResultForRun, type Run } from '@farmslot/protocol
 
 import '../progress-tracker/progress-tracker.js';
 
-import { isTaskProgressRunActive } from './run-detail-model.js';
+import { isRunWorking } from './run-detail-model.js';
 import type { RunEvidenceRenderContext } from './run-detail-renderers.js';
 
 /** Optional explanation backed by the run's frozen inputs and existing progress/artifact viewers. */
@@ -56,7 +56,7 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
       ? html`<progress-tracker
           .structured=${ctx.taskProgress}
           .runId=${run.id}
-          .runActive=${isTaskProgressRunActive(run)}
+          .runActive=${isRunWorking(run)}
         ></progress-tracker>`
       : html`<p>Waiting for task progress.</p>`}
     <p>

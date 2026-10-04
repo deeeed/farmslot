@@ -117,3 +117,10 @@ test('the step inspector marks the artifacts it owns, and run detail links drop 
   assert.equal(artifactSelectionFromRunDetailHash(next).artifactView, null);
   assert.equal(artifactSelectionFromRunDetailHash(next).artifact, 'artifacts/operations/a.log');
 });
+
+test('leaving run detail drops the step inspector artifact marker too', () => {
+  const next = runInventoryHashFromDetail(
+    '#run/run-1?step=write-task&artifactRun=run-1&artifact=TASK.md&artifactView=step',
+  );
+  assert.doesNotMatch(next, /artifactView|artifact=/);
+});

@@ -10,7 +10,11 @@ import {
 import type { TaskOperation, TaskProgressStructured } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
+import {
+  isRunDetailHashForRun,
+  runDetailEvidenceArtifactHash,
+  selectedStepNameFromRunDetailHash,
+} from '../runs/run-detail-url-state.js';
 
 /** Include in every host's shadow-root styles alongside renderOperationPanel. */
 export const operationPanelStyles = css`
@@ -97,6 +101,18 @@ export const operationPanelStyles = css`
 function age(at: string, now: number): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(at)) / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/**
+ * Where an operation-log link lands: the run's own page, keeping the step the
+ * link was clicked from. A finished run lists its command logs only through
+ * that step's progress, so dropping the step would drop the log.
+ */
+function operationLogBaseHash(runId: string): string {
+  const base = `#run/${encodeURIComponent(runId)}`;
+  if (typeof location === 'undefined' || !isRunDetailHashForRun(runId)) return base;
+  const step = selectedStepNameFromRunDetailHash();
+  return step ? `${base}?step=${encodeURIComponent(step)}` : base;
 }
 
 const STALE_STATUS_MS = 30_000;
@@ -229,7 +245,7 @@ export function renderOperationPanel(
               href=${runDetailEvidenceArtifactHash(
                 runId,
                 { path: operation.logPath },
-                `#run/${encodeURIComponent(runId)}`,
+                operationLogBaseHash(runId),
               )}
               >View operation log</a
             >`

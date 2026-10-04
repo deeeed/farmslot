@@ -129,6 +129,22 @@ export function runFamilyPrStatus(
 
 const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch', 'human-gate']);
 
+/**
+ * Whether the run's worker is still working, for wording that says so.
+ *
+ * Stricter than `isTaskProgressRunActive`, which also counts a differing
+ * active task file so progress keeps refreshing: a run cancelled or blocked
+ * during a self-review fix keeps that file, and must not read as in progress.
+ */
+export function isRunWorking(
+  run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
+    steps?: readonly Pick<RunStep, 'name' | 'status'>[];
+  },
+): boolean {
+  if (isTerminalRunStatus(run.status) || run.status === 'blocked') return false;
+  return isTaskProgressRunActive(run, { includeCompleting: true });
+}
+
 export function isTaskProgressRunActive(
   run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
     steps?: readonly Pick<RunStep, 'name' | 'status'>[];
@@ -744,6 +760,29 @@ export function locateEvidenceArtifact(
           : operationLog && !progress.loaded
             ? 'this run has finished and its worker progress is not loaded here; select the monitor step to list its command logs.'
             : "it is not among this run's evidence files or worker command logs.",
+    },
+  };
+}
+
+/**
+ * The step file a step-owned artifact link (`artifactView=step`) points at, so
+ * the step inspector can reopen it after a reload or from a shared URL. Null
+ * when the link is not the inspector's to answer.
+ */
+export function locateStepArtifact(
+  selection: { artifactRun: string | null; artifact: string | null; artifactView: string | null },
+  stepArtifacts: readonly FamilyObservabilityArtifact[],
+  context: { runId: string | undefined; stepName: string },
+): EvidenceArtifactLookup | null {
+  if (selection.artifactView !== 'step' || !selection.artifact) return null;
+  if (selection.artifactRun && context.runId && selection.artifactRun !== context.runId)
+    return null;
+  const index = stepArtifacts.findIndex((candidate) => candidate.path === selection.artifact);
+  if (index >= 0) return { index };
+  return {
+    unavailable: {
+      path: selection.artifact,
+      reason: `it is not among the ${context.stepName} step's files.`,
     },
   };
 }
