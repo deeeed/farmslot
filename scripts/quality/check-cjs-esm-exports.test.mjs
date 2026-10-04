@@ -110,6 +110,61 @@ describe('checkCjsEsmExports', () => {
     assert.deepEqual(checkCjsEsmExports(binOnly), []);
   });
 
+  it('never touches an unbuilt ESM target, but still reports a missing CommonJS one', () => {
+    const unbuilt = fixturePackage(
+      {
+        type: 'module',
+        exports: {
+          '.': {
+            types: './dist/index.d.ts',
+            import: './dist/index.js',
+            default: './dist/index.js',
+          },
+          './cli': './dist/cli.mjs',
+        },
+      },
+      {},
+    );
+    assert.deepEqual(checkCjsEsmExports(unbuilt), []);
+    const missingCjs = fixturePackage({ exports: { './a': './dist/a.cjs' } }, {});
+    assert.match(
+      checkCjsEsmExports(missingCjs).join('\n'),
+      /\.\/a does not resolve: Cannot find module/u,
+    );
+  });
+
+  it('loads an extensionless or directory main the way Node resolves it', () => {
+    const clean = fixturePackage(
+      { main: './lib' },
+      { 'lib/index.js': 'function one() {}\nmodule.exports = { one };\n' },
+    );
+    assert.deepEqual(checkCjsEsmExports(clean), []);
+    const hidden = fixturePackage(
+      { main: 'lib' },
+      { 'lib.js': 'const o = { two: 2 };\nmodule.exports = { two: o.two, one: 1 };\n' },
+    );
+    assert.deepEqual(checkCjsEsmExports(hidden), [
+      '@fixture/pkg: . hides 1 require() export(s) from ESM import: one',
+    ]);
+  });
+
+  it('fails a dual package whose ESM side cannot load a dependency subpath', () => {
+    const root = fixturePackage(
+      { type: 'module', exports: { '.': { import: './index.js', require: './index.cjs' } } },
+      {
+        'index.js': "import '@fixture/dep/hidden';\nexport const one = 1;\n",
+        'index.cjs': 'function one() {}\nmodule.exports = { one };\n',
+        'node_modules/@fixture/dep/package.json':
+          '{"name":"@fixture/dep","exports":{".":"./index.js"}}\n',
+        'node_modules/@fixture/dep/index.js': 'module.exports = {};\n',
+      },
+    );
+    assert.match(
+      checkCjsEsmExports(root).join('\n'),
+      /^@fixture\/pkg: \. does not load: Package subpath '\.\/hidden' is not defined by "exports"/u,
+    );
+  });
+
   it('compares a dual package by what each side loads', () => {
     const complete = fixturePackage(
       { type: 'module', exports: { '.': { import: './index.js', require: './index.cjs' } } },

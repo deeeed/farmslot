@@ -44,6 +44,15 @@ function isCommonJsFile(file) {
   }
 }
 
+// Whether a target could be a CommonJS file, decided from its path alone so an unbuilt
+// ESM target (dist/ before the build) is never touched. Extensionless and directory
+// targets (legacy `main`) follow the nearest package.json type.
+function couldBeCommonJs(target, packageDir) {
+  const file = path.resolve(packageDir, target);
+  if (/\.(?:mjs|json|node|[cm]?ts)$/u.test(file)) return false;
+  return isCommonJsFile(/\.c?js$/u.test(file) ? file : `${file}.js`);
+}
+
 // The package's public subpaths: exports keys ("." for string, array or condition sugar),
 // or "." from `main` when there is no exports map.
 function exportedSubpaths(pkg, packageDir) {
@@ -82,13 +91,14 @@ export function cjsExportTargets(packageDir, entryOnlyExports = ENTRY_ONLY_EXPOR
         );
       continue;
     }
-    const specifier =
-      pkg.exports === undefined
-        ? path.resolve(packageDir, value)
-        : `${pkg.name}${subpath.slice(1)}`;
+    if (!targetStrings(value).some((target) => couldBeCommonJs(target, packageDir))) continue;
     let file;
     try {
-      file = requireFromPackage.resolve(specifier);
+      file = requireFromPackage.resolve(
+        pkg.exports === undefined
+          ? path.resolve(packageDir, value)
+          : `${pkg.name}${subpath.slice(1)}`,
+      );
     } catch (error) {
       // An ESM-only subpath has no require() target; it cannot hide CommonJS names.
       if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') continue;
@@ -96,6 +106,8 @@ export function cjsExportTargets(packageDir, entryOnlyExports = ENTRY_ONLY_EXPOR
       continue;
     }
     if (!isCommonJsFile(file)) continue;
+    // Without an exports map there is no self-reference: load the file Node resolved.
+    const specifier = pkg.exports === undefined ? file : `${pkg.name}${subpath.slice(1)}`;
     targets.push({ subpath, specifier, file, entryOnly: entryOnly.has(subpath) });
   }
   const resolved = new Set(targets.map((target) => target.subpath));
@@ -120,9 +132,12 @@ const required = createRequire(path.join(packageDir, 'package.json'))(specifier)
 const importable = path.isAbsolute(specifier) ? pathToFileURL(specifier).href : specifier;
 import(importable).then(
   (namespace) => Object.keys(required).filter((key) => !(key in namespace)),
-  // A require-only subpath is not offered to ESM importers, so it hides nothing from them.
+  // A require-only subpath is not offered to ESM importers, so it hides nothing from
+  // them. Only this package's own exports map counts; a dependency's failure propagates.
   (error) => {
-    if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return [];
+    const ownManifest = path.join(packageDir, 'package.json');
+    if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' && String(error.message).includes(ownManifest))
+      return [];
     throw error;
   },
 ).then((missing) => {
