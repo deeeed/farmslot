@@ -15,8 +15,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Add `adapterPortFlags`: the dev-server port options every registered adapter adds.
 - Depend on `esbuild` and `es-module-lexer` (live adapter bundling).
 
+## 0.3.0 - 2026-10-04
+
 - Add the lifecycle commands to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through `@farmslot/adapter-sdk` adapters the host registers (`configureHarnessAdapters`): `handleLaunch`, `handleReload`, `handleStop` (with a `companions` hook for host processes), `handleLast`, and `handleHarness` for `install`/`verify`/`cleanup` (with `usage` and `install`-variant hooks). They come with their shared modules: adapter detection and resolution (`detectAdapter`, `adapterForPlatform`, `resolveAdapter`, `assertAdapter`), option parsing (`parseArgs`, `parseFlags`, `CliError`), leaf spawning (`spawnScript`, `spawnScriptStreaming`, `spawnInherit`), teaching errors (`usageOut`, `checkoutBusyOut`, `EXIT`) and bounded healing (`parseHeal`, `ensureOverlay`, `classifyFailure`, `checkHealBounds`). Platform policy comes from the adapters (`detect`, `targets`, `flags`, `failurePatterns`), and names from the host (new `product` field, required).
 - Add `@farmslot/recipe-cli/harness`, the generic support a harness CLI runs its commands on: the host identity (`configureHarnessHost`: name, env prefix, package, executable, journaled commands), runtime paths (`recipeRuntimeDir`, `recipeRuntimePath`, `recipeHarnessRoot`, `recipeHarnessPath`, `harnessExecutable`), the resumability journal (`withCommandJournal`, `readCommandJournal`, argument redaction), the checkout lock (`acquireCheckoutLock`, `trackCheckoutChild`), `JsonStreamWriter`, colour helpers, contained artifact writes, Git library provenance and shell-leaf invocation. Moved from mm-harness; a product preset keeps its own env names (`MM_HARNESS_*`) through the host identity.
+- Publish with protocol 0.34.0, recipe-runner 0.23.0, agent-runtime 0.17.0 and adapter-sdk 0.2.0 (agent-runtime and adapter-sdk are new dependencies of the harness support).
 
 ## 0.2.0 - 2026-10-04
 

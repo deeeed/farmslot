@@ -92,4 +92,12 @@ result = spawnSync(
 assert.equal(result.status, 0, result.stderr);
 assert.equal(JSON.parse(result.stdout).templates[0].sourceId, 'team:trading');
 
+// Every CommonJS library subpath gives ESM importers the names require() returns.
+const exportCheck = spawnSync(
+  process.execPath,
+  [path.resolve(packageRoot, '../../scripts/quality/check-cjs-esm-exports.mjs'), packageRoot],
+  { encoding: 'utf8' },
+);
+assert.equal(exportCheck.status, 0, exportCheck.stderr || exportCheck.stdout);
+
 process.stdout.write('agent-runtime package exports tests: ok\n');

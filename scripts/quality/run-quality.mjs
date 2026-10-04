@@ -37,6 +37,10 @@ export const STEPS = [
     ['node', '--test', 'scripts/quality/check-farmslot-package-readiness.test.mjs'],
   ],
   [
+    'CommonJS/ESM export guard tests',
+    ['node', '--test', 'scripts/quality/check-cjs-esm-exports.test.mjs'],
+  ],
+  [
     'single-canonical worker scripts',
     ['node', '--test', 'scripts/quality/single-canonical-worker-scripts.test.mjs'],
   ],
