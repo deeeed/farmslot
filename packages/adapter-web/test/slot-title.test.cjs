@@ -96,7 +96,7 @@ describe('slot-title helpers', () => {
     }
   });
 
-  it('serializes the page callback for CDP with the slot and fallback title', () => {
+  it('serializes the page callback for CDP with the slot and default title', () => {
     const expression = buildStampExpression('mmedev-2', 'Product');
     assert.match(expression, /mmedev-2/u);
     assert.match(expression, /"defaultTitle":"Product"/u);
@@ -129,7 +129,7 @@ describe('applyPersistentSlotTitle', () => {
     );
   });
 
-  it('uses the fallback title for an untitled page, and the bare slot id without one', () => {
+  it('uses the default title for an untitled page, and the bare slot id without one', () => {
     assert.equal(
       vm.runInContext(buildStampExpression('slot-a', 'Product'), fakePage('').context),
       'slot-a — Product',
@@ -137,7 +137,7 @@ describe('applyPersistentSlotTitle', () => {
     assert.equal(vm.runInContext(buildStampExpression('slot-a'), fakePage('').context), 'slot-a');
   });
 
-  it('keeps a bare slot id stable when stamped again without a fallback', async () => {
+  it('keeps a bare slot id stable when stamped again without a default title', async () => {
     const page = fakePage('');
     vm.runInContext(buildStampExpression('slot-a'), page.context);
     await new Promise((resolve) => setImmediate(resolve)); // let the observer unlock
