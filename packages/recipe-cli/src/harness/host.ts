@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 export interface HarnessHost {
   /** The bin name used in messages and `Next:` lines. */
   name: string;
+  /** What a checkout belongs to, in "could not detect the <product> repo type". */
+  product: string;
   /** Prefix of the host's own environment variables: `<envPrefix>_OPERATION_ID`. */
   envPrefix: string;
   /** The npm package that ships the bin. */
@@ -24,6 +26,7 @@ export interface HarnessHost {
 
 const defaultHost: HarnessHost = {
   name: 'farmslot-recipe',
+  product: 'project',
   envPrefix: 'FARMSLOT_RECIPE',
   packageName: '@farmslot/recipe-cli',
   packageRoot: fileURLToPath(new URL('../..', import.meta.url)),

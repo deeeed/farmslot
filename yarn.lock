@@ -4531,7 +4531,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@farmslot/adapter-sdk@workspace:packages/adapter-sdk":
+"@farmslot/adapter-sdk@workspace:*, @farmslot/adapter-sdk@workspace:packages/adapter-sdk":
   version: 0.0.0-use.local
   resolution: "@farmslot/adapter-sdk@workspace:packages/adapter-sdk"
   dependencies:
@@ -4853,6 +4853,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/recipe-cli@workspace:packages/recipe-cli"
   dependencies:
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"

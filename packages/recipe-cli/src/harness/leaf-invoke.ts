@@ -16,15 +16,21 @@ export function resolveLeafInvoke(
   return { bin: command, args };
 }
 
-// Teaching diagnostic for a shell leaf that is absent from disk. Bash exits
-// 127 (not a Node spawn error) for a missing file, so callers pre-check and
-// emit this rather than relying on result.error.
-export function missingShellLeafMessage(leafPath: string): string {
-  const leaf = path.basename(leafPath);
+// Teaching diagnostic for a leaf that could not start: the host's own install
+// is incomplete, so the next step reinstalls it.
+export function leafStartFailureMessage(leaf: string, code: string, kind = 'shell leaf'): string {
+  const host = harnessHost();
   return (
-    `leaf could not start: ${leaf} (ENOENT)\n` +
-    `  Next: reinstall ${harnessHost().name} (npm i -g ${harnessHost().packageName}) — the shell leaf is missing or not executable`
+    `leaf could not start: ${leaf} (${code})\n` +
+    `  Next: reinstall ${host.name} (npm i -g ${host.packageName}) — the ${kind} is missing or not executable`
   );
+}
+
+// A shell leaf absent from disk. Bash exits 127 (not a Node spawn error) for a
+// missing file, so callers pre-check and emit this rather than relying on
+// result.error.
+export function missingShellLeafMessage(leafPath: string): string {
+  return leafStartFailureMessage(path.basename(leafPath), 'ENOENT');
 }
 
 // Returns true when a .sh leaf path does not exist on disk.

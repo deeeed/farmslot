@@ -1,7 +1,9 @@
+import type { CommandEventStream } from '@farmslot/adapter-sdk';
+
 import { recordCommandStage } from './command-journal.js';
 type JsonFields = Record<string, unknown>;
 
-export class JsonStreamWriter {
+export class JsonStreamWriter implements CommandEventStream {
   readonly enabled: boolean;
   readonly command: string;
 
