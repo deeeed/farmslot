@@ -4531,6 +4531,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@farmslot/adapter-sdk@workspace:packages/adapter-sdk":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/adapter-sdk@workspace:packages/adapter-sdk"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@farmslot/recipe-harness": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    eslint: "npm:^10.3.0"
+    prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
+    typescript: "npm:^5.6.0"
+  languageName: unknown
+  linkType: soft
+
 "@farmslot/adapter-web@workspace:packages/adapter-web":
   version: 0.0.0-use.local
   resolution: "@farmslot/adapter-web@workspace:packages/adapter-web"

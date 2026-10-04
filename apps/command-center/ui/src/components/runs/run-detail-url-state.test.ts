@@ -21,6 +21,7 @@ test('run detail helpers read selected step and artifact modal state', () => {
   assert.deepEqual(artifactSelectionFromRunDetailHash(hash), {
     artifactRun: 'run-1',
     artifact: 'captures/after.png',
+    artifactView: null,
   });
 });
 
@@ -101,4 +102,39 @@ test('back to inventory preserves its filters and removes detail-only state', ()
     ),
     '#runs?projects=farmslot-farm&runsTab=history&status=done',
   );
+});
+
+test('the step inspector marks the artifacts it owns, and run detail links drop the mark', () => {
+  const stepOwned =
+    '#run/run-1?step=write-task&artifactRun=run-1&artifact=TASK.md&artifactView=step';
+  assert.equal(artifactSelectionFromRunDetailHash(stepOwned).artifactView, 'step');
+  // An operation-log link built from that page belongs to run detail's viewer.
+  const next = runDetailEvidenceArtifactHash(
+    'run-1',
+    { path: 'artifacts/operations/a.log' },
+    stepOwned,
+  );
+  assert.equal(artifactSelectionFromRunDetailHash(next).artifactView, null);
+  assert.equal(artifactSelectionFromRunDetailHash(next).artifact, 'artifacts/operations/a.log');
+});
+
+test('leaving run detail drops the step inspector artifact marker too', () => {
+  const next = runInventoryHashFromDetail(
+    '#run/run-1?step=write-task&artifactRun=run-1&artifact=TASK.md&artifactView=step',
+  );
+  assert.doesNotMatch(next, /artifactView|artifact=/);
+});
+
+test('choosing another step closes the file the last step had open; history entries keep theirs', () => {
+  const taskOpen =
+    '#run/run-1?step=write-task&artifactRun=run-1&artifact=TASK.md&artifactView=step';
+  const toMonitor = runDetailStepHash('run-1', 'monitor', taskOpen);
+  assert.equal(selectedStepNameFromRunDetailHash(toMonitor), 'monitor');
+  assert.equal(artifactSelectionFromRunDetailHash(toMonitor).artifact, null);
+  assert.equal(artifactSelectionFromRunDetailHash(toMonitor).artifactView, null);
+  // Same step (a URL reached by back/forward re-syncing): the file stays.
+  assert.equal(runDetailStepHash('run-1', 'write-task', taskOpen), taskOpen);
+  // A run-detail artifact is not the step's to drop.
+  const runOwned = '#run/run-1?step=write-task&artifactRun=run-1&artifact=artifacts%2Fa.log';
+  assert.match(runDetailStepHash('run-1', 'monitor', runOwned), /artifact=artifacts%2Fa\.log/);
 });

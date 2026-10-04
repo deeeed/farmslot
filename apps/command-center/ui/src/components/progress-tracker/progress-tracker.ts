@@ -80,6 +80,8 @@ export class ProgressTracker extends LitElement {
    * like the slot view, and a unit id repeats across runs.
    */
   @property() runId?: string;
+  /** Whether the run is still working; see `OperationPanelOptions.runActive`. */
+  @property({ type: Boolean }) runActive = false;
 
   @state() private _expandedPhases: Set<string> = new Set();
   private _prevCurrentPhase: string | null = null;
@@ -395,7 +397,7 @@ export class ProgressTracker extends LitElement {
         ? nothing
         : html`
             <div class="phase-list">
-              ${renderOperationPanel(s, this.runId)}
+              ${renderOperationPanel(s, this.runId, { runActive: this.runActive })}
               ${s.phases.map((phase) => this._renderPhase(phase, s.currentPhase))}
             </div>
           `}

@@ -4,7 +4,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Add the Adapter SDK reference (`@farmslot/adapter-sdk`: `PlatformAdapter`, `defineAdapter`, the adapter registry).
 - Add the `@farmslot/adapter-web` reference page.
+
 - Document which package-manager values leave the approved plan environment and the shared `run`/`validate` exit codes for malformed library entries.
 
 - Add the Recipe discovery quickstart and reference (`farmslot-recipe actions/list/describe/explain`), and install `@farmslot/recipe-cli` wherever guides use the `farmslot-recipe` command.

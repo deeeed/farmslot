@@ -39,6 +39,7 @@ jobs:
       protocol: ${{ steps.filter.outputs.protocol }}
       recipe_harness: ${{ steps.filter.outputs.recipe_harness }}
       recipe_cli: ${{ steps.filter.outputs.recipe_cli }}
+      adapter_sdk: ${{ steps.filter.outputs.adapter_sdk }}
       skills: ${{ steps.filter.outputs.skills }}
       theme: ${{ steps.filter.outputs.theme }}
       gateway: ${{ steps.filter.outputs.gateway }}
@@ -150,6 +151,13 @@ jobs:
               - 'examples/recipe-library-hello/**'
               - 'packages/protocol/**'
               - 'packages/recipe-cli/**'
+              - 'packages/recipe-harness/**'
+            adapter_sdk:
+              - '.github/workflows/farmslot-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/protocol/**'
+              - 'packages/adapter-sdk/**'
               - 'packages/recipe-harness/**'
             skills:
               - '.github/workflows/farmslot-quality.yml'
@@ -590,6 +598,29 @@ jobs:
         run: yarn install --immutable
       - name: Recipe CLI quality
         run: yarn workspace @farmslot/recipe-cli quality
+
+  adapter-sdk:
+    name: Adapter SDK package quality
+    needs: changes
+    if: needs.changes.outputs.adapter_sdk == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Adapter SDK quality
+        run: yarn workspace @farmslot/adapter-sdk quality
 
   skills:
     name: Skills package quality
