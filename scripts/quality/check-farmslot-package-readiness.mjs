@@ -4,6 +4,8 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { checkCjsEsmExports } from './check-cjs-esm-exports.mjs';
+
 const argv = process.argv.slice(2);
 const args = new Set(argv);
 const runPack = args.has('--pack');
@@ -522,6 +524,9 @@ const selectedPackages = packageSpecsToCheck();
 for (const pkgSpec of selectedPackages) checkWorkspaceInstallShadows(pkgSpec);
 if (runPack) for (const pkgSpec of selectedPackages) buildPackage(pkgSpec);
 for (const pkgSpec of selectedPackages) checkPackage(pkgSpec);
+for (const pkgSpec of selectedPackages) {
+  for (const problem of checkCjsEsmExports(path.resolve(pkgSpec.dir))) fail(problem);
+}
 if (runPack) for (const pkgSpec of selectedPackages) checkBuiltPackageImports(pkgSpec);
 if (runPack) for (const pkgSpec of selectedPackages) checkPack(pkgSpec);
 if (runPack) checkTempConsumerSmoke();

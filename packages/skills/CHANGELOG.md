@@ -4,6 +4,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- `import` of `@farmslot/skills/scripts/worker-terminal-contract.cjs` exposes its names: it re-exports `@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs` with a literal `require`, which ESM can follow, instead of a computed path with a repo-relative fallback.
 - Skills refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
 
 ## 0.5.0 - 2026-09-20
