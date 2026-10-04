@@ -1685,6 +1685,7 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
     taskFile: '/tmp/recovery-releasing-fence/TASK.md',
   });
   const reset: string[] = [];
+  const stamped: string[] = [];
   const deps = {
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
@@ -1693,11 +1694,14 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => null,
     resetSlot: async (slotId: string) => reset.push(slotId),
+    resetSlotIf: async (slotId: string) => reset.push(slotId),
+    updateSlotStatusIf: async (slotId: string) => stamped.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 
   await reconcileOrphanedSlots(deps);
 
   assert.deepEqual(reset, []);
+  assert.deepEqual(stamped, ['macwork-ff-2'], 'left alone means stamped, not reset');
 });
 
 test('orphan reconcile reclaims a releasing fence through the conditional reset', async () => {
@@ -1791,9 +1795,12 @@ test('orphan reconcile leaves a releasing fence that is still young', async () =
   assert.deepEqual(reset, []);
 });
 
-test('an unstamped releasing fence keeps its protection rather than being reclaimed', async () => {
-  // A fence written before the stamp existed has unknown age. Unknown must
-  // not read as stale, or the first tick after deploy reclaims live teardowns.
+test('an unstamped releasing fence is stamped, not reclaimed, so the bound can run', async () => {
+  // A fence written before the stamp existed, or whose stamp an older fleet
+  // refresh dropped, has unknown age. Unknown must not read as stale, or the
+  // first tick after deploy reclaims live teardowns. It must not read as
+  // "protected forever" either: that left macpro-mm-4 and macpro-mm-6 fenced
+  // with nothing left to clear them. The reconciler starts the clock instead.
   const terminal = minimalActiveRun({
     id: 'terminal-unstamped',
     status: 'done',
@@ -1803,19 +1810,109 @@ test('an unstamped releasing fence keeps its protection rather than being reclai
     taskFile: '/tmp/terminal-unstamped/TASK.md',
   });
   const reset: string[] = [];
+  const reclaimed: string[] = [];
+  const stamps: Array<{
+    slotId: string;
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean;
+    fields: Record<string, unknown>;
+  }> = [];
+  let teardownInFlight = false;
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+    }),
+    isTerminalTeardownInFlight: () => teardownInFlight,
+    readSlotField: async () => undefined,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+    resetSlotIf: async (slotId: string) => reclaimed.push(slotId),
+    updateSlotStatusIf: async (
+      slotId: string,
+      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      stamps.push({ slotId, predicate, fields });
+      return true;
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  const before = Date.now();
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, [], 'no unguarded reset');
+  assert.deepEqual(reclaimed, [], 'unknown age is not stale');
+  assert.equal(stamps.length, 1);
+  assert.equal(stamps[0]!.slotId, 'macwork-ff-2');
+  const stampedAt = Date.parse(String(stamps[0]!.fields.releasing_since));
+  assert.ok(stampedAt >= before && stampedAt <= Date.now(), 'the clock starts at first sight');
+  const { predicate } = stamps[0]!;
+  assert.equal(predicate({ phase: 'releasing' }), true, 'the unstamped fence it saw');
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: null }),
+    true,
+    'an explicit null is as unstamped as a missing key',
+  );
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: new Date().toISOString() }),
+    false,
+    'a release that re-fenced with a real stamp keeps its own clock',
+  );
+  assert.equal(predicate({ phase: null }), false, 'a fence that cleared is left alone');
+  teardownInFlight = true;
+  assert.equal(predicate({ phase: 'releasing' }), false, 'a teardown that registered owns it');
+});
+
+test('a stamped fence past the bound is reclaimed on a later tick', async () => {
+  // The other half of the unstamped path: once stamped, the existing bound is
+  // the only thing that decides, with no special case for where the stamp
+  // came from.
+  const terminal = minimalActiveRun({
+    id: 'terminal-restamped',
+    status: 'failed',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-RESTAMPED',
+    familyRootTicketOrPr: 'RECOVERY-RESTAMPED',
+    taskFile: '/tmp/terminal-restamped/TASK.md',
+  });
+  const row: Record<string, unknown> = { phase: 'releasing' };
+  const reclaimed: string[] = [];
   const deps = {
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
     }),
     isTerminalTeardownInFlight: () => false,
-    readSlotField: async () => null,
-    resetSlot: async (slotId: string) => reset.push(slotId),
+    readSlotField: async (_slot: string, field: string) => row[field],
+    resetSlot: async () => assert.fail('resetSlot refuses releasing slots'),
+    resetSlotIf: async (
+      slotId: string,
+      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+    ) => {
+      if (!predicate(row)) return false;
+      reclaimed.push(slotId);
+      return true;
+    },
+    updateSlotStatusIf: async (
+      _slotId: string,
+      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      if (!predicate(row)) return false;
+      Object.assign(row, fields);
+      return true;
+    },
   } as unknown as RunRecoveryCollaborators;
 
   await reconcileOrphanedSlots(deps);
+  assert.equal(typeof row.releasing_since, 'string', 'first tick stamps');
+  assert.deepEqual(reclaimed, []);
 
-  assert.deepEqual(reset, []);
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reclaimed, [], 'inside the bound the fence keeps its protection');
+
+  row.releasing_since = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 1_000).toISOString();
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reclaimed, ['macwork-ff-2'], 'past the bound the stamped fence is reclaimed');
 });
 
 test('orphan reconcile preserves a persisted occupied workspace without a run owner', async () => {

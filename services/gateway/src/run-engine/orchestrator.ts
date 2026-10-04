@@ -30,6 +30,7 @@ import {
   resetSlotIf,
   SLOT_PHASE_RELEASING,
   slotReleasingFenceFields,
+  updateSlotStatusIf,
 } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
@@ -1424,6 +1425,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     setRunFlags,
     resetSlot,
     resetSlotIf,
+    updateSlotStatusIf,
     isTerminalTeardownInFlight,
     readSlotField,
     quarantineLeakedRun,
