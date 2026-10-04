@@ -7,8 +7,8 @@ import {
   type RecipeActionManifestDocument,
   type RecipeValidationFinding,
 } from '@farmslot/protocol';
-import { STANDARD_UI_ACTIONS } from '@farmslot/recipe-harness';
-import { validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
+import { STANDARD_UI_ACTIONS } from '@farmslot/recipe-runner';
+import { validateRecipeCliInput } from '@farmslot/recipe-runner/cli/support';
 
 import { NATIVE_UI_ACTIONS } from './agent-device-ui-transport.js';
 import {

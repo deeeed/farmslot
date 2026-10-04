@@ -19,7 +19,7 @@ import type { Run } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 if (process.argv[2] === 'recipe') {

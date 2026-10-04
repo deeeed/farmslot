@@ -107,7 +107,7 @@ export async function farmslotUpdate(
 
   // 2. Reinstall dependencies + rebuild the CLI's workspace deps.
   sh('yarn', ['install'], clone, {}, stdio);
-  sh('yarn', ['workspace', '@farmslot/recipe-harness', 'build'], clone, {}, stdio);
+  sh('yarn', ['workspace', '@farmslot/recipe-runner', 'build'], clone, {}, stdio);
   progress.step('dependencies installed and CLI rebuilt');
 
   // 3. Pool schema migrations (versioned, preserve user edits).

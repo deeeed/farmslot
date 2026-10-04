@@ -162,7 +162,7 @@ export function registerRunCommand(program: Command, context: RecipeCliCommandCo
             defaultSource: {
               kind: 'operator',
               trust: 'trusted',
-              name: '@farmslot/recipe-harness CLI',
+              name: '@farmslot/recipe-runner CLI',
             },
             logger: console,
           });

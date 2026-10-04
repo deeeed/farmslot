@@ -16,7 +16,7 @@ test('farmslot-farm prepare builds recipe dependencies before doctor runs', asyn
   const projectJson = JSON.parse(await readFile(projectJsonPath, 'utf-8'));
   assert.match(
     projectJson.hooks.post_merge_install,
-    /^yarn install && yarn workspace @farmslot\/recipe-harness build$/,
+    /^yarn install && yarn workspace @farmslot\/recipe-runner build$/,
   );
   assert.match(projectJson.hooks.recipe_doctor, /recipe-doctor\.mjs/);
 });
@@ -204,9 +204,9 @@ test('first-party farmslot-farm routes resolve to harness-backed Recipe v1 produ
   );
 
   assert.match(commandCenterRunner, /createRecipeRunner/);
-  assert.match(commandCenterRunner, /@farmslot\/recipe-harness/);
+  assert.match(commandCenterRunner, /@farmslot\/recipe-runner/);
   assert.match(companionWrapper, /farmslot-expo-recipe run/);
   assert.match(companionWrapper, /--artifacts-dir/);
   assert.match(expoRunner, /createRecipeRunner/);
-  assert.match(expoRunner, /@farmslot\/recipe-harness/);
+  assert.match(expoRunner, /@farmslot\/recipe-runner/);
 });

@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { PNG } from 'pngjs';
 
-import type { ActionExecutionContext } from '@farmslot/recipe-harness';
+import type { ActionExecutionContext } from '@farmslot/recipe-runner';
 
 import {
   type AgentDeviceUiTransportOptions,

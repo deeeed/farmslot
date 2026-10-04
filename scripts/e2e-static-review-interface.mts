@@ -21,7 +21,7 @@ import type { PRRulesListResult, PRTeamProfile, Run } from '../packages/protocol
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 
 /** Start the checkout's production gateway and Vite UI with caller-owned isolated paths/ports. */
 export function startReviewInterfaceServers(options: {

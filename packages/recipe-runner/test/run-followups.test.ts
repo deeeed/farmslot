@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { RecipeActionManifestDocument } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
-import { runRecipeHarnessCli } from '../src/cli/index.js';
+import { runRecipeRunnerCli } from '../src/cli/index.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import { RecipeTrustError } from '../src/core/trust-error.js';
 
@@ -154,12 +154,12 @@ test('run and validate exit 2 for a malformed library entry', async (t) => {
     ['validate', recipe, '--library', '=path'],
   ]) {
     process.exitCode = 0;
-    await runRecipeHarnessCli(argv);
+    await runRecipeRunnerCli(argv);
     assert.equal(process.exitCode, 2, argv.join(' '));
   }
   process.exitCode = 0;
   process.env.RECIPE_LIBRARY_PATH = 'hello=';
-  await runRecipeHarnessCli(['run', 'greet', '--describe']);
+  await runRecipeRunnerCli(['run', 'greet', '--describe']);
   assert.equal(process.exitCode, 2);
 });
 
@@ -173,7 +173,7 @@ test('a library root that does not exist is a usage error', async (t) => {
   const lines: string[] = [];
   console.error = (line: unknown) => void lines.push(String(line));
   process.exitCode = 0;
-  await runRecipeHarnessCli([
+  await runRecipeRunnerCli([
     'run',
     'greet',
     '--library',

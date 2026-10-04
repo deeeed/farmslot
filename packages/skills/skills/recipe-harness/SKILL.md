@@ -4,7 +4,7 @@ description: Help run or install a local recipe runtime without assuming the ful
 compatibility: Claude, Codex, Cursor, and Markdown skill runners with shell access
 metadata:
   package: '@farmslot/skills'
-  related_package: '@farmslot/recipe-harness'
+  related_package: '@farmslot/recipe-runner'
 allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(npm:*) Bash(yarn:*) Bash(pnpm:*) Bash(farmslot-recipe:*)
 ---
 
@@ -15,7 +15,7 @@ Use the local recipe runtime when one exists, or recommend the smallest install 
 ## Workflow
 
 1. Find the project-owned recipe command first.
-2. If no command exists, check for `@farmslot/recipe-harness` or an app-specific harness package.
+2. If no command exists, check for `@farmslot/recipe-runner` or an app-specific harness package.
 3. Before authoring, inspect the closest recipes with `farmslot-recipe run --list` and `farmslot-recipe run <id> --describe`, then inspect declared actions only if no recipe fits. Prefer project discovery commands; otherwise read only the relevant manifest entries and examples.
 4. Run dry-run or schema validation before live execution when available.
 5. Record artifact paths and validation output.

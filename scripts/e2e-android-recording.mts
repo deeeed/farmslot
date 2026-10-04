@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RecipeActionManifestDocument } from '@farmslot/protocol';
-import { createRecipeRunner } from '../packages/recipe-harness/src/core/runner.js';
-import { createStandardCoreAdapters } from '../packages/recipe-harness/src/adapters/core.js';
-import { createStandardUiAdapters } from '../packages/recipe-harness/src/adapters/ui.js';
-import { createAndroidMirrorVideoRecorder } from '../packages/recipe-harness/src/recording/android-mirror.js';
+import { createRecipeRunner } from '../packages/recipe-runner/src/core/runner.js';
+import { createStandardCoreAdapters } from '../packages/recipe-runner/src/adapters/core.js';
+import { createStandardUiAdapters } from '../packages/recipe-runner/src/adapters/ui.js';
+import { createAndroidMirrorVideoRecorder } from '../packages/recipe-runner/src/recording/android-mirror.js';
 
 const serial = process.env.FARMSLOT_RECORDING_DEVICE_SERIAL;
 const lease = process.env.FARMSLOT_RECORDING_DEVICE_LEASE;

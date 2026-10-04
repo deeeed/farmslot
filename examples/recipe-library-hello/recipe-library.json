@@ -1,4 +1,4 @@
 {
   "platforms": ["web"],
-  "requires": { "@farmslot/recipe-harness": ">=0.21.1" }
+  "requires": { "@farmslot/recipe-runner": ">=0.21.1" }
 }

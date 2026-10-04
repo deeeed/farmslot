@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.2.0 - 2026-10-04
+
+- Depend on `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
+- Publish with protocol 0.34.0 and recipe-runner 0.23.0.
+
 ## 0.1.2 - 2026-10-04
 
 - Export the action catalog helpers a host CLI needs on top of its own action manifest: `actionCategory`, `fuzzyResolveActions`, `shortActionNames`, `searchActions`, `findRelatedActions`, `summarizeActionCategories`, `actionCapabilityMatrix`, `resolveActionCapabilityRefusal` and `missingActionCapabilities`. `search` ranks with the same scorer, so its results are unchanged.

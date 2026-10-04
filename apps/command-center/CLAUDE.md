@@ -29,7 +29,7 @@ Farmslot Command Center: real-time fleet management UI + gateway daemon for auto
 farmslot/
   packages/
     protocol/       # @farmslot/protocol — shared types, methods, and recipe contracts
-    recipe-harness/ # @farmslot/recipe-harness — shared recipe runner runtime
+    recipe-runner/ # @farmslot/recipe-runner — shared recipe runner runtime
     theme/          # @farmslot/theme — shared UI tokens
     cli/            # @farmslot/cli — operator CLI for gateway/control-plane actions
   services/

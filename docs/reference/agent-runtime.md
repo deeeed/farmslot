@@ -4,12 +4,12 @@
 
 ## Boundary
 
-| Package                    | Owns                                                                                                                                                      |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@farmslot/protocol`       | Pure contracts, types, validators, and shared constants.                                                                                                  |
-| `@farmslot/recipe-harness` | Recipe graph execution and recipe artifact package writing.                                                                                               |
-| `@farmslot/agent-runtime`  | Task-local marking, `SIGNAL.json`, checklist timing, worker terminal contract resolution, closeout artifact checks, and recipe-quality artifact building. |
-| `@farmslot/skills`         | Agent instructions and installer behavior; legacy runtime paths are shims.                                                                                |
+| Package                   | Owns                                                                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@farmslot/protocol`      | Pure contracts, types, validators, and shared constants.                                                                                                  |
+| `@farmslot/recipe-runner` | Recipe graph execution and recipe artifact package writing.                                                                                               |
+| `@farmslot/agent-runtime` | Task-local marking, `SIGNAL.json`, checklist timing, worker terminal contract resolution, closeout artifact checks, and recipe-quality artifact building. |
+| `@farmslot/skills`        | Agent instructions and installer behavior; legacy runtime paths are shims.                                                                                |
 
 ## Task Directory
 

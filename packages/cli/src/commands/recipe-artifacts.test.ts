@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { digestRecipeDocument } from '@farmslot/protocol';
-import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
+import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
 import { validateRecipeArtifactDirectory } from './recipe.js';
 

@@ -4536,7 +4536,7 @@ __metadata:
   resolution: "@farmslot/adapter-sdk@workspace:packages/adapter-sdk"
   dependencies:
     "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
@@ -4591,7 +4591,7 @@ __metadata:
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/credential-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@farmslot/slot-config": "workspace:*"
     "@types/node": "npm:^22.0.0"
@@ -4700,7 +4700,7 @@ __metadata:
   resolution: "@farmslot/expo-recipe@workspace:packages/expo-recipe"
   dependencies:
     "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/pngjs": "npm:^6.0.5"
     agent-device: "npm:0.19.3"
@@ -4770,7 +4770,7 @@ __metadata:
     "@expo/vector-icons": "npm:^15.0.3"
     "@farmslot/expo-recipe": "workspace:*"
     "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/theme": "workspace:*"
     "@gorhom/bottom-sheet": "npm:^5.2.14"
     "@react-native-async-storage/async-storage": "npm:2.2.0"
@@ -4854,7 +4854,7 @@ __metadata:
   resolution: "@farmslot/recipe-cli@workspace:packages/recipe-cli"
   dependencies:
     "@farmslot/protocol": "workspace:*"
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"
     commander: "npm:^12.0.0"
     eslint: "npm:^10.3.0"
@@ -4867,9 +4867,9 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/recipe-harness@workspace:*, @farmslot/recipe-harness@workspace:packages/recipe-harness":
+"@farmslot/recipe-runner@workspace:*, @farmslot/recipe-runner@workspace:packages/recipe-runner":
   version: 0.0.0-use.local
-  resolution: "@farmslot/recipe-harness@workspace:packages/recipe-harness"
+  resolution: "@farmslot/recipe-runner@workspace:packages/recipe-runner"
   dependencies:
     "@farmslot/protocol": "workspace:*"
     "@types/node": "npm:^22.0.0"

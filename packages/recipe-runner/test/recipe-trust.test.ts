@@ -16,7 +16,7 @@ import {
 } from '@farmslot/protocol/recipe';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
-import { runRecipeHarnessCli } from '../src/cli/index.js';
+import { runRecipeRunnerCli } from '../src/cli/index.js';
 import { writeJsonFile } from '../src/core/json.js';
 import { loadRecipeLibraries } from '../src/core/library.js';
 import { createRecipeRunner } from '../src/core/runner.js';
@@ -216,7 +216,7 @@ test('CLI JSON trust failures expose stable code, message, and userAction', asyn
     await writeJsonFile(manifestPath, manifest);
     process.exitCode = undefined;
     const output = await captureConsoleLog(() =>
-      runRecipeHarnessCli([
+      runRecipeRunnerCli([
         'run',
         recipePath,
         '--artifacts-dir',

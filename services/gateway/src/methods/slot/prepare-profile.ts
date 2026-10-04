@@ -149,7 +149,7 @@ export interface RequirementCheckContext {
 }
 
 // Deps inputs hashed for the deps_current sentinel. Keep in sync with
-// @farmslot/recipe-harness/runtime/deps-readiness DEPS_INPUTS.
+// @farmslot/recipe-runner/runtime/deps-readiness DEPS_INPUTS.
 const DEPS_FINGERPRINT_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
 
 // Lockfiles hashed when Node is unavailable on the slot (legacy fallback).

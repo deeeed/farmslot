@@ -1,4 +1,4 @@
-# Recipe harness: high-level map
+# Recipe runner: high-level map
 
 The recipe system gives humans and agents one deterministic way to prepare a runtime, exercise behavior, and retain proof.
 
@@ -54,7 +54,7 @@ Every run retains the authored root, exact resolved dependencies, resolution pro
 | Layer              | Owns                                                                  |
 | ------------------ | --------------------------------------------------------------------- |
 | Farmslot protocol  | Recipe schema, graph semantics, validation, trust, evidence contracts |
-| Recipe harness     | Resolution, execution, trace, artifacts, generic actions              |
+| Recipe runner      | Resolution, execution, trace, artifacts, generic actions              |
 | Project runner     | Platform adapters and namespaced product actions                      |
 | Team library       | Reusable domain recipes and safe defaults                             |
 | Product repository | Product behavior, fixtures, native tests, telemetry                   |
@@ -65,5 +65,5 @@ Keep domain knowledge in team libraries. Add a base action only when it is atomi
 
 - [Recipe Protocol v1](recipe-protocol-v1.md) — authored document contract.
 - [Recipe Runner Protocol](recipe-runner-protocol.md) — project integration contract.
-- [Recipe harness architecture](recipe-harness-architecture.md) — component boundaries.
+- [Recipe runner architecture](recipe-runner-architecture.md) — component boundaries.
 - [New project recipe support](new-project-recipe-support.md) — minimal onboarding checklist.

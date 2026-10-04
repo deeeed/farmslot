@@ -12,7 +12,7 @@ import {
   type RecipeLibrarySource,
   type RecipePackageVersions,
   resolveRecipeLibrarySources,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 import type { DiscoveryActionManifestFile, DiscoveryLibrary } from './types.js';
 

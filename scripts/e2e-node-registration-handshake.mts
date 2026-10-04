@@ -38,7 +38,7 @@ import { PROTOCOL_VERSION } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 import {
   authenticateNode,
   GatewayRequestError,

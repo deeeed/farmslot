@@ -5,17 +5,17 @@ ready for review, but the packages remain private until final publish approval. 
 
 ## Packages
 
-| Package                    | Purpose                                                             | Public docs                                             |
-| -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| `@farmslot/protocol`       | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
-| `@farmslot/agent-runtime`  | Task lifecycle, artifact checks, and execution-template utilities.  | <https://farmslot.io/docs/reference/agent-runtime>      |
-| `@farmslot/recipe-harness` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-harness>  |
-| `@farmslot/recipe-cli`     | The `farmslot-recipe` command: run, validate and recipe discovery.  | <https://farmslot.io/docs/reference/recipe-discovery>   |
-| `@farmslot/adapter-sdk`    | The platform adapter contract and registry.                         | <https://farmslot.io/docs/reference/adapter-sdk>        |
-| `@farmslot/expo-recipe`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
-| `@farmslot/skills`         | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
-| `@farmslot/capabilities`   | Machine-local capability primitives shared by node and gateway.     | `packages/capabilities/README.md`                       |
-| `@farmslot/handoff`        | Task handoff records, closeout and learning packages.               | <https://farmslot.io/docs/guides/learning-package>      |
+| Package                   | Purpose                                                             | Public docs                                             |
+| ------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
+| `@farmslot/protocol`      | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
+| `@farmslot/agent-runtime` | Task lifecycle, artifact checks, and execution-template utilities.  | <https://farmslot.io/docs/reference/agent-runtime>      |
+| `@farmslot/recipe-runner` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-runner>   |
+| `@farmslot/recipe-cli`    | The `farmslot-recipe` command: run, validate and recipe discovery.  | <https://farmslot.io/docs/reference/recipe-discovery>   |
+| `@farmslot/adapter-sdk`   | The platform adapter contract and registry.                         | <https://farmslot.io/docs/reference/adapter-sdk>        |
+| `@farmslot/expo-recipe`   | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
+| `@farmslot/skills`        | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
+| `@farmslot/capabilities`  | Machine-local capability primitives shared by node and gateway.     | `packages/capabilities/README.md`                       |
+| `@farmslot/handoff`       | Task handoff records, closeout and learning packages.               | <https://farmslot.io/docs/guides/learning-package>      |
 
 ## Token
 
@@ -70,7 +70,7 @@ Publish Recipe Protocol packages in dependency order:
 1. `@farmslot/protocol`
 2. `@farmslot/agent-runtime`
 3. `@farmslot/capabilities`
-4. `@farmslot/recipe-harness`
+4. `@farmslot/recipe-runner`
 5. `@farmslot/recipe-cli`
 6. `@farmslot/adapter-sdk`
 7. `@farmslot/expo-recipe`
@@ -89,10 +89,10 @@ checks only.
 ## Build/export strategy
 
 The packages now publish from `dist/` rather than TypeScript source.
-`@farmslot/protocol`, `@farmslot/agent-runtime`, `@farmslot/recipe-harness`,
+`@farmslot/protocol`, `@farmslot/agent-runtime`, `@farmslot/recipe-runner`,
 and `@farmslot/skills` build JavaScript and declaration files before pack, and
 `scripts/quality/check-farmslot-package-readiness.mjs` verifies required packed
 files plus built import contracts. The
 `farmslot-recipe` bin ships in `@farmslot/recipe-cli` and imports `../dist/cli.js`, so
 local workspace CLI smoke testing requires `yarn workspace @farmslot/recipe-cli build`
-first (it builds `@farmslot/recipe-harness` too).
+first (it builds `@farmslot/recipe-runner` too).
