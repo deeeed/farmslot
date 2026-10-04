@@ -18,7 +18,6 @@ mock.module('../node-support/remote-command.js', {
 });
 mock.module('../core/exec.js', {
   namedExports: {
-    EXEC_TIMEOUT_EXIT_CODE: 124,
     execLocal: async () => {
       localCalls++;
       return { stdout: '', stderr: '', exitCode: 0 };
@@ -72,14 +71,13 @@ test('resource hooks that call farm scripts run them from the bundle (ledger F15
     "bash ~/farmslot-node/support/h/projects/x/scripts/physical-android-health.sh 'serial'",
   ]);
 
+  // A pending delivery is "could not run", never "probe failed": shutdown
+  // reads a failed health probe as already stopped and would skip its hook.
   bundlePending = true;
-  const timedOut = await execResourceCommand(
-    'slot',
-    '/tmp',
-    'bash ~/farmslot-node/scripts/x.sh',
-    5_000,
+  await assert.rejects(
+    execResourceCommand('slot', '/tmp', 'bash ~/farmslot-node/scripts/x.sh', 5_000),
+    ResourceCommandUnavailableError,
   );
   bundlePending = false;
-  assert.equal(timedOut.exitCode, 124, 'a 5 s health probe times out rather than waiting');
-  assert.equal(sentCmds.length, 1, 'and nothing ran from the stale copy');
+  assert.equal(sentCmds.length, 1, 'nothing ran from the stale copy');
 });

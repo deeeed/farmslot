@@ -178,6 +178,7 @@ async function executeExpandedCommand(
     }
     // Slot actions call farm scripts too; run them from the bundle that matches
     // this config, not the node's last deploy (ledger F15).
+    const startedAt = Date.now();
     const remoteCommand = await resolveRemoteFarmCommand(slotVars, command, {
       budgetMs: timeoutMs,
     }).catch((error: unknown) => {
@@ -186,15 +187,16 @@ async function executeExpandedCommand(
         { cause: error },
       );
     });
+    const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
     const execResult = (await sendNodeRequest(
       node,
       'exec',
       {
         cmd: remoteCommand,
         cwd: slotVars.remoteRepo,
-        timeout: timeoutMs,
+        timeout: remainingMs,
       },
-      { timeout: timeoutMs },
+      { timeout: remainingMs },
     ).catch((error: unknown) => {
       throw new ResourceCommandUnavailableError(
         `Resource command unavailable on ${machine}: ${error instanceof Error ? error.message : String(error)}`,

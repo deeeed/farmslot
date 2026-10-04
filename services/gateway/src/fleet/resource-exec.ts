@@ -6,7 +6,7 @@
  * inventory for its post-control device-state check, and a cycle between the two
  * would be resolved by module order rather than by design.
  */
-import { EXEC_TIMEOUT_EXIT_CODE, execLocal } from '../core/exec.js';
+import { execLocal } from '../core/exec.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { getNode } from './machine-registry.js';
@@ -40,15 +40,20 @@ export async function execResourceCommand(
       let remoteCmd = cmd;
       if (cmd.includes('~/farmslot-node')) {
         // Resource hooks call farm scripts too; run them from the bundle that
-        // matches this config, not the node's last deploy (ledger F15). Loaded
-        // only when needed: node-support executes through core/exec.
-        const { NodeSupportPendingError, resolveSlotFarmCommand } =
-          await import('../node-support/remote-command.js');
+        // matches this config, not the node's last deploy (ledger F15). A
+        // delivery still pending or failed means the command could not run:
+        // unavailable, never a failed probe, which shutdown would read as
+        // "already stopped" and skip its hook. Imported on demand so this
+        // module's many importers (device inventory, cleanup, pressure) do not
+        // load the node-support graph for commands that never need it.
+        const { resolveSlotFarmCommand } = await import('../node-support/remote-command.js');
         try {
           remoteCmd = await resolveSlotFarmCommand(slotId, cmd, timeout);
         } catch (err) {
-          if (!(err instanceof NodeSupportPendingError)) throw err;
-          return { stdout: '', stderr: err.message, exitCode: EXEC_TIMEOUT_EXIT_CODE };
+          throw new ResourceCommandUnavailableError(
+            `Resource command unavailable on ${machine}: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
         }
       }
       try {

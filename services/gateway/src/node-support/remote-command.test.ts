@@ -337,27 +337,30 @@ test('every direct node exec sender is reviewed for farm script references', asy
     });
   const senders = walk(src)
     .filter((file) =>
-      /sendNodeRequest(?:Streaming)?\(\s*[\w.]+,\s*'exec'/.test(readFileSync(file, 'utf8')),
+      /(?:sendNodeRequest(?:Streaming)?|requestNativeNode)\(\s*[\w.]+,\s*(?:[\w.]+,\s*)?'exec'/.test(
+        readFileSync(file, 'utf8'),
+      ),
     )
     .map((file) => path.relative(src, file))
     .sort();
-  const resolvesFarmRefs = [
-    'fleet/node-rpc.ts', // nodeExec, reached through execOnSlot
-    'fleet/resource-exec.ts',
-    'fleet/resource-manager.ts',
-    'methods/slot-actions.ts',
-  ];
+  // How many commands each file resolves: one per exec path it owns.
+  const resolvesFarmRefs: Record<string, number> = {
+    'fleet/node-rpc.ts': 0, // nodeExec, reached through execOnSlot (core/exec.ts)
+    'fleet/resource-exec.ts': 1, // resource health
+    'fleet/resource-manager.ts': 2, // resource control and watch commands
+    'methods/slot-actions.ts': 1,
+  };
   const gatewayBuiltOnly = [
     'methods/tmux-workers.ts',
     'run-engine/remote-probes.ts',
+    'runners/native/node.ts', // argv only
     'runtime/screen-session.ts',
   ];
-  assert.deepEqual(senders, [...resolvesFarmRefs, ...gatewayBuiltOnly].sort());
-  for (const file of resolvesFarmRefs.slice(1)) {
-    assert.match(
-      readFileSync(path.join(src, file), 'utf8'),
-      /resolve(?:Remote|Slot)FarmCommand/,
-      `${file} resolves farm refs`,
-    );
+  assert.deepEqual(senders, [...Object.keys(resolvesFarmRefs), ...gatewayBuiltOnly].sort());
+  for (const [file, expected] of Object.entries(resolvesFarmRefs)) {
+    const calls =
+      readFileSync(path.join(src, file), 'utf8').match(/resolve(?:Remote|Slot)FarmCommand\(/g) ??
+      [];
+    assert.equal(calls.length, expected, `${file} resolves farm refs on each exec path`);
   }
 });
