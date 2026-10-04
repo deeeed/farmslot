@@ -29,15 +29,16 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 
 ## Source layout
 
-| path                                                | owns                                                                        |
-| --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `src/cli.ts`                                        | the `farmslot-recipe` program: the runner's `run`/`validate` plus discovery |
-| `src/commands.ts`                                   | discovery command registration, JSON envelopes and errors                   |
-| `src/libraries.ts`                                  | library resolution: precedence, overrides, digests, `requires` checks       |
-| `src/discovery-index.ts`                            | the recipe and action index for one platform view                           |
-| `src/composition.ts`                                | composition, callers and `explain`                                          |
-| `src/search.ts`, `src/template.ts`, `src/render.ts` | search ranking, skeletons, text output                                      |
-| `src/types.ts`                                      | the documented `--json` schema                                              |
+| path                                                | owns                                                                                                                                |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/cli.ts`                                        | the `farmslot-recipe` program: the runner's `run`/`validate` plus discovery                                                         |
+| `src/commands.ts`                                   | discovery command registration, JSON envelopes and errors                                                                           |
+| `src/libraries.ts`                                  | library resolution: precedence, overrides, digests, `requires` checks                                                               |
+| `src/discovery-index.ts`                            | the recipe and action index for one platform view                                                                                   |
+| `src/composition.ts`                                | composition, callers and `explain`                                                                                                  |
+| `src/search.ts`, `src/template.ts`, `src/render.ts` | search ranking, skeletons, text output                                                                                              |
+| `src/types.ts`                                      | the documented `--json` schema                                                                                                      |
+| `src/harness/`                                      | generic harness support (`@farmslot/recipe-cli/harness`): host identity, runtime paths, journal, checkout lock, JSON stream, colour |
 
 ## Maintenance rules
 
@@ -45,6 +46,7 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 - Library loading, recipe identity and precedence belong to `@farmslot/recipe-runner`; this package reads them and must not re-implement them.
 - `--json` envelopes are a contract: add fields freely, but bump `DISCOVERY_SCHEMA_VERSION` before removing or renaming one.
 - Discovery never runs actions or loads adapter code.
+- `src/harness/` never hardcodes a product: names and env variables come from the host identity (`configureHarnessHost`), so a preset such as `mm-harness` keeps its own spelling. Runtime paths are shared by every host (`temp/recipe/runtime`, `temp/recipe/harness`; `RECIPE_RUNTIME_DIR` and `RECIPE_HARNESS_ROOT` override them).
 
 ## Local quality
 

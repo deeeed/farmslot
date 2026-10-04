@@ -51,6 +51,7 @@ const packages = [
       'bin/farmslot-recipe.mjs',
       'src/index.ts',
       'src/cli.ts',
+      'src/harness/index.ts',
     ],
     packRequiredFiles: [
       'README.md',
@@ -59,9 +60,11 @@ const packages = [
       'dist/index.js',
       'dist/index.d.ts',
       'dist/cli.js',
+      'dist/harness/index.js',
+      'dist/harness/index.d.ts',
     ],
     importCheck:
-      "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export');",
+      "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export'); const h = await import('./packages/recipe-cli/dist/harness/index.js'); if (typeof h.configureHarnessHost !== 'function') throw new Error('missing harness configureHarnessHost export');",
   },
   {
     name: '@farmslot/adapter-sdk',

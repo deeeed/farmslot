@@ -4,6 +4,7 @@
     "noEmit": false,
     "rootDir": "src",
     "paths": {
+      "@farmslot/agent-runtime": ["../agent-runtime/dist/index.d.ts"],
       "@farmslot/protocol": ["../protocol/dist/index.d.ts"],
       "@farmslot/protocol/*": ["../protocol/dist/*"],
       "@farmslot/recipe-runner": ["../recipe-runner/dist/index.d.ts"],

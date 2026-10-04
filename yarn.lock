@@ -4841,6 +4841,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/recipe-cli@workspace:packages/recipe-cli"
   dependencies:
+    "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"

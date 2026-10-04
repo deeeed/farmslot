@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "paths": {
+      "@farmslot/agent-runtime": ["../agent-runtime/src/index.ts"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
       "@farmslot/recipe-runner": ["../recipe-runner/src/index.ts"],
