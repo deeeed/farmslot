@@ -26,7 +26,7 @@ import {
   type ResolvedLibraryRecipe,
   resolveRecipeDependencies,
   SHARED_RECIPE_SCOPE,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 
 import { DiscoveryError } from './discovery-error.js';
 import { type ResolvedDiscoveryLibrary, resolveDiscoveryLibraries } from './libraries.js';

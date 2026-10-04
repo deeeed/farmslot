@@ -24,7 +24,7 @@ window coordinates, one device lock, and a retained session:
 
 Every failure is `cause_class: harness` with `error_code` and the observed geometry in
 `error_details`. Absolute versus relative `ui.scroll` movement is covered in
-`test/recipe-harness.test.ts`.
+`test/recipe-runner.test.ts`.
 
 ## Real browser page
 
@@ -35,5 +35,5 @@ frame when the URL has `?jitter=1`. Serve it from the Command Center Vite origin
 CDP runner can attach to it:
 
 ```
-<ui_url>/@fs<repo>/packages/recipe-harness/test/fixtures/scroll-to-visible/page.html
+<ui_url>/@fs<repo>/packages/recipe-runner/test/fixtures/scroll-to-visible/page.html
 ```

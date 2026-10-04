@@ -13,7 +13,7 @@ export const PATH_FILTERS = {
     'apps/command-center/**',
     'packages/cli/**',
     'packages/protocol/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
     'packages/theme/**',
     'services/gateway/**',
     'services/node/**',
@@ -35,7 +35,7 @@ export const PATH_FILTERS = {
     'apps/companion/**',
     'packages/expo-recipe/**',
     'packages/protocol/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
     'packages/theme/**',
   ],
   docs: [
@@ -54,7 +54,7 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'packages/cli/**',
     'packages/protocol/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
   ],
   expo_recipe: [
     '.github/workflows/farmslot-quality.yml',
@@ -62,7 +62,7 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'packages/expo-recipe/**',
     'packages/protocol/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
   ],
   protocol: [
     '.github/workflows/farmslot-quality.yml',
@@ -70,12 +70,12 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'packages/protocol/**',
   ],
-  recipe_harness: [
+  recipe_runner: [
     '.github/workflows/farmslot-quality.yml',
     'package.json',
     'yarn.lock',
     'packages/protocol/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
   ],
   recipe_cli: [
     '.github/workflows/farmslot-quality.yml',
@@ -84,7 +84,7 @@ export const PATH_FILTERS = {
     'examples/recipe-library-hello/**',
     'packages/protocol/**',
     'packages/recipe-cli/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
   ],
   adapter_sdk: [
     '.github/workflows/farmslot-quality.yml',
@@ -92,7 +92,7 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'packages/protocol/**',
     'packages/adapter-sdk/**',
-    'packages/recipe-harness/**',
+    'packages/recipe-runner/**',
   ],
   skills: [
     '.github/workflows/farmslot-quality.yml',
@@ -146,7 +146,7 @@ export const TARGET_STEPS = {
     ['loc advisory', ['yarn', 'quality:loc:advisory']],
   ],
   command_center: [
-    ['recipe-harness build', ['yarn', 'workspace', '@farmslot/recipe-harness', 'build']],
+    ['recipe-runner build', ['yarn', 'workspace', '@farmslot/recipe-runner', 'build']],
     ['command-center quality', ['yarn', '--cwd', 'apps/command-center', 'quality']],
   ],
   desktop: [
@@ -161,8 +161,8 @@ export const TARGET_STEPS = {
   cli: [['cli quality', ['yarn', 'workspace', '@farmslot/cli', 'quality']]],
   expo_recipe: [['expo-recipe quality', ['yarn', 'workspace', '@farmslot/expo-recipe', 'quality']]],
   protocol: [['protocol quality', ['yarn', 'workspace', '@farmslot/protocol', 'quality']]],
-  recipe_harness: [
-    ['recipe-harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
+  recipe_runner: [
+    ['recipe-runner quality', ['yarn', 'workspace', '@farmslot/recipe-runner', 'quality']],
   ],
   recipe_cli: [['recipe-cli quality', ['yarn', 'workspace', '@farmslot/recipe-cli', 'quality']]],
   adapter_sdk: [['adapter-sdk quality', ['yarn', 'workspace', '@farmslot/adapter-sdk', 'quality']]],

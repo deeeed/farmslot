@@ -5,8 +5,8 @@
     "paths": {
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
-      "@farmslot/recipe-harness": ["../recipe-harness/src/index.ts"],
-      "@farmslot/recipe-harness/*": ["../recipe-harness/src/*"]
+      "@farmslot/recipe-runner": ["../recipe-runner/src/index.ts"],
+      "@farmslot/recipe-runner/*": ["../recipe-runner/src/*"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

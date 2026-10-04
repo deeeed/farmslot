@@ -103,7 +103,7 @@ test('npm release group is every non-private package, dependency-first', () => {
     'packages/protocol',
     'packages/agent-runtime',
     'packages/capabilities',
-    'packages/recipe-harness',
+    'packages/recipe-runner',
     'packages/expo-recipe',
     'packages/handoff',
     'packages/skills',

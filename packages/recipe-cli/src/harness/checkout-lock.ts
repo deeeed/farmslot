@@ -2,10 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import {
-  ensureRuntimeDirectory,
-  processIdentity,
-} from '@farmslot/recipe-harness/runtime/operation';
+import { ensureRuntimeDirectory, processIdentity } from '@farmslot/recipe-runner/runtime/operation';
 
 import { hostEnvName } from './host.js';
 import { recipeRuntimeDir } from './paths.js';

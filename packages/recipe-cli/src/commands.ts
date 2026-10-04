@@ -5,8 +5,8 @@ import {
   parseRecipeLibraryPath,
   RecipeResolutionError,
   RecipeTrustError,
-} from '@farmslot/recipe-harness';
-import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
+} from '@farmslot/recipe-runner';
+import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
 import { actionCallers, explainRecipe, recipeCallers, recipeComposition } from './composition.js';
 import { DiscoveryError } from './discovery-error.js';

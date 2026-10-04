@@ -72,7 +72,7 @@ export function createAppLifecycleAdapter(
     source: {
       kind: 'bundled',
       trust: 'trusted',
-      name: '@farmslot/recipe-harness',
+      name: '@farmslot/recipe-runner',
     },
     async execute(node, context) {
       // Validate every node input before resolving the target or running any

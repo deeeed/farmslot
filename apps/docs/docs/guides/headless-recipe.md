@@ -9,7 +9,7 @@ Use a headless recipe when commands, API responses, logs, or files can prove the
 ## Install
 
 ```sh
-yarn add -D @farmslot/recipe-harness @farmslot/recipe-cli @farmslot/protocol
+yarn add -D @farmslot/recipe-runner @farmslot/recipe-cli @farmslot/protocol
 ```
 
 Keep the project surface small:
@@ -32,7 +32,7 @@ Minimal runner construction:
 
 ```ts
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
-import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-harness';
+import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
 
 const runner = createRecipeRunner({
   actionManifest,

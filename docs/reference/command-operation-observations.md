@@ -4,7 +4,7 @@ This reference describes optional command observations alongside task progress.
 It does not change recipe proof results or checklist completion.
 
 Command runtimes may use `OperationRecord` from
-`@farmslot/recipe-harness/runtime/operation`. Each invocation writes a UUID-named
+`@farmslot/recipe-runner/runtime/operation`. Each invocation writes a UUID-named
 record and log. Nested invocations carry a `parentId`; they do not overwrite their
 parent. The producer calls `stage`, streams output with `output`, and calls
 `finish` with the real exit code. Records include process identity, start time,

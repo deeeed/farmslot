@@ -258,7 +258,7 @@ them, but manifests should advertise project-specific availability and limits.
 
 - Extend `ActionResult` / `TraceEntry` with optional `observations` and
   `observationWarnings`.
-- Add a small observer runner in `@farmslot/recipe-harness` that runs after a
+- Add a small observer runner in `@farmslot/recipe-runner` that runs after a
   successful node when policy resolves to enabled.
 - Ensure observer results never mutate `status`, `next`, `case`, or artifacts.
 - Make observer failures warning-only.

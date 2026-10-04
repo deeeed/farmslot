@@ -29,7 +29,7 @@ import { prepareBrowserSlots } from './runner-validation/lib/browser-slots.mjs';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
-} from '../packages/recipe-harness/src/index.js';
+} from '../packages/recipe-runner/src/index.js';
 
 // Uses the installed native reviewer and its existing account. Provider PR facts come
 // from a read-only fixture; run creation, ownership and worker execution are real.

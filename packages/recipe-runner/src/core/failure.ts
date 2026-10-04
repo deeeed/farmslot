@@ -1,6 +1,6 @@
 import type { RecipeFailureCause } from '@farmslot/protocol';
 
-const RECIPE_EXECUTION_ERROR_BRAND = Symbol.for('@farmslot/recipe-harness/RecipeExecutionError');
+const RECIPE_EXECUTION_ERROR_BRAND = Symbol.for('@farmslot/recipe-runner/RecipeExecutionError');
 const FAILURE_CAUSES = new Set<RecipeFailureCause>([
   'subject',
   'harness',

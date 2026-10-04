@@ -34,7 +34,7 @@ yarn e2e:scripted-runner
 yarn e2e:recipe-protocol --json
 ```
 
-`e2e:recipe-protocol` executes a real `@farmslot/recipe-harness` run against the
+`e2e:recipe-protocol` executes a real `@farmslot/recipe-runner` run against the
 repo-local self-validation suite, writes a fresh v1 artifact package under
 `temp/recipe-protocol-self-validation/`, and validates the emitted
 `summary.json`, `trace.json`, `recipe.json`, and `artifact-manifest.json` with

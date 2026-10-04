@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { buildRecipeReviewBoard } from '@farmslot/recipe-harness/visual-review';
+import { buildRecipeReviewBoard } from '@farmslot/recipe-runner/visual-review';
 
 export const COMPANION_SURFACE_LOCATIONS = {
   'capture-review': '/(tabs)/runs',

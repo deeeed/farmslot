@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CdpWebPage, listCdpTargets } from '../packages/recipe-harness/src/runtime/cdp.js';
+import { CdpWebPage, listCdpTargets } from '../packages/recipe-runner/src/runtime/cdp.js';
 import { GatewayClient } from '../packages/cli/src/gateway-client.js';
 import { loadCheckoutEnv } from '../packages/cli/src/onboarding/env-file.js';
 import type {

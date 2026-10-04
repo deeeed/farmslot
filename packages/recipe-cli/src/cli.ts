@@ -1,7 +1,7 @@
 import { type Command, CommanderError } from 'commander';
 
-import { createStandardCoreAdapters } from '@farmslot/recipe-harness';
-import { createRecipeHarnessProgram } from '@farmslot/recipe-harness/cli';
+import { createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import { createRecipeRunnerProgram } from '@farmslot/recipe-runner/cli';
 
 import { printFailure, registerDiscoveryCommands } from './commands.js';
 import { RECIPE_CLI_PACKAGE_VERSIONS, RECIPE_CLI_VERSION } from './version.js';
@@ -13,7 +13,7 @@ export interface RecipeCliOptions {
 /** The `farmslot-recipe` program: the runner's run/validate plus the discovery commands. */
 export function createRecipeCliProgram(options: RecipeCliOptions = {}): Command {
   const commandName = options.commandName ?? 'farmslot-recipe';
-  const program = createRecipeHarnessProgram({
+  const program = createRecipeRunnerProgram({
     commandName,
     description: 'Farmslot recipe CLI: run, validate and discover recipes and actions',
     version: RECIPE_CLI_VERSION,

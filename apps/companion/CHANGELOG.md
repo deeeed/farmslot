@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The screenshot catalog script imports `@farmslot/recipe-runner/visual-review` (renamed from `@farmslot/recipe-harness`).
 
 ## 0.8.0 - 2026-09-27
 

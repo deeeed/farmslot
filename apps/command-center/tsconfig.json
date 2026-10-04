@@ -5,7 +5,7 @@
       "path": "../../packages/protocol"
     },
     {
-      "path": "../../packages/recipe-harness"
+      "path": "../../packages/recipe-runner"
     }
   ]
 }

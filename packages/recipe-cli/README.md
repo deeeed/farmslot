@@ -43,7 +43,7 @@ Docs: https://farmslot.io/docs/reference/recipe-discovery
 ## Maintenance rules
 
 - Discovery is generic. Product names, platforms and actions come from libraries, never from this package.
-- Library loading, recipe identity and precedence belong to `@farmslot/recipe-harness`; this package reads them and must not re-implement them.
+- Library loading, recipe identity and precedence belong to `@farmslot/recipe-runner`; this package reads them and must not re-implement them.
 - `--json` envelopes are a contract: add fields freely, but bump `DISCOVERY_SCHEMA_VERSION` before removing or renaming one.
 - Discovery never runs actions or loads adapter code.
 - `src/harness/` never hardcodes a product: names and env variables come from the host identity (`configureHarnessHost`), so a preset such as `mm-harness` keeps its own spelling. Runtime paths are shared by every host (`temp/recipe/runtime`, `temp/recipe/harness`; `RECIPE_RUNTIME_DIR` and `RECIPE_HARNESS_ROOT` override them).

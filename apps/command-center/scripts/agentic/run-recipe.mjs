@@ -32,15 +32,15 @@ import {
   loadRecipeLibraries,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
-} from '@farmslot/recipe-harness';
-import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
-import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
-import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
+} from '@farmslot/recipe-runner';
+import { createStandardCoreAdapters } from '@farmslot/recipe-runner/adapters/core';
+import { createStandardUiAdapters } from '@farmslot/recipe-runner/adapters/ui';
+import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
   listCdpTargets,
-} from '@farmslot/recipe-harness/runtime/cdp';
+} from '@farmslot/recipe-runner/runtime/cdp';
 
 const execFileAsync = promisify(execFile);
 

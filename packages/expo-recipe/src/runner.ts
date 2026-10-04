@@ -23,12 +23,12 @@ import {
   rootResolutionRef,
   type UiActionTransport,
   type VideoRecorder,
-} from '@farmslot/recipe-harness';
+} from '@farmslot/recipe-runner';
 import {
   parsePositiveInteger,
   resolveRecipeCliPath,
   validateRecipeCliInput,
-} from '@farmslot/recipe-harness/cli/support';
+} from '@farmslot/recipe-runner/cli/support';
 
 import {
   type AgentDeviceUiTransport,

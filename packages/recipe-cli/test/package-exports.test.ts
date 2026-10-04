@@ -17,8 +17,8 @@ test('the package and the harness entries it loads require() from CommonJS', () 
       if (typeof cli.assessRecipe !== 'function') throw new Error('assessRecipe is not exported');
       const harness = require('@farmslot/recipe-cli/harness');
       if (typeof harness.withCommandJournal !== 'function') throw new Error('harness entry is not exported');
-      require('@farmslot/recipe-harness');
-      require('@farmslot/recipe-harness/cli');`,
+      require('@farmslot/recipe-runner');
+      require('@farmslot/recipe-runner/cli');`,
     ],
     { cwd: packageRoot, env, encoding: 'utf8' },
   );

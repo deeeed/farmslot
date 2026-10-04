@@ -53,7 +53,7 @@ yarn quality:slot-view
 - `yarn --cwd apps/command-center test:recipe-operational-gates`
 - `yarn --cwd apps/companion test:lib`
 - `yarn workspace @farmslot/theme quality`
-- `yarn workspace @farmslot/recipe-harness quality`
+- `yarn workspace @farmslot/recipe-runner quality`
 - `node scripts/quality/check-farmslot-package-readiness.mjs --pack`
 - `yarn docs:build`
 
@@ -317,7 +317,7 @@ Final cleanup notes:
 - **Mobile Companion:** treat large released-app route files as stabilization
   debt and split only with dedicated app regression coverage.
 - **Protocol and recipe harness:** recipe validators, `types/runs.ts`,
-  `recipe-harness/src/runner.ts`, and the harness mega-test are acceptable
+  `recipe-runner/src/runner.ts`, and the harness mega-test are acceptable
   until a protocol/harness behavior change gives a focused seam to extract.
 - **Schema, skills, and reference docs:** acceptable unless touched by a planned
   owner-domain change.

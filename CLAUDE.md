@@ -234,7 +234,7 @@ See [docs/README.md](docs/README.md) and [docs/adr/](docs/adr/) for the full des
 
 When working on `apps/command-center/`, read [apps/command-center/CLAUDE.md](apps/command-center/CLAUDE.md) first. Key points:
 
-- **Yarn workspaces monorepo**: `packages/{protocol,recipe-harness,theme,cli} + services/{gateway,node}` + `apps/command-center/ui`
+- **Yarn workspaces monorepo**: `packages/{protocol,recipe-runner,theme,cli} + services/{gateway,node}` + `apps/command-center/ui`
 - **Isolation first**: every feature must work with mock data before integration
 - **Coexistence**: gateway is additive — never break existing bash scripts
 - **OpenClaw reference**: copy patterns from `~/dev/openclaw/`, don't add as dependency

@@ -8,7 +8,7 @@ import {
   OperationRecord,
   processIdentity,
   readOperations,
-} from '@farmslot/recipe-harness/runtime/operation';
+} from '@farmslot/recipe-runner/runtime/operation';
 
 import { harnessHost, hostEnvName } from './host.js';
 import { recipeRuntimeDir } from './paths.js';

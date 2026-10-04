@@ -125,7 +125,7 @@ export {
   probeVideoTiming,
   writeRecordingTimeline,
 } from './recording/timeline.js';
-export { RECIPE_HARNESS_VERSION } from './version.js';
+export { RECIPE_RUNNER_VERSION } from './version.js';
 export type {
   RecipeResolutionDependency,
   RecipeResolutionDocument,
