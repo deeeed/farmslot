@@ -176,9 +176,9 @@ export function summarizeActionCategories<T extends { category: string }>(
 }
 
 /**
- * One row per action across the given adapter catalogs, sorted by name. Category comes from the
- * first catalog that has the action, the description from the first non-empty one, and fields
- * are the sorted union.
+ * One row per action across the given adapter catalogs (one catalog per adapter, in matrix
+ * order), sorted by name. Category comes from the first catalog that has the action, the
+ * description from the first non-empty one, and fields are the sorted union.
  */
 export function actionCapabilityMatrix<Adapter extends string, Action extends CatalogAction>(
   catalogs: readonly AdapterActionCatalog<Adapter, Action>[],

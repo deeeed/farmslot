@@ -7,13 +7,11 @@ export {
   type ActionSupport,
   type AdapterActionCatalog,
   type CatalogAction,
-  catalogTermScore,
   findRelatedActions,
   fuzzyResolveActions,
   missingActionCapabilities,
   resolveActionCapabilityRefusal,
   searchActions,
-  searchTerms,
   shortActionNames,
   summarizeActionCategories,
 } from './action-catalog.js';
