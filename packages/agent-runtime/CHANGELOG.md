@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Docs refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
 
 ## 0.16.0 - 2026-10-02
 

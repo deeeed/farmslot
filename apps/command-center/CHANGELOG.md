@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The recipe scripts import `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`), and `test:recipe-harness` is now `test:recipe-runner`.
 
 ## 0.13.0 - 2026-09-27
 

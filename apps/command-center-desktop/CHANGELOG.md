@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Docs refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
+
 - Allow the isolated embedded HTML report viewer while retaining script and origin separation.
 
 - Use one shared navigation contract for the copy button, native menu, incoming links and saved views, covering run steps, reports, filters and family evidence.

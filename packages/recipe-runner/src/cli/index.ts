@@ -20,7 +20,7 @@ export function createRecipeRunnerProgram(options: RecipeRunnerCliOptions = {}):
   const program = new Command();
   program
     .name(options.commandName ?? 'farmslot-recipe')
-    .description(options.description ?? 'Farmslot v1 recipe harness CLI')
+    .description(options.description ?? 'Farmslot v1 recipe runner CLI')
     .version(options.version ?? RECIPE_RUNNER_VERSION);
 
   const context = options.packageVersions ? { packageVersions: options.packageVersions } : {};
