@@ -464,7 +464,8 @@ export interface AdapterDiagnostics {
     start(projectRoot: string): Promise<void>;
     files(projectRoot: string): AdapterConsoleFiles;
     cdpPort(): string | undefined;
-    // Prove a control line reaches the log the run reads.
+    // Prove the collector belongs to this runtime and listens on the run's CDP
+    // port, and that a control line reaches the log the run reads.
     verifyControl(
       capture: { projectRoot: string; cdpPort: string } & AdapterConsoleFiles,
     ): Promise<{ ok: boolean; detail: string }>;

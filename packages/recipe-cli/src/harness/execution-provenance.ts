@@ -57,7 +57,8 @@ export interface ExecutionProvenanceInput {
   helperPaths?: string[];
   // The runner checkout; the host package root by default.
   runnerRoot?: string;
-  // The runner paths (relative to its root) whose bytes the run depends on.
+  // The runner paths (relative to its root) whose bytes the run depends on;
+  // empty fingerprints the whole root.
   runnerIncludes: readonly string[];
 }
 

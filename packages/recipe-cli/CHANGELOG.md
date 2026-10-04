@@ -13,7 +13,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - run options (`recipeRunOptionsFromCli`), recipe trust input and failures (`explicitRecipeTrustOptions`, `recipeTrustFailure`), behavioral proof checks (`validateRuntimeProof`, `validateRuntimeProofPlan`) and `closest`.
 - **BREAKING:** the host identity requires `recipeEnvPrefix`, the prefix of the variables recipe processes and library actions read (`recipeEnvName('ADAPTER_INPUT')`); `farmslot-recipe` uses `RECIPE`.
 - Add `adapterPortFlags`: the dev-server port options every registered adapter adds.
-- Depend on `esbuild` and `es-module-lexer` (live adapter bundling).
+- Depend on `esbuild` 0.28.1 and `es-module-lexer` 2.3.1, pinned exactly (live adapter bundling): the bundler's patch version changes prepared bytes and so every approved `sourceDigest`.
 
 ## 0.3.0 - 2026-10-04
 

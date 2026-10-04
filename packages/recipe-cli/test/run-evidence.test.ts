@@ -1275,6 +1275,31 @@ describe('live adapter scripts', () => {
     );
   });
 
+  test('bundles with the exact esbuild and es-module-lexer the package pins', async () => {
+    // Prepared bytes, and so every approved sourceDigest, change with the bundler
+    // patch version: the pins are exact and must be what actually resolves.
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { dependencies: Record<string, string> };
+    const pinned = {
+      esbuild: manifest.dependencies.esbuild,
+      lexer: manifest.dependencies['es-module-lexer'],
+    };
+    assert.match(pinned.esbuild ?? '', /^\d+\.\d+\.\d+$/u);
+    assert.match(pinned.lexer ?? '', /^\d+\.\d+\.\d+$/u);
+    const esbuild = await import('esbuild');
+    assert.equal(esbuild.version, pinned.esbuild);
+    let directory = path.dirname(fileURLToPath(import.meta.resolve('es-module-lexer')));
+    let lexer: { name?: string; version?: string } = {};
+    while (lexer.name !== 'es-module-lexer' && directory !== path.dirname(directory)) {
+      const candidate = path.join(directory, 'package.json');
+      if (fs.existsSync(candidate))
+        lexer = JSON.parse(fs.readFileSync(candidate, 'utf8')) as typeof lexer;
+      if (lexer.name !== 'es-module-lexer') directory = path.dirname(directory);
+    }
+    assert.equal(lexer.version, pinned.lexer);
+  });
+
   test('executes the approved bundle even when an imported source changes afterward', async () => {
     const root = tempRoot('prepared-adapter-');
     const outside = tempRoot('adapter-dependency-');
