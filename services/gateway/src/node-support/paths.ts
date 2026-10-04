@@ -86,30 +86,21 @@ function addFarmPath(paths: Set<string>, farmPath: string): void {
   }
 }
 
-function hookCommands(projectJson: RawProjectJson): string[] {
-  const hooks = projectJson.hooks ?? {};
-  const commands: string[] = [];
-  for (const hook of Object.values(hooks)) {
-    if (typeof hook === 'string') {
-      commands.push(hook);
-    } else if (hook && typeof hook === 'object') {
-      for (const command of Object.values(hook)) {
-        if (typeof command === 'string') commands.push(command);
-      }
-    }
+/**
+ * Every string in the project config, not only `hooks`.
+ *
+ * Resource health/boot commands, slot actions, and platform fields call farm
+ * scripts too, and the gateway resolves every remote command that does against
+ * this bundle. A reference missing from the bundle would fall back to whatever
+ * the node was last deployed with, which is the rollout gap the bundle closes.
+ */
+function configStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const item of value) configStrings(item, out);
+  else if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) configStrings(item, out);
   }
-  for (const profile of Object.values(projectJson.prepare?.profiles ?? {})) {
-    for (const command of Object.values(profile.hooks ?? {})) {
-      if (typeof command === 'string') commands.push(command);
-    }
-  }
-  for (const command of Object.values(projectJson.prepare?.core?.hooks ?? {})) {
-    if (typeof command === 'string') commands.push(command);
-  }
-  for (const value of Object.values(projectJson.vars ?? {})) {
-    if (typeof value === 'string') commands.push(value);
-  }
-  return commands;
+  return out;
 }
 
 function inferHookPaths(
@@ -128,7 +119,7 @@ function inferHookPaths(
     }
   };
 
-  for (const command of hookCommands(projectJson)) {
+  for (const command of configStrings(projectJson)) {
     for (const supportDirToken of [
       '{{farmslot_dir}}',
       '{{FARMSLOT_DIR}}',

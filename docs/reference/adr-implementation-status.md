@@ -160,11 +160,12 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Partial**
 
-| ADR requirement                              | Status  | Evidence / gap                                     |
-| -------------------------------------------- | ------- | -------------------------------------------------- |
-| Content-addressed bundle sync on prepare     | Shipped | `services/gateway/src/node-support/`, prepare step |
-| `scripts/check-node-support-bundles.ts` gate | Shipped | CI/check script                                    |
-| All hook-heavy projects declare bundles      | Partial | Optional per ADR; project adoption varies          |
+| ADR requirement                               | Status  | Evidence / gap                                     |
+| --------------------------------------------- | ------- | -------------------------------------------------- |
+| Content-addressed bundle sync on prepare      | Shipped | `services/gateway/src/node-support/`, prepare step |
+| `scripts/check-node-support-bundles.ts` gate  | Shipped | CI/check script                                    |
+| Every remote farm-script call uses the bundle | Shipped | `execOnSlot` → `node-support/remote-command.ts`    |
+| All hook-heavy projects declare bundles       | Partial | Optional per ADR; project adoption varies          |
 
 ---
 

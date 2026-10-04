@@ -19,6 +19,7 @@ import {
   isLocal,
   loadProjectVars,
   type ProjectVars,
+  type RawProjectJson,
   slotFileExists,
   slotReadFile,
   type SlotVars,
@@ -47,6 +48,8 @@ export interface NodeSupportBundleState {
   hash: string | null;
   /** True when this call published the bundle to the node. */
   published: boolean;
+  /** Farm-relative paths the bundle carries (`scripts`, `projects/<name>/...`). */
+  paths: string[];
 }
 
 export type NodeSupportStep = (name: string, detail: string) => void;
@@ -73,7 +76,7 @@ function pathWithin(rootPath: string, candidatePath: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-async function loadProjectVarsIfAny(projectName: string): Promise<ProjectVars | undefined> {
+export async function loadProjectVarsIfAny(projectName: string): Promise<ProjectVars | undefined> {
   try {
     return await loadProjectVars(projectName);
   } catch (error) {
@@ -83,6 +86,62 @@ async function loadProjectVarsIfAny(projectName: string): Promise<ProjectVars | 
     if (!/not found/i.test((error as Error).message)) throw error;
     return undefined;
   }
+}
+
+/** Farm-relative paths a project's bundle carries: its config refs plus the runner installer. */
+export function nodeSupportBundlePaths(projectName: string, projectJson: RawProjectJson): string[] {
+  const { paths: hookSupportPaths } = resolveNodeSupportPaths(
+    projectName,
+    projectJson,
+    farmslotRoot,
+  );
+  const supportPaths = [...hookSupportPaths];
+  for (const requiredPath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
+    if (
+      !supportPaths.some(
+        (supportPath) => supportPath === requiredPath || requiredPath.startsWith(`${supportPath}/`),
+      )
+    ) {
+      supportPaths.push(requiredPath);
+    }
+  }
+  return supportPaths.sort();
+}
+
+/** Read and hash the bundle's files from this gateway's tree. */
+export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
+  const farmslotRootRealPath = await realpath(farmslotRoot);
+  const files: NodeSupportFile[] = (
+    await Promise.all(
+      supportPaths.map(async (supportPath) => {
+        const sourcePath = path.join(farmslotRoot, supportPath);
+        const sourceRealPath = await realpath(sourcePath);
+        if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
+          throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
+        }
+        return collectSupportFiles(sourcePath, supportPath);
+      }),
+    )
+  ).flat();
+  const manifest = {
+    version: 1,
+    project: projectName,
+    hash: supportHash(files),
+    paths: supportPaths,
+    fileCount: files.length,
+    files: files.map((file) => ({
+      path: file.relativePath,
+      sha256: file.sha256,
+      mode: file.mode.toString(8).padStart(3, '0'),
+      size: file.size,
+    })),
+  };
+  return { files, manifest };
+}
+
+/** Where a bundle lives on a node. */
+export function nodeSupportDir(hash: string): string {
+  return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
 }
 
 /**
@@ -103,6 +162,8 @@ export async function ensureNodeSupportBundle(
      * exist; a matching manifest over missing files is reported, never used.
      */
     verify?: 'full' | 'presence';
+    /** The bundle already read for this project; reused when its paths still match. */
+    collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   const step = options.step ?? (() => {});
@@ -110,54 +171,17 @@ export async function ensureNodeSupportBundle(
   const verifyMode = options.verify ?? 'presence';
   const projectVars = options.projectVars ?? (await loadProjectVarsIfAny(vars.projectName));
   if (!projectVars) return null;
-  const { paths: hookSupportPaths } = resolveNodeSupportPaths(
-    vars.projectName,
-    projectVars.projectJson,
-    farmslotRoot,
-  );
-  const supportPaths = [...hookSupportPaths];
-  for (const requiredPath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
-    if (
-      !supportPaths.some(
-        (supportPath) => supportPath === requiredPath || requiredPath.startsWith(`${supportPath}/`),
-      )
-    ) {
-      supportPaths.push(requiredPath);
-    }
-  }
-  supportPaths.sort();
+  const supportPaths = nodeSupportBundlePaths(vars.projectName, projectVars.projectJson);
   if (isLocal(vars.host, vars.machine)) {
     step('support', 'Using local node support source');
-    return { supportDir: farmslotRoot, hash: null, published: false };
+    return { supportDir: farmslotRoot, hash: null, published: false, paths: supportPaths };
   }
 
-  const farmslotRootRealPath = await realpath(farmslotRoot);
-  const files: NodeSupportFile[] = (
-    await Promise.all(
-      supportPaths.map(async (supportPath) => {
-        const sourcePath = path.join(farmslotRoot, supportPath);
-        const sourceRealPath = await realpath(sourcePath);
-        if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
-          throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
-        }
-        return collectSupportFiles(sourcePath, supportPath);
-      }),
-    )
-  ).flat();
-  const manifest = {
-    version: 1,
-    project: vars.projectName,
-    hash: supportHash(files),
-    paths: supportPaths,
-    fileCount: files.length,
-    files: files.map((file) => ({
-      path: file.relativePath,
-      sha256: file.sha256,
-      mode: file.mode.toString(8).padStart(3, '0'),
-      size: file.size,
-    })),
-  };
-  const supportDir = path.posix.join(REMOTE_SUPPORT_ROOT, manifest.hash);
+  const { files, manifest } =
+    options.collected && options.collected.manifest.paths.join('\0') === supportPaths.join('\0')
+      ? options.collected
+      : await collectNodeSupportBundle(vars.projectName, supportPaths);
+  const supportDir = nodeSupportDir(manifest.hash);
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
@@ -205,7 +229,7 @@ export async function ensureNodeSupportBundle(
       }
       await persistSelection('current');
       step('support', `Node support bundle current (${files.length} files)`);
-      return { supportDir, hash: manifest.hash, published: false };
+      return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
     }
   }
 
@@ -273,5 +297,5 @@ export async function ensureNodeSupportBundle(
   }
   await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
-  return { supportDir, hash: manifest.hash, published: true };
+  return { supportDir, hash: manifest.hash, published: true, paths: supportPaths };
 }
