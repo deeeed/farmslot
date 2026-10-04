@@ -64,6 +64,15 @@ const packages = [
       "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export');",
   },
   {
+    name: '@farmslot/adapter-sdk',
+    dir: 'packages/adapter-sdk',
+    publicDoc: 'https://farmslot.io/docs/reference/adapter-sdk',
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/registry.ts', 'src/types.ts'],
+    packRequiredFiles: ['README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts'],
+    importCheck:
+      "const m = await import('./packages/adapter-sdk/dist/index.js'); if (typeof m.createAdapterRegistry !== 'function') throw new Error('missing createAdapterRegistry export');",
+  },
+  {
     name: '@farmslot/agent-runtime',
     dir: 'packages/agent-runtime',
     publicDoc: 'https://farmslot.io/docs/reference/agent-runtime',

@@ -132,6 +132,7 @@ export function renderPipelineProgressPanel(
   openScope: SubtaskOpenScope,
   activeTaskBasename?: string | null,
   runId?: string | null,
+  runActive = false,
 ) {
   const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
   return html`
@@ -143,7 +144,7 @@ export function renderPipelineProgressPanel(
         </span>
         <button class="monitor-close" aria-label="Close worker progress" @click=${close}>x</button>
       </div>
-      ${renderOperationPanel(progress, runId)}
+      ${renderOperationPanel(progress, runId, { runActive })}
       ${progress.phases.map((phase) => {
         const allDone = phase.completedSteps === phase.totalSteps;
         const hasRunning = phase.steps.some((step) => step.status === 'running');

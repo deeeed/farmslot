@@ -27,6 +27,15 @@ import {
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import { isRunWorking, locateStepArtifact } from './run-detail-model.js';
+import {
+  ARTIFACT_PARAM,
+  ARTIFACT_RUN_PARAM,
+  ARTIFACT_VIEW_PARAM,
+  artifactSelectionFromRunDetailHash,
+  selectedStepNameFromRunDetailHash,
+  STEP_ARTIFACT_VIEW,
+} from './run-detail-url-state.js';
 import { formatDuration, stepStatusColor } from './run-utils.js';
 import { renderStepInspectorCiWatchBanner } from './step-inspector-ci-watch-renderer.js';
 import {
@@ -277,6 +286,19 @@ export class StepInspector extends StepInspectorState {
           : nothing}
       </div>
 
+      ${this._artifactUnavailable
+        ? html`<div
+            class="artifact-unavailable"
+            role="alert"
+            data-testid="step-artifact-unavailable"
+          >
+            <span
+              >Cannot open <code>${this._artifactUnavailable.path}</code>:
+              ${this._artifactUnavailable.reason}</span
+            >
+            <button type="button" @click=${() => this._closeLightbox()}>Dismiss</button>
+          </div>`
+        : nothing}
       <media-lightbox
         .items=${this._lightboxItems}
         .open=${this._lightboxOpen}
@@ -342,7 +364,9 @@ export class StepInspector extends StepInspectorState {
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>
-        ${renderOperationPanel(tp, this.run?.id)}
+        ${renderOperationPanel(tp, this.run?.id, {
+          runActive: this.run ? isRunWorking(this.run) : false,
+        })}
         ${tp.phases.map(
           (phase) => html`
             <div class="task-phase">
@@ -460,6 +484,7 @@ export class StepInspector extends StepInspectorState {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener('hashchange', this._onHashChange);
     if (this._tickTimer != null) {
       window.clearInterval(this._tickTimer);
       this._tickTimer = null;
@@ -676,11 +701,13 @@ export class StepInspector extends StepInspectorState {
     const base = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
     const params = new URLSearchParams(qIdx >= 0 ? raw.slice(qIdx + 1) : '');
     if (item) {
-      if (this.run?.id) params.set('artifactRun', this.run.id);
-      params.set('artifact', item.path);
+      if (this.run?.id) params.set(ARTIFACT_RUN_PARAM, this.run.id);
+      params.set(ARTIFACT_PARAM, item.path);
+      params.set(ARTIFACT_VIEW_PARAM, STEP_ARTIFACT_VIEW);
     } else {
-      params.delete('artifactRun');
-      params.delete('artifact');
+      params.delete(ARTIFACT_RUN_PARAM);
+      params.delete(ARTIFACT_PARAM);
+      params.delete(ARTIFACT_VIEW_PARAM);
     }
     const qs = params.toString();
     const next = `#${base}${qs ? `?${qs}` : ''}`;
@@ -689,7 +716,51 @@ export class StepInspector extends StepInspectorState {
 
   private _closeLightbox(): void {
     this._lightboxOpen = false;
+    this._artifactUnavailable = null;
     this._updateArtifactHash(null);
+  }
+
+  /**
+   * Make the step viewer match the URL: open the step file it names, or close.
+   * The URL is the source of truth, so back/forward and reloads land where the
+   * history entry was, and a run-detail artifact never sits under a step file.
+   */
+  private _restoreArtifactFromHash(): void {
+    if (!this.step) return;
+    const selection = artifactSelectionFromRunDetailHash();
+    const lookup = locateStepArtifact(selection, this._stepArtifacts(), {
+      runId: this.run?.id,
+      stepName: this.step.name,
+      urlStepName: selectedStepNameFromRunDetailHash(),
+    });
+    if (!lookup || 'unavailable' in lookup) {
+      this._lightboxOpen = false;
+      this._artifactUnavailable = lookup ? lookup.unavailable : null;
+      return;
+    }
+    if (this._lightboxOpen && this._lightboxItems[this._lightboxIndex]?.path === selection.artifact)
+      return;
+    const artifacts = this._stepArtifacts();
+    this._artifactUnavailable = null;
+    this._lightboxItems = artifacts.map((a) => ({
+      url: this._artifactUrl(a),
+      path: a.path,
+      purpose: a.purpose,
+    }));
+    this._lightboxIndex = lookup.index;
+    this._lightboxOpen = true;
+  }
+
+  private _onHashChange = () => this._restoreArtifactFromHash();
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('hashchange', this._onHashChange);
+  }
+
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    // Run data can arrive trimmed first; retry as it fills in.
+    if (changed.has('step') || changed.has('run')) this._restoreArtifactFromHash();
   }
 
   private _navigateLightbox(index: number): void {

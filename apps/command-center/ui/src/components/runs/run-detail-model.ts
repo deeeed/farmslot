@@ -10,6 +10,7 @@ import type {
   Run,
   RunDecision,
   RunStep,
+  TaskOperation,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
@@ -20,6 +21,8 @@ import {
 } from '@farmslot/protocol';
 
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
+
+import { collectRunEvidenceArtifacts } from './run-utils.js';
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -125,6 +128,22 @@ export function runFamilyPrStatus(
 }
 
 const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch', 'human-gate']);
+
+/**
+ * Whether the run's worker is still working, for wording that says so.
+ *
+ * Stricter than `isTaskProgressRunActive`, which also counts a differing
+ * active task file so progress keeps refreshing: a run cancelled or blocked
+ * during a self-review fix keeps that file, and must not read as in progress.
+ */
+export function isRunWorking(
+  run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
+    steps?: readonly Pick<RunStep, 'name' | 'status'>[];
+  },
+): boolean {
+  if (isTerminalRunStatus(run.status) || run.status === 'blocked') return false;
+  return isTaskProgressRunActive(run, { includeCompleting: true });
+}
 
 export function isTaskProgressRunActive(
   run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
@@ -689,4 +708,87 @@ export function runBootstrapBlocksActions(
   return (
     bootstrapFailed && (verified?.runId !== runId || verified.connectionEpoch !== connectionEpoch)
   );
+}
+
+/** Run evidence plus each worker command's task-local log, the files a run-detail link may open. */
+export function runArtifactsWithOperationLogs(
+  run: Run,
+  operations: readonly TaskOperation[],
+): FamilyObservabilityArtifact[] {
+  const artifacts = collectRunEvidenceArtifacts(run);
+  for (const operation of operations) {
+    if (!artifacts.some((entry) => entry.path === operation.logPath)) {
+      artifacts.push({
+        runId: run.id,
+        familyId: run.familyId,
+        path: operation.logPath,
+        purpose: 'other',
+        source: 'task-artifact',
+      });
+    }
+  }
+  return artifacts;
+}
+
+export type EvidenceArtifactLookup =
+  | { index: number }
+  | { unavailable: { path: string; reason: string } };
+
+/**
+ * Where an artifact link points among the run's files. A link that cannot be
+ * opened gets a reason the page shows; it never resolves to nothing.
+ */
+export function locateEvidenceArtifact(
+  artifacts: readonly FamilyObservabilityArtifact[],
+  path: string,
+  progress: {
+    /** A worker-progress snapshot with its operations is loaded. */
+    loaded: boolean;
+    /** The run is active, so run detail keeps fetching worker progress. */
+    runActive: boolean;
+  },
+): EvidenceArtifactLookup {
+  const index = artifacts.findIndex((candidate) => candidate.path === path);
+  if (index >= 0) return { index };
+  const operationLog = path.startsWith('artifacts/operations/');
+  return {
+    unavailable: {
+      path,
+      reason:
+        operationLog && !progress.loaded && progress.runActive
+          ? 'worker progress has not loaded yet; the log opens when it arrives.'
+          : operationLog && !progress.loaded
+            ? 'this run has finished and its worker progress is not loaded here; select the monitor step to list its command logs.'
+            : "it is not among this run's evidence files or worker command logs.",
+    },
+  };
+}
+
+/**
+ * The step file a step-owned artifact link (`artifactView=step`) points at, so
+ * the step inspector can reopen it after a reload or from a shared URL. Null
+ * when the link is not the inspector's to answer.
+ */
+export function locateStepArtifact(
+  selection: { artifactRun: string | null; artifact: string | null; artifactView: string | null },
+  stepArtifacts: readonly FamilyObservabilityArtifact[],
+  context: {
+    runId: string | undefined;
+    stepName: string;
+    /** The step the URL names; a file opened from another step is not this one's. */
+    urlStepName?: string | null;
+  },
+): EvidenceArtifactLookup | null {
+  if (selection.artifactView !== 'step' || !selection.artifact) return null;
+  if (context.urlStepName && context.urlStepName !== context.stepName) return null;
+  if (selection.artifactRun && context.runId && selection.artifactRun !== context.runId)
+    return null;
+  const index = stepArtifacts.findIndex((candidate) => candidate.path === selection.artifact);
+  if (index >= 0) return { index };
+  return {
+    unavailable: {
+      path: selection.artifact,
+      reason: `it is not among the ${context.stepName} step's files.`,
+    },
+  };
 }

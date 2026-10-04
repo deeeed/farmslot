@@ -25,11 +25,15 @@ import {
   isActiveInteractiveDevRun,
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
+  isRunWorking,
   isTaskProgressRunActive,
+  locateEvidenceArtifact,
+  locateStepArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   reviewTerminalUnavailableReason,
+  runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
@@ -821,4 +825,98 @@ test('direct run snapshot recovers actions after list failure only for its run a
   assert.equal(runBootstrapBlocksActions(true, 'selected', verified, 3), true);
   assert.equal(runBootstrapBlocksActions(true, 'selected', null, 2), true);
   assert.equal(runBootstrapBlocksActions(false, 'selected', null, 2), false);
+});
+
+// The "View operation log" link from the runs panel, exactly as Arthur clicked it.
+const OPERATION_LOG_HASH =
+  '#run/ba646bae-62a2-490b-86bb-0d5c3edcb9de?artifactRun=ba646bae-62a2-490b-86bb-0d5c3edcb9de&artifact=artifacts%2Foperations%2Fbac623d2-897a-46a4-a6c0-dd477efe0bc7.log';
+
+test('an operation log link resolves to the worker command log of an active run', async () => {
+  const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
+  const selection = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);
+  assert.equal(selection.artifactRun, 'ba646bae-62a2-490b-86bb-0d5c3edcb9de');
+  const run = makeRun({ id: 'ba646bae-62a2-490b-86bb-0d5c3edcb9de', status: 'monitoring' });
+  const operations = [
+    {
+      schemaVersion: 1 as const,
+      id: 'bac623d2-897a-46a4-a6c0-dd477efe0bc7',
+      command: 'run',
+      target: '/repo',
+      pid: 1,
+      processStartedAt: 'x',
+      startedAt: '2026-10-04T07:00:00Z',
+      updatedAt: '2026-10-04T07:00:05Z',
+      status: 'running' as const,
+      logPath: 'artifacts/operations/bac623d2-897a-46a4-a6c0-dd477efe0bc7.log',
+    },
+  ];
+  const artifacts = runArtifactsWithOperationLogs(run, operations);
+  const lookup = locateEvidenceArtifact(artifacts, selection.artifact!, {
+    loaded: true,
+    runActive: true,
+  });
+  assert.ok('index' in lookup);
+  assert.equal(artifacts[lookup.index]!.path, operations[0]!.logPath);
+  assert.equal(artifacts[lookup.index]!.source, 'task-artifact');
+});
+
+test('an artifact link that cannot open says why instead of doing nothing', async () => {
+  const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
+  const { artifact } = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);
+  const run = makeRun({ status: 'monitoring' });
+  const none = runArtifactsWithOperationLogs(run, []);
+  const loading = locateEvidenceArtifact(none, artifact!, { loaded: false, runActive: true });
+  assert.ok('unavailable' in loading);
+  assert.match(loading.unavailable.reason, /has not loaded yet; the log opens when it arrives/);
+  // A finished run never fetches live progress: no promise that it will arrive.
+  const finished = locateEvidenceArtifact(none, artifact!, { loaded: false, runActive: false });
+  assert.ok('unavailable' in finished);
+  assert.match(finished.unavailable.reason, /has finished[\s\S]*select the monitor step/);
+  assert.doesNotMatch(finished.unavailable.reason, /opens when it arrives/);
+  const unknown = locateEvidenceArtifact(none, artifact!, { loaded: true, runActive: true });
+  assert.ok('unavailable' in unknown);
+  assert.equal(unknown.unavailable.path, artifact);
+  assert.match(unknown.unavailable.reason, /not among this run's evidence files/);
+});
+
+test('a run cancelled or blocked during a self-review fix is not working', () => {
+  // The fix keeps a differing active task file, which keeps progress refreshing,
+  // but the run is no longer in progress.
+  const fixing = { taskFile: '/t/TASK.md', activeTaskFile: '/t/fix/TASK.md' };
+  assert.equal(isTaskProgressRunActive(makeRun({ status: 'cancelled', ...fixing })), true);
+  assert.equal(isRunWorking(makeRun({ status: 'cancelled', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'blocked', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'failed', ...fixing })), false);
+  assert.equal(isRunWorking(makeRun({ status: 'monitoring' })), true);
+  assert.equal(isRunWorking(makeRun({ status: 'self-reviewing', ...fixing })), true);
+});
+
+test('a step-owned artifact link reopens in the step inspector, or says why it cannot', () => {
+  const stepFiles: FamilyObservabilityArtifact[] = [
+    { runId: 'run-1', familyId: 'f', path: 'TASK.md', purpose: 'other', source: 'task-artifact' },
+  ];
+  const owned = { artifactRun: 'run-1', artifact: 'TASK.md', artifactView: 'step' };
+  const ctx = { runId: 'run-1', stepName: 'write-task' };
+  assert.deepEqual(locateStepArtifact(owned, stepFiles, ctx), { index: 0 });
+  const gone = locateStepArtifact({ ...owned, artifact: 'gone.md' }, stepFiles, ctx);
+  assert.ok(gone && 'unavailable' in gone);
+  assert.match(gone.unavailable.reason, /not among the write-task step's files/);
+  assert.equal(
+    locateStepArtifact({ ...owned, artifactView: null }, stepFiles, ctx),
+    null,
+    "run detail's links are not the inspector's to answer",
+  );
+  assert.equal(locateStepArtifact({ ...owned, artifactRun: 'run-2' }, stepFiles, ctx), null);
+  assert.equal(
+    locateStepArtifact(owned, stepFiles, {
+      ...ctx,
+      stepName: 'monitor',
+      urlStepName: 'write-task',
+    }),
+    null,
+    "another step's file closes the viewer quietly, no false notice",
+  );
+  assert.deepEqual(locateStepArtifact(owned, stepFiles, { ...ctx, urlStepName: 'write-task' }), {
+    index: 0,
+  });
 });

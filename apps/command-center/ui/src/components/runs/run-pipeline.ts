@@ -26,6 +26,7 @@ import {
   subscribeFileTransferStore,
 } from '../shared/file-transfer-progress-store.js';
 
+import { isRunWorking } from './run-detail-model.js';
 import {
   activeTaskProgressStepId,
   ciWatchOutputsForRun,
@@ -319,6 +320,7 @@ export class RunPipeline extends LitElement {
       this.subtaskOpen.scope(this.run?.id),
       this.run.activeTaskFile?.split('/').pop(),
       this.run.id,
+      isRunWorking(this.run),
     );
   }
 
