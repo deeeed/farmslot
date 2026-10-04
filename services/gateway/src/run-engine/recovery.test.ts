@@ -1685,6 +1685,7 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
     taskFile: '/tmp/recovery-releasing-fence/TASK.md',
   });
   const reset: string[] = [];
+  const stamped: string[] = [];
   const deps = {
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
@@ -1694,12 +1695,13 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
     readSlotField: async () => null,
     resetSlot: async (slotId: string) => reset.push(slotId),
     resetSlotIf: async (slotId: string) => reset.push(slotId),
-    updateSlotStatusIf: async () => true,
+    updateSlotStatusIf: async (slotId: string) => stamped.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 
   await reconcileOrphanedSlots(deps);
 
   assert.deepEqual(reset, []);
+  assert.deepEqual(stamped, ['macwork-ff-2'], 'left alone means stamped, not reset');
 });
 
 test('orphan reconcile reclaims a releasing fence through the conditional reset', async () => {
