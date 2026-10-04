@@ -199,7 +199,10 @@ test('run create sends the operator scope from --scope or --scope-file', () => {
   }
   assert.throws(() => buildRunCreateParams({ ...base, scope: '   ' }), /is empty/);
   // `--scope-file "$UNSET"` must fail, not quietly create an unscoped run.
-  assert.throws(() => buildRunCreateParams({ ...base, scopeFile: '' }));
+  assert.throws(
+    () => buildRunCreateParams({ ...base, scopeFile: '' }),
+    /--scope-file needs a path/,
+  );
   // An existing TASK.md skips write-task, so the scope would never reach it.
   assert.throws(
     () =>

@@ -283,6 +283,7 @@ export function readOperatorScope(
 ): string | undefined {
   if (opts.scope !== undefined && opts.scopeFile !== undefined)
     throw new Error('Use either --scope or --scope-file, not both.');
+  if (opts.scopeFile === '') throw new Error('--scope-file needs a path.');
   const raw =
     opts.scopeFile !== undefined ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : opts.scope;
   const scope = raw?.trim();

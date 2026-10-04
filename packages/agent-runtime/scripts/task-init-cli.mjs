@@ -133,6 +133,7 @@ async function main() {
   // Rendered inside taskInit with the same vars as the checklist, so an addendum
   // that works on the farm works here.
   const addendum = opts.addendumFile ? readFileSync(path.resolve(opts.addendumFile), 'utf8') : null;
+  if (opts.scopeFile === '') throw new Error('--scope-file needs a path.');
   const rawScope =
     opts.scopeFile !== null ? readFileSync(path.resolve(opts.scopeFile), 'utf8') : opts.scope;
   const operatorScope = rawScope?.trim() ?? '';
