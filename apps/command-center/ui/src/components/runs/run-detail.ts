@@ -73,10 +73,13 @@ import {
   currentRunCiStatus,
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
+  isRunWorking,
   isTaskProgressRunActive,
+  locateEvidenceArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
@@ -131,13 +134,10 @@ import {
   runDetailStepHash,
   runInventoryHashFromDetail,
   selectedStepNameFromRunDetailHash,
+  STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
-import {
-  collectRunEvidenceArtifacts,
-  collectRunInteractivePacketArtifacts,
-  sortRunsForFamilyView,
-} from './run-utils.js';
+import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -189,7 +189,7 @@ export class RunDetail extends RunDetailState {
     }
     // The direct run.get snapshot may arrive after hashchange and after the
     // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
-    if (changed.has('run') || changed.has('taskProgress'))
+    if (changed.has('run') || changed.has('taskProgress') || changed.has('selectedStepProgress'))
       this._applyEvidenceArtifactFromHash(true);
   }
 
@@ -861,8 +861,10 @@ export class RunDetail extends RunDetailState {
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
-    const { artifactRun, artifact } = artifactSelectionFromRunDetailHash();
-    if (!artifact) {
+    const { artifactRun, artifact, artifactView } = artifactSelectionFromRunDetailHash();
+    if (!artifact || (artifactView === STEP_ARTIFACT_VIEW && this.selectedStep)) {
+      // No artifact, or one the step inspector (showing) answers for.
+      this._evidenceArtifactUnavailable = null;
       if (this._evidenceLightboxOpen) {
         this._evidenceLightboxOpen = false;
         this._evidenceLightboxItems = [];
@@ -877,20 +879,27 @@ export class RunDetail extends RunDetailState {
       this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact
     )
       return;
-    const artifacts = collectRunEvidenceArtifacts(this.run);
-    for (const operation of this.taskProgress?.operations ?? []) {
-      if (!artifacts.some((entry) => entry.path === operation.logPath)) {
-        artifacts.push({
-          runId: this.runId,
-          familyId: this.run.familyId,
-          path: operation.logPath,
-          purpose: 'other',
-          source: 'task-artifact',
-        });
-      }
+    // Operation logs come from the live progress or, for a finished run, the
+    // selected step's progress (the panel that rendered the link).
+    const operations = [
+      ...(this.taskProgress?.operations ?? []),
+      ...(this.selectedStepProgress?.operations ?? []),
+    ];
+    const artifacts = runArtifactsWithOperationLogs(this.run, operations);
+    // Re-applied when the run or worker progress updates, so a link that
+    // arrives before progress loads still opens; until then, say so.
+    const lookup = locateEvidenceArtifact(artifacts, artifact, {
+      loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
+      runActive: isRunWorking(this.run),
+    });
+    if ('unavailable' in lookup) {
+      // Never leave a previous artifact showing under the notice.
+      this._evidenceLightboxOpen = false;
+      this._evidenceArtifactUnavailable = lookup.unavailable;
+      return;
     }
-    const index = artifacts.findIndex((candidate) => candidate.path === artifact);
-    if (index < 0) return;
+    const { index } = lookup;
+    this._evidenceArtifactUnavailable = null;
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
     const params = new URLSearchParams(location.hash.split('?')[1]);
     const traceIndex = params.get('artifactTrace');
@@ -1041,6 +1050,7 @@ export class RunDetail extends RunDetailState {
 
   private _closeEvidenceLightbox(): void {
     this._evidenceLightboxOpen = false;
+    this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
   }
 
@@ -1113,6 +1123,7 @@ export class RunDetail extends RunDetailState {
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,
       evidenceLightboxIndex: this._evidenceLightboxIndex,
+      evidenceArtifactUnavailable: this._evidenceArtifactUnavailable,
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),

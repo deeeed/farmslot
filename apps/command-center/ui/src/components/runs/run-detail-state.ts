@@ -93,6 +93,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];
   @state() _evidenceLightboxIndex = 0;
+  /** An artifact link that could not be opened, and why. Never a silent no-op. */
+  @state() _evidenceArtifactUnavailable: { path: string; reason: string } | null = null;
   @state() _recipeRuns: RecipeRunArtifactGroup[] = [];
   @state() _selectedRecipeRunId = '';
   _confirmTimer?: ReturnType<typeof setTimeout>;

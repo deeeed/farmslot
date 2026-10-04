@@ -19,6 +19,8 @@ export abstract class StepInspectorState extends LitElement {
   @state() protected _lightboxOpen = false;
   @state() protected _lightboxItems: LightboxItem[] = [];
   @state() protected _lightboxIndex = 0;
+  /** A step-owned artifact link that could not be opened, and why. */
+  @state() protected _artifactUnavailable: { path: string; reason: string } | null = null;
   protected _prevLastOutput = '';
   protected _prevStepName = '';
 }
