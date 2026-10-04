@@ -76,7 +76,7 @@ export function undetectedAdapterMessage(target: string): string {
   return `could not detect the ${harnessHost().product} repo type for ${target}`;
 }
 
-function assertAdaptersRegistered(): void {
+export function assertAdaptersRegistered(): void {
   if (registry.list().length === 0) {
     throw new Error(
       'internal: no adapters are registered yet; the host registers its adapters before resolving one',
@@ -93,6 +93,11 @@ export function assertAdapter(adapter: unknown): asserts adapter is string {
       ids.length > 1 ? `${ids.slice(0, -1).join(', ')}, or ${ids.at(-1)}` : ids.join('');
     throw new Error(`Adapter must be ${choices}.`);
   }
+}
+
+/** Extra dev-server port environment names every registered adapter reads. */
+export function adapterPortEnv(): string[] {
+  return [...new Set(registered().flatMap((adapter) => [...(adapter.devServer.portEnv ?? [])]))];
 }
 
 /** Boolean flags every registered adapter adds, for `launch` or for the other commands. */

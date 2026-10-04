@@ -7,6 +7,7 @@ import {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
+  adapterPortEnv,
   assertAdapter,
   detectAdapter,
   harnessAdapter,
@@ -213,7 +214,7 @@ export function applyWatcherPortOption(options: CliOptions): void {
   if (!watcherPort) return;
   process.env.WATCHER_PORT = watcherPort;
   process.env.RECIPE_WATCHER_PORT = watcherPort;
-  process.env.METRO_PORT = watcherPort;
+  for (const name of adapterPortEnv()) process.env[name] = watcherPort;
 }
 
 export function requiredOption(options: CliOptions, key: string, message: string): string {

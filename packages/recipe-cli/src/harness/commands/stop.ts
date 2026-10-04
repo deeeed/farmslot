@@ -1,7 +1,7 @@
 // stop — stop the dev server this checkout owns, through the platform's
 // `devServer`, plus any companion processes the host started for it.
 
-import { harnessAdapter } from '../adapters.js';
+import { adapterPortEnv, harnessAdapter } from '../adapters.js';
 import { color } from '../cli-color.js';
 import { harnessHost } from '../host.js';
 import { optionFlag, optionString, parseArgs, resolveAdapter, shellQuote } from '../parse-args.js';
@@ -31,7 +31,7 @@ export async function handleStop(
   const explicitPort = optionString(options, 'port') ?? optionString(options, 'watcherPort');
   if (explicitPort) {
     process.env.WATCHER_PORT = explicitPort;
-    process.env.METRO_PORT = explicitPort;
+    for (const name of adapterPortEnv()) process.env[name] = explicitPort;
   }
   const stop = surface.devServer.stop(target);
   if (stop.kind === 'headless') {

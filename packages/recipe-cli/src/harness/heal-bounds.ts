@@ -16,7 +16,7 @@ import type {
   HealState,
 } from '@farmslot/adapter-sdk';
 
-import { harnessAdapter, harnessAdapters } from './adapters.js';
+import { assertAdaptersRegistered, harnessAdapter, harnessAdapters } from './adapters.js';
 import { harnessHost, hostEnvName } from './host.js';
 import { handleHarness } from './overlay.js';
 import { recipeHarnessPath, recipeRuntimePath } from './paths.js';
@@ -134,6 +134,8 @@ export function classifyFailure(output: string): FailureClass {
 }
 
 function adapterPatterns(): AdapterFailurePatterns[] {
+  // With no adapters every failure would read as app logic and never heal.
+  assertAdaptersRegistered();
   const registry = harnessAdapters();
   return registry.list().flatMap((id) => {
     const patterns = registry.get(id).failurePatterns;

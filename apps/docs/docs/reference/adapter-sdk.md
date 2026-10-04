@@ -29,7 +29,7 @@ registry.register(web);
 | `id`, `sdkVersion`, `headless`                                | registry key and `--adapter` value; SDK version; whether the platform runs an app or dev server |
 | `resolveSlotPorts(target)`                                    | slot ports and device into the environment                                                      |
 | `runtimeStatus(target)`                                       | read-only readiness for `doctor`                                                                |
-| `devServer`                                                   | label, description and `stop` for the platform's dev server                                     |
+| `devServer`                                                   | label, description, `stop` and extra port env names (`portEnv?`) for the platform's dev server  |
 | `logSources(target)`, `appLogSource(target)`                  | the log files `logs` tails                                                                      |
 | `hints`                                                       | platform-phrased next steps                                                                     |
 | `actions`                                                     | the bundled action manifest, live-script rules, the `cdp.target` probe and the `ui.*` transport |

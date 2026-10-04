@@ -128,7 +128,6 @@ export interface HealBoundViolation {
 // The --json-stream events a command and its platform emit while it runs.
 export interface CommandEventStream {
   readonly enabled: boolean;
-  emit(event: string, fields?: Record<string, unknown>): void;
   phase(phase: string, fields?: Record<string, unknown>): void;
   mutation(mutation: Record<string, unknown>): void;
   recovery(code: string): void;
@@ -197,6 +196,10 @@ export interface AdapterDevServer {
   stop(target: string): AdapterDevServerStop;
   // stop's Next: line, when the platform has one truthful relaunch.
   afterStop?(target: string): string;
+  // More environment names the dev server reads its port from, besides
+  // WATCHER_PORT and RECIPE_WATCHER_PORT. Hosts set them for every registered
+  // platform when a port is given explicitly.
+  portEnv?: readonly string[];
 }
 
 // Platform-phrased Next: hints so no command prints another platform's vocabulary.

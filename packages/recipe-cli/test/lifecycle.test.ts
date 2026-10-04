@@ -150,6 +150,23 @@ describe('adapter resolution', () => {
     assert.equal(detectAdapter(tempRoot()), undefined);
   });
 
+  test('within a pass, the first registered match wins', () => {
+    const checkout = tempRoot();
+    git(checkout, 'init', '-q');
+    git(checkout, 'remote', 'add', 'origin', 'git@example.test:acme/shop.git');
+    const any = { remote: () => true, files: () => true };
+    useAdapters(fakeAdapter('first', { detect: any }), fakeAdapter('second', { detect: any }));
+    assert.equal(detectAdapter(checkout), 'first');
+    useAdapters(fakeAdapter('second', { detect: any }), fakeAdapter('first', { detect: any }));
+    assert.equal(detectAdapter(checkout), 'second');
+
+    const files = { files: () => true };
+    useAdapters(fakeAdapter('first', { detect: files }), fakeAdapter('second', { detect: files }));
+    assert.equal(detectAdapter(tempRoot()), 'first');
+    useAdapters(fakeAdapter('second', { detect: files }), fakeAdapter('first', { detect: files }));
+    assert.equal(detectAdapter(tempRoot()), 'second');
+  });
+
   test('a platform target selects its adapter; the messages use the host and registry', () => {
     useAdapters(fakeAdapter('app', { targets: ['ios', 'android'] }), fakeAdapter('web'));
     assert.equal(adapterForPlatform('ios'), 'app');
@@ -176,6 +193,10 @@ describe('adapter resolution', () => {
     assert.throws(() => assertAdapter('web'), /^Error: internal: no adapters are registered yet/u);
     assert.throws(
       () => detectAdapter(tempRoot()),
+      /^Error: internal: no adapters are registered yet/u,
+    );
+    assert.throws(
+      () => classifyFailure('ECONNREFUSED'),
       /^Error: internal: no adapters are registered yet/u,
     );
   });
@@ -327,10 +348,14 @@ describe('launch', () => {
 
 describe('stop, reload and last', () => {
   test('stop reports the dev server and the host’s companions', async () => {
-    useAdapters(fakeAdapter('web'));
+    const server = fakeAdapter('app').devServer;
+    useAdapters(
+      fakeAdapter('web'),
+      fakeAdapter('app', { devServer: { ...server, portEnv: ['APP_PORT'] } }),
+    );
     const target = tempRoot();
     const { result, stdout } = await capture(() =>
-      handleStop(['--adapter', 'web', '--target', target, '--json'], {
+      handleStop(['--adapter', 'web', '--target', target, '--port', '9100', '--json'], {
         companions: async () => [{ label: 'collector', pid: 42 }],
       }),
     );
@@ -338,6 +363,9 @@ describe('stop, reload and last', () => {
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.equal(envelope.status, 'pass');
     assert.equal(envelope.signalled, 1);
+    // An explicit port reaches every registered dev server's port names.
+    assert.equal(process.env.WATCHER_PORT, '9100');
+    assert.equal(process.env.APP_PORT, '9100');
 
     const failing = fakeAdapter('app', {
       devServer: {
