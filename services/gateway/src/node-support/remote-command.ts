@@ -62,8 +62,10 @@ const localBundles = new Map<string, { at: number; bundle: Promise<LocalBundle> 
 
 /**
  * The caller's time budget ran out while the bundle was still being delivered.
- * The delivery keeps going for the next command; this one reports a timeout,
- * as it would had the node been slow to run it.
+ * The delivery keeps going for the next command. This one did not run: a hook
+ * through `execOnSlot` reports a timeout, as it would had the node been slow,
+ * and a resource command reports itself unavailable, so a pending delivery is
+ * never read as a stopped resource.
  */
 export class NodeSupportPendingError extends Error {}
 

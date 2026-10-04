@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Run every remote command that calls a farm script (`~/farmslot-node/projects/...`, `~/farmslot-node/scripts/...`) from the content-hashed node support bundle that matches the gateway's config, not only prepare hooks: project hooks, resource health, control and watch commands, and slot actions. A bounded probe that meets a first bundle delivery times out instead of waiting it out. Fast-forwarding the operator's farm config before a node is redeployed no longer makes its hooks exit 127. Bundle paths are now inferred from every farm reference in `project.json` (resources and actions too), and bundle verification uses one checksum pass per bundle, which cuts a 500-file publish from about a minute to a few seconds.
+- Run every remote command that calls a farm script (`~/farmslot-node/projects/...`, `~/farmslot-node/scripts/...`) from the content-hashed node support bundle that matches the gateway's config, not only prepare hooks: project hooks, resource health, control and watch commands, and slot actions. A bounded hook probe that meets a first bundle delivery times out instead of waiting it out; a resource command reports itself unavailable, so cleanup never mistakes it for a stopped resource. Fast-forwarding the operator's farm config before a node is redeployed no longer makes its hooks exit 127. Bundle paths are now inferred from every farm reference in `project.json` (resources and actions too), and bundle verification uses one checksum pass per bundle, which cuts a 500-file publish from about a minute to a few seconds.
 
 ## 0.20.0 - 2026-10-02
 

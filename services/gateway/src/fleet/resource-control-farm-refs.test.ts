@@ -9,7 +9,9 @@ import { mock, test } from 'node:test';
 
 class NodeSupportPendingError extends Error {}
 const sent: string[] = [];
+const sentTimeouts: number[] = [];
 let deliveryPending = true;
+let deliveryMs = 0;
 
 // Real exports spread in, so every other importer of these modules still loads.
 const realConfig = await import('../core/config.js');
@@ -52,14 +54,20 @@ mock.module('./node-rpc.js', {
   namedExports: {
     ...realRpc,
     getSlotLocality: async () => ({ isLocal: false, machine: 'mini' }),
-    sendNodeRequest: async (_node: unknown, _method: string, params: { cmd: string }) => {
+    sendNodeRequest: async (
+      _node: unknown,
+      _method: string,
+      params: { cmd: string; timeout: number },
+    ) => {
       sent.push(params.cmd);
+      sentTimeouts.push(params.timeout);
       return { stdout: '', stderr: '', exitCode: 0 };
     },
   },
 });
 const resolve = async (_target: unknown, cmd: string) => {
   if (deliveryPending) throw new NodeSupportPendingError('bundle still being delivered');
+  await new Promise((done) => setTimeout(done, deliveryMs));
   return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
 };
 mock.module('../node-support/remote-command.js', {
@@ -90,4 +98,20 @@ test('once delivered, health and shutdown both run from the bundle', async () =>
     'bash ~/farmslot-node/support/h/projects/p-farm/scripts/health.sh',
     'bash ~/farmslot-node/support/h/projects/p-farm/scripts/stop.sh',
   ]);
+});
+
+test('the delivery wait comes off the control hook timeout', async () => {
+  deliveryPending = false;
+  deliveryMs = 300;
+  sent.length = 0;
+  sentTimeouts.length = 0;
+  await executeResourceControl('mini-p-1', 'probe', 'shutdown');
+  deliveryMs = 0;
+  const { resourceControlTimeoutMs } = await import('./resource-manager.js');
+  const budget = resourceControlTimeoutMs('process', 'shutdown');
+  const hookTimeout = sentTimeouts.at(-1)!;
+  assert.ok(
+    hookTimeout <= budget - 250,
+    `shutdown hook got ${hookTimeout}ms of a ${budget}ms budget after a 300ms delivery`,
+  );
 });
