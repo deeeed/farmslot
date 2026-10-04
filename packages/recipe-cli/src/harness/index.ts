@@ -40,6 +40,7 @@ export {
   configureHarnessHost,
   type HarnessHost,
   harnessHost,
+  type HarnessHostConfig,
   hostEnvName,
   validateRelativeRecipePath,
 } from './host.js';

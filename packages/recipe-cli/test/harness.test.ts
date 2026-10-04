@@ -43,6 +43,9 @@ const MM_HOST = {
   journaledCommands: ['run', 'call', 'launch', 'fixtures'],
 };
 
+// The farmslot-recipe identity, captured before any test reconfigures the host.
+const DEFAULT_HOST = harnessHost();
+
 const roots: string[] = [];
 function tempRoot(prefix = 'recipe-cli-harness-'): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -64,7 +67,7 @@ const touchedEnv = [
 const savedEnv = Object.fromEntries(touchedEnv.map((name) => [name, process.env[name]]));
 
 afterEach(() => {
-  configureHarnessHost({});
+  configureHarnessHost(DEFAULT_HOST);
   for (const name of touchedEnv) {
     if (savedEnv[name] === undefined) delete process.env[name];
     else process.env[name] = savedEnv[name];
@@ -94,9 +97,19 @@ describe('host identity', () => {
     );
   });
 
+  test('requires every identity field and defaults the journal to nothing', () => {
+    const { journaledCommands: _journaled, ...identity } = MM_HOST;
+    assert.deepEqual(configureHarnessHost(identity).journaledCommands, []);
+    const { bin: _bin, ...missingBin } = MM_HOST;
+    // A host that forgets a field must not compile; it would inherit farmslot-recipe's.
+    // @ts-expect-error bin is required
+    const misconfigured = (): unknown => configureHarnessHost(missingBin);
+    assert.equal(typeof misconfigured, 'function');
+  });
+
   test('rejects an unsafe env prefix or runtime directory', () => {
     assert.throws(
-      () => configureHarnessHost({ envPrefix: 'mm-harness' }),
+      () => configureHarnessHost({ ...MM_HOST, envPrefix: 'mm-harness' }),
       /upper-case identifier/u,
     );
     process.env.RECIPE_RUNTIME_DIR = '../out';
@@ -113,11 +126,11 @@ describe('host identity', () => {
 
 describe('command journal', () => {
   beforeEach(() => {
-    configureHarnessHost({ journaledCommands: ['run', 'call', 'launch'] });
+    configureHarnessHost({ ...DEFAULT_HOST, journaledCommands: ['run', 'call', 'launch'] });
   });
 
   test('the default host journals nothing', async () => {
-    configureHarnessHost({});
+    configureHarnessHost(DEFAULT_HOST);
     const target = tempRoot();
     assert.equal(await withCommandJournal('run', ['run', '--target', target], async () => 0), 0);
     assert.equal(fs.existsSync(path.dirname(commandJournalPath(target))), false);
@@ -291,6 +304,15 @@ describe('checkout lock', () => {
   });
 });
 
+/** SIGKILL a process that may already be gone; anything but ESRCH is a real failure. */
+function killIfAlive(pid: number): void {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
+
 describe('checkout lock ownership across processes', () => {
   test('keeps an orphaned child reservation after its owner dies, then reclaims it', async () => {
     const target = tempRoot();
@@ -320,13 +342,21 @@ describe('checkout lock ownership across processes', () => {
         target,
         childPidFile,
       ],
-      { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore' },
+      { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: ['ignore', 'ignore', 'pipe'] },
     );
+    let ownerStderr = '';
+    owner.stderr?.on('data', (chunk: Buffer) => {
+      ownerStderr += chunk.toString();
+    });
     let childPid: number | undefined;
     try {
       for (let i = 0; i < 600 && !fs.existsSync(childPidFile); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+      assert.ok(
+        fs.existsSync(childPidFile),
+        `the lock owner never started its child: ${ownerStderr}`,
+      );
       childPid = Number(fs.readFileSync(childPidFile, 'utf8'));
       const exited = once(owner, 'exit');
       owner.kill('SIGKILL');
@@ -337,8 +367,9 @@ describe('checkout lock ownership across processes', () => {
       for (let i = 0; i < 100; i += 1) {
         try {
           process.kill(childPid, 0);
-        } catch {
-          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ESRCH') break;
+          throw error;
         }
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
@@ -347,13 +378,7 @@ describe('checkout lock ownership across processes', () => {
       reclaimed.release();
     } finally {
       owner.kill('SIGKILL');
-      if (childPid) {
-        try {
-          process.kill(childPid, 'SIGKILL');
-        } catch {
-          // already gone
-        }
-      }
+      if (childPid) killIfAlive(childPid);
     }
   });
 });
@@ -394,12 +419,12 @@ describe('contained artifacts', () => {
     fs.writeFileSync(path.join(outside, 'keep.json'), '{"keep":true}');
     await assert.rejects(
       writeContainedArtifact(dir, '../x.json', '{}', 'escape'),
-      /inside artifactsDir/u,
+      /path must stay inside artifactsDir/u,
     );
     fs.symlinkSync(path.join(outside, 'keep.json'), path.join(dir, 'linked.json'));
     await assert.rejects(
       writeContainedArtifact(dir, 'linked.json', '{}', 'linked'),
-      /symbolic link/u,
+      /must not be a symbolic link/u,
     );
     fs.symlinkSync(outside, path.join(dir, 'linked-dir'));
     await assert.rejects(

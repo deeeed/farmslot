@@ -64,7 +64,7 @@ const packages = [
       'dist/harness/index.d.ts',
     ],
     importCheck:
-      "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export');",
+      "const m = await import('./packages/recipe-cli/dist/index.js'); if (typeof m.runRecipeCli !== 'function') throw new Error('missing runRecipeCli export'); const h = await import('./packages/recipe-cli/dist/harness/index.js'); if (typeof h.configureHarnessHost !== 'function') throw new Error('missing harness configureHarnessHost export');",
   },
   {
     name: '@farmslot/adapter-sdk',

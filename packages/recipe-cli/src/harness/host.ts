@@ -34,9 +34,17 @@ const defaultHost: HarnessHost = {
 
 let current: HarnessHost = defaultHost;
 
-/** Set the host identity. Call once, before any command runs. */
-export function configureHarnessHost(host: Partial<HarnessHost>): HarnessHost {
-  const next = { ...defaultHost, ...host };
+/** A host's identity; it journals nothing unless it lists commands. */
+export type HarnessHostConfig = Omit<HarnessHost, 'journaledCommands'> & {
+  journaledCommands?: readonly string[];
+};
+
+/**
+ * Set the host identity. Call once, before any command runs. Every identity
+ * field is required, so a host can't silently inherit farmslot-recipe's names.
+ */
+export function configureHarnessHost(host: HarnessHostConfig): HarnessHost {
+  const next: HarnessHost = { ...host, journaledCommands: host.journaledCommands ?? [] };
   if (!/^[A-Z][A-Z0-9_]*$/u.test(next.envPrefix)) {
     throw new Error(`envPrefix must be an upper-case identifier: ${next.envPrefix}`);
   }
