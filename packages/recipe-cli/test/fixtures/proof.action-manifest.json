@@ -1,0 +1,145 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "command": {
+      "description": "Run a shell command from the project root.",
+      "examples": [
+        {
+          "action": "command",
+          "cmd": "pwd",
+          "intent": "Prepare the project state needed for this proof.",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "number"
+          },
+          "allow_failure": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assert_output": {
+      "description": "Assert a previous node's stdout/stderr with contains or match, or compare a structured output field using assert.path and an operator such as eq or length_eq.",
+      "examples": [
+        {
+          "action": "assert_output",
+          "source": "run-tests",
+          "stream": "stdout",
+          "contains": "PASS",
+          "intent": "Confirm the recorded output satisfies the requested condition.",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": ["string", "number", "integer", "boolean", "object", "array"],
+                "items": {
+                  "type": ["string", "number", "integer", "boolean", "object"]
+                }
+              },
+              "all": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "any": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "none": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "switch": {
+      "description": "Choose a graph branch when one resolved string equals another.",
+      "examples": [
+        {
+          "action": "switch",
+          "value": "{{params.mode}}",
+          "equals": "background_resume",
+          "cases": {
+            "match": "background"
+          },
+          "default": "warm",
+          "intent": "Choose the graph path matching the observed state."
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "equals": {
+            "type": "string"
+          }
+        },
+        "required": ["value", "equals"],
+        "additionalProperties": false
+      },
+      "result_cases": ["match"]
+    },
+    "end": {
+      "description": "Base terminal action.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    }
+  }
+}

@@ -5,6 +5,7 @@ export {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
+  adapterPortFlags,
   assertAdapter,
   configureHarnessAdapters,
   detectAdapter,
@@ -53,6 +54,18 @@ export { handleLaunch } from './commands/launch.js';
 export { handleReload } from './commands/reload.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export {
+  captureExecutionProvenance,
+  type ExecutionProvenanceDrift,
+  executionProvenanceDrift,
+  type ExecutionProvenanceInput,
+  type ExecutionProvenancePhase,
+  type ExecutionProvenanceRecord,
+  type ExecutionProvenanceSnapshot,
+  ProvenanceDriftError,
+  type SourceProvenanceSnapshot,
+  writeExecutionProvenance,
+} from './execution-provenance.js';
+export {
   checkHealBounds,
   classifyFailure,
   conciseFailureForHuman,
@@ -68,6 +81,7 @@ export {
   harnessHost,
   type HarnessHostConfig,
   hostEnvName,
+  recipeEnvName,
   validateRelativeRecipePath,
 } from './host.js';
 export { JsonStreamWriter } from './json-stream.js';
@@ -78,6 +92,14 @@ export {
   shellLeafMissing,
 } from './leaf-invoke.js';
 export { gitLibraryProvenance } from './library-provenance.js';
+export {
+  liveAdapterProcessTimeoutMs,
+  type LiveAdapterRun,
+  type PreparedLiveAdapter,
+  prepareLiveAdapterScript,
+  resolveLiveAdapter,
+  runLiveAdapterScript,
+} from './live-adapter-contract.js';
 export {
   argValue,
   handleHarness,
@@ -122,6 +144,53 @@ export {
   recipeRuntimePath,
 } from './paths.js';
 export {
+  captureHelperPath,
+  captureHelperSupportsCapability,
+  captureHelperSupportsRecordSessionSnapshots,
+  createRecordingTargetProvider,
+} from './recording-target.js';
+export {
+  beginRunDiagnostics,
+  type CaptureEvidence,
+  type ClassifiedConsoleRecord,
+  collectRunDiagnostics,
+  type ConsoleAllowlist,
+  type ConsoleAllowlistMatch,
+  type ConsoleCaptureSpec,
+  type ConsoleClassifier,
+  type ConsoleEventKey,
+  type ConsoleRecord,
+  finishRunDiagnostics,
+  formatRunDiagnosticsForHuman,
+  readRunDiagnosticsDocument,
+  type RecipeRunEvidence,
+  type RunDiagnosticBaseline,
+  type RunDiagnosticsDocument,
+  type RunSideFinding,
+  verifyConsoleCapture,
+} from './run-diagnostics.js';
+export { recipeRunOptionsFromCli } from './run-options.js';
+export {
+  type ActiveRecipeRecording,
+  captureActiveRecipeRecordingSnapshot,
+  type RecipeRecordingOptions,
+  startRecipeRecording,
+  stopRecipeRecording,
+} from './run-recording.js';
+export {
+  executedBrowser,
+  indexProductProvenanceArtifact,
+  recipeCdpPorts,
+  type RunReport,
+  writeRunReport,
+} from './run-report.js';
+export {
+  type ProofDocument,
+  type ProofNode,
+  validateRuntimeProof,
+  validateRuntimeProofPlan,
+} from './runtime-proof.js';
+export {
   checkoutBusyOut,
   EXIT,
   flag,
@@ -139,3 +208,9 @@ export {
   usageOut,
   writeInteractiveProgress,
 } from './shared.js';
+export { closest } from './suggest.js';
+export {
+  explicitRecipeTrustOptions,
+  type RecipeTrustFailure,
+  recipeTrustFailure,
+} from './trust.js';

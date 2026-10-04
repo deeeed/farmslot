@@ -43,6 +43,7 @@ const SHOP_HOST = {
   name: 'shop-harness',
   product: 'Shop',
   envPrefix: 'SHOP_HARNESS',
+  recipeEnvPrefix: 'SHOP_RECIPE',
   packageName: '@acme/shop-harness',
   packageRoot: '/opt/shop-harness',
   bin: 'bin/shop-harness',

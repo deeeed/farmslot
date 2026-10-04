@@ -2,10 +2,15 @@
 // behavior through, so no command compares adapter ids. A new platform behavior
 // adds a member here, implemented by the platforms that own it.
 
-import type { RecipeValidationFinding } from '@farmslot/protocol';
+import type {
+  RecipeExecutionApproval,
+  RecipeSourceProvenance,
+  RecipeValidationFinding,
+} from '@farmslot/protocol';
 import type {
   ActionAdapter,
   ActionExecutionContext,
+  RecipeLibrarySource,
   RecordingTarget,
   RecordingTargetContext,
   StandardUiAction,
@@ -19,7 +24,12 @@ import type { CreateReactNativeBridgeUiTransportOptions } from '@farmslot/recipe
 export const ADAPTER_SDK_VERSION = 1;
 export type AdapterSdkVersion = typeof ADAPTER_SDK_VERSION;
 
-export interface PlatformAdapter {
+// TPlatform: the run options this platform adds (`run.platformOptions`).
+// TBrowser: the browser record a run drove (`run.launchedBrowser`).
+export interface PlatformAdapter<
+  TPlatform extends object = object,
+  TBrowser extends AdapterBrowser = AdapterBrowser,
+> {
   /** Registry key and the value of `--adapter`. */
   readonly id: string;
   /** The SDK version this adapter was written against. A host refuses any other. */
@@ -70,6 +80,9 @@ export interface PlatformAdapter {
   // Output patterns that classify a failure for bounded healing. Hosts match
   // every registered adapter's patterns.
   failurePatterns?: AdapterFailurePatterns;
+  // What `run` and `call` need from the platform. Every member is optional: a
+  // platform without one behaves like a headless platform for that step.
+  run?: AdapterRun<TPlatform, TBrowser>;
 }
 
 export interface AdapterDetect {
@@ -186,6 +199,102 @@ export type AdapterDevServerStop =
   | { kind: 'headless'; message: string; userAction: string }
   | { kind: 'stopped'; status: number; summary: string; signalled?: number; output?: string };
 
+// The parsed command-line options a command hands its platform.
+export type CommandOptions = Readonly<Record<string, string | boolean | readonly string[]>>;
+
+// One recipe node changing state while a run executes.
+export interface RecipeNodeEvent {
+  nodeId: string;
+  action: string;
+  status: 'running' | 'passed' | 'failed';
+}
+
+// The options of one recipe run (`run`, `call`). `platform` carries what the
+// adapter adds through `run.platformOptions`.
+export interface RecipeRunOptions<TPlatform extends object = object> {
+  cdpPort?: string;
+  watcherPort?: string;
+  slot?: string;
+  validationRuntimeDir?: string;
+  recordVideo?: false | 'full-run';
+  librarySources?: RecipeLibrarySource[];
+  // Root recipe values supplied by `run <recipe> key=value`.
+  params?: Record<string, unknown>;
+  onActionEvent?(event: RecipeNodeEvent): void;
+  // Machine output: stdout is the contract, so the engine logs elsewhere.
+  stdoutIsMachineContract?: boolean;
+  // Whether the runner may update its HUD automatically; undefined lets it decide.
+  autoHud?: boolean;
+  // Keep routine library provenance in the trace instead of human output.
+  suppressLibraryResolutionLogs?: boolean;
+  source?: RecipeSourceProvenance;
+  approval?: RecipeExecutionApproval;
+  platform?: TPlatform;
+}
+
+// The least a browser record carries: what it was bound to, or `none` with
+// the reason the run's browser could not be bound.
+export interface AdapterBrowser {
+  boundTo: string;
+  reason?: string;
+}
+
+export interface AdapterDependencyBlock {
+  code: string;
+  message: string;
+  userAction: string;
+}
+
+export interface AdapterRunPrepareContext {
+  target: string;
+  options: CommandOptions;
+  heal: HealPolicy;
+  state: HealState;
+  json: boolean;
+  // The caller authored an app restart, so the loaded source may be stale.
+  appRestartAuthored?: boolean;
+  onRecovery?(code: string): void;
+}
+
+// Members are methods so an adapter with its own TPlatform/TBrowser still fits
+// a registry of `PlatformAdapter`.
+export interface AdapterRun<
+  TPlatform extends object = object,
+  TBrowser extends AdapterBrowser = AdapterBrowser,
+> {
+  // The run options this platform reads from the command line.
+  platformOptions?(options: CommandOptions): TPlatform;
+  // Keys to restore after the slot ports resolve (an explicit device pin).
+  pinnedEnv?(): Record<string, string | undefined> | undefined;
+  // Platform environment for the run, after the slot ports and explicit ports.
+  activateEnv?(projectRoot: string, options: RecipeRunOptions<TPlatform>): void;
+  // Environment keys the engine restores when the run ends, beyond the ones
+  // every run restores (the CDP and watcher ports).
+  envKeys?: readonly string[];
+  // Extra environment the run's child processes read.
+  childEnv?(base: Record<string, string | undefined>): Record<string, string | undefined>;
+  // Whether the runner may draw its HUD automatically.
+  autoHud?(): boolean;
+  // Best-effort cleanup after the runner returns, whatever the outcome.
+  teardown?(projectRoot: string, env: Record<string, string | undefined>): Promise<void>;
+  // Make the runtime attachable before a run.
+  prepareRuntime?(projectRoot: string, options: RecipeRunOptions<TPlatform>): Promise<void>;
+  // Called before the overlay install; returns the check the healthcheck phase
+  // runs (exit code to stop, null to continue), or undefined for none.
+  runtimeCheck?(context: AdapterRunPrepareContext): (() => Promise<number | null>) | undefined;
+  // A dependency the run cannot start without, for a recipe or one action.
+  dependencyBlock?(
+    target: string,
+    use: { recipe?: unknown; librarySources?: RecipeLibrarySource[]; action?: string },
+  ): Promise<AdapterDependencyBlock | null>;
+  // Platform wording for a heal-bound violation's next step.
+  violationUserAction?(violation: HealBoundViolation): string | undefined;
+  // The browser a run drove, bound to the run's one CDP port.
+  launchedBrowser?(target: string, artifactsDir: string, cdpPort?: string): TBrowser | null;
+  // Metadata the product provenance artifact records for a bound browser.
+  browserProvenance?(browser: TBrowser): Record<string, unknown>;
+}
+
 export interface AdapterDevServer {
   // Short label used in compact status/help output ("metro", "webpack").
   label: string;
@@ -200,6 +309,9 @@ export interface AdapterDevServer {
   // WATCHER_PORT and RECIPE_WATCHER_PORT. Hosts set them for every registered
   // platform when a port is given explicitly.
   portEnv?: readonly string[];
+  // More option names (camelCase, as parsed) that give the dev-server port to
+  // `run` and `call`, after --watcher-port.
+  portFlags?: readonly string[];
 }
 
 // Platform-phrased Next: hints so no command prints another platform's vocabulary.
@@ -330,9 +442,11 @@ export interface AdapterRuntimeContextSpec {
 
 export interface AdapterRecording {
   target(context: RecordingTargetContext): Promise<RecordingTarget>;
-  // The harness-owned framed recorder: the browser pid to record.
+  // The harness-owned framed recorder: the browser pid to record, and the
+  // environment variable that names it to actions while the recording runs.
   framed?: {
     browserPid(projectRoot: string, artifactsDir: string, cdpPort?: string): number | undefined;
+    activePidEnv: string;
   };
   // The device recorder the runner records with, when the platform has one.
   videoRecorder?(): Promise<VideoRecorder | undefined>;
@@ -350,16 +464,29 @@ export interface AdapterDiagnostics {
     start(projectRoot: string): Promise<void>;
     files(projectRoot: string): AdapterConsoleFiles;
     cdpPort(): string | undefined;
-    // Prove a control line reaches the log the run reads.
+    // Prove the collector belongs to this runtime and listens on the run's CDP
+    // port, and that a control line reaches the log the run reads.
     verifyControl(
       capture: { projectRoot: string; cdpPort: string } & AdapterConsoleFiles,
     ): Promise<{ ok: boolean; detail: string }>;
   };
-  // A JSONL log of wallet requests, read from the run's start.
-  walletLog?(projectRoot: string): string;
+  // A request log read from the run's start; the platform turns its lines
+  // into findings.
+  requestLog?: {
+    path(projectRoot: string): string;
+    findings(lines: readonly string[]): AdapterLogFinding[];
+  };
   // An in-app issue buffer armed at the start and collected at the end.
   issueBuffer?: {
     arm(projectRoot: string): boolean;
     collect(projectRoot: string): unknown[] | null;
   };
+}
+
+// One finding a platform reads from its own log.
+export interface AdapterLogFinding {
+  level: 'warning' | 'error' | 'exception';
+  // Where it came from, as the diagnostics report names it.
+  source: string;
+  text: string;
 }

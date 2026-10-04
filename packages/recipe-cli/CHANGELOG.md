@@ -4,7 +4,16 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add run evidence to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through the registered adapters and the host identity:
+  - execution provenance (`captureExecutionProvenance` with `runnerIncludes`, `executionProvenanceDrift`, `writeExecutionProvenance`, `ProvenanceDriftError`); the runner root defaults to the host package root;
+  - the framed recorder (`startRecipeRecording`, `stopRecipeRecording`, `captureActiveRecipeRecordingSnapshot`), `createRecordingTargetProvider` and the capture-helper capability checks;
+  - run diagnostics (`beginRunDiagnostics`, `finishRunDiagnostics`, `collectRunDiagnostics`, `verifyConsoleCapture`, `readRunDiagnosticsDocument`, `formatRunDiagnosticsForHuman`), with the console rules injected as a `ConsoleClassifier`;
+  - the run report and provenance (`writeRunReport`, `indexProductProvenanceArtifact`, `executedBrowser`, `recipeCdpPorts`);
+  - live adapter scripts (`prepareLiveAdapterScript`, `runLiveAdapterScript`, `resolveLiveAdapter`, `liveAdapterProcessTimeoutMs`), with the action `namespace`, input `contextExtras` and extra `tsxCandidates` per call;
+  - run options (`recipeRunOptionsFromCli`), recipe trust input and failures (`explicitRecipeTrustOptions`, `recipeTrustFailure`), behavioral proof checks (`validateRuntimeProof`, `validateRuntimeProofPlan`) and `closest`.
+- **BREAKING:** the host identity requires `recipeEnvPrefix`, the prefix of the variables recipe processes and library actions read (`recipeEnvName('ADAPTER_INPUT')`); `farmslot-recipe` uses `RECIPE`.
+- Add `adapterPortFlags`: the dev-server port options every registered adapter adds.
+- Depend on `esbuild` 0.28.1 and `es-module-lexer` 2.3.1, pinned exactly (live adapter bundling): the bundler's patch version changes prepared bytes and so every approved `sourceDigest`.
 
 ## 0.3.0 - 2026-10-04
 
