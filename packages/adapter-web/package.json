@@ -20,10 +20,15 @@
       "types": "./dist/extension-id.d.cts",
       "default": "./src/extension-id.cjs"
     },
+    "./launch-browser": {
+      "types": "./dist/launch-browser.d.cts",
+      "default": "./src/launch-browser.cjs"
+    },
     "./macos-focus": {
       "types": "./dist/macos-focus.d.cts",
       "default": "./src/macos-focus.cjs"
     },
+    "./package.json": "./package.json",
     "./page-target": {
       "types": "./dist/page-target.d.cts",
       "default": "./src/page-target.cjs"
@@ -32,6 +37,10 @@
       "types": "./dist/playwright-cdp.d.cts",
       "default": "./src/playwright-cdp.cjs"
     },
+    "./slot-title": {
+      "types": "./dist/slot-title.d.cts",
+      "default": "./src/slot-title.cjs"
+    },
     "./validation-launch-supervisor": {
       "types": "./dist/validation-launch-supervisor.d.cts",
       "default": "./src/validation-launch-supervisor.cjs"
@@ -39,8 +48,7 @@
     "./validation-process-ownership": {
       "types": "./dist/validation-process-ownership.d.cts",
       "default": "./src/validation-process-ownership.cjs"
-    },
-    "./package.json": "./package.json"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json && yarn build && tsc --project tsconfig.consumer.json",

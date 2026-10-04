@@ -4,9 +4,11 @@ import browserCdp = require('@farmslot/adapter-web/browser-cdp');
 import browserResolver = require('@farmslot/adapter-web/browser-resolver');
 import chromeArgs = require('@farmslot/adapter-web/chrome-args');
 import extensionId = require('@farmslot/adapter-web/extension-id');
+import launch = require('@farmslot/adapter-web/launch-browser');
 import macosFocus = require('@farmslot/adapter-web/macos-focus');
 import pageTarget = require('@farmslot/adapter-web/page-target');
 import playwrightCdp = require('@farmslot/adapter-web/playwright-cdp');
+import slotTitle = require('@farmslot/adapter-web/slot-title');
 import ownership = require('@farmslot/adapter-web/validation-process-ownership');
 
 export async function consumerCalls(
@@ -67,5 +69,48 @@ export async function consumerCalls(
   await playwrightCdp.evaluatePageViaCdp(page, () => document.title);
   await playwrightCdp.evaluatePageViaCdp(page, (slot: string) => slot, 'ff-1');
   extensionId.extensionIdFromExtensionDir(dist);
+  const launched = launch.launchBrowser({
+    cdpPort: 9222,
+    chromeBin: '/Applications/Chrome.app/Contents/MacOS/Chrome',
+    profile,
+    extensionDir: dist,
+    runtimeDir,
+    chromeLog: `${runtimeDir}/chrome.log`,
+    chromePid: `${runtimeDir}/chrome.pid`,
+    browserResolution: `${runtimeDir}/browser-resolution.json`,
+    homePage: 'home.html',
+    defaultTitle: 'Product',
+    extensionOwnerRoot: (dir: string) => (dir.startsWith(runtimeDir) ? runtimeDir : null),
+    acquireRuntimeLock: () => () => undefined,
+    rerunCommand: 'host launch',
+    focusSettleMs: 0,
+  });
+  if (!launched.stopped) launched.pid.toFixed();
+  launch.launchBrowser({
+    cdpPort: 9222,
+    chromeBin: '',
+    profile,
+    extensionDir: dist,
+    runtimeDir,
+    chromeLog: '',
+    chromePid: '',
+    stopOnly: true,
+    resetProfile: true,
+  });
+  const slotId: string = slotTitle.readSlotId(runtimeDir, 'temp/recipe/runtime');
+  slotTitle.buildStampExpression(slotTitle.sanitizeSlotId(slotId), 'Product');
+  await playwrightCdp.evaluatePageViaCdp(page, slotTitle.applyPersistentSlotTitle, {
+    slotId,
+    fallbackTitle: 'Product',
+  });
+  const stamp = await slotTitle.stampHomeTabsViaCdp({
+    cdpPort: 9222,
+    extensionId: 'abc',
+    homePage: 'home.html',
+    fallbackTitle: 'Product',
+    target: runtimeDir,
+    runtimeDir: 'temp/recipe/runtime',
+  });
+  stamp.stamped.toFixed();
   return { pids, owner, waited, loaded, selected, ownedPids, launchArgs };
 }
