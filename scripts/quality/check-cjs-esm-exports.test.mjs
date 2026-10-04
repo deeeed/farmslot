@@ -61,22 +61,90 @@ describe('checkCjsEsmExports', () => {
     ]);
   });
 
-  it('checks .js files only in CommonJS packages and follows the require condition', () => {
+  it('checks .js files only where Node treats them as CommonJS', () => {
     const esm = fixturePackage(
       { type: 'module', exports: { '.': './index.js' } },
       { 'index.js': 'export const one = 1;\n' },
     );
     assert.deepEqual(checkCjsEsmExports(esm), []);
-    const dual = fixturePackage(
+    const nested = fixturePackage(
+      { type: 'module', exports: { './legacy': './legacy/index.js' } },
+      {
+        'legacy/package.json': '{"type":"commonjs"}\n',
+        'legacy/index.js': 'const o = { two: 2 };\nmodule.exports = { two: o.two, one: 1 };\n',
+      },
+    );
+    assert.deepEqual(checkCjsEsmExports(nested), [
+      '@fixture/pkg: ./legacy hides 1 require() export(s) from ESM import: one',
+    ]);
+  });
+
+  it('resolves subpaths like Node: arrays, condition sugar, condition order and main', () => {
+    const hidden = 'const o = { two: 2 };\nmodule.exports = { two: o.two, one: 1 };\n';
+    const array = fixturePackage({ exports: { './a': ['./a.cjs'] } }, { 'a.cjs': hidden });
+    assert.deepEqual(checkCjsEsmExports(array), [
+      '@fixture/pkg: ./a hides 1 require() export(s) from ESM import: one',
+    ]);
+    const sugar = fixturePackage({ exports: { default: './a.cjs' } }, { 'a.cjs': hidden });
+    assert.deepEqual(checkCjsEsmExports(sugar), [
+      '@fixture/pkg: . hides 1 require() export(s) from ESM import: one',
+    ]);
+    const requireOnly = fixturePackage({ exports: { require: './a.cjs' } }, { 'a.cjs': hidden });
+    assert.deepEqual(checkCjsEsmExports(requireOnly), []);
+    const ordered = fixturePackage(
+      { exports: { '.': { default: './clean.cjs', require: './hidden.cjs' } } },
+      {
+        'clean.cjs': 'function one() {}\nfunction two() {}\nmodule.exports = { one, two };\n',
+        'hidden.cjs': hidden,
+      },
+    );
+    assert.deepEqual(checkCjsEsmExports(ordered), []);
+    const main = fixturePackage({ main: './lib.cjs' }, { 'lib.cjs': hidden });
+    assert.deepEqual(checkCjsEsmExports(main), [
+      '@fixture/pkg: . hides 1 require() export(s) from ESM import: one',
+    ]);
+    const binOnly = fixturePackage(
+      { bin: { tool: './bin.cjs' } },
+      { 'bin.cjs': 'process.exit(3);\n' },
+    );
+    assert.deepEqual(checkCjsEsmExports(binOnly), []);
+  });
+
+  it('compares a dual package by what each side loads', () => {
+    const complete = fixturePackage(
+      { type: 'module', exports: { '.': { import: './index.js', require: './index.cjs' } } },
+      {
+        'index.js': 'export const one = 1;\nexport const two = 2;\n',
+        'index.cjs': 'const o = { two: 2 };\nmodule.exports = { two: o.two, one: 1 };\n',
+      },
+    );
+    assert.deepEqual(checkCjsEsmExports(complete), []);
+    const diverged = fixturePackage(
       { type: 'module', exports: { '.': { import: './index.js', require: './index.cjs' } } },
       {
         'index.js': 'export const one = 1;\n',
-        'index.cjs': 'const o = { one: 1 };\nmodule.exports = { a: o.one, one: 1 };\n',
+        'index.cjs': 'module.exports = { one: 1, two: 2 };\n',
       },
     );
-    assert.deepEqual(checkCjsEsmExports(dual), [
-      '@fixture/pkg: . hides 1 require() export(s) from ESM import: one',
+    assert.deepEqual(checkCjsEsmExports(diverged), [
+      '@fixture/pkg: . hides 1 require() export(s) from ESM import: two',
     ]);
+  });
+
+  it('reads the result past stdout noise and fails a run that exits non-zero after loading', () => {
+    const noisy = fixturePackage(
+      { exports: { './a': './a.cjs' } },
+      { 'a.cjs': "console.log('hello');\nfunction one() {}\nmodule.exports = { one };\n" },
+    );
+    assert.deepEqual(checkCjsEsmExports(noisy), []);
+    const late = fixturePackage(
+      { exports: { './a': './a.cjs' } },
+      {
+        'a.cjs':
+          "setTimeout(() => { throw new Error('late'); }, 50);\nfunction one() {}\nmodule.exports = { one };\n",
+      },
+    );
+    assert.deepEqual(checkCjsEsmExports(late), ['@fixture/pkg: ./a does not load: late']);
   });
 
   it('only resolves entry-only subpaths and fails a stale entry-only listing', () => {
@@ -96,8 +164,10 @@ describe('checkCjsEsmExports', () => {
       { exports: { './gone': './gone.cjs', './bad': './bad.cjs', './lib/*': './lib/*.cjs' } },
       { 'bad.cjs': "throw new Error('boom');\n" },
     );
-    assert.deepEqual(checkCjsEsmExports(root), [
-      '@fixture/pkg: ./gone points at a missing file',
+    const problems = checkCjsEsmExports(root);
+    assert.equal(problems.length, 3);
+    assert.match(problems[0], /^@fixture\/pkg: \.\/gone does not resolve: Cannot find module /u);
+    assert.deepEqual(problems.slice(1), [
       '@fixture/pkg: ./lib/* is a CommonJS wildcard export; list its subpaths so each can be checked',
       '@fixture/pkg: ./bad does not load: boom',
     ]);
