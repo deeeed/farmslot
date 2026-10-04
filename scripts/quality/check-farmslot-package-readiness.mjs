@@ -67,7 +67,7 @@ const packages = [
     name: '@farmslot/adapter-sdk',
     dir: 'packages/adapter-sdk',
     publicDoc: 'https://farmslot.io/docs/reference/adapter-sdk',
-    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/registry.ts'],
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/registry.ts', 'src/types.ts'],
     packRequiredFiles: ['README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts'],
     importCheck:
       "const m = await import('./packages/adapter-sdk/dist/index.js'); if (typeof m.createAdapterRegistry !== 'function') throw new Error('missing createAdapterRegistry export');",
