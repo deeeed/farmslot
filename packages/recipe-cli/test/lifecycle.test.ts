@@ -123,6 +123,7 @@ afterEach(() => {
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+  for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
