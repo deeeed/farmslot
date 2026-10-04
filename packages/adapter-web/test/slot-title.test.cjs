@@ -99,7 +99,7 @@ describe('slot-title helpers', () => {
   it('serializes the page callback for CDP with the slot and fallback title', () => {
     const expression = buildStampExpression('mmedev-2', 'Product');
     assert.match(expression, /mmedev-2/u);
-    assert.match(expression, /"fallbackTitle":"Product"/u);
+    assert.match(expression, /"defaultTitle":"Product"/u);
     assert.match(expression, /MutationObserver/u);
     assert.match(expression, /applyPersistentSlotTitle/u);
     assert.equal(buildStampExpression(''), 'document.title');
@@ -110,7 +110,7 @@ describe('applyPersistentSlotTitle', () => {
   it('stamps the same title through the page callback and the CDP expression', () => {
     const direct = fakePage('Product');
     const viaCallback = vm.runInContext(
-      `(${applyPersistentSlotTitle.toString()})(${JSON.stringify({ slotId: 'slot-a', fallbackTitle: 'Product' })})`,
+      `(${applyPersistentSlotTitle.toString()})(${JSON.stringify({ slotId: 'slot-a', defaultTitle: 'Product' })})`,
       direct.context,
     );
     const viaCdp = vm.runInContext(
@@ -211,7 +211,7 @@ describe('stampHomeTabsViaCdp', () => {
         cdpPort: server.address().port,
         extensionId,
         homePage: 'home.html',
-        fallbackTitle: 'Product',
+        defaultTitle: 'Product',
         slotId: 'slot-a',
       });
       assert.deepEqual(result, {

@@ -101,13 +101,13 @@ export async function consumerCalls(
   slotTitle.buildStampExpression(slotTitle.sanitizeSlotId(slotId), 'Product');
   await playwrightCdp.evaluatePageViaCdp(page, slotTitle.applyPersistentSlotTitle, {
     slotId,
-    fallbackTitle: 'Product',
+    defaultTitle: 'Product',
   });
   const stamp = await slotTitle.stampHomeTabsViaCdp({
     cdpPort: 9222,
     extensionId: 'abc',
     homePage: 'home.html',
-    fallbackTitle: 'Product',
+    defaultTitle: 'Product',
     target: runtimeDir,
     runtimeDir: 'temp/recipe/runtime',
   });

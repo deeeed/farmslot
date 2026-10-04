@@ -51,11 +51,11 @@ function readSlotId(target, runtimeDir) {
 
 /**
  * Serialized page-evaluation callback. Must stay a plain function (no closure).
- * `fallbackTitle` is the page's own title, used when the document has none.
- * @param {{ slotId: string, fallbackTitle?: string }} options
+ * `defaultTitle` is the page's own title (as in launchBrowser), used when the document has none.
+ * @param {{ slotId: string, defaultTitle?: string }} options
  * @returns {string}
  */
-function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
+function applyPersistentSlotTitle({ slotId, defaultTitle = '' }) {
   // Inline sanitize because the serialized function cannot call Node helpers.
   const id =
     typeof slotId === 'string' && /^[A-Za-z0-9._:-]{1,64}$/u.test(slotId.trim())
@@ -63,18 +63,18 @@ function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
       : '';
   if (!id) return document.title;
   window.__farmslotSlotId = id;
-  window.__farmslotSlotFallbackTitle = String(fallbackTitle || '');
+  window.__farmslotSlotDefaultTitle = String(defaultTitle || '');
 
   const stripSlotPrefixes = (title) => {
-    const fallback = window.__farmslotSlotFallbackTitle;
-    let base = String(title || fallback);
+    const ownTitle = window.__farmslotSlotDefaultTitle;
+    let base = String(title || ownTitle);
     // Accept em dash, en dash, or hyphen — historical stampers mixed them.
     for (let i = 0; i < 32; i += 1) {
       const stripped = base.replace(/^.+?\s+[—–-]\s+/u, '');
       if (stripped === base) break;
       base = stripped;
     }
-    return base || fallback;
+    return base || ownTitle;
   };
 
   const desiredTitle = () => {
@@ -84,8 +84,8 @@ function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
     if (base && base !== id) return `${id} — ${base}`;
     // A bare id is this stamp's own output for an untitled page: never prefix it
     // with itself, but complete it once the page title is known.
-    const fallback = window.__farmslotSlotFallbackTitle;
-    return fallback ? `${id} — ${fallback}` : id;
+    const ownTitle = window.__farmslotSlotDefaultTitle;
+    return ownTitle ? `${id} — ${ownTitle}` : id;
   };
 
   const setTitle = () => {
@@ -133,14 +133,14 @@ function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
 
 /**
  * @param {string} slotId
- * @param {string} [fallbackTitle]
+ * @param {string} [defaultTitle]
  * @returns {string}
  */
-function buildStampExpression(slotId, fallbackTitle = '') {
+function buildStampExpression(slotId, defaultTitle = '') {
   const slot = sanitizeSlotId(slotId);
   if (!slot) return 'document.title';
   // Single source of truth: serialize the Playwright callback for CDP evaluate.
-  const argument = JSON.stringify({ slotId: slot, fallbackTitle: String(fallbackTitle) });
+  const argument = JSON.stringify({ slotId: slot, defaultTitle: String(defaultTitle) });
   return `(${applyPersistentSlotTitle.toString()})(${argument})`;
 }
 
@@ -238,7 +238,7 @@ function isHomePage(target, extensionId, homePage) {
 /**
  * Stamp every inspectable `homePage` tab of this extension over CDP.
  * Attached tabs (no webSocketDebuggerUrl) are skipped — another client owns them.
- * @param {{ cdpPort: number, extensionId: string, homePage: string, fallbackTitle?: string, slotId?: string, target?: string, runtimeDir?: string }} options
+ * @param {{ cdpPort: number, extensionId: string, homePage: string, defaultTitle?: string, slotId?: string, target?: string, runtimeDir?: string }} options
  * @returns {Promise<{ slotId: string, stamped: number, skipped: number, titles: string[] }>}
  */
 async function stampHomeTabsViaCdp(options) {
@@ -247,7 +247,7 @@ async function stampHomeTabsViaCdp(options) {
     cdpPort,
     extensionId,
     homePage,
-    fallbackTitle = '',
+    defaultTitle = '',
     slotId: slotIdOption,
     runtimeDir,
   } = options || {};
@@ -267,7 +267,7 @@ async function stampHomeTabsViaCdp(options) {
   const titles = [];
   let stamped = 0;
   let skipped = 0;
-  const expression = buildStampExpression(slotId, fallbackTitle);
+  const expression = buildStampExpression(slotId, defaultTitle);
 
   for (const home of homes) {
     if (typeof home.webSocketDebuggerUrl !== 'string') {
