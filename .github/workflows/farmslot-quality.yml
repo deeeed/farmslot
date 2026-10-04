@@ -231,6 +231,11 @@ jobs:
       - name: Import boundary guard
         run: yarn quality:imports
 
+      - name: CommonJS/ESM export parity
+        run: |
+          node --test scripts/quality/check-cjs-esm-exports.test.mjs
+          node scripts/quality/check-cjs-esm-exports.mjs
+
       - name: Large-file warning
         run: yarn quality:large-files
 
