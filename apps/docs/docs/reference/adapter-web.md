@@ -47,11 +47,11 @@ The host passes what it knows about its product: `homePage`, `defaultTitle`, `ex
 
 `node browser-resolver.cjs <command>` runs one bounded call (at most 120 s; exit 0, or 1 with the message on stderr):
 
-| command         | arguments                                                                                                                                             | stdout                                                   |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `resolve`       | `--target <checkout>` `[--launch-method spawn\|launch-services]` `[--display headless\|headful]` `[--recorded <file>]` `[--out <file>]...` `[--json]` | the browser path, or the resolution record with `--json` |
-| `load-unpacked` | `--port <cdp> --path <dist> --profile <dir>` `[--expect-id <id>]` `[--open-url <url>]` `[--timeout-ms <ms>]`                                          | `{ id, otherExtensions, owner }`                         |
-| `open-window`   | `--port <cdp> --url <url>`                                                                                                                            | `{ targetId }` of a new background window                |
+| command         | arguments                                                                                                                                                              | stdout                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `resolve`       | `[--target <checkout>]` (default: cwd) `[--launch-method spawn\|launch-services]` `[--display headless\|headful]` `[--recorded <file>]` `[--out <file>]...` `[--json]` | the browser path, or the resolution record with `--json` |
+| `load-unpacked` | `--port <cdp> --path <dist> --profile <dir>` `[--expect-id <id>]` `[--open-url <url>]` `[--timeout-ms <ms>]`                                                           | `{ id, otherExtensions, owner }`                         |
+| `open-window`   | `--port <cdp> --url <url>`                                                                                                                                             | `{ targetId }` of a new background window                |
 
 ## Users
 

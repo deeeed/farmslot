@@ -178,13 +178,17 @@ describe('launchBrowser', () => {
         homePage: 'home.html',
         acquireRuntimeLock: (runtimeDir) => {
           lockEvents.push(`acquire ${runtimeDir}`);
-          return () => lockEvents.push('release');
+          // Released only after the launch has recorded its browser.
+          return () =>
+            lockEvents.push(
+              `release pid-file=${fs.existsSync(path.join(runtimeDir, 'logs/chrome.pid'))} identity=${fs.existsSync(runtimeIdentityPath(runtimeDir))}`,
+            );
         },
       }),
     );
     try {
       assert.equal(result.stopped, false);
-      assert.deepEqual(lockEvents, [`acquire ${dir}`, 'release']);
+      assert.deepEqual(lockEvents, [`acquire ${dir}`, 'release pid-file=true identity=true']);
       assert.equal(fs.readFileSync(path.join(dir, 'logs/chrome.pid'), 'utf8'), `${result.pid}\n`);
       assert.deepEqual(cdpListenerPids(port), [result.pid]);
       const resolution = JSON.parse(
@@ -207,7 +211,7 @@ describe('launchBrowser', () => {
     assert.deepEqual(cdpListenerPids(port), []);
   });
 
-  it('refuses a CDP port held by a process it did not launch, and names the rerun command', async () => {
+  it('refuses a CDP port held by a process it did not launch, and releases the caller lock', async () => {
     const dir = runtime('foreign');
     const port = await freePort();
     const server = net.createServer();
@@ -231,6 +235,18 @@ describe('launchBrowser', () => {
     } finally {
       server.close();
     }
+  });
+
+  it('names the caller rerun command in failure hints, else a generic rerun', async () => {
+    const dir = runtime('hint');
+    const port = await freePort();
+    // A directory where the runtime identity file goes makes invalidating it fail.
+    fs.mkdirSync(path.join(runtimeIdentityPath(dir), 'blocker'), { recursive: true });
+    assert.throws(
+      () => launchBrowser(options(dir, port, { rerunCommand: 'host launch --build' })),
+      /Failed to invalidate Extension runtime identity[\s\S]*then rerun: host launch --build$/u,
+    );
+    assert.throws(() => launchBrowser(options(dir, port)), /then rerun the launch$/u);
   });
 
   it('treats a browser loading an extension under the caller owner root as its own', async () => {

@@ -56,11 +56,11 @@ launchBrowser({
 
 `browser-resolver.cjs` is also a command, for hosts that need a bounded child process (a hung CDP call can't stall the caller). Every command finishes within 120 s, exits 0 on success and 1 with the error message on stderr otherwise. Hosts can keep their own script path by calling `runCli(argv)`.
 
-| command                                                                                                                                             | output                                                                                                                               |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `resolve --target <checkout> [--launch-method spawn\|launch-services] [--display headless\|headful] [--recorded <file>] [--out <file>]... [--json]` | stdout: the browser path, or the resolution record with `--json`; each `--out` gets the record; stderr: one `[browser]` summary line |
-| `load-unpacked --port <cdp> --path <dist> --profile <dir> [--expect-id <id>] [--open-url <url>] [--timeout-ms <ms>]`                                | stdout: one JSON line `{ id, otherExtensions, owner }`                                                                               |
-| `open-window --port <cdp> --url <url>`                                                                                                              | stdout: one JSON line `{ targetId }` for a new background window                                                                     |
+| command                                                                                                                                               | output                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `resolve [--target <checkout>] [--launch-method spawn\|launch-services] [--display headless\|headful] [--recorded <file>] [--out <file>]... [--json]` | stdout: the browser path, or the resolution record with `--json`; each `--out` gets the record; stderr: one `[browser]` summary line |
+| `load-unpacked --port <cdp> --path <dist> --profile <dir> [--expect-id <id>] [--open-url <url>] [--timeout-ms <ms>]`                                  | stdout: one JSON line `{ id, otherExtensions, owner }`                                                                               |
+| `open-window --port <cdp> --url <url>`                                                                                                                | stdout: one JSON line `{ targetId }` for a new background window                                                                     |
 
 ## Maintenance rules
 

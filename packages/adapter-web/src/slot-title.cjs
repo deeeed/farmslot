@@ -81,7 +81,8 @@ function applyPersistentSlotTitle({ slotId, fallbackTitle = '' }) {
     const id = window.__farmslotSlotId;
     if (!id) return document.title;
     const base = stripSlotPrefixes(document.title);
-    return base ? `${id} — ${base}` : id;
+    // A bare id is this stamp's own output for an untitled page; never prefix it again.
+    return base && base !== id ? `${id} — ${base}` : id;
   };
 
   const setTitle = () => {
@@ -215,7 +216,7 @@ async function cdpEvaluate(webSocketDebuggerUrl, expression, timeoutMs = 5000) {
       clearTimeout(timer);
       reject(
         new Error(
-          `CDP websocket error while stamping slot title: ${err?.message || err || 'unknown'}`,
+          `CDP websocket error while stamping slot title: ${err?.message || err?.error?.message || err?.type || 'unknown'}`,
         ),
       );
     };

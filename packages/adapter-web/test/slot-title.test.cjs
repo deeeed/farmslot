@@ -4,7 +4,9 @@
 // expression in a fake document. No live Chrome.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -135,6 +137,15 @@ describe('applyPersistentSlotTitle', () => {
     assert.equal(vm.runInContext(buildStampExpression('slot-a'), fakePage('').context), 'slot-a');
   });
 
+  it('keeps a bare slot id stable when stamped again without a fallback', async () => {
+    const page = fakePage('');
+    vm.runInContext(buildStampExpression('slot-a'), page.context);
+    await new Promise((resolve) => setImmediate(resolve)); // let the observer unlock
+    vm.runInContext(buildStampExpression('slot-a'), page.context);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.document.title, 'slot-a');
+  });
+
   it('re-applies a title reset that arrives while the observer is locked', () => {
     const page = fakePage('Product', { deferMicrotasks: true });
     vm.runInContext(buildStampExpression('slot-a', 'Product'), page.context);
@@ -212,6 +223,63 @@ describe('stampHomeTabsViaCdp', () => {
     } finally {
       wss.close();
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('counts a home tab whose CDP socket is unreachable as skipped', async () => {
+    const extensionId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const closed = net.createServer();
+    await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const deadPort = closed.address().port;
+    await new Promise((resolve) => closed.close(resolve));
+    const server = http.createServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(
+        JSON.stringify([
+          {
+            id: 'home-1',
+            type: 'page',
+            url: `chrome-extension://${extensionId}/home.html`,
+            webSocketDebuggerUrl: `ws://127.0.0.1:${deadPort}/devtools/page/home-1`,
+          },
+        ]),
+      );
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const result = await stampHomeTabsViaCdp({
+        cdpPort: server.address().port,
+        extensionId,
+        homePage: 'home.html',
+        slotId: 'slot-a',
+      });
+      assert.deepEqual(result, { slotId: 'slot-a', stamped: 0, skipped: 1, titles: [] });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('loads without any WebSocket implementation (vendored without ws, no global WebSocket)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-title-no-ws-'));
+    try {
+      fs.copyFileSync(
+        path.join(__dirname, '../src/slot-title.cjs'),
+        path.join(dir, 'slot-title.cjs'),
+      );
+      const output = execFileSync(
+        process.execPath,
+        [
+          '--no-experimental-websocket',
+          '-e',
+          `const t = require('./slot-title.cjs');
+           process.env.RECIPE_SLOT_ID = 'slot-a';
+           console.log(typeof WebSocket, t.readSlotId(), t.buildStampExpression('slot-a', 'P').length > 0);`,
+        ],
+        { cwd: dir, encoding: 'utf8' },
+      );
+      assert.equal(output.trim(), 'undefined slot-a true');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

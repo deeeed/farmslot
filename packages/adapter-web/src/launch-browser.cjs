@@ -74,7 +74,7 @@ const BROWSER_RESOLVER_CLI = require.resolve('./browser-resolver.cjs');
  * @property {string} [homePage] Extension page (e.g. `home.html`) opened at start and kept to one tab.
  * @property {string} [defaultTitle] That page's own title: a home tab with any other title (a slot-stamped one) is the one kept.
  * @property {(extensionDir: string) => string | null} [extensionOwnerRoot] Path prefix whose `--load-extension=` also proves a browser is ours.
- * @property {(runtimeDir: string) => () => void} [acquireRuntimeLock] Taken before the profile is touched; the returned release runs when the launch ends.
+ * @property {(runtimeDir: string) => () => void} [acquireRuntimeLock] Taken once the profile, log and pid directories exist, before any browser is stopped or started; the returned release runs when the launch returns or throws.
  * @property {string} [rerunCommand] Command named in "Next:" hints.
  * @property {number} [focusSettleMs] macOS: wait before the one focus check (default 1000).
  * @property {(line: string) => void} [log] Progress lines (default stderr).
@@ -94,6 +94,11 @@ function launchBrowser(options) {
   } finally {
     if (typeof release === 'function') release();
   }
+}
+
+// The rerun step named in "Next:" hints.
+function rerunHint({ rerunCommand }) {
+  return rerunCommand ? `rerun: ${rerunCommand}` : 'rerun the launch';
 }
 
 function normalizeOptions(options) {
@@ -117,7 +122,7 @@ function normalizeOptions(options) {
 
 function runLaunch(opts, acquireLock) {
   const { cdpPort, profile, extensionDir, runtimeDir, log } = opts;
-  const rerun = opts.rerunCommand ? `rerun: ${opts.rerunCommand}` : 'rerun the launch';
+  const rerun = rerunHint(opts);
   // stopOnly releases the profile before the extension snapshot exists on a first
   // run, so launch-input validation applies only to a real launch.
   if (!opts.stopOnly) {
@@ -349,12 +354,12 @@ function openBackgroundWindow(opts, pid, url, clearLaunchMarkers) {
   } catch (stopError) {
     throw new Error(
       `Chrome started but its start window could not be opened (${openError}), and stopping it failed: ${stopError.message}. ` +
-        `The launch markers for port ${opts.cdpPort} and ${opts.profile} are kept. Next: stop pid ${pid}, then rerun.`,
+        `The launch markers for port ${opts.cdpPort} and ${opts.profile} are kept. Next: stop pid ${pid}, then ${rerunHint(opts)}`,
     );
   }
   clearLaunchMarkers();
   throw new Error(
-    `Chrome started but its start window could not be opened: ${openError}. Next: inspect ${opts.chromeLog}, then rerun.`,
+    `Chrome started but its start window could not be opened: ${openError}. Next: inspect ${opts.chromeLog}, then ${rerunHint(opts)}`,
   );
 }
 
@@ -432,13 +437,13 @@ function loadExtensionOverCdp(opts, pid, initialUrl, clearLaunchMarkers) {
   } catch (stopError) {
     throw new Error(
       `Chrome started but the extension did not load over CDP (${loadError}), and stopping it failed: ${stopError.message}. ` +
-        `The launch markers for port ${opts.cdpPort} and ${opts.profile} are kept. Next: stop pid ${pid}, then rerun.`,
+        `The launch markers for port ${opts.cdpPort} and ${opts.profile} are kept. Next: stop pid ${pid}, then ${rerunHint(opts)}`,
     );
   }
   clearLaunchMarkers();
   throw new Error(
     `Chrome started but the extension did not load over CDP: ${loadError}. ` +
-      `Next: inspect ${opts.chromeLog}, or rerun with RECIPE_HARNESS_BROWSER=cft to use Chrome for Testing.`,
+      `Next: inspect ${opts.chromeLog}, or set RECIPE_HARNESS_BROWSER=cft to use Chrome for Testing, then ${rerunHint(opts)}`,
   );
 }
 
