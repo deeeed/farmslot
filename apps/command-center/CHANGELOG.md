@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.13.1 - 2026-10-05
+
 - The recipe scripts import `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`), and `test:recipe-harness` is now `test:recipe-runner`.
 - The recipe runner places its recording window over its own CDP port (`@farmslot/adapter-web`) instead of AppleScript on whichever "Google Chrome" is frontmost, so it no longer activates or moves the operator's own Google Chrome. Connecting to the page still calls `Page.bringToFront`, which can bring the recipe Chrome to the front. Page selection and the CDP browser pid come from the same package.
 
