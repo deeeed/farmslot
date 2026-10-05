@@ -84,6 +84,15 @@ test('resolveBin decides where a bin may come from', () => {
       userAction: yarnInstallCommand(root),
     },
   );
+  // A host whose runner lives outside the checkout says how to provide it.
+  assert.equal(
+    nodeDependencyBlock(root, {
+      bins: ['tsx'],
+      resolveBin: () => null,
+      missingBinAction: (_target, bin) => `set ${bin.toUpperCase()}_BIN`,
+    })?.userAction,
+    'set TSX_BIN',
+  );
 });
 
 test('all present is no block; options shape codes, bins and the next step', () => {

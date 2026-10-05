@@ -65,6 +65,8 @@ export interface NodeAdapterDependencies {
   bins?: readonly string[];
   /** Finds a bin for the checkout; pass the resolver execution uses. Default: `<target>/node_modules/.bin`. */
   resolveBin?(target: string, bin: string): string | null;
+  /** Next step when a bin cannot be found. Default: the install command. */
+  missingBinAction?(target: string, bin: string): string;
   /** Whether this run or action needs the checkout's dependencies. Default: always. */
   requiredFor?(target: string, use: NodeDependencyUse): boolean | Promise<boolean>;
 }
@@ -115,6 +117,7 @@ export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
       runtimeDeps: dependencies.runtimeDeps,
       bins: dependencies.bins,
       resolveBin: dependencies.resolveBin,
+      missingBinAction: dependencies.missingBinAction,
       label: id,
       installCommand,
     });

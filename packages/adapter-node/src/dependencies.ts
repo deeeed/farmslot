@@ -27,6 +27,11 @@ export interface NodeDependencyOptions {
   codePrefix?: string;
   /** The block's next step. Default: {@link yarnInstallCommand}. */
   installCommand?(target: string): string;
+  /**
+   * The next step when `bin` cannot be found. Default: the install command. A host
+   * whose `resolveBin` looks outside the checkout says how to provide the bin.
+   */
+  missingBinAction?(target: string, bin: string): string;
 }
 
 /**
@@ -73,7 +78,7 @@ export function nodeDependencyBlock(
       message: options.resolveBin
         ? `${label} dependencies are incomplete (no ${bin} runtime found for the checkout).`
         : `${label} dependencies are incomplete (node_modules/.bin/${bin} is missing).`,
-      userAction,
+      userAction: options.missingBinAction ? options.missingBinAction(resolved, bin) : userAction,
     };
   }
 
