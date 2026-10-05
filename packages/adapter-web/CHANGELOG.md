@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.2.0 - 2026-10-05
+
 - Add `launch-browser` (`launchBrowser`: launch or release one isolated, detached, owned Chromium with an unpacked extension; `homeTabsToClose`) and `slot-title` (stamp the farm slot id into the extension home tab's title), moved from `@deeeed/metamask-harness`. Product knowledge is now passed in: the home page, its default title, the owner-root rule, a lock held for the launch, and the rerun command named in hints. `slot-title`'s `applyPersistentSlotTitle` takes `{ slotId, defaultTitle }`, `buildStampExpression(slotId, defaultTitle)` and `stampHomeTabsViaCdp({ homePage, defaultTitle, ... })` match it, and CDP stamping uses the global `WebSocket` (else `ws`), loaded only when it stamps.
 - README: document the `browser-resolver.cjs` command (`resolve`, `load-unpacked`, `open-window`): arguments, output, exit codes and the 120 s bound.
 
