@@ -338,10 +338,16 @@ function commandFor(
   return { command: tsxBin, args: [file] };
 }
 
-// Prefer the TARGET checkout's own tsx (delegate-don't-duplicate): a thin-installed
-// slot has tsx in its node_modules, and a published host need not ship tsx.
-// Order: TSX_BIN seam → target tsx → host package tsx (dev) → the caller's candidates.
-function resolveTsxBin(tsxCandidates: readonly string[], projectRoot?: string): string | null {
+/**
+ * The tsx a live adapter script runs under, or null. Exported so a readiness
+ * check asks the same question execution does. Order: the `TSX_BIN` seam, the
+ * target checkout's own tsx (a thin-installed slot has it; a published host
+ * need not ship one), the host package's tsx, then the caller's candidates.
+ */
+export function resolveTsxBin(
+  tsxCandidates: readonly string[],
+  projectRoot?: string,
+): string | null {
   if (process.env.TSX_BIN) return process.env.TSX_BIN;
   const candidates: string[] = [];
   if (projectRoot) candidates.push(path.join(projectRoot, 'node_modules/.bin/tsx'));

@@ -115,6 +115,38 @@ test('runtimeStatus reports dependency presence in the host wording', async () =
   });
 });
 
+test('runtimeStatus is not ready when the actions cannot find their runtime', async () => {
+  let runner: string | null = null;
+  const adapter = createNodeAdapter({
+    ...BASE,
+    wording: { ready: 'Ready.', notReady: 'Not ready.' },
+    dependencies: { bins: ['tsx'], resolveBin: () => runner },
+  });
+  const installed = checkout({ 'package.json': '{}', 'yarn.lock': '' });
+  const marker = path.join(installed, 'node_modules/.yarn-state.yml');
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, '');
+  const later = new Date(Date.now() + 60_000);
+  fs.utimesSync(marker, later, later);
+
+  // Installed but no tsx anywhere: doctor must say so, as run and call would refuse.
+  assert.deepEqual(await adapter.runtimeStatus(installed), {
+    decision: 'install',
+    reasonCode: 'deps-incomplete',
+    reasons: [
+      'Not ready.',
+      'core dependencies are incomplete (no tsx runtime found for the checkout).',
+    ],
+    nextAction: yarnInstallCommand(installed),
+    deps: 'current',
+  });
+  assert.equal((await adapter.run?.dependencyBlock?.(installed, {}))?.code, 'CORE_DEPS_INCOMPLETE');
+
+  runner = '/harness/node_modules/.bin/tsx';
+  assert.equal((await adapter.runtimeStatus(installed)).decision, 'ready');
+  assert.equal(await adapter.run?.dependencyBlock?.(installed, {}), null);
+});
+
 test('host overrides reach the surface', async () => {
   const detect = { files: (target: string) => target.endsWith('core') };
   const violationUserAction = () => 'fund the wallet';
