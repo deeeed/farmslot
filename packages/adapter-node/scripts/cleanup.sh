@@ -13,8 +13,10 @@ ADAPTER=""
 TARGET="$PWD"
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --adapter) ADAPTER="$2"; shift 2 ;;
-    --target) TARGET="$2"; shift 2 ;;
+    --adapter|--target)
+      [ "$#" -ge 2 ] || { echo "cleanup.sh: $1 needs a value" >&2; exit 2; }
+      if [ "$1" = --adapter ]; then ADAPTER="$2"; else TARGET="$2"; fi
+      shift 2 ;;
     -h|--help) echo "Usage: cleanup.sh --adapter <id> [--target <checkout>]"; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac

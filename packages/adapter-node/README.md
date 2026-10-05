@@ -26,6 +26,10 @@ export const core = createNodeAdapter({
 
 A host adds its own members by spreading the result: `{ ...createNodeAdapter(config), readiness }`.
 
+`runtimeStatus` reads the install through recipe-runner's `depsCheck`, which tracks Yarn's install
+state, so it reports `deps-missing` for an npm or pnpm checkout even after `installCommand` ran.
+Such a host overrides `runtimeStatus` with its own check: `{ ...createNodeAdapter(config), runtimeStatus }`.
+
 Docs: https://farmslot.io/docs/reference/adapter-node
 
 ## Source layout

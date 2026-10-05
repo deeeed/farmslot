@@ -78,6 +78,11 @@ test('bad arguments exit 2', () => {
   assert.equal(cleanup(['--adapter', '..', '--target', root]).status, 2);
   assert.equal(cleanup(['--adapter', 'a/b', '--target', root]).status, 2);
   assert.equal(cleanup(['--adapter', 'core', '--bogus']).status, 2);
+  for (const args of [['--adapter'], ['--adapter', 'core', '--target']]) {
+    const result = cleanup(args);
+    assert.equal(result.status, 2, args.join(' '));
+    assert.match(result.stderr, /needs a value/u);
+  }
   assert.ok(fs.existsSync(path.join(root, 'temp/recipe/harness/core')));
   assert.equal(cleanup(['--help']).status, 0);
 });

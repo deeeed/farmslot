@@ -93,6 +93,17 @@ test('an ESM-only runtime dependency counts as installed', () => {
   assert.equal(nodeDependencyBlock(root, { runtimeDeps: ['fixture-esm-only'] }), null);
 });
 
+test('an unexpected resolver error propagates instead of reading as missing', () => {
+  const root = checkout({
+    ...TSX,
+    'node_modules/fixture-broken/package.json': '{ not json',
+  });
+  assert.throws(
+    () => nodeDependencyBlock(root, { runtimeDeps: ['fixture-broken'] }),
+    (error: NodeJS.ErrnoException) => error.code !== 'MODULE_NOT_FOUND',
+  );
+});
+
 test('yarnInstallCommand quotes the resolved target', () => {
   assert.equal(
     yarnInstallCommand("/tmp/it's here"),
