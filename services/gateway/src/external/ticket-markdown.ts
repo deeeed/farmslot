@@ -481,11 +481,18 @@ export function sectionItems(section: string): string[] {
     items.push(current);
     return current;
   };
+  const opensList = (index: number): boolean => {
+    const next = lines.findIndex((line, i) => i > index && line.trim() !== '');
+    const marker = next >= 0 && !fenced[next] ? lines[next].match(ITEM_MARKER) : null;
+    return marker !== null && marker[1].length <= rootIndent;
+  };
   lines.forEach((line, index) => {
     if (!line.trim()) return;
     const inCode = fenced[index];
-    // Only a real `#` subheading groups items; a bold line is the author's text.
-    const heading = inCode || !/^\s{0,3}#/.test(line) ? null : headingAt(line, index);
+    // A `#` subheading groups the items under it. A bold-only line does too when a
+    // list starts right after it (`**Mobile**` / `- m1`); otherwise it is a criterion.
+    const heading =
+      inCode || !(/^\s{0,3}#/.test(line) || opensList(index)) ? null : headingAt(line, index);
     if (heading) {
       group = heading.title.replace(/[*_`]/g, '').replace(/:\s*$/, '').trim();
       current = null;

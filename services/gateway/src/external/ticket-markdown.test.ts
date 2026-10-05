@@ -574,3 +574,24 @@ test('a list item ending in a colon is not a section label', () => {
   ].join('\n');
   assert.equal(extractSection(body, ['expected result']), '');
 });
+
+test('a bold label right before a list groups it; a bold line on its own stays a criterion', () => {
+  const grouped = [
+    '## Acceptance Criteria',
+    '**Mobile**',
+    '- m1',
+    '- m2',
+    '**Extension**',
+    '- e1',
+  ].join('\n');
+  assert.deepEqual(sectionItems(extractSection(grouped, ['acceptance criteria'])), [
+    'Mobile: m1',
+    'Mobile: m2',
+    'Extension: e1',
+  ]);
+  const plain = '## Acceptance Criteria\n\n**Preview equals the charge.**\n\n**Points match.**';
+  assert.deepEqual(sectionItems(extractSection(plain, ['acceptance criteria'])), [
+    '**Preview equals the charge.**',
+    '**Points match.**',
+  ]);
+});
