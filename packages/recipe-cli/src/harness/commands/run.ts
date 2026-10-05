@@ -311,6 +311,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     return commandOptions.describe(targetRecipe, options);
   }
   const params = parseRecipeParamAssignments(paramAssignments);
+  // The runtime directory names where the slot's context and the run's runtime
+  // state live, so it applies before the plan and before the slot resolves.
+  applyRuntimeDirOption(options);
   if (optionFlag(options, 'plan')) {
     return handleRunPlan(targetRecipe, params, options, stream, commandOptions);
   }
@@ -331,9 +334,6 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     return usageOut(jsonOutput, 'run', message, userAction);
   }
   writeInteractiveProgress(machine, `→ recipe run — validating ${targetRecipe} · ${adapter}`);
-  // The runtime directory names where the slot's context and the run's runtime
-  // state live, so it applies before the slot resolves.
-  applyRuntimeDirOption(options);
   harnessAdapter(adapter).resolveSlotPorts(target);
   // Resolve/gate the device target before any engine path reads process.env.
   const device = commandOptions.targetDevice?.('run', adapter, options);

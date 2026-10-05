@@ -1105,13 +1105,46 @@ describe('run', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    assert.ok(seen.length > 0);
+    assert.equal(seen[0], 'temp/recipe/runtime-9301');
     assert.ok(
       seen
         .slice(0, seen.indexOf('temp/recipe/runtime-9302'))
         .every((dir) => dir === 'temp/recipe/runtime-9301'),
     );
     assert.equal(seen.at(-1), 'temp/recipe/runtime-9302');
+
+    // --plan sees the same runtime directory, whether the flag or the
+    // environment selects it.
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const planOptions = {
+      ...runOptions,
+      plan: {
+        steps: () => [
+          {
+            step: 'fixture.file',
+            confidence: 'static' as const,
+            status: 'ok' as const,
+            detail: `fixture in ${process.env.RECIPE_RUNTIME_DIR ?? 'the default runtime dir'}`,
+          },
+        ],
+        launchDetail: 'would open the shop',
+      },
+    };
+    const fixtureDetail = (lines: string[]) =>
+      (lastJson(lines).plan as Array<{ step: string; detail: string }>).find(
+        (step) => step.step === 'fixture.file',
+      )?.detail;
+    const byFlag = await capture(() =>
+      handleRun(
+        [recipe, '--plan', ...common, '--runtime-dir', 'temp/recipe/runtime-9303'],
+        planOptions,
+      ),
+    );
+    delete process.env.RECIPE_RUNTIME_DIR;
+    process.env.RECIPE_RUNTIME_DIR = 'temp/recipe/runtime-9303';
+    const byEnv = await capture(() => handleRun([recipe, '--plan', ...common], planOptions));
+    assert.equal(fixtureDetail(byFlag.stdout), 'fixture in temp/recipe/runtime-9303');
+    assert.equal(fixtureDetail(byEnv.stdout), fixtureDetail(byFlag.stdout));
   });
 
   test('refuses before validation when the host refuses the device', async () => {

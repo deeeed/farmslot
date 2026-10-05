@@ -10,7 +10,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - the recipe library: `resolveLibrarySources`, `listRunnableRecipes`, `describeRunnableRecipe`, `runnableLibraryRecipes`;
   - static validation: `validateRunRecipeStatic`, `validateActionInputs` (each adapter's `actions.inputFindings` on every node), `resolveRecipeParamValue`;
   - the action catalog helpers `run`, `call` and a host's `actions` share: `describeManifestActions`, `actionExampleCommand`, `renderHumanActionExample`, `actionLibraryContextArgs`, `resolveActionCapabilityMatrix` (one column per registered adapter);
-  - `run` and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`;
+  - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`;
   - `call` never loads the engine's trusted mutation: funded mutations run through `run`, bound to the reviewed recipe;
   - network observation through the adapter's `observation.network`: the automatic whole-run capture (off with the host's `AUTO_NETWORK_CAPTURE=0`) and `runNetworkCaptureAction` for `app.network_capture`.
 
