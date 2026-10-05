@@ -37,6 +37,15 @@ const {
   writeLogArtifact,
 } = require('./signature-log.cjs');
 
+/**
+ * @typedef {import('./page-script.cjs').TypedDataRefusal} TypedDataRefusal
+ * @typedef {import('./page-script.cjs').InjectedWallet} InjectedWallet
+ * @typedef {import('./signature-log.cjs').SignatureLog} SignatureLog
+ * @typedef {import('./signature-log.cjs').SignaturePolicy} SignaturePolicy
+ * @typedef {import('./signature-log.cjs').SignatureSummary} SignatureSummary
+ * @typedef {import('./signature-log.cjs').LogEntry} LogEntry
+ */
+
 module.exports = {
   DEFAULT_KNOWN_CHAINS,
   ERROR_CATEGORIES,

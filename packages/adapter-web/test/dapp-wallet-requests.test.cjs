@@ -179,6 +179,35 @@ describe('wallet request binding', () => {
     assert.match(resolutions()[0], /Refused: staging only\./);
   });
 
+  it('refuses when the refusal check throws, and refuses a policy it cannot apply', async () => {
+    const signed = [];
+    const refuseTypedData = {
+      reason: () => {
+        throw new Error('boom');
+      },
+      kind: 'refused-x',
+      message: 'Refused.',
+    };
+    const { binding, records, context, call } = setup({
+      wallet: { request: async ({ method }) => signed.push(method) },
+      refuseTypedData,
+    });
+    await binding.install('S1', 'TAB');
+    binding.commit('S1', `${APP}/`, 'L1');
+    context(1);
+    call(REQUEST_BINDING, { id: 5, method: 'eth_signTypedData_v4', params: ['0x01', '{}'] });
+    await tick();
+    assert.deepEqual(signed, []);
+    assert.deepEqual(
+      records.map((entry) => [entry.kind, entry.reason]),
+      [['refused-x', 'the refusal check threw']],
+    );
+    assert.throws(
+      () => setup({ refuseTypedData: { reason: () => null, kind: 'k' } }),
+      /message must be a non-empty string/,
+    );
+  });
+
   it('holds an early call until its context is known, and records it unattributed when the tab detaches first', async () => {
     const { binding, records, said, context, call } = setup({ signer: 'extension' });
     await binding.install('S1', 'TAB');

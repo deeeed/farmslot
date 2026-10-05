@@ -19,6 +19,15 @@ const path = require('node:path');
 /**
  * @typedef {{ logFile: string, cursorFile: string }} SignatureLog
  * @typedef {{ seq: number, kind?: string, [field: string]: any }} LogEntry
+ * @typedef {{ requested: number, signed: number, rejected: number, chainIds: Array<number | null | undefined> }} PrimaryTypeSummary
+ * @typedef {object} SignatureSummary
+ * @property {number} requests
+ * @property {number} typedDataRequests
+ * @property {number} confirmationsShown
+ * @property {number} unattributed
+ * @property {number} outsideAppFrame
+ * @property {Record<string, PrimaryTypeSummary>} byPrimaryType
+ * @property {Record<string, number>} byMethod
  * @typedef {object} SignaturePolicy
  * @property {Record<string, { match(entry: LogEntry): boolean, param: string, defaultMax: number, failure(count: number, max: number): string }>} [typedDataClasses]
  * @property {Record<string, { match(entry: LogEntry): boolean, failure(count: number): string }>} [forbiddenEntries]
@@ -66,7 +75,7 @@ async function writeCursor({ cursorFile }, seq) {
   });
 }
 
-// "HyperliquidTransaction:ApproveAgent" → "ApproveAgent".
+// "Token:Permit" → "Permit".
 /** @param {unknown} primaryType @returns {string | null} */
 function shortPrimaryType(primaryType) {
   if (primaryType == null) return null;
@@ -79,10 +88,16 @@ function isTypedDataRequest(entry) {
   return entry.kind === 'request' && /^eth_signTypedData/u.test(String(entry.method));
 }
 
-/** @param {LogEntry[]} entries @param {SignaturePolicy} [policy] */
+/**
+ * @param {LogEntry[]} entries
+ * @param {SignaturePolicy} [policy]
+ * @returns {SignatureSummary & Record<string, any>} The policy's counters are extra top-level keys.
+ */
 function summarize(entries, policy = {}) {
+  assertPolicyCounters(policy);
   const requests = entries.filter((entry) => entry.kind === 'request');
   const typed = requests.filter(isTypedDataRequest);
+  /** @type {Record<string, PrimaryTypeSummary>} */
   const byPrimaryType = {};
   for (const entry of typed) {
     const key = shortPrimaryType(entry.primaryType) ?? '<none>';
@@ -93,6 +108,7 @@ function summarize(entries, policy = {}) {
     if (!byPrimaryType[key].chainIds.includes(entry.domainChainId))
       byPrimaryType[key].chainIds.push(entry.domainChainId);
   }
+  /** @type {Record<string, number>} */
   const byMethod = {};
   for (const entry of requests) byMethod[entry.method] = (byMethod[entry.method] ?? 0) + 1;
   const counted = (rules, list) =>
@@ -117,12 +133,44 @@ function summarize(entries, policy = {}) {
   };
 }
 
+// The summary's own keys; a policy counter may not reuse one.
+const SUMMARY_KEYS = Object.freeze([
+  'requests',
+  'typedDataRequests',
+  'confirmationsShown',
+  'unattributed',
+  'outsideAppFrame',
+  'byPrimaryType',
+  'byMethod',
+]);
+
+/** @param {SignaturePolicy} policy */
+function assertPolicyCounters(policy) {
+  const names = [
+    ...Object.keys(policy.typedDataClasses ?? {}),
+    ...Object.keys(policy.forbiddenEntries ?? {}),
+  ];
+  const clash = names.find(
+    (name, index) => SUMMARY_KEYS.includes(name) || names.indexOf(name) !== index,
+  );
+  if (clash !== undefined) {
+    throw new Error(
+      `signature log policy counter "${clash}" is a summary key or used twice; name it something else.`,
+    );
+  }
+}
+
 function exact(label, actual, expected, failures) {
   if (actual !== expected) failures.push(`${label}: expected ${expected}, got ${actual}`);
 }
 
 // Every expectation in `node` is optional.
-/** @param {LogEntry[]} entries @param {Record<string, any>} [node] @param {SignaturePolicy} [policy] */
+/**
+ * @param {LogEntry[]} entries
+ * @param {Record<string, any>} [node]
+ * @param {SignaturePolicy} [policy]
+ * @returns {{ ok: boolean, failures: string[], summary: SignatureSummary & Record<string, any> }}
+ */
 function evaluateSignatureLog(entries, node = {}, policy = {}) {
   const summary = summarize(entries, policy);
   const typed = entries.filter(isTypedDataRequest);

@@ -180,6 +180,11 @@ export async function dappCalls(
   };
   const { window, result } = await dapp.awaitSignatureLog(log, { timeout_ms: 0 }, policy);
   const summary = dapp.summarize(window.entries, policy);
+  const permits: number = summary.byPrimaryType.Permit?.signed ?? 0;
+  const accounts: number = summary.byMethod.eth_requestAccounts ?? 0;
+  const sessions: number = summary.sessionRequests;
+  const chainId: unknown = await wallet.request({ method: 'eth_chainId' });
+  await wallet.request({ method: 'eth_getBalance', params: [account.address, 'latest'] });
   const reset = await dapp.resetWindow(log);
   const artifacts = await dapp.writeLogArtifact(
     { artifactsDir: '/tmp', nodeId: 'n', folder: 'wallet' },
@@ -191,6 +196,10 @@ export async function dappCalls(
     { targetId: 'T1', appOrigin: 'http://localhost:3000', committedUrl: 'http://localhost:3000/' },
   );
   return {
+    permits,
+    accounts,
+    sessions,
+    chainId,
     source,
     ready,
     ok: result.ok,

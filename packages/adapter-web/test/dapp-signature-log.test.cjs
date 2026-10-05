@@ -173,6 +173,21 @@ describe('wallet request log', () => {
       "1 wallet log entr(y/ies) could not be attributed to the app's top frame (unattributed)",
       'session requests reached the main wallet: 1 > 0',
     ]);
+    assert.throws(
+      () =>
+        summarize(entries, {
+          forbiddenEntries: { unattributed: { match: () => true, failure: () => 'x' } },
+        }),
+      /"unattributed" is a summary key/,
+    );
+    assert.throws(
+      () =>
+        summarize(entries, {
+          ...POLICY,
+          forbiddenEntries: { sessionRequests: POLICY.forbiddenEntries.blockedHosts },
+        }),
+      /"sessionRequests" is a summary key or used twice/,
+    );
     const allowed = evaluateSignatureLog(withSeq([session]), { max_session_requests: 1 }, POLICY);
     assert.equal(allowed.ok, true);
     assert.equal('sessionRequests' in summarize(entries), false);

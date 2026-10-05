@@ -15,7 +15,13 @@
 // (detach). Records never hold params, messages or signatures.
 
 const { isAppTopFrameContext, shortUrl } = require('../origin.cjs');
-const { LOG_BINDING, REQUEST_BINDING, RESOLVE_FN } = require('./page-script.cjs');
+const {
+  LOG_BINDING,
+  REFUSAL_CHECK_FAILED,
+  REQUEST_BINDING,
+  RESOLVE_FN,
+  assertTypedDataRefusal,
+} = require('./page-script.cjs');
 
 const PENDING_CALL_TTL_MS = 5000;
 
@@ -46,6 +52,7 @@ function createWalletRequestBinding({
   record,
   say = () => {},
 }) {
+  assertTypedDataRefusal(refuseTypedData);
   // Per app session: its target id (= main frame id) and live execution
   // contexts, so a binding call can be traced to the frame, document and
   // origin that made it.
@@ -150,13 +157,21 @@ function createWalletRequestBinding({
     if (name !== REQUEST_BINDING || !wallet) return;
     const { id, method, params } = JSON.parse(payload);
     if (refuseTypedData && /^eth_signTypedData/u.test(String(method))) {
-      let reason = null;
+      // As in the page: unparseable data is the wallet's to reject; a check that throws refuses.
+      let data;
+      let parsed = true;
       try {
-        reason = refuseTypedData.reason(
-          typeof params?.[1] === 'string' ? JSON.parse(params[1]) : params?.[1],
-        );
+        data = typeof params?.[1] === 'string' ? JSON.parse(params[1]) : params?.[1];
       } catch {
-        reason = null;
+        parsed = false;
+      }
+      let reason = null;
+      if (parsed) {
+        try {
+          reason = refuseTypedData.reason(data);
+        } catch {
+          reason = REFUSAL_CHECK_FAILED;
+        }
       }
       if (reason) {
         record({ kind: refuseTypedData.kind, t: Date.now(), method, reason, layer: 'wallet-host' });

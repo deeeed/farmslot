@@ -212,6 +212,46 @@ describe('page script', () => {
     });
   }
 
+  it('refuses when the refusal check throws, and leaves unparseable data to the signer', async () => {
+    const calls = [];
+    const throwing = {
+      ...REFUSE,
+      reason: function broken(data) {
+        return data.message.missing.field;
+      },
+    };
+    const { window, logged } = preload({
+      signer: 'extension',
+      provider: chainOne(calls),
+      refuseTypedData: throwing,
+    });
+    const data = JSON.stringify({
+      primaryType: 'Permit',
+      domain: { chainId: 1 },
+      types: {},
+      message: {},
+    });
+    await assert.rejects(
+      window.ethereum.request({ method: 'eth_signTypedData_v4', params: ['0x01', data] }),
+      { code: 4100 },
+    );
+    assert.deepEqual(
+      logged.map((entry) => [entry.kind, entry.reason]),
+      [['refused-production', 'the refusal check threw']],
+    );
+    assert.equal(
+      await window.ethereum.request({
+        method: 'eth_signTypedData_v4',
+        params: ['0x01', '{not json'],
+      }),
+      '0xsig',
+    );
+    assert.deepEqual(
+      calls.filter((method) => method === 'eth_signTypedData_v4'),
+      ['eth_signTypedData_v4'],
+    );
+  });
+
   it('passes typed data the policy allows, and refuses nothing without a policy', async () => {
     const staging = JSON.stringify({
       primaryType: 'Permit',
@@ -315,6 +355,44 @@ describe('page script', () => {
 
   it('refuses an unknown signer, a policy without a reason and an injected signer without an identity', () => {
     assert.throws(() => pageScriptSource({ signer: 'other', appOrigin: APP }), /signer must be/);
+    assert.throws(
+      () =>
+        pageScriptSource({
+          signer: 'extension',
+          appOrigin: APP,
+          refuseTypedData: { ...REFUSE, kind: '' },
+        }),
+      /kind must be a non-empty string/,
+    );
+    assert.throws(
+      () =>
+        pageScriptSource({
+          signer: 'extension',
+          appOrigin: APP,
+          refuseTypedData: { ...REFUSE, message: undefined },
+        }),
+      /message must be a non-empty string/,
+    );
+    assert.throws(
+      () =>
+        pageScriptSource({
+          signer: 'extension',
+          appOrigin: APP,
+          refuseTypedData: { ...REFUSE, reason: REFUSE.reason.bind(null) },
+        }),
+      /bound or native function/,
+    );
+    const shorthand = {
+      reason(data) {
+        return data ? null : 'x';
+      },
+      kind: 'k',
+      message: 'm',
+    };
+    assert.throws(
+      () => pageScriptSource({ signer: 'extension', appOrigin: APP, refuseTypedData: shorthand }),
+      /method shorthand/,
+    );
     assert.throws(
       () =>
         pageScriptSource({ signer: 'extension', appOrigin: APP, refuseTypedData: { kind: 'x' } }),

@@ -74,6 +74,7 @@ function createStrictWallet({
   const known = new Set(knownChains);
   let rpcId = 1;
 
+  /** @param {{ method: string, params?: any[] }} args @returns {Promise<any>} */
   async function request({ method, params = [] }) {
     switch (method) {
       case 'eth_chainId':

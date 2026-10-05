@@ -108,14 +108,25 @@ function pageMain(config, refusalReason) {
       if (!logged.has(method)) return original(args);
       if (!hasBinding(config.logBinding)) throw unrecorded();
       const entry = { ...describe(method, args?.params), source };
-      // Typed data the run must never sign never reaches the signer.
+      // Typed data the run must never sign never reaches the signer. Data
+      // that does not parse is left to the signer to reject; a check that
+      // throws refuses.
       if (config.refusal && /^eth_signTypedData/.test(method)) {
-        let reason = null;
+        let data;
+        let parsed = true;
         try {
           const raw = args?.params?.[1];
-          reason = refusalReason(typeof raw === 'string' ? JSON.parse(raw) : raw);
+          data = typeof raw === 'string' ? JSON.parse(raw) : raw;
         } catch {
-          reason = null;
+          parsed = false;
+        }
+        let reason = null;
+        if (parsed) {
+          try {
+            reason = refusalReason(data);
+          } catch {
+            reason = config.refusal.checkFailed;
+          }
         }
         if (reason) {
           report({
@@ -269,6 +280,35 @@ function pageMain(config, refusalReason) {
   }, 50);
 }
 
+// The reason recorded when a refusal check throws: the request is refused.
+const REFUSAL_CHECK_FAILED = 'the refusal check threw';
+
+/**
+ * Refuse a policy the page or the host could not apply: kind and message must
+ * be non-empty strings, and reason a function whose source is an expression
+ * in the page (a function declaration or an arrow; not a method shorthand, a
+ * bound or a native function).
+ * @param {TypedDataRefusal | null | undefined} refuseTypedData
+ */
+function assertTypedDataRefusal(refuseTypedData) {
+  if (!refuseTypedData) return;
+  if (typeof refuseTypedData.reason !== 'function') {
+    throw new Error('refuseTypedData.reason must be a function.');
+  }
+  for (const field of ['kind', 'message']) {
+    if (typeof refuseTypedData[field] !== 'string' || !refuseTypedData[field].trim()) {
+      throw new Error(`refuseTypedData.${field} must be a non-empty string.`);
+    }
+  }
+  try {
+    new Function(`return (${refuseTypedData.reason.toString()});`);
+  } catch {
+    throw new Error(
+      'refuseTypedData.reason must be a function declaration or an arrow function; a method shorthand, bound or native function does not serialize into the page.',
+    );
+  }
+}
+
 /**
  * @typedef {object} TypedDataRefusal
  * @property {(typedData: any) => string | null} reason Why the run must not sign this typed data, or null. Runs in the page too: self-contained (no closure, no imports).
@@ -300,9 +340,7 @@ function pageScriptSource({ signer, appOrigin, refuseTypedData = null, injectedW
   if (signer !== 'extension' && signer !== 'injected') {
     throw new Error(`signer must be extension or injected, got ${JSON.stringify(signer)}.`);
   }
-  if (refuseTypedData && typeof refuseTypedData.reason !== 'function') {
-    throw new Error('refuseTypedData.reason must be a function.');
-  }
+  assertTypedDataRefusal(refuseTypedData);
   if (signer === 'injected' && !injectedWallet?.info?.rdns) {
     throw new Error('the injected signer needs injectedWallet.info (EIP-6963 provider info).');
   }
@@ -310,7 +348,11 @@ function pageScriptSource({ signer, appOrigin, refuseTypedData = null, injectedW
     signer,
     appOrigin: new URL(appOrigin).origin,
     refusal: refuseTypedData
-      ? { kind: refuseTypedData.kind, message: refuseTypedData.message }
+      ? {
+          kind: refuseTypedData.kind,
+          message: refuseTypedData.message,
+          checkFailed: REFUSAL_CHECK_FAILED,
+        }
       : null,
     injectedWallet:
       signer === 'injected'
@@ -350,7 +392,9 @@ module.exports = {
   LOG_BINDING,
   PAGE_MARKER,
   REQUEST_BINDING,
+  REFUSAL_CHECK_FAILED,
   RESOLVE_FN,
+  assertTypedDataRefusal,
   pageReadyExpression,
   pageScriptSource,
 };
