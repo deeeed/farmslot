@@ -1,0 +1,582 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, test } from 'node:test';
+
+import {
+  ADAPTER_SDK_VERSION,
+  createAdapterRegistry,
+  type PlatformAdapter,
+} from '@farmslot/adapter-sdk';
+
+import {
+  booleanOption,
+  type CommandContract,
+  configureHarnessAdapters,
+  configureHarnessHost,
+  type ContractedCommand,
+  contractOptions,
+  createHarnessCli,
+  type HarnessCliOptions,
+  type HarnessCommand,
+  harnessHost,
+  optionalValueOption,
+  publicCommandTokens,
+  type PublicHarnessCommand,
+  usageError,
+  validatePublicInvocation,
+  valueOption,
+} from '../src/harness/index.js';
+import { RECIPE_CLI_VERSION } from '../src/version.js';
+
+const DEFAULT_HOST = harnessHost();
+const roots: string[] = [];
+function tempRoot(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-harness-cli-'));
+  roots.push(root);
+  return root;
+}
+
+function shopHost(packageRoot = tempRoot(), version = '1.2.3') {
+  fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ version }));
+  return {
+    name: 'shop-harness',
+    product: 'Shop',
+    envPrefix: 'SHOP_HARNESS',
+    recipeEnvPrefix: 'SHOP_RECIPE',
+    packageName: '@acme/shop-harness',
+    packageRoot,
+    bin: 'bin/shop-harness',
+  };
+}
+
+function fakeAdapter(id: string): PlatformAdapter {
+  return {
+    id,
+    sdkVersion: ADAPTER_SDK_VERSION,
+    headless: false,
+    resolveSlotPorts() {},
+    runtimeStatus: async () => ({ decision: 'ready', reasons: [] }),
+    devServer: {
+      label: `${id}-server`,
+      describe: () => `${id} dev server`,
+      stop: () => ({ kind: 'stopped', status: 0, summary: `stopped ${id} dev server` }),
+    },
+    logSources: () => [],
+    appLogSource: () => null,
+    hints: { launch: `launch ${id}`, relaunch: `relaunch ${id}`, runtimeProbeRecovery: () => 'r' },
+    actions: {
+      manifestPath: () => `/manifests/${id}.json`,
+      semantic: [],
+      cdpTarget: { transport: 'none', probePath: '/json/version' },
+    },
+    harness: {
+      install: { entry: 'install.mjs', fallback: 'install.mjs', node: true },
+      cleanup: { entry: 'cleanup.mjs', fallback: 'cleanup.mjs', node: true },
+      verify: () => ({ error: 'no verify' }),
+    },
+    runtimeContext: { forbiddenFields: [] },
+    launch: async () => 0,
+  };
+}
+
+const HELP = { '--help': booleanOption(), '-h': booleanOption() };
+const JSON_FLAG = { '--json': booleanOption(), '--json-stream': booleanOption() };
+const TARGET = { '--target': valueOption() };
+
+const calls: { command: string; argv: string[] }[] = [];
+function command(
+  name: string,
+  contract: CommandContract,
+  extra: Partial<PublicHarnessCommand> = {},
+): HarnessCommand {
+  return {
+    name,
+    summary: `${name} summary`,
+    example: `shop-harness ${name} example`,
+    helpText: `shop-harness ${name} [flags]\n\n  ${name} help`,
+    contract,
+    run: (argv) => {
+      calls.push({ command: name, argv });
+      return 0;
+    },
+    ...extra,
+  };
+}
+
+function shopCommands(): HarnessCommand[] {
+  return [
+    command('status', { options: contractOptions(HELP, JSON_FLAG, TARGET) }, { aliases: ['home'] }),
+    command('launch', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, {
+        '--surface': valueOption(['fullscreen', 'sidepanel']),
+      }),
+      positionals: [{ label: 'platform', choices: ['ios', 'android'] }],
+    }),
+    command('run', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--list': booleanOption() }),
+      positionals: [{ label: 'recipe' }],
+      minimumPositionals: 1,
+      requiredUnless: ['--list'],
+      noPositionalsWith: ['--list'],
+      variadic: { label: 'key=value', pattern: /^[^=\s]+=.*/u },
+      missingPositionalAction: (example) =>
+        `List recipes: shop-harness run --list\n  Example: ${example}`,
+    }),
+    command('call', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--arg': optionalValueOption() }),
+      positionals: [{ label: 'action' }],
+    }),
+    command('install', { options: contractOptions(HELP, TARGET), allowPassthrough: true }),
+    command('update', { options: contractOptions(HELP) }, { exit: 'now', nudge: false }),
+    command('setup', { options: contractOptions(HELP) }, { raw: true, nudge: false }),
+    command(
+      'fail',
+      { options: contractOptions(HELP) },
+      {
+        run: () => {
+          throw usageError('fail needs a reason.');
+        },
+      },
+    ),
+    command(
+      'crash',
+      { options: contractOptions(HELP) },
+      {
+        run: () => {
+          throw new Error('crashed');
+        },
+      },
+    ),
+    {
+      name: 'runtime-probe',
+      hidden: true,
+      run: (argv) => {
+        calls.push({ command: 'runtime-probe', argv });
+        return 3;
+      },
+    },
+  ];
+}
+
+function cliOptions(overrides: Partial<HarnessCliOptions> = {}): HarnessCliOptions {
+  const registry = createAdapterRegistry();
+  registry.register(fakeAdapter('web'));
+  return {
+    host: shopHost(),
+    adapters: registry,
+    commands: shopCommands(),
+    help: {
+      description: 'the Shop harness',
+      intro: (paint) => [`${paint('bold', 'shop-harness')} — the Shop recipe loop.`],
+      groups: [
+        { title: 'DAILY', blurb: 'every day', commands: ['status', 'launch'] },
+        { title: 'PROVE', blurb: 'run recipes', commands: ['run'] },
+      ],
+      footer: () => ['See README.md.'],
+      slotAdapter: (platform) => (platform === 'web-extension' ? 'web' : undefined),
+    },
+    ...overrides,
+  };
+}
+
+// Captures everything written to stdout/stderr while `run` executes.
+async function capture<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const stdoutWrite = process.stdout.write;
+  const stderrWrite = process.stderr.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    err.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const result = await run();
+    return { result, stdout: out.join(''), stderr: err.join('') };
+  } finally {
+    process.stdout.write = stdoutWrite;
+    process.stderr.write = stderrWrite;
+  }
+}
+
+const savedEnv = { ...process.env };
+const savedCwd = process.cwd();
+beforeEach(() => {
+  calls.length = 0;
+  delete process.env.FORCE_COLOR;
+  delete process.env.SHOP_HARNESS_BIN;
+  delete process.env.SHOP_HARNESS_RUN_MODE;
+  delete process.env.RECIPE_RUNTIME_DIR;
+  process.chdir(tempRoot());
+});
+afterEach(() => {
+  process.chdir(savedCwd);
+  configureHarnessHost(DEFAULT_HOST);
+  configureHarnessAdapters(createAdapterRegistry());
+  for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+  for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe('validatePublicInvocation', () => {
+  function table(): ContractedCommand[] {
+    return shopCommands().filter((entry): entry is PublicHarnessCommand => !entry.hidden);
+  }
+  beforeEach(() => {
+    configureHarnessHost(shopHost());
+  });
+
+  test('accepts the bare top level, help, version and aliases', () => {
+    for (const argv of [[], ['--help'], ['-h'], ['--version'], ['-v'], ['home']])
+      assert.equal(validatePublicInvocation(argv, table()), null, argv.join(' '));
+  });
+
+  test('lists valid commands in table order and suggests the closest one', () => {
+    const error = validatePublicInvocation(['lanch'], table());
+    assert.equal(error?.code, 'CLI_UNKNOWN_COMMAND');
+    assert.equal(
+      error?.message,
+      "unknown command 'lanch'. Valid commands: status, launch, run, call, install, update, setup, fail, crash.",
+    );
+    assert.equal(
+      error?.userAction,
+      "Did you mean 'launch' instead of 'lanch'? Try: shop-harness launch example",
+    );
+  });
+
+  test('names the host for an unknown top-level option', () => {
+    assert.deepEqual(validatePublicInvocation(['--verison'], table()), {
+      code: 'CLI_UNKNOWN_OPTION',
+      command: 'shop-harness',
+      message: "unknown top-level option '--verison'. Valid top-level options: --help, --version.",
+      userAction: "Did you mean '--version' instead of '--verison'? Try: shop-harness --help",
+    });
+  });
+
+  test('suggests a replaced option before the nearest valid one', () => {
+    const error = validatePublicInvocation(['status', '--project-root', '.'], table(), {
+      replacedOptions: { '--project-root': '--target' },
+    });
+    assert.equal(error?.code, 'CLI_UNKNOWN_OPTION');
+    assert.match(error?.userAction ?? '', /Did you mean '--target'/u);
+  });
+
+  test('tells a missing value from an invalid one, and reads function choices when validating', () => {
+    assert.deepEqual(validatePublicInvocation(['launch', '--surface'], table()), {
+      code: 'CLI_MISSING_OPTION_VALUE',
+      command: 'launch',
+      message: '--surface requires a value.',
+      userAction: 'Try: shop-harness launch example. Inspect options: shop-harness launch --help',
+    });
+    assert.equal(
+      validatePublicInvocation(['launch', '--surface', 'popup'], table())?.message,
+      "--surface must be fullscreen or sidepanel; received 'popup'.",
+    );
+    let ids = ['web'];
+    const dynamic: ContractedCommand = {
+      name: 'doctor',
+      example: 'shop-harness doctor',
+      contract: { options: { '--adapter': valueOption(() => ids) } },
+    };
+    assert.equal(
+      validatePublicInvocation(['doctor', '--adapter', 'plug'], [dynamic])?.code,
+      'CLI_INVALID_OPTION_VALUE',
+    );
+    ids = ['web', 'plug'];
+    assert.equal(validatePublicInvocation(['doctor', '--adapter', 'plug'], [dynamic]), null);
+  });
+
+  test('uses the command recovery for a missing positional, else the generic one', () => {
+    assert.deepEqual(validatePublicInvocation(['run'], table()), {
+      code: 'CLI_MISSING_POSITIONAL',
+      command: 'run',
+      message: 'missing required <recipe>.',
+      userAction: 'List recipes: shop-harness run --list\n  Example: shop-harness run example',
+    });
+    assert.equal(validatePublicInvocation(['run', '--list'], table()), null);
+    assert.equal(
+      validatePublicInvocation(['run', '--list', 'x'], table())?.code,
+      'CLI_EXCESS_POSITIONAL',
+    );
+    assert.equal(
+      validatePublicInvocation(['run', 'smoke', 'bad'], table())?.code,
+      'CLI_INVALID_POSITIONAL',
+    );
+    assert.equal(validatePublicInvocation(['run', 'smoke', 'market=BTC'], table()), null);
+  });
+
+  test('applies passthrough policy and the accepted positional shape', () => {
+    assert.equal(
+      validatePublicInvocation(['run', 'smoke', '--'], table())?.code,
+      'CLI_UNEXPECTED_PASSTHROUGH',
+    );
+    assert.equal(validatePublicInvocation(['install', '--', '--leaf'], table()), null);
+    assert.equal(
+      validatePublicInvocation(['status', 'extra'], table())?.message,
+      "unexpected positional 'extra'; this command accepts no positionals.",
+    );
+    assert.equal(
+      validatePublicInvocation(['status', '--json=yes'], table())?.code,
+      'CLI_INVALID_OPTION_VALUE',
+    );
+  });
+
+  test('runs a command bypass and refine hook', () => {
+    const checklist: ContractedCommand = {
+      name: 'checklist',
+      example: 'shop-harness checklist mark <dir> start',
+      contract: {
+        options: contractOptions(HELP, { '--share': booleanOption() }),
+        positionals: [
+          { label: 'action', choices: ['mark', 'closeout'] },
+          { label: 'task-dir' },
+          { label: 'step' },
+        ],
+        bypass: (tokens) => tokens[2] === 'sub',
+        refine: (positionals, seen, fail) =>
+          positionals[0] === 'mark' && seen.has('--share')
+            ? fail.usage('CLI_UNKNOWN_OPTION', '--share is not valid with checklist mark.')
+            : null,
+      },
+    };
+    assert.equal(
+      validatePublicInvocation(['checklist', 'mark', 'dir', 'sub', '--anything'], [checklist]),
+      null,
+    );
+    assert.deepEqual(
+      validatePublicInvocation(['checklist', 'mark', 'dir', '--share'], [checklist]),
+      {
+        code: 'CLI_UNKNOWN_OPTION',
+        command: 'checklist',
+        message: '--share is not valid with checklist mark.',
+        userAction:
+          'Try: shop-harness checklist mark <dir> start. Inspect options: shop-harness checklist --help',
+      },
+    );
+  });
+
+  test('lists every name and alias for completion', () => {
+    assert.deepEqual(publicCommandTokens(table()).slice(0, 3), ['status', 'home', 'launch']);
+  });
+});
+
+describe('createHarnessCli', () => {
+  test('prints the grouped help for no arguments and for --help', async () => {
+    const cli = createHarnessCli(cliOptions());
+    const bare = await capture(() => cli.main([]));
+    assert.deepEqual(bare.result, { exitCode: 0, exit: 'now' });
+    assert.equal(
+      bare.stdout,
+      [
+        'shop-harness — the Shop recipe loop.',
+        '',
+        'DAILY — every day:',
+        '  status     status summary',
+        '               shop-harness status example',
+        '  launch     launch summary',
+        '               shop-harness launch example',
+        '',
+        'PROVE — run recipes:',
+        '  run        run summary',
+        '               shop-harness run example',
+        '',
+        'See README.md.',
+        '',
+      ].join('\n'),
+    );
+    const flag = await capture(() => cli.main(['--help']));
+    assert.deepEqual(flag.result, { exitCode: 0, exit: 'now' });
+    assert.equal(flag.stdout, bare.stdout);
+  });
+
+  test('shows the dev override and the slot the checkout is bound to', async () => {
+    process.env.SHOP_HARNESS_BIN = '/dev/shop/bin/shop-harness';
+    process.env.SHOP_HARNESS_RUN_MODE = 'src';
+    const runtime = path.join(process.cwd(), 'temp/recipe/runtime');
+    fs.mkdirSync(runtime, { recursive: true });
+    fs.writeFileSync(
+      path.join(runtime, 'agentic-runtime.json'),
+      JSON.stringify({
+        platform: 'web-extension',
+        slotId: 'shop-1',
+        watcherPort: 9011,
+        gitBranch: 'main',
+      }),
+    );
+    const { stdout } = await capture(() => createHarnessCli(cliOptions()).main([]));
+    assert.match(
+      stdout,
+      /\nDEV OVERRIDE ACTIVE — this run is served by SHOP_HARNESS_BIN=\/dev\/shop\/bin\/shop-harness \(unset it to return to the installed\/global bin\)\.\nrunning from: src \(source checkout; dist shadows src when both exist\)\n/u,
+    );
+    assert.match(
+      stdout,
+      /\n\nSLOT — this checkout is a prepared slot: slot shop-1 · web-server :9011 · branch main\n/u,
+    );
+  });
+
+  test('prints the host version, then the recipe-cli version it runs on', async () => {
+    const cli = createHarnessCli(cliOptions());
+    for (const flag of ['--version', '-v']) {
+      const { result, stdout } = await capture(() => cli.main([flag]));
+      assert.deepEqual(result, { exitCode: 0, exit: 'now' });
+      assert.equal(stdout, `1.2.3\n@farmslot/recipe-cli ${RECIPE_CLI_VERSION}\n`);
+    }
+    const own = createHarnessCli(
+      cliOptions({ host: { ...shopHost(), packageName: '@farmslot/recipe-cli' } }),
+    );
+    assert.equal((await capture(() => own.main(['--version']))).stdout, '1.2.3\n');
+  });
+
+  test('prints a command help text and its aliases resolve to it', async () => {
+    const cli = createHarnessCli(cliOptions());
+    const help = await capture(() => cli.main(['status', '--help']));
+    assert.deepEqual(help.result, { exitCode: 0, exit: 'now' });
+    assert.equal(help.stdout, 'shop-harness status [flags]\n\n  status help\n');
+    assert.equal((await capture(() => cli.main(['home', '-h']))).stdout, help.stdout);
+    assert.deepEqual(calls, []);
+  });
+
+  test('writes usage errors for people, --json and --json-stream, and exits 2 at once', async () => {
+    const cli = createHarnessCli(cliOptions());
+    const human = await capture(() => cli.main(['launch', 'web']));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      human.stderr,
+      "✗ shop-harness launch: invalid <platform> 'web'. Valid values: ios, android.\n  Next: Try: shop-harness launch example\n",
+    );
+    const top = await capture(() => cli.main(['--bogus']));
+    assert.match(top.stderr, /^✗ shop-harness: unknown top-level option '--bogus'\./u);
+
+    const json = await capture(() => cli.main(['launch', '--surface', 'popup', '--json']));
+    assert.equal(
+      json.stdout,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          command: 'launch',
+          status: 'fail',
+          error: {
+            code: 'CLI_INVALID_OPTION_VALUE',
+            message: "--surface must be fullscreen or sidepanel; received 'popup'.",
+            userAction: 'Try: shop-harness launch example',
+          },
+          exitCode: 2,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const stream = await capture(() => cli.main(['launch', '--surface', 'popup', '--json-stream']));
+    const events = stream.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(events.at(-1)?.status, 'fail');
+    assert.equal(events.at(-1)?.exitCode, 2);
+    assert.deepEqual(calls, []);
+  });
+
+  test('dispatches the arguments after the command and keeps each exit mode', async () => {
+    const cli = createHarnessCli(cliOptions());
+    assert.deepEqual(await cli.main(['launch', 'ios', '--json']), { exitCode: 0, exit: 'code' });
+    assert.deepEqual(await cli.main(['home', '--json']), { exitCode: 0, exit: 'code' });
+    assert.deepEqual(await cli.main(['update']), { exitCode: 0, exit: 'now' });
+    // Hidden commands skip the public grammar and exit at once.
+    assert.deepEqual(await cli.main(['runtime-probe', '--private', 'x']), {
+      exitCode: 3,
+      exit: 'now',
+    });
+    assert.deepEqual(calls, [
+      { command: 'launch', argv: ['ios', '--json'] },
+      { command: 'status', argv: ['--json'] },
+      { command: 'update', argv: [] },
+      { command: 'runtime-probe', argv: ['--private', 'x'] },
+    ]);
+  });
+
+  test('maps a thrown error to its exit code, else 1', async () => {
+    const cli = createHarnessCli(cliOptions());
+    const usage = await capture(() => cli.main(['fail']));
+    assert.deepEqual(usage.result, { exitCode: 2, exit: 'code' });
+    assert.equal(usage.stderr, 'fail needs a reason.\n');
+    const crash = await capture(() => cli.main(['crash']));
+    assert.deepEqual(crash.result, { exitCode: 1, exit: 'code' });
+    assert.equal(crash.stderr, 'crashed\n');
+  });
+
+  test('runs a raw command before the grammar, hydration and commander', async () => {
+    const targets: string[] = [];
+    const cli = createHarnessCli(
+      cliOptions({ libraries: { hydrate: async (target) => void targets.push(target) } }),
+    );
+    assert.deepEqual(await cli.main(['setup', '--not-in-contract']), { exitCode: 0, exit: 'code' });
+    assert.deepEqual(calls, [{ command: 'setup', argv: ['--not-in-contract'] }]);
+    assert.deepEqual(targets, []);
+  });
+
+  test('hydrates libraries for the --target checkout after the grammar and before dispatch', async () => {
+    const targets: string[] = [];
+    const cli = createHarnessCli(
+      cliOptions({
+        libraries: {
+          hydrate: async (target) => {
+            targets.push(target);
+            // Each dispatch comes after its own hydration.
+            assert.equal(calls.length, targets.length - 1);
+          },
+        },
+      }),
+    );
+    await capture(() => cli.main(['launch', 'web']));
+    assert.deepEqual(targets, []);
+    await cli.main(['status', '--target', 'shop']);
+    await cli.main(['status', '--target=/abs/shop']);
+    await cli.main(['status']);
+    assert.deepEqual(targets, [path.resolve('shop'), '/abs/shop', process.cwd()]);
+  });
+
+  test('calls beforeDispatch once per invocation unless the command opts out', async () => {
+    const seen: string[][] = [];
+    const cli = createHarnessCli(
+      cliOptions({ beforeDispatch: (argv) => void seen.push([...argv]) }),
+    );
+    await capture(() => cli.main([]));
+    await cli.main(['update']);
+    await cli.main(['setup']);
+    await cli.main(['status']);
+    await capture(() => cli.main(['nope']));
+    assert.deepEqual(seen, [['status'], ['nope']]);
+  });
+
+  test('hands --help after `--` to the command itself, unjournaled and exiting at once', async () => {
+    const cli = createHarnessCli(cliOptions());
+    assert.deepEqual(await cli.main(['install', '--', '--help']), { exitCode: 0, exit: 'now' });
+    assert.deepEqual(calls, [{ command: 'install', argv: ['--', '--help'] }]);
+  });
+
+  test('renders call <action> --help through the catalog, mapping its usage errors', async () => {
+    const withoutCatalog = await capture(() =>
+      createHarnessCli(cliOptions()).main(['call', 'x', '--help']),
+    );
+    assert.equal(withoutCatalog.stdout, 'shop-harness call [flags]\n\n  call help\n');
+    const catalog = {} as NonNullable<HarnessCliOptions['catalog']>;
+    const cli = createHarnessCli(cliOptions({ catalog }));
+    const { result, stderr } = await capture(() => cli.main(['call', 'x', '--arg', '--help']));
+    assert.deepEqual(result, { exitCode: 2, exit: 'now' });
+    assert.equal(stderr, '--arg requires k=v.\n');
+  });
+
+  test('configures the host and adapters it is given', async () => {
+    const options = cliOptions();
+    createHarnessCli(options);
+    assert.equal(harnessHost().name, 'shop-harness');
+    assert.deepEqual(options.adapters.list(), ['web']);
+  });
+});
