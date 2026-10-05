@@ -879,9 +879,18 @@ export function emitHealViolation(
   return violation.exitCode;
 }
 
+/**
+ * A recipe's node count: `workflow.nodes` in recipe v1 (a `call` node counts
+ * once), or the arrays older recipes kept (`nodes`, `steps`, or
+ * `workflow.<phase>[]`). Undefined when the document has none of these.
+ */
 export function countRecipeNodes(recipe: unknown): number | undefined {
   if (!isRecord(recipe)) return undefined;
-  const workflow = isRecord(recipe.workflow) ? recipe.workflow : undefined;
-  const nodes = workflow && isRecord(workflow.nodes) ? workflow.nodes : undefined;
-  return nodes ? Object.keys(nodes).length : undefined;
+  if (Array.isArray(recipe.nodes)) return recipe.nodes.length;
+  if (Array.isArray(recipe.steps)) return recipe.steps.length;
+  if (!isRecord(recipe.workflow)) return undefined;
+  const graph = recipe.workflow.nodes;
+  if (isRecord(graph)) return Object.keys(graph).length;
+  const phases = Object.values(recipe.workflow).filter((value) => Array.isArray(value));
+  return phases.length > 0 ? phases.reduce((total, phase) => total + phase.length, 0) : undefined;
 }
