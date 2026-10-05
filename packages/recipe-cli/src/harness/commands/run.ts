@@ -23,6 +23,7 @@ import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
 import {
+  applyRuntimeDirOption,
   type CliOptions,
   isRecord,
   optionFlag,
@@ -330,6 +331,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     return usageOut(jsonOutput, 'run', message, userAction);
   }
   writeInteractiveProgress(machine, `→ recipe run — validating ${targetRecipe} · ${adapter}`);
+  // The runtime directory names where the slot's context and the run's runtime
+  // state live, so it applies before the slot resolves.
+  applyRuntimeDirOption(options);
   harnessAdapter(adapter).resolveSlotPorts(target);
   // Resolve/gate the device target before any engine path reads process.env.
   const device = commandOptions.targetDevice?.('run', adapter, options);

@@ -10,7 +10,7 @@ import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 
 import { fuzzyResolveActions, resolveActionCapabilityRefusal } from '../../action-catalog.js';
-import { adapterPortFlags, harnessAdapter } from '../adapters.js';
+import { harnessAdapter } from '../adapters.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
@@ -30,6 +30,7 @@ import { ProvenanceDriftError } from '../execution-provenance.js';
 import { conciseFailureForHuman, recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost, hostEnvName } from '../host.js';
 import {
+  applyRuntimeDirOption,
   type CliOptions,
   isRecord,
   optionFlag,
@@ -148,6 +149,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     );
   }
 
+  // The runtime directory names where the slot's context and the call's runtime
+  // state live, so it applies before the slot resolves.
+  applyRuntimeDirOption(options);
   harnessAdapter(adapter).resolveSlotPorts(target);
   // Resolve/gate the device target before the engine reads process.env.
   const device = commandOptions.targetDevice?.('call', adapter, options);
@@ -376,9 +380,10 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     process.env.FARMSLOT_RECIPE_SOURCE_NAME ||
     process.env.FARMSLOT_RECIPE_SOURCE_DIGEST;
   let observers: RunObservers | undefined;
+  // No `cli`: a call never loads the engine's trusted mutation (funded
+  // mutations run through `run`, bound to a reviewed recipe).
   const callRuntimeOptions: RecipeEngineRunOptions = {
     ...requestedRuntimeOptions,
-    cli: options,
     librarySources,
     autoHud: false,
     suppressLibraryResolutionLogs: true,
@@ -897,13 +902,10 @@ function isForwardedOptionValue(argv: string[], index: number): boolean {
   const previous = argv[index - 1]!;
   if (!previous.startsWith('--') || previous.includes('=')) return false;
   const flag = previous.replace(/^--/u, '');
-  return (
-    VALUE_TAKING_CALL_FLAGS.has(flag) || adapterPortFlags().some((name) => kebabCase(name) === flag)
-  );
+  return VALUE_TAKING_CALL_FLAGS.has(flag);
 }
 
-// Option flags whose next argument is their value, not a key=value input. The
-// registered adapters' dev-server port flags take a value too.
+// Option flags whose next argument is their value, not a key=value input.
 const VALUE_TAKING_CALL_FLAGS = new Set([
   'action-manifest',
   'approve-plan',
@@ -914,6 +916,7 @@ const VALUE_TAKING_CALL_FLAGS = new Set([
   'heal',
   'library',
   'platform',
+  'runtime-dir',
   'slot',
   'source-digest',
   'source-kind',
@@ -923,10 +926,6 @@ const VALUE_TAKING_CALL_FLAGS = new Set([
   'validation-runtime-dir',
   'watcher-port',
 ]);
-
-function kebabCase(name: string): string {
-  return name.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-}
 
 interface ActionResolution {
   status: 'ok' | 'ambiguous' | 'unknown';

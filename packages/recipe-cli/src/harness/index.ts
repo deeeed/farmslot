@@ -5,7 +5,6 @@ export {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
-  adapterPortFlags,
   assertAdapter,
   configureHarnessAdapters,
   detectAdapter,

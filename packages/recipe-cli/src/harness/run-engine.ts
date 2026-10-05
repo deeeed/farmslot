@@ -97,7 +97,8 @@ export interface RecipeEngine<
 
 /** A run's options: the generic ones (with the platform's own) and the command line it came from. */
 export type RecipeEngineRunOptions = RecipeRunOptions & {
-  // The engine's trusted mutation reads its own flags from it.
+  // The engine's trusted mutation reads its own flags from it; `run` passes it,
+  // `call` does not.
   cli?: CommandOptions;
 };
 

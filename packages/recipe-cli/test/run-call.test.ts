@@ -271,7 +271,7 @@ function shopAdapter(
       label: `${id}-server`,
       describe: () => `${id} dev server`,
       stop: () => ({ kind: 'stopped', status: 0, summary: `stopped ${id}` }),
-      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'], portFlags: ['bundlerPort'] } : {}),
+      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'] } : {}),
     },
     logSources: () => [],
     appLogSource: () => null,
@@ -1044,6 +1044,76 @@ describe('run', () => {
     );
   });
 
+  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
+    assert.equal(bound.length, 4);
+    assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
+    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
+    assert.equal(bound[3], bound[1]);
+  });
+
+  test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
+    const seen: Array<string | undefined> = [];
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...webAdapter(calls),
+      resolveSlotPorts() {
+        seen.push(process.env.RECIPE_RUNTIME_DIR);
+      },
+    });
+    configureHarnessAdapters(registry);
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const common = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const run = await capture(() =>
+      handleRun([recipe, ...common, '--runtime-dir', 'temp/recipe/runtime-9301'], runOptions),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.ok(fs.existsSync(path.join(target, 'temp/recipe/runtime-9301')));
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const call = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast', ...common, '--runtime-dir', 'temp/recipe/runtime-9302'],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.ok(seen.length > 0);
+    assert.ok(
+      seen
+        .slice(0, seen.indexOf('temp/recipe/runtime-9302'))
+        .every((dir) => dir === 'temp/recipe/runtime-9301'),
+    );
+    assert.equal(seen.at(-1), 'temp/recipe/runtime-9302');
+  });
+
   test('refuses before validation when the host refuses the device', async () => {
     const target = checkout();
     const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
@@ -1204,13 +1274,13 @@ describe('call', () => {
     const artifacts = tempRoot('recipe-cli-call-artifacts-');
     const call = await capture(() =>
       handleCall(
-        // The adapter's port flag takes a value, so `port=8099` is not an action input.
+        // --slot takes a value, so `lane=7` is not an action input.
         [
           'ping',
           'mode=fast',
           'password=hunter2',
-          '--bundler-port',
-          'port=8099',
+          '--slot',
+          'lane=7',
           '--adapter',
           'web',
           '--target',
@@ -1233,7 +1303,7 @@ describe('call', () => {
     assert.deepEqual(calls.runners.at(-1), { adapter: 'web', trustTaskActions: true });
   });
 
-  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+  test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
     const target = checkout();
     const call = await capture(() =>
       handleCall(
@@ -1254,11 +1324,8 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
-    assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
-    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
-    assert.equal(bound[3], bound[1]);
+    assert.equal(calls.runners.length, 2);
+    assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
   });
 
   test('teaches unknown, unavailable and invalid actions', async () => {
