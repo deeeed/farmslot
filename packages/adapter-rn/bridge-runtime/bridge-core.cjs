@@ -588,7 +588,7 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
       const expr = `(function() {
       // The app helper implements generic scrolling by searching inside the
       // selector fiber. For into-view requests the scroll container is commonly
-      // an ancestor (for example, a Wallet Home section row), so use the
+      // an ancestor (for example, a row inside a sectioned list), so use the
       // ancestor-aware bridge fallback below instead.
       if (${intoView} && globalThis.__AGENTIC__?.scrollIntoView) {
         return globalThis.__AGENTIC__.scrollIntoView(${JSON.stringify(testId)}, ${animated});
@@ -1231,6 +1231,10 @@ function runBridgeCli(config = {}) {
   for (const [name, handler] of Object.entries(hostCommands)) {
     if (Object.hasOwn(builtins, name)) {
       throw new Error(`bridge-core: host command ${name} collides with a built-in command`);
+    }
+    // `status-selected` is the core's single-target form of the host `status`.
+    if (name === 'status-selected') {
+      throw new Error('bridge-core: status-selected is reserved; register status instead');
     }
     commands[name] = handler;
     const doc = commandDocs[name] || {};

@@ -248,6 +248,10 @@ describe('bridge core', () => {
       /host command eval collides with a built-in command/,
     );
     assert.throws(
+      () => runBridgeCli({ commands: { 'status-selected': async () => null } }),
+      /status-selected is reserved/,
+    );
+    assert.throws(
       () => runBridgeCli({ commands: { extra: async () => null }, commandDocs: { other: {} } }),
       /commandDocs names unknown host command other/,
     );
