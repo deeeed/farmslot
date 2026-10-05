@@ -1325,7 +1325,8 @@ describe('run', () => {
       ['run throw', commands.run(passing)],
       ['call throw', commands.call('shop.ping mode=fast')],
     ] as const) {
-      await capture(async () => {
+      // The teardown error propagates: the command neither swallows it nor exits 0.
+      const thrown = await capture(async () => {
         try {
           return await invoke();
         } catch (error) {
@@ -1333,6 +1334,7 @@ describe('run', () => {
           return -1;
         }
       });
+      assert.equal(thrown.value, -1, name);
       assert.deepEqual({ ...process.env }, expected, name);
     }
 
@@ -1346,7 +1348,9 @@ describe('run', () => {
         ['run busy', commands.run(passing)],
         ['call busy', commands.call('shop.ping mode=fast')],
       ] as const) {
-        assert.notEqual((await capture(invoke)).value, 0, name);
+        const busy = await capture(invoke);
+        assert.notEqual(busy.value, 0, name);
+        assert.equal((lastJson(busy.stdout).error as { code: string }).code, 'SANDBOX_BUSY', name);
         assert.deepEqual({ ...process.env }, expected, name);
       }
     } finally {
