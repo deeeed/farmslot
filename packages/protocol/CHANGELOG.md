@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `catalogDefaultRunMode` derives the omitted run mode from execution-template `defaults`: a flow with an interactive rule and a general rule defaults to autonomous, the same rule a default worker template with an interactive sibling follows.
 - Register the `artifactView` Command Center link parameter, which marks an artifact opened in the step inspector's own viewer.
 
 ## 0.34.0 - 2026-10-02
