@@ -404,7 +404,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   }
   let artifactsDir: string;
   try {
-    artifactsDir = resolveRunArtifactsDir(target, optionString(options, 'artifactsDir'));
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
+    artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
+      fresh: path.join('runs', `${stamp}-${process.pid}`),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return emitRunUsageError(
@@ -615,19 +618,28 @@ function formatDiagnosticLine(line: string, out: (style: string, text: string) =
   return `${out(style, status)}${match[2]}`;
 }
 
-function resolveRunArtifactsDir(target: string, explicit: string | undefined): string {
+/**
+ * Where a run or call writes its artifacts: `--artifacts-dir`; else, inside a
+ * task (RECIPE_TASK_DIR/FARMSLOT_TASK_DIR, which must be inside the checkout),
+ * the task's `artifacts` directory plus `taskSubdir`; else `fresh` under the
+ * checkout's temp/recipe.
+ */
+export function resolveRecipeArtifactsDir(
+  target: string,
+  explicit: string | undefined,
+  layout: { fresh: string; taskSubdir?: string },
+): string {
   if (explicit !== undefined) return path.resolve(explicit);
   const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
   if (taskDir) {
     const resolvedTask = path.resolve(target, taskDir);
     const relative = path.relative(path.resolve(target), resolvedTask);
     if (!relative.startsWith(`..${path.sep}`) && relative !== '..') {
-      return path.join(resolvedTask, 'artifacts');
+      return path.join(resolvedTask, 'artifacts', layout.taskSubdir ?? '');
     }
     throw new Error(`task directory must be inside the target checkout: ${taskDir}`);
   }
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
-  return path.join(target, 'temp', 'recipe', 'runs', `${stamp}-${process.pid}`);
+  return path.join(target, 'temp', 'recipe', layout.fresh);
 }
 
 interface RunArtifactDisplay {

@@ -158,9 +158,7 @@ export function redactCommandArgs(argv: readonly string[]): string[] {
     if (token.startsWith('--') && equals !== -1) {
       const option = token.slice(0, equals);
       const value = token.slice(equals + 1);
-      redacted.push(
-        `${option}=${option === '--arg' ? redactAssignment(value) : SENSITIVE_KEY.test(option) ? '<redacted>' : redactUrl(value)}`,
-      );
+      redacted.push(`${option}=${SENSITIVE_KEY.test(option) ? '<redacted>' : redactUrl(value)}`);
       continue;
     }
     if (token.startsWith('--') && SENSITIVE_KEY.test(token)) {
@@ -168,15 +166,6 @@ export function redactCommandArgs(argv: readonly string[]): string[] {
       const value = argv[index + 1];
       if (value !== undefined && !value.startsWith('--')) {
         redacted.push('<redacted>');
-        index += 1;
-      }
-      continue;
-    }
-    if (token === '--arg') {
-      redacted.push(token);
-      const value = argv[index + 1];
-      if (value !== undefined) {
-        redacted.push(redactAssignment(value));
         index += 1;
       }
       continue;

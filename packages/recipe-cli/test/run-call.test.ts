@@ -28,7 +28,7 @@ import {
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
-import { defaultCallArtifactsDir, redactCallValue } from '../src/harness/commands/call.js';
+import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/call.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
   actionExampleCommand,
@@ -548,9 +548,10 @@ describe('engine door', () => {
       },
     );
     assert.equal(redactCallValue('plain', 'apiKey'), '<redacted>');
-    const first = defaultCallArtifactsDir('/tmp/checkout', 'shop.ping');
-    assert.notEqual(defaultCallArtifactsDir('/tmp/checkout', 'shop.ping'), first);
-    assert.match(first, /\/temp\/recipe\/calls\/shop\.ping-/u);
+    const first = callArtifactsLayout('shop.ping');
+    assert.notEqual(callArtifactsLayout('shop.ping').fresh, first.fresh);
+    assert.match(first.fresh, /^calls\/shop\.ping-[0-9a-f-]{36}$/u);
+    assert.equal(first.taskSubdir, first.fresh);
   });
 
   test('a failed execution runs once and records no hidden recovery', async () => {
@@ -1259,6 +1260,88 @@ describe('call', () => {
     assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
     assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
     assert.equal(bound[3], bound[1]);
+  });
+
+  test("writes under the task's artifacts like run, each call in its own directory", async () => {
+    const target = checkout();
+    const args = [
+      'shop.ping',
+      'mode=fast',
+      '--adapter',
+      'web',
+      '--target',
+      target,
+      '--heal',
+      'off',
+      '--json',
+    ];
+    process.env.RECIPE_TASK_DIR = 'temp/tasks/t1';
+    const first = await capture(() => handleCall(args, callOptions));
+    assert.equal(first.value, 0, first.stderr.join('\n'));
+    const second = await capture(() => handleCall(args, callOptions));
+    const calls = path.join(target, 'temp/tasks/t1/artifacts/calls');
+    const dirs = [first, second].map((call) =>
+      path.dirname(String(lastJson(call.stdout).summaryPath)),
+    );
+    for (const dir of dirs) assert.equal(path.dirname(dir), calls);
+    assert.notEqual(dirs[0], dirs[1]);
+
+    delete process.env.RECIPE_TASK_DIR;
+    process.env.FARMSLOT_TASK_DIR = '../outside';
+    const outside = await capture(() => handleCall(args, callOptions));
+    assert.equal(outside.value, 2);
+    assert.deepEqual(lastJson(outside.stdout).error, {
+      code: 'USAGE',
+      message: 'task directory must be inside the target checkout: ../outside',
+      userAction:
+        'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+    });
+    const explicit = tempRoot('recipe-cli-call-explicit-');
+    const pinned = await capture(() =>
+      handleCall([...args, '--artifacts-dir', explicit], callOptions),
+    );
+    assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
+  });
+
+  test('takes every input as key=value, values that look like flags included', async () => {
+    const target = checkout();
+    const call = await capture(() =>
+      handleCall(
+        [
+          'command',
+          'cmd=echo --not-a-flag -1',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.deepEqual(lastJson(call.stdout).args, { cmd: 'echo --not-a-flag -1' });
+    const dashed = await capture(() =>
+      handleCall(
+        [
+          'command',
+          'cmd=--version',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    // The value reaches the action verbatim (the shell then rejects it as an option).
+    const failure = lastJson(dashed.stdout).error as { originalError: string };
+    assert.match(failure.originalError, /^Command exited with \d+: --version\n/u);
   });
 
   test('teaches unknown, unavailable and invalid actions', async () => {

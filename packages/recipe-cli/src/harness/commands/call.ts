@@ -64,7 +64,12 @@ import { checkoutBusyOut, EXIT, usageOut } from '../shared.js';
 import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
-import { type DeviceTargeting, provenanceFailure, reportTrustFailure } from './run.js';
+import {
+  type DeviceTargeting,
+  provenanceFailure,
+  reportTrustFailure,
+  resolveRecipeArtifactsDir,
+} from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
@@ -92,7 +97,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     // The public wrapper catches this with the structured grammar. Keep the
     // guard for direct callers: without it, parseCallArgs can mistake an
     // option value (for example `core`) for the action.
-    const message = `call requires <action> first: ${host} call <action> [key=value ...] [--arg k=v ...] [flags]`;
+    const message = `call requires <action> first: ${host} call <action> [key=value ...] [flags]`;
     console.error(message);
     return EXIT.usage;
   }
@@ -366,8 +371,21 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     return EXIT.validation;
   }
 
-  const artifactsDir =
-    optionString(options, 'artifactsDir') ?? defaultCallArtifactsDir(target, resolvedAction);
+  let artifactsDir: string;
+  try {
+    artifactsDir = resolveRecipeArtifactsDir(
+      target,
+      optionString(options, 'artifactsDir'),
+      callArtifactsLayout(resolvedAction),
+    );
+  } catch (error) {
+    return usageOut(
+      json,
+      'call',
+      error instanceof Error ? error.message : String(error),
+      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+    );
+  }
   recordCommandEvidence(artifactsDir);
   const requestedRuntimeOptions = recipeRunOptionsFromCli(adapter, options);
   const inheritedSource =
@@ -684,9 +702,10 @@ function renderDefaultsUsed(defaults: Record<string, unknown>, stream: NodeJS.Wr
 }
 
 /** A fresh artifacts directory per call, under the checkout's recipe calls. */
-export function defaultCallArtifactsDir(target: string, action: string): string {
-  const actionStem = action.replace(/[^a-zA-Z0-9._-]/gu, '_');
-  return path.join(target, 'temp', 'recipe', 'calls', `${actionStem}-${randomUUID()}`);
+/** Each call writes to its own `calls/<action>-<uuid>`, under the task's artifacts or temp/recipe. */
+export function callArtifactsLayout(action: string): { fresh: string; taskSubdir: string } {
+  const own = path.join('calls', `${action.replace(/[^a-zA-Z0-9._-]/gu, '_')}-${randomUUID()}`);
+  return { fresh: own, taskSubdir: own };
 }
 
 function readCallOutput(tracePath: string): unknown {
@@ -780,10 +799,7 @@ function renderCallActionHelp(entry: DescribedAction): string {
       ? schema.required.filter((r): r is string => typeof r === 'string')
       : [],
   );
-  const lines: string[] = [
-    `${host} call ${entry.name} [key=value ...] [--arg k=v ...] [flags]`,
-    '',
-  ];
+  const lines: string[] = [`${host} call ${entry.name} [key=value ...] [flags]`, ''];
   if (entry.description) lines.push(`  ${entry.description}`, '');
   lines.push(
     `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''}`,
@@ -795,7 +811,7 @@ function renderCallActionHelp(entry: DescribedAction): string {
   if (names.length === 0) {
     lines.push('  Fields: (none)');
   } else {
-    lines.push('  Fields (pass as <name>=<value> or --arg <name>=<value>):');
+    lines.push('  Fields (pass as <name>=<value>):');
     const width = Math.max(...names.map((name) => name.length));
     for (const name of names) {
       const prop = isRecord(properties[name]) ? properties[name] : {};
@@ -843,14 +859,6 @@ function parseCallArgs(argv: string[]): CallArgs {
   let action: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg === '--arg' || arg.startsWith('--arg=')) {
-      const pair = arg === '--arg' ? argv[(i += 1)] : arg.slice('--arg='.length);
-      if (pair === undefined) throw usageError('--arg requires k=v.');
-      const eq = pair.indexOf('=');
-      if (eq === -1) throw usageError(`--arg must be k=v: ${pair}`);
-      args[pair.slice(0, eq)] = parseCallValue(pair.slice(eq + 1));
-      continue;
-    }
     if (!arg.startsWith('--') && action === undefined) {
       action = arg;
       continue;
