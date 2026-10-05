@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { renderAcceptanceCriteria } from '../tasks/task-document.js';
+
 import { fetchJiraIssue } from './jira.js';
 import {
   adfToInlineText,
@@ -443,8 +445,8 @@ test('captions, layouts, decision lists and nested task lists keep their words a
       '- Decision two',
       '',
       '- (todo) parent',
-      '         - (done) child1',
-      '         - (todo) child2',
+      '  - (done) child1',
+      '  - (todo) child2',
     ].join('\n'),
   );
   assert.deepEqual(sectionItems(extractSection(markdown, ['acceptance criteria'])), [
@@ -495,4 +497,80 @@ test('fetchJiraIssue finds deep criteria on the ticket heading levels, not the s
   });
   assert.deepEqual(data.acceptanceCriteria, ['Mobile: m1', 'Extension: e1']);
   assert.match(data.description ?? '', /^###### Acceptance criteria$/m);
+});
+
+test('bold criteria and bold continuation paragraphs stay criteria, through to TASK.md', async (t) => {
+  const savedFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = savedFetch;
+    delete process.env.JIRA_BOLD_EMAIL;
+    delete process.env.JIRA_BOLD_TOKEN;
+  });
+  process.env.JIRA_BOLD_EMAIL = 'bot@example.test';
+  process.env.JIRA_BOLD_TOKEN = 'token';
+  const bold = (value: string) => text(value, [{ type: 'strong' }]);
+  globalThis.fetch = async (input) => {
+    const body = String(input).includes('/comment')
+      ? { comments: [] }
+      : {
+          key: 'ABC-3',
+          fields: {
+            summary: 's',
+            description: doc(
+              heading(2, 'Acceptance criteria'),
+              paragraph(bold('Preview equals the charge.')),
+              paragraph(bold('Points match.')),
+              heading(2, 'Steps to reproduce'),
+              ordered(
+                item(
+                  paragraph(text('Open the form.')),
+                  paragraph(bold('Use a discounted account.')),
+                ),
+              ),
+            ),
+            status: { name: 'To Do' },
+            issuetype: { name: 'Bug' },
+            labels: [],
+            components: [],
+          },
+        };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const data = await fetchJiraIssue('ABC-3', {
+    baseUrl: 'https://jira.example.test',
+    emailEnv: 'JIRA_BOLD_EMAIL',
+    apiTokenEnv: 'JIRA_BOLD_TOKEN',
+  });
+  assert.deepEqual(data.acceptanceCriteria, [
+    '**Preview equals the charge.**',
+    '**Points match.**',
+  ]);
+  assert.equal(
+    renderAcceptanceCriteria(data.acceptanceCriteria ?? []),
+    '- **Preview equals the charge.**\n- **Points match.**',
+  );
+  assert.deepEqual(data.stepsToReproduce, ['Open the form.\n**Use a discounted account.**']);
+});
+
+test('a line that only starts with inline backticks is not a fence', () => {
+  const body = [
+    '## Steps to reproduce',
+    '```yarn start``` then open the page',
+    '## Acceptance Criteria',
+    '- [ ] a',
+    '- [ ] b',
+  ].join('\n');
+  assert.deepEqual(sectionItems(extractSection(body, ['acceptance criteria'])), ['a', 'b']);
+  assert.equal(extractSection(body, ['steps to reproduce']), '```yarn start``` then open the page');
+});
+
+test('a list item ending in a colon is not a section label', () => {
+  const body = [
+    '## Steps to reproduce',
+    '1. Open the form.',
+    '   - Expected result:',
+    '     - error shown',
+    '2. Submit.',
+  ].join('\n');
+  assert.equal(extractSection(body, ['expected result']), '');
 });

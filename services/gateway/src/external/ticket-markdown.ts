@@ -191,7 +191,9 @@ function list(
     // taskItem and decisionItem hold inline content directly.
     const body = content.some(isBlock) ? itemBlocks(content, opts) : inline(content);
     const [first = '', ...rest] = body.split('\n');
-    indent = ' '.repeat(prefix.length);
+    // Continuation sits at the content column of the list marker (`- ` or `N. `), not
+    // after the whole prefix: `- (todo) ` is 9 wide and 9 spaces would read as code.
+    indent = ' '.repeat((prefix.match(/^(?:-|\d+\.) /)?.[0] ?? prefix).length);
     out.push([prefix + first, ...rest.map((line) => (line ? indent + line : ''))].join('\n'));
   }
   return out.join('\n');
@@ -356,14 +358,23 @@ interface Heading {
 
 // Which lines sit inside a fenced code block (fence lines included): their `#`
 // and list markers are code, not structure.
+// CommonMark fences: an opener is 3+ backticks (info string without a backtick)
+// or 3+ tildes, indented at most 3 spaces; the closer is the same character, at
+// least as long, with nothing after it. `` ```yarn start``` `` is inline code, not a fence.
 function fencedLines(lines: string[]): boolean[] {
-  let open = false;
+  let fence: { char: string; length: number } | null = null;
   return lines.map((line) => {
-    if (/^\s*(?:```|~~~)/.test(line)) {
-      open = !open;
+    if (fence) {
+      const close = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
       return true;
     }
-    return open;
+    const open = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      fence = { char: open[1][0], length: open[1].length };
+      return true;
+    }
+    return false;
   });
 }
 
@@ -418,7 +429,11 @@ export function extractSection(markdown: string, names: string[]): string {
     }
     // No heading: a line that is just the label, e.g. "Acceptance criteria:".
     const label = lines.findIndex(
-      (line, index) => !fenced[index] && /:\s*$/.test(line) && normalizeTitle(line) === name,
+      (line, index) =>
+        !fenced[index] &&
+        !ITEM_MARKER.test(line) &&
+        /:\s*$/.test(line) &&
+        normalizeTitle(line) === name,
     );
     if (label >= 0) {
       const next = lines.findIndex(
@@ -469,7 +484,8 @@ export function sectionItems(section: string): string[] {
   lines.forEach((line, index) => {
     if (!line.trim()) return;
     const inCode = fenced[index];
-    const heading = inCode ? null : headingAt(line, index);
+    // Only a real `#` subheading groups items; a bold line is the author's text.
+    const heading = inCode || !/^\s{0,3}#/.test(line) ? null : headingAt(line, index);
     if (heading) {
       group = heading.title.replace(/[*_`]/g, '').replace(/:\s*$/, '').trim();
       current = null;
