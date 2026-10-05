@@ -429,22 +429,39 @@ export function usageOut(
   message: string,
   userAction: string,
 ): number {
+  return emitUsageError(json, command, { code: 'USAGE', message, userAction });
+}
+
+/**
+ * The one usage-error envelope (exit 2) every command prints: the command, what
+ * was asked (`context`: mode, adapter, recipe, action, …), then the error with
+ * its details and next step. Human output names the host and the command.
+ */
+export function emitUsageError(
+  json: boolean,
+  command: string,
+  error: { code: string; message: string; userAction: string } & Record<string, unknown>,
+  context: Record<string, unknown> = {},
+): number {
+  const { code, message, userAction, ...details } = error;
   if (json) {
     console.log(
       JSON.stringify(
         {
           schemaVersion: 1,
           command,
+          ...context,
           status: 'fail',
           exitCode: EXIT.usage,
-          error: { code: 'USAGE', message, userAction },
+          error: { code, message, ...details, userAction },
         },
         null,
         2,
       ),
     );
   } else {
-    console.error(`✗ ${harnessHost().name} ${command}: ${message}\n  Next: ${userAction}`);
+    const label = context.mode === 'plan' ? `${command} --plan` : command;
+    console.error(`✗ ${harnessHost().name} ${label}: ${message}\n  Next: ${userAction}`);
   }
   return EXIT.usage;
 }

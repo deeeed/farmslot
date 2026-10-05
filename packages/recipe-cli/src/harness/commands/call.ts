@@ -14,6 +14,7 @@ import { adapterPortFlags, harnessAdapter } from '../adapters.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
+  capabilityRefusalText,
   type DescribedAction,
   describeManifestActions,
   type RecipeCatalog,
@@ -61,7 +62,7 @@ import {
 } from '../run-engine.js';
 import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
-import { checkoutBusyOut, EXIT, usageOut } from '../shared.js';
+import { checkoutBusyOut, emitUsageError, EXIT, usageOut } from '../shared.js';
 import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
@@ -92,9 +93,12 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     // The public wrapper catches this with the structured grammar. Keep the
     // guard for direct callers: without it, parseCallArgs can mistake an
     // option value (for example `core`) for the action.
-    const message = `call requires <action> first: ${host} call <action> [key=value ...] [--arg k=v ...] [flags]`;
-    console.error(message);
-    return EXIT.usage;
+    const usage = `${host} call <action> [key=value ...] [--arg k=v ...] [flags]`;
+    return emitUsageError(argv.includes('--json'), 'call', {
+      code: 'CLI_MISSING_POSITIONAL',
+      message: `call requires <action> first: ${usage}`,
+      userAction: usage,
+    });
   }
   const { action: shortName, args, rest } = parseCallArgs(argv);
   const { options } = parseArgs(rest);
@@ -119,22 +123,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     }
     const message = `call requires <action>. Example: ${example}`;
     const userAction = `${example}   # see the vocabulary: ${discovery}`;
-    if (json)
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            status: 'fail',
-            error: { code: 'CLI_MISSING_POSITIONAL', message, userAction },
-            exitCode: EXIT.usage,
-          },
-          null,
-          2,
-        ),
-      );
-    else console.error(`${message}\n  See the vocabulary: ${discovery}`);
-    return EXIT.usage;
+    return emitUsageError(json, 'call', { code: 'CLI_MISSING_POSITIONAL', message, userAction });
   }
 
   const { adapter, target } = resolveAdapter(options);
@@ -152,21 +141,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   // Resolve/gate the device target before the engine reads process.env.
   const device = commandOptions.targetDevice?.('call', adapter, options);
   if (device && !device.ok) {
-    if (json)
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            adapter,
-            error: { code: device.code, message: device.message, userAction: device.userAction },
-          },
-          null,
-          2,
-        ),
-      );
-    else console.error(`✗ call: ${device.message}\n  Next: ${device.userAction}`);
-    return EXIT.usage;
+    const { code, message, userAction } = device;
+    return emitUsageError(json, 'call', { code, message, userAction }, { adapter });
   }
 
   if (recipeRunning(target)) {
@@ -209,82 +185,45 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           await resolveActionCapabilityMatrix(engine, librarySources),
         );
     if (refusal) {
-      const satisfying = refusal.satisfyingAdapters.join(', ');
-      const message = `missing action capability "${refusal.capability}" for the ${adapter} adapter.`;
-      const userAction =
-        `Satisfying adapters for "${refusal.capability}": ${satisfying}. ` +
-        `Inspect: ${host} actions --matrix ` +
-        `--action ${shellQuote(refusal.capability)}` +
-        `${actionLibraryContextArgs(engine, librarySources)} --json`;
-      const error = {
-        code: 'ACTION_CAPABILITY_UNAVAILABLE',
-        message,
-        capability: refusal.capability,
-        satisfyingAdapters: refusal.satisfyingAdapters,
-        userAction,
-      };
-      if (json) {
-        console.log(
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              command: 'call',
-              adapter,
-              action: shortName,
-              error,
-            },
-            null,
-            2,
-          ),
-        );
-      } else {
-        console.error(`✗ call: ${message}\n  Next: ${userAction}`);
-      }
-      return EXIT.usage;
-    }
-    const message = `unknown action "${shortName}" for the ${adapter} adapter.`;
-    const userAction = `${host} actions --adapter ${adapter} --json`;
-    if (json)
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
+      return emitUsageError(
+        json,
+        'call',
+        {
+          code: 'ACTION_CAPABILITY_UNAVAILABLE',
+          ...capabilityRefusalText(
             adapter,
-            action: shortName,
-            error: { code: 'ACTION_UNKNOWN', message, userAction },
-          },
-          null,
-          2,
-        ),
+            [refusal],
+            actionLibraryContextArgs(engine, librarySources),
+          ),
+          capability: refusal.capability,
+          satisfyingAdapters: refusal.satisfyingAdapters,
+        },
+        { adapter, action: shortName },
       );
-    else console.error(`✗ call: ${message}\n  Next: ${userAction}`);
-    return EXIT.usage;
+    }
+    return emitUsageError(
+      json,
+      'call',
+      {
+        code: 'ACTION_UNKNOWN',
+        message: `unknown action "${shortName}" for the ${adapter} adapter.`,
+        userAction: `${host} actions --adapter ${adapter} --json`,
+      },
+      { adapter, action: shortName },
+    );
   }
   if (resolution.status === 'ambiguous') {
-    const message = `"${shortName}" is ambiguous: ${resolution.candidates.join(', ')} — use the full name.`;
-    const userAction = `${host} actions --action ${resolution.candidates[0]} --adapter ${adapter} --json`;
-    if (json)
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            adapter,
-            action: shortName,
-            error: {
-              code: 'ACTION_AMBIGUOUS',
-              message,
-              candidates: resolution.candidates,
-              userAction,
-            },
-          },
-          null,
-          2,
-        ),
-      );
-    else console.error(`✗ call: ${message}\n  Next: ${userAction}`);
-    return EXIT.usage;
+    return emitUsageError(
+      json,
+      'call',
+      {
+        code: 'ACTION_AMBIGUOUS',
+        message: `"${shortName}" is ambiguous: ${resolution.candidates.join(', ')} — use the full name.`,
+        candidates: resolution.candidates,
+        userAction: `${host} actions --action ${resolution.candidates[0]} --adapter ${adapter} --json`,
+      },
+      { adapter, action: shortName },
+    );
   }
   const resolvedAction = resolution.resolved;
   const describedAction = describeManifestActions(engine, manifest, actionSources).find(
@@ -294,28 +233,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   const depsBlock =
     (await harnessAdapter(adapter).run?.dependencyBlock?.(target, { action: resolvedAction })) ??
     null;
-  if (depsBlock) {
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            adapter,
-            status: 'fail',
-            exitCode: EXIT.usage,
-            error: depsBlock,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      console.error(`✗ call: ${depsBlock.message}`);
-      console.error(`  Next: ${depsBlock.userAction}`);
-    }
-    return EXIT.usage;
-  }
+  if (depsBlock) return emitUsageError(json, 'call', { ...depsBlock }, { adapter });
 
   const recipe = synthesizeOneNodeRecipe(resolvedAction, args);
 

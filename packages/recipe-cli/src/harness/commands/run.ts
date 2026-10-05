@@ -12,6 +12,7 @@ import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../a
 import { harnessAdapter } from '../adapters.js';
 import {
   actionLibraryContextArgs,
+  capabilityRefusalText,
   type RecipeCatalog,
   resolveActionCapabilityMatrix,
 } from '../catalog.js';
@@ -56,7 +57,13 @@ import {
 import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
 import { indexProductProvenanceArtifact, writeRunReport } from '../run-report.js';
-import { checkoutBusyOut, EXIT, usageOut, writeInteractiveProgress } from '../shared.js';
+import {
+  checkoutBusyOut,
+  emitUsageError,
+  EXIT,
+  usageOut,
+  writeInteractiveProgress,
+} from '../shared.js';
 import { type RecipeTrustFailure, recipeTrustFailure } from '../trust.js';
 
 import { handleDescribeRecipe, handleListExecutables } from './discover.js';
@@ -112,15 +119,8 @@ function capabilityValidationUserAction(
   refusals: ActionCapabilityRefusal[],
   libraryContextArgs: string,
 ): string {
-  const capabilities = refusals
-    .map((refusal) => `"${refusal.capability}" [${refusal.satisfyingAdapters.join(', ')}]`)
-    .join('; ');
-  return (
-    `Missing action capabilities for ${adapter}, with satisfying adapters: ${capabilities}. ` +
-    `Inspect: ${harnessHost().name} actions --matrix${libraryContextArgs} --json; ` +
-    'then rerun from a checkout matching ' +
-    'a satisfying adapter, splitting the recipe if no single adapter satisfies every capability'
-  );
+  const { message, userAction } = capabilityRefusalText(adapter, refusals, libraryContextArgs);
+  return `${message} ${userAction}`;
 }
 
 export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
@@ -890,26 +890,12 @@ function emitPlanUsageError(
   userAction: string,
 ): number {
   stream.error({ code, message, userAction, mode: 'plan', adapter, recipe: recipeFile });
-  if (json) {
-    console.log(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          command: 'run',
-          mode: 'plan',
-          status: 'fail',
-          adapter,
-          recipe: recipeFile,
-          error: { code, message, userAction },
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    console.error(`✗ run --plan: ${message}\n  Next: ${userAction}`);
-  }
-  return EXIT.usage;
+  return emitUsageError(
+    json,
+    'run',
+    { code, message, userAction },
+    { mode: 'plan', adapter, recipe: recipeFile },
+  );
 }
 
 function emitRunRecipeRunning(json: boolean, stream: JsonStreamWriter, target: string): number {
@@ -945,27 +931,12 @@ function emitRunUsageError(
   userAction: string,
 ): number {
   stream.error({ code, message, userAction });
-  if (json) {
-    console.log(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          command: 'run',
-          adapter,
-          status: 'fail',
-          exitCode: EXIT.usage,
-          recipe: recipeFile,
-          error: { code, message, userAction },
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    console.error(`✗ run: ${message}`);
-    console.error(`  Next: ${userAction}`);
-  }
-  return EXIT.usage;
+  return emitUsageError(
+    json,
+    'run',
+    { code, message, userAction },
+    { adapter, recipe: recipeFile },
+  );
 }
 
 function emitRunValidationError(

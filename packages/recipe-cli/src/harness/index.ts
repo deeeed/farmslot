@@ -232,6 +232,7 @@ export {
 } from './runtime-proof.js';
 export {
   checkoutBusyOut,
+  emitUsageError,
   EXIT,
   flag,
   type ParsedFlags,

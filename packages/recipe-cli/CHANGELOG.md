@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** `run`, `call` and `actions` print one usage-error envelope (exit 2): `{ schemaVersion, command, …context, status: 'fail', exitCode: 2, error: { code, message, …details, userAction } }`, and the human line `✗ <host> <command>: <message>` (`run --plan` for a plan) with `Next: <userAction>`.
+  - `run` usage errors now list `recipe` before `status`; `run --plan` usage errors gain `exitCode`.
+  - `call`'s device, unknown, ambiguous, capability and dependency refusals, and every `actions` refusal, gain `status` and `exitCode`. `call` with a flag before the action prints the envelope (it printed a bare line), and `call` without an action prints the standard human line.
+  - Add `emitUsageError(json, command, error, context)`; `usageOut` is its `USAGE`-code form.
+- **BREAKING:** `run`, `call` and `actions` word a missing action capability the same way: `missing action capability "X" for the <adapter> adapter.` (or `capabilities "X", "Y"`), then `Satisfying adapters for "X": a, b. Inspect: <host> actions --matrix [--action X] --json; then rerun from a checkout of a satisfying adapter` (`, splitting the recipe if no single adapter satisfies every capability` for several). `run`'s refusal next step was `Missing action capabilities for <adapter>, with satisfying adapters: …`; `call` now quotes the capability in `--action` only when it needs quoting, as `actions` does.
 - **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
 

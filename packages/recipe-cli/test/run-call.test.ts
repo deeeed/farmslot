@@ -949,22 +949,32 @@ describe('actions', () => {
       capability: 'shop.ping',
       satisfyingAdapters: ['web'],
       userAction:
-        'Satisfying adapters for "shop.ping": web. Inspect: shop-harness actions --matrix --action shop.ping --json',
+        'Satisfying adapters for "shop.ping": web. Inspect: shop-harness actions --matrix --action shop.ping --json; ' +
+        'then rerun from a checkout of a satisfying adapter',
     });
-    // The envelopes keep their key order: context first, then error with its
-    // details between message and userAction.
+    // One usage envelope: the command, its context, status and exit code, then
+    // the error with its details between message and userAction.
     const keyOrder = (lines: string[]) => {
       const envelope = lastJson(lines);
       return [Object.keys(envelope), Object.keys(envelope.error as object)];
     };
     assert.deepEqual(keyOrder(unavailable.stdout), [
-      ['schemaVersion', 'command', 'adapter', 'action', 'error'],
+      ['schemaVersion', 'command', 'adapter', 'action', 'status', 'exitCode', 'error'],
       ['code', 'message', 'capability', 'satisfyingAdapters', 'userAction'],
     ]);
     const matrixCategory = await actions('--matrix', '--category', 'nope', '--json');
     assert.equal(matrixCategory.value, 2);
     assert.deepEqual(keyOrder(matrixCategory.stdout), [
-      ['schemaVersion', 'command', 'view', 'category', 'availableCategories', 'error'],
+      [
+        'schemaVersion',
+        'command',
+        'view',
+        'category',
+        'availableCategories',
+        'status',
+        'exitCode',
+        'error',
+      ],
       ['code', 'message', 'userAction'],
     ]);
     const raw = await actions('--raw', '--adapter', 'api');
@@ -1782,7 +1792,12 @@ describe('run', () => {
     assert.deepEqual(error.missingCapabilities, [
       { capability: 'shop.ping', satisfyingAdapters: ['web'] },
     ]);
-    assert.match(String(error.userAction), /Inspect: shop-harness actions --matrix --json/u);
+    // The same wording call and actions use, in front of run's next step.
+    assert.equal(
+      error.userAction,
+      'missing action capability "shop.ping" for the api adapter. Satisfying adapters for "shop.ping": web. ' +
+        'Inspect: shop-harness actions --matrix --action shop.ping --json; then rerun from a checkout of a satisfying adapter',
+    );
     const notFound = await capture(() =>
       handleRun(['nope', '--adapter', 'api', '--target', target, '--json'], runOptions),
     );
@@ -1794,6 +1809,99 @@ describe('run', () => {
 });
 
 describe('refusal and failure envelopes', () => {
+  test('every usage error of run, run --plan and call prints one envelope', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const refuseDevice = {
+      targetDevice: (command: 'run' | 'call') => ({
+        ok: false as const,
+        code: 'DEVICE_AMBIGUOUS',
+        message: `${command} needs --device`,
+        userAction: 'pass --device',
+      }),
+    };
+    const blockDeps = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...blockDeps,
+      run: {
+        ...blockDeps.run,
+        dependencyBlock: async () => ({
+          code: 'DEPS_MISSING',
+          message: 'install the shop',
+          userAction: 'yarn install',
+        }),
+      },
+    });
+    registry.register(shopAdapter('api', calls));
+    const flags = ['--target', target, '--json'];
+    const cases: Array<[string, () => Promise<number>, string[]]> = [
+      [
+        'run device',
+        () => handleRun([recipe, '--adapter', 'web', ...flags], { ...runOptions, ...refuseDevice }),
+        ['schemaVersion', 'command', 'adapter', 'recipe', 'status', 'exitCode', 'error'],
+      ],
+      [
+        'run --plan unknown recipe',
+        () => handleRun(['nope', '--plan', '--adapter', 'web', ...flags], runOptions),
+        ['schemaVersion', 'command', 'mode', 'adapter', 'recipe', 'status', 'exitCode', 'error'],
+      ],
+      [
+        'call device',
+        () =>
+          handleCall(['shop.ping', 'mode=fast', '--adapter', 'web', ...flags], {
+            ...callOptions,
+            ...refuseDevice,
+          }),
+        ['schemaVersion', 'command', 'adapter', 'status', 'exitCode', 'error'],
+      ],
+      [
+        'call unknown action',
+        () => handleCall(['nope', '--adapter', 'web', ...flags], callOptions),
+        ['schemaVersion', 'command', 'adapter', 'action', 'status', 'exitCode', 'error'],
+      ],
+      [
+        'call with a flag before the action',
+        () => handleCall(['--json', '--adapter', 'web', '--target', target], callOptions),
+        ['schemaVersion', 'command', 'status', 'exitCode', 'error'],
+      ],
+      [
+        'call dependency block',
+        async () => {
+          configureHarnessAdapters(registry);
+          return handleCall(['shop.ping', 'mode=fast', '--adapter', 'web', ...flags], callOptions);
+        },
+        ['schemaVersion', 'command', 'adapter', 'status', 'exitCode', 'error'],
+      ],
+    ];
+    for (const [name, invoke, keys] of cases) {
+      const json = await capture(invoke);
+      assert.equal(json.value, 2, name);
+      const envelope = lastJson(json.stdout);
+      assert.deepEqual(Object.keys(envelope), keys, name);
+      assert.equal(envelope.status, 'fail', name);
+      assert.equal(envelope.exitCode, 2, name);
+      const error = envelope.error as Record<string, unknown>;
+      assert.equal(Object.keys(error)[0], 'code', name);
+      assert.equal(Object.keys(error).at(-1), 'userAction', name);
+    }
+    // Human output names the host and the command, then the next step.
+    const human = await capture(() =>
+      handleRun(['nope', '--plan', '--adapter', 'web', '--target', target], runOptions),
+    );
+    assert.match(human.stderr.join('\n'), /^✗ shop-harness run --plan: recipe not found: nope/mu);
+    const device = await capture(() =>
+      handleCall(['shop.ping', '--adapter', 'web', '--target', target], {
+        ...callOptions,
+        ...refuseDevice,
+      }),
+    );
+    assert.equal(
+      device.stderr.join('\n'),
+      '✗ shop-harness call: call needs --device\n  Next: pass --device',
+    );
+  });
+
   function lockCheckout(prefix: string): string {
     const target = tempRoot(prefix);
     fs.mkdirSync(path.dirname(recipeRuntimePath(target, 'recipe.lock')), { recursive: true });
@@ -2047,7 +2155,7 @@ describe('call', () => {
       assert.equal(fallback.value, 2);
       assert.match(
         fallback.stderr.join('\n'),
-        /Example: shop-harness call command --adapter web\n {2}See the vocabulary: shop-harness actions --adapter web/u,
+        /^✗ shop-harness call: call requires <action>\. Example: shop-harness call command --adapter web\n {2}Next: shop-harness call command --adapter web {3}# see the vocabulary: shop-harness actions --adapter web$/u,
       );
       const preferred = await capture(() =>
         handleCall([], {
@@ -2063,7 +2171,7 @@ describe('call', () => {
       const generic = await capture(() => handleCall([], callOptions));
       assert.match(
         generic.stderr.join('\n'),
-        /Example: shop-harness call <action>\n {2}See the vocabulary: shop-harness actions$/u,
+        /Example: shop-harness call <action>\n {2}Next: shop-harness call <action> {3}# see the vocabulary: shop-harness actions$/u,
       );
     } finally {
       process.chdir(cwd);

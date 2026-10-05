@@ -14,6 +14,7 @@ import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import {
   actionCapabilityMatrix,
+  type ActionCapabilityRefusal,
   actionCategory,
   type ActionMatrixRow,
   shortActionNames,
@@ -92,6 +93,36 @@ export function actionLibraryContextArgs(
       return ` --library ${shellQuoteArg(entry)}`;
     })
     .join('');
+}
+
+/**
+ * The one wording for action capabilities the adapter lacks, in run, call and
+ * actions: which capabilities, the adapters that satisfy each, and how to look
+ * them up (`libraryArgs`: the `--library` flags the lookup needs).
+ */
+export function capabilityRefusalText(
+  adapter: string,
+  refusals: readonly ActionCapabilityRefusal[],
+  libraryArgs: string,
+): { message: string; userAction: string } {
+  const host = harnessHost().name;
+  const names = refusals.map((refusal) => `"${refusal.capability}"`).join(', ');
+  const message =
+    refusals.length === 1
+      ? `missing action capability ${names} for the ${adapter} adapter.`
+      : `missing action capabilities ${names} for the ${adapter} adapter.`;
+  const satisfying = refusals
+    .map((refusal) => `for "${refusal.capability}": ${refusal.satisfyingAdapters.join(', ')}`)
+    .join('; ');
+  const action = refusals.length === 1 ? ` --action ${shellQuoteArg(refusals[0]!.capability)}` : '';
+  const userAction =
+    `Satisfying adapters ${satisfying}. ` +
+    `Inspect: ${host} actions --matrix${action}${libraryArgs} --json; ` +
+    'then rerun from a checkout of a satisfying adapter' +
+    (refusals.length > 1
+      ? ', splitting the recipe if no single adapter satisfies every capability'
+      : '');
+  return { message, userAction };
 }
 
 /** Every action across the registered adapters, with the adapters that declare it. */
