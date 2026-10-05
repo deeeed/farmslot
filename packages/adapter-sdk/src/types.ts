@@ -83,6 +83,8 @@ export interface PlatformAdapter<
   // What `run` and `call` need from the platform. Every member is optional: a
   // platform without one behaves like a headless platform for that step.
   run?: AdapterRun<TPlatform, TBrowser>;
+  // Network and performance observation around a run.
+  observation?: AdapterObservation;
 }
 
 export interface AdapterDetect {
@@ -489,4 +491,42 @@ export interface AdapterLogFinding {
   // Where it came from, as the diagnostics report names it.
   source: string;
   text: string;
+}
+
+// A run-scoped observer: it sees every node event and writes its artifacts when
+// the run ends.
+export interface RunObserver {
+  onActionEvent(event: RecipeNodeEvent): void;
+  // Write and index the artifacts; the manifest is absent when the run threw.
+  finalize(artifactManifestPath?: string): Promise<void>;
+}
+
+// One network capture session on the platform's runtime.
+export interface NetworkCaptureBackend {
+  start(params: Record<string, unknown>): Promise<unknown>;
+  end(id: string): Promise<Record<string, unknown>>;
+  close(): Promise<void>;
+}
+
+export interface AdapterObservation {
+  // The run's network capture: the host owns the session, the automatic summary
+  // and the app.network_capture windows; the platform owns the backend.
+  network?: {
+    backend(
+      target: string,
+      env: NodeJS.ProcessEnv,
+      artifactsDir: string,
+    ): Promise<NetworkCaptureBackend>;
+    // Whether recipes may call app.network_capture and app.network_assert.
+    actions?: boolean;
+  };
+  // The run's performance observer, started before the run executes.
+  performance?: {
+    start(context: {
+      target: string;
+      artifactsDir: string;
+      env: NodeJS.ProcessEnv;
+      ports: { cdpPort?: string; watcherPort?: string };
+    }): Promise<RunObserver>;
+  };
 }

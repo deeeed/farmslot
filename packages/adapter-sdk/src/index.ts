@@ -19,6 +19,7 @@ export {
   type AdapterLaunchContext,
   type AdapterLogFinding,
   type AdapterLogSource,
+  type AdapterObservation,
   type AdapterRecording,
   type AdapterRun,
   type AdapterRunPrepareContext,
@@ -35,7 +36,9 @@ export {
   type HealState,
   type NativeUiTransport,
   type NativeUiTransportOptions,
+  type NetworkCaptureBackend,
   type PlatformAdapter,
   type RecipeNodeEvent,
   type RecipeRunOptions,
+  type RunObserver,
 } from './types.js';

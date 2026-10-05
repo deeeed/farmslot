@@ -21,6 +21,17 @@ export {
   writeContainedArtifact,
 } from './artifact-files.js';
 export {
+  type ActionCapabilitySource,
+  actionExampleCommand,
+  actionLibraryContextArgs,
+  type DescribedAction,
+  describeManifestActions,
+  type RecipeCatalog,
+  renderHumanActionExample,
+  resolveActionCapabilityMatrix,
+  type ResolvedActionManifest,
+} from './catalog.js';
+export {
   acquireCheckoutLock,
   type CheckoutLock,
   type CheckoutLockFailure,
@@ -49,9 +60,16 @@ export {
   redactStructuredValue,
   withCommandJournal,
 } from './command-journal.js';
+export { type CallCommandOptions, handleCall, handleCallHelp } from './commands/call.js';
 export { handleLast } from './commands/last.js';
 export { handleLaunch } from './commands/launch.js';
 export { handleReload } from './commands/reload.js';
+export {
+  type DeviceTargeting,
+  handleRun,
+  type RunCommandOptions,
+  type RunPlanStep,
+} from './commands/run.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export {
   captureExecutionProvenance,
@@ -100,6 +118,7 @@ export {
   resolveLiveAdapter,
   runLiveAdapterScript,
 } from './live-adapter-contract.js';
+export { runNetworkCaptureAction } from './network-observation.js';
 export {
   argValue,
   handleHarness,
@@ -144,6 +163,21 @@ export {
   recipeRuntimePath,
 } from './paths.js';
 export {
+  describeRunnableRecipe,
+  listRunnableRecipes,
+  type RecipeParameterSummary,
+  resolveLibrarySources,
+  runnableLibraryRecipes,
+  type RunnableRecipe,
+  type RunnableRecipeDetail,
+} from './recipe-library.js';
+export {
+  resolveRecipeParamValue,
+  type RunRecipeStaticValidation,
+  validateActionInputs,
+  validateRunRecipeStatic,
+} from './recipe-validation.js';
+export {
   captureHelperPath,
   captureHelperSupportsCapability,
   captureHelperSupportsRecordSessionSnapshots,
@@ -169,6 +203,15 @@ export {
   type RunSideFinding,
   verifyConsoleCapture,
 } from './run-diagnostics.js';
+export {
+  activateRecipeRuntimeEnvironment,
+  preflightRecipe,
+  type PreparedRecipeExecution,
+  type RecipeEngine,
+  type RecipeEngineRunOptions,
+  type RecipeRunnerOptions,
+  runRecipe,
+} from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
 export {
   type ActiveRecipeRecording,

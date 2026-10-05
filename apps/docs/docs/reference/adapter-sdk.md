@@ -15,7 +15,8 @@ export const web = defineAdapter({
   headless: false,
   // resolveSlotPorts, runtimeStatus, devServer, logSources, appLogSource,
   // hints, actions, harness, runtimeContext, launch; optional reload, detect,
-  // targets, flags, failurePatterns, run, recording, diagnostics, sourceFingerprint
+  // targets, flags, failurePatterns, run, recording, diagnostics, observation,
+  // sourceFingerprint
 });
 
 const registry = createAdapterRegistry<PlatformAdapter>();
@@ -43,6 +44,7 @@ registry.register(web);
 | `run?`                                       | what `run` and `call` need: the platform's run options (`platformOptions`), env, runtime prep and checks, the browser it drove (`launchedBrowser`, `browserProvenance`) |
 | `recording?`                                 | the `--record-video` target; `framed` names the browser pid and the env var actions read it from (`activePidEnv`)                                                       |
 | `diagnostics?`                               | the console collector, a request log read from the run's start (`requestLog`), the in-app issue buffer                                                                  |
+| `observation?`                               | network capture around a run (`network.backend`, `network.actions` for `app.network_capture`/`app.network_assert`) and the performance observer (`performance.start`)   |
 | `reload?`, `sourceFingerprint?`              | optional run support                                                                                                                                                    |
 
 ## Rules
@@ -52,5 +54,6 @@ registry.register(web);
 - `register` refuses a duplicate id, an empty id, and any `sdkVersion` other than `ADAPTER_SDK_VERSION`.
 - A behavior one platform needs is an optional member, not a command branch.
 - Detection: any adapter's remote match beats any adapter's file match; within a pass, registration order decides.
+- Observation: the host owns the run's network session (the automatic whole-run capture and the `app.network_capture` windows); the platform supplies the capture backend. `performance.start` returns a `RunObserver` that sees every node event and writes its artifacts when the run ends.
 - Failure classes are tested in order (capture-protected, transport-first, wallet state, transport) against every registered adapter's patterns; an unmatched failure is app logic and is never healed.
-- The SDK also defines the types the host and platforms share: `AdapterLaunchContext`, `CommandEventStream`, `HealPolicy`, `HealState`, `HealBoundViolation`, and for runs `CommandOptions`, `RecipeRunOptions`, `RecipeNodeEvent`, `AdapterBrowser`, `AdapterRunPrepareContext`, `AdapterDependencyBlock` and `AdapterLogFinding`.
+- The SDK also defines the types the host and platforms share: `AdapterLaunchContext`, `CommandEventStream`, `HealPolicy`, `HealState`, `HealBoundViolation`, and for runs `CommandOptions`, `RecipeRunOptions`, `RecipeNodeEvent`, `AdapterBrowser`, `AdapterRunPrepareContext`, `AdapterDependencyBlock`, `AdapterLogFinding`, `RunObserver` and `NetworkCaptureBackend`.

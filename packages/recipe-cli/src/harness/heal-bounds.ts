@@ -160,6 +160,17 @@ export function recipeRunning(target: string): boolean {
   return fs.existsSync(recipeRuntimePath(target, 'recipe.lock'));
 }
 
+/**
+ * Why a command refuses while another recipe runs, and where to look.
+ * `targetArg` is the checkout as the caller quotes it for a shell.
+ */
+export function recipeRunningRefusal(targetArg: string): { message: string; userAction: string } {
+  return {
+    message: 'a recipe is currently running — refusing to start while another recipe executes.',
+    userAction: `inspect the checkout state with: ${harnessHost().name} status --target ${targetArg} --json; retry after the active recipe finishes`,
+  };
+}
+
 // Returns null (ok to proceed) or a violation descriptor when a bound is hit.
 // Using null instead of { ok: true } keeps the return typeof-narrowable without
 // relying on discriminated-union narrowing (avoids strict-mode tsconfig issues).
