@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.1 - 2026-10-05
+
+- Publish with adapter-sdk 0.3.1, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.24.0 so consumers share one recipe-runner copy.
+
 ## 0.4.0 - 2026-10-05
 
 - Add run evidence to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through the registered adapters and the host identity:

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.3.1 - 2026-10-05
+
+- Publish with protocol 0.34.0 and recipe-runner 0.24.0 so consumers share one recipe-runner copy.
+
 ## 0.3.0 - 2026-10-05
 
 - **BREAKING:** `AdapterRecording.framed` requires `activePidEnv`, the environment variable that names the recorded browser pid to actions while the recording runs.
