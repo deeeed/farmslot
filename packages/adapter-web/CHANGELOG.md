@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.3.0 - 2026-10-05
+
 - Add `dapp`, the web3 layer for a dapp under test, moved from `@deeeed/metamask-harness`'s Web Terminal adapter: the strict EIP-1193 test wallet (`createStrictWallet`), the page script that wraps the app's provider and logs its wallet requests or injects a provider the host answers (`pageScriptSource`, `pageReadyExpression`), the host's side of its bindings (`createWalletRequestBinding`: frame and document attribution, `outside-app-frame` and `unattributed` records, refusals) and the wallet request log (`windowSinceCursor`, `resetWindow`, `evaluateSignatureLog`, `awaitSignatureLog`, `writeLogArtifact`). Product policy is passed in: the typed data to refuse (`refuseTypedData`), the injected wallet's EIP-6963 identity and the log entries and typed-data classes a product forbids. Page bindings are `__farmslotWallet{Log,Request,Resolve}` and the page marker `__farmslotDapp`.
 - Add `origin` (`isAppUrl`, `originOf`, `isAppTopFrameContext`, `shortUrl`): exact app-origin checks, moved from the same adapter.
 
