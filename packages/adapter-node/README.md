@@ -34,12 +34,12 @@ Docs: https://farmslot.io/docs/reference/adapter-node
 
 ## Source layout
 
-| path                        | owns                                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/node-adapter.ts`       | `createNodeAdapter`, its config and wording types, `HEADLESS_FORBIDDEN_FIELDS`           |
-| `src/dependencies.ts`       | `nodeDependencyBlock` (Yarn PnP, node_modules, bins, runtime deps), `pnpNodeOptions`     |
-| `src/workspace-tsconfig.ts` | `workspaceTsconfig`/`workspaceTsconfigEnv`: tsx paths to unbuilt workspace package `src` |
-| `scripts/cleanup.sh`        | `cleanup.sh --adapter <id> [--target <dir>]`: removes the adapter's overlay directory    |
+| path                        | owns                                                                                                  |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `src/node-adapter.ts`       | `createNodeAdapter`, its config and wording types, `HEADLESS_FORBIDDEN_FIELDS`                        |
+| `src/dependencies.ts`       | `nodeDependencyBlock` (Yarn PnP, node_modules, bins via `resolveBin`, runtime deps), `pnpNodeOptions` |
+| `src/workspace-tsconfig.ts` | `workspaceTsconfig`/`workspaceTsconfigEnv`: tsx paths to unbuilt workspace package `src`              |
+| `scripts/cleanup.sh`        | `cleanup.sh --adapter <id> [--target <dir>]`: removes the adapter's overlay directory                 |
 
 `scripts/cleanup.sh` is exported by path (`@farmslot/adapter-node/scripts/cleanup.sh`, also
 `NODE_CLEANUP_SCRIPT`). It honours `RECIPE_HARNESS_ROOT` (default `temp/recipe/harness`) and

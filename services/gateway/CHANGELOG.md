@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A run created without a mode for a project with an execution-template catalog takes its default mode from the catalog `defaults` instead of the worker template files, so removing a farm template that a shared checklist replaced keeps the mode unchanged.
 
 ## 0.20.1 - 2026-10-05
 

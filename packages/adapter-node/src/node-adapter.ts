@@ -61,8 +61,12 @@ export type NodeDependencyUse = Parameters<NonNullable<AdapterRun['dependencyBlo
 export interface NodeAdapterDependencies {
   /** Packages the checkout must resolve at runtime. Default: none. */
   runtimeDeps?: readonly string[];
-  /** Executables `node_modules/.bin` must hold. Default: `['tsx']`. */
+  /** Executables the actions run (e.g. `tsx`). Default: none. */
   bins?: readonly string[];
+  /** Finds a bin for the checkout; pass the resolver execution uses. Default: `<target>/node_modules/.bin`. */
+  resolveBin?(target: string, bin: string): string | null;
+  /** Next step when a bin cannot be found. Default: the install command. */
+  missingBinAction?(target: string, bin: string): string;
   /** Whether this run or action needs the checkout's dependencies. Default: always. */
   requiredFor?(target: string, use: NodeDependencyUse): boolean | Promise<boolean>;
 }
@@ -108,6 +112,15 @@ export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
     ...config.wording,
   };
   const dependencies = config.dependencies ?? {};
+  const dependencyBlockFor = (target: string) =>
+    nodeDependencyBlock(target, {
+      runtimeDeps: dependencies.runtimeDeps,
+      bins: dependencies.bins,
+      resolveBin: dependencies.resolveBin,
+      missingBinAction: dependencies.missingBinAction,
+      label: id,
+      installCommand,
+    });
   const workspacePackages = config.workspacePackages;
 
   return defineAdapter<PlatformAdapter>({
@@ -121,12 +134,32 @@ export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
 
     async runtimeStatus(target) {
       const deps = depsCheck(path.resolve(target));
-      const ready = deps.status === 'current';
+      if (deps.status !== 'current') {
+        return {
+          decision: 'install',
+          reasonCode: `deps-${deps.status}`,
+          reasons: [wording.notReady],
+          nextAction: installCommand(target),
+          deps: deps.status,
+        };
+      }
+      // Installed is not enough: the actions must find their runtime too, so
+      // doctor and verify report what run and call would refuse.
+      const block = dependencyBlockFor(target);
+      if (block) {
+        return {
+          decision: 'install',
+          reasonCode: 'deps-incomplete',
+          reasons: [wording.notReady, block.message],
+          nextAction: block.userAction,
+          deps: deps.status,
+        };
+      }
       return {
-        decision: ready ? 'ready' : 'install',
-        reasonCode: ready ? 'deps-present' : `deps-${deps.status}`,
-        reasons: [ready ? wording.ready : wording.notReady],
-        nextAction: ready ? undefined : installCommand(target),
+        decision: 'ready',
+        reasonCode: 'deps-present',
+        reasons: [wording.ready],
+        nextAction: undefined,
         deps: deps.status,
       };
     },
@@ -168,12 +201,7 @@ export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
           ? await dependencies.requiredFor(target, use)
           : true;
         if (!required) return null;
-        return nodeDependencyBlock(target, {
-          runtimeDeps: dependencies.runtimeDeps,
-          bins: dependencies.bins,
-          label: id,
-          installCommand,
-        });
+        return dependencyBlockFor(target);
       },
       ...config.run,
     },

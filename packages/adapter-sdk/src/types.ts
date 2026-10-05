@@ -97,10 +97,11 @@ export interface PlatformAdapter<
 /** One check a platform adds to the `doctor` report. */
 export interface AdapterDoctorCheck {
   id: string;
-  status: 'pass' | 'warn' | 'fail';
+  status: 'pass' | 'fail';
   /** A required check that fails makes the report fail. */
-  required?: boolean;
+  required: boolean;
   message: string;
+  detail?: string;
   userAction?: string;
 }
 

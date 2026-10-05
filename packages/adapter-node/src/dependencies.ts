@@ -1,5 +1,5 @@
 // The headless dependency check: a Node checkout can run recipes once Yarn
-// installed it (PnP or node_modules), its tools are on node_modules/.bin, and the
+// installed it (PnP or node_modules), the tools its actions run are found, and the
 // packages its live scripts import resolve from the checkout.
 
 import fs from 'node:fs';
@@ -14,14 +14,24 @@ const requireFromPackage = createRequire(import.meta.url);
 export interface NodeDependencyOptions {
   /** Packages the checkout must resolve at runtime. Default: none. */
   runtimeDeps?: readonly string[];
-  /** Executables `node_modules/.bin` must hold. Default: `['tsx']`. */
+  /** Executables the actions run (e.g. `tsx`). Default: none. */
   bins?: readonly string[];
+  /**
+   * Finds `bin` for the checkout, or returns null. Pass the resolver execution
+   * uses, so the check and the run agree. Default: `<target>/node_modules/.bin/<bin>`.
+   */
+  resolveBin?(target: string, bin: string): string | null;
   /** Names the checkout in messages ("<label> dependencies are …"). Default: `node`. */
   label?: string;
   /** Code prefix: `<prefix>_DEPS_MISSING`, `<prefix>_DEPS_INCOMPLETE`. Default: the label, upper-cased. */
   codePrefix?: string;
   /** The block's next step. Default: {@link yarnInstallCommand}. */
   installCommand?(target: string): string;
+  /**
+   * The next step when `bin` cannot be found. Default: the install command. A host
+   * whose `resolveBin` looks outside the checkout says how to provide the bin.
+   */
+  missingBinAction?(target: string, bin: string): string;
 }
 
 /**
@@ -61,14 +71,15 @@ export function nodeDependencyBlock(
     };
   }
 
-  for (const bin of options.bins ?? ['tsx']) {
-    if (!fs.existsSync(path.join(resolved, 'node_modules/.bin', bin))) {
-      return {
-        code: incomplete,
-        message: `${label} dependencies are incomplete (node_modules/.bin/${bin} is missing).`,
-        userAction,
-      };
-    }
+  for (const bin of options.bins ?? []) {
+    if (options.resolveBin ? options.resolveBin(resolved, bin) : localBin(resolved, bin)) continue;
+    return {
+      code: incomplete,
+      message: options.resolveBin
+        ? `${label} dependencies are incomplete (no ${bin} runtime found for the checkout).`
+        : `${label} dependencies are incomplete (node_modules/.bin/${bin} is missing).`,
+      userAction: options.missingBinAction ? options.missingBinAction(resolved, bin) : userAction,
+    };
   }
 
   for (const dependency of options.runtimeDeps ?? []) {
@@ -110,6 +121,11 @@ function canResolveFromTarget(specifier: string, target: string): boolean {
     if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true;
     throw error;
   }
+}
+
+function localBin(target: string, bin: string): string | null {
+  const file = path.join(target, 'node_modules/.bin', bin);
+  return fs.existsSync(file) ? file : null;
 }
 
 function readYarnNodeLinker(target: string): string | undefined {

@@ -3,13 +3,20 @@
 // journal, the checkout lock, JSON streaming and colour output.
 export {
   adapterChoices,
+  type AdapterLibraryOptions,
   type AdapterLoadOptions,
+  adapterPlugin,
+  adapterPluginChecks,
   AdapterPluginError,
   type AdapterPluginErrorCode,
   adapterSelectionFailureOut,
   composeAdapter,
   type DeclaredAdapter,
+  declaredAdapterIds,
   ensureAdapterLoaded,
+  type LoadedAdapterPlugin,
+  loadedAdapterPlugins,
+  selectedAdapterId,
 } from './adapter-plugins.js';
 export {
   adapterDetectNext,
@@ -152,6 +159,7 @@ export {
   type PreparedLiveAdapter,
   prepareLiveAdapterScript,
   resolveLiveAdapter,
+  resolveTsxBin,
   runLiveAdapterScript,
 } from './live-adapter-contract.js';
 export { runNetworkCaptureAction } from './network-observation.js';

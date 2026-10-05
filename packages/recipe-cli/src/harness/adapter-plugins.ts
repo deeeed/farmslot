@@ -3,12 +3,24 @@
 // resolves inside the library root, is imported, checked against the SDK and
 // composed on the adapter it `extends`, then registered with the host's
 // built-ins. The library digest the run records covers the module.
+//
+// Trust: plugins load only from the operator's libraries (--library,
+// RECIPE_LIBRARY_PATH, the personal library and what the host configures),
+// never from a task-local library beside a recipe, so loading one is trusted
+// like installing it. Each plugin's digest binds what the run approves (see
+// `adapterPlugin`), and `adapterPluginChecks` names it in the doctor report.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ADAPTER_SDK_VERSION, type PlatformAdapter } from '@farmslot/adapter-sdk';
 import {
+  ADAPTER_SDK_VERSION,
+  type AdapterDoctorCheck,
+  type PlatformAdapter,
+} from '@farmslot/adapter-sdk';
+import {
+  digestLibraryAdapter,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   readRecipeLibraryManifest,
@@ -18,7 +30,7 @@ import {
   resolveRecipeLibrarySources,
 } from '@farmslot/recipe-runner';
 
-import { harnessAdapters } from './adapters.js';
+import { adapterForPlatform, harnessAdapters } from './adapters.js';
 import { harnessHost } from './host.js';
 import { CliError, isRecord } from './parse-args.js';
 import { EXIT } from './shared.js';
@@ -49,9 +61,32 @@ export interface DeclaredAdapter extends RecipeLibraryAdapterDeclaration {
   root: string;
 }
 
-export interface AdapterLoadOptions {
+/** A plugin the loader registered: where it came from and the digest of its code. */
+export interface LoadedAdapterPlugin {
+  id: string;
+  library: string;
+  root: string;
+  module: string;
+  extends?: string;
+  /**
+   * sha256 over the declaring library's name and real root, the plugin's files
+   * (`digestLibraryAdapter`: the module's directory) and, with `extends`, the
+   * parent plugin's digest. Taken before the module is imported.
+   */
+  digest: string;
+}
+
+export interface AdapterLibraryOptions {
   /** The command's `--library` entries; RECIPE_LIBRARY_PATH and the personal library follow. */
   libraries?: readonly string[];
+  /**
+   * Libraries the host configures (e.g. a config file), after those. A source
+   * whose name or root is already present is skipped, so an earlier one wins.
+   */
+  configured?: readonly RecipeLibrarySource[];
+}
+
+export interface AdapterLoadOptions extends AdapterLibraryOptions {
   /**
    * Turns a loaded adapter into the host's adapter, e.g. defaults for members
    * the host's registry requires beyond the SDK. Called before registration.
@@ -61,15 +96,62 @@ export interface AdapterLoadOptions {
 
 /**
  * Every adapter id `--adapter` accepts: the registered adapters, then the ids
- * the configured libraries declare. Reads recipe-library.json only; imports nothing.
- * The libraries are RECIPE_LIBRARY_PATH (else the personal library) plus `libraries`.
+ * the libraries declare (`declaredAdapterIds`). Reads recipe-library.json only;
+ * imports nothing. The libraries are resolved as recipes resolve them: `libraries`
+ * (--library), then RECIPE_LIBRARY_PATH entries they don't rename, else the
+ * personal library; then `configured`.
  */
-export function adapterChoices(libraries: readonly string[] = []): string[] {
-  const ids = new Set(harnessAdapters().list());
-  for (const root of configuredLibraryRoots(libraries)) {
-    for (const id of declaredIdsIn(root)) ids.add(id);
-  }
-  return [...ids];
+export function adapterChoices(
+  libraries: readonly string[] = [],
+  options: Pick<AdapterLibraryOptions, 'configured'> = {},
+): string[] {
+  const sources = withConfigured(librarySourcesSync(libraries), options.configured);
+  return [...new Set([...harnessAdapters().list(), ...declaredAdapterIds(sources)])];
+}
+
+/**
+ * The adapter ids these libraries declare in recipe-library.json `adapters`,
+ * read without importing anything. A library without a readable manifest
+ * declares nothing here; selecting one of its adapters reports the error.
+ */
+export function declaredAdapterIds(sources: readonly RecipeLibrarySource[]): string[] {
+  return [...new Set(sources.flatMap((source) => declaredIdsIn(source.root)))];
+}
+
+/**
+ * The adapter a command's tokens select, the way commands resolve it: the last
+ * `--adapter`, else the adapter of the last `--platform`. Tokens after `--` are
+ * passthrough and select nothing.
+ */
+export function selectedAdapterId(tokens: readonly string[]): string | undefined {
+  return (
+    lastOptionValue(tokens, '--adapter') ??
+    adapterForPlatform(lastOptionValue(tokens, '--platform'))
+  );
+}
+
+/** The plugin the loader registered under `id` in the host's registry, if any. */
+export function adapterPlugin(id: string): LoadedAdapterPlugin | undefined {
+  return loadedInto(harnessAdapters()).get(id);
+}
+
+/** Every plugin the loader registered in the host's registry, in load order. */
+export function loadedAdapterPlugins(): LoadedAdapterPlugin[] {
+  return [...loadedInto(harnessAdapters()).values()];
+}
+
+/**
+ * One passing, non-required doctor check per loaded plugin, naming its library,
+ * module and digest, so the report shows which plugin code this process runs.
+ */
+export function adapterPluginChecks(): AdapterDoctorCheck[] {
+  return loadedAdapterPlugins().map((plugin) => ({
+    id: `adapter-plugin:${plugin.id}`,
+    status: 'pass',
+    required: false,
+    message: `adapter ${plugin.id} is loaded from library ${plugin.library} (${plugin.module}), ${plugin.digest}`,
+    detail: plugin.root,
+  }));
 }
 
 /**
@@ -83,7 +165,7 @@ export async function ensureAdapterLoaded(
 ): Promise<void> {
   if (id === undefined) return;
   const registry = harnessAdapters();
-  if (registry.has(id) && loadedInto(registry).has(id)) return;
+  if (loadedInto(registry).has(id)) return;
   if (registry.has(id)) {
     // A built-in: refuse a library that claims its id; never block it on a library error.
     const claims = (await declarations(options, { lenient: true })).filter((d) => d.id === id);
@@ -96,13 +178,13 @@ export async function ensureAdapterLoaded(
   await load(id, declared, options, []);
 }
 
-/** Adapter ids the loader registered, per host registry. */
-const loaded = new WeakMap<object, Set<string>>();
+/** The plugins the loader registered, per host registry. */
+const loaded = new WeakMap<object, Map<string, LoadedAdapterPlugin>>();
 
-function loadedInto(registry: object): Set<string> {
-  let ids = loaded.get(registry);
-  if (!ids) loaded.set(registry, (ids = new Set()));
-  return ids;
+function loadedInto(registry: object): Map<string, LoadedAdapterPlugin> {
+  let plugins = loaded.get(registry);
+  if (!plugins) loaded.set(registry, (plugins = new Map()));
+  return plugins;
 }
 
 async function load(
@@ -142,13 +224,40 @@ async function load(
   const parent = declaration.extends
     ? await load(declaration.extends, declared, options, [...chain, id])
     : undefined;
+  // The digest is taken before the import, so it covers the code that loads.
+  const digest = await pluginDigest(
+    declaration,
+    loadedInto(registry).get(declaration.extends ?? ''),
+  );
   const plugin = await importDeclared(declaration);
   const composed = parent ? composeAdapter(parent, plugin) : plugin;
   assertAdapterMembers(composed, declaration);
   const adopted = options.adopt ? options.adopt(composed) : composed;
   registry.register(adopted);
-  loadedInto(registry).add(id);
+  loadedInto(registry).set(id, {
+    id,
+    library: declaration.library,
+    root: declaration.root,
+    module: declaration.module,
+    ...(declaration.extends ? { extends: declaration.extends } : {}),
+    digest,
+  });
   return adopted;
+}
+
+async function pluginDigest(
+  declaration: DeclaredAdapter,
+  parent: LoadedAdapterPlugin | undefined,
+): Promise<string> {
+  const files = await digestLibraryAdapter(declaration.root, declaration);
+  const identity = [
+    declaration.library,
+    fs.realpathSync(declaration.root),
+    declaration.id,
+    files,
+    parent?.digest ?? '',
+  ].join('\0');
+  return `sha256:${createHash('sha256').update(identity).digest('hex')}`;
 }
 
 async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAdapter> {
@@ -273,13 +382,19 @@ async function declarations(
   options: AdapterLoadOptions,
   mode: { lenient: boolean },
 ): Promise<DeclaredAdapter[]> {
-  const sources = await resolveRecipeLibrarySources({ cliEntries: [...(options.libraries ?? [])] });
+  // No recipePath: a task-local library beside a recipe never declares adapters.
+  const sources = withConfigured(
+    await resolveRecipeLibrarySources({ cliEntries: [...(options.libraries ?? [])] }),
+    options.configured,
+  );
   const declared: DeclaredAdapter[] = [];
   for (const source of sources) {
     let manifest;
     try {
       manifest = await readRecipeLibraryManifest(source.root);
     } catch (error) {
+      // Selecting a built-in only looks for libraries that claim its id, so a
+      // broken library never blocks it; selecting a plugin reports the error.
       if (mode.lenient) continue;
       throw error;
     }
@@ -294,34 +409,77 @@ function libraryName(source: RecipeLibrarySource): string {
   return source.name ?? path.basename(source.root);
 }
 
-function configuredLibraryRoots(libraries: readonly string[]): string[] {
-  const entries = [...libraries.flatMap((entry) => safeParse(entry))];
-  const environment = process.env.RECIPE_LIBRARY_PATH;
-  if (environment) entries.push(...safeParse(environment));
-  if (entries.length === 0) {
-    const personal = personalRecipeLibraryRoot(process.env);
-    if (fs.existsSync(personal)) entries.push({ root: personal });
+/**
+ * `resolveRecipeLibrarySources` without the file system, for the grammar: the
+ * `--library` entries, then the RECIPE_LIBRARY_PATH entries they don't rename,
+ * else the personal library.
+ */
+function librarySourcesSync(libraries: readonly string[]): RecipeLibrarySource[] {
+  const flagged = libraries.flatMap((entry) => safeParse(entry));
+  const renamed = new Set(flagged.map(libraryName));
+  const environment = safeParse(process.env.RECIPE_LIBRARY_PATH ?? '').filter(
+    (source) => !renamed.has(libraryName(source)),
+  );
+  const explicit = [...flagged, ...environment];
+  if (explicit.length > 0) return explicit;
+  const personal = personalRecipeLibraryRoot(process.env);
+  return fs.existsSync(personal) ? [{ name: 'personal', root: personal }] : [];
+}
+
+function withConfigured(
+  sources: readonly RecipeLibrarySource[],
+  configured: readonly RecipeLibrarySource[] = [],
+): RecipeLibrarySource[] {
+  const result = [...sources];
+  for (const source of configured) {
+    const present = result.some(
+      (existing) =>
+        libraryName(existing) === libraryName(source) ||
+        path.resolve(existing.root) === path.resolve(source.root),
+    );
+    if (!present) result.push(source);
   }
-  return entries.map((entry) => entry.root);
+  return result;
 }
 
 function safeParse(value: string): RecipeLibrarySource[] {
   try {
     return parseRecipeLibraryPath(value);
   } catch {
+    // A malformed entry adds no adapter ids to the grammar; the command that
+    // resolves its libraries reports RECIPE_LIBRARY_PATH_INVALID itself.
     return [];
   }
 }
 
 function declaredIdsIn(root: string): string[] {
+  let text: string;
   try {
-    const value: unknown = JSON.parse(
-      fs.readFileSync(path.join(root, RECIPE_LIBRARY_MANIFEST_FILE), 'utf8'),
-    );
+    text = fs.readFileSync(path.join(root, RECIPE_LIBRARY_MANIFEST_FILE), 'utf8');
+  } catch (error) {
+    // A library without recipe-library.json declares no adapters.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  try {
+    const value: unknown = JSON.parse(text);
     return isRecord(value) && isRecord(value.adapters) ? Object.keys(value.adapters) : [];
   } catch {
+    // Invalid JSON declares nothing for the grammar, so `--adapter core` still
+    // validates; selecting a plugin reads the manifest strictly and reports it.
     return [];
   }
+}
+
+function lastOptionValue(tokens: readonly string[], name: string): string | undefined {
+  let value: string | undefined;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token === '--') break;
+    if (token === name && tokens[index + 1] !== undefined) value = tokens[(index += 1)];
+    else if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1);
+  }
+  return value;
 }
 
 /**
