@@ -940,6 +940,22 @@ describe('actions', () => {
       userAction:
         'Satisfying adapters for "shop.ping": web. Inspect: shop-harness actions --matrix --action shop.ping --json',
     });
+    // The envelopes keep their key order: context first, then error with its
+    // details between message and userAction.
+    const keyOrder = (lines: string[]) => {
+      const envelope = lastJson(lines);
+      return [Object.keys(envelope), Object.keys(envelope.error as object)];
+    };
+    assert.deepEqual(keyOrder(unavailable.stdout), [
+      ['schemaVersion', 'command', 'adapter', 'action', 'error'],
+      ['code', 'message', 'capability', 'satisfyingAdapters', 'userAction'],
+    ]);
+    const matrixCategory = await actions('--matrix', '--category', 'nope', '--json');
+    assert.equal(matrixCategory.value, 2);
+    assert.deepEqual(keyOrder(matrixCategory.stdout), [
+      ['schemaVersion', 'command', 'view', 'category', 'availableCategories', 'error'],
+      ['code', 'message', 'userAction'],
+    ]);
     const raw = await actions('--raw', '--adapter', 'api');
     assert.deepEqual(Object.keys(lastJson(raw.stdout)), ['$schema', 'actions']);
   });
