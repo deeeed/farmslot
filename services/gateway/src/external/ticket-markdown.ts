@@ -482,6 +482,8 @@ export function sectionItems(section: string): string[] {
     return current;
   };
   const opensList = (index: number): boolean => {
+    // The label itself sits at the list's root: an indented bold line continues an item.
+    if ((lines[index].match(/^\s*/)?.[0].length ?? 0) > Math.max(rootIndent, 0)) return false;
     const next = lines.findIndex((line, i) => i > index && line.trim() !== '');
     const marker = next >= 0 && !fenced[next] ? lines[next].match(ITEM_MARKER) : null;
     return marker !== null && marker[1].length <= rootIndent;

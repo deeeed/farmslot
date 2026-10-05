@@ -589,6 +589,25 @@ test('a bold label right before a list groups it; a bold line on its own stays a
     'Mobile: m2',
     'Extension: e1',
   ]);
+  // A bold paragraph continuing an item stays with that item, even with siblings after it.
+  const bold = (value: string) => text(value, [{ type: 'strong' }]);
+  for (const list of [bullets, ordered]) {
+    const markdown = ticketBodyToMarkdown(
+      doc(
+        heading(2, 'Acceptance criteria'),
+        list(
+          item(paragraph(text('First criterion')), paragraph(bold('Important'))),
+          item(paragraph(text('Second criterion'))),
+          item(paragraph(text('Third'))),
+        ),
+      ),
+    );
+    assert.deepEqual(sectionItems(extractSection(markdown, ['acceptance criteria'])), [
+      'First criterion\n**Important**',
+      'Second criterion',
+      'Third',
+    ]);
+  }
   const plain = '## Acceptance Criteria\n\n**Preview equals the charge.**\n\n**Points match.**';
   assert.deepEqual(sectionItems(extractSection(plain, ['acceptance criteria'])), [
     '**Preview equals the charge.**',
