@@ -1199,6 +1199,36 @@ describe('run', () => {
     ]);
     assert.equal(process.env.WATCHER_PORT, undefined);
     assert.equal(process.env.SHOP_ACTIVE, undefined);
+
+    // call opens the same scope.
+    seen.length = 0;
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--cdp-port',
+          '9444',
+          '--watcher-port',
+          '8088',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.deepEqual(seen, [
+      'runtimeCheck:9444/9444/8088/8088/1',
+      'network:9444/9444/8088/8088/1',
+      'performance:9444/9444/8088/8088/1',
+    ]);
+    assert.equal(process.env.WATCHER_PORT, undefined);
   });
 
   test('refuses before validation when the host refuses the device', async () => {
