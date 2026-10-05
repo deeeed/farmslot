@@ -618,6 +618,12 @@ function formatDiagnosticLine(line: string, out: (style: string, text: string) =
   return `${out(style, status)}${match[2]}`;
 }
 
+/** A run's or call's own directory: `fresh` under temp/recipe, `taskSubdir` under a task's artifacts. */
+export interface RecipeArtifactsLayout {
+  fresh: string;
+  taskSubdir?: string;
+}
+
 /**
  * Where a run or call writes its artifacts: `--artifacts-dir`; else, inside a
  * task (RECIPE_TASK_DIR/FARMSLOT_TASK_DIR, which must be inside the checkout),
@@ -627,7 +633,7 @@ function formatDiagnosticLine(line: string, out: (style: string, text: string) =
 export function resolveRecipeArtifactsDir(
   target: string,
   explicit: string | undefined,
-  layout: { fresh: string; taskSubdir?: string },
+  layout: RecipeArtifactsLayout,
 ): string {
   if (explicit !== undefined) return path.resolve(explicit);
   const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;

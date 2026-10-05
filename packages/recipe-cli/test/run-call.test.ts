@@ -1303,6 +1303,29 @@ describe('call', () => {
     assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
   });
 
+  test('an inline --flag=value is an option, never an input', async () => {
+    const target = checkout();
+    const artifacts = tempRoot('recipe-cli-call-inline-');
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          `--artifacts-dir=${artifacts}`,
+          '--adapter=web',
+          `--target=${target}`,
+          '--heal=off',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, `${call.stdout.join('\n')}\n${call.stderr.join('\n')}`);
+    const envelope = lastJson(call.stdout);
+    assert.deepEqual(envelope.args, { mode: 'fast' });
+    assert.equal(path.dirname(String(envelope.summaryPath)), artifacts);
+  });
+
   test('takes every input as key=value, values that look like flags included', async () => {
     const target = checkout();
     const call = await capture(() =>

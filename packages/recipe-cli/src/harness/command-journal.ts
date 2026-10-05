@@ -158,7 +158,9 @@ export function redactCommandArgs(argv: readonly string[]): string[] {
     if (token.startsWith('--') && equals !== -1) {
       const option = token.slice(0, equals);
       const value = token.slice(equals + 1);
-      redacted.push(`${option}=${SENSITIVE_KEY.test(option) ? '<redacted>' : redactUrl(value)}`);
+      redacted.push(
+        `${option}=${SENSITIVE_KEY.test(option) ? '<redacted>' : redactAssignment(redactUrl(value))}`,
+      );
       continue;
     }
     if (token.startsWith('--') && SENSITIVE_KEY.test(token)) {

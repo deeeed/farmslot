@@ -67,6 +67,7 @@ import { recipeTrustFailure } from '../trust.js';
 import {
   type DeviceTargeting,
   provenanceFailure,
+  type RecipeArtifactsLayout,
   reportTrustFailure,
   resolveRecipeArtifactsDir,
 } from './run.js';
@@ -701,9 +702,8 @@ function renderDefaultsUsed(defaults: Record<string, unknown>, stream: NodeJS.Wr
   return `${out('label', 'Defaults used:')} ${values}`;
 }
 
-/** A fresh artifacts directory per call, under the checkout's recipe calls. */
 /** Each call writes to its own `calls/<action>-<uuid>`, under the task's artifacts or temp/recipe. */
-export function callArtifactsLayout(action: string): { fresh: string; taskSubdir: string } {
+export function callArtifactsLayout(action: string): RecipeArtifactsLayout {
   const own = path.join('calls', `${action.replace(/[^a-zA-Z0-9._-]/gu, '_')}-${randomUUID()}`);
   return { fresh: own, taskSubdir: own };
 }
@@ -895,9 +895,9 @@ function parseCallValue(value: string): unknown {
   return value;
 }
 
+// An action input: `key=value`, never an inline `--flag=value`.
 function isArgPair(value: string): boolean {
-  const eq = value.indexOf('=');
-  return eq > 0;
+  return !value.startsWith('-') && value.indexOf('=') > 0;
 }
 
 function isForwardedOptionValue(argv: string[], index: number): boolean {

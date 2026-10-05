@@ -159,6 +159,9 @@ describe('command journal', () => {
         '{"mnemonic":"standalone-secret","account":"visible"}',
         'https://user:pass@example.test/path',
         'tx=0x1234',
+        '--arg=payload=api_key=x',
+        '--extra=state=vault=y',
+        '--target=/repo/checkout',
       ]),
       [
         '--password',
@@ -172,6 +175,9 @@ describe('command journal', () => {
         '{"mnemonic":"<redacted>","account":"visible"}',
         'https://<redacted>@example.test/path',
         'tx=0x1234',
+        '--arg=payload=api_key=<redacted>',
+        '--extra=state=vault=<redacted>',
+        '--target=/repo/checkout',
       ],
     );
   });
