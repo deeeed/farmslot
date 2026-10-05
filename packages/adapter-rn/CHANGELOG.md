@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add `bridge-runtime/bridge-core.cjs`, the generic Hermes CDP bridge CLI moved from mm-harness. `runBridgeCli(config)` runs the built-in commands (navigation, eval, UI gestures and input, scrolling and scroll-transition timing, Sentry debug, HUD steps, profiler, in-app issues, network capture), target selection over the CDP broker or a direct connection, the debugger-slot lock and typed errors. The host supplies its own commands, route table, recovery hints, help lines, perf markers and readiness check; a host command that reuses a built-in name throws at startup. The iOS and Android key and tap fallbacks read `RECIPE_RN_IDB_PATH` / `RECIPE_RN_ADB_PATH`.
 
 ## 0.16.0 - 2026-10-05
 
