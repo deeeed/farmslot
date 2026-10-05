@@ -4,16 +4,20 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.5.0 - 2026-10-05
+
 - Add `run` and `call` to `@farmslot/recipe-cli/harness`, moved from mm-harness: `handleRun(argv, options)`, `handleCall(argv, options)` and `handleCallHelp(argv, genericHelp, { catalog })`. The host passes a `RecipeEngine` (`RecipeCatalog`: its bundled library, action manifest resolver and validator, and bundled action risk; plus `createRunner`, an optional `trustedMutation` loaded from the command line and bound to the run's plan, the `console` classifier and `runnerIncludes`), and per command `targetDevice`, the `run --plan` host steps and launch wording, and `exampleAction`. `run --list`, `run <recipe> --describe` and `call --list` read the catalog themselves. Messages name the host (`<name> call`, `<product>-checkout`).
   - the engine door: `runRecipe`, `preflightRecipe`, `activateRecipeRuntimeEnvironment` (sets every registered adapter's `devServer.portEnv` from `--watcher-port`), bounded healing and heal-bound envelopes;
   - the recipe library: `resolveLibrarySources`, `listRunnableRecipes`, `describeRunnableRecipe`, `runnableLibraryRecipes`;
   - static validation: `validateRunRecipeStatic`, `validateActionInputs` (each adapter's `actions.inputFindings` on every node), `resolveRecipeParamValue`;
   - `describeManifestActions`, the action catalog entries a host reads for its own action views;
   - network observation through the adapter's `observation.network`: the automatic whole-run capture (off with the host's `AUTO_NETWORK_CAPTURE=0`) and `runNetworkCaptureAction` for `app.network_capture`.
-
 - Add `actions` to `@farmslot/recipe-cli/harness`, moved from mm-harness: `handleActions(parsed, { catalog })` lists, searches (`[query]`), filters (`--category`, `--categories`), describes (`--action`) and dumps (`--raw`) the adapter's actions, and `--matrix` compares them across the registered adapters. `actions`, `run --list`, `call --list` and `run <recipe> --describe` share one discovery module and one catalog renderer.
   - The matrix has one column per registered adapter, in registration order (its JSON `adapters`, the human header and column widths), and a capability no adapter declares reads `across <Adapter>, …, or <Adapter>` from the registry instead of a fixed list.
   - `actions --action <name>` (one match, human output) and `call <action> --help` print the same action detail: the call form, description, source and adapter, risk, result cases, typed fields, up to two example calls, and the first example as a runnable call with its recipe node. The example calls carry only the action's fields (no `next`, `cases` or other graph keys), shell-quoted, under the short name when it is unambiguous. JSON output is unchanged.
+- Publish with adapter-sdk 0.4.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.24.0.
 
 ## 0.4.1 - 2026-10-05
 
