@@ -114,6 +114,8 @@ export interface TaskDocumentInput {
   /** Rendered project addendum (`templates/task-document.md`), if the project ships one. */
   addendum?: string | null;
   hasTicketData: boolean;
+  /** The control plane's own section for this run (e.g. Farmslot's run contract), rendered last. */
+  runContract?: string | null;
 }
 
 export function buildTaskDocument(input: TaskDocumentInput): string {
@@ -184,6 +186,9 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   );
   if (input.hasTicketData) {
     sections.push(`- \`${path.basename(BUG_INPUT)}\` — full ticket data as fetched`);
+  }
+  if (input.runContract?.trim()) {
+    sections.push('', input.runContract.trim());
   }
   sections.push('');
   return sections.join('\n');

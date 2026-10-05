@@ -67,6 +67,7 @@ import {
   writePlanningContextInput,
 } from './planning-context.js';
 import { buildQaTaskSection, writeQaInput } from './qa-input.js';
+import { runContractSection } from './run-contract.js';
 import { renderAcceptanceCriteria } from './task-document.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
@@ -1274,6 +1275,8 @@ export async function writeTaskFile(
       commentSummaryMarkdown: vars.COMMENT_SUMMARY,
       addendum: renderedAddendum,
       hasTicketData: Boolean(run.ticketData),
+      runContract: runContractSection(run.flowType, run.mode, vars.TASK_DIR),
+      runContract: runContractSection(run.flowType, run.mode, vars.TASK_DIR),
     });
     // Artifact-only replays neutralize publication steps inside the checklist
     // (BRANCH/REPO for the rewritten snippets come from the task document) and

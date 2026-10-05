@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `buildTaskDocument` accepts an optional `runContract` section from the control plane and renders it last, after `## Inputs`; every other TASK.md section is unchanged.
 
 ## 0.17.0 - 2026-10-04
 
