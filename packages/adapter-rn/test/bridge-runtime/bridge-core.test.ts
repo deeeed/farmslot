@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import net from 'node:net';
@@ -411,6 +411,52 @@ describe('bridge core', () => {
     assert.equal(
       bridgeErrors.parseErrorMarker(bridgeErrors.formatErrorMarker('WS_CLOSED', 'x')),
       'WS_CLOSED',
+    );
+  });
+
+  it('runs the iOS accessibility tap fallback with the idb from RECIPE_RN_IDB_PATH', async () => {
+    const { directory, port } = await startBroker((expression) => {
+      if (expression.includes('__AGENTIC__?.platform')) return 'ios';
+      if (expression.includes("status: 'pending'")) return 'started';
+      if (expression.includes('return globalThis[')) {
+        return { status: 'resolved', value: { ok: false, error: 'no onPress' } };
+      }
+      return true;
+    });
+    const tools = path.join(directory, 'tools');
+    const idbLog = path.join(directory, 'idb.log');
+    await mkdir(tools);
+    const xcrun = path.join(tools, 'xcrun');
+    await writeFile(
+      xcrun,
+      `#!/bin/sh\necho '{"devices":{"rt":[{"name":"demo-1","udid":"UDID-1","state":"Booted"}]}}'\n`,
+    );
+    // Not on PATH: only RECIPE_RN_IDB_PATH can reach it.
+    const idb = path.join(directory, 'stub-idb');
+    await writeFile(
+      idb,
+      `#!/bin/sh\necho "$*" >> ${JSON.stringify(idbLog)}\n` +
+        `if [ "$2" = describe-all ]; then echo '[{"frame":{"x":0,"y":0,"width":390,"height":844}},` +
+        `{"AXUniqueId":"buy","frame":{"x":100,"y":400,"width":190,"height":44}}]'; fi\n`,
+    );
+    await chmod(xcrun, 0o755);
+    await chmod(idb, 0o755);
+
+    const result = await runBridge(directory, port, ['press-test-id', 'buy'], {
+      PATH: `${tools}${path.delimiter}${process.env.PATH ?? ''}`,
+      RECIPE_RN_IDB_PATH: idb,
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      testId: 'buy',
+      deviceName: 'demo-1',
+      provider: 'idb-accessibility',
+    });
+    assert.equal(
+      await readFile(idbLog, 'utf8'),
+      'ui describe-all --udid UDID-1 --json\nui tap 195 422 --udid UDID-1\n',
     );
   });
 
