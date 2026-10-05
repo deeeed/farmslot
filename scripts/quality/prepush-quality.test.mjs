@@ -61,6 +61,7 @@ test('selection is deterministic and order-independent for the same change set',
     'recipe_runner',
     'recipe_cli',
     'adapter_sdk',
+    'adapter_node',
     'gateway',
     'node',
   ]);

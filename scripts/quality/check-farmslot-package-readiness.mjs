@@ -93,6 +93,27 @@ const packages = [
       "const m = await import('./packages/adapter-web/src/browser-cdp.cjs'); if (typeof m.default.connectBrowserCdp !== 'function') throw new Error('missing connectBrowserCdp export');",
   },
   {
+    name: '@farmslot/adapter-node',
+    dir: 'packages/adapter-node',
+    publicDoc: 'https://farmslot.io/docs/reference/adapter-node',
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'src/node-adapter.ts',
+      'scripts/cleanup.sh',
+    ],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'dist/index.js',
+      'dist/index.d.ts',
+      'scripts/cleanup.sh',
+    ],
+    importCheck:
+      "const m = await import('./packages/adapter-node/dist/index.js'); if (typeof m.createNodeAdapter !== 'function') throw new Error('missing createNodeAdapter export');",
+  },
+  {
     name: '@farmslot/agent-runtime',
     dir: 'packages/agent-runtime',
     publicDoc: 'https://farmslot.io/docs/reference/agent-runtime',
