@@ -2,6 +2,16 @@
 // presets such as `mm-harness`): host identity, runtime paths, the resumability
 // journal, the checkout lock, JSON streaming and colour output.
 export {
+  adapterChoices,
+  type AdapterLoadOptions,
+  AdapterPluginError,
+  type AdapterPluginErrorCode,
+  adapterSelectionFailureOut,
+  composeAdapter,
+  type DeclaredAdapter,
+  ensureAdapterLoaded,
+} from './adapter-plugins.js';
+export {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
