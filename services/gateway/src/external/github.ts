@@ -4,6 +4,8 @@ import type { RunTicketData } from '@farmslot/protocol';
 
 import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
 
+import { extractSection, sectionItems } from './ticket-markdown.js';
+
 interface GitHubIssue {
   title: string;
   body: string;
@@ -52,9 +54,9 @@ export async function fetchGitHubIssue(issueRef: string): Promise<Partial<RunTic
     source: 'github',
     title: issue.title,
     description: body,
-    acceptanceCriteria: ac ? ac.split('\n').filter(Boolean) : [],
+    acceptanceCriteria: sectionItems(ac),
     affectedArea: area || '',
-    stepsToReproduce: steps ? steps.split('\n').filter(Boolean) : [],
+    stepsToReproduce: sectionItems(steps),
     screenshots,
     labels: issue.labels.map((l) => l.name),
     githubIssue: `${repo}#${number}`,
@@ -197,13 +199,4 @@ export async function fetchGitHubCompareFiles(
     deletions: file.deletions,
     patch: file.patch,
   }));
-}
-
-function extractSection(text: string, headings: string[]): string {
-  for (const h of headings) {
-    const pattern = new RegExp(`(?:^|\\n)#+\\s*${h}[:\\s]*\\n([\\s\\S]*?)(?=\\n#|$)`, 'i');
-    const match = text.match(pattern);
-    if (match) return match[1].trim();
-  }
-  return '';
 }
