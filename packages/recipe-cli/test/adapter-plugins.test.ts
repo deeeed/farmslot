@@ -14,13 +14,17 @@ import {
 
 import {
   adapterChoices,
+  adapterPlugin,
+  adapterPluginChecks,
   AdapterPluginError,
   adapterSelectionFailureOut,
   composeAdapter,
   configureHarnessAdapters,
+  declaredAdapterIds,
   ensureAdapterLoaded,
   harnessAdapter,
   harnessAdapters,
+  selectedAdapterId,
 } from '../src/harness/index.js';
 
 const roots: string[] = [];
@@ -270,6 +274,99 @@ describe('adapter plugins', () => {
     assert.deepEqual(imports(), []);
     // A built-in never fails on another library's error.
     await ensureAdapterLoaded('core');
+  });
+
+  test('refuses an extends cycle', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `lib=${library('cycle', {
+      a: { source: pluginSource('a'), extends: 'b' },
+      b: { source: pluginSource('b'), extends: 'a' },
+    })}`;
+    const error = await refusal('a');
+    assert.equal(error.code, 'ADAPTER_EXTENDS_UNKNOWN');
+    assert.match(error.message, /extends itself through a → b → a/u);
+    assert.deepEqual(imports(), []);
+  });
+
+  test('a --library entry replaces the RECIPE_LIBRARY_PATH entry of the same name', async () => {
+    const declaring = library('env', { echo: { source: pluginSource('echo') } });
+    const empty = tempRoot('recipe-cli-plugins-empty-');
+    process.env.RECIPE_LIBRARY_PATH = `plug=${declaring}`;
+    assert.ok(adapterChoices().includes('echo'));
+    assert.deepEqual(adapterChoices([`plug=${empty}`]), ['core']);
+    await ensureAdapterLoaded('echo', { libraries: [`plug=${empty}`] });
+    assert.deepEqual(imports(), []);
+  });
+
+  test('host-configured libraries follow the others, and an earlier name wins', async () => {
+    const configured = library('cfg', { echo: { source: pluginSource('echo') } });
+    const shadow = tempRoot('recipe-cli-plugins-shadow-');
+    delete process.env.RECIPE_LIBRARY_PATH;
+    const sources = [{ name: 'cfg', root: configured }];
+    assert.deepEqual(declaredAdapterIds(sources), ['echo']);
+    assert.ok(adapterChoices([], { configured: sources }).includes('echo'));
+    // A --library entry of the same name shadows the configured one.
+    assert.deepEqual(adapterChoices([`cfg=${shadow}`], { configured: sources }), ['core']);
+    await ensureAdapterLoaded('echo', { configured: sources });
+    assert.ok(harnessAdapters().has('echo'));
+  });
+
+  test('a library that is not configured declares nothing, wherever it sits', async () => {
+    // A task-local library beside a recipe is not an operator library.
+    const task = tempRoot('recipe-cli-plugins-task-');
+    const local = path.join(task, 'recipe-library');
+    fs.mkdirSync(path.join(local, 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(local, 'plugins', 'tasky.mjs'), pluginSource('tasky'));
+    fs.writeFileSync(
+      path.join(local, 'recipe-library.json'),
+      JSON.stringify({ adapters: { tasky: { module: './plugins/tasky.mjs', export: 'adapter' } } }),
+    );
+    fs.writeFileSync(path.join(task, 'recipe.json'), '{}');
+    process.env.RECIPE_LIBRARY_PATH = `other=${tempRoot('recipe-cli-plugins-other-')}`;
+    assert.deepEqual(adapterChoices(), ['core']);
+    await ensureAdapterLoaded('tasky');
+    assert.equal(harnessAdapters().has('tasky'), false);
+    assert.deepEqual(imports(), []);
+  });
+
+  test('selects the last --adapter, else the last --platform, before any --', () => {
+    assert.equal(selectedAdapterId(['--adapter', 'core', '--adapter', 'echo']), 'echo');
+    assert.equal(selectedAdapterId(['--adapter=echo', '--adapter', 'core']), 'core');
+    assert.equal(selectedAdapterId(['--platform', 'echo', '--platform', 'core']), 'core');
+    assert.equal(selectedAdapterId(['--platform', 'echo', '--adapter', 'core']), 'core');
+    assert.equal(selectedAdapterId(['--adapter', 'core', '--', '--adapter', 'echo']), 'core');
+    assert.equal(selectedAdapterId(['run', 'x']), undefined);
+  });
+
+  test("a plugin's digest covers its directory and its parent, and doctor names it", async () => {
+    const root = library('plug', {
+      echo: { source: pluginSource('echo') },
+      'echo-child': { source: pluginSource('echo-child'), extends: 'echo' },
+    });
+    process.env.RECIPE_LIBRARY_PATH = `plug=${root}`;
+    await ensureAdapterLoaded('echo-child');
+    const parent = adapterPlugin('echo');
+    const child = adapterPlugin('echo-child');
+    assert.match(parent?.digest ?? '', /^sha256:[a-f0-9]{64}$/u);
+    assert.deepEqual(
+      { library: child?.library, module: child?.module, extends: child?.extends },
+      { library: 'plug', module: './plugins/echo-child.mjs', extends: 'echo' },
+    );
+    assert.deepEqual(
+      adapterPluginChecks().map((check) => [check.id, check.status, check.required]),
+      [
+        ['adapter-plugin:echo', 'pass', false],
+        ['adapter-plugin:echo-child', 'pass', false],
+      ],
+    );
+    assert.match(adapterPluginChecks()[1]!.message, /library plug .*sha256:/u);
+
+    // A helper beside the module moves the digest, and the child's with it.
+    fs.writeFileSync(path.join(root, 'plugins', 'helper.mjs'), 'export const changed = 1;\n');
+    configureHarnessAdapters(createAdapterRegistry());
+    harnessAdapters().register(builtin('core'));
+    await ensureAdapterLoaded('echo-child');
+    assert.notEqual(adapterPlugin('echo')?.digest, parent?.digest);
+    assert.notEqual(adapterPlugin('echo-child')?.digest, child?.digest);
   });
 
   test('prints a refusal as the --json envelope or the human line', () => {
