@@ -54,7 +54,7 @@ recipe_output="$(
   env -u GATEWAY_PORT -u METRO_PORT \
     COMPANION_AGENTIC_PORT_ENV="${TMP_DIR}/ports" \
     COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
-    COMPANION_EXPO_RECIPE_BIN="${TMP_DIR}/recipe-bin" \
+    COMPANION_ADAPTER_RN_BIN="${TMP_DIR}/recipe-bin" \
     bash "${SCRIPT_DIR}/run-recipe.sh"
 )"
 [[ "${recipe_output}" == "45101 45102 1" ]] || {
@@ -79,7 +79,7 @@ native_recipe_output="$(
     GATEWAY_PORT=45301 METRO_PORT=45300 \
     COMPANION_AGENTIC_PORT_ENV=/dev/null \
     COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
-    COMPANION_EXPO_RECIPE_BIN="${TMP_DIR}/native-recipe-bin" \
+    COMPANION_ADAPTER_RN_BIN="${TMP_DIR}/native-recipe-bin" \
     bash "${SCRIPT_DIR}/run-recipe.sh"
 )"
 [[ "${native_recipe_output}" == "net.siteed.farmslot.development|fs-slot-test|45302" ]] || {
@@ -147,7 +147,7 @@ if FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
   GATEWAY_PORT=45301 METRO_PORT=45300 \
   COMPANION_AGENTIC_PORT_ENV=/dev/null \
   COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
-  COMPANION_EXPO_RECIPE_BIN="${TMP_DIR}/native-recipe-bin" \
+  COMPANION_ADAPTER_RN_BIN="${TMP_DIR}/native-recipe-bin" \
   bash "${SCRIPT_DIR}/run-recipe.sh" run >/dev/null 2>&1; then
   echo "ERROR: slot-scoped recipe run accepted a missing PLATFORM." >&2
   exit 1

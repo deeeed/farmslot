@@ -1,6 +1,6 @@
 /**
  * Dev-only Metro middleware: relays recipe bridge commands between the host
- * runner (farmslot-expo-recipe) and the in-app __FARMSLOT_RECIPE_BRIDGE__.
+ * runner (farmslot-adapter-rn) and the in-app __FARMSLOT_RECIPE_BRIDGE__.
  */
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;

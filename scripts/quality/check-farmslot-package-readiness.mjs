@@ -123,27 +123,27 @@ const packages = [
       "const m = await import('./packages/agent-runtime/dist/index.js'); if (m.AGENT_RUNTIME_PACKAGE !== '@farmslot/agent-runtime') throw new Error('missing agent-runtime root export');",
   },
   {
-    name: '@farmslot/expo-recipe',
-    dir: 'packages/expo-recipe',
-    publicDoc: 'https://farmslot.io/docs/guides/expo-recipe',
+    name: '@farmslot/adapter-rn',
+    dir: 'packages/adapter-rn',
+    publicDoc: 'https://farmslot.io/docs/guides/adapter-rn',
     requiredFiles: [
       'README.md',
       'LICENSE',
-      'bin/farmslot-expo-recipe.mjs',
+      'bin/farmslot-adapter-rn.mjs',
       'src/index.ts',
       'templates/scripts/agentic/recipe/recipes/expo.config.recipe.json',
     ],
     packRequiredFiles: [
       'README.md',
       'LICENSE',
-      'bin/farmslot-expo-recipe.mjs',
+      'bin/farmslot-adapter-rn.mjs',
       'dist/index.js',
       'dist/index.d.ts',
       'dist/cli.js',
       'templates/scripts/agentic/recipe/recipes/expo.config.recipe.json',
     ],
     importCheck:
-      "const m = await import('./packages/expo-recipe/dist/cli.js'); if (typeof m.runExpoRecipeCli !== 'function') throw new Error('missing runExpoRecipeCli export');",
+      "const m = await import('./packages/adapter-rn/dist/cli.js'); if (typeof m.runAdapterRnCli !== 'function') throw new Error('missing runAdapterRnCli export');",
   },
   {
     name: '@farmslot/skills',

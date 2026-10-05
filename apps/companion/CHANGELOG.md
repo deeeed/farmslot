@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- The recipe scripts and Metro bridge use `@farmslot/adapter-rn` and its `farmslot-adapter-rn` bin (renamed from `@farmslot/expo-recipe`); `COMPANION_EXPO_RECIPE_BIN` is now `COMPANION_ADAPTER_RN_BIN`.
+
 - The screenshot catalog script imports `@farmslot/recipe-runner/visual-review` (renamed from `@farmslot/recipe-harness`).
 
 ## 0.8.0 - 2026-09-27

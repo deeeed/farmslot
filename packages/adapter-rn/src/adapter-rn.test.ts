@@ -11,7 +11,7 @@ import {
   installExpoRecipeScaffold,
   NATIVE_UI_ACTIONS,
   resolveExpoRecordingTarget,
-  runExpoRecipeCli,
+  runAdapterRnCli,
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
   validateExpoRecipeDocument,
@@ -35,7 +35,7 @@ test('publishes the native action set through the package root', () => {
 });
 
 test('scaffolded manifests accept native key press recipes', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-key-press-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-key-press-'));
   const previousPlatform = process.env.PLATFORM;
   try {
     process.env.PLATFORM = 'android';
@@ -70,7 +70,7 @@ test('scaffolded manifests accept native key press recipes', async () => {
 });
 
 test('production Expo validation rejects gestures unsupported by the active adapter', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-adapter-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-adapter-'));
   const previousPlatform = process.env.PLATFORM;
   try {
     process.env.PLATFORM = 'android';
@@ -149,7 +149,7 @@ test('native Agent Device transport reports its Node runtime requirement', () =>
 });
 
 test('installs the Expo recipe scaffold idempotently', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-'));
   try {
     await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
     const first = await installExpoRecipeScaffold({ projectRoot: root });
@@ -161,10 +161,10 @@ test('installs the Expo recipe scaffold idempotently', async () => {
     const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf-8')) as {
       scripts: Record<string, string>;
     };
-    assert.equal(packageJson.scripts.recipe, 'farmslot-expo-recipe');
-    assert.equal(packageJson.scripts['recipe:doctor'], 'farmslot-expo-recipe doctor');
-    assert.equal(packageJson.scripts['recipe:validate'], 'farmslot-expo-recipe validate');
-    assert.equal(packageJson.scripts['recipe:run'], 'farmslot-expo-recipe run');
+    assert.equal(packageJson.scripts.recipe, 'farmslot-adapter-rn');
+    assert.equal(packageJson.scripts['recipe:doctor'], 'farmslot-adapter-rn doctor');
+    assert.equal(packageJson.scripts['recipe:validate'], 'farmslot-adapter-rn validate');
+    assert.equal(packageJson.scripts['recipe:run'], 'farmslot-adapter-rn run');
 
     const doctor = await runExpoRecipeDoctor({ projectRoot: root });
     assert.equal(doctor.status, 'pass');
@@ -193,7 +193,7 @@ test('installs the Expo recipe scaffold idempotently', async () => {
 });
 
 test('installs optional bridge files and validates the dev guard contract', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-bridge-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-bridge-'));
   try {
     await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
     const result = await installExpoRecipeScaffold({ projectRoot: root, withBridge: true });
@@ -254,7 +254,7 @@ test('installs optional bridge files and validates the dev guard contract', asyn
 });
 
 test('doctor warns when the native provider environment is partially configured', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-native-env-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-native-env-'));
   const nativeEnvKeys = [
     'PLATFORM',
     'IOS_SIMULATOR',
@@ -313,7 +313,7 @@ test('transport cleanup failures never mask the run result', async () => {
 });
 
 test('defers Metro port validation until a bridge-backed action runs', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-metro-port-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-metro-port-'));
   const envNames = ['FARMSLOT_RECIPE_METRO_PORT', 'METRO_PORT'] as const;
   const savedEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
   try {
@@ -371,7 +371,7 @@ test('defers Metro port validation until a bridge-backed action runs', async () 
 });
 
 test('redacts sensitive command output before writing trace artifacts', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-redaction-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-redaction-'));
   try {
     await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
     await installExpoRecipeScaffold({ projectRoot: root });
@@ -421,7 +421,7 @@ test('redacts sensitive command output before writing trace artifacts', async ()
 });
 
 test('inherited untrusted provenance blocks Expo recipe actions before side effects', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-trust-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-trust-'));
   const envNames = [
     'FARMSLOT_RECIPE_SOURCE_TRUST',
     'FARMSLOT_RECIPE_SOURCE_KIND',
@@ -475,7 +475,7 @@ test('inherited untrusted provenance blocks Expo recipe actions before side effe
 });
 
 test('runs composed recipes from the configured library', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-library-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-adapter-rn-library-'));
   const libraryRoot = path.join(root, 'library');
   const previousLibraryPath = process.env.RECIPE_LIBRARY_PATH;
   try {
@@ -580,7 +580,7 @@ test('CLI passes typed root params and resolves the adjacent task recipe library
       },
     });
 
-    await runExpoRecipeCli([
+    await runAdapterRnCli([
       'run',
       'artifacts/recipe.json',
       '--project-root',
@@ -642,23 +642,23 @@ test('CLI passes typed root params and resolves the adjacent task recipe library
 
 test('CLI rejects missing option values before treating the next flag as a path', async () => {
   await assert.rejects(
-    () => runExpoRecipeCli(['run', '--artifacts-dir', '--dry-run']),
+    () => runAdapterRnCli(['run', '--artifacts-dir', '--dry-run']),
     /--artifacts-dir requires a value/u,
   );
   await assert.rejects(
-    () => runExpoRecipeCli(['validate', '--manifest', '--json']),
+    () => runAdapterRnCli(['validate', '--manifest', '--json']),
     /--manifest requires a value/u,
   );
   await assert.rejects(
-    () => runExpoRecipeCli(['run', '--record-video=proof-window']),
+    () => runAdapterRnCli(['run', '--record-video=proof-window']),
     /proof-window is reserved for future focused clips/u,
   );
   await assert.rejects(
-    () => runExpoRecipeCli(['run', '--record-video=proof_window']),
+    () => runAdapterRnCli(['run', '--record-video=proof_window']),
     /proof-window is reserved for future focused clips/u,
   );
   await assert.rejects(
-    () => runExpoRecipeCli(['run', '--record-video', '--record-pid', 'abc']),
+    () => runAdapterRnCli(['run', '--record-video', '--record-pid', 'abc']),
     /Expected a positive integer/u,
   );
 });
