@@ -127,18 +127,28 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
       ? undefined
       : (options.commands.find((command) => command.name === token) ??
         publicCommands.find((command) => command.aliases?.includes(token)));
-  const packageVersion = readPackageVersion(host.packageRoot);
-  const version =
+  const version = readPackageVersion(host.packageRoot);
+  // `--version --verbose` adds the recipe-cli a preset runs on; `--version`
+  // stays the one line scripts compare.
+  const verboseVersion =
     host.packageName === RECIPE_CLI_PACKAGE
-      ? packageVersion
-      : `${packageVersion}\n${RECIPE_CLI_PACKAGE} ${RECIPE_CLI_VERSION}`;
+      ? version
+      : `${version}\n${RECIPE_CLI_PACKAGE} ${RECIPE_CLI_VERSION}`;
   const renderHelp = (): string => groupedHelp(options.help, publicCommands);
 
   async function main(argv: readonly string[]): Promise<HarnessCliResult> {
+    // The libraries the operator started the command with: plugins load only
+    // from these, never from the ones library hydration discovers.
+    const operatorEnv = { ...process.env };
     const command = find(argv[0]);
     if (argv.length > 0 && command?.nudge !== false) options.beforeDispatch?.(argv);
     if (argv.length === 0) {
       process.stdout.write(renderHelp());
+      return { exitCode: 0, exit: 'now' };
+    }
+    // Commander prints `--version` and exits at the flag, so it never sees `--verbose`.
+    if ((argv[0] === '--version' || argv[0] === '-v') && argv.slice(1).includes('--verbose')) {
+      process.stdout.write(`${verboseVersion}\n`);
       return { exitCode: 0, exit: 'now' };
     }
     if (command && !command.hidden && command.raw) {
@@ -169,6 +179,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
       const refused = await loadSelectedAdapter(command.name, argv, {
         adopt: options.adopt,
         configured: options.configuredLibraries?.(),
+        env: operatorEnv,
       });
       if (refused !== undefined) return { exitCode: refused, exit: 'now' };
     }
@@ -242,7 +253,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 async function loadSelectedAdapter(
   command: string,
   argv: readonly string[],
-  load: Pick<AdapterLoadOptions, 'adopt' | 'configured'>,
+  load: Pick<AdapterLoadOptions, 'adopt' | 'configured' | 'env'>,
 ): Promise<number | undefined> {
   const tokens = argv.slice(1);
   const selected = selectedAdapterId(tokens);

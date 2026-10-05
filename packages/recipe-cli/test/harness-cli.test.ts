@@ -428,17 +428,20 @@ describe('createHarnessCli', () => {
     );
   });
 
-  test('prints the host version, then the recipe-cli version it runs on', async () => {
+  test('prints the host version as one line, and the recipe-cli it runs on with --verbose', async () => {
     const cli = createHarnessCli(cliOptions());
     for (const flag of ['--version', '-v']) {
-      const { result, stdout } = await capture(() => cli.main([flag]));
-      assert.deepEqual(result, { exitCode: 0, exit: 'now' });
-      assert.equal(stdout, `1.2.3\n@farmslot/recipe-cli ${RECIPE_CLI_VERSION}\n`);
+      const plain = await capture(() => cli.main([flag]));
+      assert.deepEqual(plain.result, { exitCode: 0, exit: 'now' });
+      assert.equal(plain.stdout, '1.2.3\n');
+      const verbose = await capture(() => cli.main([flag, '--verbose']));
+      assert.deepEqual(verbose.result, { exitCode: 0, exit: 'now' });
+      assert.equal(verbose.stdout, `1.2.3\n@farmslot/recipe-cli ${RECIPE_CLI_VERSION}\n`);
     }
     const own = createHarnessCli(
       cliOptions({ host: { ...shopHost(), packageName: '@farmslot/recipe-cli' } }),
     );
-    assert.equal((await capture(() => own.main(['--version']))).stdout, '1.2.3\n');
+    assert.equal((await capture(() => own.main(['--version', '--verbose']))).stdout, '1.2.3\n');
   });
 
   test('prints a command help text and its aliases resolve to it', async () => {
@@ -677,6 +680,55 @@ export const adapter = {
     });
     assert.deepEqual(imported(), ['kept']);
     assert.equal(harnessAdapters().has('kept'), true);
+  });
+
+  test('loads the adapter the last --adapter selects, as the commands resolve it', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('late')}`;
+    const cli = createHarnessCli(pluginOptions());
+    await cli.main(['doctor', '--adapter', 'late', '--adapter', 'web']);
+    assert.deepEqual(imported(), []);
+    await cli.main(['doctor', '--adapter', 'web', '--adapter', 'late']);
+    assert.deepEqual(imported(), ['late']);
+  });
+
+  test('loads the selected adapter before call <action> --help renders', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('helped')}`;
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, {
+        '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+        '--arg': optionalValueOption(),
+      }),
+      positionals: [{ label: 'action' }],
+    });
+    const cli = createHarnessCli({
+      ...pluginOptions(),
+      commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
+      catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
+    });
+    // --arg with no pair stops the action help early, after the load.
+    const { result } = await capture(() =>
+      cli.main(['call', 'x', '--adapter', 'helped', '--arg', '--help']),
+    );
+    assert.deepEqual(result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual(imported(), ['helped']);
+  });
+
+  test('never loads a plugin from a library only hydration adds, hidden commands included', async () => {
+    const root = pluginLibrary('found');
+    const cli = createHarnessCli({
+      ...pluginOptions(),
+      libraries: {
+        hydrate: async () => {
+          process.env.RECIPE_LIBRARY_PATH = `found=${root}`;
+        },
+      },
+    });
+    assert.deepEqual(await cli.main(['runtime-probe', '--adapter', 'found']), {
+      exitCode: 3,
+      exit: 'now',
+    });
+    assert.deepEqual(imported(), []);
+    assert.equal(harnessAdapters().has('found'), false);
   });
 
   test('prints a refused adapter with its code and next step', async () => {
