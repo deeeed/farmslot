@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Web adapter reference: document `dapp` (record or answer a dapp's wallet requests, assert the request log, product signing policy as input) and `origin`.
 - Add the Node adapter reference (`@farmslot/adapter-node`: `createNodeAdapter`, `nodeDependencyBlock` with a host `resolveBin`, `workspaceTsconfigEnv`, `scripts/cleanup.sh`).
 - The Expo guide becomes the React Native adapter guide at `/docs/guides/adapter-rn` (`@farmslot/adapter-rn`, renamed from `@farmslot/expo-recipe`).
 

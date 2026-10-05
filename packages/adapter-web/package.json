@@ -16,6 +16,10 @@
       "types": "./dist/chrome-args.d.cts",
       "default": "./src/chrome-args.cjs"
     },
+    "./dapp": {
+      "types": "./dist/dapp/index.d.cts",
+      "default": "./src/dapp/index.cjs"
+    },
     "./extension-id": {
       "types": "./dist/extension-id.d.cts",
       "default": "./src/extension-id.cjs"
@@ -27,6 +31,10 @@
     "./macos-focus": {
       "types": "./dist/macos-focus.d.cts",
       "default": "./src/macos-focus.cjs"
+    },
+    "./origin": {
+      "types": "./dist/origin.d.cts",
+      "default": "./src/origin.cjs"
     },
     "./package.json": "./package.json",
     "./page-target": {

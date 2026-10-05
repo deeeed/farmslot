@@ -3,9 +3,11 @@
 import browserCdp = require('@farmslot/adapter-web/browser-cdp');
 import browserResolver = require('@farmslot/adapter-web/browser-resolver');
 import chromeArgs = require('@farmslot/adapter-web/chrome-args');
+import dapp = require('@farmslot/adapter-web/dapp');
 import extensionId = require('@farmslot/adapter-web/extension-id');
 import launch = require('@farmslot/adapter-web/launch-browser');
 import macosFocus = require('@farmslot/adapter-web/macos-focus');
+import origin = require('@farmslot/adapter-web/origin');
 import pageTarget = require('@farmslot/adapter-web/page-target');
 import playwrightCdp = require('@farmslot/adapter-web/playwright-cdp');
 import slotTitle = require('@farmslot/adapter-web/slot-title');
@@ -113,4 +115,89 @@ export async function consumerCalls(
   });
   stamp.stamped.toFixed();
   return { pids, owner, waited, loaded, selected, ownedPids, launchArgs };
+}
+
+// The MetaMask harness's Web Terminal wallet host and its wallet actions.
+export async function dappCalls(
+  client: {
+    send(method: string, params?: object, sessionId?: string): Promise<unknown>;
+    on(method: string, handler: (params: any, sessionId?: string) => void): () => void;
+  },
+  account: {
+    address: string;
+    signTypedData(args: unknown): Promise<string>;
+    signMessage(args: unknown): Promise<string>;
+  },
+  logFile: string,
+) {
+  const refuseTypedData = {
+    reason: (data: { message?: { env?: string } }) =>
+      data?.message?.env === 'production' ? 'env=production' : null,
+    kind: 'refused-production',
+    message: 'Refused.',
+  };
+  const source: string = dapp.pageScriptSource({
+    signer: 'injected',
+    appOrigin: 'http://localhost:3000',
+    refuseTypedData,
+    injectedWallet: {
+      info: { uuid: 'u', name: 'Test', icon: 'data:,', rdns: 'test.wallet' },
+      isMetaMask: true,
+    },
+  });
+  dapp.pageScriptSource({ signer: 'extension', appOrigin: 'http://localhost:3000' });
+  const ready: string = dapp.pageReadyExpression({ signer: 'injected', refusesTypedData: true });
+  const wallet = dapp.createStrictWallet({ account, chainId: 42161 });
+  const binding = dapp.createWalletRequestBinding({
+    client,
+    appOrigin: 'http://localhost:3000',
+    signer: 'injected',
+    wallet,
+    refuseTypedData,
+    record: () => {},
+    say: () => {},
+  });
+  await binding.install('S1', 'T1');
+  binding.commit('S1', 'http://localhost:3000/', 'L1');
+  binding.drain('S1');
+  binding.detach('S1');
+  const log = { logFile, cursorFile: `${logFile}.cursor` };
+  const policy = {
+    typedDataClasses: {
+      sessionRequests: {
+        match: () => false,
+        param: 'max_session_requests',
+        defaultMax: 0,
+        failure: (count: number, max: number) => `${count} > ${max}`,
+      },
+    },
+    forbiddenEntries: {
+      blocked: {
+        match: (entry: { kind?: string }) => entry.kind === 'blocked',
+        failure: (count: number) => `${count}`,
+      },
+    },
+  };
+  const { window, result } = await dapp.awaitSignatureLog(log, { timeout_ms: 0 }, policy);
+  const summary = dapp.summarize(window.entries, policy);
+  const reset = await dapp.resetWindow(log);
+  const artifacts = await dapp.writeLogArtifact(
+    { artifactsDir: '/tmp', nodeId: 'n', folder: 'wallet' },
+    { summary },
+  );
+  const sameOrigin: boolean = origin.isAppUrl('http://localhost:3000/x', 'http://localhost:3000');
+  const top: boolean = origin.isAppTopFrameContext(
+    { origin: 'http://localhost:3000', auxData: { isDefault: true, frameId: 'T1' } },
+    { targetId: 'T1', appOrigin: 'http://localhost:3000', committedUrl: 'http://localhost:3000/' },
+  );
+  return {
+    source,
+    ready,
+    ok: result.ok,
+    reset: reset.cursor,
+    path: artifacts[0]?.path,
+    sameOrigin,
+    top,
+    short: origin.shortUrl('x'),
+  };
 }
