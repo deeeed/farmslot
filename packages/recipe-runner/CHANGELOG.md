@@ -4,7 +4,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.24.0 - 2026-10-05
+
 - Add `@farmslot/recipe-runner/cdp-broker`: the CDP broker that shares one inspector connection between bridge commands and long-lived collectors, moved from mm-harness. Both React Native and browser-extension network capture use it.
+- Publish with protocol 0.34.0.
 
 ## 0.23.0 - 2026-10-04
 
