@@ -49,7 +49,9 @@ test('Yarn PnP needs only .pnp.cjs', () => {
 
 test('a missing bin or runtime dependency is an incomplete install', () => {
   const noTsx = checkout({ 'node_modules/.keep': '' });
-  assert.deepEqual(nodeDependencyBlock(noTsx, { label: 'core' }), {
+  // No bins required by default: a checkout needs no repo-local runner.
+  assert.equal(nodeDependencyBlock(noTsx, { label: 'core' }), null);
+  assert.deepEqual(nodeDependencyBlock(noTsx, { label: 'core', bins: ['tsx'] }), {
     code: 'CORE_DEPS_INCOMPLETE',
     message: 'core dependencies are incomplete (node_modules/.bin/tsx is missing).',
     userAction: yarnInstallCommand(noTsx),
@@ -62,6 +64,26 @@ test('a missing bin or runtime dependency is an incomplete install', () => {
       'core dependencies are incomplete (cannot resolve immer-absent from the target checkout).',
     userAction: yarnInstallCommand(noDep),
   });
+});
+
+test('resolveBin decides where a bin may come from', () => {
+  // Core after core#10564: no node_modules/.bin/tsx, but the harness ships one.
+  const root = checkout({ 'node_modules/.keep': '' });
+  const asked: string[] = [];
+  const resolveBin = (target: string, bin: string) => {
+    asked.push(`${target}:${bin}`);
+    return bin === 'tsx' ? '/harness/node_modules/.bin/tsx' : null;
+  };
+  assert.equal(nodeDependencyBlock(root, { label: 'core', bins: ['tsx'], resolveBin }), null);
+  assert.deepEqual(asked, [`${root}:tsx`]);
+  assert.deepEqual(
+    nodeDependencyBlock(root, { label: 'core', bins: ['tsx'], resolveBin: () => null }),
+    {
+      code: 'CORE_DEPS_INCOMPLETE',
+      message: 'core dependencies are incomplete (no tsx runtime found for the checkout).',
+      userAction: yarnInstallCommand(root),
+    },
+  );
 });
 
 test('all present is no block; options shape codes, bins and the next step', () => {
