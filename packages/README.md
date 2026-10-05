@@ -8,6 +8,7 @@
 | `recipe-runner/` | Generic Recipe Protocol v1 runner, adapters, CLI runner support, and artifact writers.     |
 | `recipe-cli/`    | The `farmslot-recipe` command: run, validate, and library-wide recipe/action discovery.    |
 | `adapter-sdk/`   | The platform adapter contract: `PlatformAdapter`, `defineAdapter`, the adapter registry.   |
+| `adapter-node/`  | Headless Node adapter: `createNodeAdapter`, the dependency check, tsx workspace paths.     |
 | `adapter-web/`   | Web platform pieces: browser resolve/launch, CDP-port ownership, extension loading, focus. |
 | `adapter-rn/`    | React Native (Expo) adapter: scaffold, doctor, Metro bridge and native UI transports.      |
 | `cli/`           | Human/operator CLI for talking to a running Gateway and validating recipe artifacts.       |
@@ -28,6 +29,7 @@ yarn workspace @farmslot/protocol quality
 yarn workspace @farmslot/recipe-runner quality
 yarn workspace @farmslot/recipe-cli quality
 yarn workspace @farmslot/adapter-sdk quality
+yarn workspace @farmslot/adapter-node quality
 yarn workspace @farmslot/adapter-web quality
 yarn workspace @farmslot/adapter-rn quality
 yarn workspace @farmslot/cli quality
@@ -40,6 +42,7 @@ yarn workspace @farmslot/theme quality
 - Put recipe execution mechanics and generic adapters in `recipe-runner/`.
 - Put the `farmslot-recipe` command and recipe/action discovery in `recipe-cli/`.
 - Put the platform adapter contract in `adapter-sdk/`.
+- Put the headless Node platform (dependency check, tsx workspace paths, overlay cleanup) in `adapter-node/`.
 - Put browser process and CDP mechanics for web platforms in `adapter-web/`.
 - Put Expo/React Native scaffolding, checks and transports in `adapter-rn/`.
 - Put Gateway operator commands in `cli/`.
