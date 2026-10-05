@@ -1,6 +1,6 @@
 // external/ticket-markdown.ts — ticket bodies as Markdown, and their named sections.
-// Jira REST v3 returns descriptions as ADF (Atlassian Document Format); older
-// APIs and some imports return wiki markup strings. Both become Markdown that
+// Jira REST v3 returns descriptions as ADF (Atlassian Document Format); a string
+// body is treated as Jira wiki markup (REST v2). Both become Markdown that
 // keeps paragraphs, headings, lists, code and tables, so TASK.md shows the
 // ticket as written and sections such as "Acceptance criteria" can be found by
 // heading whatever format the ticket was authored in.
@@ -84,10 +84,13 @@ function block(node: AdfNode, opts: AdfToMarkdownOptions): string {
       const start = Number(attr(node, 'order')) || 1;
       return list(content, (index) => `${start + index}. `, opts);
     }
+    case 'decisionList':
+      return list(content, () => '- ', opts);
     case 'taskList':
       return list(
         content,
-        (_index, item) => (attr(item, 'state') === 'DONE' ? '- [x] ' : '- [ ] '),
+        // Not `- [ ]`: a live box in the description could be read as a checklist step.
+        (_index, item) => (attr(item, 'state') === 'DONE' ? '- (done) ' : '- (todo) '),
         opts,
       );
     case 'codeBlock': {
@@ -114,12 +117,20 @@ function block(node: AdfNode, opts: AdfToMarkdownOptions): string {
       return attr(node, 'url');
     case 'mediaSingle':
     case 'mediaGroup':
+      // The media itself is an attachment; a caption is text the author wrote.
+      return content
+        .filter((child) => child.type === 'caption')
+        .map((child) => inline(asNodes(child.content)))
+        .filter(Boolean)
+        .join('\n\n');
     case 'media':
       return '';
     default:
       // Unknown containers keep their text; unknown inline nodes are rendered as inline.
+      // A container whose children have their own content (layoutSection/layoutColumn
+      // and the like) holds blocks, not one text run.
       if (content.length > 0)
-        return content.some(isBlock) ? blocks(content, opts) : inline(content);
+        return content.some(isContainer) ? blocks(content, opts) : inline(content);
       return inline([node]);
   }
 }
@@ -130,6 +141,7 @@ const BLOCK_TYPES = new Set([
   'bulletList',
   'orderedList',
   'taskList',
+  'decisionList',
   'codeBlock',
   'blockquote',
   'panel',
@@ -147,6 +159,11 @@ function isBlock(node: AdfNode): boolean {
   return BLOCK_TYPES.has(node.type ?? '');
 }
 
+// A block, or any non-text node with children of its own.
+function isContainer(node: AdfNode): boolean {
+  return isBlock(node) || (node.type !== 'text' && Array.isArray(node.content));
+}
+
 // One list: each item's first line carries the marker, every other line of the
 // item (later paragraphs, nested lists) is indented under it.
 function list(
@@ -154,17 +171,30 @@ function list(
   marker: (index: number, item: AdfNode) => string,
   opts: AdfToMarkdownOptions,
 ): string {
-  return items
-    .map((item, index) => {
-      const prefix = marker(index, item);
-      const content = asNodes(item.content);
-      // taskItem holds inline content directly.
-      const body = content.some(isBlock) ? itemBlocks(content, opts) : inline(content);
-      const [first = '', ...rest] = body.split('\n');
-      const indent = ' '.repeat(prefix.length);
-      return [prefix + first, ...rest.map((line) => (line ? indent + line : ''))].join('\n');
-    })
-    .join('\n');
+  const out: string[] = [];
+  let indent = '';
+  let index = 0;
+  for (const item of items) {
+    if (/List$/.test(item.type ?? '')) {
+      // A list nested directly in a list (ADF nests task lists this way) goes under the previous item.
+      out.push(
+        block(item, opts)
+          .split('\n')
+          .map((line) => (line ? indent + line : ''))
+          .join('\n'),
+      );
+      continue;
+    }
+    const prefix = marker(index, item);
+    index += 1;
+    const content = asNodes(item.content);
+    // taskItem and decisionItem hold inline content directly.
+    const body = content.some(isBlock) ? itemBlocks(content, opts) : inline(content);
+    const [first = '', ...rest] = body.split('\n');
+    indent = ' '.repeat(prefix.length);
+    out.push([prefix + first, ...rest.map((line) => (line ? indent + line : ''))].join('\n'));
+  }
+  return out.join('\n');
 }
 
 // A list item's blocks: a nested list follows its paragraph directly (a tight
@@ -324,6 +354,19 @@ interface Heading {
   title: string;
 }
 
+// Which lines sit inside a fenced code block (fence lines included): their `#`
+// and list markers are code, not structure.
+function fencedLines(lines: string[]): boolean[] {
+  let open = false;
+  return lines.map((line) => {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      open = !open;
+      return true;
+    }
+    return open;
+  });
+}
+
 // A heading line: Markdown `#` headings, or a line that is only bold text
 // (`**Acceptance criteria**`, how many editors fake a heading).
 function headingAt(line: string, index: number): Heading | null {
@@ -339,24 +382,31 @@ function isLabel(line: string): boolean {
   return /^[A-Za-z][^:]{0,60}:\s*$/.test(line);
 }
 
+// "✅ Acceptance Criteria (AC):" → "acceptance criteria".
 function normalizeTitle(title: string): string {
   return title
     .replace(/[*_`]/g, '')
+    .replace(/:[a-z0-9_+-]+:/gi, '')
+    .replace(/\([^)]*\)\s*:?\s*$/, '')
+    .replace(/^[^A-Za-z]+/, '')
     .replace(/[:.\s]+$/, '')
     .trim()
     .toLowerCase();
 }
 
 /**
- * The body of the first section whose heading is one of `names` (case- and
- * punctuation-insensitive), up to the next heading of the same or a higher level.
- * Also accepts a plain `Acceptance criteria:` line when the ticket has no headings.
+ * The body of the first section whose heading is one of `names` (case-, emoji-
+ * and punctuation-insensitive; a trailing parenthetical is ignored), up to the
+ * next heading of the same or a higher level. Also accepts a plain
+ * `Acceptance criteria:` line when the ticket has no headings. Lines inside
+ * fenced code never start or end a section.
  */
 export function extractSection(markdown: string, names: string[]): string {
   const lines = markdown.split('\n');
+  const fenced = fencedLines(lines);
   const wanted = names.map((name) => name.toLowerCase());
   const headings = lines
-    .map((line, index) => headingAt(line, index))
+    .map((line, index) => (fenced[index] ? null : headingAt(line, index)))
     .filter((heading): heading is Heading => heading !== null);
   for (const name of wanted) {
     const start = headings.find((heading) => normalizeTitle(heading.title) === name);
@@ -364,40 +414,78 @@ export function extractSection(markdown: string, names: string[]): string {
       const end = headings.find(
         (heading) => heading.index > start.index && heading.level <= start.level,
       );
-      return lines
-        .slice(start.index + 1, end ? end.index : lines.length)
-        .join('\n')
-        .trim();
+      return trimBlankLines(lines.slice(start.index + 1, end ? end.index : lines.length));
     }
     // No heading: a line that is just the label, e.g. "Acceptance criteria:".
-    const label = lines.findIndex((line) => /:\s*$/.test(line) && normalizeTitle(line) === name);
+    const label = lines.findIndex(
+      (line, index) => !fenced[index] && /:\s*$/.test(line) && normalizeTitle(line) === name,
+    );
     if (label >= 0) {
       const next = lines.findIndex(
-        (line, index) => index > label && (headingAt(line, index) !== null || isLabel(line)),
+        (line, index) =>
+          index > label && !fenced[index] && (headingAt(line, index) !== null || isLabel(line)),
       );
-      return lines
-        .slice(label + 1, next >= 0 ? next : lines.length)
-        .join('\n')
-        .trim();
+      return trimBlankLines(lines.slice(label + 1, next >= 0 ? next : lines.length));
     }
   }
   return '';
 }
 
+// Drop blank lines at both ends but keep indentation: an indented list stays indented.
+function trimBlankLines(lines: string[]): string {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && !lines[start].trim()) start += 1;
+  while (end > start && !lines[end - 1].trim()) end -= 1;
+  return lines.slice(start, end).join('\n');
+}
+
+const ITEM_MARKER = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:(?:\[[ xX]\]|\((?:done|todo)\))\s+)?/;
+
 /**
- * A section body as items: one per top-level list item, with its continuation
- * lines and nested items kept with it, list markers stripped; without a list,
- * one per paragraph line.
+ * A section body as items. With a list: one item per list entry at the list's
+ * own indentation, keeping nested entries, continuation lines and code blocks
+ * with their item, markers stripped. Without one: one item per line, a code
+ * block staying whole. A subheading inside the section is not an item; it
+ * prefixes the items under it ("Mobile: …").
  */
 export function sectionItems(section: string): string[] {
-  const marker = /^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/;
-  const lines = section.split('\n').filter((line) => line.trim());
-  if (!lines.some((line) => marker.test(line))) return lines.map((line) => line.trim());
+  const lines = section.split('\n');
+  const fenced = fencedLines(lines);
+  const markers = lines
+    .map((line, index) => (fenced[index] ? null : line.match(ITEM_MARKER)))
+    .filter((match): match is RegExpMatchArray => match !== null);
+  const rootIndent = markers.length > 0 ? Math.min(...markers.map((m) => m[1].length)) : -1;
   const items: string[][] = [];
-  for (const line of lines) {
-    if (marker.test(line)) items.push([line.replace(marker, '').trim()]);
-    else if (items.length > 0 && /^\s/.test(line)) items[items.length - 1].push(line.trim());
-    else items.push([line.trim()]);
-  }
+  let current: string[] | null = null;
+  let currentIsCode = false;
+  let group = '';
+  const start = (text: string, isCode = false) => {
+    current = [group && !isCode ? `${group}: ${text}` : text];
+    currentIsCode = isCode;
+    items.push(current);
+    return current;
+  };
+  lines.forEach((line, index) => {
+    if (!line.trim()) return;
+    const inCode = fenced[index];
+    const heading = inCode ? null : headingAt(line, index);
+    if (heading) {
+      group = heading.title.replace(/[*_`]/g, '').replace(/:\s*$/, '').trim();
+      current = null;
+      return;
+    }
+    if (rootIndent >= 0) {
+      const marker = inCode ? null : line.match(ITEM_MARKER);
+      if (marker && marker[1].length <= rootIndent) start(line.replace(ITEM_MARKER, '').trim());
+      // Deeper entries, indented continuation and code stay with the open item.
+      else if (current && (inCode || marker || /^\s/.test(line))) current.push(line.trim());
+      else start(line.trim(), inCode);
+      return;
+    }
+    // No list: one item per line, a code block kept whole.
+    if (inCode && current && currentIsCode) current.push(line.trim());
+    else start(line.trim(), inCode);
+  });
   return items.map((item) => item.join('\n')).filter(Boolean);
 }

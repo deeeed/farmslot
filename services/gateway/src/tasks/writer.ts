@@ -67,6 +67,7 @@ import {
   writePlanningContextInput,
 } from './planning-context.js';
 import { buildQaTaskSection, writeQaInput } from './qa-input.js';
+import { renderAcceptanceCriteria } from './task-document.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
   readWorkerTerminalProjectConfig,
@@ -997,7 +998,8 @@ export async function writeTaskFile(
     RECIPE_DIR: projectVars.recipeDir || `${projectVars.runtimeDir || '.agent'}/recipes`,
     ARTIFACT_DIR: projectVars.artifactDir || '.task',
     DESCRIPTION: description || '_No description_',
-    ACCEPTANCE_CRITERIA: ticket.acceptanceCriteria.join('\n') || '_Not specified_',
+    // One bullet per criterion, as the split TASK.md renders it.
+    ACCEPTANCE_CRITERIA: renderAcceptanceCriteria(ticket.acceptanceCriteria),
     // Rendered from the same list that writes CHECKLIST.md, so the numbers a
     // worker reads in TASK.md are the numbers `mark N` targets. A configured
     // override changes the list; hardcoding steps in the template would leave

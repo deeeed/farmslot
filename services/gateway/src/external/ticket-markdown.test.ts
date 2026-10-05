@@ -183,8 +183,8 @@ test('tables, code blocks, task lists and leading-space paragraphs render as Mar
       'const b = 2;',
       '```',
       '',
-      '- [x] done thing',
-      '- [ ] open thing',
+      '- (done) done thing',
+      '- (todo) open thing',
     ].join('\n'),
   );
 });
@@ -232,7 +232,7 @@ test('wiki markup becomes Markdown with the same sections', () => {
   assert.equal(ticketBodyToMarkdown(wiki), wikiToMarkdown(wiki));
 });
 
-test('GitHub-style Markdown bodies keep their one-entry-per-item criteria', () => {
+test('Markdown checklist bodies (GitHub issues) give one criterion per checkbox item', () => {
   const body = '## Acceptance Criteria\n- [ ] First\n- [x] Second\n\n## Notes\nlater';
   assert.deepEqual(sectionItems(extractSection(body, ['acceptance criteria'])), [
     'First',
@@ -311,10 +311,188 @@ test('fetchJiraIssue turns an ADF description into Markdown with its acceptance 
   assert.equal(requested.length, 2);
   assert.equal(
     data.description,
-    '##### Expected behavior\n\n- Preview equals the charge.\n- Points match.\n\n##### Steps to reproduce\n\nOpen the order form.\n\nEnter a size.',
+    '###### Expected behavior\n\n- Preview equals the charge.\n- Points match.\n\n###### Steps to reproduce\n\nOpen the order form.\n\nEnter a size.',
   );
   assert.deepEqual(data.acceptanceCriteria, ['Preview equals the charge.', 'Points match.']);
   assert.deepEqual(data.stepsToReproduce, ['Open the order form.', 'Enter a size.']);
   assert.equal(data.affectedArea, 'Perps');
   assert.deepEqual(data.comments, ['Ana (2026-10-05): First. Second.']);
+});
+
+test('fenced code never ends a section or splits an item, and its lines stay with their item', () => {
+  const markdown = [
+    '## Steps to reproduce',
+    '1. Start the app:',
+    '   ```bash',
+    '   # start the app',
+    '   - not a step',
+    '   ```',
+    '2. Open the form.',
+    '```bash',
+    '# a comment at column 0',
+    '```',
+    '3. Submit.',
+    '## Notes',
+    'later',
+  ].join('\n');
+  assert.deepEqual(sectionItems(extractSection(markdown, ['steps to reproduce'])), [
+    'Start the app:\n```bash\n# start the app\n- not a step\n```',
+    'Open the form.\n```bash\n# a comment at column 0\n```',
+    'Submit.',
+  ]);
+});
+
+test('uniformly indented list items stay siblings; deeper ones nest', () => {
+  const body = '## Acceptance Criteria\n  - [ ] a\n  - [ ] b\n    - child of b\n';
+  assert.deepEqual(sectionItems(extractSection(body, ['acceptance criteria'])), [
+    'a',
+    'b\n- child of b',
+  ]);
+});
+
+test('subheadings inside the criteria prefix their items instead of becoming criteria', () => {
+  const markdown = ticketBodyToMarkdown(
+    doc(
+      heading(4, 'Acceptance criteria'),
+      heading(5, 'Mobile'),
+      bullets(item(paragraph(text('m1'))), item(paragraph(text('m2')))),
+      heading(5, 'Extension'),
+      bullets(item(paragraph(text('e1')))),
+      heading(4, 'Notes'),
+      paragraph(text('later')),
+    ),
+  );
+  assert.deepEqual(sectionItems(extractSection(markdown, ['acceptance criteria'])), [
+    'Mobile: m1',
+    'Mobile: m2',
+    'Extension: e1',
+  ]);
+});
+
+test('headings with emoji, a trailing parenthetical or a colon still match', () => {
+  assert.equal(
+    extractSection('### :white_check_mark: Acceptance Criteria (AC):\n- one', [
+      'acceptance criteria',
+    ]),
+    '- one',
+  );
+  assert.equal(
+    extractSection('## ✅ Acceptance criteria\n- one', ['acceptance criteria']),
+    '- one',
+  );
+});
+
+test('captions, layouts, decision lists and nested task lists keep their words apart', () => {
+  const markdown = ticketBodyToMarkdown(
+    doc(
+      {
+        type: 'mediaSingle',
+        content: [
+          { type: 'media', attrs: { id: 'x' } },
+          { type: 'caption', content: [text('Fee preview screenshot')] },
+        ],
+      },
+      {
+        type: 'layoutSection',
+        content: [
+          {
+            type: 'layoutColumn',
+            content: [
+              heading(2, 'Acceptance criteria'),
+              bullets(item(paragraph(text('A1'))), item(paragraph(text('A2')))),
+            ],
+          },
+          { type: 'layoutColumn', content: [paragraph(text('Right column'))] },
+        ],
+      },
+      {
+        type: 'decisionList',
+        content: [
+          { type: 'decisionItem', content: [text('Decision one')] },
+          { type: 'decisionItem', content: [text('Decision two')] },
+        ],
+      },
+      {
+        type: 'taskList',
+        content: [
+          { type: 'taskItem', attrs: { state: 'TODO' }, content: [text('parent')] },
+          {
+            type: 'taskList',
+            content: [
+              { type: 'taskItem', attrs: { state: 'DONE' }, content: [text('child1')] },
+              { type: 'taskItem', attrs: { state: 'TODO' }, content: [text('child2')] },
+            ],
+          },
+        ],
+      },
+    ),
+  );
+  assert.equal(
+    markdown,
+    [
+      'Fee preview screenshot',
+      '',
+      '## Acceptance criteria',
+      '',
+      '- A1',
+      '- A2',
+      '',
+      'Right column',
+      '',
+      '- Decision one',
+      '- Decision two',
+      '',
+      '- (todo) parent',
+      '         - (done) child1',
+      '         - (todo) child2',
+    ].join('\n'),
+  );
+  assert.deepEqual(sectionItems(extractSection(markdown, ['acceptance criteria'])), [
+    'A1',
+    'A2',
+    'Right column',
+    'Decision one',
+    'Decision two',
+    'parent\n- (done) child1\n- (todo) child2',
+  ]);
+});
+
+test('fetchJiraIssue finds deep criteria on the ticket heading levels, not the shifted ones', async (t) => {
+  const savedFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = savedFetch;
+    delete process.env.JIRA_DEEP_EMAIL;
+    delete process.env.JIRA_DEEP_TOKEN;
+  });
+  process.env.JIRA_DEEP_EMAIL = 'bot@example.test';
+  process.env.JIRA_DEEP_TOKEN = 'token';
+  globalThis.fetch = async (input) => {
+    const body = String(input).includes('/comment')
+      ? { comments: [] }
+      : {
+          key: 'ABC-2',
+          fields: {
+            summary: 's',
+            description: doc(
+              heading(4, 'Acceptance criteria'),
+              heading(5, 'Mobile'),
+              bullets(item(paragraph(text('m1')))),
+              heading(5, 'Extension'),
+              bullets(item(paragraph(text('e1')))),
+            ),
+            status: { name: 'To Do' },
+            issuetype: { name: 'Task' },
+            labels: [],
+            components: [],
+          },
+        };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const data = await fetchJiraIssue('ABC-2', {
+    baseUrl: 'https://jira.example.test',
+    emailEnv: 'JIRA_DEEP_EMAIL',
+    apiTokenEnv: 'JIRA_DEEP_TOKEN',
+  });
+  assert.deepEqual(data.acceptanceCriteria, ['Mobile: m1', 'Extension: e1']);
+  assert.match(data.description ?? '', /^###### Acceptance criteria$/m);
 });

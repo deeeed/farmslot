@@ -91,16 +91,18 @@ export async function fetchJiraIssue(
 
   const issue = (await res.json()) as JiraIssue;
 
-  // ADF (or wiki) description as Markdown. Ticket headings sit two levels down so
-  // they nest under TASK.md's own `## Description` instead of reading as its sections.
-  const description = ticketBodyToMarkdown(issue.fields.description, { headingOffset: 2 });
-  const ac = extractSection(description, [
+  // ADF (or wiki) description as Markdown. Sections are found on the ticket's own
+  // heading levels; the copy shown in TASK.md has its headings three levels down so
+  // they nest under TASK.md's `## Description` (and a linked ticket's `### KEY`).
+  const ticketMarkdown = ticketBodyToMarkdown(issue.fields.description);
+  const description = ticketBodyToMarkdown(issue.fields.description, { headingOffset: 3 });
+  const ac = extractSection(ticketMarkdown, [
     'acceptance criteria',
     'expected behavior',
     'expected result',
   ]);
-  const area = extractSection(description, ['affected area', 'component', 'affected component']);
-  const steps = extractSection(description, [
+  const area = extractSection(ticketMarkdown, ['affected area', 'component', 'affected component']);
+  const steps = extractSection(ticketMarkdown, [
     'steps to reproduce',
     'repro steps',
     'reproduction steps',

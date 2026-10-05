@@ -974,6 +974,35 @@ test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the
   await access(path.join(taskDir, 'inputs', 'dev-intake.json'));
 });
 
+test('templated TASK.md renders acceptance criteria one bullet per criterion, like the split document', async (t) => {
+  const run = makeRun(`PROJ-${Date.now()}`, 'lightweight-interactive-ac');
+  run.flowType = 'dev';
+  run.mode = 'interactive';
+  run.devInteractiveProfile = DEFAULT_DEV_INTERACTIVE_PROFILE;
+  run.engineState = {
+    ...(run.engineState ?? {}),
+    interactiveDev: { checklist: ['Do the one thing'] },
+  } as Run['engineState'];
+  run.ticketData = {
+    ...(run.ticketData ?? {}),
+    title: 'Fee preview',
+    description: 'desc',
+    acceptanceCriteria: ['Preview equals the charge.', 'Points match.\n- including the tooltip'],
+  } as Run['ticketData'];
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+
+  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  const rendered = await readFile(taskPath, 'utf-8');
+  const section = rendered.split('## Acceptance Criteria')[1]?.split('\n## ')[0] ?? '';
+  assert.equal(
+    section.trim(),
+    '- Preview equals the charge.\n- Points match.\n  including the tooltip',
+  );
+});
+
 test('an explicitly configured interactive checklist still wins', () => {
   const run = makeRun(`PROJ-${Date.now()}`, 'interactive-checklist-override');
   run.ticketData = {
