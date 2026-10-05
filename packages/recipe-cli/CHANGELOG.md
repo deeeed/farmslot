@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.4.0 - 2026-10-05
+
 - Add run evidence to `@farmslot/recipe-cli/harness`, moved from mm-harness and driven through the registered adapters and the host identity:
   - execution provenance (`captureExecutionProvenance` with `runnerIncludes`, `executionProvenanceDrift`, `writeExecutionProvenance`, `ProvenanceDriftError`); the runner root defaults to the host package root;
   - the framed recorder (`startRecipeRecording`, `stopRecipeRecording`, `captureActiveRecipeRecordingSnapshot`), `createRecordingTargetProvider` and the capture-helper capability checks;
@@ -14,6 +18,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - **BREAKING:** the host identity requires `recipeEnvPrefix`, the prefix of the variables recipe processes and library actions read (`recipeEnvName('ADAPTER_INPUT')`); `farmslot-recipe` uses `RECIPE`.
 - Add `adapterPortFlags`: the dev-server port options every registered adapter adds.
 - Depend on `esbuild` 0.28.1 and `es-module-lexer` 2.3.1, pinned exactly (live adapter bundling): the bundler's patch version changes prepared bytes and so every approved `sourceDigest`.
+- Publish with adapter-sdk 0.3.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.23.0.
 
 ## 0.3.0 - 2026-10-04
 
