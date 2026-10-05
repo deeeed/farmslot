@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Autonomous dev and fix-bug TASK.md files end with a `## Run contract` section from the run mode: never pause, `mark blocked` when blocked, commit locally, Farmslot publishes after the publication gate, no AI mentions. Interactive and validation runs and other flows are unchanged.
+- Autonomous dev and fix-bug TASK.md files carry a `## Run contract` section after `## Inputs`, from the run mode: never pause, `mark blocked` when blocked, commit locally and leave pushing to Farmslot until it publishes (CI-FIX follow-ups keep their push step), no AI attribution. Interactive, validation and artifact-only runs and other flows are unchanged.
 
 ## 0.20.1 - 2026-10-05
 

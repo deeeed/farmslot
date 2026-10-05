@@ -1231,9 +1231,11 @@ export async function writeTaskFile(
   // plan, related planning context, review contract) is appended to the document
   // the worker opens first: TASK.md in both layouts.
   const appendTaskContext = async (base: string): Promise<string> => {
+    const runContract = runContractSection(run, vars.TASK_DIR);
+    const withRunContract = runContract ? `${base.trimEnd()}\n\n${runContract}\n` : base;
     const withInheritedContext = inheritedContext
-      ? `${base.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
-      : base;
+      ? `${withRunContract.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
+      : withRunContract;
     const withInteractivePrCompleteHandoff =
       run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
@@ -1275,7 +1277,6 @@ export async function writeTaskFile(
       commentSummaryMarkdown: vars.COMMENT_SUMMARY,
       addendum: renderedAddendum,
       hasTicketData: Boolean(run.ticketData),
-      runContract: runContractSection(run.flowType, run.mode, vars.TASK_DIR),
     });
     // Artifact-only replays neutralize publication steps inside the checklist
     // (BRANCH/REPO for the rewritten snippets come from the task document) and
