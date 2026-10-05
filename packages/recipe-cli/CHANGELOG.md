@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Export `resolveTsxBin(tsxCandidates, projectRoot)` from `@farmslot/recipe-cli/harness`, the tsx lookup live adapter scripts run under (`TSX_BIN`, the checkout's tsx, the host package's tsx, the caller's candidates), so a host's readiness check can ask the same question.
 - **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
 

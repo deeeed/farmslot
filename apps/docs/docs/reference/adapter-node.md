@@ -30,19 +30,19 @@ registry.register({ ...core, readiness });
 
 ## Config
 
-| field               | default                                                      | owns                                                                                      |
-| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `id`                | required                                                     | registry key, `--adapter` value, dependency codes (`<ID>_DEPS_MISSING`) and labels        |
-| `hints`             | required                                                     | the platform's next steps                                                                 |
-| `actions`           | required                                                     | the action set                                                                            |
-| `harness`           | required                                                     | `install`, `verify` and `cleanup` leaves                                                  |
-| `detect`            | none                                                         | recognise the checkout                                                                    |
-| `wording`           | lines naming the id; refusals point at `hints.relaunch`      | `ready`, `notReady`, `devServerStop`, `launch`                                            |
-| `dependencies`      | every run checks node_modules and `node_modules/.bin/tsx`    | `runtimeDeps`, `bins`, `requiredFor(target, use)`                                         |
-| `workspacePackages` | none                                                         | package name → checkout-relative dir; wires `actions.tsxLiveScripts` when the host didn't |
-| `installCommand`    | `cd '<target>' && yarn install --immutable`                  | the next step for missing dependencies                                                    |
-| `runtimeContext`    | `HEADLESS_FORBIDDEN_FIELDS` (ports, simulator, extension id) | what `agentic-runtime.json` must not carry                                                |
-| `run`               | `dependencyBlock` runs the dependency check                  | host run members; a host `dependencyBlock` replaces the check                             |
+| field               | default                                                      | owns                                                                                                                                                                 |
+| ------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | required                                                     | registry key, `--adapter` value, dependency codes (`<ID>_DEPS_MISSING`) and labels                                                                                   |
+| `hints`             | required                                                     | the platform's next steps                                                                                                                                            |
+| `actions`           | required                                                     | the action set                                                                                                                                                       |
+| `harness`           | required                                                     | `install`, `verify` and `cleanup` leaves                                                                                                                             |
+| `detect`            | none                                                         | recognise the checkout                                                                                                                                               |
+| `wording`           | lines naming the id; refusals point at `hints.relaunch`      | `ready`, `notReady`, `devServerStop`, `launch`                                                                                                                       |
+| `dependencies`      | every run checks the install (node_modules or PnP)           | `runtimeDeps`, `bins` with `resolveBin(target, bin)` (pass the resolver execution uses), `requiredFor(target, use)`; `runtimeStatus` (doctor) applies the same check |
+| `workspacePackages` | none                                                         | package name → checkout-relative dir; wires `actions.tsxLiveScripts` when the host didn't                                                                            |
+| `installCommand`    | `cd '<target>' && yarn install --immutable`                  | the next step for missing dependencies                                                                                                                               |
+| `runtimeContext`    | `HEADLESS_FORBIDDEN_FIELDS` (ports, simulator, extension id) | what `agentic-runtime.json` must not carry                                                                                                                           |
+| `run`               | `dependencyBlock` runs the dependency check                  | host run members; a host `dependencyBlock` replaces the check                                                                                                        |
 
 ## Helpers
 
