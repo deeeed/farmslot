@@ -100,15 +100,18 @@ export async function resolveLibrarySources(
 }
 
 /**
- * The library sources a command's `--library` names, and the adapter's action
- * manifest over them (or its `--action-manifest`).
+ * The library sources a command's `--library` names (unless the caller already
+ * resolved them), and the adapter's action manifest over them (or its
+ * `--action-manifest`).
  */
 export async function resolveCommandManifest(
   catalog: RecipeCatalog,
   adapter: string,
   options: CliOptions,
+  resolvedSources?: RecipeLibrarySource[],
 ): Promise<ResolvedActionManifest & { librarySources: RecipeLibrarySource[] }> {
-  const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
+  const librarySources =
+    resolvedSources ?? (await resolveLibrarySources(catalog, optionStrings(options, 'library')));
   const resolution = await catalog.resolveActionManifest(
     adapter,
     optionString(options, 'actionManifest'),
