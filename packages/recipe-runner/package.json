@@ -103,7 +103,8 @@
       "import": "./dist/runtime/operation.js",
       "default": "./dist/runtime/operation.js"
     },
-    "./cdp-broker": "./cdp-broker/cdp-broker.cjs"
+    "./cdp-broker": "./cdp-broker/cdp-broker.cjs",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",

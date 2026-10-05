@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it, mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import { WebSocket } from 'ws';
 
@@ -118,8 +119,10 @@ describe('DevTools broker proxy', () => {
 
     socket.send(JSON.stringify({ id: 9, method: 'Runtime.enable', params: {} }));
     await waitFor(() => {
-      const found = messages.some((m) => (m as { id?: number }).id === 9);
-      assert.ok(found, 'expected response for second Runtime.enable (id:9)');
+      assert.ok(
+        messages.some((m) => isDeepStrictEqual(m, { id: 9, result: { accepted: true } })),
+        'expected { id: 9, result: { accepted: true } } for the second Runtime.enable',
+      );
     });
 
     proxy.onCdpEvent('device-1', 'Runtime.executionContextCreated', {

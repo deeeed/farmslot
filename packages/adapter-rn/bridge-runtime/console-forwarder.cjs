@@ -242,8 +242,8 @@ function flush() {
   if (pending.length === 0) return;
   const lines = pending.join('\n');
   pending = [];
-  fs.appendFile(out, `${lines}\n`, rethrowUnlessRuntimeDirGone);
-  fs.writeFile(statePath, serializeState(), rethrowUnlessRuntimeDirGone);
+  fs.appendFile(out, `${lines}\n`, reportWriteFailure);
+  fs.writeFile(statePath, serializeState(), reportWriteFailure);
 }
 
 // Signal-path flush: process.exit() cancels queued async I/O, so the SIGTERM/
@@ -260,14 +260,23 @@ function flushSync() {
     if (lines) fs.appendFileSync(out, lines);
     fs.writeFileSync(statePath, serializeState());
   } catch (error) {
-    rethrowUnlessRuntimeDirGone(error);
+    reportWriteFailure(error);
   }
 }
 
-// Slot teardown removes the runtime dir while the forwarder is still flushing;
-// those lines have no reader left. Any other write failure is real.
-function rethrowUnlessRuntimeDirGone(error) {
-  if (error && error.code !== 'ENOENT') throw error;
+// A failed write loses that batch of console lines. This process also hosts
+// the CDP broker, so it keeps running: slot teardown (runtime dir gone) needs
+// no report, anything else (disk full, permissions) goes to the forwarder's
+// stderr log once per error code, and the next flush tries again.
+let lastWriteFailureCode = null;
+function reportWriteFailure(error) {
+  if (!error) {
+    lastWriteFailureCode = null;
+    return;
+  }
+  if (error.code === 'ENOENT' || error.code === lastWriteFailureCode) return;
+  lastWriteFailureCode = error.code;
+  process.stderr.write(`[console-forwarder] console log write failed: ${error.message}\n`);
 }
 
 function queueLine(line) {
