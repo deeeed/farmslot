@@ -37,7 +37,7 @@ export interface RecipeLibraryAdapterDeclaration {
 export interface RecipeLibraryManifest {
   /** Platform variant folders under recipes/, in addition to the built-in platforms. */
   platforms?: string[];
-  /** Platform adapter plugins this library ships. Declared and digested; not loaded yet. */
+  /** Platform adapter plugins this library ships; a host loads one when a command selects it. */
   adapters?: Record<string, RecipeLibraryAdapterDeclaration>;
   /** Action manifest files keyed by platform or `shared`, relative to the library root. */
   actions?: Record<string, string>;
@@ -277,23 +277,64 @@ export async function listLibraryFiles(root: string, directory: string): Promise
   return (await visit(directory)).sort();
 }
 
+/** The most files one adapter plugin's directory may hold; past it the plugin should be bundled. */
+export const MAX_LIBRARY_ADAPTER_FILES = 1000;
+
+/**
+ * Files one declared adapter plugin contributes, sorted and relative to the root: its module,
+ * plus every file under the module's directory when that directory is not the library root,
+ * so a multi-file plugin's helpers are covered. A module at the root contributes itself only.
+ */
+export async function libraryAdapterFiles(
+  root: string,
+  declaration: RecipeLibraryAdapterDeclaration,
+): Promise<string[]> {
+  const module = path
+    .relative(root, path.resolve(root, declaration.module))
+    .split(path.sep)
+    .join('/');
+  const rootReal = await libraryRootReal(root);
+  const moduleReal = await existingRealpath(path.join(root, module));
+  if (moduleReal && !isPathWithin(rootReal, moduleReal))
+    throw invalidRecipeSource(
+      `Library file ${module} resolves outside its library root.`,
+      'move the file inside the library root or remove the escaping symlink',
+    );
+  const directory = path.posix.dirname(module);
+  const files = new Set(moduleReal ? [module] : []);
+  if (directory !== '.') {
+    for (const file of await listLibraryFiles(root, directory)) files.add(file);
+  }
+  if (files.size > MAX_LIBRARY_ADAPTER_FILES)
+    throw invalidRecipeSource(
+      `Adapter module ${module} sits in a directory of ${files.size} files (at most ${MAX_LIBRARY_ADAPTER_FILES}).`,
+      `give the adapter its own directory, or bundle it into fewer files`,
+    );
+  return [...files].sort();
+}
+
+/** Content digest of one declared adapter plugin: the files `libraryAdapterFiles` lists. */
+export async function digestLibraryAdapter(
+  root: string,
+  declaration: RecipeLibraryAdapterDeclaration,
+): Promise<string> {
+  return digestFiles(root, await libraryAdapterFiles(root, declaration));
+}
+
 const fileDigests = new Map<string, { mtimeMs: number; size: number; digest: string }>();
 
 /**
  * Content digest of what a library contributes to discovery and runs: recipe-library.json,
- * recipes/, manifests/, actions/, and the files it declares. Text files hash with LF line
- * endings, so a CRLF checkout of the same content has the same digest.
+ * recipes/, manifests/, actions/, the files it declares, and each adapter plugin's directory
+ * (`libraryAdapterFiles`). Text files hash with LF line endings, so a CRLF checkout of the same
+ * content has the same digest.
  */
 export async function digestRecipeLibrary(
   root: string,
   manifest?: RecipeLibraryManifest,
 ): Promise<string> {
   const files = new Set<string>();
-  const declared = [
-    RECIPE_LIBRARY_MANIFEST_FILE,
-    ...Object.values(manifest?.actions ?? {}),
-    ...Object.values(manifest?.adapters ?? {}).map((adapter) => adapter.module),
-  ];
+  const declared = [RECIPE_LIBRARY_MANIFEST_FILE, ...Object.values(manifest?.actions ?? {})];
   const rootReal = await libraryRootReal(root);
   for (const file of declared) {
     const relative = path.relative(root, path.resolve(root, file)).split(path.sep).join('/');
@@ -310,6 +351,13 @@ export async function digestRecipeLibrary(
   for (const directory of RECIPE_LIBRARY_DIRECTORIES) {
     for (const file of await listLibraryFiles(root, directory)) files.add(file);
   }
+  for (const adapter of Object.values(manifest?.adapters ?? {})) {
+    for (const file of await libraryAdapterFiles(root, adapter)) files.add(file);
+  }
+  return digestFiles(root, [...files]);
+}
+
+async function digestFiles(root: string, files: readonly string[]): Promise<string> {
   const sorted = [...files].sort();
   const digests = await Promise.all(sorted.map((file) => fileDigest(path.join(root, file))));
   const hash = createHash('sha256');

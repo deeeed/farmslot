@@ -18,8 +18,11 @@ import {
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
 import {
+  digestLibraryAdapter,
   digestRecipeLibrary,
+  libraryAdapterFiles,
   listLibraryFiles,
+  MAX_LIBRARY_ADAPTER_FILES,
   readRecipeLibraryManifest,
 } from '../src/core/library-manifest.js';
 import { RecipeResolutionError } from '../src/core/resolution-error.js';
@@ -177,6 +180,51 @@ test('library digests cover recipes, manifests and actions only', async (t) => {
   assert.equal(await digestRecipeLibrary(root), first);
   await writeJsonFile(path.join(root, 'recipes', 'smoke.recipe.json'), terminalRecipe('Two'));
   assert.notEqual(await digestRecipeLibrary(root), first);
+});
+
+test('library digests cover each adapter plugin directory, its helper files included', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-digest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, { 'smoke.recipe.json': terminalRecipe('One') });
+  await mkdir(path.join(root, 'plugins', 'web', 'lib'), { recursive: true });
+  await writeFile(
+    path.join(root, 'plugins', 'web', 'index.mjs'),
+    "export { web } from './lib/web.mjs';\n",
+  );
+  await writeFile(path.join(root, 'plugins', 'web', 'lib', 'web.mjs'), 'export const web = {};\n');
+  await writeFile(path.join(root, 'top.mjs'), 'export default {};\n');
+  const web = { module: './plugins/web/index.mjs' };
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    adapters: { web, top: { module: './top.mjs' } },
+  });
+  const manifest = await readRecipeLibraryManifest(root);
+  assert.deepEqual(await libraryAdapterFiles(root, web), [
+    'plugins/web/index.mjs',
+    'plugins/web/lib/web.mjs',
+  ]);
+  // A module at the library root covers itself, not the whole library.
+  assert.deepEqual(await libraryAdapterFiles(root, { module: './top.mjs' }), ['top.mjs']);
+
+  const library = await digestRecipeLibrary(root, manifest);
+  const plugin = await digestLibraryAdapter(root, web);
+  await writeFile(
+    path.join(root, 'plugins', 'web', 'lib', 'web.mjs'),
+    'export const web = { changed: 1 };\n',
+  );
+  assert.notEqual(await digestRecipeLibrary(root, manifest), library);
+  assert.notEqual(await digestLibraryAdapter(root, web), plugin);
+
+  await mkdir(path.join(root, 'plugins', 'big'));
+  await writeFile(path.join(root, 'plugins', 'big', 'index.mjs'), 'export default {};\n');
+  await Promise.all(
+    Array.from({ length: MAX_LIBRARY_ADAPTER_FILES }, (_, index) =>
+      writeFile(path.join(root, 'plugins', 'big', `f${index}.mjs`), ''),
+    ),
+  );
+  await assert.rejects(
+    digestLibraryAdapter(root, { module: './plugins/big/index.mjs' }),
+    /sits in a directory of 1001 files \(at most 1000\)/u,
+  );
 });
 
 test('places an adjacent task recipe library before configured sources', async () => {
