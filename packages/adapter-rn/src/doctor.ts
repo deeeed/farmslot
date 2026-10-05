@@ -78,7 +78,7 @@ export async function runExpoRecipeDoctor(
 }
 
 export function printDoctorResult(result: ExpoRecipeDoctorResult): void {
-  console.log(`Farmslot Expo Recipe doctor: ${result.status}`);
+  console.log(`Farmslot React Native adapter doctor: ${result.status}`);
   console.log(`Recipe: ${result.recipePath}`);
   console.log(`Manifest: ${result.manifestPath}`);
   if (result.findings.length === 0) return;

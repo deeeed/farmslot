@@ -191,6 +191,6 @@ function printRunResult(result: Awaited<ReturnType<typeof runExpoRecipeDocument>
 
 function printUsage(): void {
   console.log(
-    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-adapter-rn init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-adapter-rn manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-adapter-rn doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
+    `Farmslot React Native adapter\n\nUsage:\n  farmslot-adapter-rn init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-adapter-rn manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-adapter-rn doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
   );
 }

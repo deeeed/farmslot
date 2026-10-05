@@ -102,7 +102,9 @@
       "types": "./dist/runtime/operation.d.ts",
       "import": "./dist/runtime/operation.js",
       "default": "./dist/runtime/operation.js"
-    }
+    },
+    "./cdp-broker": "./cdp-broker/cdp-broker.cjs",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
@@ -155,7 +157,8 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
-    "dist/**/*.js.map"
+    "dist/**/*.js.map",
+    "cdp-broker/*.cjs"
   ],
   "publishConfig": {
     "access": "public"

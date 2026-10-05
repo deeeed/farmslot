@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add `@farmslot/recipe-runner/cdp-broker`: the CDP broker that shares one inspector connection between bridge commands and long-lived collectors, moved from mm-harness. Both React Native and browser-extension network capture use it.
 
 ## 0.23.0 - 2026-10-04
 

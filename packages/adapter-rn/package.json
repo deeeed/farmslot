@@ -12,23 +12,39 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    }
+    },
+    "./bridge-runtime/lib/bridge-errors.cjs": "./bridge-runtime/lib/bridge-errors.cjs",
+    "./bridge-runtime/lib/cdp-eval.cjs": "./bridge-runtime/lib/cdp-eval.cjs",
+    "./bridge-runtime/lib/config.cjs": "./bridge-runtime/lib/config.cjs",
+    "./bridge-runtime/lib/console-format.cjs": "./bridge-runtime/lib/console-format.cjs",
+    "./bridge-runtime/lib/devtools-proxy.cjs": "./bridge-runtime/lib/devtools-proxy.cjs",
+    "./bridge-runtime/lib/issue-capture.cjs": "./bridge-runtime/lib/issue-capture.cjs",
+    "./bridge-runtime/lib/match-bridge-target.cjs": "./bridge-runtime/lib/match-bridge-target.cjs",
+    "./bridge-runtime/lib/target-discovery.cjs": "./bridge-runtime/lib/target-discovery.cjs",
+    "./bridge-runtime/lib/ws-client.cjs": "./bridge-runtime/lib/ws-client.cjs",
+    "./bridge-runtime/console-forwarder.cjs": "./bridge-runtime/console-forwarder.cjs",
+    "./metro/coalesce-metro-log.cjs": "./metro/coalesce-metro-log.cjs",
+    "./metro/launch-metro.cjs": "./metro/launch-metro.cjs",
+    "./metro/metro-config.cjs": "./metro/metro-config.cjs",
+    "./metro/metro-log-generation.cjs": "./metro/metro-log-generation.cjs",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "build": "yarn workspace @farmslot/protocol build && yarn workspace @farmslot/recipe-runner build && rm -rf dist && tsc --project tsconfig.build.json",
-    "test": "tsx --tsconfig tsconfig.json --test src/agent-device-ui-transport.test.ts src/adapter-rn.test.ts src/metro-recipe-bridge-transport.test.ts",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/agent-device-ui-transport.test.ts src/adapter-rn.test.ts src/metro-recipe-bridge-transport.test.ts test",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\"",
-    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"test/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
     "prepack": "yarn build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/adapter-rn"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-runner": "workspace:*",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "ws": "^8.18.0"
   },
   "peerDependencies": {
     "agent-device": ">=0.19.3"
@@ -41,6 +57,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pngjs": "^6.0.5",
+    "@types/ws": "^8.5.12",
     "agent-device": "0.19.3",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
@@ -73,7 +90,9 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
-    "templates/**/*"
+    "templates/**/*",
+    "bridge-runtime/**/*.cjs",
+    "metro/*.cjs"
   ],
   "publishConfig": {
     "access": "public"

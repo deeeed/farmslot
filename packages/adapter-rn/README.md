@@ -6,15 +6,20 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 
 ## Source layout
 
-| Path               | Owns                                                          |
-| ------------------ | ------------------------------------------------------------- |
-| `bin/`             | Published `farmslot-adapter-rn` executable shim.              |
-| `src/cli.ts`       | Init command parsing and CLI entrypoint.                      |
-| `src/scaffold.ts`  | File-copy and package-script scaffolding.                     |
-| `src/doctor.ts`    | Project integration checks.                                   |
-| `src/runner.ts`    | Expo smoke runner wiring built on `@farmslot/recipe-runner`.  |
-| `src/redaction.ts` | Output redaction helpers for generated artifacts.             |
-| `templates/`       | Versionless project scaffold copied into consuming Expo apps. |
+| Path                                                                         | Owns                                                                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `bin/`                                                                       | Published `farmslot-adapter-rn` executable shim.                                                      |
+| `src/cli.ts`                                                                 | Init command parsing and CLI entrypoint.                                                              |
+| `src/scaffold.ts`                                                            | File-copy and package-script scaffolding.                                                             |
+| `src/doctor.ts`                                                              | Project integration checks.                                                                           |
+| `src/runner.ts`                                                              | Expo smoke runner wiring built on `@farmslot/recipe-runner`.                                          |
+| `src/redaction.ts`                                                           | Output redaction helpers for generated artifacts.                                                     |
+| `templates/`                                                                 | Versionless project scaffold copied into consuming Expo apps.                                         |
+| `bridge-runtime/`                                                            | Hermes CDP bridge libraries (`lib/*.cjs`) and the console forwarder; a host bridge CLI requires them. |
+| `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.                        |
+| `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing.           |
+| `src/video-recorder.ts`, `src/frame-metrics.ts`                              | Device video recorders and frame-timing summaries.                                                    |
+| `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.                   |
 
 ## Relationship to the harness
 
@@ -22,7 +27,7 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 
 - `@farmslot/protocol` owns Recipe Protocol v1 schemas, action names, and validation.
 - `@farmslot/recipe-runner` owns the generic runner, official core actions, UI actions, and CDP/React Native transports.
-- `@farmslot/adapter-rn` only adds Expo-friendly scaffolding: package scripts, a default recipe, optional dev-only React Native bridge/HUD files, and integration checks.
+- `@farmslot/adapter-rn` adds Expo-friendly scaffolding (package scripts, a default recipe, optional dev-only React Native bridge/HUD files, integration checks) and the generic React Native runtime a harness drives: the Hermes bridge libraries, Metro helpers, device tools, recorders and freshness fingerprints. Product commands, routes and env names stay in the host harness.
 
 Do not add project-specific actions such as wallet, perps, or meetings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions. Generic whole-run video proof stays in the shared harness capability surface.
 
