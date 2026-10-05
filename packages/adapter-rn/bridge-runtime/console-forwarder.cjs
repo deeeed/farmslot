@@ -60,6 +60,13 @@ function parseArgs(argv) {
 }
 
 const { port, out } = parseArgs(process.argv);
+
+// stderr is a log file beside the console log (or a pipe). When that disk is
+// full or the reader is gone, diagnostics have nowhere to go; the forwarder
+// keeps running because it also hosts the CDP broker.
+process.stderr.on('error', (error) => {
+  if (error.code !== 'ENOSPC' && error.code !== 'EPIPE') throw error;
+});
 const statePath = `${out}.forwarder-state.json`;
 
 // Bridge-priority coordination: the inspector proxy reliably serves one
@@ -242,8 +249,8 @@ function flush() {
   if (pending.length === 0) return;
   const lines = pending.join('\n');
   pending = [];
-  fs.appendFile(out, `${lines}\n`, reportWriteFailure);
-  fs.writeFile(statePath, serializeState(), reportWriteFailure);
+  fs.appendFile(out, `${lines}\n`, (error) => reportWriteFailure(out, error));
+  fs.writeFile(statePath, serializeState(), (error) => reportWriteFailure(statePath, error));
 }
 
 // Signal-path flush: process.exit() cancels queued async I/O, so the SIGTERM/
@@ -256,27 +263,32 @@ function flushSync() {
   }
   const lines = pending.length > 0 ? `${pending.join('\n')}\n` : '';
   pending = [];
+  if (lines) writeSyncOrReport(out, () => fs.appendFileSync(out, lines));
+  writeSyncOrReport(statePath, () => fs.writeFileSync(statePath, serializeState()));
+}
+
+function writeSyncOrReport(destination, write) {
   try {
-    if (lines) fs.appendFileSync(out, lines);
-    fs.writeFileSync(statePath, serializeState());
+    write();
   } catch (error) {
-    reportWriteFailure(error);
+    reportWriteFailure(destination, error);
   }
 }
 
 // A failed write loses that batch of console lines. This process also hosts
 // the CDP broker, so it keeps running: slot teardown (runtime dir gone) needs
 // no report, anything else (disk full, permissions) goes to the forwarder's
-// stderr log once per error code, and the next flush tries again.
-let lastWriteFailureCode = null;
-function reportWriteFailure(error) {
+// stderr log once per destination and error code, and the next flush tries
+// again.
+const reportedWriteFailures = new Map();
+function reportWriteFailure(destination, error) {
   if (!error) {
-    lastWriteFailureCode = null;
+    reportedWriteFailures.delete(destination);
     return;
   }
-  if (error.code === 'ENOENT' || error.code === lastWriteFailureCode) return;
-  lastWriteFailureCode = error.code;
-  process.stderr.write(`[console-forwarder] console log write failed: ${error.message}\n`);
+  if (error.code === 'ENOENT' || reportedWriteFailures.get(destination) === error.code) return;
+  reportedWriteFailures.set(destination, error.code);
+  process.stderr.write(`console-forwarder: write to ${destination} failed: ${error.message}\n`);
 }
 
 function queueLine(line) {
