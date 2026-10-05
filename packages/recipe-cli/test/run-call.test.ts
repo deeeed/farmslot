@@ -1285,6 +1285,23 @@ describe('call', () => {
     );
     for (const dir of dirs) assert.equal(path.dirname(dir), calls);
     assert.notEqual(dirs[0], dirs[1]);
+    // A later run in the same task writes its own artifacts beside the calls'.
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'web', '--target', target, '--heal', 'off', '--json'],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.equal(
+      path.dirname(String((lastJson(run.stdout).result as { summaryPath: string }).summaryPath)),
+      path.join(target, 'temp/tasks/t1/artifacts'),
+    );
+    for (const dir of dirs) assert.ok(fs.existsSync(path.join(dir, 'summary.json')), dir);
 
     delete process.env.RECIPE_TASK_DIR;
     process.env.FARMSLOT_TASK_DIR = '../outside';
