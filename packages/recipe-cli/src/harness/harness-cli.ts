@@ -16,13 +16,9 @@ import {
   type AdapterLoadOptions,
   adapterSelectionFailureOut,
   ensureAdapterLoaded,
+  selectedAdapterId,
 } from './adapter-plugins.js';
-import {
-  adapterForPlatform,
-  configureHarnessAdapters,
-  detectAdapter,
-  harnessAdapter,
-} from './adapters.js';
+import { configureHarnessAdapters, detectAdapter, harnessAdapter } from './adapters.js';
 import type { RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import {
@@ -102,6 +98,8 @@ export interface HarnessCliOptions {
   catalog?: RecipeCatalog;
   /** Turns a library-declared adapter into the host's adapter before it registers. */
   adopt?: AdapterLoadOptions['adopt'];
+  /** Libraries the host configures (a config file), searched after the others for adapters. */
+  configuredLibraries?(): AdapterLoadOptions['configured'];
   /** Retired option spellings and their replacements, for the unknown-option suggestion. */
   replacedOptions?: Readonly<Record<string, string>>;
 }
@@ -168,7 +166,10 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     // A library-declared adapter loads only when the command selects it.
     if (command) {
-      const refused = await loadSelectedAdapter(command.name, argv, options.adopt);
+      const refused = await loadSelectedAdapter(command.name, argv, {
+        adopt: options.adopt,
+        configured: options.configuredLibraries?.(),
+      });
       if (refused !== undefined) return { exitCode: refused, exit: 'now' };
     }
 
@@ -236,22 +237,18 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
   };
 }
 
-// Loads the adapter `--adapter` (else `--platform`) selects, if a library
+// Loads the adapter the command selects (`selectedAdapterId`), if a library
 // declares it. A refused plugin prints its code and next step; returns that exit.
 async function loadSelectedAdapter(
   command: string,
   argv: readonly string[],
-  adopt: AdapterLoadOptions['adopt'],
+  load: Pick<AdapterLoadOptions, 'adopt' | 'configured'>,
 ): Promise<number | undefined> {
   const tokens = argv.slice(1);
-  const selected =
-    optionValues(tokens, '--adapter').at(-1) ?? optionValues(tokens, '--platform').at(-1);
+  const selected = selectedAdapterId(tokens);
   if (selected === undefined) return undefined;
   try {
-    await ensureAdapterLoaded(adapterForPlatform(selected), {
-      libraries: optionValues(tokens, '--library'),
-      adopt,
-    });
+    await ensureAdapterLoaded(selected, { ...load, libraries: optionValues(tokens, '--library') });
     return undefined;
   } catch (error) {
     if (

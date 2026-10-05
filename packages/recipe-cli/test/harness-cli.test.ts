@@ -654,6 +654,31 @@ export const adapter = {
     assert.deepEqual(imported(), ['flagged']);
   });
 
+  test('loads an adapter from a library only the host configures', async () => {
+    const configured = [{ name: 'cfg', root: pluginLibrary('kept') }];
+    const options = pluginOptions();
+    const cli = createHarnessCli({
+      ...options,
+      commands: [
+        ...shopCommands(),
+        command('doctor', {
+          options: contractOptions(HELP, JSON_FLAG, {
+            '--adapter': valueOption((tokens) =>
+              adapterChoices(optionValues(tokens, '--library'), { configured }),
+            ),
+          }),
+        }),
+      ],
+      configuredLibraries: () => configured,
+    });
+    assert.deepEqual(await cli.main(['doctor', '--adapter', 'kept']), {
+      exitCode: 0,
+      exit: 'code',
+    });
+    assert.deepEqual(imported(), ['kept']);
+    assert.equal(harnessAdapters().has('kept'), true);
+  });
+
   test('prints a refused adapter with its code and next step', async () => {
     process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('old', 99)}`;
     const cli = createHarnessCli(pluginOptions());
