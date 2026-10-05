@@ -19,6 +19,12 @@ import { isMainModule } from './lib/step-timing.mjs';
 // resolved. Keyed by package name; a listed subpath that no longer resolves to a
 // CommonJS file fails.
 export const ENTRY_ONLY_EXPORTS = Object.freeze({
+  '@farmslot/adapter-rn': [
+    './bridge-runtime/console-forwarder.cjs',
+    './metro/coalesce-metro-log.cjs',
+    './metro/launch-metro.cjs',
+    './metro/metro-log-generation.cjs',
+  ],
   '@farmslot/adapter-web': ['./validation-launch-supervisor'],
   '@farmslot/agent-runtime': ['./scripts/mark-checklist-step.cjs'],
   '@farmslot/skills': ['./scripts/mark-checklist-step.cjs'],

@@ -4,6 +4,11 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Add the generic React Native runtime, moved from mm-harness:
+  - **Bridge runtime:** the Hermes CDP libraries in `bridge-runtime/lib/*.cjs` (target discovery, ws client, devtools proxy, eval, error codes, port config, console format, in-app issue buffer snippets) and `bridge-runtime/console-forwarder.cjs`.
+  - **Metro:** the config wrapper, detached launcher and log helpers in `metro/*.cjs`.
+  - **From the index:** adb/idb discovery (`resolveMobileToolPath`, overridable with `RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`), `listConnectedDevices`, the Android and iOS-simulator video recorders, `summarizeFrames`, and Metro-env and source fingerprints with recorded baselines. The project supplies the input lists and marker paths. Hosts set `RECIPE_RN_EXPLICIT_PLATFORM` and `RECIPE_RN_METRO_*` for the bridge and the Metro wrapper.
+
 - **Breaking:** renamed from `@farmslot/expo-recipe`, with no alias package. The bin is now `farmslot-adapter-rn` (was `farmslot-expo-recipe`), and `init` writes `recipe:*` scripts that call it. Run provenance and the bundled recipe source report `@farmslot/adapter-rn`. `runExpoRecipeCli` and `EXPO_RECIPE_PACKAGE_VERSIONS` are now `runAdapterRnCli` and `ADAPTER_RN_PACKAGE_VERSIONS`. Expo-specific APIs (`installExpoRecipeScaffold`, `runExpoRecipeDoctor`, `runExpoRecipeDocument`, …) keep their names.
 
 ## 0.14.0 - 2026-10-04
