@@ -1,9 +1,7 @@
 {
-  "version": "0.20.0",
-  "date": "2026-10-02",
+  "version": "0.20.1",
+  "date": "2026-10-05",
   "items": [
-    "View recovery hints for blocked runs and steer a busy native worker through a persisted message queue",
-    "Additional reviews default to a warm static recheck, with requested, starting and running progress",
-    "New Codex selections default to GPT-6.1 Sol; saved model choices are kept"
+    "A failed worker command no longer reads as a failed run, and operation log and step-file links open reliably"
   ]
 }

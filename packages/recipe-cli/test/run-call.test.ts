@@ -28,29 +28,37 @@ import {
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
-import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/call.js';
-import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
+  renderActionDetail,
+  renderHumanActionExample,
+  resolveActionCapabilityMatrix,
+} from '../src/harness/catalog.js';
+import { acquireCheckoutLock } from '../src/harness/checkout-lock.js';
+import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/call.js';
+import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
+import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
+import {
   activateRecipeRuntimeEnvironment,
   type CallCommandOptions,
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  type DescribedAction,
   describeManifestActions,
   describeRunnableRecipe,
+  handleActions,
   handleCall,
   handleCallHelp,
   handleRun,
   harnessHost,
   listRunnableRecipes,
   newHealState,
+  parseArgs,
   ProvenanceDriftError,
   type RecipeEngine,
   recipeRuntimePath,
-  renderHumanActionExample,
-  resolveActionCapabilityMatrix,
   resolveLibrarySources,
   resolveRecipeParamValue,
   type RunCommandOptions,
@@ -218,6 +226,16 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
       const adapters = [
         ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
         ...(adapter === 'web' ? [pingAdapter] : []),
+        ...(manifest.actions['app.network_capture']
+          ? [
+              {
+                action: 'app.network_capture',
+                source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
+                execute: (node: Record<string, unknown>, context: ActionExecutionContext) =>
+                  runNetworkCaptureAction(adapter, node, context),
+              } satisfies ActionAdapter,
+            ]
+          : []),
       ].map((entry) => ({
         ...entry,
         async execute(node: Record<string, unknown>, context: ActionExecutionContext) {
@@ -447,7 +465,6 @@ let engine: ShopEngine;
 let library: string;
 let runOptions: RunCommandOptions<{ bound: string }, { entries: unknown[]; problems: string[] }>;
 let callOptions: CallCommandOptions<{ bound: string }, { entries: unknown[]; problems: string[] }>;
-const listed: string[] = [];
 const savedEnv = { ...process.env };
 
 beforeEach(() => {
@@ -467,7 +484,6 @@ beforeEach(() => {
   configureHarnessAdapters(registry);
   library = bundledLibrary();
   engine = shopEngine(library, calls);
-  listed.length = 0;
   runOptions = {
     engine,
     plan: {
@@ -476,22 +492,8 @@ beforeEach(() => {
       ],
       launchDetail: 'would open the shop',
     },
-    list: async () => {
-      listed.push('run --list');
-      return 0;
-    },
-    describe: async (recipe) => {
-      listed.push(`run ${recipe} --describe`);
-      return 0;
-    },
   };
-  callOptions = {
-    engine,
-    list: async () => {
-      listed.push('call --list');
-      return 0;
-    },
-  };
+  callOptions = { engine };
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('FARMSLOT_RECIPE_SOURCE_') || key === 'RECIPE_LIBRARY_PATH')
       delete process.env[key];
@@ -825,18 +827,351 @@ describe('action catalog', () => {
   });
 });
 
+describe('actions', () => {
+  // Each view prints in one write: pick it out of anything the test runner wrote meanwhile.
+  const view = (lines: string[], head: string) => lines.find((line) => line.startsWith(head));
+  const actions = async (...argv: string[]) => {
+    const parsed = parseArgs(argv);
+    return capture(() => handleActions(parsed, { catalog: engine }));
+  };
+
+  test('the matrix has one column per registered adapter, in registration order', async () => {
+    const json = await actions('--matrix', '--json');
+    assert.equal(json.value, 0);
+    const matrix = lastJson(json.stdout);
+    assert.deepEqual(matrix.adapters, ['web', 'api']);
+    assert.deepEqual(
+      (matrix.actions as Array<{ name: string; support: unknown }>).find(
+        (row) => row.name === 'shop.ping',
+      )?.support,
+      { web: 'available', api: 'unavailable' },
+    );
+    const human = await actions('--matrix', '--action', 'ping');
+    assert.deepEqual(view(human.stdout, 'action capability matrix')?.split('\n'), [
+      'action capability matrix',
+      'Inspect one: shop-harness actions --matrix --action <name> --json',
+      'action capability  web  api',
+      'shop.ping          yes  —  ',
+    ]);
+    const unknown = await actions('--matrix', '--action', 'zzz', '--json');
+    assert.equal(unknown.value, 2);
+    assert.deepEqual(lastJson(unknown.stdout).error, {
+      code: 'ACTION_UNKNOWN',
+      message: 'no action capability matches "zzz" across Web or Api.',
+      userAction: 'shop-harness actions --matrix --json',
+    });
+    const conflict = await actions('--matrix', '--adapter', 'web', '--json');
+    assert.equal(
+      (lastJson(conflict.stdout).error as { message: string }).message,
+      '--matrix cannot be combined with --adapter.',
+    );
+  });
+
+  test('--action prints the same detail as call <action> --help', async () => {
+    const target = checkout();
+    const detail = await actions('--action', 'ping', '--adapter', 'web', '--target', target);
+    assert.equal(detail.value, 0);
+    const help = await capture(() =>
+      handleCallHelp(['ping', '--help', '--adapter', 'web', '--target', target], 'GENERIC', {
+        catalog: engine,
+      }),
+    );
+    const text = view(detail.stdout, 'shop-harness call shop.ping') ?? '';
+    assert.ok(help.stdout.includes(`${text}\n\n`));
+    assert.ok(help.stdout.includes('GENERIC\n'));
+    for (const line of [
+      'shop-harness call shop.ping [key=value ...] [flags]',
+      '  Ping the shop.',
+      `  Source: shop (${path.join(library, 'manifests', 'web.action-manifest.json')}) · adapter web`,
+      '  Risk: host-read-export',
+      '    mode      string (required) [one of: fast, slow]',
+      '    shop-harness call ping count=2 mode=fast',
+      'Example call:',
+      `  shop-harness call shop.ping count=2 mode=fast --adapter web --target ${target}`,
+      'Recipe node:',
+    ])
+      assert.ok(text.split('\n').includes(line), line);
+    const json = await actions('--action', 'ping', '--adapter', 'web', '--json');
+    assert.equal(lastJson(json.stdout).detail, 'full');
+  });
+
+  test('lists, searches and filters the catalog with teaching errors', async () => {
+    const list = await actions('--adapter', 'web', '--json');
+    const summary = lastJson(list.stdout);
+    assert.equal(summary.detail, 'summary');
+    assert.ok(
+      (summary.actions as Array<Record<string, unknown>>).every(
+        (entry) => !('schema' in entry) && !('examples' in entry),
+      ),
+    );
+    const human = await actions('--adapter', 'web');
+    assert.match(
+      view(human.stdout, 'actions (web)') ?? '',
+      /^actions \(web\)\nInspect: shop-harness actions --action <name> {2}· {2}Run: shop-harness call <name>\n\nofficial \(\d+\)[\s\S]*\ncustom \(1\)\n {2}shop\.ping \[shop\] fields=count,mode=fast\|slow,password risk=host-read-export — Ping the shop\.$/u,
+    );
+    const categories = await actions('--adapter', 'web', '--categories', '--json');
+    assert.ok(
+      (lastJson(categories.stdout).categories as Array<{ name: string }>).some(
+        (entry) => entry.name === 'shop',
+      ),
+    );
+    const search = await actions('ping', '--adapter', 'web', '--json');
+    assert.deepEqual(
+      (lastJson(search.stdout).actions as Array<{ name: string }>).map((entry) => entry.name),
+      ['shop.ping'],
+    );
+    for (const [argv, code, userAction] of [
+      [
+        ['--categories', '--category', 'x'],
+        'ACTION_FILTER_CONFLICT',
+        'shop-harness actions --adapter web --categories',
+      ],
+      [
+        ['--category', 'nope'],
+        'ACTION_CATEGORY_UNKNOWN',
+        'shop-harness actions --adapter web --categories',
+      ],
+      [['--action', 'zzz'], 'ACTION_UNKNOWN', 'shop-harness actions --adapter web'],
+      [['zzz-nothing'], 'ACTION_SEARCH_EMPTY', 'shop-harness actions --adapter web --categories'],
+    ] as const) {
+      const refused = await actions(...argv, '--adapter', 'web', '--json');
+      assert.equal(refused.value, 2, code);
+      assert.deepEqual(
+        (({ code: c, userAction: u }) => ({ code: c, userAction: u }))(
+          lastJson(refused.stdout).error as { code: string; userAction: string },
+        ),
+        { code, userAction },
+      );
+    }
+    const unavailable = await actions('--action', 'ping', '--adapter', 'api', '--json');
+    assert.deepEqual(lastJson(unavailable.stdout).error, {
+      code: 'ACTION_CAPABILITY_UNAVAILABLE',
+      message: 'missing action capability "shop.ping" for the api adapter.',
+      capability: 'shop.ping',
+      satisfyingAdapters: ['web'],
+      userAction:
+        'Satisfying adapters for "shop.ping": web. Inspect: shop-harness actions --matrix --action shop.ping --json',
+    });
+    // The envelopes keep their key order: context first, then error with its
+    // details between message and userAction.
+    const keyOrder = (lines: string[]) => {
+      const envelope = lastJson(lines);
+      return [Object.keys(envelope), Object.keys(envelope.error as object)];
+    };
+    assert.deepEqual(keyOrder(unavailable.stdout), [
+      ['schemaVersion', 'command', 'adapter', 'action', 'error'],
+      ['code', 'message', 'capability', 'satisfyingAdapters', 'userAction'],
+    ]);
+    const matrixCategory = await actions('--matrix', '--category', 'nope', '--json');
+    assert.equal(matrixCategory.value, 2);
+    assert.deepEqual(keyOrder(matrixCategory.stdout), [
+      ['schemaVersion', 'command', 'view', 'category', 'availableCategories', 'error'],
+      ['code', 'message', 'userAction'],
+    ]);
+    const raw = await actions('--raw', '--adapter', 'api');
+    assert.deepEqual(Object.keys(lastJson(raw.stdout)), ['$schema', 'actions']);
+  });
+
+  test("groups the bundled namespace's actions by domain", () => {
+    const described = describeManifestActions(engine, {
+      $schema: CORE_ACTIONS.$schema,
+      actions: { 'shop.cart.add': PING_ACTION, 'team.wave': WAVE_ACTION },
+    });
+    const text = renderHumanActionCatalog(engine, described, { title: 't', guidance: 'g' });
+    assert.match(text, /\nshop · cart \(1\)\n {2}shop\.cart\.add/u);
+    assert.match(text, /\ncustom \(1\)\n {2}team\.wave/u);
+  });
+});
+
+describe('action examples', () => {
+  test('hides recipe-owned fields and renders a runnable call from an authored example', () => {
+    const [selected] = describeManifestActions(engine, {
+      $schema: CORE_ACTIONS.$schema,
+      actions: {
+        'shop.wallet.select_account': {
+          description: 'Select a wallet account.',
+          schema: { properties: { action: {}, next: {}, name: {}, address: {} } },
+          examples: [
+            {
+              action: 'shop.wallet.select_account',
+              intent: 'Select Account 2.',
+              name: 'Account 2',
+              next: 'done',
+            },
+          ],
+        },
+      },
+    });
+    assert.ok(selected);
+    assert.deepEqual(selected.fields, ['address', 'name']);
+    const output = renderHumanActionExample(selected, 'web', '/tmp/slot one', 'shop-harness') ?? '';
+    assert.match(output, /shop-harness call shop\.wallet\.select_account 'name=Account 2'/u);
+    assert.match(output, /--target '\/tmp\/slot one'/u);
+    assert.doesNotMatch(output, /next=done/u);
+  });
+
+  const positions = {
+    name: 'shop.orders.ensure_positions',
+    fields: ['market', 'side', 'state', 'notional'],
+    examples: [
+      { action: 'shop.orders.ensure_positions', market: 'BTC', state: 'none' },
+      {
+        action: 'shop.orders.ensure_positions',
+        market: 'ETH',
+        side: 'long',
+        state: 'open',
+        notional: 10,
+      },
+    ],
+  } as DescribedAction;
+  const example = (entry: Partial<DescribedAction>, values: Record<string, unknown>) =>
+    actionExampleCommand(entry as DescribedAction, 'web', '/tmp/slot', 'shop-harness', values) ??
+    '';
+
+  test('picks the authored example closest to the supplied values', () => {
+    for (const part of ['market=ETH', 'side=long', 'state=open', 'notional=10'])
+      assert.ok(example(positions, { market: 'ETH', state: 'open' }).includes(part), part);
+    // The complete state-compatible example beats a market-only match.
+    for (const part of ['market=BTC', 'state=open', 'side=long', 'notional=10'])
+      assert.ok(example(positions, { market: 'BTC', state: 'open' }).includes(part), part);
+    // An alias-compatible example fills the missing inputs; the caller's spelling stays.
+    for (const part of ['market=ETH', 'side=long', 'state=present', 'notional=10'])
+      assert.ok(
+        example(
+          {
+            ...positions,
+            examples: [
+              {
+                action: 'shop.orders.ensure_positions',
+                market: 'BTC',
+                side: 'long',
+                state: 'open',
+                notional: 10,
+              },
+            ],
+          },
+          {
+            market: 'ETH',
+            state: 'present',
+          },
+        ).includes(part),
+        part,
+      );
+  });
+
+  test('keeps caller values, repairs enum values, and falls back on a wrongly typed value', () => {
+    const account = {
+      name: 'shop.wallet.select_account',
+      fields: ['name'],
+      examples: [{ action: 'shop.wallet.select_account', name: 'Account 2' }],
+    };
+    assert.match(example(account, { name: 'Missing account' }), /'name=Missing account'/u);
+    const orders = {
+      name: 'shop.orders.assert_orders',
+      fields: ['state'],
+      schema: { properties: { state: { enum: ['none', 'open'] } } },
+      examples: [{ action: 'shop.orders.assert_orders', state: 'none' }],
+    };
+    assert.match(example(orders, { state: 'opne' }), /state=open/u);
+    assert.match(example(orders, { state: 'present' }), /state=open/u);
+    const command = {
+      name: 'command',
+      fields: ['cmd'],
+      schema: { properties: { cmd: { type: 'string' } } },
+      examples: [{ action: 'command', cmd: 'pwd' }],
+    };
+    assert.match(example(command, { cmd: 12345 }), /cmd=pwd/u);
+  });
+
+  test('never renders caller secrets', () => {
+    const output = example(
+      {
+        name: 'team.auth.call',
+        fields: ['token', 'password', 'payload'],
+        examples: [
+          {
+            action: 'team.auth.call',
+            token: 'example-token',
+            password: 'example-password',
+            payload: { secret: 'nested-example' },
+          },
+        ],
+      },
+      {
+        token: 'SECRET_VALUE',
+        password: 'PASSWORD_VALUE',
+        payload: { secret: 'NESTED_VALUE' },
+      },
+    );
+    for (const secret of ['SECRET_VALUE', 'PASSWORD_VALUE', 'NESTED_VALUE'])
+      assert.ok(!output.includes(secret), secret);
+    for (const part of ['token=<token>', 'password=<password>', '<redacted>'])
+      assert.ok(output.includes(part), part);
+  });
+
+  test('short example calls carry only the fields, shell-quoted, under an unambiguous name', () => {
+    const [branch, palette] = describeManifestActions(engine, {
+      $schema: CORE_ACTIONS.$schema,
+      actions: {
+        'shop.flow.switch': {
+          description: 'Branch on a value.',
+          schema: { properties: { value: {}, equals: {} } },
+          examples: [
+            {
+              action: 'shop.flow.switch',
+              value: '{{params.mode}}',
+              equals: 'warm start',
+              cases: { match: 'warm' },
+              default: 'cold',
+              intent: 'Branch.',
+            },
+          ],
+        },
+        'shop.ui.set_flags': {
+          description: 'Set flags.',
+          schema: { properties: { flags: {} } },
+          examples: [{ action: 'shop.ui.set_flags', flags: { theme: "dark's" } }],
+        },
+      },
+    });
+    assert.ok(branch && palette);
+    const detail = (entry: DescribedAction, names: string[]) =>
+      renderActionDetail(entry, 'web', '/tmp/x', 'shop-harness', names).split('\n');
+    const examples = (lines: string[]) => {
+      const start = lines.indexOf('  Examples:') + 1;
+      return lines.slice(start, lines.indexOf('', start));
+    };
+    // Graph keys (cases, default) are not the action's fields.
+    assert.deepEqual(examples(detail(branch, [branch.name])), [
+      "    shop-harness call switch 'equals=warm start' 'value={{params.mode}}'",
+    ]);
+    // A short name another action shares falls back to the full name.
+    assert.deepEqual(examples(detail(branch, [branch.name, 'command', 'other.switch'])), [
+      "    shop-harness call shop.flow.switch 'equals=warm start' 'value={{params.mode}}'",
+    ]);
+    // An object value survives shell word splitting as one key=value argument.
+    const [line] = examples(detail(palette, [palette.name]));
+    const argv = execFileSync('bash', ['-c', `printf '%s\\n' ${line!.trim()}`], {
+      encoding: 'utf8',
+    }).split('\n');
+    assert.deepEqual(argv.slice(0, 4), [
+      'shop-harness',
+      'call',
+      'set_flags',
+      'flags={"theme":"dark\'s"}',
+    ]);
+    assert.ok(detail(palette, [palette.name]).includes('  Source: shop · adapter web'));
+  });
+});
+
 describe('network observation', () => {
   test('captures the whole run, summarizes node events, and indexes the summary', async () => {
     const artifacts = tempRoot('recipe-cli-network-');
     const manifestPath = path.join(artifacts, 'artifact-manifest.json');
     fs.writeFileSync(manifestPath, JSON.stringify({ artifacts: [] }));
-    const observer = await startRunNetworkObservation(
-      'web',
-      artifacts,
-      artifacts,
-      {},
-      { cdpPort: '9222' },
-    );
+    const observer = await startRunNetworkObservation('web', artifacts, artifacts, {
+      CDP_PORT: '9222',
+    });
     assert.ok(observer);
     assert.equal(calls.networkStarts[0]?.id, 'run-network');
     observer.onActionEvent({ nodeId: 'ping', action: 'shop.ping', status: 'running' });
@@ -977,10 +1312,62 @@ describe('run', () => {
     );
   });
 
-  test('--list and --describe are the host views; --describe refuses --plan', async () => {
-    assert.equal(await handleRun(['--list'], runOptions), 0);
-    assert.equal(await handleRun(['hello', '--describe'], runOptions), 0);
-    assert.deepEqual(listed, ['run --list', 'run hello --describe']);
+  test('--list and --describe read the catalog; --describe refuses --plan', async () => {
+    const list = await capture(() =>
+      handleRun(['--list', '--adapter', 'api', '--json'], runOptions),
+    );
+    assert.equal(list.value, 0);
+    assert.deepEqual(lastJson(list.stdout), {
+      schemaVersion: 1,
+      command: 'run',
+      action: 'list',
+      adapter: 'api',
+      recipes: [
+        {
+          name: 'hello',
+          source: 'shop',
+          file: 'recipes/hello.recipe.json',
+          shadows: [],
+          adapter: 'api',
+          variant: null,
+          parameters: [
+            { name: 'name', type: 'string', required: true, default: 'shop', description: 'Who.' },
+          ],
+          title: 'Hello',
+          description: 'Say hello. Twice.',
+        },
+      ],
+    });
+    const human = await capture(() => handleRun(['--list', '--adapter', 'api'], runOptions));
+    assert.match(
+      human.stdout.join('\n'),
+      /runnable recipes \(api\)\nLibraries loaded:\n {2}shop bundled · [^\n]+\nInspect: shop-harness run <recipe> --describe\n\ngeneral \(1\)\n {2}hello library=shop variant=all\n {4}Say hello\./u,
+    );
+    const filtered = await capture(() =>
+      handleRun(['--list', '--adapter', 'api', '--domain', 'perps'], runOptions),
+    );
+    assert.match(
+      filtered.stdout.join('\n'),
+      /Filter: domain=perps\nInspect[\s\S]*No runnable recipes match\.\nAvailable domains: general/u,
+    );
+    const described = await capture(() =>
+      handleRun(['hello', '--describe', '--adapter', 'api', '--json'], runOptions),
+    );
+    assert.equal(described.value, 0);
+    const detail = lastJson(described.stdout);
+    assert.deepEqual((detail.recipe as { actions: string[] }).actions, ['command', 'end']);
+    assert.equal(detail.runCommand, 'shop-harness run hello --adapter api');
+    assert.equal(detail.nextCommand, 'shop-harness run hello --adapter api --plan');
+    const missing = await capture(() =>
+      handleRun(['nope', '--describe', '--adapter', 'api', '--json'], runOptions),
+    );
+    assert.equal(missing.value, 2);
+    assert.deepEqual(lastJson(missing.stdout).error as { code: string; userAction: string }, {
+      code: 'RECIPE_NOT_FOUND',
+      message:
+        'recipe not found: nope — not a file, and no packaged library recipe matched. Library recipes for api: hello (shop-harness run <name>).',
+      userAction: 'shop-harness run --list --adapter api',
+    });
     const conflict = await capture(() =>
       handleRun(['hello', '--describe', '--plan', '--json'], runOptions),
     );
@@ -1043,6 +1430,313 @@ describe('run', () => {
       provenance.snapshots.map((snapshot: { phase: string }) => snapshot.phase),
       ['start', 'pre-execute', 'end'],
     );
+  });
+
+  test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
+    const seen: string[] = [];
+    const observerEnvs: NodeJS.ProcessEnv[] = [];
+    const portView = (env: NodeJS.ProcessEnv) =>
+      [
+        env.CDP_PORT,
+        env.RECIPE_CDP_PORT,
+        env.WATCHER_PORT,
+        env.SHOP_BUNDLER_PORT,
+        env.SHOP_ACTIVE,
+      ].join('/');
+    const web = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...web,
+      resolveSlotPorts() {
+        process.env.CDP_PORT = '9555';
+        process.env.RECIPE_CDP_PORT = '9555';
+      },
+      run: {
+        ...web.run,
+        runtimeCheck: () => async () => {
+          seen.push(`runtimeCheck:${portView(process.env)}`);
+          return null;
+        },
+      },
+      observation: {
+        network: {
+          // Like the Extension observer: no CDP port, no session.
+          backend: async (target, env, artifactsDir) => {
+            seen.push(`network:${portView(env)}`);
+            observerEnvs.push(env);
+            if (!env.CDP_PORT) throw new Error('network observation requires CDP_PORT');
+            return web.observation!.network!.backend(target, env, artifactsDir);
+          },
+          actions: true,
+        },
+        performance: {
+          start: async (context) => {
+            seen.push(`performance:${portView(context.env)}`);
+            observerEnvs.push(context.env);
+            return web.observation!.performance!.start(context);
+          },
+        },
+      },
+    });
+    configureHarnessAdapters(registry);
+    for (const key of ['CDP_PORT', 'RECIPE_CDP_PORT', 'WATCHER_PORT', 'SHOP_BUNDLER_PORT']) {
+      delete process.env[key];
+    }
+    const target = checkout();
+    const runArgs = (artifactsDir: string, ...flags: string[]) => [
+      recipe,
+      '--adapter',
+      'web',
+      '--target',
+      target,
+      '--heal',
+      'off',
+      '--artifacts-dir',
+      artifactsDir,
+      '--action-manifest',
+      manifestPath,
+      '--json',
+      ...flags,
+    ];
+    const artifacts = tempRoot('recipe-cli-run-slot-ports-');
+    const manifestPath = path.join(target, 'network.action-manifest.json');
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        ...CORE_ACTIONS,
+        actions: {
+          ...CORE_ACTIONS.actions,
+          'shop.ping': PING_ACTION,
+          'app.network_capture': {
+            description: 'Open or close a network capture window.',
+            execution_capabilities: ['host-read-export'],
+            examples: [
+              {
+                action: 'app.network_capture',
+                phase: 'start',
+                id: 'focus',
+                intent: 'Capture.',
+                next: 'done',
+              },
+            ],
+            schema: {
+              type: 'object',
+              properties: { phase: { type: 'string' }, id: { type: 'string' } },
+              required: ['phase', 'id'],
+              additionalProperties: false,
+            },
+          },
+        },
+      }),
+    );
+    const recipe = recipeFile(target, {
+      open: {
+        action: 'app.network_capture',
+        phase: 'start',
+        id: 'focus',
+        intent: 'Open the window.',
+        next: 'close',
+      },
+      close: {
+        action: 'app.network_capture',
+        phase: 'end',
+        id: 'focus',
+        intent: 'Close the window.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    // The slot's port, when no flag is given.
+    const slot = await capture(() => handleRun(runArgs(artifacts), runOptions));
+    assert.equal(slot.value, 0, `${slot.stdout.join('\n')}\n${slot.stderr.join('\n')}`);
+    assert.deepEqual(seen, [
+      'runtimeCheck:9555/9555///1',
+      'network:9555/9555///1',
+      'performance:9555/9555///1',
+    ]);
+    const summary = JSON.parse(
+      fs.readFileSync(path.join(artifacts, 'network/run-summary.json'), 'utf8'),
+    );
+    assert.equal(summary.status, 'complete');
+    assert.equal(summary.nodeEvents.length, 4);
+    assert.ok(fs.existsSync(path.join(artifacts, 'network/focus-summary.json')));
+    // The observers keep the environment the run started them with, though
+    // process.env has been restored since.
+    assert.equal(process.env.SHOP_ACTIVE, undefined);
+    assert.deepEqual(
+      observerEnvs.map((env) => portView(env)),
+      ['9555/9555///1', '9555/9555///1'],
+    );
+
+    // Explicit ports win over the slot's for every one of them, and the
+    // platform's dev-server port name follows --watcher-port.
+    seen.length = 0;
+    const explicit = await capture(() =>
+      handleRun(
+        runArgs(
+          tempRoot('recipe-cli-run-explicit-ports-'),
+          '--cdp-port',
+          '9444',
+          '--watcher-port',
+          '8088',
+        ),
+        runOptions,
+      ),
+    );
+    assert.equal(explicit.value, 0, explicit.stderr.join('\n'));
+    assert.deepEqual(seen, [
+      'runtimeCheck:9444/9444/8088/8088/1',
+      'network:9444/9444/8088/8088/1',
+      'performance:9444/9444/8088/8088/1',
+    ]);
+    assert.equal(process.env.WATCHER_PORT, undefined);
+    assert.equal(process.env.SHOP_ACTIVE, undefined);
+    assert.equal(process.env.CDP_PORT, '9555');
+    assert.equal(process.env.RECIPE_CDP_PORT, '9555');
+
+    // call opens the same scope.
+    seen.length = 0;
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--cdp-port',
+          '9444',
+          '--watcher-port',
+          '8088',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.deepEqual(seen, [
+      'runtimeCheck:9444/9444/8088/8088/1',
+      'network:9444/9444/8088/8088/1',
+      'performance:9444/9444/8088/8088/1',
+    ]);
+    assert.equal(process.env.WATCHER_PORT, undefined);
+    assert.equal(process.env.CDP_PORT, '9555');
+    assert.equal(process.env.RECIPE_CDP_PORT, '9555');
+  });
+
+  test('every exit of run and call restores the environment it found, but the slot ports it resolved', async () => {
+    let mode: 'pass' | 'prepare' | 'throw' = 'pass';
+    const web = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...web,
+      resolveSlotPorts() {
+        process.env.CDP_PORT = '9555';
+        process.env.RECIPE_CDP_PORT = '9555';
+      },
+      run: {
+        ...web.run,
+        runtimeCheck: () => async () => (mode === 'prepare' ? 4 : null),
+        async teardown() {
+          if (mode === 'throw') throw new Error('teardown boom');
+        },
+      },
+    });
+    configureHarnessAdapters(registry);
+    for (const key of ['CDP_PORT', 'RECIPE_CDP_PORT']) delete process.env[key];
+    process.env.WATCHER_PORT = '7000';
+    process.env.SHOP_BUNDLER_PORT = '7001';
+    process.env.SHOP_ACTIVE = 'seed';
+    const before = { ...process.env };
+    const expected = { ...before, CDP_PORT: '9555', RECIPE_CDP_PORT: '9555' };
+    const target = checkout();
+    const passing = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const failing = path.join(target, 'failing.recipe.json');
+    fs.writeFileSync(
+      failing,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Fails',
+        description: 'A node that fails as app logic.',
+        workflow: {
+          entry: 'fail',
+          nodes: {
+            fail: { action: 'command', cmd: 'exit 3', intent: 'Fail.', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    const flags = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const ports = ['--cdp-port', '9444', '--watcher-port', '8088'];
+    const commands = {
+      run: (recipe: string) => () => handleRun([recipe, ...flags, ...ports], runOptions),
+      call: (input: string) => () =>
+        handleCall([...input.split(' '), ...flags, ...ports], callOptions),
+    };
+    const exits: Array<[string, () => Promise<number>, number | 'throws']> = [
+      ['run pass', commands.run(passing), 0],
+      ['run violation', commands.run(failing), 1],
+      ['call pass', commands.call('shop.ping mode=fast'), 0],
+      ['call violation', commands.call('command cmd=false;'), 1],
+    ];
+    for (const [name, invoke, exit] of exits) {
+      const result = await capture(invoke);
+      assert.equal(result.value, exit, `${name}: ${result.stdout.join('\n')}`);
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    mode = 'prepare';
+    for (const [name, invoke] of [
+      ['run prepare', commands.run(passing)],
+      ['call prepare', commands.call('shop.ping mode=fast')],
+    ] as const) {
+      assert.equal((await capture(invoke)).value, 4, name);
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    mode = 'throw';
+    for (const [name, invoke] of [
+      ['run throw', commands.run(passing)],
+      ['call throw', commands.call('shop.ping mode=fast')],
+    ] as const) {
+      // The teardown error propagates: the command neither swallows it nor exits 0.
+      const thrown = await capture(async () => {
+        try {
+          return await invoke();
+        } catch (error) {
+          assert.match(String(error), /teardown boom/u, name);
+          return -1;
+        }
+      });
+      assert.equal(thrown.value, -1, name);
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    // Another owner holds the checkout lock.
+    mode = 'pass';
+    const holder = acquireCheckoutLock(target, 'other');
+    assert.ok(!('message' in holder));
+    delete process.env.SHOP_HARNESS_CHECKOUT_LOCK_TOKEN;
+    try {
+      for (const [name, invoke] of [
+        ['run busy', commands.run(passing)],
+        ['call busy', commands.call('shop.ping mode=fast')],
+      ] as const) {
+        const busy = await capture(invoke);
+        assert.notEqual(busy.value, 0, name);
+        assert.equal((lastJson(busy.stdout).error as { code: string }).code, 'SANDBOX_BUSY', name);
+        assert.deepEqual({ ...process.env }, expected, name);
+      }
+    } finally {
+      holder.release();
+    }
   });
 
   test('refuses before validation when the host refuses the device', async () => {
@@ -1497,8 +2191,27 @@ describe('call', () => {
     } finally {
       process.chdir(cwd);
     }
-    assert.equal(await handleCall(['--list'], callOptions), 0);
-    assert.deepEqual(listed, ['call --list']);
+    const list = await capture(() =>
+      handleCall(['--list', '--adapter', 'web', '--json'], callOptions),
+    );
+    assert.equal(list.value, 0);
+    assert.deepEqual(
+      (lastJson(list.stdout).actions as Array<{ name: string; short: string | null }>).map(
+        (entry) => [entry.name, entry.short],
+      ),
+      [
+        ['assert_output', 'assert_output'],
+        ['command', 'command'],
+        ['end', 'end'],
+        ['shop.ping', 'ping'],
+        ['switch', 'switch'],
+      ],
+    );
+    const human = await capture(() => handleCall(['--list', '--adapter', 'web'], callOptions));
+    assert.match(
+      human.stdout.join('\n'),
+      /invocable actions \(web\)[\s\S]*Use: shop-harness call <name>[\s\S]*ping \(shop\.ping\) \[shop\]/u,
+    );
   });
 
   test('--help renders the matching action above the generic help', async () => {

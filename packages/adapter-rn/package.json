@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/adapter-rn",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,6 +22,7 @@
     "./bridge-runtime/lib/match-bridge-target.cjs": "./bridge-runtime/lib/match-bridge-target.cjs",
     "./bridge-runtime/lib/target-discovery.cjs": "./bridge-runtime/lib/target-discovery.cjs",
     "./bridge-runtime/lib/ws-client.cjs": "./bridge-runtime/lib/ws-client.cjs",
+    "./bridge-runtime/bridge-core.cjs": "./bridge-runtime/bridge-core.cjs",
     "./bridge-runtime/console-forwarder.cjs": "./bridge-runtime/console-forwarder.cjs",
     "./metro/coalesce-metro-log.cjs": "./metro/coalesce-metro-log.cjs",
     "./metro/launch-metro.cjs": "./metro/launch-metro.cjs",

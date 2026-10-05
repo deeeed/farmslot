@@ -1,9 +1,9 @@
 {
-  "version": "0.20.0",
-  "date": "2026-10-02",
+  "version": "0.20.1",
+  "date": "2026-10-05",
   "items": [
-    "Recover blocked native workers through their pending decision, adopt verified external recoveries, and keep occupied workspaces across cleanup and restore",
-    "Report a failed project unlock hook, with its exit code and output tail, in slot check, replay and prepare health",
-    "New runs require absolute task paths: upgrade the CLI on every node first, then the gateway"
+    "Jira tickets keep their structure and acceptance criteria in TASK.md",
+    "Slots no longer get stuck in busy/releasing after a fleet refresh",
+    "Farm hooks run from the node's matching config bundle, so they no longer exit 127 after a config update"
   ]
 }
