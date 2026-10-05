@@ -8,8 +8,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Rename the recipe harness package pages to `@farmslot/recipe-runner` (`/docs/architecture/recipe-runner`).
 - Add the Adapter SDK reference (`@farmslot/adapter-sdk`: `PlatformAdapter`, `defineAdapter`, the adapter registry), including the lifecycle members (`launch`, `detect`, `targets`, `flags`, `failurePatterns`, `devServer.portEnv`) and the detection and failure-classification rules.
-- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `devServer.portFlags`, `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
+- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
 - Document the Adapter SDK `observation` member (`network.backend`, `network.actions`, `performance.start`) and the `RunObserver` and `NetworkCaptureBackend` types.
+- Drop `devServer.portFlags` from the Adapter SDK reference (removed from the SDK).
 - Add the `@farmslot/adapter-web` reference page.
 - Web adapter reference: add `launch-browser` and `slot-title`, the launch sequence, and the `browser-resolver.cjs` command contract.
 
