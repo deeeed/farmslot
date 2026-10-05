@@ -4,7 +4,9 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - **BREAKING:** remove `adapterPortFlags`. `run` and `call` take the dev-server port from `--watcher-port` only.
+- `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
 - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`.
 - `call` never loads the engine's trusted mutation: funded mutations run through `run`, bound to the reviewed recipe.
 

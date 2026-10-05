@@ -282,7 +282,8 @@ export interface AdapterRun<
   // Make the runtime attachable before a run.
   prepareRuntime?(projectRoot: string, options: RecipeRunOptions<TPlatform>): Promise<void>;
   // Called before the overlay install; returns the check the healthcheck phase
-  // runs (exit code to stop, null to continue), or undefined for none.
+  // runs on the run's ports (exit code to stop, null to continue), or undefined
+  // for none.
   runtimeCheck?(context: AdapterRunPrepareContext): (() => Promise<number | null>) | undefined;
   // A dependency the run cannot start without, for a recipe or one action.
   dependencyBlock?(
@@ -517,13 +518,13 @@ export interface AdapterObservation {
     // Whether recipes may call app.network_capture and app.network_assert.
     actions?: boolean;
   };
-  // The run's performance observer, started before the run executes.
+  // The run's performance observer, started before the run executes; `env`
+  // carries the run's ports.
   performance?: {
     start(context: {
       target: string;
       artifactsDir: string;
       env: NodeJS.ProcessEnv;
-      ports: { cdpPort?: string; watcherPort?: string };
     }): Promise<RunObserver>;
   };
 }
