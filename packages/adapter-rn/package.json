@@ -1,11 +1,11 @@
 {
-  "name": "@farmslot/expo-recipe",
+  "name": "@farmslot/adapter-rn",
   "version": "0.14.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "farmslot-expo-recipe": "./bin/farmslot-expo-recipe.mjs"
+    "farmslot-adapter-rn": "./bin/farmslot-adapter-rn.mjs"
   },
   "exports": {
     ".": {
@@ -17,13 +17,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "build": "yarn workspace @farmslot/protocol build && yarn workspace @farmslot/recipe-runner build && rm -rf dist && tsc --project tsconfig.build.json",
-    "test": "tsx --tsconfig tsconfig.json --test src/agent-device-ui-transport.test.ts src/expo-recipe.test.ts src/metro-recipe-bridge-transport.test.ts",
+    "test": "tsx --tsconfig tsconfig.json --test src/agent-device-ui-transport.test.ts src/adapter-rn.test.ts src/metro-recipe-bridge-transport.test.ts",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\"",
     "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
     "prepack": "yarn build",
-    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/expo-recipe"
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/adapter-rn"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
@@ -50,13 +50,13 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deeeed/farmslot.git",
-    "directory": "packages/expo-recipe"
+    "directory": "packages/adapter-rn"
   },
   "bugs": {
     "url": "https://github.com/deeeed/farmslot/issues"
   },
   "license": "MIT",
-  "homepage": "https://farmslot.io/docs/guides/expo-recipe",
+  "homepage": "https://farmslot.io/docs/guides/adapter-rn",
   "keywords": [
     "farmslot",
     "expo",

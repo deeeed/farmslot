@@ -31,7 +31,7 @@ interface RecipeBridgeProviderProps extends RecipeBridgeProviderOptions {
 }
 
 export function RecipeBridgeProvider({
-  bridgeName = '@farmslot/expo-recipe',
+  bridgeName = '@farmslot/adapter-rn',
   children,
   hud: hudOptions,
   isEnabled = isRecipeBridgeEnabled,

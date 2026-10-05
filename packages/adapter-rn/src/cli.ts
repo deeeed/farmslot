@@ -31,7 +31,7 @@ interface ParsedCliOptions extends ExpoRecipeRunOptions {
   paramAssignments?: string[];
 }
 
-export async function runExpoRecipeCli(argv: string[]): Promise<void> {
+export async function runAdapterRnCli(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   if (!command || command === '--help' || command === '-h') {
     printUsage();
@@ -81,7 +81,7 @@ export async function runExpoRecipeCli(argv: string[]): Promise<void> {
     return;
   }
 
-  throw new Error(`Unknown farmslot-expo-recipe command: ${command}`);
+  throw new Error(`Unknown farmslot-adapter-rn command: ${command}`);
 }
 
 function parseRecipeCommand(args: string[]): { recipePath: string; options: ParsedCliOptions } {
@@ -191,6 +191,6 @@ function printRunResult(result: Awaited<ReturnType<typeof runExpoRecipeDocument>
 
 function printUsage(): void {
   console.log(
-    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-expo-recipe init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-expo-recipe manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-expo-recipe doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
+    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-adapter-rn init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-adapter-rn manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-adapter-rn doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
   );
 }

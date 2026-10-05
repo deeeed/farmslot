@@ -108,7 +108,7 @@ Reference implementations:
 
 | Project farm                  | Recipe surface                                                                                         |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `farmslot-farm` (first-party) | `projects/farmslot-farm/setup/validate-recipe.sh` routes CLI/web to Command Center `@farmslot/recipe-runner` and iOS/Android to Companion `@farmslot/expo-recipe`; both receive the same `{{artifacts_dir}}` v1 package root |
+| `farmslot-farm` (first-party) | `projects/farmslot-farm/setup/validate-recipe.sh` routes CLI/web to Command Center `@farmslot/recipe-runner` and iOS/Android to Companion `@farmslot/adapter-rn`; both receive the same `{{artifacts_dir}}` v1 package root |
 | Browser app farm              | CDP or Playwright runner with a `validate-recipe` wrapper                                              |
 | Native app farm               | Maestro/XCTest/Detox runner with mobile action docs                                                    |
 | Backend/service farm          | Shell, pytest, or API-test runner with JSON artifact output                                            |

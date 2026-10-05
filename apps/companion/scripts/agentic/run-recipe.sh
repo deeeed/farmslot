@@ -20,5 +20,5 @@ case "${PLATFORM:-}" in
 esac
 export FARMSLOT_RECIPE_APP_ID="${FARMSLOT_RECIPE_APP_ID:-${BUNDLE_ID}}"
 
-RECIPE_BIN="${COMPANION_EXPO_RECIPE_BIN:-farmslot-expo-recipe}"
+RECIPE_BIN="${COMPANION_ADAPTER_RN_BIN:-farmslot-adapter-rn}"
 exec "${RECIPE_BIN}" "$@"

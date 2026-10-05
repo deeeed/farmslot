@@ -224,7 +224,7 @@ Farmslot separates product surfaces, runtime services, and reusable toolkit pack
 | `packages/cli`           | The `farmslot` command-line surface and operator workflows over Gateway APIs.                | Long-running orchestration or machine-local execution.                                     |
 | `packages/handoff`       | Portable handoff/report helpers for run context and evidence packaging.                      | App UI rendering or Gateway run-state mutation.                                            |
 | `packages/run-bundle`    | Durable run bundle contracts and scrub/export helpers for moving run evidence.               | Live run orchestration, task execution, or UI presentation.                                |
-| `packages/expo-recipe`   | Expo/React Native recipe adapter helpers.                                                    | App/domain semantics; those belong in project packs and project runners.                   |
+| `packages/adapter-rn`    | Expo/React Native recipe adapter helpers.                                                    | App/domain semantics; those belong in project packs and project runners.                   |
 | `packages/theme`         | Shared visual tokens/components for Farmslot-owned surfaces.                                 | Product state, protocol contracts, or runtime behavior.                                    |
 | Other `packages/*`       | Narrow reusable libraries with an explicit owner and public surface.                         | One-off app/service code that is not reusable outside its owner.                           |
 

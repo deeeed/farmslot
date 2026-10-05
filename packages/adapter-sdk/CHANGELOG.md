@@ -4,12 +4,16 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Add the optional `PlatformAdapter` member `observation` (`AdapterObservation`), moved from the metamask-harness surface: `network.backend(target, env, artifactsDir)` returns the platform's `NetworkCaptureBackend` and `network.actions` lets recipes call `app.network_capture`/`app.network_assert`; `performance.start(context)` returns a `RunObserver` (`onActionEvent`, `finalize`) for the run.
+
+## 0.3.0 - 2026-10-05
+
 - **BREAKING:** `AdapterRecording.framed` requires `activePidEnv`, the environment variable that names the recorded browser pid to actions while the recording runs.
 - **BREAKING:** `AdapterDiagnostics.walletLog` is replaced by `requestLog: { path(projectRoot), findings(lines) }`; the platform turns its log lines into findings.
 - Add the optional `PlatformAdapter` member `run` (`AdapterRun`), moved from the metamask-harness surface: what `run` and `call` need from a platform (`platformOptions`, `pinnedEnv`, `activateEnv`, `envKeys`, `childEnv`, `autoHud`, `teardown`, `prepareRuntime`, `runtimeCheck`, `dependencyBlock`, `violationUserAction`, `launchedBrowser`, `browserProvenance`). `PlatformAdapter<TPlatform, TBrowser>` and `AdapterRun<TPlatform, TBrowser>` take the platform's own run options and browser record as type parameters; `run` members are methods, so such an adapter still fits a registry of `PlatformAdapter`.
 - Add the run types `CommandOptions`, `RecipeNodeEvent`, `RecipeRunOptions<TPlatform>`, `AdapterBrowser`, `AdapterRunPrepareContext`, `AdapterDependencyBlock` and `AdapterLogFinding`.
 - Add optional `devServer.portFlags`: option names that give the dev-server port to `run` and `call` after `--watcher-port`.
-- Add the optional `PlatformAdapter` member `observation` (`AdapterObservation`), moved from the metamask-harness surface: `network.backend(target, env, artifactsDir)` returns the platform's `NetworkCaptureBackend` and `network.actions` lets recipes call `app.network_capture`/`app.network_assert`; `performance.start(context)` returns a `RunObserver` (`onActionEvent`, `finalize`) for the run.
+- Publish with protocol 0.34.0 and recipe-runner 0.23.0.
 
 ## 0.2.0 - 2026-10-04
 

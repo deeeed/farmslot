@@ -9,7 +9,7 @@
 | `recipe-cli/`    | The `farmslot-recipe` command: run, validate, and library-wide recipe/action discovery.    |
 | `adapter-sdk/`   | The platform adapter contract: `PlatformAdapter`, `defineAdapter`, the adapter registry.   |
 | `adapter-web/`   | Web platform pieces: browser resolve/launch, CDP-port ownership, extension loading, focus. |
-| `expo-recipe/`   | Expo/React Native scaffold that wires projects into the generic recipe harness.            |
+| `adapter-rn/`    | React Native (Expo) adapter: scaffold, doctor, Metro bridge and native UI transports.      |
 | `cli/`           | Human/operator CLI for talking to a running Gateway and validating recipe artifacts.       |
 | `theme/`         | Shared color, label, lifecycle, flow, and runner presentation tokens for Farmslot clients. |
 
@@ -29,7 +29,7 @@ yarn workspace @farmslot/recipe-runner quality
 yarn workspace @farmslot/recipe-cli quality
 yarn workspace @farmslot/adapter-sdk quality
 yarn workspace @farmslot/adapter-web quality
-yarn workspace @farmslot/expo-recipe quality
+yarn workspace @farmslot/adapter-rn quality
 yarn workspace @farmslot/cli quality
 yarn workspace @farmslot/theme quality
 ```
@@ -41,7 +41,7 @@ yarn workspace @farmslot/theme quality
 - Put the `farmslot-recipe` command and recipe/action discovery in `recipe-cli/`.
 - Put the platform adapter contract in `adapter-sdk/`.
 - Put browser process and CDP mechanics for web platforms in `adapter-web/`.
-- Put Expo project scaffolding and checks in `expo-recipe/`.
+- Put Expo/React Native scaffolding, checks and transports in `adapter-rn/`.
 - Put Gateway operator commands in `cli/`.
 - Put UI-neutral visual tokens in `theme/`.
 - Put daemon/service behavior in `services/*`, not here.

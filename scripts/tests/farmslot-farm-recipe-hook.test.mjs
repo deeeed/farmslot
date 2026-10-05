@@ -199,13 +199,13 @@ test('first-party farmslot-farm routes resolve to harness-backed Recipe v1 produ
     'utf-8',
   );
   const expoRunner = await readFile(
-    path.join(repoRoot, 'packages/expo-recipe/src/runner.ts'),
+    path.join(repoRoot, 'packages/adapter-rn/src/runner.ts'),
     'utf-8',
   );
 
   assert.match(commandCenterRunner, /createRecipeRunner/);
   assert.match(commandCenterRunner, /@farmslot\/recipe-runner/);
-  assert.match(companionWrapper, /farmslot-expo-recipe run/);
+  assert.match(companionWrapper, /farmslot-adapter-rn run/);
   assert.match(companionWrapper, /--artifacts-dir/);
   assert.match(expoRunner, /createRecipeRunner/);
   assert.match(expoRunner, /@farmslot\/recipe-runner/);

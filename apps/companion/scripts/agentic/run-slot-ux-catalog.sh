@@ -36,7 +36,7 @@ esac
 
 artifacts_dir=".agent/ux-ready-gate-${FARMSLOT_SLOT_ID}-${PLATFORM_VALUE}"
 cd "${APP_DIR}"
-exec yarn farmslot-expo-recipe run \
+exec yarn farmslot-adapter-rn run \
   scripts/agentic/recipe/recipes/ux-ready-gate-catalog.recipe.json \
   --param "platform=${PLATFORM_VALUE}" \
   --param "run_id=${RUN_ID}" \

@@ -33,7 +33,7 @@ jobs:
       companion: ${{ steps.filter.outputs.companion }}
       docs: ${{ steps.filter.outputs.docs }}
       cli: ${{ steps.filter.outputs.cli }}
-      expo_recipe: ${{ steps.filter.outputs.expo_recipe }}
+      adapter_rn: ${{ steps.filter.outputs.adapter_rn }}
       agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
       capabilities: ${{ steps.filter.outputs.capabilities }}
       protocol: ${{ steps.filter.outputs.protocol }}
@@ -61,6 +61,7 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/**'
               - 'scripts/quality/check-farmslot-package-readiness.mjs'
             command_center:
@@ -69,6 +70,7 @@ jobs:
               - 'eslint.config.mjs'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'apps/command-center/**'
               - 'packages/cli/**'
               - 'packages/protocol/**'
@@ -80,6 +82,7 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'apps/command-center-desktop/**'
               - 'apps/command-center/ui/**'
               - 'packages/protocol/**'
@@ -88,9 +91,10 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'scripts/quality/check-companion-structure.mjs'
               - 'apps/companion/**'
-              - 'packages/expo-recipe/**'
+              - 'packages/adapter-rn/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
               - 'packages/theme/**'
@@ -100,6 +104,7 @@ jobs:
               - '.github/workflows/docs-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'apps/command-center/**'
               - 'apps/docs/**'
               - 'packages/cli/**'
@@ -111,43 +116,50 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/cli/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
-            expo_recipe:
+            adapter_rn:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
-              - 'packages/expo-recipe/**'
+              - '.yarnrc.yml'
+              - 'packages/adapter-rn/**'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
             agent_runtime:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/agent-runtime/**'
               - 'packages/protocol/**'
             capabilities:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/capabilities/**'
               - 'packages/protocol/**'
             protocol:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/protocol/**'
             recipe_runner:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'packages/recipe-runner/**'
             recipe_cli:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'examples/recipe-library-hello/**'
               - 'packages/protocol/**'
               - 'packages/recipe-cli/**'
@@ -156,6 +168,7 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'packages/adapter-sdk/**'
               - 'packages/recipe-runner/**'
@@ -163,23 +176,27 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/agent-runtime/**'
               - 'packages/skills/**'
             theme:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/theme/**'
             gateway:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'services/gateway/**'
             node:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - '.yarnrc.yml'
               - 'packages/protocol/**'
               - 'services/node/**'
 
@@ -230,6 +247,11 @@ jobs:
 
       - name: Import boundary guard
         run: yarn quality:imports
+
+      - name: CommonJS/ESM export parity
+        run: |
+          node --test scripts/quality/check-cjs-esm-exports.test.mjs
+          node scripts/quality/check-cjs-esm-exports.mjs
 
       - name: Large-file warning
         run: yarn quality:large-files
@@ -461,10 +483,10 @@ jobs:
       - name: CLI quality
         run: yarn workspace @farmslot/cli quality
 
-  expo-recipe:
-    name: Expo recipe package quality
+  adapter-rn:
+    name: React Native adapter package quality
     needs: changes
-    if: needs.changes.outputs.expo_recipe == 'true'
+    if: needs.changes.outputs.adapter_rn == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -481,8 +503,8 @@ jobs:
         run: corepack enable
       - name: Install workspace dependencies
         run: yarn install --immutable
-      - name: Expo recipe quality
-        run: yarn workspace @farmslot/expo-recipe quality
+      - name: React Native adapter quality
+        run: yarn workspace @farmslot/adapter-rn quality
 
   protocol:
     name: Protocol package quality
