@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- The library digest (`digestRecipeLibrary`) covers every file under each declared adapter module's directory, not only the module file, so a plugin's helper files move it. A module at the library root covers itself only. Add `libraryAdapterFiles(root, declaration)` and `digestLibraryAdapter(root, declaration)` for one plugin; a plugin directory of more than `MAX_LIBRARY_ADAPTER_FILES` (1,000) files fails with `RECIPE_SOURCE_INVALID`.
+- The library digest (`digestRecipeLibrary`) covers every file under each declared adapter module's directory, not only the module file, so a plugin's helper files move it. A module at the library root covers itself only. Add `libraryAdapterFiles(root, declaration)` (the module's directory plus the library's `actions/`, the files a host lets the plugin import) and `digestLibraryAdapter(root, declaration)` for one plugin. The module's directory is listed strictly (`listLibraryFiles(root, directory, { strict: true })`): dot-files are digested, and a `node_modules`, a symlinked directory, or more than `MAX_LIBRARY_ADAPTER_FILES` (1,000) files fails with `RECIPE_SOURCE_INVALID`.
 
 ## 0.24.0 - 2026-10-05
 

@@ -133,7 +133,21 @@ Declared paths must be regular files inside the library root. Invalid content fa
 
 ### Adapter plugins and trust
 
-A host built on `@farmslot/recipe-cli/harness` loads a declared adapter only when a command selects it with `--adapter` (or `--platform`), and only from the operator's libraries: `--library`, `RECIPE_LIBRARY_PATH` (or the personal library) and the libraries the host configures. A task-local `recipe-library/` beside a recipe never declares adapters. Loading a plugin is therefore trusted like installing it: its module top level and its lifecycle members (`launch`, `doctor`, `runtimeStatus`, …) run without a recipe approval, as a built-in adapter's do. What a recipe approves still binds the plugin's code: the actions it ships in code carry the plugin digest (its library, the files under its module's directory, and its parent plugin's), so editing the module or a helper beside it makes an approved plan fail with `RECIPE_APPROVAL_MISMATCH`. `doctor --json` names every loaded plugin with its library and digest. This is the plugin trust boundary of the platform layering ADR (risk 5). The library digest itself covers each plugin's directory, at most 1,000 files (`RECIPE_SOURCE_INVALID` past that: give the plugin its own directory or bundle it).
+A host built on `@farmslot/recipe-cli/harness` loads a declared adapter only when a command selects it (the last `--adapter`, else the last `--platform`), and only from the operator's libraries, in this order:
+
+1. the command's `--library` entries;
+2. the `RECIPE_LIBRARY_PATH` the operator started the command with (entries a `--library` entry of the same name doesn't replace), or the personal library when it is unset;
+3. the libraries the host's configuration names (mm-harness: `config set libraries.<name>`).
+
+Nothing else declares plugins: not a task-local `recipe-library/` beside a recipe, and not a library the host discovers on its own (mm-harness adds sibling checkouts and `<target>/.skills-cache/*` to `RECIPE_LIBRARY_PATH` for recipe discovery; the `--adapter` grammar and the loader both use the list above, captured before that). A task can't add an operator library, so loading a plugin is trusted like installing it: its module top level and lifecycle members (`launch`, `doctor`, `runtimeStatus`, …) run without a recipe approval, as a built-in adapter's do. `doctor --json` names every loaded plugin with its library and digest.
+
+What a recipe approves still binds the plugin's code. The actions it ships in code carry the plugin digest: its library, every file under its module's directory, the library's `actions/`, and its parent plugin's digest. Editing any of those files after approval fails the plan with `RECIPE_APPROVAL_MISMATCH`. The plugin may import from disk only those files:
+
+- an import from plugin code that resolves (after symlinks) to any other file fails with `RECIPE_SOURCE_INVALID`, while it loads and while it runs. `node:` builtins and bare package specifiers that resolve outside the library (the host's install, e.g. `@farmslot/adapter-sdk`) are allowed. The fence uses `module.registerHooks`, so plugins need Node.js 22.15 or later (`ADAPTER_PLUGIN_LOAD_FAILED` otherwise);
+- the module's directory may not hold a `node_modules` or a symlinked directory (`RECIPE_SOURCE_INVALID`); dot-files in it are digested like any other file;
+- a module at the library root covers itself only, so keep a multi-file plugin in its own directory. The directory holds at most 1,000 files; past that the library's digest, and so its discovery, fails with `RECIPE_SOURCE_INVALID`.
+
+This is the plugin trust boundary of the platform layering ADR (risk 5).
 
 ## Commands
 

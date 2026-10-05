@@ -67,6 +67,32 @@ export const adapter = {
 `;
 }
 
+// A library whose plugins each live in their own directory, plugins/<id>/index.mjs,
+// with extra files written relative to the library root.
+function dirLibrary(
+  name: string,
+  adapters: Record<string, { source: string; extends?: string }>,
+  files: Record<string, string> = {},
+): string {
+  const root = tempRoot(`recipe-cli-plugins-${name}-`);
+  const declared: Record<string, Record<string, string>> = {};
+  for (const [id, entry] of Object.entries(adapters)) {
+    fs.mkdirSync(path.join(root, 'plugins', id), { recursive: true });
+    fs.writeFileSync(path.join(root, 'plugins', id, 'index.mjs'), entry.source);
+    declared[id] = {
+      module: `./plugins/${id}/index.mjs`,
+      export: 'adapter',
+      ...(entry.extends ? { extends: entry.extends } : {}),
+    };
+  }
+  for (const [file, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), content);
+  }
+  fs.writeFileSync(path.join(root, 'recipe-library.json'), JSON.stringify({ adapters: declared }));
+  return root;
+}
+
 // A library declaring `adapters`, with one module file per entry.
 function library(
   name: string,
@@ -367,6 +393,107 @@ describe('adapter plugins', () => {
     await ensureAdapterLoaded('echo-child');
     assert.notEqual(adapterPlugin('echo')?.digest, parent?.digest);
     assert.notEqual(adapterPlugin('echo-child')?.digest, child?.digest);
+  });
+
+  test("a child's digest folds in its parent's, even in separate directories", async () => {
+    const root = dirLibrary('split', {
+      echo: { source: pluginSource('echo') },
+      'echo-child': { source: pluginSource('echo-child'), extends: 'echo' },
+    });
+    process.env.RECIPE_LIBRARY_PATH = `split=${root}`;
+    await ensureAdapterLoaded('echo-child');
+    const child = adapterPlugin('echo-child')?.digest;
+    // Only the parent's directory changes; the child's files don't.
+    fs.writeFileSync(path.join(root, 'plugins', 'echo', 'helper.mjs'), 'export const h = 1;\n');
+    configureHarnessAdapters(createAdapterRegistry());
+    harnessAdapters().register(builtin('core'));
+    await ensureAdapterLoaded('echo-child');
+    assert.notEqual(adapterPlugin('echo-child')?.digest, child);
+  });
+
+  test('a plugin imports from disk only the files its digest covers', async () => {
+    const importing = (specifier: string) =>
+      pluginSource('echo').replace(
+        'export const adapter = {',
+        `import ${JSON.stringify(specifier)};\nexport const adapter = {`,
+      );
+    const cases: Array<[string, Record<string, string>]> = [
+      ['../../lib/helper.mjs', { 'lib/helper.mjs': 'export const h = 1;\n' }],
+      ['../../node_modules/dep/index.mjs', { 'node_modules/dep/index.mjs': 'export {};\n' }],
+    ];
+    for (const [specifier, files] of cases) {
+      process.env.RECIPE_LIBRARY_PATH = `fence=${dirLibrary('fence', { echo: { source: importing(specifier) } }, files)}`;
+      configureHarnessAdapters(createAdapterRegistry());
+      const error = await refusal('echo');
+      assert.equal(error.code, 'RECIPE_SOURCE_INVALID', `${specifier}: ${error.message}`);
+      assert.match(error.message, /outside the files its digest covers/u);
+    }
+    // Its own directory, actions/ and builtins are fine.
+    process.env.RECIPE_LIBRARY_PATH = `fence=${dirLibrary(
+      'fence',
+      {
+        echo: {
+          source: importing('./helper.mjs').replace(
+            'import "./helper.mjs";',
+            'import "./helper.mjs"; import "../../actions/shared.mjs"; import "node:fs";',
+          ),
+        },
+      },
+      { 'plugins/echo/helper.mjs': 'export {};\n', 'actions/shared.mjs': 'export {};\n' },
+    )}`;
+    configureHarnessAdapters(createAdapterRegistry());
+    await ensureAdapterLoaded('echo');
+    assert.ok(harnessAdapters().has('echo'));
+    // A symlinked directory in the plugin's directory is refused before any import.
+    const linked = dirLibrary(
+      'linked',
+      { echo: { source: pluginSource('echo') } },
+      {
+        'lib/helper.mjs': 'export {};\n',
+      },
+    );
+    fs.symlinkSync('../../lib', path.join(linked, 'plugins', 'echo', 'shared'));
+    process.env.RECIPE_LIBRARY_PATH = `linked=${linked}`;
+    configureHarnessAdapters(createAdapterRegistry());
+    (globalThis as Record<string, unknown>).__pluginImports = [];
+    assert.equal((await refusal('echo')).code, 'RECIPE_SOURCE_INVALID');
+    assert.deepEqual(imports(), []);
+  });
+
+  test('plugin code that imports later, while it runs, is fenced too', async () => {
+    const root = dirLibrary(
+      'late',
+      {
+        echo: {
+          source: pluginSource('echo').replace(
+            'async execute() { return { output: {} }; }',
+            "async execute() { return { output: await import('../../lib/late.mjs') }; }",
+          ),
+        },
+      },
+      { 'lib/late.mjs': 'export const late = 1;\n' },
+    );
+    process.env.RECIPE_LIBRARY_PATH = `late=${root}`;
+    await ensureAdapterLoaded('echo');
+    const [ping] = (await harnessAdapter('echo').actions.adapters?.()) ?? [];
+    await assert.rejects(
+      ping!.execute({}, {} as Parameters<typeof ping.execute>[1]),
+      /outside the files its digest covers/u,
+    );
+  });
+
+  test("only the operator's environment declares plugins, for choices and loading", async () => {
+    const root = library('hydrated', { echo: { source: pluginSource('echo') } });
+    // The host's discovery extended process.env; the operator started with none.
+    process.env.RECIPE_LIBRARY_PATH = `hydrated=${root}`;
+    const operator = { ...process.env, RECIPE_LIBRARY_PATH: '' };
+    assert.deepEqual(adapterChoices([], { env: operator }).includes('echo'), false);
+    await ensureAdapterLoaded('echo', { env: operator });
+    assert.equal(harnessAdapters().has('echo'), false);
+    assert.deepEqual(imports(), []);
+    // A library the hydrated env adds may not claim a built-in either way.
+    process.env.RECIPE_LIBRARY_PATH = `hydrated=${library('claim', { core: { source: pluginSource('core') } })}`;
+    await ensureAdapterLoaded('core', { env: operator });
   });
 
   test('prints a refusal as the --json envelope or the human line', () => {

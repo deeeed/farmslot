@@ -4,11 +4,13 @@
 // composed on the adapter it `extends`, then registered with the host's
 // built-ins. The library digest the run records covers the module.
 //
-// Trust: plugins load only from the operator's libraries (--library,
-// RECIPE_LIBRARY_PATH, the personal library and what the host configures),
-// never from a task-local library beside a recipe, so loading one is trusted
-// like installing it. Each plugin's digest binds what the run approves (see
-// `adapterPlugin`), and `adapterPluginChecks` names it in the doctor report.
+// Trust: plugins load only from the operator's libraries (--library, the
+// operator's RECIPE_LIBRARY_PATH or else the personal library, and what the host
+// configures), never from a task-local library beside a recipe or a library the
+// host discovered on its own, so loading one is trusted like installing it. Each
+// plugin's digest binds what the run approves (see `adapterPlugin`), the plugin
+// may import from disk only the files that digest covers (plugin-imports.ts),
+// and `adapterPluginChecks` names it in the doctor report.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,18 +23,21 @@ import {
 } from '@farmslot/adapter-sdk';
 import {
   digestLibraryAdapter,
+  libraryAdapterFiles,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   readRecipeLibraryManifest,
   RECIPE_LIBRARY_MANIFEST_FILE,
   type RecipeLibraryAdapterDeclaration,
   type RecipeLibrarySource,
+  RecipeTrustError,
   resolveRecipeLibrarySources,
 } from '@farmslot/recipe-runner';
 
 import { adapterForPlatform, harnessAdapters } from './adapters.js';
 import { harnessHost } from './host.js';
 import { CliError, isRecord } from './parse-args.js';
+import { canFencePluginImports, fencePluginImports } from './plugin-imports.js';
 import { EXIT } from './shared.js';
 
 export type AdapterPluginErrorCode =
@@ -84,6 +89,13 @@ export interface AdapterLibraryOptions {
    * whose name or root is already present is skipped, so an earlier one wins.
    */
   configured?: readonly RecipeLibrarySource[];
+  /**
+   * The environment the operator started the command with (RECIPE_LIBRARY_PATH,
+   * the personal library's home), before the host's own library discovery
+   * extended it: plugins load only from the operator's libraries. Defaults to
+   * process.env; pass the same value to `adapterChoices` and `ensureAdapterLoaded`.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface AdapterLoadOptions extends AdapterLibraryOptions {
@@ -103,9 +115,9 @@ export interface AdapterLoadOptions extends AdapterLibraryOptions {
  */
 export function adapterChoices(
   libraries: readonly string[] = [],
-  options: Pick<AdapterLibraryOptions, 'configured'> = {},
+  options: Pick<AdapterLibraryOptions, 'configured' | 'env'> = {},
 ): string[] {
-  const sources = withConfigured(librarySourcesSync(libraries), options.configured);
+  const sources = withConfigured(librarySourcesSync(libraries, options.env), options.configured);
   return [...new Set([...harnessAdapters().list(), ...declaredAdapterIds(sources)])];
 }
 
@@ -263,10 +275,28 @@ async function pluginDigest(
 async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAdapter> {
   // recipe-library.json validation already proved the module resolves inside the root.
   const file = fs.realpathSync(path.resolve(declaration.root, declaration.module));
+  if (!canFencePluginImports())
+    throw new AdapterPluginError(
+      'ADAPTER_PLUGIN_LOAD_FAILED',
+      `adapter '${declaration.id}' from library ${declaration.library} needs Node.js 22.15 or later (module.registerHooks fences a plugin's imports); this is ${process.version}.`,
+      'upgrade Node.js to 22.15 or later',
+    );
+  // The plugin may import from disk only the files its digest covers.
+  const covered = await libraryAdapterFiles(declaration.root, declaration);
+  fencePluginImports({
+    id: declaration.id,
+    library: declaration.library,
+    root: fs.realpathSync(declaration.root),
+    files: new Set(
+      covered.map((relative) => fs.realpathSync(path.join(declaration.root, relative))),
+    ),
+  });
   let module: Record<string, unknown>;
   try {
     module = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
   } catch (error) {
+    // The fence's refusal keeps its code: the plugin imports code its digest misses.
+    if (error instanceof RecipeTrustError) throw error;
     throw new AdapterPluginError(
       'ADAPTER_PLUGIN_LOAD_FAILED',
       `adapter '${declaration.id}' from library ${declaration.library} failed to load: ${error instanceof Error ? error.message : String(error)}`,
@@ -384,7 +414,10 @@ async function declarations(
 ): Promise<DeclaredAdapter[]> {
   // No recipePath: a task-local library beside a recipe never declares adapters.
   const sources = withConfigured(
-    await resolveRecipeLibrarySources({ cliEntries: [...(options.libraries ?? [])] }),
+    await resolveRecipeLibrarySources({
+      cliEntries: [...(options.libraries ?? [])],
+      ...(options.env ? { env: options.env } : {}),
+    }),
     options.configured,
   );
   const declared: DeclaredAdapter[] = [];
@@ -414,15 +447,18 @@ function libraryName(source: RecipeLibrarySource): string {
  * `--library` entries, then the RECIPE_LIBRARY_PATH entries they don't rename,
  * else the personal library.
  */
-function librarySourcesSync(libraries: readonly string[]): RecipeLibrarySource[] {
+function librarySourcesSync(
+  libraries: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): RecipeLibrarySource[] {
   const flagged = libraries.flatMap((entry) => safeParse(entry));
   const renamed = new Set(flagged.map(libraryName));
-  const environment = safeParse(process.env.RECIPE_LIBRARY_PATH ?? '').filter(
+  const environment = safeParse(env.RECIPE_LIBRARY_PATH ?? '').filter(
     (source) => !renamed.has(libraryName(source)),
   );
   const explicit = [...flagged, ...environment];
   if (explicit.length > 0) return explicit;
-  const personal = personalRecipeLibraryRoot(process.env);
+  const personal = personalRecipeLibraryRoot(env);
   return fs.existsSync(personal) ? [{ name: 'personal', root: personal }] : [];
 }
 
