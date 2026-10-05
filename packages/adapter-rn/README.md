@@ -51,14 +51,16 @@ runBridgeCli({
     },
   },
   commandDocs: { status: { help: '  status                       App status' } },
-  // measure-scroll-transition: console lines starting with a prefix carry a JSON event,
-  // and readyExpression must evaluate truthy before it measures.
+  // measure-scroll-transition: console lines starting with a prefix carry a JSON event.
   perfMarkerPrefixes: ['[MyAppPerf] '],
-  readyExpression: 'Boolean(globalThis.__AGENTIC__?.getRoute?.())',
+  // Evaluated only when a measure-scroll-transition request sets requireWalletReady: true;
+  // it must return { ready, observedAtMs }, and the measurement refuses unless ready is true.
+  readyExpression:
+    '({ ready: Boolean(globalThis.__AGENTIC__?.getRoute?.()), observedAtMs: performance.now() })',
 });
 ```
 
-The built-in commands use the app's dev-only `globalThis.__AGENTIC__` bridge where present (`platform`, `getRoute`, `getState`, `navigate`, `canGoBack`, `goBack`, `pressTestId`, `pressText`, `queryUiTarget`, `setInput`, `scrollView`, `scrollIntoView`). A host command that reuses a built-in name, or `status-selected`, throws at startup.
+The built-in commands use the app's dev-only `globalThis.__AGENTIC__` bridge where present (`platform`, `getRoute`, `getState`, `navigate`, `canGoBack`, `goBack`, `pressTestId`, `pressText`, `queryUiTarget`, `setInput`, `scrollView`, `scrollIntoView`, and `showStep`/`hideStep` for the HUD). A host command that reuses a built-in name, or `status-selected`, throws at startup.
 
 Do not add project-specific actions such as wallet, perps, or meetings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions. Generic whole-run video proof stays in the shared harness capability surface.
 
