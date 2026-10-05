@@ -4,7 +4,12 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.0 - 2026-10-05
+
 - **Breaking:** renamed from `@farmslot/expo-recipe`, with no alias package. The bin is now `farmslot-adapter-rn` (was `farmslot-expo-recipe`), and `init` writes `recipe:*` scripts that call it. Run provenance and the bundled recipe source report `@farmslot/adapter-rn`. `runExpoRecipeCli` and `EXPO_RECIPE_PACKAGE_VERSIONS` are now `runAdapterRnCli` and `ADAPTER_RN_PACKAGE_VERSIONS`. Expo-specific APIs (`installExpoRecipeScaffold`, `runExpoRecipeDoctor`, `runExpoRecipeDocument`, …) keep their names.
+- Publish with protocol 0.34.0 and recipe-runner 0.23.0.
 
 ## 0.14.0 - 2026-10-04
 
