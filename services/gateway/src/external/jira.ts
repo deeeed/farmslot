@@ -5,6 +5,13 @@
 
 import type { RunTicketData } from '@farmslot/protocol';
 
+import {
+  adfToInlineText,
+  extractSection,
+  sectionItems,
+  ticketBodyToMarkdown,
+} from './ticket-markdown.js';
+
 export interface JiraConfig {
   baseUrl: string;
   emailEnv?: string; // env var name for email (default: JIRA_EMAIL)
@@ -50,7 +57,7 @@ export async function fetchJiraComments(issueKey: string, config: JiraConfig): P
 
   const formatted = data.comments.map((c) => {
     const date = c.created.slice(0, 10); // YYYY-MM-DD
-    const text = extractAdfText(c.body);
+    const text = adfToInlineText(c.body);
     return `${c.author.displayName} (${date}): ${text}`;
   });
 
@@ -84,8 +91,9 @@ export async function fetchJiraIssue(
 
   const issue = (await res.json()) as JiraIssue;
 
-  // Extract text from ADF description
-  const description = extractAdfText(issue.fields.description);
+  // ADF (or wiki) description as Markdown. Ticket headings sit two levels down so
+  // they nest under TASK.md's own `## Description` instead of reading as its sections.
+  const description = ticketBodyToMarkdown(issue.fields.description, { headingOffset: 2 });
   const ac = extractSection(description, [
     'acceptance criteria',
     'expected behavior',
@@ -107,9 +115,9 @@ export async function fetchJiraIssue(
     issueType: issue.fields.issuetype?.name,
     title: issue.fields.summary,
     description,
-    acceptanceCriteria: ac ? ac.split('\n').filter(Boolean) : [],
+    acceptanceCriteria: sectionItems(ac),
     affectedArea: area || issue.fields.components.map((c) => c.name).join(', '),
-    stepsToReproduce: steps ? steps.split('\n').filter(Boolean) : [],
+    stepsToReproduce: sectionItems(steps),
     screenshots,
     labels: issue.fields.labels,
     jiraKey: issueKey,
@@ -179,44 +187,4 @@ function resolveJiraAuth(config: JiraConfig): {
     email: process.env[emailVar],
     token: process.env[tokenVar],
   };
-}
-
-function extractAdfText(node: any): string {
-  if (!node) return '';
-  if (typeof node === 'string') return node;
-  if (node.type === 'text') return node.text || '';
-  if (node.type === 'hardBreak') return '\n';
-  // Leaf nodes that carry URLs/labels — must be rendered, not dropped.
-  // Without these, Jira descriptions that embed GitHub/Figma/PR previews lose
-  // all actionable context when serialized to plain text for TASK.md.
-  if (node.type === 'inlineCard' || node.type === 'blockCard') {
-    return node.attrs?.url || '';
-  }
-  if (node.type === 'mention') {
-    const text = node.attrs?.text || node.attrs?.displayName || node.attrs?.id;
-    return text ? `@${String(text).replace(/^@/, '')}` : '';
-  }
-  if (node.type === 'emoji') {
-    return node.attrs?.shortName || node.attrs?.text || '';
-  }
-  if (node.type === 'status') {
-    return node.attrs?.text ? `[${node.attrs.text}]` : '';
-  }
-  if (node.type === 'date') {
-    const ts = Number(node.attrs?.timestamp);
-    return Number.isFinite(ts) ? new Date(ts).toISOString().slice(0, 10) : '';
-  }
-  if (Array.isArray(node.content)) {
-    return node.content.map(extractAdfText).join('');
-  }
-  return '';
-}
-
-function extractSection(text: string, headings: string[]): string {
-  for (const h of headings) {
-    const pattern = new RegExp(`(?:^|\\n)#+\\s*${h}[:\\s]*\\n([\\s\\S]*?)(?=\\n#|$)`, 'i');
-    const match = text.match(pattern);
-    if (match) return match[1].trim();
-  }
-  return '';
 }
