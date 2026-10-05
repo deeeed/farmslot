@@ -1,6 +1,6 @@
 // The observers around one run or call: the run's network session, then the
 // platform's performance observer, fed the same node events and closed in
-// that order.
+// that order. They start inside the run's environment scope, on its ports.
 import type { RecipeNodeEvent, RunObserver } from '@farmslot/adapter-sdk';
 
 import { harnessAdapter } from './adapters.js';
@@ -18,18 +18,14 @@ export async function startRunObservers(
   adapter: string,
   target: string,
   artifactsDir: string,
-  ports: { cdpPort?: string; watcherPort?: string },
 ): Promise<RunObservers> {
-  const network = await startRunNetworkObservation(
-    adapter,
-    target,
-    artifactsDir,
-    process.env,
-    ports,
-  );
+  // The run's environment as the observers start: they keep it, whatever the
+  // run's actions change later.
+  const env = { ...process.env };
+  const network = await startRunNetworkObservation(adapter, target, artifactsDir, env);
   const performance: RunObserver | undefined = await harnessAdapter(
     adapter,
-  ).observation?.performance?.start({ target, artifactsDir, env: process.env, ports });
+  ).observation?.performance?.start({ target, artifactsDir, env });
   return {
     onActionEvent(event) {
       network?.onActionEvent(event);

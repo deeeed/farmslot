@@ -43,16 +43,10 @@ export async function startRunNetworkObservation(
   target: string,
   artifactsDir: string,
   env: NodeJS.ProcessEnv,
-  ports: { cdpPort?: string; watcherPort?: string } = {},
 ): Promise<RunObserver | undefined> {
   const network = harnessAdapter(adapter).observation?.network;
   if (!network) return undefined;
-  const runtimeEnv: NodeJS.ProcessEnv = {
-    ...env,
-    ...(ports.cdpPort ? { CDP_PORT: ports.cdpPort, RECIPE_CDP_PORT: ports.cdpPort } : {}),
-    ...(ports.watcherPort ? { WATCHER_PORT: ports.watcherPort } : {}),
-  };
-  const autoCapture = runtimeEnv[hostEnvName('AUTO_NETWORK_CAPTURE')] !== '0';
+  const autoCapture = env[hostEnvName('AUTO_NETWORK_CAPTURE')] !== '0';
   const key = path.resolve(artifactsDir);
   const session: ObservationSession = {
     adapter,
@@ -64,7 +58,7 @@ export async function startRunNetworkObservation(
   sessions.set(key, session);
 
   try {
-    session.backend = await network.backend(target, runtimeEnv, key);
+    session.backend = await network.backend(target, env, key);
   } catch (error) {
     session.setupError = boundedError(error);
   }

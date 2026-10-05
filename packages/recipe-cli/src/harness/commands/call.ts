@@ -17,6 +17,7 @@ import {
   type DescribedAction,
   describeManifestActions,
   type RecipeCatalog,
+  renderActionDetail,
   resolveActionCapabilityMatrix,
 } from '../catalog.js';
 import { acquireCheckoutLock } from '../checkout-lock.js';
@@ -28,9 +29,8 @@ import {
 } from '../command-journal.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { conciseFailureForHuman, recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
-import { harnessHost, hostEnvName } from '../host.js';
+import { harnessHost, invokedHostCommand } from '../host.js';
 import {
-  type CliOptions,
   isRecord,
   optionFlag,
   optionString,
@@ -47,6 +47,7 @@ import {
   readRunDiagnosticsDocument,
 } from '../run-diagnostics.js';
 import {
+  activateRecipeRuntimeEnvironment,
   emitHealViolation,
   executeWithHealBounds,
   persistRunEffects,
@@ -64,6 +65,7 @@ import { checkoutBusyOut, EXIT, usageOut } from '../shared.js';
 import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
+import { handleListExecutables } from './discover.js';
 import { type DeviceTargeting, provenanceFailure, reportTrustFailure } from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
@@ -72,8 +74,6 @@ export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowli
   // The action the usage example names when no action is given; undefined
   // falls back to `command`, then the first action.
   exampleAction?(names: readonly string[]): string | undefined;
-  // `call --list`: the actions `call` accepts.
-  list(options: CliOptions): Promise<number>;
 }
 
 export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>(
@@ -86,7 +86,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   // required). Intercept before the "action first" grammar check.
   if (argv.includes('--list')) {
     const { options } = parseArgs(argv);
-    return commandOptions.list(options);
+    return handleListExecutables('call', options, { catalog: engine });
   }
   if (argv.length > 0 && argv[0]!.startsWith('--')) {
     // The public wrapper catches this with the structured grammar. Keep the
@@ -325,13 +325,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     const parameterHelp = parameterValidationHelp(describedAction, validation.findings, args);
     const actionsCommand = `${host} actions --action ${resolvedAction} --adapter ${adapter}`;
     const userAction = describedAction
-      ? (actionExampleCommand(
-          describedAction,
-          adapter,
-          target,
-          process.env[hostEnvName('INVOKED_AS')] ?? process.env[hostEnvName('EXECUTABLE')] ?? host,
-          args,
-        ) ?? actionsCommand)
+      ? (actionExampleCommand(describedAction, adapter, target, invokedHostCommand(), args) ??
+        actionsCommand)
       : actionsCommand;
     if (json)
       console.log(
@@ -398,190 +393,197 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             },
           }),
   };
-  let preflightedExecution: PreparedRecipeExecution | undefined;
+  // One environment scope for the call: preflight, the runtime check, the
+  // observers and the execution all see the same ports.
+  const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
+    adapter,
+    target,
+    callRuntimeOptions,
+  );
   try {
-    preflightedExecution = await preflightRecipe(
-      engine,
-      adapter,
-      recipe,
-      artifactsDir,
-      target,
-      actionManifestOverride,
-      callRuntimeOptions,
-    );
-  } catch (error) {
-    const trustFailure = recipeTrustFailure(error);
-    if (!trustFailure) throw error;
-    const planDigest = trustFailure.details?.recipeDigest;
-    if (planDigest) {
-      trustFailure.userAction =
-        `review the plan, then rerun this call with --artifacts-dir ${shellQuote(artifactsDir)} ` +
-        `--approve-plan ${shellQuote(planDigest)}; managed callers must keep the same artifact ` +
-        `directory and execution environment, then set ` +
-        `FARMSLOT_RECIPE_APPROVE_PLAN=${shellQuote(planDigest)}`;
-    }
-    reportTrustFailure('call', trustFailure, json);
-    return EXIT.validation;
-  }
-
-  const lock = acquireCheckoutLock(target, 'call');
-  if ('message' in lock) {
-    return checkoutBusyOut(json, 'call', lock.message, lock.path);
-  }
-
-  try {
-    const prepared = await prepareHeal(adapter, target, options, json, {
-      appRestartAuthored: resolvedAction === 'app.lifecycle' && args.command === 'restart',
-    });
-    if (typeof prepared === 'number') return prepared;
-    const { state } = prepared;
-    preflightedExecution = await preflightRecipe(
-      engine,
-      adapter,
-      recipe,
-      artifactsDir,
-      target,
-      actionManifestOverride,
-      callRuntimeOptions,
-    );
-
-    const ports = {
-      cdpPort: callRuntimeOptions.cdpPort,
-      watcherPort: callRuntimeOptions.watcherPort,
-    };
-    const started = await startRunObservers(adapter, target, artifactsDir, ports);
-    observers = started;
-    let executionResult;
+    let preflightedExecution: PreparedRecipeExecution | undefined;
     try {
-      executionResult = await executeWithHealBounds(
-        () => {
-          const execution = preflightedExecution;
-          preflightedExecution = undefined;
-          return runRecipe(
-            engine,
-            adapter,
-            recipe,
-            artifactsDir,
-            target,
-            actionManifestOverride,
-            callRuntimeOptions,
-            execution,
-            state,
-          );
-        },
+      preflightedExecution = await preflightRecipe(
+        engine,
+        adapter,
+        recipe,
+        artifactsDir,
         target,
-        state,
+        actionManifestOverride,
+        callRuntimeOptions,
       );
     } catch (error) {
-      await started.abandon();
-      observers = undefined;
-      if (error instanceof ProvenanceDriftError) {
-        const failure = provenanceFailure(error);
-        if (json) {
-          console.log(
-            JSON.stringify(
-              {
-                schemaVersion: 1,
-                command: 'call',
-                adapter,
-                action: shortName,
-                resolvedAction,
-                status: 'fail',
-                error: failure,
-                exitCode: error.exitCode,
-              },
-              null,
-              2,
-            ),
-          );
-        } else {
-          console.error(`✗ ${host} call: ${error.message}`);
-          console.error(`  Next: ${error.userAction}`);
-        }
-        return error.exitCode;
+      const trustFailure = recipeTrustFailure(error);
+      if (!trustFailure) throw error;
+      const planDigest = trustFailure.details?.recipeDigest;
+      if (planDigest) {
+        trustFailure.userAction =
+          `review the plan, then rerun this call with --artifacts-dir ${shellQuote(artifactsDir)} ` +
+          `--approve-plan ${shellQuote(planDigest)}; managed callers must keep the same artifact ` +
+          `directory and execution environment, then set ` +
+          `FARMSLOT_RECIPE_APPROVE_PLAN=${shellQuote(planDigest)}`;
       }
-      throw error;
+      reportTrustFailure('call', trustFailure, json);
+      return EXIT.validation;
     }
-    const { result, violation } = executionResult;
-    await started.finalize(result.artifactManifestPath);
-    observers = undefined;
-    persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
-    if (violation !== null) {
-      const conciseFailure = violation.originalError
-        ? conciseFailureForHuman(violation.originalError)
-        : '';
-      const taughtViolation =
-        violation.code === 'APP_LOGIC_FAILURE' &&
-        conciseFailure.includes(' requires ') &&
-        describedAction
-          ? {
-              ...violation,
-              userAction: `${host} actions ${resolvedAction} --adapter ${adapter} --json`,
-            }
-          : violation;
-      return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
-    }
-    const callOutput = readCallOutput(result.tracePath);
-    const safeArgs = redactCallValue(args);
-    const safeCallOutput = redactCallValue(callOutput);
-    const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
 
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            adapter,
-            action: shortName,
-            resolvedAction,
-            args: safeArgs,
-            ...(Object.keys(defaultsUsed).length > 0 ? { defaultsUsed } : {}),
-            status: result.status,
-            summaryPath: result.summaryPath,
-            tracePath: result.tracePath,
-            artifactManifestPath: result.artifactManifestPath,
-            ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
-            ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
-            ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
-            recovered: state.recovered,
-            mutations: state.mutations,
-            exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
-            ...(result.status === 'fail'
-              ? {
-                  error: {
-                    code: 'ACTION_EXECUTION_FAILED',
-                    message: `${resolvedAction} failed; inspect the persisted result and evidence paths`,
-                    userAction: failureUserAction,
-                  },
-                }
-              : {}),
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      const renderedInputs = Object.keys(args).length > 0 ? formatCallOutput(safeArgs) : '';
-      const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
-      const diagnostics = formatRunDiagnosticsForHuman(
-        readRunDiagnosticsDocument(result.diagnosticsPath),
-        adapter,
-      );
-      const renderedDiagnostics = `${out('label', 'Diagnostics:')}\n${diagnostics.map((line) => `  ${line}`).join('\n')}\n`;
-      console.log(
-        `${out('label', 'call')} ${out('cmd', resolvedAction)}: ${out(result.status === 'pass' ? 'ok' : 'err', result.status)}` +
-          `${renderedInputs ? `\n${out('label', 'Inputs:')}\n${renderedInputs}` : ''}` +
-          `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
-          `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
-          renderedDiagnostics +
-          `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
-          (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
-      );
+    const lock = acquireCheckoutLock(target, 'call');
+    if ('message' in lock) {
+      return checkoutBusyOut(json, 'call', lock.message, lock.path);
     }
-    return result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+
+    try {
+      const prepared = await prepareHeal(adapter, target, options, json, {
+        appRestartAuthored: resolvedAction === 'app.lifecycle' && args.command === 'restart',
+      });
+      if (typeof prepared === 'number') return prepared;
+      const { state } = prepared;
+      preflightedExecution = await preflightRecipe(
+        engine,
+        adapter,
+        recipe,
+        artifactsDir,
+        target,
+        actionManifestOverride,
+        callRuntimeOptions,
+      );
+
+      const started = await startRunObservers(adapter, target, artifactsDir);
+      observers = started;
+      let executionResult;
+      try {
+        executionResult = await executeWithHealBounds(
+          () => {
+            const execution = preflightedExecution;
+            preflightedExecution = undefined;
+            return runRecipe(
+              engine,
+              adapter,
+              recipe,
+              artifactsDir,
+              target,
+              actionManifestOverride,
+              callRuntimeOptions,
+              execution,
+              state,
+            );
+          },
+          target,
+          state,
+        );
+      } catch (error) {
+        await started.abandon();
+        observers = undefined;
+        if (error instanceof ProvenanceDriftError) {
+          const failure = provenanceFailure(error);
+          if (json) {
+            console.log(
+              JSON.stringify(
+                {
+                  schemaVersion: 1,
+                  command: 'call',
+                  adapter,
+                  action: shortName,
+                  resolvedAction,
+                  status: 'fail',
+                  error: failure,
+                  exitCode: error.exitCode,
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            console.error(`✗ ${host} call: ${error.message}`);
+            console.error(`  Next: ${error.userAction}`);
+          }
+          return error.exitCode;
+        }
+        throw error;
+      }
+      const { result, violation } = executionResult;
+      await started.finalize(result.artifactManifestPath);
+      observers = undefined;
+      persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
+      if (violation !== null) {
+        const conciseFailure = violation.originalError
+          ? conciseFailureForHuman(violation.originalError)
+          : '';
+        const taughtViolation =
+          violation.code === 'APP_LOGIC_FAILURE' &&
+          conciseFailure.includes(' requires ') &&
+          describedAction
+            ? {
+                ...violation,
+                userAction: `${host} actions ${resolvedAction} --adapter ${adapter} --json`,
+              }
+            : violation;
+        return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
+      }
+      const callOutput = readCallOutput(result.tracePath);
+      const safeArgs = redactCallValue(args);
+      const safeCallOutput = redactCallValue(callOutput);
+      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+
+      if (json) {
+        console.log(
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              command: 'call',
+              adapter,
+              action: shortName,
+              resolvedAction,
+              args: safeArgs,
+              ...(Object.keys(defaultsUsed).length > 0 ? { defaultsUsed } : {}),
+              status: result.status,
+              summaryPath: result.summaryPath,
+              tracePath: result.tracePath,
+              artifactManifestPath: result.artifactManifestPath,
+              ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
+              ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
+              ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
+              recovered: state.recovered,
+              mutations: state.mutations,
+              exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
+              ...(result.status === 'fail'
+                ? {
+                    error: {
+                      code: 'ACTION_EXECUTION_FAILED',
+                      message: `${resolvedAction} failed; inspect the persisted result and evidence paths`,
+                      userAction: failureUserAction,
+                    },
+                  }
+                : {}),
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        const renderedInputs = Object.keys(args).length > 0 ? formatCallOutput(safeArgs) : '';
+        const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
+        const diagnostics = formatRunDiagnosticsForHuman(
+          readRunDiagnosticsDocument(result.diagnosticsPath),
+          adapter,
+        );
+        const renderedDiagnostics = `${out('label', 'Diagnostics:')}\n${diagnostics.map((line) => `  ${line}`).join('\n')}\n`;
+        console.log(
+          `${out('label', 'call')} ${out('cmd', resolvedAction)}: ${out(result.status === 'pass' ? 'ok' : 'err', result.status)}` +
+            `${renderedInputs ? `\n${out('label', 'Inputs:')}\n${renderedInputs}` : ''}` +
+            `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
+            `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
+            renderedDiagnostics +
+            `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
+            (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
+        );
+      }
+      return result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+    } finally {
+      lock.release();
+    }
   } finally {
-    lock.release();
+    restoreRuntimeEnvironment();
   }
 }
 
@@ -721,11 +723,11 @@ export function redactCallValue(value: unknown, key = ''): unknown {
   return key && isSensitiveKey(key) ? '<redacted>' : redactStructuredValue(value);
 }
 
-// `call <action> --help` renders the named action's own field schema (from the
-// action manifest — the same data `actions --action <name>` exposes) above the
-// generic call flags, so parameter help for the action the user asked about is
-// not hidden behind the generic call help. An unresolvable name falls back to the
-// generic help plus a pointer to the vocabulary. Help is never an error: exit 0.
+// `call <action> --help` renders the named action's detail (the same block
+// `actions --action <name>` prints) above the generic call flags, so parameter
+// help for the action the user asked about is not hidden behind the generic call
+// help. An unresolvable name falls back to the generic help plus a pointer to
+// the vocabulary. Help is never an error: exit 0.
 export async function handleCallHelp(
   argv: string[],
   genericHelp: string,
@@ -738,11 +740,12 @@ export async function handleCallHelp(
   );
   const { options } = parseArgs(rest);
   let adapter: string;
+  let target: string;
   let manifest: unknown;
   let actionSources: Awaited<ReturnType<RecipeCatalog['resolveActionManifest']>>['actionSources'] =
     new Map();
   try {
-    ({ adapter } = resolveAdapter(options));
+    ({ adapter, target } = resolveAdapter(options));
     const resolution = await resolveCommandManifest(catalog, adapter, options);
     manifest = resolution.manifest;
     actionSources = resolution.actionSources;
@@ -752,9 +755,8 @@ export async function handleCallHelp(
     process.stdout.write(`${genericHelp}\n`);
     return EXIT.ok;
   }
-  const matches = shortName
-    ? fuzzyResolveActions(describeManifestActions(catalog, manifest, actionSources), shortName)
-    : [];
+  const described = describeManifestActions(catalog, manifest, actionSources);
+  const matches = shortName ? fuzzyResolveActions(described, shortName) : [];
   if (matches.length === 0) {
     process.stdout.write(`${genericHelp}\n`);
     if (shortName) {
@@ -765,70 +767,18 @@ export async function handleCallHelp(
     }
     return EXIT.ok;
   }
-  for (const entry of matches) process.stdout.write(renderCallActionHelp(entry));
+  for (const entry of matches) {
+    const detail = renderActionDetail(
+      entry,
+      adapter,
+      target,
+      invokedHostCommand(),
+      described.map(({ name }) => name),
+    );
+    process.stdout.write(`${detail}\n\n`);
+  }
   process.stdout.write(`${genericHelp}\n`);
   return EXIT.ok;
-}
-
-function renderCallActionHelp(entry: DescribedAction): string {
-  const host = harnessHost().name;
-  const short = entry.name.split('.').pop() ?? entry.name;
-  const schema = isRecord(entry.schema) ? entry.schema : {};
-  const properties = isRecord(schema.properties) ? schema.properties : {};
-  const required = new Set(
-    Array.isArray(schema.required)
-      ? schema.required.filter((r): r is string => typeof r === 'string')
-      : [],
-  );
-  const lines: string[] = [
-    `${host} call ${entry.name} [key=value ...] [--arg k=v ...] [flags]`,
-    '',
-  ];
-  if (entry.description) lines.push(`  ${entry.description}`, '');
-  lines.push(
-    `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''}`,
-    '',
-  );
-  const names = Object.keys(properties)
-    .filter((name) => name !== 'action' && name !== 'next')
-    .sort();
-  if (names.length === 0) {
-    lines.push('  Fields: (none)');
-  } else {
-    lines.push('  Fields (pass as <name>=<value> or --arg <name>=<value>):');
-    const width = Math.max(...names.map((name) => name.length));
-    for (const name of names) {
-      const prop = isRecord(properties[name]) ? properties[name] : {};
-      const type = typeof prop.type === 'string' ? prop.type : 'any';
-      const req = required.has(name) ? ' (required)' : '';
-      const desc = typeof prop.description === 'string' ? ` — ${prop.description}` : '';
-      const enumVals = Array.isArray(prop.enum) ? ` [one of: ${prop.enum.join(', ')}]` : '';
-      const defaultValue = Object.hasOwn(prop, 'default')
-        ? ` [default: ${JSON.stringify(prop.default)}]`
-        : '';
-      lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
-    }
-  }
-  const examples = renderCallExamples(short, entry.examples);
-  if (examples.length > 0) {
-    lines.push('', '  Examples:');
-    for (const example of examples) lines.push(`    ${example}`);
-  }
-  return `${lines.join('\n')}\n\n`;
-}
-
-function renderCallExamples(short: string, examples: unknown): string[] {
-  if (!Array.isArray(examples)) return [];
-  const out: string[] = [];
-  for (const example of examples.slice(0, 2)) {
-    const node = isRecord(example) ? example : undefined;
-    if (!node) continue;
-    const tokens = Object.entries(node)
-      .filter(([key]) => key !== 'action' && key !== 'intent')
-      .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
-    out.push(`${harnessHost().name} call ${short} ${tokens.join(' ')}`.trim());
-  }
-  return out;
 }
 
 interface CallArgs {
