@@ -4,6 +4,16 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Add `createHarnessCli({ host, adapters, libraries, commands, help, beforeDispatch, catalog, replacedOptions })` to `@farmslot/recipe-cli/harness`, the generic front door a product harness presets. `main(argv)` returns `{ exitCode, exit }` and `run()` exits with it.
+  - It provides the grouped help (the host's intro, groups and footer, the `<PREFIX>_BIN` dev override line and the prepared-slot line), per-command `--help`, and `-v/--version`, which prints the host version and then `@farmslot/recipe-cli <version>` (one line when the host is recipe-cli itself).
+  - Each public command carries its `contract`, so the command list and the grammar can't drift apart. Hidden commands keep their private grammar.
+  - Order per invocation: `beforeDispatch` (unless the command sets `nudge: false`); help for no arguments; `raw` commands; the public grammar; `libraries.hydrate(--target)`; `--help` after `--` handed to the command; `call <action> --help` through the `catalog`; commander.
+  - One error mapper: a command that throws exits with the error's `exitCode` (a `CliError`), else 1. A public command sets `process.exitCode` by default and a hidden one exits at once; `exit` overrides either.
+- Add the public command contract to `@farmslot/recipe-cli/harness`: `validatePublicInvocation(argv, commands, { replacedOptions })` returns a stable `CLI_*` usage error naming the host, or null.
+  - Option builders: `booleanOption`, `valueOption`, `optionalValueOption`, `contractOptions`. `OptionSpec.choices` can be a function read at validation time.
+  - Command hooks: `bypass` (a sub-grammar another tool checks), `refine` (command rules, given `ContractFailures`) and `missingPositionalAction`.
+  - `publicCommandTokens(commands)` lists every name and alias.
+
 - **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
 
