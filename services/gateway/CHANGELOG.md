@@ -4,6 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.1 - 2026-10-05
+
+- Jira tickets come into TASK.md as written: the ADF description (and wiki markup) is converted to Markdown that keeps paragraphs, headings, lists, code, captions and tables, with ticket headings three levels down so they nest under TASK.md's `## Description`. Acceptance criteria and repro steps are found by heading on the ticket's own levels, in any format (Markdown or bold headings, emoji or a trailing parenthetical, `Acceptance criteria:` labels), ignoring fenced code, one entry per top-level list item (a subheading inside the section prefixes its items). `## Acceptance Criteria` is no longer `_Not specified_` for ADF tickets, and the templated TASK.md renders it one bullet per criterion like the split document. GitHub issues use the same section finder. Comments keep word boundaries.
 - Comments and tests refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
 - Stop stranding slots in `busy/releasing`: fleet refresh now keeps a release fence's timestamp and cleanup token (and an occupied slot's held reason), and the reconciler stamps a fence it finds with no timestamp so the 30-minute stale-release reclaim applies to it. An operator slot release counts as an in-flight teardown, so a long release is never reclaimed from under itself.
 - Run every remote command that calls a farm script (`~/farmslot-node/projects/...`, `~/farmslot-node/scripts/...`) from the content-hashed node support bundle that matches the gateway's config, not only prepare hooks: project hooks, resource health, control and watch commands, and slot actions. A bounded hook probe that meets a first bundle delivery times out instead of waiting it out; a resource command reports itself unavailable, so cleanup never mistakes it for a stopped resource. Fast-forwarding the operator's farm config before a node is redeployed no longer makes its hooks exit 127. Bundle paths are now inferred from every farm reference in `project.json` (resources and actions too), and bundle verification uses one checksum pass per bundle, which cuts a 500-file publish from about a minute to a few seconds.

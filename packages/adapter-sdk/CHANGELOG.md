@@ -5,7 +5,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - **BREAKING:** remove `devServer.portFlags`. `--watcher-port` is the one option that gives `run` and `call` the dev-server port; a platform names its port environment with `devServer.portEnv`.
+
+## 0.4.0 - 2026-10-05
+
 - Add the optional `PlatformAdapter` member `observation` (`AdapterObservation`), moved from the metamask-harness surface: `network.backend(target, env, artifactsDir)` returns the platform's `NetworkCaptureBackend` and `network.actions` lets recipes call `app.network_capture`/`app.network_assert`; `performance.start(context)` returns a `RunObserver` (`onActionEvent`, `finalize`) for the run.
+- Publish with protocol 0.34.0 and recipe-runner 0.24.0.
 
 ## 0.3.1 - 2026-10-05
 

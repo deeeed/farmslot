@@ -59,6 +59,8 @@ import { indexProductProvenanceArtifact, writeRunReport } from '../run-report.js
 import { checkoutBusyOut, EXIT, usageOut, writeInteractiveProgress } from '../shared.js';
 import { type RecipeTrustFailure, recipeTrustFailure } from '../trust.js';
 
+import { handleDescribeRecipe, handleListExecutables } from './discover.js';
+
 /**
  * Resolve and pin the device a `run` or `call` drives, before the engine reads
  * the environment; a refusal is reported as a usage error.
@@ -82,10 +84,6 @@ export interface RunCommandOptions<TMutation, TAllowlist extends ConsoleAllowlis
   // `run --plan`: the host's own static steps after validation, and how it
   // words the app launch a non-headless run performs.
   plan?: { steps?(target: string): RunPlanStep[]; launchDetail?: string };
-  // `run --list`: the recipes `run` accepts.
-  list(options: CliOptions): Promise<number>;
-  // `run <recipe> --describe`: the recipe's declaration.
-  describe(recipe: string, options: CliOptions): Promise<number>;
 }
 
 async function validationCapabilityRefusals(
@@ -288,7 +286,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return commandOptions.list(options);
+    return handleListExecutables('run', options, { catalog: engine });
   }
   const targetRecipe = positional[0];
   if (!targetRecipe) throw usageError('run requires <recipe.json>.');
@@ -308,7 +306,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return commandOptions.describe(targetRecipe, options);
+    return handleDescribeRecipe(targetRecipe, options, { catalog: engine });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
   // The runtime directory names where the slot's context and the run's runtime
