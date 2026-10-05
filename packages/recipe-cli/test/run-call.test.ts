@@ -28,6 +28,7 @@ import {
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
+import { acquireCheckoutLock } from '../src/harness/checkout-lock.js';
 import { defaultCallArtifactsDir, redactCallValue } from '../src/harness/commands/call.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
@@ -1052,6 +1053,7 @@ describe('run', () => {
 
   test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
     const seen: string[] = [];
+    const observerEnvs: NodeJS.ProcessEnv[] = [];
     const portView = (env: NodeJS.ProcessEnv) =>
       [
         env.CDP_PORT,
@@ -1080,6 +1082,7 @@ describe('run', () => {
           // Like the Extension observer: no CDP port, no session.
           backend: async (target, env, artifactsDir) => {
             seen.push(`network:${portView(env)}`);
+            observerEnvs.push(env);
             if (!env.CDP_PORT) throw new Error('network observation requires CDP_PORT');
             return web.observation!.network!.backend(target, env, artifactsDir);
           },
@@ -1088,6 +1091,7 @@ describe('run', () => {
         performance: {
           start: async (context) => {
             seen.push(`performance:${portView(context.env)}`);
+            observerEnvs.push(context.env);
             return web.observation!.performance!.start(context);
           },
         },
@@ -1175,6 +1179,13 @@ describe('run', () => {
     assert.equal(summary.status, 'complete');
     assert.equal(summary.nodeEvents.length, 4);
     assert.ok(fs.existsSync(path.join(artifacts, 'network/focus-summary.json')));
+    // The observers keep the environment the run started them with, though
+    // process.env has been restored since.
+    assert.equal(process.env.SHOP_ACTIVE, undefined);
+    assert.deepEqual(
+      observerEnvs.map((env) => portView(env)),
+      ['9555/9555///1', '9555/9555///1'],
+    );
 
     // Explicit ports win over the slot's for every one of them, and the
     // platform's dev-server port name follows --watcher-port.
@@ -1199,6 +1210,8 @@ describe('run', () => {
     ]);
     assert.equal(process.env.WATCHER_PORT, undefined);
     assert.equal(process.env.SHOP_ACTIVE, undefined);
+    assert.equal(process.env.CDP_PORT, '9555');
+    assert.equal(process.env.RECIPE_CDP_PORT, '9555');
 
     // call opens the same scope.
     seen.length = 0;
@@ -1229,6 +1242,116 @@ describe('run', () => {
       'performance:9444/9444/8088/8088/1',
     ]);
     assert.equal(process.env.WATCHER_PORT, undefined);
+    assert.equal(process.env.CDP_PORT, '9555');
+    assert.equal(process.env.RECIPE_CDP_PORT, '9555');
+  });
+
+  test('every exit of run and call restores the environment it found, but the slot ports it resolved', async () => {
+    let mode: 'pass' | 'prepare' | 'throw' = 'pass';
+    const web = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...web,
+      resolveSlotPorts() {
+        process.env.CDP_PORT = '9555';
+        process.env.RECIPE_CDP_PORT = '9555';
+      },
+      run: {
+        ...web.run,
+        runtimeCheck: () => async () => (mode === 'prepare' ? 4 : null),
+        async teardown() {
+          if (mode === 'throw') throw new Error('teardown boom');
+        },
+      },
+    });
+    configureHarnessAdapters(registry);
+    for (const key of ['CDP_PORT', 'RECIPE_CDP_PORT']) delete process.env[key];
+    process.env.WATCHER_PORT = '7000';
+    process.env.SHOP_BUNDLER_PORT = '7001';
+    process.env.SHOP_ACTIVE = 'seed';
+    const before = { ...process.env };
+    const expected = { ...before, CDP_PORT: '9555', RECIPE_CDP_PORT: '9555' };
+    const target = checkout();
+    const passing = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const failing = path.join(target, 'failing.recipe.json');
+    fs.writeFileSync(
+      failing,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Fails',
+        description: 'A node that fails as app logic.',
+        workflow: {
+          entry: 'fail',
+          nodes: {
+            fail: { action: 'command', cmd: 'exit 3', intent: 'Fail.', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    const flags = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const ports = ['--cdp-port', '9444', '--watcher-port', '8088'];
+    const commands = {
+      run: (recipe: string) => () => handleRun([recipe, ...flags, ...ports], runOptions),
+      call: (input: string) => () =>
+        handleCall([...input.split(' '), ...flags, ...ports], callOptions),
+    };
+    const exits: Array<[string, () => Promise<number>, number | 'throws']> = [
+      ['run pass', commands.run(passing), 0],
+      ['run violation', commands.run(failing), 1],
+      ['call pass', commands.call('shop.ping mode=fast'), 0],
+      ['call violation', commands.call('command cmd=false;'), 1],
+    ];
+    for (const [name, invoke, exit] of exits) {
+      const result = await capture(invoke);
+      assert.equal(result.value, exit, `${name}: ${result.stdout.join('\n')}`);
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    mode = 'prepare';
+    for (const [name, invoke] of [
+      ['run prepare', commands.run(passing)],
+      ['call prepare', commands.call('shop.ping mode=fast')],
+    ] as const) {
+      assert.equal((await capture(invoke)).value, 4, name);
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    mode = 'throw';
+    for (const [name, invoke] of [
+      ['run throw', commands.run(passing)],
+      ['call throw', commands.call('shop.ping mode=fast')],
+    ] as const) {
+      await capture(async () => {
+        try {
+          return await invoke();
+        } catch (error) {
+          assert.match(String(error), /teardown boom/u, name);
+          return -1;
+        }
+      });
+      assert.deepEqual({ ...process.env }, expected, name);
+    }
+
+    // Another owner holds the checkout lock.
+    mode = 'pass';
+    const holder = acquireCheckoutLock(target, 'other');
+    assert.ok(!('message' in holder));
+    delete process.env.SHOP_HARNESS_CHECKOUT_LOCK_TOKEN;
+    try {
+      for (const [name, invoke] of [
+        ['run busy', commands.run(passing)],
+        ['call busy', commands.call('shop.ping mode=fast')],
+      ] as const) {
+        assert.notEqual((await capture(invoke)).value, 0, name);
+        assert.deepEqual({ ...process.env }, expected, name);
+      }
+    } finally {
+      holder.release();
+    }
   });
 
   test('refuses before validation when the host refuses the device', async () => {

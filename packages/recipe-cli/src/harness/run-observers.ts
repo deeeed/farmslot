@@ -19,10 +19,13 @@ export async function startRunObservers(
   target: string,
   artifactsDir: string,
 ): Promise<RunObservers> {
-  const network = await startRunNetworkObservation(adapter, target, artifactsDir, process.env);
+  // The run's environment as the observers start: they keep it, whatever the
+  // run's actions change later.
+  const env = { ...process.env };
+  const network = await startRunNetworkObservation(adapter, target, artifactsDir, env);
   const performance: RunObserver | undefined = await harnessAdapter(
     adapter,
-  ).observation?.performance?.start({ target, artifactsDir, env: process.env });
+  ).observation?.performance?.start({ target, artifactsDir, env });
   return {
     onActionEvent(event) {
       network?.onActionEvent(event);
