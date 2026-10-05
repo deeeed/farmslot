@@ -5,11 +5,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Add `run` and `call` to `@farmslot/recipe-cli/harness`, moved from mm-harness: `handleRun(argv, options)`, `handleCall(argv, options)` and `handleCallHelp(argv, genericHelp, { catalog })`. The host passes a `RecipeEngine` (`RecipeCatalog`: its bundled library, action manifest resolver and validator, and bundled action risk; plus `createRunner`, an optional `trustedMutation` loaded from the command line and bound to the run's plan, the `console` classifier and `runnerIncludes`), and per command `targetDevice`, the `run --plan` host steps and launch wording, `exampleAction`, and its `run --list`/`--describe`/`call --list` views. Messages name the host (`<name> call`, `<product>-checkout`).
-  - the engine door: `runRecipe`, `preflightRecipe`, `activateRecipeRuntimeEnvironment` (sets every registered adapter's `devServer.portEnv` from `--watcher-port`), bounded healing and heal-bound envelopes;
+  - the engine door: `runRecipe`, `preflightRecipe`, `activateRecipeRuntimeEnvironment` (sets every registered adapter's `devServer.portEnv` from `--watcher-port`), bounded healing and heal-bound envelopes. `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution, so all of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment; `runRecipe` and `preflightRecipe` run inside the caller's scope;
   - the recipe library: `resolveLibrarySources`, `listRunnableRecipes`, `describeRunnableRecipe`, `runnableLibraryRecipes`;
   - static validation: `validateRunRecipeStatic`, `validateActionInputs` (each adapter's `actions.inputFindings` on every node), `resolveRecipeParamValue`;
   - the action catalog helpers `run`, `call` and a host's `actions` share: `describeManifestActions`, `actionExampleCommand`, `renderHumanActionExample`, `actionLibraryContextArgs`, `resolveActionCapabilityMatrix` (one column per registered adapter);
-  - network observation through the adapter's `observation.network`: the automatic whole-run capture (off with the host's `AUTO_NETWORK_CAPTURE=0`) and `runNetworkCaptureAction` for `app.network_capture`.
+  - network observation through the adapter's `observation.network`, on the run's ports: the automatic whole-run capture (off with the host's `AUTO_NETWORK_CAPTURE=0`) and `runNetworkCaptureAction` for `app.network_capture`.
 
 ## 0.4.1 - 2026-10-05
 

@@ -41,6 +41,7 @@ import {
   readRunDiagnosticsDocument,
 } from '../run-diagnostics.js';
 import {
+  activateRecipeRuntimeEnvironment,
   countRecipeNodes,
   emitHealViolation,
   executeWithHealBounds,
@@ -434,36 +435,15 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     },
   };
   stream.phase('authorize');
-  let preflightedExecution: PreparedRecipeExecution | undefined = await preflightRecipe(
-    engine,
+  // One environment scope for the run: preflight, the runtime check, the
+  // observers and the execution all see the same ports.
+  const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
     adapter,
-    validated.recipeFile,
-    artifactsDir,
     target,
-    optionString(options, 'actionManifest'),
     runtimeOptions,
   );
-  const lock = acquireCheckoutLock(target, 'run');
-  if ('message' in lock) {
-    const userAction = `wait for the current owner, or inspect ${lock.path} if its process has exited`;
-    stream.error({ code: 'SANDBOX_BUSY', message: lock.message, userAction });
-    return checkoutBusyOut(jsonOutput, 'run', lock.message, lock.path);
-  }
-
   try {
-    const prepared = await prepareHeal(adapter, target, options, machine, {
-      onPhase: (phase, fields) => stream.phase(phase, fields),
-    });
-    if (typeof prepared === 'number') {
-      stream.error({
-        code: 'RUN_PREPARE_FAILED',
-        message: 'runtime preparation failed; inspect stderr for the exact probe',
-        userAction: `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
-      });
-      return prepared;
-    }
-    const { state } = prepared;
-    preflightedExecution = await preflightRecipe(
+    let preflightedExecution: PreparedRecipeExecution | undefined = await preflightRecipe(
       engine,
       adapter,
       validated.recipeFile,
@@ -472,137 +452,170 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       optionString(options, 'actionManifest'),
       runtimeOptions,
     );
+    const lock = acquireCheckoutLock(target, 'run');
+    if ('message' in lock) {
+      const userAction = `wait for the current owner, or inspect ${lock.path} if its process has exited`;
+      stream.error({ code: 'SANDBOX_BUSY', message: lock.message, userAction });
+      return checkoutBusyOut(jsonOutput, 'run', lock.message, lock.path);
+    }
 
-    const ports = { cdpPort: runtimeOptions.cdpPort, watcherPort: runtimeOptions.watcherPort };
-    const started = await startRunObservers(adapter, target, artifactsDir, ports);
-    observers = started;
-    stream.phase('execute');
-    let executionResult;
     try {
-      executionResult = await executeWithHealBounds(
-        // validated.recipeFile, not the raw arg: the arg may be a library recipe NAME
-        // that only the resolver knows how to turn into a file.
-        () => {
-          const execution = preflightedExecution;
-          preflightedExecution = undefined;
-          return runRecipe(
-            engine,
-            adapter,
-            validated.recipeFile,
-            artifactsDir,
-            target,
-            optionString(options, 'actionManifest'),
-            runtimeOptions,
-            execution,
-            state,
-          );
-        },
-        target,
-        state,
-      );
-    } catch (error) {
-      await started.abandon();
-      observers = undefined;
-      throw error;
-    }
-    const { result, violation } = executionResult;
-    await started.finalize(result.artifactManifestPath);
-    observers = undefined;
-    for (const mutation of state.mutations) stream.mutation(mutation);
-    for (const recovery of state.recovered) stream.recovery(recovery);
-    persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
-    indexProductProvenanceArtifact(
-      result.artifactManifestPath,
-      target,
-      adapter,
-      result.browser ?? null,
-    );
-    if (violation !== null) {
-      const userAction =
-        violation.userAction ??
-        `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}; fix the application or recipe failure before retrying`;
-      stream.error({
-        code: violation.code,
-        message: violation.message,
-        userAction,
-        originalError: violation.originalError ?? null,
+      const prepared = await prepareHeal(adapter, target, options, machine, {
+        onPhase: (phase, fields) => stream.phase(phase, fields),
       });
-      return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter);
-    }
-    const report = writeRunReport(result);
-    const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
-    const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
-    if (stream.enabled) {
-      if (result.status === 'fail') {
+      if (typeof prepared === 'number') {
         stream.error({
-          code: 'RECIPE_EXECUTION_FAILED',
-          message: 'recipe execution failed; inspect the persisted result and evidence paths',
-          userAction: failureUserAction,
+          code: 'RUN_PREPARE_FAILED',
+          message: 'runtime preparation failed; inspect stderr for the exact probe',
+          userAction: `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
         });
+        return prepared;
       }
-      stream.complete(result.status, exitCode, {
+      const { state } = prepared;
+      preflightedExecution = await preflightRecipe(
+        engine,
         adapter,
-        reportPath: report.path,
-        summaryPath: result.summaryPath,
-        tracePath: result.tracePath,
-        artifactManifestPath: result.artifactManifestPath,
-        recovered: state.recovered,
-        mutations: state.mutations,
-      });
-    } else if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'run',
-            adapter,
-            status: result.status,
-            exitCode,
-            recovered: state.recovered,
-            mutations: state.mutations,
-            reportPath: report.path,
-            result,
-            ...(result.status === 'fail'
-              ? {
-                  error: {
-                    code: 'RECIPE_EXECUTION_FAILED',
-                    message:
-                      'recipe execution failed; inspect the persisted result and evidence paths',
-                    userAction: failureUserAction,
-                  },
-                }
-              : {}),
+        validated.recipeFile,
+        artifactsDir,
+        target,
+        optionString(options, 'actionManifest'),
+        runtimeOptions,
+      );
+
+      const started = await startRunObservers(adapter, target, artifactsDir);
+      observers = started;
+      stream.phase('execute');
+      let executionResult;
+      try {
+        executionResult = await executeWithHealBounds(
+          // validated.recipeFile, not the raw arg: the arg may be a library recipe NAME
+          // that only the resolver knows how to turn into a file.
+          () => {
+            const execution = preflightedExecution;
+            preflightedExecution = undefined;
+            return runRecipe(
+              engine,
+              adapter,
+              validated.recipeFile,
+              artifactsDir,
+              target,
+              optionString(options, 'actionManifest'),
+              runtimeOptions,
+              execution,
+              state,
+            );
           },
-          null,
-          2,
-        ),
+          target,
+          state,
+        );
+      } catch (error) {
+        await started.abandon();
+        observers = undefined;
+        throw error;
+      }
+      const { result, violation } = executionResult;
+      await started.finalize(result.artifactManifestPath);
+      observers = undefined;
+      for (const mutation of state.mutations) stream.mutation(mutation);
+      for (const recovery of state.recovered) stream.recovery(recovery);
+      persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
+      indexProductProvenanceArtifact(
+        result.artifactManifestPath,
+        target,
+        adapter,
+        result.browser ?? null,
       );
-    } else {
-      const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
-      console.log(
-        `${out(result.status === 'pass' ? 'ok' : 'err', result.status.toUpperCase())} ${out('bold', 'recipe run')} ${out('dim', `[${adapter}]`)}`,
-      );
-      if (report.preview.length > 0) {
-        console.log(out('label', 'summary:'));
-        for (const line of report.preview) console.log(`  ${formatPreviewLine(line, out)}`);
+      if (violation !== null) {
+        const userAction =
+          violation.userAction ??
+          `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}; fix the application or recipe failure before retrying`;
+        stream.error({
+          code: violation.code,
+          message: violation.message,
+          userAction,
+          originalError: violation.originalError ?? null,
+        });
+        return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter);
       }
-      const artifacts = runArtifactInventory(result.artifactManifestPath);
-      console.log(out('label', `artifacts (${artifacts.length}):`));
-      for (const artifact of artifacts) {
-        console.log(`  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}`);
+      const report = writeRunReport(result);
+      const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+      if (stream.enabled) {
+        if (result.status === 'fail') {
+          stream.error({
+            code: 'RECIPE_EXECUTION_FAILED',
+            message: 'recipe execution failed; inspect the persisted result and evidence paths',
+            userAction: failureUserAction,
+          });
+        }
+        stream.complete(result.status, exitCode, {
+          adapter,
+          reportPath: report.path,
+          summaryPath: result.summaryPath,
+          tracePath: result.tracePath,
+          artifactManifestPath: result.artifactManifestPath,
+          recovered: state.recovered,
+          mutations: state.mutations,
+        });
+      } else if (json) {
+        console.log(
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              command: 'run',
+              adapter,
+              status: result.status,
+              exitCode,
+              recovered: state.recovered,
+              mutations: state.mutations,
+              reportPath: report.path,
+              result,
+              ...(result.status === 'fail'
+                ? {
+                    error: {
+                      code: 'RECIPE_EXECUTION_FAILED',
+                      message:
+                        'recipe execution failed; inspect the persisted result and evidence paths',
+                      userAction: failureUserAction,
+                    },
+                  }
+                : {}),
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
+        console.log(
+          `${out(result.status === 'pass' ? 'ok' : 'err', result.status.toUpperCase())} ${out('bold', 'recipe run')} ${out('dim', `[${adapter}]`)}`,
+        );
+        if (report.preview.length > 0) {
+          console.log(out('label', 'summary:'));
+          for (const line of report.preview) console.log(`  ${formatPreviewLine(line, out)}`);
+        }
+        const artifacts = runArtifactInventory(result.artifactManifestPath);
+        console.log(out('label', `artifacts (${artifacts.length}):`));
+        for (const artifact of artifacts) {
+          console.log(
+            `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}`,
+          );
+        }
+        if (result.status === 'fail') {
+          console.error(`  Next: ${failureUserAction}`);
+        }
+        console.log(out('label', 'diagnostics:'));
+        const diagnostics = readRunDiagnosticsDocument(result.diagnosticsPath);
+        for (const line of formatRunDiagnosticsForHuman(diagnostics, adapter)) {
+          console.log(`  ${formatDiagnosticLine(line, out)}`);
+        }
       }
-      if (result.status === 'fail') {
-        console.error(`  Next: ${failureUserAction}`);
-      }
-      console.log(out('label', 'diagnostics:'));
-      const diagnostics = readRunDiagnosticsDocument(result.diagnosticsPath);
-      for (const line of formatRunDiagnosticsForHuman(diagnostics, adapter)) {
-        console.log(`  ${formatDiagnosticLine(line, out)}`);
-      }
+      return exitCode;
+    } finally {
+      lock.release();
     }
-    return exitCode;
   } finally {
-    lock.release();
+    restoreRuntimeEnvironment();
   }
 }
 

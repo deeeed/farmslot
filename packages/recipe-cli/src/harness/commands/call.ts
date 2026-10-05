@@ -47,6 +47,7 @@ import {
   readRunDiagnosticsDocument,
 } from '../run-diagnostics.js';
 import {
+  activateRecipeRuntimeEnvironment,
   emitHealViolation,
   executeWithHealBounds,
   persistRunEffects,
@@ -398,190 +399,197 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             },
           }),
   };
-  let preflightedExecution: PreparedRecipeExecution | undefined;
+  // One environment scope for the call: preflight, the runtime check, the
+  // observers and the execution all see the same ports.
+  const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
+    adapter,
+    target,
+    callRuntimeOptions,
+  );
   try {
-    preflightedExecution = await preflightRecipe(
-      engine,
-      adapter,
-      recipe,
-      artifactsDir,
-      target,
-      actionManifestOverride,
-      callRuntimeOptions,
-    );
-  } catch (error) {
-    const trustFailure = recipeTrustFailure(error);
-    if (!trustFailure) throw error;
-    const planDigest = trustFailure.details?.recipeDigest;
-    if (planDigest) {
-      trustFailure.userAction =
-        `review the plan, then rerun this call with --artifacts-dir ${shellQuote(artifactsDir)} ` +
-        `--approve-plan ${shellQuote(planDigest)}; managed callers must keep the same artifact ` +
-        `directory and execution environment, then set ` +
-        `FARMSLOT_RECIPE_APPROVE_PLAN=${shellQuote(planDigest)}`;
-    }
-    reportTrustFailure('call', trustFailure, json);
-    return EXIT.validation;
-  }
-
-  const lock = acquireCheckoutLock(target, 'call');
-  if ('message' in lock) {
-    return checkoutBusyOut(json, 'call', lock.message, lock.path);
-  }
-
-  try {
-    const prepared = await prepareHeal(adapter, target, options, json, {
-      appRestartAuthored: resolvedAction === 'app.lifecycle' && args.command === 'restart',
-    });
-    if (typeof prepared === 'number') return prepared;
-    const { state } = prepared;
-    preflightedExecution = await preflightRecipe(
-      engine,
-      adapter,
-      recipe,
-      artifactsDir,
-      target,
-      actionManifestOverride,
-      callRuntimeOptions,
-    );
-
-    const ports = {
-      cdpPort: callRuntimeOptions.cdpPort,
-      watcherPort: callRuntimeOptions.watcherPort,
-    };
-    const started = await startRunObservers(adapter, target, artifactsDir, ports);
-    observers = started;
-    let executionResult;
+    let preflightedExecution: PreparedRecipeExecution | undefined;
     try {
-      executionResult = await executeWithHealBounds(
-        () => {
-          const execution = preflightedExecution;
-          preflightedExecution = undefined;
-          return runRecipe(
-            engine,
-            adapter,
-            recipe,
-            artifactsDir,
-            target,
-            actionManifestOverride,
-            callRuntimeOptions,
-            execution,
-            state,
-          );
-        },
+      preflightedExecution = await preflightRecipe(
+        engine,
+        adapter,
+        recipe,
+        artifactsDir,
         target,
-        state,
+        actionManifestOverride,
+        callRuntimeOptions,
       );
     } catch (error) {
-      await started.abandon();
-      observers = undefined;
-      if (error instanceof ProvenanceDriftError) {
-        const failure = provenanceFailure(error);
-        if (json) {
-          console.log(
-            JSON.stringify(
-              {
-                schemaVersion: 1,
-                command: 'call',
-                adapter,
-                action: shortName,
-                resolvedAction,
-                status: 'fail',
-                error: failure,
-                exitCode: error.exitCode,
-              },
-              null,
-              2,
-            ),
-          );
-        } else {
-          console.error(`✗ ${host} call: ${error.message}`);
-          console.error(`  Next: ${error.userAction}`);
-        }
-        return error.exitCode;
+      const trustFailure = recipeTrustFailure(error);
+      if (!trustFailure) throw error;
+      const planDigest = trustFailure.details?.recipeDigest;
+      if (planDigest) {
+        trustFailure.userAction =
+          `review the plan, then rerun this call with --artifacts-dir ${shellQuote(artifactsDir)} ` +
+          `--approve-plan ${shellQuote(planDigest)}; managed callers must keep the same artifact ` +
+          `directory and execution environment, then set ` +
+          `FARMSLOT_RECIPE_APPROVE_PLAN=${shellQuote(planDigest)}`;
       }
-      throw error;
+      reportTrustFailure('call', trustFailure, json);
+      return EXIT.validation;
     }
-    const { result, violation } = executionResult;
-    await started.finalize(result.artifactManifestPath);
-    observers = undefined;
-    persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
-    if (violation !== null) {
-      const conciseFailure = violation.originalError
-        ? conciseFailureForHuman(violation.originalError)
-        : '';
-      const taughtViolation =
-        violation.code === 'APP_LOGIC_FAILURE' &&
-        conciseFailure.includes(' requires ') &&
-        describedAction
-          ? {
-              ...violation,
-              userAction: `${host} actions ${resolvedAction} --adapter ${adapter} --json`,
-            }
-          : violation;
-      return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
-    }
-    const callOutput = readCallOutput(result.tracePath);
-    const safeArgs = redactCallValue(args);
-    const safeCallOutput = redactCallValue(callOutput);
-    const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
 
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'call',
-            adapter,
-            action: shortName,
-            resolvedAction,
-            args: safeArgs,
-            ...(Object.keys(defaultsUsed).length > 0 ? { defaultsUsed } : {}),
-            status: result.status,
-            summaryPath: result.summaryPath,
-            tracePath: result.tracePath,
-            artifactManifestPath: result.artifactManifestPath,
-            ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
-            ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
-            ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
-            recovered: state.recovered,
-            mutations: state.mutations,
-            exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
-            ...(result.status === 'fail'
-              ? {
-                  error: {
-                    code: 'ACTION_EXECUTION_FAILED',
-                    message: `${resolvedAction} failed; inspect the persisted result and evidence paths`,
-                    userAction: failureUserAction,
-                  },
-                }
-              : {}),
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      const renderedInputs = Object.keys(args).length > 0 ? formatCallOutput(safeArgs) : '';
-      const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
-      const diagnostics = formatRunDiagnosticsForHuman(
-        readRunDiagnosticsDocument(result.diagnosticsPath),
-        adapter,
-      );
-      const renderedDiagnostics = `${out('label', 'Diagnostics:')}\n${diagnostics.map((line) => `  ${line}`).join('\n')}\n`;
-      console.log(
-        `${out('label', 'call')} ${out('cmd', resolvedAction)}: ${out(result.status === 'pass' ? 'ok' : 'err', result.status)}` +
-          `${renderedInputs ? `\n${out('label', 'Inputs:')}\n${renderedInputs}` : ''}` +
-          `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
-          `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
-          renderedDiagnostics +
-          `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
-          (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
-      );
+    const lock = acquireCheckoutLock(target, 'call');
+    if ('message' in lock) {
+      return checkoutBusyOut(json, 'call', lock.message, lock.path);
     }
-    return result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+
+    try {
+      const prepared = await prepareHeal(adapter, target, options, json, {
+        appRestartAuthored: resolvedAction === 'app.lifecycle' && args.command === 'restart',
+      });
+      if (typeof prepared === 'number') return prepared;
+      const { state } = prepared;
+      preflightedExecution = await preflightRecipe(
+        engine,
+        adapter,
+        recipe,
+        artifactsDir,
+        target,
+        actionManifestOverride,
+        callRuntimeOptions,
+      );
+
+      const started = await startRunObservers(adapter, target, artifactsDir);
+      observers = started;
+      let executionResult;
+      try {
+        executionResult = await executeWithHealBounds(
+          () => {
+            const execution = preflightedExecution;
+            preflightedExecution = undefined;
+            return runRecipe(
+              engine,
+              adapter,
+              recipe,
+              artifactsDir,
+              target,
+              actionManifestOverride,
+              callRuntimeOptions,
+              execution,
+              state,
+            );
+          },
+          target,
+          state,
+        );
+      } catch (error) {
+        await started.abandon();
+        observers = undefined;
+        if (error instanceof ProvenanceDriftError) {
+          const failure = provenanceFailure(error);
+          if (json) {
+            console.log(
+              JSON.stringify(
+                {
+                  schemaVersion: 1,
+                  command: 'call',
+                  adapter,
+                  action: shortName,
+                  resolvedAction,
+                  status: 'fail',
+                  error: failure,
+                  exitCode: error.exitCode,
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            console.error(`✗ ${host} call: ${error.message}`);
+            console.error(`  Next: ${error.userAction}`);
+          }
+          return error.exitCode;
+        }
+        throw error;
+      }
+      const { result, violation } = executionResult;
+      await started.finalize(result.artifactManifestPath);
+      observers = undefined;
+      persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
+      if (violation !== null) {
+        const conciseFailure = violation.originalError
+          ? conciseFailureForHuman(violation.originalError)
+          : '';
+        const taughtViolation =
+          violation.code === 'APP_LOGIC_FAILURE' &&
+          conciseFailure.includes(' requires ') &&
+          describedAction
+            ? {
+                ...violation,
+                userAction: `${host} actions ${resolvedAction} --adapter ${adapter} --json`,
+              }
+            : violation;
+        return emitHealViolation(json, 'call', result, taughtViolation, state, adapter);
+      }
+      const callOutput = readCallOutput(result.tracePath);
+      const safeArgs = redactCallValue(args);
+      const safeCallOutput = redactCallValue(callOutput);
+      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+
+      if (json) {
+        console.log(
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              command: 'call',
+              adapter,
+              action: shortName,
+              resolvedAction,
+              args: safeArgs,
+              ...(Object.keys(defaultsUsed).length > 0 ? { defaultsUsed } : {}),
+              status: result.status,
+              summaryPath: result.summaryPath,
+              tracePath: result.tracePath,
+              artifactManifestPath: result.artifactManifestPath,
+              ...(result.diagnosticsPath ? { diagnosticsPath: result.diagnosticsPath } : {}),
+              ...(result.sideFindings ? { sideFindings: result.sideFindings } : {}),
+              ...(callOutput !== undefined ? { output: safeCallOutput } : {}),
+              recovered: state.recovered,
+              mutations: state.mutations,
+              exitCode: result.status === 'pass' ? EXIT.ok : EXIT.runtime,
+              ...(result.status === 'fail'
+                ? {
+                    error: {
+                      code: 'ACTION_EXECUTION_FAILED',
+                      message: `${resolvedAction} failed; inspect the persisted result and evidence paths`,
+                      userAction: failureUserAction,
+                    },
+                  }
+                : {}),
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        const renderedInputs = Object.keys(args).length > 0 ? formatCallOutput(safeArgs) : '';
+        const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
+        const diagnostics = formatRunDiagnosticsForHuman(
+          readRunDiagnosticsDocument(result.diagnosticsPath),
+          adapter,
+        );
+        const renderedDiagnostics = `${out('label', 'Diagnostics:')}\n${diagnostics.map((line) => `  ${line}`).join('\n')}\n`;
+        console.log(
+          `${out('label', 'call')} ${out('cmd', resolvedAction)}: ${out(result.status === 'pass' ? 'ok' : 'err', result.status)}` +
+            `${renderedInputs ? `\n${out('label', 'Inputs:')}\n${renderedInputs}` : ''}` +
+            `${Object.keys(defaultsUsed).length > 0 ? `\n${renderDefaultsUsed(defaultsUsed, process.stdout)}` : ''}` +
+            `${callOutput !== undefined ? `\n${out('label', 'Result:')}\n${formatCallOutput(safeCallOutput)}` : ''}\n` +
+            renderedDiagnostics +
+            `${out('label', 'Artifacts:')} ${out('path', result.artifactManifestPath)}` +
+            (result.status === 'fail' ? `\n  Next: ${failureUserAction}` : ''),
+        );
+      }
+      return result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+    } finally {
+      lock.release();
+    }
   } finally {
-    lock.release();
+    restoreRuntimeEnvironment();
   }
 }
 

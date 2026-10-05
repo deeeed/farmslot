@@ -110,6 +110,7 @@ export interface PreparedRecipeExecution {
   provenanceSnapshots: ExecutionProvenanceSnapshot[];
 }
 
+/** Execute a recipe inside the caller's `activateRecipeRuntimeEnvironment` scope. */
 export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   engine: RecipeEngine<TMutation, TAllowlist>,
   adapter: string,
@@ -121,111 +122,103 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   preflightedExecution?: PreparedRecipeExecution,
   effectsState: HealState = newHealState(),
 ): Promise<RecipeRunEvidence> {
-  const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
-    adapter,
-    projectRoot,
-    runtimeOptions,
-  );
-  try {
-    const wasPreflighted = preflightedExecution !== undefined;
-    const execution =
-      preflightedExecution ??
-      (await resolveRecipeExecution(
-        engine,
-        adapter,
-        recipe,
-        artifactsDir,
-        projectRoot,
-        actionManifestPath,
-        runtimeOptions,
-      ));
-    const {
-      runner,
-      runRequest,
-      absoluteArtifactsDir,
-      useFramedRecording,
-      provenanceInput,
-      provenanceSnapshots,
-    } = execution;
-    if (!wasPreflighted) await runner.preflight(runRequest);
-    await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
-    // The prepared runner owns frozen action bundles. Rechecking its plan here
-    // does not reconstruct adapters or replace their approved bytes.
-    await runner.preflight(runRequest);
-    const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
-    provenanceSnapshots.push(preExecute);
-    const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
-    if (preExecuteDrift.length > 0) {
-      const provenancePath = await writeExecutionProvenance(
-        absoluteArtifactsDir,
-        provenanceSnapshots,
-        preExecuteDrift,
-      );
-      throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
-    }
-    const diagnosticBaseline = await beginRunDiagnostics(adapter, projectRoot);
-    const recording = useFramedRecording
-      ? await startRecipeRecording(adapter, projectRoot, absoluteArtifactsDir, {
-          record: true,
-          cdpPort: runtimeOptions.cdpPort,
-        })
-      : undefined;
-    let result: RecipeRunResult | undefined;
-    let executionError: unknown;
-    try {
-      result = await runner.run(runRequest);
-    } catch (error) {
-      executionError = error;
-      try {
-        await stopRecipeRecording(recording);
-      } catch (recordingError) {
-        console.error(
-          `WARN: recipe and video recording both failed; preserving recipe failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`,
-        );
-      }
-    } finally {
-      // Always clear a HUD step the engine left on-device (a failed run strands
-      // the FAIL banner). Best-effort — never masks the run's real outcome.
-      const run = harnessAdapter(adapter).run;
-      if (run?.teardown) await run.teardown(projectRoot, recipeRunEnv(adapter, runtimeOptions));
-    }
-    let recordingError: unknown;
-    if (executionError === undefined && result) {
-      try {
-        await stopRecipeRecording(recording, result);
-      } catch (error) {
-        recordingError = error;
-      }
-    }
-    const end = await captureExecutionProvenance(provenanceInput, 'end');
-    provenanceSnapshots.push(end);
-    const endDrift = executionProvenanceDrift(provenanceSnapshots[0]!, end);
+  const wasPreflighted = preflightedExecution !== undefined;
+  const execution =
+    preflightedExecution ??
+    (await resolveRecipeExecution(
+      engine,
+      adapter,
+      recipe,
+      artifactsDir,
+      projectRoot,
+      actionManifestPath,
+      runtimeOptions,
+    ));
+  const {
+    runner,
+    runRequest,
+    absoluteArtifactsDir,
+    useFramedRecording,
+    provenanceInput,
+    provenanceSnapshots,
+  } = execution;
+  if (!wasPreflighted) await runner.preflight(runRequest);
+  await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
+  // The prepared runner owns frozen action bundles. Rechecking its plan here
+  // does not reconstruct adapters or replace their approved bytes.
+  await runner.preflight(runRequest);
+  const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
+  provenanceSnapshots.push(preExecute);
+  const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
+  if (preExecuteDrift.length > 0) {
     const provenancePath = await writeExecutionProvenance(
       absoluteArtifactsDir,
       provenanceSnapshots,
-      endDrift,
-      result?.artifactManifestPath,
+      preExecuteDrift,
     );
-    if (endDrift.length > 0) {
-      throw new ProvenanceDriftError(provenancePath, endDrift, executionError);
-    }
-    if (executionError !== undefined) throw executionError;
-    if (recordingError !== undefined) throw recordingError;
-    if (!result) throw new Error('Recipe execution returned no result.');
-    const finalized = await finishRunDiagnostics(diagnosticBaseline, result, engine.console);
-    persistRunEffects(finalized.summaryPath, finalized.artifactManifestPath, effectsState);
-    const browser = executedBrowser(
-      adapter,
-      projectRoot,
-      finalized.artifactManifestPath,
-      recipeCdpPorts(runRequest),
-    );
-    return browser ? { ...finalized, browser } : finalized;
-  } finally {
-    restoreRuntimeEnvironment();
+    throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
   }
+  const diagnosticBaseline = await beginRunDiagnostics(adapter, projectRoot);
+  const recording = useFramedRecording
+    ? await startRecipeRecording(adapter, projectRoot, absoluteArtifactsDir, {
+        record: true,
+        cdpPort: runtimeOptions.cdpPort,
+      })
+    : undefined;
+  let result: RecipeRunResult | undefined;
+  let executionError: unknown;
+  try {
+    result = await runner.run(runRequest);
+  } catch (error) {
+    executionError = error;
+    try {
+      await stopRecipeRecording(recording);
+    } catch (recordingError) {
+      console.error(
+        `WARN: recipe and video recording both failed; preserving recipe failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`,
+      );
+    }
+  } finally {
+    // Always clear a HUD step the engine left on-device (a failed run strands
+    // the FAIL banner). Best-effort — never masks the run's real outcome.
+    const run = harnessAdapter(adapter).run;
+    if (run?.teardown) await run.teardown(projectRoot, recipeRunEnv(adapter, runtimeOptions));
+  }
+  let recordingError: unknown;
+  if (executionError === undefined && result) {
+    try {
+      await stopRecipeRecording(recording, result);
+    } catch (error) {
+      recordingError = error;
+    }
+  }
+  const end = await captureExecutionProvenance(provenanceInput, 'end');
+  provenanceSnapshots.push(end);
+  const endDrift = executionProvenanceDrift(provenanceSnapshots[0]!, end);
+  const provenancePath = await writeExecutionProvenance(
+    absoluteArtifactsDir,
+    provenanceSnapshots,
+    endDrift,
+    result?.artifactManifestPath,
+  );
+  if (endDrift.length > 0) {
+    throw new ProvenanceDriftError(provenancePath, endDrift, executionError);
+  }
+  if (executionError !== undefined) throw executionError;
+  if (recordingError !== undefined) throw recordingError;
+  if (!result) throw new Error('Recipe execution returned no result.');
+  const finalized = await finishRunDiagnostics(diagnosticBaseline, result, engine.console);
+  persistRunEffects(finalized.summaryPath, finalized.artifactManifestPath, effectsState);
+  const browser = executedBrowser(
+    adapter,
+    projectRoot,
+    finalized.artifactManifestPath,
+    recipeCdpPorts(runRequest),
+  );
+  return browser ? { ...finalized, browser } : finalized;
 }
 
+/** Resolve and preflight a recipe inside the caller's `activateRecipeRuntimeEnvironment` scope. */
 export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   engine: RecipeEngine<TMutation, TAllowlist>,
   adapter: string,
@@ -235,26 +228,17 @@ export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllow
   actionManifestPath?: string,
   runtimeOptions: RecipeEngineRunOptions = {},
 ): Promise<PreparedRecipeExecution> {
-  const restoreRuntimeEnvironment = activateRecipeRuntimeEnvironment(
+  const execution = await resolveRecipeExecution(
+    engine,
     adapter,
+    recipe,
+    artifactsDir,
     projectRoot,
+    actionManifestPath,
     runtimeOptions,
   );
-  try {
-    const execution = await resolveRecipeExecution(
-      engine,
-      adapter,
-      recipe,
-      artifactsDir,
-      projectRoot,
-      actionManifestPath,
-      runtimeOptions,
-    );
-    await execution.runner.preflight(execution.runRequest);
-    return execution;
-  } finally {
-    restoreRuntimeEnvironment();
-  }
+  await execution.runner.preflight(execution.runRequest);
+  return execution;
 }
 
 /** Record the run's recoveries and mutations in its summary and artifact manifest. */
@@ -584,6 +568,12 @@ function runEnvKeys(): string[] {
   return ['CDP_PORT', 'RECIPE_CDP_PORT', 'WATCHER_PORT', ...adapterPortEnv()];
 }
 
+/**
+ * The run's ports and platform environment: the slot's ports, then the explicit
+ * ones, then the platform's own. `run` and `call` open one scope around
+ * preflight, the runtime check, the observers and the execution, so all of them
+ * see the same ports. Returns the restore.
+ */
 export function activateRecipeRuntimeEnvironment(
   adapter: string,
   projectRoot: string,

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Add the optional `PlatformAdapter` member `observation` (`AdapterObservation`), moved from the metamask-harness surface: `network.backend(target, env, artifactsDir)` returns the platform's `NetworkCaptureBackend` and `network.actions` lets recipes call `app.network_capture`/`app.network_assert`; `performance.start(context)` returns a `RunObserver` (`onActionEvent`, `finalize`) for the run.
+- Add the optional `PlatformAdapter` member `observation` (`AdapterObservation`), moved from the metamask-harness surface: `network.backend(target, env, artifactsDir)` returns the platform's `NetworkCaptureBackend` and `network.actions` lets recipes call `app.network_capture`/`app.network_assert`; `performance.start({ target, artifactsDir, env })` returns a `RunObserver` (`onActionEvent`, `finalize`) for the run; `env` carries the run's ports. `run.runtimeCheck` runs on the run's ports too.
 
 ## 0.3.1 - 2026-10-05
 
