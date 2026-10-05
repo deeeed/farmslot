@@ -176,6 +176,79 @@ function describeManifestAction(
   };
 }
 
+/**
+ * One action in full, as `actions --action <name>` and `call <action> --help`
+ * print it: the call form, description, source, risk, result cases, fields
+ * with their types, up to two authored examples, and the first one as a
+ * runnable call with its recipe node.
+ */
+export function renderActionDetail(
+  entry: DescribedAction,
+  adapter: string,
+  target: string,
+  executable: string,
+): string {
+  const host = harnessHost().name;
+  const schema = isRecord(entry.schema) ? entry.schema : {};
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((r): r is string => typeof r === 'string')
+      : [],
+  );
+  const lines: string[] = [
+    `${host} call ${entry.name} [key=value ...] [--arg k=v ...] [flags]`,
+    '',
+  ];
+  if (entry.description) lines.push(`  ${entry.description}`, '');
+  lines.push(
+    `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''}`,
+  );
+  if (entry.capabilities.length > 0) lines.push(`  Risk: ${entry.capabilities.join(', ')}`);
+  if (entry.result_cases?.length) lines.push(`  Result cases: ${entry.result_cases.join(', ')}`);
+  lines.push('');
+  if (entry.fields.length === 0) {
+    lines.push('  Fields: (none)');
+  } else {
+    lines.push('  Fields (pass as <name>=<value> or --arg <name>=<value>):');
+    const width = Math.max(...entry.fields.map((name) => name.length));
+    for (const name of entry.fields) {
+      const prop = isRecord(properties[name]) ? properties[name] : {};
+      const type = typeof prop.type === 'string' ? prop.type : 'any';
+      const req = required.has(name) ? ' (required)' : '';
+      const desc = typeof prop.description === 'string' ? ` — ${prop.description}` : '';
+      const enumVals = Array.isArray(prop.enum) ? ` [one of: ${prop.enum.join(', ')}]` : '';
+      const defaultValue = Object.hasOwn(prop, 'default')
+        ? ` [default: ${JSON.stringify(prop.default)}]`
+        : '';
+      lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
+    }
+  }
+  const examples = shortExampleCalls(entry);
+  if (examples.length > 0) {
+    lines.push('', '  Examples:');
+    for (const example of examples) lines.push(`    ${example}`);
+  }
+  const runnable = renderHumanActionExample(entry, adapter, target, executable);
+  if (runnable) lines.push('', runnable);
+  return lines.join('\n');
+}
+
+function shortExampleCalls(entry: DescribedAction): string[] {
+  if (!Array.isArray(entry.examples)) return [];
+  const short = entry.name.split('.').pop() ?? entry.name;
+  const out: string[] = [];
+  for (const example of entry.examples.slice(0, 2)) {
+    const node = isRecord(example) ? example : undefined;
+    if (!node) continue;
+    const tokens = Object.entries(node)
+      .filter(([key]) => key !== 'action' && key !== 'intent' && key !== 'next')
+      .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
+    out.push(`${harnessHost().name} call ${short} ${tokens.join(' ')}`.trim());
+  }
+  return out;
+}
+
 /** The authored example as a human block: the call that runs it and its recipe node. */
 export function renderHumanActionExample(
   entry: DescribedAction,

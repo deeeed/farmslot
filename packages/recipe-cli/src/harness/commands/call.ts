@@ -17,6 +17,7 @@ import {
   type DescribedAction,
   describeManifestActions,
   type RecipeCatalog,
+  renderActionDetail,
   resolveActionCapabilityMatrix,
 } from '../catalog.js';
 import { acquireCheckoutLock } from '../checkout-lock.js';
@@ -28,9 +29,8 @@ import {
 } from '../command-journal.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { conciseFailureForHuman, recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
-import { harnessHost, hostEnvName } from '../host.js';
+import { harnessHost, invokedHostCommand } from '../host.js';
 import {
-  type CliOptions,
   isRecord,
   optionFlag,
   optionString,
@@ -64,6 +64,7 @@ import { checkoutBusyOut, EXIT, usageOut } from '../shared.js';
 import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
+import { handleListExecutables } from './discover.js';
 import { type DeviceTargeting, provenanceFailure, reportTrustFailure } from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
@@ -72,8 +73,6 @@ export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowli
   // The action the usage example names when no action is given; undefined
   // falls back to `command`, then the first action.
   exampleAction?(names: readonly string[]): string | undefined;
-  // `call --list`: the actions `call` accepts.
-  list(options: CliOptions): Promise<number>;
 }
 
 export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>(
@@ -86,7 +85,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   // required). Intercept before the "action first" grammar check.
   if (argv.includes('--list')) {
     const { options } = parseArgs(argv);
-    return commandOptions.list(options);
+    return handleListExecutables('call', options, { catalog: engine });
   }
   if (argv.length > 0 && argv[0]!.startsWith('--')) {
     // The public wrapper catches this with the structured grammar. Keep the
@@ -325,13 +324,8 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     const parameterHelp = parameterValidationHelp(describedAction, validation.findings, args);
     const actionsCommand = `${host} actions --action ${resolvedAction} --adapter ${adapter}`;
     const userAction = describedAction
-      ? (actionExampleCommand(
-          describedAction,
-          adapter,
-          target,
-          process.env[hostEnvName('INVOKED_AS')] ?? process.env[hostEnvName('EXECUTABLE')] ?? host,
-          args,
-        ) ?? actionsCommand)
+      ? (actionExampleCommand(describedAction, adapter, target, invokedHostCommand(), args) ??
+        actionsCommand)
       : actionsCommand;
     if (json)
       console.log(
@@ -721,11 +715,11 @@ export function redactCallValue(value: unknown, key = ''): unknown {
   return key && isSensitiveKey(key) ? '<redacted>' : redactStructuredValue(value);
 }
 
-// `call <action> --help` renders the named action's own field schema (from the
-// action manifest — the same data `actions --action <name>` exposes) above the
-// generic call flags, so parameter help for the action the user asked about is
-// not hidden behind the generic call help. An unresolvable name falls back to the
-// generic help plus a pointer to the vocabulary. Help is never an error: exit 0.
+// `call <action> --help` renders the named action's detail (the same block
+// `actions --action <name>` prints) above the generic call flags, so parameter
+// help for the action the user asked about is not hidden behind the generic call
+// help. An unresolvable name falls back to the generic help plus a pointer to
+// the vocabulary. Help is never an error: exit 0.
 export async function handleCallHelp(
   argv: string[],
   genericHelp: string,
@@ -738,11 +732,12 @@ export async function handleCallHelp(
   );
   const { options } = parseArgs(rest);
   let adapter: string;
+  let target: string;
   let manifest: unknown;
   let actionSources: Awaited<ReturnType<RecipeCatalog['resolveActionManifest']>>['actionSources'] =
     new Map();
   try {
-    ({ adapter } = resolveAdapter(options));
+    ({ adapter, target } = resolveAdapter(options));
     const resolution = await resolveCommandManifest(catalog, adapter, options);
     manifest = resolution.manifest;
     actionSources = resolution.actionSources;
@@ -765,70 +760,11 @@ export async function handleCallHelp(
     }
     return EXIT.ok;
   }
-  for (const entry of matches) process.stdout.write(renderCallActionHelp(entry));
+  for (const entry of matches) {
+    process.stdout.write(`${renderActionDetail(entry, adapter, target, invokedHostCommand())}\n\n`);
+  }
   process.stdout.write(`${genericHelp}\n`);
   return EXIT.ok;
-}
-
-function renderCallActionHelp(entry: DescribedAction): string {
-  const host = harnessHost().name;
-  const short = entry.name.split('.').pop() ?? entry.name;
-  const schema = isRecord(entry.schema) ? entry.schema : {};
-  const properties = isRecord(schema.properties) ? schema.properties : {};
-  const required = new Set(
-    Array.isArray(schema.required)
-      ? schema.required.filter((r): r is string => typeof r === 'string')
-      : [],
-  );
-  const lines: string[] = [
-    `${host} call ${entry.name} [key=value ...] [--arg k=v ...] [flags]`,
-    '',
-  ];
-  if (entry.description) lines.push(`  ${entry.description}`, '');
-  lines.push(
-    `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''}`,
-    '',
-  );
-  const names = Object.keys(properties)
-    .filter((name) => name !== 'action' && name !== 'next')
-    .sort();
-  if (names.length === 0) {
-    lines.push('  Fields: (none)');
-  } else {
-    lines.push('  Fields (pass as <name>=<value> or --arg <name>=<value>):');
-    const width = Math.max(...names.map((name) => name.length));
-    for (const name of names) {
-      const prop = isRecord(properties[name]) ? properties[name] : {};
-      const type = typeof prop.type === 'string' ? prop.type : 'any';
-      const req = required.has(name) ? ' (required)' : '';
-      const desc = typeof prop.description === 'string' ? ` — ${prop.description}` : '';
-      const enumVals = Array.isArray(prop.enum) ? ` [one of: ${prop.enum.join(', ')}]` : '';
-      const defaultValue = Object.hasOwn(prop, 'default')
-        ? ` [default: ${JSON.stringify(prop.default)}]`
-        : '';
-      lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
-    }
-  }
-  const examples = renderCallExamples(short, entry.examples);
-  if (examples.length > 0) {
-    lines.push('', '  Examples:');
-    for (const example of examples) lines.push(`    ${example}`);
-  }
-  return `${lines.join('\n')}\n\n`;
-}
-
-function renderCallExamples(short: string, examples: unknown): string[] {
-  if (!Array.isArray(examples)) return [];
-  const out: string[] = [];
-  for (const example of examples.slice(0, 2)) {
-    const node = isRecord(example) ? example : undefined;
-    if (!node) continue;
-    const tokens = Object.entries(node)
-      .filter(([key]) => key !== 'action' && key !== 'intent')
-      .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
-    out.push(`${harnessHost().name} call ${short} ${tokens.join(' ')}`.trim());
-  }
-  return out;
 }
 
 interface CallArgs {

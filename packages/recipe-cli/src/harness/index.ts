@@ -61,6 +61,7 @@ export {
   withCommandJournal,
 } from './command-journal.js';
 export { type CallCommandOptions, handleCall, handleCallHelp } from './commands/call.js';
+export { handleActions } from './commands/discover.js';
 export { handleLast } from './commands/last.js';
 export { handleLaunch } from './commands/launch.js';
 export { handleReload } from './commands/reload.js';
