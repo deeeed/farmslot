@@ -73,6 +73,16 @@ export function hostEnvName(suffix: string): string {
   return `${current.envPrefix}_${suffix}`;
 }
 
+/**
+ * How the user invoked the host (`<envPrefix>_INVOKED_AS`, else its
+ * executable, else its name), for the commands examples print.
+ */
+export function invokedHostCommand(): string {
+  return (
+    process.env[hostEnvName('INVOKED_AS')] ?? process.env[hostEnvName('EXECUTABLE')] ?? current.name
+  );
+}
+
 /** The recipe-process environment variable `<recipeEnvPrefix>_<suffix>`. */
 export function recipeEnvName(suffix: string): string {
   return `${current.recipeEnvPrefix}_${suffix}`;

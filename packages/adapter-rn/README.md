@@ -6,20 +6,21 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 
 ## Source layout
 
-| Path                                                                         | Owns                                                                                                  |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `bin/`                                                                       | Published `farmslot-adapter-rn` executable shim.                                                      |
-| `src/cli.ts`                                                                 | Init command parsing and CLI entrypoint.                                                              |
-| `src/scaffold.ts`                                                            | File-copy and package-script scaffolding.                                                             |
-| `src/doctor.ts`                                                              | Project integration checks.                                                                           |
-| `src/runner.ts`                                                              | Expo smoke runner wiring built on `@farmslot/recipe-runner`.                                          |
-| `src/redaction.ts`                                                           | Output redaction helpers for generated artifacts.                                                     |
-| `templates/`                                                                 | Versionless project scaffold copied into consuming Expo apps.                                         |
-| `bridge-runtime/`                                                            | Hermes CDP bridge libraries (`lib/*.cjs`) and the console forwarder; a host bridge CLI requires them. |
-| `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.                        |
-| `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing.           |
-| `src/video-recorder.ts`, `src/frame-metrics.ts`                              | Device video recorders and frame-timing summaries.                                                    |
-| `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.                   |
+| Path                                                                         | Owns                                                                                             |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `bin/`                                                                       | Published `farmslot-adapter-rn` executable shim.                                                 |
+| `src/cli.ts`                                                                 | Init command parsing and CLI entrypoint.                                                         |
+| `src/scaffold.ts`                                                            | File-copy and package-script scaffolding.                                                        |
+| `src/doctor.ts`                                                              | Project integration checks.                                                                      |
+| `src/runner.ts`                                                              | Expo smoke runner wiring built on `@farmslot/recipe-runner`.                                     |
+| `src/redaction.ts`                                                           | Output redaction helpers for generated artifacts.                                                |
+| `templates/`                                                                 | Versionless project scaffold copied into consuming Expo apps.                                    |
+| `bridge-runtime/`                                                            | Hermes CDP bridge libraries (`lib/*.cjs`) and the console forwarder.                             |
+| `bridge-runtime/bridge-core.cjs`                                             | Generic bridge CLI (`runBridgeCli`); a host preset adds its commands, routes and recovery hints. |
+| `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.                   |
+| `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing.      |
+| `src/video-recorder.ts`, `src/frame-metrics.ts`                              | Device video recorders and frame-timing summaries.                                               |
+| `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.              |
 
 ## Relationship to the harness
 
@@ -28,6 +29,38 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 - `@farmslot/protocol` owns Recipe Protocol v1 schemas, action names, and validation.
 - `@farmslot/recipe-runner` owns the generic runner, official core actions, UI actions, and CDP/React Native transports.
 - `@farmslot/adapter-rn` adds Expo-friendly scaffolding (package scripts, a default recipe, optional dev-only React Native bridge/HUD files, integration checks) and the generic React Native runtime a harness drives: the Hermes bridge libraries, Metro helpers, device tools, recorders and freshness fingerprints. Product commands, routes and env names stay in the host harness.
+
+### Bridge CLI preset
+
+A host's bridge script is a preset over `runBridgeCli`:
+
+```js
+// my-app/bridge-runtime/cdp-bridge.cjs
+const { runBridgeCli } = require('@farmslot/adapter-rn/bridge-runtime/bridge-core.cjs');
+const { cdpEval } = require('@farmslot/adapter-rn/bridge-runtime/lib/cdp-eval.cjs');
+
+runBridgeCli({
+  appLabel: 'My App',
+  routes: { aliases: { Home: 'HomeView' }, nestedParents: { SettingsDetail: 'Settings' } },
+  teachingByErrorCode: { NO_TARGET: 'Next: open the app on the device.' },
+  commands: {
+    // `status` also gets the core's `status-selected` (the pinned target only).
+    // Handlers get (client, args, { deviceName, platform, runtimeIdentity }).
+    async status(client, _args, { deviceName } = {}) {
+      return { route: await cdpEval(client, 'globalThis.__AGENTIC__?.getRoute?.()'), deviceName };
+    },
+  },
+  commandDocs: { status: { help: '  status                       App status' } },
+  // measure-scroll-transition: console lines starting with a prefix carry a JSON event.
+  perfMarkerPrefixes: ['[MyAppPerf] '],
+  // Evaluated only when a measure-scroll-transition request sets requireWalletReady: true;
+  // it must return { ready, observedAtMs }, and the measurement refuses unless ready is true.
+  readyExpression:
+    '({ ready: Boolean(globalThis.__AGENTIC__?.getRoute?.()), observedAtMs: performance.now() })',
+});
+```
+
+The built-in commands use the app's dev-only `globalThis.__AGENTIC__` bridge where present (`platform`, `getRoute`, `getState`, `navigate`, `canGoBack`, `goBack`, `pressTestId`, `pressText`, `queryUiTarget`, `setInput`, `scrollView`, `scrollIntoView`, and `showStep`/`hideStep` for the HUD). A host command that reuses a built-in name, or `status-selected`, throws at startup.
 
 Do not add project-specific actions such as wallet, perps, or meetings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions. Generic whole-run video proof stays in the shared harness capability surface.
 
