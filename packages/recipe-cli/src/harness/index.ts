@@ -64,6 +64,7 @@ export {
   type ContractValidationOptions,
   optionalValueOption,
   type OptionSpec,
+  optionValues,
   type PositionalSpec,
   publicCommandTokens,
   validatePublicInvocation,

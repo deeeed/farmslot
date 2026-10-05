@@ -16,8 +16,11 @@ export type CliUsageErrorCode =
 
 export interface OptionSpec {
   kind: 'boolean' | 'value' | 'optional-value';
-  /** Accepted values; a function is read at validation time (registry or library ids). */
-  choices?: readonly string[] | (() => readonly string[]);
+  /**
+   * Accepted values. A function is read at validation time with the tokens
+   * after the command (registry ids plus the ids `--library` entries declare).
+   */
+  choices?: readonly string[] | ((tokens: readonly string[]) => readonly string[]);
 }
 
 export interface PositionalSpec {
@@ -195,7 +198,7 @@ export function validatePublicInvocation(
       return fail.usage('CLI_MISSING_OPTION_VALUE', `${optionName} requires a value.`);
     }
     if (inlineValue === undefined) index += 1;
-    const choices = typeof spec.choices === 'function' ? spec.choices() : spec.choices;
+    const choices = typeof spec.choices === 'function' ? spec.choices(tokens) : spec.choices;
     if (choices && !choices.includes(optionValue)) {
       const suggestion = closest(optionValue, choices);
       return {
@@ -260,6 +263,19 @@ export function validatePublicInvocation(
     }
   }
   return null;
+}
+
+/** Every value `option` takes in `tokens` before any `--`, separate (`--x v`) or inline (`--x=v`). */
+export function optionValues(tokens: readonly string[], option: string): string[] {
+  const values: string[] = [];
+  const divider = tokens.indexOf('--');
+  const scope = divider === -1 ? tokens : tokens.slice(0, divider);
+  for (let index = 0; index < scope.length; index += 1) {
+    const token = scope[index] ?? '';
+    if (token === option && index + 1 < scope.length) values.push(scope[(index += 1)] ?? '');
+    else if (token.startsWith(`${option}=`)) values.push(token.slice(option.length + 1));
+  }
+  return values;
 }
 
 /** Every public command name and alias, in table order. */

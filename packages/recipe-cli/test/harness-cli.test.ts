@@ -11,6 +11,7 @@ import {
 } from '@farmslot/adapter-sdk';
 
 import {
+  adapterChoices,
   booleanOption,
   type CommandContract,
   configureHarnessAdapters,
@@ -18,10 +19,12 @@ import {
   type ContractedCommand,
   contractOptions,
   createHarnessCli,
+  harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
   harnessHost,
   optionalValueOption,
+  optionValues,
   publicCommandTokens,
   type PublicHarnessCommand,
   usageError,
@@ -214,6 +217,10 @@ beforeEach(() => {
   delete process.env.SHOP_HARNESS_BIN;
   delete process.env.SHOP_HARNESS_RUN_MODE;
   delete process.env.RECIPE_RUNTIME_DIR;
+  delete process.env.RECIPE_LIBRARY_PATH;
+  // No personal library from ~/.farmslot reaches the tests.
+  process.env.FARMSLOT_HOME = tempRoot();
+  (globalThis as Record<string, unknown>).__pluginImports = [];
   process.chdir(tempRoot());
 });
 afterEach(() => {
@@ -578,5 +585,88 @@ describe('createHarnessCli', () => {
     createHarnessCli(options);
     assert.equal(harnessHost().name, 'shop-harness');
     assert.deepEqual(options.adapters.list(), ['web']);
+  });
+});
+
+describe('library-declared adapters', () => {
+  // A library whose recipe-library.json declares `id`, implemented by a module
+  // that records its import.
+  function pluginLibrary(id: string, sdkVersion = ADAPTER_SDK_VERSION): string {
+    const root = fs.realpathSync(tempRoot());
+    fs.mkdirSync(path.join(root, 'plugins'));
+    fs.writeFileSync(
+      path.join(root, 'plugins', `${id}.mjs`),
+      `globalThis.__pluginImports.push('${id}');
+export const adapter = {
+  id: '${id}', sdkVersion: ${sdkVersion}, headless: true, resolveSlotPorts() {},
+  async runtimeStatus() { return { decision: 'ready', reasons: [] }; },
+  devServer: { label: 'none', describe: () => 'none', stop: () => ({ kind: 'none' }) },
+  logSources: () => [], appLogSource: () => null,
+  hints: { launch: 'l', relaunch: 'l', runtimeProbeRecovery: () => 'd' },
+  actions: { manifestPath: () => '/m.json', semantic: [], cdpTarget: { transport: 'none', probePath: '/' } },
+  harness: { install: { entry: 'i', fallback: 'i' }, cleanup: { entry: 'c', fallback: 'c' }, verify: () => ({ error: 'none' }) },
+  runtimeContext: { forbiddenFields: [] },
+  async launch() { return 0; },
+};
+`,
+    );
+    fs.writeFileSync(
+      path.join(root, 'recipe-library.json'),
+      JSON.stringify({ adapters: { [id]: { module: `./plugins/${id}.mjs`, export: 'adapter' } } }),
+    );
+    return root;
+  }
+  const imported = (): string[] =>
+    (globalThis as Record<string, unknown>).__pluginImports as string[];
+  function pluginOptions(): HarnessCliOptions {
+    const doctor = command('doctor', {
+      options: contractOptions(HELP, JSON_FLAG, {
+        '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+        '--library': valueOption(),
+      }),
+    });
+    return cliOptions({ commands: [...shopCommands(), doctor] });
+  }
+
+  test('imports a declared adapter only when the command selects it', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('plug')}`;
+    const cli = createHarnessCli(pluginOptions());
+    assert.deepEqual(await cli.main(['doctor']), { exitCode: 0, exit: 'code' });
+    assert.deepEqual(imported(), []);
+    assert.deepEqual(await cli.main(['doctor', '--adapter', 'plug']), {
+      exitCode: 0,
+      exit: 'code',
+    });
+    assert.deepEqual(imported(), ['plug']);
+    assert.equal(harnessAdapters().has('plug'), true);
+  });
+
+  test('accepts a --library adapter in the grammar and loads it from that library', async () => {
+    const root = pluginLibrary('flagged');
+    const cli = createHarnessCli(pluginOptions());
+    const refused = await capture(() => cli.main(['doctor', '--adapter', 'flagged']));
+    assert.equal(refused.result.exitCode, 2);
+    assert.match(refused.stderr, /--adapter must be web; received 'flagged'\./u);
+    assert.deepEqual(await cli.main(['doctor', '--adapter=flagged', '--library', `lib=${root}`]), {
+      exitCode: 0,
+      exit: 'code',
+    });
+    assert.deepEqual(imported(), ['flagged']);
+  });
+
+  test('prints a refused adapter with its code and next step', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('old', 99)}`;
+    const cli = createHarnessCli(pluginOptions());
+    const human = await capture(() => cli.main(['doctor', '--adapter', 'old']));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.match(
+      human.stderr,
+      /^✗ shop-harness doctor: adapter 'old' targets adapter SDK 99; shop-harness implements \d+\.\n {2}Next: /u,
+    );
+    const json = await capture(() => cli.main(['doctor', '--adapter', 'old', '--json']));
+    const envelope = JSON.parse(json.stdout) as { error: { code: string } };
+    assert.equal(envelope.error.code, 'ADAPTER_SDK_UNSUPPORTED');
+    assert.equal(harnessAdapters().has('old'), false);
+    assert.deepEqual(calls, []);
   });
 });

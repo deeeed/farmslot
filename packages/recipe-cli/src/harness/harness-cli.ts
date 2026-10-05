@@ -12,12 +12,23 @@ import type { AdapterRegistry } from '@farmslot/adapter-sdk';
 import { RECIPE_CLI_VERSION } from '../version.js';
 
 import { handleCallHelp } from './commands/call.js';
-import { configureHarnessAdapters, detectAdapter, harnessAdapter } from './adapters.js';
+import {
+  type AdapterLoadOptions,
+  adapterSelectionFailureOut,
+  ensureAdapterLoaded,
+} from './adapter-plugins.js';
+import {
+  adapterForPlatform,
+  configureHarnessAdapters,
+  detectAdapter,
+  harnessAdapter,
+} from './adapters.js';
 import type { RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import {
   type CliUsageError,
   type CommandContract,
+  optionValues,
   validatePublicInvocation,
 } from './command-contract.js';
 import { withCommandJournal } from './command-journal.js';
@@ -89,6 +100,8 @@ export interface HarnessCliOptions {
   beforeDispatch?(argv: readonly string[]): void;
   /** When set, `call <action> --help` renders the action's fields above call's help. */
   catalog?: RecipeCatalog;
+  /** Turns a library-declared adapter into the host's adapter before it registers. */
+  adopt?: AdapterLoadOptions['adopt'];
   /** Retired option spellings and their replacements, for the unknown-option suggestion. */
   replacedOptions?: Readonly<Record<string, string>>;
 }
@@ -153,6 +166,12 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     await options.libraries?.hydrate(targetFromArgv(argv));
 
+    // A library-declared adapter loads only when the command selects it.
+    if (command) {
+      const refused = await loadSelectedAdapter(command.name, argv, options.adopt);
+      if (refused !== undefined) return { exitCode: refused, exit: 'now' };
+    }
+
     // Leaves own --help after `--`; commander would intercept it.
     if (command && hasPassthroughHelp(argv)) {
       return { exitCode: await dispatch(command, argv), exit: 'now' };
@@ -215,6 +234,43 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
       process.exitCode = exitCode;
     },
   };
+}
+
+// Loads the adapter `--adapter` (else `--platform`) selects, if a library
+// declares it. A refused plugin prints its code and next step; returns that exit.
+async function loadSelectedAdapter(
+  command: string,
+  argv: readonly string[],
+  adopt: AdapterLoadOptions['adopt'],
+): Promise<number | undefined> {
+  const tokens = argv.slice(1);
+  const selected =
+    optionValues(tokens, '--adapter').at(-1) ?? optionValues(tokens, '--platform').at(-1);
+  if (selected === undefined) return undefined;
+  try {
+    await ensureAdapterLoaded(adapterForPlatform(selected), {
+      libraries: optionValues(tokens, '--library'),
+      adopt,
+    });
+    return undefined;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      typeof error.code === 'string' &&
+      'userAction' in error &&
+      typeof error.userAction === 'string'
+    ) {
+      return adapterSelectionFailureOut(requested(argv, '--json'), command, {
+        code: error.code,
+        message: error.message,
+        userAction: error.userAction,
+      });
+    }
+    return mapErrors(() => {
+      throw error;
+    });
+  }
 }
 
 function exitOf(command: HarnessCommand): 'now' | 'code' {
