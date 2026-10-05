@@ -29,6 +29,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { defaultCallArtifactsDir, redactCallValue } from '../src/harness/commands/call.js';
+import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
   actionExampleCommand,
   actionLibraryContextArgs,
@@ -45,7 +46,9 @@ import {
   harnessHost,
   listRunnableRecipes,
   newHealState,
+  ProvenanceDriftError,
   type RecipeEngine,
+  recipeRuntimePath,
   renderHumanActionExample,
   resolveActionCapabilityMatrix,
   resolveLibrarySources,
@@ -122,13 +125,22 @@ const PING_ACTION = {
   },
 };
 
+// A team library's action, declared for every adapter when a `team` source is configured.
+const WAVE_ACTION = {
+  description: 'Wave at the team.',
+  execution_capabilities: ['host-read-export'],
+  examples: [{ action: 'team.wave', intent: 'Wave at the team.', next: 'done' }],
+  schema: { type: 'object', properties: {}, additionalProperties: false },
+};
+
 // `web` declares shop.ping; `api` (headless) only the core actions.
-function manifestFor(adapter: string): RecipeActionManifestDocument {
+function manifestFor(adapter: string, team = false): RecipeActionManifestDocument {
   return {
     $schema: CORE_ACTIONS.$schema,
     actions: {
       ...CORE_ACTIONS.actions,
       ...(adapter === 'web' ? { 'shop.ping': PING_ACTION } : {}),
+      ...(team ? { 'team.wave': WAVE_ACTION } : {}),
     },
   } as RecipeActionManifestDocument;
 }
@@ -167,7 +179,7 @@ type ShopEngine = RecipeEngine<{ bound: string }, { entries: unknown[]; problems
 function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
   return {
     bundledLibrary: { name: 'shop', root: libraryRoot, actionNamespace: 'shop' },
-    async resolveActionManifest(adapter, overridePath) {
+    async resolveActionManifest(adapter, overridePath, sources) {
       if (overridePath) {
         return {
           manifest: JSON.parse(
@@ -178,7 +190,10 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
       }
       const manifestPath = path.join(libraryRoot, 'manifests', `${adapter}.action-manifest.json`);
       return {
-        manifest: manifestFor(adapter),
+        manifest: manifestFor(
+          adapter,
+          sources?.some((source) => source.name === 'team'),
+        ),
         actionSources: new Map(
           adapter === 'web'
             ? [['shop.ping', { name: 'shop', tier: 'canonical' as const, manifestPath }]]
@@ -710,6 +725,16 @@ describe('recipe validation', () => {
       validated.usageError?.message ?? '',
       /no packaged library recipe matched\. Library recipes for web: hello \(shop-harness run <name>\)\. This is an action, not a recipe\. Use: shop-harness call shop\.ping --adapter web --target /u,
     );
+    const team = tempRoot('recipe-cli-hint-team-');
+    fs.mkdirSync(path.join(team, 'recipes'));
+    const teamAction = await validateRunRecipeStatic(engine, 'wave', 'api', {
+      target,
+      library: [`team=${team}`],
+    });
+    assert.match(
+      teamAction.usageError?.message ?? '',
+      /This is an action, not a recipe\. Use: shop-harness call team\.wave --adapter api /u,
+    );
     const unparseable = path.join(target, 'broken.recipe.json');
     fs.writeFileSync(unparseable, '{');
     assert.equal(
@@ -1074,6 +1099,105 @@ describe('run', () => {
   });
 });
 
+describe('refusal and failure envelopes', () => {
+  function lockCheckout(prefix: string): string {
+    const target = tempRoot(prefix);
+    fs.mkdirSync(path.dirname(recipeRuntimePath(target, 'recipe.lock')), { recursive: true });
+    fs.writeFileSync(recipeRuntimePath(target, 'recipe.lock'), '');
+    return target;
+  }
+  const running = (targetArg: string) =>
+    `inspect the checkout state with: shop-harness status --target ${targetArg} --json; retry after the active recipe finishes`;
+
+  test('a running recipe refuses run and call with the shell-quoted target, prepareHeal with the plain one', async () => {
+    const spaced = lockCheckout('recipe cli refusal-');
+    const run = await capture(() =>
+      handleRun(['hello', '--adapter', 'api', '--target', spaced, '--json'], runOptions),
+    );
+    assert.equal(run.value, 4);
+    assert.deepEqual(lastJson(run.stdout).error, {
+      code: 'RECIPE_RUNNING',
+      message: 'a recipe is currently running — refusing to start while another recipe executes.',
+      userAction: running(`'${spaced}'`),
+    });
+    const call = await capture(() =>
+      handleCall(['ping', '--adapter', 'web', '--target', spaced, '--json'], callOptions),
+    );
+    assert.equal(call.value, 4);
+    assert.equal(
+      (lastJson(call.stdout).error as { userAction: string }).userAction,
+      running(`'${spaced}'`),
+    );
+
+    const plain = lockCheckout('recipe-cli-refusal-');
+    const runPlain = await capture(() =>
+      handleRun(['hello', '--adapter', 'api', '--target', plain, '--json'], runOptions),
+    );
+    assert.equal(
+      (lastJson(runPlain.stdout).error as { userAction: string }).userAction,
+      running(`'${plain}'`),
+    );
+    const heal = await capture(() => prepareHeal('api', plain, {}, true));
+    assert.equal(heal.value, 4);
+    assert.equal(
+      (lastJson(heal.stdout).error as { userAction: string }).userAction,
+      running(plain),
+    );
+  });
+
+  test('a trust failure prints at most ten restricted nodes and the next step', async () => {
+    const blocked = Array.from({ length: 11 }, (_, index) => ({
+      nodeId: `n${index}`,
+      action: 'shop.ping',
+      capabilities: ['host-read-export'],
+      source: 'team',
+      ...(index === 0 ? { implementation: { kind: 'live-adapter', digest: 'sha256:abc' } } : {}),
+    }));
+    const failure = {
+      code: 'RECIPE_APPROVAL_REQUIRED',
+      message: 'Approval required.',
+      userAction: 'review the plan',
+      details: { blocked },
+    };
+    const human = await capture(async () => reportTrustFailure('call', failure, false));
+    assert.deepEqual(human.stderr, [
+      '✗ shop-harness call: Approval required.',
+      '  Restricted plan nodes:',
+      '  - n0: shop.ping [host-read-export] source=team implementation=live-adapter@sha256:abc',
+      ...blocked
+        .slice(1, 10)
+        .map((node) => `  - ${node.nodeId}: shop.ping [host-read-export] source=team`),
+      '  - … 1 more (use --json)',
+      '  Next: review the plan',
+    ]);
+    const json = await capture(async () => reportTrustFailure('run', failure, true));
+    assert.deepEqual(Object.keys(lastJson(json.stdout)), [
+      'schemaVersion',
+      'command',
+      'status',
+      'error',
+      'exitCode',
+    ]);
+    assert.equal(lastJson(json.stdout).command, 'run');
+  });
+
+  test('a provenance failure reports the drift record in a fixed key order', () => {
+    const drift = [
+      { phase: 'end' as const, field: 'product.sourceFingerprint', start: 'a', current: 'b' },
+    ];
+    const failure = provenanceFailure(new ProvenanceDriftError('/tmp/provenance.json', drift));
+    assert.deepEqual(Object.keys(failure), [
+      'code',
+      'message',
+      'userAction',
+      'provenancePath',
+      'drift',
+    ]);
+    assert.equal(failure.provenancePath, '/tmp/provenance.json');
+    assert.deepEqual(failure.drift, drift);
+  });
+});
+
 describe('call', () => {
   test('runs one action and reports its output with redacted inputs', async () => {
     const target = checkout();
@@ -1176,6 +1300,41 @@ describe('call', () => {
         suggestion: 'fast',
       },
     ]);
+  });
+
+  test('resolves names against --action-manifest and the --library sources', async () => {
+    const target = checkout();
+    const override = path.join(tempRoot('recipe-cli-override-'), 'api.action-manifest.json');
+    fs.writeFileSync(override, JSON.stringify(manifestFor('api')));
+    const overridden = await capture(() =>
+      handleCall(
+        ['ping', '--adapter', 'web', '--target', target, '--action-manifest', override, '--json'],
+        callOptions,
+      ),
+    );
+    assert.equal(overridden.value, 2);
+    assert.equal((lastJson(overridden.stdout).error as { code: string }).code, 'ACTION_UNKNOWN');
+
+    const team = tempRoot('recipe-cli-team-');
+    fs.mkdirSync(path.join(team, 'recipes'));
+    const library = await capture(() =>
+      handleCall(
+        [
+          'wave',
+          'bogus=1',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--library',
+          `team=${team}`,
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(library.value, 5);
+    assert.equal(lastJson(library.stdout).resolvedAction, 'team.wave');
   });
 
   test('without an action, teaches with the host example or the generic fallback', async () => {
