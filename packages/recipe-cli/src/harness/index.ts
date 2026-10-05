@@ -22,13 +22,9 @@ export {
 } from './artifact-files.js';
 export {
   type ActionCapabilitySource,
-  actionExampleCommand,
-  actionLibraryContextArgs,
   type DescribedAction,
   describeManifestActions,
   type RecipeCatalog,
-  renderHumanActionExample,
-  resolveActionCapabilityMatrix,
   type ResolvedActionManifest,
 } from './catalog.js';
 export {

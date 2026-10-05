@@ -12,7 +12,12 @@ import {
 } from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
-import { actionCapabilityMatrix, actionCategory, type ActionMatrixRow } from '../action-catalog.js';
+import {
+  actionCapabilityMatrix,
+  actionCategory,
+  type ActionMatrixRow,
+  shortActionNames,
+} from '../action-catalog.js';
 
 import { harnessAdapters } from './adapters.js';
 import { color } from './cli-color.js';
@@ -178,15 +183,17 @@ function describeManifestAction(
 
 /**
  * One action in full, as `actions --action <name>` and `call <action> --help`
- * print it: the call form, description, source, risk, result cases, fields
- * with their types, up to two authored examples, and the first one as a
- * runnable call with its recipe node.
+ * print it: the call form, description, source and adapter, risk, result
+ * cases, fields with their types, up to two authored examples, and the first
+ * one as a runnable call with its recipe node. `actionNames` is the adapter's
+ * vocabulary, which decides whether the short name is unambiguous.
  */
 export function renderActionDetail(
   entry: DescribedAction,
   adapter: string,
   target: string,
   executable: string,
+  actionNames: readonly string[],
 ): string {
   const host = harnessHost().name;
   const schema = isRecord(entry.schema) ? entry.schema : {};
@@ -202,7 +209,7 @@ export function renderActionDetail(
   ];
   if (entry.description) lines.push(`  ${entry.description}`, '');
   lines.push(
-    `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''}`,
+    `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''} · adapter ${adapter}`,
   );
   if (entry.capabilities.length > 0) lines.push(`  Risk: ${entry.capabilities.join(', ')}`);
   if (entry.result_cases?.length) lines.push(`  Result cases: ${entry.result_cases.join(', ')}`);
@@ -224,7 +231,7 @@ export function renderActionDetail(
       lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
     }
   }
-  const examples = shortExampleCalls(entry);
+  const examples = shortExampleCalls(entry, actionNames);
   if (examples.length > 0) {
     lines.push('', '  Examples:');
     for (const example of examples) lines.push(`    ${example}`);
@@ -234,17 +241,22 @@ export function renderActionDetail(
   return lines.join('\n');
 }
 
-function shortExampleCalls(entry: DescribedAction): string[] {
+// Up to two authored examples as `call` lines: the short name where it is
+// unambiguous, and only the action's fields, quoted, as actionExampleCommand
+// renders them.
+function shortExampleCalls(entry: DescribedAction, actionNames: readonly string[]): string[] {
   if (!Array.isArray(entry.examples)) return [];
-  const short = entry.name.split('.').pop() ?? entry.name;
+  const name = shortActionNames(actionNames).get(entry.name) ?? entry.name;
   const out: string[] = [];
   for (const example of entry.examples.slice(0, 2)) {
     const node = isRecord(example) ? example : undefined;
     if (!node) continue;
-    const tokens = Object.entries(node)
-      .filter(([key]) => key !== 'action' && key !== 'intent' && key !== 'next')
-      .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
-    out.push(`${harnessHost().name} call ${short} ${tokens.join(' ')}`.trim());
+    const tokens = entry.fields.flatMap((field) =>
+      Object.hasOwn(node, field)
+        ? [shellQuoteArg(`${field}=${safeActionCallValue(field, node[field])}`)]
+        : [],
+    );
+    out.push([harnessHost().name, 'call', shellQuoteArg(name), ...tokens].join(' '));
   }
   return out;
 }

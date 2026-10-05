@@ -28,17 +28,23 @@ import {
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
+import {
+  actionExampleCommand,
+  actionLibraryContextArgs,
+  renderActionDetail,
+  renderHumanActionExample,
+  resolveActionCapabilityMatrix,
+} from '../src/harness/catalog.js';
 import { defaultCallArtifactsDir, redactCallValue } from '../src/harness/commands/call.js';
 import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
-  actionExampleCommand,
-  actionLibraryContextArgs,
   activateRecipeRuntimeEnvironment,
   type CallCommandOptions,
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  type DescribedAction,
   describeManifestActions,
   describeRunnableRecipe,
   handleActions,
@@ -52,8 +58,6 @@ import {
   ProvenanceDriftError,
   type RecipeEngine,
   recipeRuntimePath,
-  renderHumanActionExample,
-  resolveActionCapabilityMatrix,
   resolveLibrarySources,
   resolveRecipeParamValue,
   type RunCommandOptions,
@@ -866,7 +870,7 @@ describe('actions', () => {
     for (const line of [
       'shop-harness call shop.ping [key=value ...] [--arg k=v ...] [flags]',
       '  Ping the shop.',
-      `  Source: shop (${path.join(library, 'manifests', 'web.action-manifest.json')})`,
+      `  Source: shop (${path.join(library, 'manifests', 'web.action-manifest.json')}) · adapter web`,
       '  Risk: host-read-export',
       '    mode      string (required) [one of: fast, slow]',
       '    shop-harness call ping count=2 mode=fast',
@@ -948,6 +952,187 @@ describe('actions', () => {
     const text = renderHumanActionCatalog(engine, described, { title: 't', guidance: 'g' });
     assert.match(text, /\nshop · cart \(1\)\n {2}shop\.cart\.add/u);
     assert.match(text, /\ncustom \(1\)\n {2}team\.wave/u);
+  });
+});
+
+describe('action examples', () => {
+  test('hides recipe-owned fields and renders a runnable call from an authored example', () => {
+    const [selected] = describeManifestActions(engine, {
+      $schema: CORE_ACTIONS.$schema,
+      actions: {
+        'shop.wallet.select_account': {
+          description: 'Select a wallet account.',
+          schema: { properties: { action: {}, next: {}, name: {}, address: {} } },
+          examples: [
+            {
+              action: 'shop.wallet.select_account',
+              intent: 'Select Account 2.',
+              name: 'Account 2',
+              next: 'done',
+            },
+          ],
+        },
+      },
+    });
+    assert.ok(selected);
+    assert.deepEqual(selected.fields, ['address', 'name']);
+    const output = renderHumanActionExample(selected, 'web', '/tmp/slot one', 'shop-harness') ?? '';
+    assert.match(output, /shop-harness call shop\.wallet\.select_account 'name=Account 2'/u);
+    assert.match(output, /--target '\/tmp\/slot one'/u);
+    assert.doesNotMatch(output, /next=done/u);
+  });
+
+  const positions = {
+    name: 'shop.orders.ensure_positions',
+    fields: ['market', 'side', 'state', 'notional'],
+    examples: [
+      { action: 'shop.orders.ensure_positions', market: 'BTC', state: 'none' },
+      {
+        action: 'shop.orders.ensure_positions',
+        market: 'ETH',
+        side: 'long',
+        state: 'open',
+        notional: 10,
+      },
+    ],
+  } as DescribedAction;
+  const example = (entry: Partial<DescribedAction>, values: Record<string, unknown>) =>
+    actionExampleCommand(entry as DescribedAction, 'web', '/tmp/slot', 'shop-harness', values) ??
+    '';
+
+  test('picks the authored example closest to the supplied values', () => {
+    for (const part of ['market=ETH', 'side=long', 'state=open', 'notional=10'])
+      assert.ok(example(positions, { market: 'ETH', state: 'open' }).includes(part), part);
+    // The complete state-compatible example beats a market-only match.
+    for (const part of ['market=BTC', 'state=open', 'side=long', 'notional=10'])
+      assert.ok(example(positions, { market: 'BTC', state: 'open' }).includes(part), part);
+    // An alias-compatible example fills the missing inputs; the caller's spelling stays.
+    for (const part of ['market=ETH', 'side=long', 'state=present', 'notional=10'])
+      assert.ok(
+        example(
+          {
+            ...positions,
+            examples: [
+              {
+                action: 'shop.orders.ensure_positions',
+                market: 'BTC',
+                side: 'long',
+                state: 'open',
+                notional: 10,
+              },
+            ],
+          },
+          {
+            market: 'ETH',
+            state: 'present',
+          },
+        ).includes(part),
+        part,
+      );
+  });
+
+  test('keeps caller values, repairs enum values, and falls back on a wrongly typed value', () => {
+    const account = {
+      name: 'shop.wallet.select_account',
+      fields: ['name'],
+      examples: [{ action: 'shop.wallet.select_account', name: 'Account 2' }],
+    };
+    assert.match(example(account, { name: 'Missing account' }), /'name=Missing account'/u);
+    const orders = {
+      name: 'shop.orders.assert_orders',
+      fields: ['state'],
+      schema: { properties: { state: { enum: ['none', 'open'] } } },
+      examples: [{ action: 'shop.orders.assert_orders', state: 'none' }],
+    };
+    assert.match(example(orders, { state: 'opne' }), /state=open/u);
+    assert.match(example(orders, { state: 'present' }), /state=open/u);
+    const command = {
+      name: 'command',
+      fields: ['cmd'],
+      schema: { properties: { cmd: { type: 'string' } } },
+      examples: [{ action: 'command', cmd: 'pwd' }],
+    };
+    assert.match(example(command, { cmd: 12345 }), /cmd=pwd/u);
+  });
+
+  test('never renders caller secrets', () => {
+    const output = example(
+      {
+        name: 'team.auth.call',
+        fields: ['token', 'password', 'payload'],
+        examples: [
+          {
+            action: 'team.auth.call',
+            token: 'example-token',
+            password: 'example-password',
+            payload: { secret: 'nested-example' },
+          },
+        ],
+      },
+      {
+        token: 'SECRET_VALUE',
+        password: 'PASSWORD_VALUE',
+        payload: { secret: 'NESTED_VALUE' },
+      },
+    );
+    for (const secret of ['SECRET_VALUE', 'PASSWORD_VALUE', 'NESTED_VALUE'])
+      assert.ok(!output.includes(secret), secret);
+    for (const part of ['token=<token>', 'password=<password>', '<redacted>'])
+      assert.ok(output.includes(part), part);
+  });
+
+  test('short example calls carry only the fields, shell-quoted, under an unambiguous name', () => {
+    const [branch, palette] = describeManifestActions(engine, {
+      $schema: CORE_ACTIONS.$schema,
+      actions: {
+        'shop.flow.switch': {
+          description: 'Branch on a value.',
+          schema: { properties: { value: {}, equals: {} } },
+          examples: [
+            {
+              action: 'shop.flow.switch',
+              value: '{{params.mode}}',
+              equals: 'warm start',
+              cases: { match: 'warm' },
+              default: 'cold',
+              intent: 'Branch.',
+            },
+          ],
+        },
+        'shop.ui.set_flags': {
+          description: 'Set flags.',
+          schema: { properties: { flags: {} } },
+          examples: [{ action: 'shop.ui.set_flags', flags: { theme: "dark's" } }],
+        },
+      },
+    });
+    assert.ok(branch && palette);
+    const detail = (entry: DescribedAction, names: string[]) =>
+      renderActionDetail(entry, 'web', '/tmp/x', 'shop-harness', names).split('\n');
+    const examples = (lines: string[]) => {
+      const start = lines.indexOf('  Examples:') + 1;
+      return lines.slice(start, lines.indexOf('', start));
+    };
+    // Graph keys (cases, default) are not the action's fields.
+    assert.deepEqual(examples(detail(branch, [branch.name])), [
+      "    shop-harness call switch 'equals=warm start' 'value={{params.mode}}'",
+    ]);
+    // A short name another action shares falls back to the full name.
+    assert.deepEqual(examples(detail(branch, [branch.name, 'command', 'other.switch'])), [
+      "    shop-harness call shop.flow.switch 'equals=warm start' 'value={{params.mode}}'",
+    ]);
+    // An object value survives shell word splitting as one key=value argument.
+    const [line] = examples(detail(palette, [palette.name]));
+    const argv = execFileSync('bash', ['-c', `printf '%s\\n' ${line!.trim()}`], {
+      encoding: 'utf8',
+    }).split('\n');
+    assert.deepEqual(argv.slice(0, 4), [
+      'shop-harness',
+      'call',
+      'set_flags',
+      'flags={"theme":"dark\'s"}',
+    ]);
+    assert.ok(detail(palette, [palette.name]).includes('  Source: shop · adapter web'));
   });
 });
 

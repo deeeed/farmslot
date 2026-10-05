@@ -43,6 +43,7 @@ import {
 import {
   describeRunnableRecipe,
   listRunnableRecipes,
+  resolveCommandManifest,
   resolveLibrarySources,
 } from '../recipe-library.js';
 import { EXIT } from '../shared.js';
@@ -78,25 +79,15 @@ export async function handleActions(
   const categoriesOnly = optionFlag(options, 'categories');
   const categories = summarizeActionCategories(all);
   if (categoriesOnly && (action || category)) {
-    const message = '--categories cannot be combined with --action or --category.';
-    const userAction = `${host} actions --adapter ${adapter} --categories`;
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'actions',
-            adapter,
-            error: { code: 'ACTION_FILTER_CONFLICT', message, userAction },
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      console.error(`✗ ${host} actions: ${message}\n  Next: ${userAction}`);
-    }
-    return EXIT.usage;
+    return actionsError(
+      json,
+      { adapter },
+      {
+        code: 'ACTION_FILTER_CONFLICT',
+        message: '--categories cannot be combined with --action or --category.',
+        userAction: `${host} actions --adapter ${adapter} --categories`,
+      },
+    );
   }
   if (categoriesOnly) {
     if (json)
@@ -108,27 +99,15 @@ export async function handleActions(
   }
   const categoryActions = category ? all.filter((entry) => entry.category === category) : all;
   if (category && categoryActions.length === 0) {
-    const message = `no action category matches "${category}" for the ${adapter} adapter.`;
-    const userAction = `${host} actions --adapter ${adapter} --categories`;
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'actions',
-            adapter,
-            category,
-            availableCategories: categories,
-            error: { code: 'ACTION_CATEGORY_UNKNOWN', message, userAction },
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      console.error(`✗ ${host} actions: ${message}\n  Next: ${userAction}`);
-    }
-    return EXIT.usage;
+    return actionsError(
+      json,
+      { adapter, category, availableCategories: categories },
+      {
+        code: 'ACTION_CATEGORY_UNKNOWN',
+        message: `no action category matches "${category}" for the ${adapter} adapter.`,
+        userAction: `${host} actions --adapter ${adapter} --categories`,
+      },
+    );
   }
   // --action fuzzy-resolves like `call`: exact full name → exact final segment →
   // final-segment substring. An unknown name teaches the vocabulary instead of
@@ -147,82 +126,41 @@ export async function handleActions(
           await resolveActionCapabilityMatrix(catalog, librarySources),
         );
     if (refusal) {
-      const satisfying = refusal.satisfyingAdapters.join(', ');
-      const message = `missing action capability "${refusal.capability}" for the ${adapter} adapter.`;
-      const userAction =
-        `Satisfying adapters for "${refusal.capability}": ${satisfying}. ` +
-        `Inspect: ${host} actions --matrix --action ${shellQuoteArg(refusal.capability)}` +
-        `${actionLibraryContextArgs(catalog, librarySources)} --json`;
-      if (json) {
-        console.log(
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              command: 'actions',
-              adapter,
-              action,
-              category,
-              error: {
-                code: 'ACTION_CAPABILITY_UNAVAILABLE',
-                message,
-                capability: refusal.capability,
-                satisfyingAdapters: refusal.satisfyingAdapters,
-                userAction,
-              },
-            },
-            null,
-            2,
-          ),
-        );
-      } else {
-        console.error(`✗ ${host} actions: ${message}\n  Next: ${userAction}`);
-      }
-      return EXIT.usage;
-    }
-    const message = `no action matches "${action}" for the ${adapter} adapter.`;
-    const userAction = `${host} actions --adapter ${adapter}`;
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'actions',
-            adapter,
-            action,
-            category,
-            error: { code: 'ACTION_UNKNOWN', message, userAction },
-          },
-          null,
-          2,
-        ),
+      return actionsError(
+        json,
+        { adapter, action, category },
+        {
+          code: 'ACTION_CAPABILITY_UNAVAILABLE',
+          message: `missing action capability "${refusal.capability}" for the ${adapter} adapter.`,
+          capability: refusal.capability,
+          satisfyingAdapters: refusal.satisfyingAdapters,
+          userAction:
+            `Satisfying adapters for "${refusal.capability}": ${refusal.satisfyingAdapters.join(', ')}. ` +
+            `Inspect: ${host} actions --matrix --action ${shellQuoteArg(refusal.capability)}` +
+            `${actionLibraryContextArgs(catalog, librarySources)} --json`,
+        },
       );
-    } else {
-      console.error(`✗ ${host} actions: ${message}\n  Next: ${userAction}`);
     }
-    return EXIT.usage;
+    return actionsError(
+      json,
+      { adapter, action, category },
+      {
+        code: 'ACTION_UNKNOWN',
+        message: `no action matches "${action}" for the ${adapter} adapter.`,
+        userAction: `${host} actions --adapter ${adapter}`,
+      },
+    );
   }
   if (query && actions.length === 0) {
-    const message = `no action matches search "${query}" for the ${adapter} adapter.`;
-    const userAction = `${host} actions --adapter ${adapter} --categories`;
-    if (json) {
-      console.log(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            command: 'actions',
-            adapter,
-            query,
-            category,
-            error: { code: 'ACTION_SEARCH_EMPTY', message, userAction },
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      console.error(`✗ ${host} actions: ${message}\n  Next: ${userAction}`);
-    }
-    return EXIT.usage;
+    return actionsError(
+      json,
+      { adapter, query, category },
+      {
+        code: 'ACTION_SEARCH_EMPTY',
+        message: `no action matches search "${query}" for the ${adapter} adapter.`,
+        userAction: `${host} actions --adapter ${adapter} --categories`,
+      },
+    );
   }
   const detailed = action && actions.length === 1 ? actions[0] : undefined;
   const relatedActions = detailed ? findRelatedActions(all, detailed) : undefined;
@@ -246,7 +184,15 @@ export async function handleActions(
     return EXIT.ok;
   }
   if (detailed) {
-    console.log(renderActionDetail(detailed, adapter, target, invokedHostCommand()));
+    console.log(
+      renderActionDetail(
+        detailed,
+        adapter,
+        target,
+        invokedHostCommand(),
+        all.map(({ name }) => name),
+      ),
+    );
   } else {
     console.log(
       renderHumanActionCatalog(catalog, actions, {
@@ -267,32 +213,35 @@ async function adapterActions(
   catalog: RecipeCatalog,
   adapter: string,
   options: CliOptions,
-  librarySources: readonly RecipeLibrarySource[],
+  librarySources: RecipeLibrarySource[],
 ): Promise<{ manifest: unknown; actions: DescribedAction[] }> {
-  const { manifest, actionSources } = await catalog.resolveActionManifest(
+  const { manifest, actionSources } = await resolveCommandManifest(
+    catalog,
     adapter,
-    optionString(options, 'actionManifest'),
+    options,
     librarySources,
   );
   return { manifest, actions: describeManifestActions(catalog, manifest, actionSources) };
 }
 
-function handleActionMatrixError(
+/**
+ * An `actions` refusal: the JSON envelope (the context keys, then `error` with
+ * code, message, any details, and the next step), or the human line. Exit 2.
+ */
+function actionsError(
   json: boolean,
-  code: string,
-  message: string,
-  userAction: string,
-  details: Record<string, unknown> = {},
+  context: Record<string, unknown>,
+  error: { code: string; message: string; userAction: string } & Record<string, unknown>,
 ): number {
+  const { code, message, userAction, ...details } = error;
   if (json) {
     console.log(
       JSON.stringify(
         {
           schemaVersion: 1,
           command: 'actions',
-          view: 'matrix',
-          ...details,
-          error: { code, message, userAction },
+          ...context,
+          error: { code, message, ...details, userAction },
         },
         null,
         2,
@@ -324,11 +273,14 @@ async function handleActionMatrix(
     optionString(options, 'actionManifest') ? '--action-manifest' : undefined,
   ].filter((value): value is string => Boolean(value));
   if (conflicts.length > 0) {
-    return handleActionMatrixError(
+    return actionsError(
       input.json,
-      'ACTION_MATRIX_CONFLICT',
-      `--matrix cannot be combined with ${conflicts.join(', ')}.`,
-      inspectCommand,
+      { view: 'matrix' },
+      {
+        code: 'ACTION_MATRIX_CONFLICT',
+        message: `--matrix cannot be combined with ${conflicts.join(', ')}.`,
+        userAction: inspectCommand,
+      },
     );
   }
 
@@ -339,12 +291,14 @@ async function handleActionMatrix(
     ? matrix.filter((entry) => entry.category === input.category)
     : matrix;
   if (input.category && categoryActions.length === 0) {
-    return handleActionMatrixError(
+    return actionsError(
       input.json,
-      'ACTION_CATEGORY_UNKNOWN',
-      `no action category matches "${input.category}" across the adapter matrix.`,
-      inspectCommand,
-      { category: input.category, availableCategories: categories },
+      { view: 'matrix', category: input.category, availableCategories: categories },
+      {
+        code: 'ACTION_CATEGORY_UNKNOWN',
+        message: `no action category matches "${input.category}" across the adapter matrix.`,
+        userAction: inspectCommand,
+      },
     );
   }
   const actions = input.action
@@ -353,21 +307,25 @@ async function handleActionMatrix(
       ? searchActions(categoryActions, input.query)
       : categoryActions;
   if (input.action && actions.length === 0) {
-    return handleActionMatrixError(
+    return actionsError(
       input.json,
-      'ACTION_UNKNOWN',
-      `no action capability matches "${input.action}" across ${adapterNames(adapters)}.`,
-      inspectCommand,
-      { action: input.action, category: input.category },
+      { view: 'matrix', action: input.action, category: input.category },
+      {
+        code: 'ACTION_UNKNOWN',
+        message: `no action capability matches "${input.action}" across ${adapterNames(adapters)}.`,
+        userAction: inspectCommand,
+      },
     );
   }
   if (input.query && actions.length === 0) {
-    return handleActionMatrixError(
+    return actionsError(
       input.json,
-      'ACTION_SEARCH_EMPTY',
-      `no action capability matches search "${input.query}" across ${adapterNames(adapters)}.`,
-      inspectCommand,
-      { query: input.query, category: input.category },
+      { view: 'matrix', query: input.query, category: input.category },
+      {
+        code: 'ACTION_SEARCH_EMPTY',
+        message: `no action capability matches search "${input.query}" across ${adapterNames(adapters)}.`,
+        userAction: inspectCommand,
+      },
     );
   }
 
@@ -402,10 +360,7 @@ function adapterNames(adapters: readonly string[]): string {
 }
 
 /** One row per action, one column per registered adapter, in registration order. */
-export function renderHumanActionMatrix(
-  actions: ActionMatrixRow[],
-  adapters: readonly string[],
-): string {
+function renderHumanActionMatrix(actions: ActionMatrixRow[], adapters: readonly string[]): string {
   const out = (style: string, text: string) => color(style, text, { stream: process.stdout });
   const width = Math.max(
     'action capability'.length,

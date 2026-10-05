@@ -747,9 +747,8 @@ export async function handleCallHelp(
     process.stdout.write(`${genericHelp}\n`);
     return EXIT.ok;
   }
-  const matches = shortName
-    ? fuzzyResolveActions(describeManifestActions(catalog, manifest, actionSources), shortName)
-    : [];
+  const described = describeManifestActions(catalog, manifest, actionSources);
+  const matches = shortName ? fuzzyResolveActions(described, shortName) : [];
   if (matches.length === 0) {
     process.stdout.write(`${genericHelp}\n`);
     if (shortName) {
@@ -761,7 +760,14 @@ export async function handleCallHelp(
     return EXIT.ok;
   }
   for (const entry of matches) {
-    process.stdout.write(`${renderActionDetail(entry, adapter, target, invokedHostCommand())}\n\n`);
+    const detail = renderActionDetail(
+      entry,
+      adapter,
+      target,
+      invokedHostCommand(),
+      described.map(({ name }) => name),
+    );
+    process.stdout.write(`${detail}\n\n`);
   }
   process.stdout.write(`${genericHelp}\n`);
   return EXIT.ok;

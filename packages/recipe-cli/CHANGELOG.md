@@ -8,12 +8,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - the engine door: `runRecipe`, `preflightRecipe`, `activateRecipeRuntimeEnvironment` (sets every registered adapter's `devServer.portEnv` from `--watcher-port`), bounded healing and heal-bound envelopes;
   - the recipe library: `resolveLibrarySources`, `listRunnableRecipes`, `describeRunnableRecipe`, `runnableLibraryRecipes`;
   - static validation: `validateRunRecipeStatic`, `validateActionInputs` (each adapter's `actions.inputFindings` on every node), `resolveRecipeParamValue`;
-  - the action catalog helpers `run`, `call` and a host's `actions` share: `describeManifestActions`, `actionExampleCommand`, `renderHumanActionExample`, `actionLibraryContextArgs`, `resolveActionCapabilityMatrix` (one column per registered adapter);
+  - `describeManifestActions`, the action catalog entries a host reads for its own action views;
   - network observation through the adapter's `observation.network`: the automatic whole-run capture (off with the host's `AUTO_NETWORK_CAPTURE=0`) and `runNetworkCaptureAction` for `app.network_capture`.
 
 - Add `actions` to `@farmslot/recipe-cli/harness`, moved from mm-harness: `handleActions(parsed, { catalog })` lists, searches (`[query]`), filters (`--category`, `--categories`), describes (`--action`) and dumps (`--raw`) the adapter's actions, and `--matrix` compares them across the registered adapters. `actions`, `run --list`, `call --list` and `run <recipe> --describe` share one discovery module and one catalog renderer.
   - The matrix has one column per registered adapter, in registration order (its JSON `adapters`, the human header and column widths), and a capability no adapter declares reads `across <Adapter>, …, or <Adapter>` from the registry instead of a fixed list.
-  - `actions --action <name>` (one match, human output) and `call <action> --help` print the same action detail: the call form, description, source, risk, result cases, typed fields, up to two short example calls (without `next`), and the first example as a runnable call with its recipe node. JSON output is unchanged.
+  - `actions --action <name>` (one match, human output) and `call <action> --help` print the same action detail: the call form, description, source and adapter, risk, result cases, typed fields, up to two example calls, and the first example as a runnable call with its recipe node. The example calls carry only the action's fields (no `next`, `cases` or other graph keys), shell-quoted, under the short name when it is unambiguous. JSON output is unchanged.
 
 ## 0.4.1 - 2026-10-05
 
