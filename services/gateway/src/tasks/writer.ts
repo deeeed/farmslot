@@ -1276,7 +1276,6 @@ export async function writeTaskFile(
       addendum: renderedAddendum,
       hasTicketData: Boolean(run.ticketData),
       runContract: runContractSection(run.flowType, run.mode, vars.TASK_DIR),
-      runContract: runContractSection(run.flowType, run.mode, vars.TASK_DIR),
     });
     // Artifact-only replays neutralize publication steps inside the checklist
     // (BRANCH/REPO for the rewritten snippets come from the task document) and
