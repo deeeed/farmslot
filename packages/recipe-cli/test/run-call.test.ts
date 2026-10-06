@@ -65,6 +65,7 @@ import {
   runnableLibraryRecipes,
   runNetworkCaptureAction,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
@@ -731,6 +732,52 @@ describe('recipe validation', () => {
     assert.deepEqual(validateActionInputs(recipe, 'web', { count: 2 }), []);
     assert.deepEqual(validateActionInputs(recipe, 'unregistered', { count: 5 }), []);
     assert.deepEqual(validateActionInputs({ workflow: {} }, 'web'), []);
+  });
+
+  test('warns on command nodes whose exit code cannot prove the claim', async () => {
+    const codes = (nodes: Record<string, unknown>) =>
+      validateCommandNodes({ workflow: { nodes } }).map((finding) => [finding.code, finding.path]);
+    assert.deepEqual(
+      codes({
+        piped: { action: 'command', cmd: 'yarn build 2>&1 | tail -20' },
+        headed: { action: 'command', command: 'cat log|head -5' },
+        orElse: { action: 'command', cmd: 'false || tail -1 log' },
+        tests: { action: 'command', cmd: 'yarn workspace @metamask/a run test:verbose -t "x"' },
+        asserted: { action: 'command', cmd: 'npx jest src/a.test.ts' },
+        count: { action: 'assert_output', source: 'asserted', match: '1 passed' },
+        notTests: { action: 'command', cmd: 'yarn workspace @metamask/test-utils build' },
+        config: { action: 'command', cmd: 'cat jest.config.ts vitest.config.ts' },
+        testing: { action: 'command', cmd: 'yarn run testing' },
+        binPath: { action: 'command', cmd: 'cd pkg && node_modules/.bin/jest' },
+      }),
+      [
+        ['recipe.command_pipe_masks_exit', 'workflow.nodes.piped.cmd'],
+        ['recipe.command_pipe_masks_exit', 'workflow.nodes.headed.command'],
+        ['recipe.test_command_exit_code_only', 'workflow.nodes.tests'],
+        ['recipe.test_command_exit_code_only', 'workflow.nodes.binPath'],
+      ],
+    );
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      unit: { action: 'command', cmd: 'yarn test | tail -5', intent: 'Run tests.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const validated = await validateRunRecipeStatic(engine, recipe, 'web', { target });
+    assert.equal(validated.errorCount, 0);
+    assert.deepEqual(
+      validated.findings.map((finding) => [finding.severity, finding.code]),
+      [
+        ['warning', 'recipe.command_pipe_masks_exit'],
+        ['warning', 'recipe.test_command_exit_code_only'],
+      ],
+    );
+    const plan = await capture(() =>
+      handleRun([recipe, '--plan', '--adapter', 'web', '--target', target], runOptions),
+    );
+    assert.equal(plan.value, 0);
+    const output = plan.stdout.join('\n');
+    assert.match(output, /⚠ recipe\.command_pipe_masks_exit workflow\.nodes\.unit\.cmd — /u);
+    assert.match(output, /⚠ recipe\.test_command_exit_code_only workflow\.nodes\.unit — /u);
   });
 
   test('a bare action name is not a recipe: the hint is the call that runs it', async () => {

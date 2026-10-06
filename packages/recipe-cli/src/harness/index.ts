@@ -190,6 +190,7 @@ export {
   resolveRecipeParamValue,
   type RunRecipeStaticValidation,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from './recipe-validation.js';
 export {
