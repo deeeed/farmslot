@@ -4,7 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { workspaceTsconfig, workspaceTsconfigEnv } from '../src/index.js';
+import {
+  checkoutWorkspacePackages,
+  workspaceTsconfig,
+  workspaceTsconfigEnv,
+} from '../src/index.js';
 
 function checkout(files: string[]): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-ws-'));
@@ -21,24 +25,29 @@ const PACKAGES = {
   '@acme/no-src': 'packages/no-src',
 };
 
-test('maps only unbuilt packages that have src/index.ts', () => {
+test('maps every package that has src/index.ts, built or not', () => {
+  // `built` holds a dist from an older build layout (core-6: dist/index.cjs while
+  // its exports name dist/index.js); a script must still run its current src.
   const root = checkout([
     'packages/unbuilt/src/index.ts',
     'packages/built/src/index.ts',
     'packages/built/dist/index.cjs',
     'packages/no-src/package.json',
   ]);
-  const src = path.join(root, 'packages/unbuilt/src');
+  const unbuilt = path.join(root, 'packages/unbuilt/src');
+  const built = path.join(root, 'packages/built/src');
   assert.deepEqual(workspaceTsconfig(root, PACKAGES), {
     compilerOptions: {
       baseUrl: root,
       paths: {
-        '@acme/unbuilt': [path.join(src, 'index.ts')],
-        '@acme/unbuilt/*': [path.join(src, '*')],
+        '@acme/unbuilt': [path.join(unbuilt, 'index.ts')],
+        '@acme/unbuilt/*': [path.join(unbuilt, '*')],
+        '@acme/built': [path.join(built, 'index.ts')],
+        '@acme/built/*': [path.join(built, '*')],
       },
     },
   });
-  assert.equal(workspaceTsconfig(root, { '@acme/built': 'packages/built' }), null);
+  assert.equal(workspaceTsconfig(root, { '@acme/no-src': 'packages/no-src' }), null);
 });
 
 test('workspaceTsconfigEnv writes the tsconfig and points tsx at it', async () => {
@@ -67,4 +76,42 @@ test('workspaceTsconfigEnv adds the PnP loader and is empty when nothing maps', 
   assert.ok(env.NODE_OPTIONS?.endsWith(`--require ${path.join(root, '.pnp.cjs')}`));
 
   assert.deepEqual(await workspaceTsconfigEnv(checkout([]), temp, { packages: PACKAGES }), {});
+});
+
+test('checkoutWorkspacePackages reads the workspaces the checkout declares', () => {
+  const root = checkout([
+    'packages/utils/src/index.ts',
+    'tools/lint/x',
+    'packages/no-manifest/src/index.ts',
+  ]);
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ workspaces: ['packages/*', 'tools/lint', 'packages/missing-parent/*'] }),
+  );
+  fs.writeFileSync(path.join(root, 'packages/utils/package.json'), '{"name":"@acme/utils"}');
+  fs.writeFileSync(path.join(root, 'tools/lint/package.json'), '{"name":"@acme/lint"}');
+  assert.deepEqual(checkoutWorkspacePackages(root), {
+    '@acme/utils': 'packages/utils',
+    '@acme/lint': 'tools/lint',
+  });
+  // A host passes the reader itself; the map is read from the checkout at run time.
+  assert.deepEqual(
+    Object.keys(workspaceTsconfig(root, checkoutWorkspacePackages)!.compilerOptions.paths),
+    ['@acme/utils', '@acme/utils/*'],
+  );
+
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ workspaces: { packages: ['tools/lint'] } }),
+  );
+  assert.deepEqual(checkoutWorkspacePackages(root), { '@acme/lint': 'tools/lint' });
+
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ workspaces: ['packages/**'] }),
+  );
+  assert.throws(
+    () => checkoutWorkspacePackages(root),
+    /workspace pattern "packages\/\*\*" is not supported/u,
+  );
 });

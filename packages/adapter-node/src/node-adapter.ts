@@ -19,7 +19,7 @@ import {
 import { depsCheck } from '@farmslot/recipe-runner/runtime/deps-readiness';
 
 import { nodeDependencyBlock, yarnInstallCommand } from './dependencies.js';
-import { type WorkspacePackageMap, workspaceTsconfigEnv } from './workspace-tsconfig.js';
+import { type WorkspacePackages, workspaceTsconfigEnv } from './workspace-tsconfig.js';
 
 /** Absolute path of the shipped overlay cleanup leaf (`cleanup.sh --adapter <id>`). */
 export const NODE_CLEANUP_SCRIPT = fileURLToPath(new URL('../scripts/cleanup.sh', import.meta.url));
@@ -83,11 +83,12 @@ export interface NodeAdapterConfig {
   wording?: Partial<NodeAdapterWording>;
   dependencies?: NodeAdapterDependencies;
   /**
-   * Workspace packages live adapter scripts import from src. When set and
-   * `actions.tsxLiveScripts` is absent, scripts run under tsx with
+   * Workspace packages live adapter scripts import from src: a map, or
+   * `checkoutWorkspacePackages` to take every package the checkout declares.
+   * When set and `actions.tsxLiveScripts` is absent, scripts run under tsx with
    * `workspaceTsconfigEnv` (`<id>-adapter.tsconfig.json`).
    */
-  workspacePackages?: WorkspacePackageMap;
+  workspacePackages?: WorkspacePackages;
   /** Next step when dependencies are missing. Default: `yarnInstallCommand`. */
   installCommand?(target: string): string;
   /** Default: `HEADLESS_FORBIDDEN_FIELDS`. */
