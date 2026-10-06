@@ -21,6 +21,7 @@ import {
   type RunStatus,
 } from '@farmslot/protocol';
 
+import { isGitHubAncestor } from '../external/github.js';
 import { getRun, listRuns, updateRun } from '../runs/store.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -300,8 +301,43 @@ export function buildRepeatReviewContext(
   };
 }
 
+/** Incremental scope needs a recorded prior head that is still part of the current history. */
+export function incrementalReviewAvailable(
+  context: Pick<RepeatReviewContext, 'priorReviewedHeadSha' | 'incrementalUnavailableReason'>,
+): boolean {
+  return Boolean(context.priorReviewedHeadSha) && !context.incrementalUnavailableReason;
+}
+
+/**
+ * After a rebase or force-push, `prior..current` contains every base-branch change,
+ * not the PR's delta. Fall back to a full review that still rechecks prior findings.
+ */
+export async function confirmIncrementalAncestry(
+  context: RepeatReviewContext,
+  isAncestor: typeof isGitHubAncestor = isGitHubAncestor,
+): Promise<RepeatReviewContext> {
+  const priorHead = context.priorReviewedHeadSha;
+  if (!priorHead || !incrementalReviewAvailable(context)) return context;
+  let reason: string | undefined;
+  try {
+    if (!(await isAncestor(context.repository, priorHead, context.currentHeadSha)))
+      reason = `Prior reviewed head ${priorHead.slice(0, 12)} is not an ancestor of ${context.currentHeadSha.slice(0, 12)} (rebase or force-push).`;
+  } catch (error) {
+    // A full review is always a valid scope; an unproven delta is not. A vanished
+    // force-pushed commit must not block the re-review, so record why and continue.
+    reason = `Could not confirm prior reviewed head ${priorHead.slice(0, 12)} is an ancestor: ${(error as Error).message}`;
+  }
+  if (!reason) return context;
+  return {
+    ...context,
+    reviewScope: 'full',
+    sessionIntent: 'reset',
+    incrementalUnavailableReason: reason,
+  };
+}
+
 export function repeatReviewDecisionActions(context: RepeatReviewContext): DecisionAction[] {
-  const incrementalAvailable = Boolean(context.priorReviewedHeadSha);
+  const incrementalAvailable = incrementalReviewAvailable(context);
   const actions: DecisionAction[] = [
     ...(incrementalAvailable
       ? [
@@ -370,11 +406,13 @@ export async function handleRepeatReviewDecision(
     });
     return null;
   }
-  const context = buildRepeatReviewContext(
-    current,
-    prior,
-    { ...subject, project: current.project, repository: subject.repository.toLowerCase() },
-    allRuns,
+  const context = await confirmIncrementalAncestry(
+    buildRepeatReviewContext(
+      current,
+      prior,
+      { ...subject, project: current.project, repository: subject.repository.toLowerCase() },
+      allRuns,
+    ),
   );
   if (current.prWork?.kind === 'review' && current.prWork.review) {
     const selected = automatedRepeatReviewSelection(context, current.prWork.review.options);
@@ -386,7 +424,7 @@ export async function handleRepeatReviewDecision(
     return selected;
   }
   const actions = repeatReviewDecisionActions(context);
-  const recommendedActionId = context.priorReviewedHeadSha
+  const recommendedActionId = incrementalReviewAvailable(context)
     ? 'reuse-incremental-static'
     : 'reuse-full-static';
   const actionId = await createEngineDecision(
@@ -427,7 +465,7 @@ export function automatedRepeatReviewSelection(
 ): RepeatReviewContext {
   const reuse = options.sessionIntent === 'resume';
   const incremental =
-    reuse && options.scope === 'incremental' && Boolean(context.priorReviewedHeadSha);
+    reuse && options.scope === 'incremental' && incrementalReviewAvailable(context);
   return {
     ...context,
     contextMode: reuse ? 'reuse' : 'fresh',

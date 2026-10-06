@@ -37,6 +37,7 @@ import {
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
+  confirmIncrementalAncestry,
 } from '../../run-engine/engine-decisions.js';
 import { applyChainedRunEngineFlags, startRun } from '../../run-engine/orchestrator.js';
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
@@ -109,16 +110,18 @@ export async function runRereviewLatestHead(
   // Attach the continuation up front: the stale review is the prior round,
   // the live head is the target, and the reviewer keeps its session.
   const context = automatedRepeatReviewSelection(
-    buildRepeatReviewContext(
-      child,
-      run,
-      {
-        project: run.project,
-        repository: target.repo.toLowerCase(),
-        prNumber: target.number,
-        headSha: live.headSha,
-      },
-      getAllRuns(),
+    await confirmIncrementalAncestry(
+      buildRepeatReviewContext(
+        child,
+        run,
+        {
+          project: run.project,
+          repository: target.repo.toLowerCase(),
+          prNumber: target.number,
+          headSha: live.headSha,
+        },
+        getAllRuns(),
+      ),
     ),
     {
       ...DEFAULT_PR_REVIEW_OPTIONS,
