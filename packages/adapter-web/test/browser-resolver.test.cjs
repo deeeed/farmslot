@@ -1368,14 +1368,26 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     }
   }
 
+  // A killed child stays a zombie until it is reaped (on Linux, after its
+  // parent exits); a zombie is not a running browser.
   function running(pid) {
     try {
       process.kill(pid, 0);
-      return true;
     } catch (error) {
       if (error.code === 'ESRCH') return false;
       throw error;
     }
+    const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    return !state.stdout.trim().startsWith('Z');
+  }
+
+  async function stopped(pid, ms = 3000) {
+    const deadline = Date.now() + ms;
+    while (running(pid)) {
+      if (Date.now() > deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
   }
 
   async function waitFor(check, ms = 10000) {
@@ -1398,7 +1410,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         process.kill(-caller.pid, signal);
         try {
           assertMatch(await exited, { signal });
-          assert.equal(running(browser.pid), false, 'the probe browser outlived its caller');
+          assert.equal(await stopped(browser.pid), true, 'the probe browser outlived its caller');
           assert.equal(fs.existsSync(browser.profile), false);
         } finally {
           if (running(browser.pid)) process.kill(browser.pid, 'SIGKILL');
@@ -1419,7 +1431,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         assert.equal(running(browser.pid), true, 'SIGKILL leaves the browser running');
         process.env.FAKE_CDP_MODE = 'ok';
         await resolver.probeLaunch(FAKE_BROWSER, fast);
-        await waitFor(() => !running(browser.pid), 3000);
+        assert.equal(await stopped(browser.pid), true);
         assert.equal(fs.existsSync(browser.profile), false);
       } finally {
         // Never leave the fake behind when the reaper fails.
@@ -1442,12 +1454,12 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         transient: true,
         reason: 'probe stopped by its caller',
       });
-      assert.equal(running(browser.pid), false);
+      assert.equal(await stopped(browser.pid), true);
     },
   );
 
   it('removes its signal handlers once overlapping probes finish', { timeout: 30000 }, async () => {
-    const before = ['SIGTERM', 'SIGINT', 'SIGHUP', 'exit'].map((event) =>
+    const before = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'exit'].map((event) =>
       process.listenerCount(event),
     );
     process.env.FAKE_CDP_MODE = 'ok';
@@ -1456,7 +1468,9 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     await Promise.all([first, resolver.probeLaunch(FAKE_BROWSER, fast)]);
     await resolver.probeLaunch(FAKE_BROWSER, fast);
     assert.deepEqual(
-      ['SIGTERM', 'SIGINT', 'SIGHUP', 'exit'].map((event) => process.listenerCount(event)),
+      ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'exit'].map((event) =>
+        process.listenerCount(event),
+      ),
       before,
     );
   });
@@ -1470,7 +1484,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     const { code, stdout } = await exited;
     assert.equal(code, 0);
     assert.ok(stdout.includes('host-done|'), stdout);
-    assert.equal(running(browser.pid), false);
+    assert.equal(await stopped(browser.pid), true);
   });
 
   it('launches nothing when stopped before the browser starts', { timeout: 30000 }, async () => {
@@ -1522,7 +1536,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
       process.kill(caller.pid, 'SIGUSR2');
       try {
         assertMatch(await exited, { code: 3 });
-        assert.equal(running(browser.pid), false);
+        assert.equal(await stopped(browser.pid), true);
         assert.equal(fs.existsSync(browser.profile), false);
       } finally {
         if (running(browser.pid)) process.kill(browser.pid, 'SIGKILL');
@@ -1530,29 +1544,23 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     },
   );
 
-  it('lets concurrent reapers share orphaned profiles', { timeout: 60000 }, async () => {
+  it('skips an orphaned profile another reaper already removed', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-'));
     const dead = spawnSync('true').pid;
-    for (let index = 0; index < 30; index += 1)
-      fs.mkdirSync(path.join(tmp, `farmslot-browser-probe-${dead}-${index}`));
+    const orphan = path.join(tmp, `farmslot-browser-probe-${dead}-left`);
+    fs.mkdirSync(orphan);
+    // Listed, then removed by a concurrent reaper before this one reaches it.
+    const realReaddir = fs.readdirSync;
+    const readdir = mock.method(fs, 'readdirSync', (dir, ...rest) =>
+      dir === tmp
+        ? [`farmslot-browser-probe-${dead}-gone`, ...realReaddir(dir, ...rest)]
+        : realReaddir(dir, ...rest),
+    );
     try {
-      const reapers = Array.from(
-        { length: 6 },
-        () =>
-          new Promise((resolve) =>
-            execFile(
-              process.execPath,
-              [
-                '-e',
-                `require(${JSON.stringify(require.resolve('../src/browser-resolver.cjs'))}).reapOrphanedProbes(${JSON.stringify(tmp)})`,
-              ],
-              (error, stdout, stderr) => resolve(error ? stderr : ''),
-            ),
-          ),
-      );
-      assert.deepEqual(await Promise.all(reapers), Array(6).fill(''));
-      assert.deepEqual(fs.readdirSync(tmp), []);
+      resolver.reapOrphanedProbes(tmp);
+      assert.equal(fs.existsSync(orphan), false);
     } finally {
+      readdir.mock.restore();
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
