@@ -1,7 +1,5 @@
 {
-  "version": "0.20.1",
-  "date": "2026-10-05",
-  "items": [
-    "A failed worker command no longer reads as a failed run, and operation log and step-file links open reliably"
-  ]
+  "version": "0.20.2",
+  "date": "2026-10-06",
+  "items": ["The Runs list shows when each active run last made progress and what it is doing next"]
 }
