@@ -529,3 +529,26 @@ test('run progress: a worker held for reconciliation waits on the operator', () 
 test('run progress: a record with no valid timestamp has no summary', () => {
   assert.equal(runProgressSummary(run('broken', { createdAt: 'not a date' })), null);
 });
+
+test('family and tag views show the live copy of each run', () => {
+  const snapshot = run('r1', { status: 'monitoring', tags: ['perf'] });
+  const live = run('r1', {
+    status: 'blocked',
+    tags: ['perf'],
+    decisions: [
+      {
+        id: 'gate',
+        type: 'engine_human_gate',
+        title: 'Approve',
+        description: '',
+        createdAt: '2026-05-14T01:00:00.000Z',
+        actions: [],
+      },
+    ],
+  });
+  const other = run('r2', { status: 'monitoring', familyId: 'family-b' });
+  const family = filter({ familyFilter: 'family-a', familyRuns: [snapshot], runs: [live, other] });
+  assert.deepEqual(family, [live]);
+  const tagged = filter({ tagFilter: 'perf', tagRuns: [snapshot], runs: [live, other] });
+  assert.deepEqual(tagged, [live]);
+});

@@ -157,10 +157,15 @@ export interface FilterRunListInput {
 }
 
 export function filterRunList(input: FilterRunListInput): readonly Run[] {
+  // Family and tag views are fetched once; live run updates land in `runs`.
+  const live = new Map(input.runs.map((run) => [run.id, run]));
+  const withLive = (runs: readonly Run[]) => runs.map((run) => live.get(run.id) ?? run);
   let result: readonly Run[] = input.familyFilter
-    ? (input.familyRuns ?? [])
+    ? withLive(input.familyRuns ?? [])
     : input.tagFilter
-      ? (input.tagRuns ?? input.runs)
+      ? input.tagRuns
+        ? withLive(input.tagRuns)
+        : input.runs
       : input.runs;
   if (input.globalFilters.projects.length > 0) {
     result = result.filter((run) => input.globalFilters.projects.includes(run.project));
