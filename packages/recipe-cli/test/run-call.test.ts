@@ -178,8 +178,21 @@ function newCalls(): Calls {
 const pingAdapter: ActionAdapter = {
   action: 'shop.ping',
   source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
-  async execute(node) {
-    return { output: { pong: node.count ?? 1, mode: node.mode } };
+  async execute(node, context) {
+    if (node.count !== 0) return { output: { pong: node.count ?? 1, mode: node.mode } };
+    // count 0: report a screenshot taken through a fallback provider, as a platform action would.
+    fs.writeFileSync(path.join(context.artifactsDir, 'shot.png'), 'png');
+    return {
+      output: { pong: 0, mode: node.mode },
+      artifacts: [
+        {
+          path: 'shot.png',
+          type: 'screenshot',
+          label: 'Ping shot',
+          metadata: { provider: 'cdp', fallbackFrom: 'native', fallbackReason: 'native timed out' },
+        },
+      ],
+    };
   },
 };
 
@@ -1325,6 +1338,73 @@ describe('network observation', () => {
 });
 
 describe('run', () => {
+  test('lists evidence produced through a fallback provider in json, stream and human output', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      shot: { action: 'shop.ping', mode: 'fast', count: 0, intent: 'Take a shot.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = (dir: string, ...flags: string[]) =>
+      capture(() =>
+        handleRun(
+          [
+            recipe,
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--artifacts-dir',
+            path.join(target, dir),
+            ...flags,
+          ],
+          runOptions,
+        ),
+      );
+    const json = await run('art-json', '--json');
+    assert.equal(json.value, 0);
+    assert.deepEqual(lastJson(json.stdout).fallbacks, [
+      {
+        path: path.join(target, 'art-json', 'shot.png'),
+        label: 'Ping shot',
+        fallbackFrom: 'native',
+        reason: 'native timed out',
+      },
+    ]);
+    const stream = await run('art-stream', '--json-stream');
+    const complete = stream.stdout
+      .flatMap((line) => line.split('\n'))
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((event) => event.event === 'complete' || event.type === 'complete');
+    assert.equal(
+      (complete?.fallbacks as Array<{ fallbackFrom: string }>)?.[0]?.fallbackFrom,
+      'native',
+    );
+    const human = await run('art-human');
+    assert.match(
+      human.stdout.join('\n'),
+      /Ping shot: .*shot\.png \(fallback from native: native timed out\)/u,
+    );
+    const plain = await capture(() =>
+      handleRun(
+        [
+          recipeFile(target, { done: { action: 'end', status: 'pass' } }),
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal('fallbacks' in lastJson(plain.stdout), false);
+  });
+
   test('--plan lists the host steps and the platform launch, without executing', async () => {
     const target = checkout();
     const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });

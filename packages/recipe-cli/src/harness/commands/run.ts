@@ -539,6 +539,14 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       }
       const report = writeRunReport(result);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
+      const artifacts = runArtifactInventory(result.artifactManifestPath);
+      // Evidence an action produced through a fallback provider (for example a
+      // screenshot from a second capture path), so an evidence gate sees it here.
+      const fallbacks = artifacts.flatMap((artifact) =>
+        artifact.fallback
+          ? [{ path: artifact.absolutePath, label: artifact.label, ...artifact.fallback }]
+          : [],
+      );
       const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
       if (stream.enabled) {
         if (result.status === 'fail') {
@@ -556,6 +564,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           artifactManifestPath: result.artifactManifestPath,
           recovered: state.recovered,
           mutations: state.mutations,
+          ...(fallbacks.length > 0 ? { fallbacks } : {}),
         });
       } else if (json) {
         console.log(
@@ -569,6 +578,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
               recovered: state.recovered,
               mutations: state.mutations,
               reportPath: report.path,
+              ...(fallbacks.length > 0 ? { fallbacks } : {}),
               result,
               ...(result.status === 'fail'
                 ? {
@@ -594,11 +604,13 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           console.log(out('label', 'summary:'));
           for (const line of report.preview) console.log(`  ${formatPreviewLine(line, out)}`);
         }
-        const artifacts = runArtifactInventory(result.artifactManifestPath);
         console.log(out('label', `artifacts (${artifacts.length}):`));
         for (const artifact of artifacts) {
+          const fallback = artifact.fallback
+            ? ` ${out('err', `(fallback from ${artifact.fallback.fallbackFrom}${artifact.fallback.reason ? `: ${artifact.fallback.reason}` : ''})`)}`
+            : '';
           console.log(
-            `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}`,
+            `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}${fallback}`,
           );
         }
         if (result.status === 'fail') {
@@ -670,10 +682,17 @@ function recordRunAcceptance(
   }
 }
 
+interface RunArtifactFallback {
+  fallbackFrom: string;
+  reason?: string;
+}
+
 interface RunArtifactDisplay {
   absolutePath: string;
   basename: string;
   label: string;
+  /** From the artifact's `metadata.fallbackFrom` / `metadata.fallbackReason`. */
+  fallback?: RunArtifactFallback;
 }
 
 function runArtifactInventory(manifestPathValue: unknown): RunArtifactDisplay[] {
@@ -699,7 +718,17 @@ function runArtifactInventory(manifestPathValue: unknown): RunArtifactDisplay[] 
     const basename = path.basename(absolutePath);
     const label =
       typeof entry.label === 'string' && entry.label.length > 0 ? entry.label : basename;
-    artifacts.push({ absolutePath, basename, label });
+    const metadata = isRecord(entry.metadata) ? entry.metadata : {};
+    const fallback: RunArtifactFallback | undefined =
+      typeof metadata.fallbackFrom === 'string'
+        ? {
+            fallbackFrom: metadata.fallbackFrom,
+            ...(typeof metadata.fallbackReason === 'string'
+              ? { reason: metadata.fallbackReason }
+              : {}),
+          }
+        : undefined;
+    artifacts.push({ absolutePath, basename, label, ...(fallback ? { fallback } : {}) });
   }
   artifacts.push({
     absolutePath: manifestPath,

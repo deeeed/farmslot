@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- `run` lists evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`, with an optional `metadata.fallbackReason`): `fallbacks` in `--json` and in the `--json-stream` completion event, and a marked artifact line in human output, so an evidence gate need not read artifact metadata.
 - **BREAKING:** a run plans with a runner that has no trusted mutation. `createRunner` no longer receives the mutation `trustedMutation.load` returned for the runner that computes the plan; only the mutation `authorize` returns reaches a runner. A host whose runner reads `options.trustedMutation` during construction or preflight now sees `undefined` there; move that check to `authorize`, which receives the loaded mutation and the plan.
 - `RecipeEngine.trustedMutation` hooks receive the adapter the command resolved (`--adapter`, a `--platform` target, or the detected one): `load` gets an `adapter` field, and `authorize` a third argument `{ adapter }`. Both input types are exported from `@farmslot/recipe-cli/harness` as `TrustedMutationLoadInput` and `TrustedMutationAuthorizeContext`, so a host can gate a mutation on the platform without resolving the adapter again.
   - `authorize`'s third argument is required in the type: a host that calls `engine.trustedMutation.authorize(base, plan)` itself must pass `{ adapter }`. An implementation that declares two parameters still type-checks.
