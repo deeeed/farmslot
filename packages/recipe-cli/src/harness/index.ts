@@ -61,6 +61,23 @@ export {
   stripAnsi,
 } from './cli-color.js';
 export {
+  booleanOption,
+  type CliUsageError,
+  type CliUsageErrorCode,
+  type CommandContract,
+  type ContractedCommand,
+  type ContractFailures,
+  contractOptions,
+  type ContractValidationOptions,
+  optionalValueOption,
+  type OptionSpec,
+  optionValues,
+  type PositionalSpec,
+  publicCommandTokens,
+  validatePublicInvocation,
+  valueOption,
+} from './command-contract.js';
+export {
   COMMAND_JOURNAL_FILE,
   commandJournalPath,
   type CommandJournalRecord,
@@ -97,6 +114,18 @@ export {
   type SourceProvenanceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
+export {
+  createHarnessCli,
+  type HarnessCli,
+  type HarnessCliOptions,
+  type HarnessCliResult,
+  type HarnessCommand,
+  type HarnessHelp,
+  type HarnessHelpGroup,
+  type HelpPaint,
+  type HiddenHarnessCommand,
+  type PublicHarnessCommand,
+} from './harness-cli.js';
 export {
   checkHealBounds,
   classifyFailure,
