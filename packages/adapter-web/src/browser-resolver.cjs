@@ -533,6 +533,7 @@ async function withProbeLock(
 // so a watchdog, a signal or process exit can stop their browsers first.
 const activeProbes = new Map();
 const PROBE_PROFILE_PREFIX = 'farmslot-browser-probe-';
+const PROBE_PROFILE_OWNER = new RegExp(`^${PROBE_PROFILE_PREFIX}(\\d+)-`, 'u');
 const PROBE_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
 function profilePids(profile) {
@@ -580,18 +581,22 @@ function stopActiveProbes() {
 
 // A hook timeout sends SIGTERM to the caller's process group. Stop the probe
 // browsers, then let the signal end the process as it would have; a host with
-// its own handler for that signal keeps control of the exit.
+// its own handler for that signal (a `once` handler is already gone by now, so
+// it is noted at install) keeps control of the exit.
 function onProbeSignal(signal) {
   stopActiveProbes();
+  const hostHandles = hostSignals.has(signal) || process.listenerCount(signal) > 1;
   setProbeExitHandlers(false);
-  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+  if (!hostHandles) process.kill(process.pid, signal);
 }
 
 let probeExitHandlers = false;
+let hostSignals = new Set();
 
 function setProbeExitHandlers(on) {
   if (probeExitHandlers === on) return;
   probeExitHandlers = on;
+  if (on) hostSignals = new Set(PROBE_SIGNALS.filter((signal) => process.listenerCount(signal)));
   for (const signal of PROBE_SIGNALS) {
     if (on) process.on(signal, onProbeSignal);
     else process.off(signal, onProbeSignal);
@@ -606,12 +611,14 @@ function trackProbe(profile, pid = null) {
 }
 
 // A resolver killed outright (SIGKILL) cannot clean up. Its profile name
-// carries its pid, so the next probe stops that browser and removes the profile.
+// carries its pid, so the next probe by the same user stops that browser and
+// removes the profile. Another user's profiles (a shared /tmp) are left alone.
 function reapOrphanedProbes(tmp = os.tmpdir()) {
   for (const name of fs.readdirSync(tmp)) {
-    const owner = new RegExp(`^${PROBE_PROFILE_PREFIX}(\\d+)-`, 'u').exec(name);
+    const owner = PROBE_PROFILE_OWNER.exec(name);
     if (!owner || Number(owner[1]) === process.pid || pidAlive(Number(owner[1]))) continue;
     const profile = path.join(tmp, name);
+    if (fs.lstatSync(profile).uid !== process.getuid()) continue;
     killProfile(profile);
     fs.rmSync(profile, { recursive: true, force: true });
   }
@@ -651,6 +658,8 @@ async function probeLaunch(
   let exited = null;
   try {
     const port = await freePort();
+    // A host that survives a signal resumes here after stopProbe ran.
+    if (!activeProbes.has(profile)) return verdict(false, 'probe stopped by its caller', true);
     // A headful probe starts like the slot browsers (the launchers and the
     // library autolaunch): in the background with no startup window (Chrome
     // activates itself when it opens one); renderCheck opens a background
@@ -1260,6 +1269,7 @@ module.exports = {
   probeCacheKey,
   probeLaunch,
   readProbeCache,
+  reapOrphanedProbes,
   renderCheck,
   resolveBrowser,
   withProbeLock,

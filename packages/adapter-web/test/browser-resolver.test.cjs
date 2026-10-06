@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { execFile, execFileSync, spawn } = require('node:child_process');
+const { execFile, execFileSync, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -1372,8 +1372,9 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (error.code === 'ESRCH') return false;
+      throw error;
     }
   }
 
@@ -1456,5 +1457,57 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
       ['SIGTERM', 'SIGINT', 'SIGHUP', 'exit'].map((event) => process.listenerCount(event)),
       before,
     );
+  });
+
+  it('lets a host once-handler finish its own shutdown', { timeout: 30000 }, async () => {
+    const { caller, exited } = probingCaller(
+      "process.once('SIGTERM', () => setTimeout(() => { process.stdout.write('host-done|'); process.exit(0); }, 300));",
+    );
+    const browser = await waitFor(() => browserOf(caller.pid));
+    process.kill(caller.pid, 'SIGTERM');
+    const { code, stdout } = await exited;
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('host-done|'), stdout);
+    assert.equal(running(browser.pid), false);
+  });
+
+  it('launches nothing when stopped before the browser starts', { timeout: 30000 }, async () => {
+    const host = () => {};
+    process.on('SIGTERM', host);
+    try {
+      process.env.FAKE_CDP_MODE = 'ok';
+      const probe = resolver.probeLaunch(FAKE_BROWSER, fast);
+      process.emit('SIGTERM', 'SIGTERM');
+      assertMatch(await probe, {
+        ok: false,
+        transient: true,
+        reason: 'probe stopped by its caller',
+      });
+    } finally {
+      process.off('SIGTERM', host);
+    }
+  });
+
+  it("leaves another user's orphaned probe profile alone", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-'));
+    const dead = spawnSync('true').pid;
+    const foreign = path.join(tmp, `farmslot-browser-probe-${dead}-abc`);
+    const mine = path.join(tmp, `farmslot-browser-probe-${dead}-def`);
+    fs.mkdirSync(foreign);
+    fs.mkdirSync(mine);
+    const realLstat = fs.lstatSync;
+    const lstat = mock.method(fs, 'lstatSync', (file, ...rest) =>
+      file === foreign
+        ? { ...realLstat(file, ...rest), uid: process.getuid() + 1 }
+        : realLstat(file, ...rest),
+    );
+    try {
+      resolver.reapOrphanedProbes(tmp);
+      assert.equal(fs.existsSync(foreign), true);
+      assert.equal(fs.existsSync(mine), false);
+    } finally {
+      lstat.mock.restore();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

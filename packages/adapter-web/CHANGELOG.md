@@ -5,7 +5,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Browser probes no longer leave Chrome running when the resolver is stopped mid-probe. A SIGTERM, SIGINT or SIGHUP (a hook timeout signals the caller's process group, which the probe browser is outside of) or process exit stops the probe browser and removes its profile first. Probe profiles are named after the resolver's pid, so the next probe stops the browser of a resolver that was killed outright. A probe stopped by its caller is a transient verdict, not a property of the binary.
+- Browser probes no longer leave Chrome for Testing running when the resolver is stopped mid-probe (a hook timeout, a signal, or the resolver killed outright): the probe browser and its temporary profile are removed.
 
 ## 0.3.0 - 2026-10-05
 
