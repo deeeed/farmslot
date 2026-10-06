@@ -27,6 +27,7 @@ import {
   harnessAdapter,
   harnessAdapters,
   harnessHost,
+  resolveLiveAdapter,
   selectedAdapterId,
 } from '../src/harness/index.js';
 
@@ -609,6 +610,35 @@ describe('adapter plugins', () => {
     // A library the hydrated env adds may not claim a built-in either way.
     process.env.RECIPE_LIBRARY_PATH = `hydrated=${library('claim', { core: { source: pluginSource('core') } })}`;
     await ensureAdapterLoaded('core', { env: operator });
+  });
+
+  test("live scripts: a child adapter finds its parents' scripts, child first, then shared", async () => {
+    harnessAdapters().register(builtin('web-dapp'));
+    harnessAdapters().register({ ...builtin('terminal'), extends: 'web-dapp' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('kiosk'), extends: 'terminal' } as PlatformAdapter);
+    const root = tempRoot('recipe-cli-live-chain-');
+    const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
+    const script = (platform: string) => {
+      const file = path.join(root, platform, 'team', 'probe.mjs');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'export default {};\n');
+      return file;
+    };
+    const resolve = (platform: string) => resolveLiveAdapter(platform, 'team.probe', 'shop', env);
+
+    const shared = script('shared');
+    const parent = script('web-dapp');
+    // A child finds its parent's script before the shared one.
+    assert.equal(await resolve('terminal'), parent);
+    // Two levels: the grandparent's script, through the parent.
+    assert.equal(await resolve('kiosk'), parent);
+    // The child's own script wins; a grandchild reaches its nearest ancestor's.
+    const child = script('terminal');
+    assert.equal(await resolve('terminal'), child);
+    assert.equal(await resolve('kiosk'), child);
+    assert.equal(await resolve('web-dapp'), parent);
+    // A built-in that extends nothing is unchanged: its own script, else shared.
+    assert.equal(await resolve('core'), shared);
   });
 
   test('prints a refusal as the --json envelope or the human line', () => {

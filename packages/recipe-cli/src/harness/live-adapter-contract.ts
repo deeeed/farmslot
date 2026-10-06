@@ -75,16 +75,33 @@ function candidatePaths(
       ).filter((entry): entry is string => Boolean(entry)),
     ),
   ];
+  const platforms = platformChain(platform);
   const files: string[] = [];
   for (const root of roots) {
     for (const family of families) {
       for (const candidateStem of stems) {
-        pushCandidateFiles(files, root, platform, family, candidateStem);
+        pushCandidateFiles(files, root, platforms, family, candidateStem);
       }
-      pushDomainDispatcherFiles(files, root, platform, family);
+      pushDomainDispatcherFiles(files, root, platforms, family);
     }
   }
   return files;
+}
+
+/**
+ * `platform`, then each adapter up its `extends` chain (a library plugin's
+ * composed adapter carries its parent's id), so a child adapter runs its
+ * parent's live scripts unless it has its own. A built-in extends nothing.
+ */
+function platformChain(platform: string): string[] {
+  const registry = harnessAdapters();
+  const chain = [platform];
+  let current = registry.has(platform) ? registry.get(platform).extends : undefined;
+  while (current !== undefined && !chain.includes(current)) {
+    chain.push(current);
+    current = registry.has(current) ? registry.get(current).extends : undefined;
+  }
+  return chain;
 }
 
 function declaredActionRoot(raw: string | undefined, action: string): string | undefined {
@@ -99,24 +116,25 @@ function declaredActionRoot(raw: string | undefined, action: string): string | u
   }
 }
 
+// The platforms' own scripts, child first, then the shared one.
 function pushCandidateFiles(
   files: string[],
   root: string,
-  platform: string,
+  platforms: readonly string[],
   family: string,
   stem: string,
 ) {
-  files.push(path.join(root, platform, family, `${stem}.mjs`));
+  for (const platform of platforms) files.push(path.join(root, platform, family, `${stem}.mjs`));
   files.push(path.join(root, 'shared', family, `${stem}.mjs`));
 }
 
 function pushDomainDispatcherFiles(
   files: string[],
   root: string,
-  platform: string,
+  platforms: readonly string[],
   family: string,
 ) {
-  files.push(path.join(root, platform, family, `${family}.mjs`));
+  for (const platform of platforms) files.push(path.join(root, platform, family, `${family}.mjs`));
   files.push(path.join(root, 'shared', family, `${family}.mjs`));
 }
 
