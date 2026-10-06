@@ -64,8 +64,38 @@ export async function runRereviewLatestHead(
   // The head is fetched once for both paths: it keys the intake request and
   // seeds the warm continuation.
   const live = await fetchGitHubPR(`${target.repo}#${target.number}`);
+  const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
+  const runner = run.metrics.runner;
+  const model = run.metrics.model;
+  // The stale review is the prior round, the live head is the target, and the
+  // reviewer keeps its session. The context reads only the prior run, so its
+  // ancestry lookup runs before the child exists.
+  const context =
+    slot && runner && model
+      ? automatedRepeatReviewSelection(
+          await confirmIncrementalAncestry(
+            buildRepeatReviewContext(
+              run,
+              run,
+              {
+                project: run.project,
+                repository: target.repo.toLowerCase(),
+                prNumber: target.number,
+                headSha: live.headSha,
+              },
+              getAllRuns(),
+            ),
+          ),
+          {
+            ...DEFAULT_PR_REVIEW_OPTIONS,
+            validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
+            busySession: 'wait',
+          },
+        )
+      : undefined;
 
   // A second click while the first chained round is still going returns it.
+  // No await follows this check before the new child carries the head it matches.
   const existing = getAllRuns().find(
     (candidate) =>
       candidate.parentRunId === run.id &&
@@ -75,10 +105,7 @@ export async function runRereviewLatestHead(
   );
   if (existing) return { mode: 'warm-handoff', runId: existing.id, headSha: live.headSha };
 
-  const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
-  const runner = run.metrics.runner;
-  const model = run.metrics.model;
-  if (!slot || !runner || !model) {
+  if (!slot || !runner || !model || !context) {
     // The blocked review still owns the PR for queue admission; retire it or
     // the replacement waits on the run it replaces.
     supersedeBlockedReview(run, 'via review intake');
@@ -89,7 +116,7 @@ export async function runRereviewLatestHead(
   const child = createRun({
     flowType: 'review-pr',
     project: run.project,
-    // Original casing for display; the continuation context below compares
+    // Original casing for display; the continuation context compares
     // repositories lower-cased, as engine-decisions does.
     ticketOrPr: `${target.repo}#${target.number}`,
     slotId: slot.slot,
@@ -107,28 +134,6 @@ export async function runRereviewLatestHead(
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
   });
-  // Attach the continuation up front: the stale review is the prior round,
-  // the live head is the target, and the reviewer keeps its session.
-  const context = automatedRepeatReviewSelection(
-    await confirmIncrementalAncestry(
-      buildRepeatReviewContext(
-        child,
-        run,
-        {
-          project: run.project,
-          repository: target.repo.toLowerCase(),
-          prNumber: target.number,
-          headSha: live.headSha,
-        },
-        getAllRuns(),
-      ),
-    ),
-    {
-      ...DEFAULT_PR_REVIEW_OPTIONS,
-      validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
-      busySession: 'wait',
-    },
-  );
   updateRun(child.id, {
     repeatReviewContext: context,
     reviewScope: context.reviewScope,

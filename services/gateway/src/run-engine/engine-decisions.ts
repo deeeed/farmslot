@@ -320,7 +320,8 @@ export async function confirmIncrementalAncestry(
   if (!priorHead || !incrementalReviewAvailable(context)) return context;
   let reason: string | undefined;
   try {
-    if (!(await isAncestor(context.repository, priorHead, context.currentHeadSha)))
+    const ancestor = await isAncestor(context.repository, priorHead, context.currentHeadSha);
+    if (!ancestor)
       reason = `Prior reviewed head ${priorHead.slice(0, 12)} is not an ancestor of ${context.currentHeadSha.slice(0, 12)} (rebase or force-push).`;
   } catch (error) {
     // A full review is always a valid scope; an unproven delta is not. A vanished
