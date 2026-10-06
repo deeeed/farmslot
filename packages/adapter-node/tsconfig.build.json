@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "paths": {
+      "@farmslot/adapter-sdk": ["../adapter-sdk/dist/index.d.ts"],
+      "@farmslot/protocol": ["../protocol/dist/index.d.ts"],
+      "@farmslot/protocol/*": ["../protocol/dist/*"],
+      "@farmslot/recipe-runner": ["../recipe-runner/dist/index.d.ts"],
+      "@farmslot/recipe-runner/*": ["../recipe-runner/dist/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

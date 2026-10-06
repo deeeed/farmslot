@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-runner",
-  "version": "0.24.0",
+  "version": "0.26.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -62,6 +62,11 @@
       "types": "./dist/runtime/cdp.d.ts",
       "import": "./dist/runtime/cdp.js",
       "default": "./dist/runtime/cdp.js"
+    },
+    "./runtime/cdp-trace": {
+      "types": "./dist/runtime/cdp-trace.d.ts",
+      "import": "./dist/runtime/cdp-trace.js",
+      "default": "./dist/runtime/cdp-trace.js"
     },
     "./runtime/react-native-bridge": {
       "types": "./dist/runtime/react-native-bridge.d.ts",

@@ -5,6 +5,8 @@
 //
 // Every command has a deadline and every pending command fails when the
 // socket closes, so a browser that dies or stalls never hangs a launcher.
+// Observers subscribe to CDP events (`onEvent`) and to the socket closing
+// (`onClose`) on the same client.
 'use strict';
 
 const { execFileSync } = require('node:child_process');
@@ -20,6 +22,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function deadlineError(what, ms) {
   return Object.assign(new Error(`${what} did not answer within ${ms}ms`), { code: 'CDP_TIMEOUT' });
 }
+
+/**
+ * @typedef {{ method: string, params: Record<string, any>, sessionId?: string }} BrowserCdpEvent
+ * @typedef {{ targetId: string, type: string, url: string }} BrowserCdpTarget
+ */
 
 async function connectBrowserCdp(
   port,
@@ -45,6 +52,10 @@ async function connectBrowserCdp(
   const WebSocketImpl = globalThis.WebSocket ?? require('ws');
   const socket = new WebSocketImpl(url);
   const pending = new Map();
+  /** @type {Set<(event: BrowserCdpEvent) => void>} */
+  const eventHandlers = new Set();
+  /** @type {Set<() => void>} */
+  const closeHandlers = new Set();
   let closedError = null;
   const failAll = (error) => {
     closedError ??= error;
@@ -78,10 +89,24 @@ async function connectBrowserCdp(
   const lost = () =>
     failAll(new Error('Browser CDP socket closed (the browser exited or disconnected).'));
   socket.onerror = lost;
-  socket.onclose = lost;
+  socket.onclose = () => {
+    lost();
+    for (const handler of [...closeHandlers]) handler();
+    closeHandlers.clear();
+    eventHandlers.clear();
+  };
   let nextId = 0;
   socket.onmessage = (event) => {
     const message = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
+    if (message.id === undefined && message.method) {
+      const cdpEvent = {
+        method: message.method,
+        params: message.params ?? {},
+        ...(message.sessionId ? { sessionId: message.sessionId } : {}),
+      };
+      for (const handler of [...eventHandlers]) handler(cdpEvent);
+      return;
+    }
     const entry = message.id === undefined ? null : pending.get(message.id);
     if (!entry) return;
     pending.delete(message.id);
@@ -89,6 +114,13 @@ async function connectBrowserCdp(
     if (message.error) entry.reject(new Error(`${entry.method}: ${message.error.message}`));
     else entry.resolve(message.result);
   };
+  /**
+   * @param {string} method
+   * @param {Record<string, any>} [params]
+   * @param {string} [sessionId]
+   * @param {number} [timeout]
+   * @returns {Promise<any>}
+   */
   const send = (method, params = {}, sessionId, timeout = commandTimeoutMs) =>
     new Promise((resolve, reject) => {
       if (closedError) {
@@ -109,6 +141,36 @@ async function connectBrowserCdp(
     });
   return {
     send,
+    // Every CDP event (a message without an id), from the browser or an
+    // attached session. Returns the unsubscribe function; a closed client
+    // has no more events and keeps no handler.
+    /**
+     * @param {(event: BrowserCdpEvent) => void} handler
+     * @returns {() => void}
+     */
+    onEvent: (handler) => {
+      if (closedError) return () => {};
+      eventHandlers.add(handler);
+      return () => {
+        eventHandlers.delete(handler);
+      };
+    },
+    // Once, when the socket closes: the browser exited or `close()` was called.
+    // On a client that is already closed, the handler runs at once.
+    /**
+     * @param {() => void} handler
+     * @returns {() => void}
+     */
+    onClose: (handler) => {
+      if (closedError) {
+        handler();
+        return () => {};
+      }
+      closeHandlers.add(handler);
+      return () => {
+        closeHandlers.delete(handler);
+      };
+    },
     close: () => {
       failAll(new Error('Browser CDP client closed.'));
       try {
@@ -712,10 +774,48 @@ function expectedExtensionId(extensionDir) {
   return extensionIdFromExtensionDir(extensionDir) || null;
 }
 
+// ---- target lists ---------------------------------------------------------
+
+// One entry of `Target.getTargets` (`targetId`) or of the `/json` list (`id`),
+// or null when it lacks an id, type or URL.
+/**
+ * @param {unknown} value
+ * @returns {BrowserCdpTarget | null}
+ */
+function asBrowserCdpTarget(value) {
+  const target = /** @type {Record<string, unknown>} */ (
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  );
+  const targetId = String(target.targetId ?? target.id ?? '');
+  const type = String(target.type ?? '');
+  const url = String(target.url ?? '');
+  return targetId && type && url ? { targetId, type, url } : null;
+}
+
+// The id of the first extension that has a target in the list.
+/**
+ * @param {unknown} targets
+ * @returns {string | null}
+ */
+function extensionIdFromCdpTargets(targets) {
+  for (const candidate of Array.isArray(targets) ? targets : []) {
+    const target = asBrowserCdpTarget(candidate);
+    if (!target) continue;
+    try {
+      const url = new URL(target.url);
+      if (url.protocol === 'chrome-extension:' && url.hostname) return url.hostname;
+    } catch {
+      // Not a URL: not an extension target.
+    }
+  }
+  return null;
+}
+
 module.exports = {
   DEFAULT_COMMAND_TIMEOUT_MS,
   START_TIME_SLACK_MS,
   assertCdpOwnedByProfile,
+  asBrowserCdpTarget,
   assertSameOwner,
   canonicalProfile,
   cdpListenerPids,
@@ -724,6 +824,7 @@ module.exports = {
   waitForCdpOwner,
   connectBrowserCdp,
   expectedExtensionId,
+  extensionIdFromCdpTargets,
   loadUnpackedExtension,
   loadUnpackedOverPort,
   ensureBackgroundWindow,

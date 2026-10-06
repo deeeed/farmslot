@@ -66,6 +66,22 @@ export interface RecipeRunnerOptions<TMutation> {
   onActionEvent?(event: RecipeNodeEvent): void;
 }
 
+/** What `trustedMutation.load` receives: the run's command line and what the command resolved. */
+export interface TrustedMutationLoadInput {
+  /** The adapter the command resolved: `--adapter`, a `--platform` target, or the detected one. */
+  adapter: string;
+  cli: CommandOptions;
+  artifactsDir: string;
+  projectRoot: string;
+  rootRecipe: unknown;
+}
+
+/** What `trustedMutation.authorize` receives besides the loaded mutation and the plan. */
+export interface TrustedMutationAuthorizeContext {
+  /** The adapter the command resolved, the same one `load` received. */
+  adapter: string;
+}
+
 /** What a host executes recipes with, on top of its catalog. */
 export interface RecipeEngine<
   TMutation = unknown,
@@ -78,16 +94,17 @@ export interface RecipeEngine<
   ): Promise<RecipeRunner>;
   /**
    * Funded external mutations: the context loaded from the run's command line,
-   * then bound to the run's execution plan. Absent: no run binds one.
+   * then bound to the run's execution plan. Absent: no run binds one. The plan is
+   * computed without the mutation; `authorize` returning undefined means there is
+   * nothing to bind for this plan, and the run executes with no trusted mutation.
    */
   trustedMutation?: {
-    load(input: {
-      cli: CommandOptions;
-      artifactsDir: string;
-      projectRoot: string;
-      rootRecipe: unknown;
-    }): Promise<TMutation | undefined>;
-    authorize(base: TMutation, plan: RecipeExecutionPlan): Promise<TMutation>;
+    load(input: TrustedMutationLoadInput): Promise<TMutation | undefined>;
+    authorize(
+      base: TMutation,
+      plan: RecipeExecutionPlan,
+      context: TrustedMutationAuthorizeContext,
+    ): Promise<TMutation | undefined>;
   };
   /** The console rules run diagnostics classify with. */
   console: ConsoleClassifier<TAllowlist>;
@@ -298,6 +315,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const mutation = engine.trustedMutation;
   const trustedMutation = mutation
     ? await mutation.load({
+        adapter,
         cli: runtimeOptions.cli ?? {},
         artifactsDir: absoluteArtifactsDir,
         projectRoot,
@@ -321,10 +339,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     // so an untrusted worker cannot promote itself with CLI flags.
     trustTaskActions: (trust.source?.trust ?? 'trusted') === 'trusted',
   };
-  let runner = await engine.createRunner(adapter, manifest, {
-    ...runnerOptions,
-    trustedMutation,
-  });
+  // The loaded mutation is not bound to a plan yet, so the runner that computes
+  // the plan gets none; only an authorized mutation reaches execution.
+  let runner = await engine.createRunner(adapter, manifest, runnerOptions);
   // The wrapper-owned framed recorder is outside the generic execution plan.
   // Keep it for trusted operator runs only; restricted sources use the generic
   // recorder so capture remains plan-bound and approval-gated.
@@ -356,11 +373,15 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   if (mutation && trustedMutation) {
     const executionPlan = await runner.preflight(runRequest);
-    const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan);
-    runner = await engine.createRunner(adapter, manifest, {
-      ...runnerOptions,
-      trustedMutation: authorizedMutation,
+    const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
+      adapter,
     });
+    if (authorizedMutation !== undefined) {
+      runner = await engine.createRunner(adapter, manifest, {
+        ...runnerOptions,
+        trustedMutation: authorizedMutation,
+      });
+    }
   }
   const provenanceInput: ExecutionProvenanceInput = {
     adapter,

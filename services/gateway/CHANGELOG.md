@@ -6,6 +6,17 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.2 - 2026-10-06
+
+- Self-review and self-review fix templates can use `{{DEFAULT_BRANCH}}`, like worker task templates: the project's `default_branch`, else `main`. A farm self-review template that used it failed the run's self-review step.
+- Runs record `statusChangedAt` when their status changes. Re-applying the same status, as a restart does when it resumes a step, leaves it unchanged. Clients now get a run update when CI watch records progress and, at most once a minute, when a monitored worker reports structured progress, so the Runs list's last-progress time stays live.
+- A run created without a mode for a project with an execution-template catalog takes its default mode from the catalog `defaults` instead of the worker template files, so removing a farm template that a shared checklist replaced keeps the mode unchanged.
+- Autonomous dev and fix-bug TASK.md files carry a `## Run contract` section after `## Inputs`, from the run mode: never pause, `mark blocked` when blocked, commit locally and leave pushing to Farmslot until it publishes (CI-FIX follow-ups keep their push step), no AI attribution. Interactive, validation and artifact-only runs and other flows are unchanged.
+- A re-review after the PR was rebased or force-pushed runs as a full review that still rechecks the prior findings. Incremental review is offered only when the prior reviewed head is an ancestor of the current head; before, the incremental diff after a rebase contained every base-branch change.
+- Publishing a PR body keeps every markdown table row (an AC table row is the AC) and cleans local paths inside it; before, a row that linked a task-local screenshot was deleted. Task-relative links (`[x](recipe-run/report.md)`), which are dead on GitHub, keep their text and lose the link, and a generated caption's local `<img>` is dropped instead of publishing as a broken image.
+- For a project without `artifacts_repo`, the draft PR body lists the evidence file names and the Farmslot run that holds them instead of an image table that could never be uploaded.
+- Draft PR titles keep a ticket key upper-case (`feat: TAT-4037`, was `feat: tAT-4037`) and strip a `[Terminal]` prefix like `[Mobile]` and `[Core]`.
+
 ## 0.20.1 - 2026-10-05
 
 - Jira tickets come into TASK.md as written: the ADF description (and wiki markup) is converted to Markdown that keeps paragraphs, headings, lists, code, captions and tables, with ticket headings three levels down so they nest under TASK.md's `## Description`. Acceptance criteria and repro steps are found by heading on the ticket's own levels, in any format (Markdown or bold headings, emoji or a trailing parenthetical, `Acceptance criteria:` labels), ignoring fenced code, one entry per top-level list item (a subheading inside the section prefixes its items). `## Acceptance Criteria` is no longer `_Not specified_` for ADF tickets, and the templated TASK.md renders it one bullet per criterion like the split document. GitHub issues use the same section finder. Comments keep word boundaries.

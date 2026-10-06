@@ -122,8 +122,9 @@ slot-free static review workspaces do not do so yet.
 
 ## Acceptance-criteria ledger
 
-`farmslot-agent ac` is the only writer of `artifacts/acceptance-status.json`. It
-records one verdict per criterion (`proven`, `weak`, `missing`, `untestable`) with
+`farmslot-agent ac` and a recipe run with a task dir write
+`artifacts/acceptance-status.json`, through one module. `ac set` records one
+verdict per criterion (`proven`, `weak`, `missing`, `untestable`) with
 evidence paths and recipe nodes, and `ac render` prints the coverage table the PR
 body reads. Enforcement is a per-project opt-in through
 `worker_terminal.acceptance`: with it, every criterion needs a verdict before a

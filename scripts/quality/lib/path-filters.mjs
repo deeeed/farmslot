@@ -104,6 +104,25 @@ export const PATH_FILTERS = {
     'packages/adapter-sdk/**',
     'packages/recipe-runner/**',
   ],
+  adapter_node: [
+    '.github/workflows/farmslot-quality.yml',
+    'package.json',
+    'yarn.lock',
+    '.yarnrc.yml',
+    'packages/protocol/**',
+    'packages/adapter-node/**',
+    'packages/adapter-sdk/**',
+    'packages/recipe-runner/**',
+  ],
+  adapter_web: [
+    '.github/workflows/farmslot-quality.yml',
+    'package.json',
+    'yarn.lock',
+    '.yarnrc.yml',
+    // adapter-web's tsconfig extends it.
+    'apps/command-center/tsconfig.base.json',
+    'packages/adapter-web/**',
+  ],
   skills: [
     '.github/workflows/farmslot-quality.yml',
     'package.json',
@@ -180,6 +199,10 @@ export const TARGET_STEPS = {
   ],
   recipe_cli: [['recipe-cli quality', ['yarn', 'workspace', '@farmslot/recipe-cli', 'quality']]],
   adapter_sdk: [['adapter-sdk quality', ['yarn', 'workspace', '@farmslot/adapter-sdk', 'quality']]],
+  adapter_node: [
+    ['adapter-node quality', ['yarn', 'workspace', '@farmslot/adapter-node', 'quality']],
+  ],
+  adapter_web: [['adapter-web quality', ['yarn', 'workspace', '@farmslot/adapter-web', 'quality']]],
   skills: [['skills quality', ['yarn', 'workspace', '@farmslot/skills', 'quality']]],
   theme: [['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']]],
   gateway: [['gateway quality', ['yarn', 'workspace', '@farmslot/gateway', 'quality']]],

@@ -61,8 +61,11 @@ export {
 } from './core/library.js';
 export {
   checkRecipeLibraryRequirements,
+  digestLibraryAdapter,
   digestRecipeLibrary,
+  libraryAdapterFiles,
   listLibraryFiles,
+  MAX_LIBRARY_ADAPTER_FILES,
   readRecipeLibraryManifest,
   RECIPE_LIBRARY_DIRECTORIES,
   RECIPE_LIBRARY_MANIFEST_FILE,

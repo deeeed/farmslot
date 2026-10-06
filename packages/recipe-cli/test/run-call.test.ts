@@ -65,6 +65,7 @@ import {
   runnableLibraryRecipes,
   runNetworkCaptureAction,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
@@ -155,6 +156,8 @@ function manifestFor(adapter: string, team = false): RecipeActionManifestDocumen
 
 interface Calls {
   runners: Array<{ adapter: string; trustedMutation?: string; trustTaskActions: boolean }>;
+  // Each trustedMutation hook call, as `<hook>:<adapter it received>`.
+  mutationHooks: string[];
   events: RecipeNodeEvent[];
   members: string[];
   networkStarts: Record<string, unknown>[];
@@ -162,7 +165,14 @@ interface Calls {
 }
 
 function newCalls(): Calls {
-  return { runners: [], events: [], members: [], networkStarts: [], performanceFinalized: [] };
+  return {
+    runners: [],
+    mutationHooks: [],
+    events: [],
+    members: [],
+    networkStarts: [],
+    performanceFinalized: [],
+  };
 }
 
 const pingAdapter: ActionAdapter = {
@@ -263,9 +273,14 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
       });
     },
     trustedMutation: {
-      load: async ({ cli }) =>
-        typeof cli.fundingToken === 'string' ? { bound: cli.fundingToken } : undefined,
-      authorize: async (base, plan) => ({ bound: `${base.bound}@${plan.digest.slice(0, 15)}` }),
+      load: async ({ cli, adapter }) => {
+        calls.mutationHooks.push(`load:${adapter}`);
+        return typeof cli.fundingToken === 'string' ? { bound: cli.fundingToken } : undefined;
+      },
+      authorize: async (base, plan, { adapter }) => {
+        calls.mutationHooks.push(`authorize:${adapter}`);
+        return { bound: `${base.bound}@${plan.digest.slice(0, 15)}` };
+      },
     },
     console: classifier,
     runnerIncludes: ['package.json'],
@@ -717,6 +732,52 @@ describe('recipe validation', () => {
     assert.deepEqual(validateActionInputs(recipe, 'web', { count: 2 }), []);
     assert.deepEqual(validateActionInputs(recipe, 'unregistered', { count: 5 }), []);
     assert.deepEqual(validateActionInputs({ workflow: {} }, 'web'), []);
+  });
+
+  test('warns on command nodes whose exit code cannot prove the claim', async () => {
+    const codes = (nodes: Record<string, unknown>) =>
+      validateCommandNodes({ workflow: { nodes } }).map((finding) => [finding.code, finding.path]);
+    assert.deepEqual(
+      codes({
+        piped: { action: 'command', cmd: 'yarn build 2>&1 | tail -20' },
+        headed: { action: 'command', command: 'cat log|head -5' },
+        orElse: { action: 'command', cmd: 'false || tail -1 log' },
+        tests: { action: 'command', cmd: 'yarn workspace @metamask/a run test:verbose -t "x"' },
+        asserted: { action: 'command', cmd: 'npx jest src/a.test.ts' },
+        count: { action: 'assert_output', source: 'asserted', match: '1 passed' },
+        notTests: { action: 'command', cmd: 'yarn workspace @metamask/test-utils build' },
+        config: { action: 'command', cmd: 'cat jest.config.ts vitest.config.ts' },
+        testing: { action: 'command', cmd: 'yarn run testing' },
+        binPath: { action: 'command', cmd: 'cd pkg && node_modules/.bin/jest' },
+      }),
+      [
+        ['recipe.command_pipe_masks_exit', 'workflow.nodes.piped.cmd'],
+        ['recipe.command_pipe_masks_exit', 'workflow.nodes.headed.command'],
+        ['recipe.test_command_exit_code_only', 'workflow.nodes.tests'],
+        ['recipe.test_command_exit_code_only', 'workflow.nodes.binPath'],
+      ],
+    );
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      unit: { action: 'command', cmd: 'yarn test | tail -5', intent: 'Run tests.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const validated = await validateRunRecipeStatic(engine, recipe, 'web', { target });
+    assert.equal(validated.errorCount, 0);
+    assert.deepEqual(
+      validated.findings.map((finding) => [finding.severity, finding.code]),
+      [
+        ['warning', 'recipe.command_pipe_masks_exit'],
+        ['warning', 'recipe.test_command_exit_code_only'],
+      ],
+    );
+    const plan = await capture(() =>
+      handleRun([recipe, '--plan', '--adapter', 'web', '--target', target], runOptions),
+    );
+    assert.equal(plan.value, 0);
+    const output = plan.stdout.join('\n');
+    assert.match(output, /⚠ recipe\.command_pipe_masks_exit workflow\.nodes\.unit\.cmd — /u);
+    assert.match(output, /⚠ recipe\.test_command_exit_code_only workflow\.nodes\.unit — /u);
   });
 
   test('a bare action name is not a recipe: the hint is the call that runs it', async () => {
@@ -1455,9 +1516,10 @@ describe('run', () => {
       ),
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
     const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
     assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
+    assert.deepEqual([bound[0], bound[2]], ['', '']);
     assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
     assert.equal(bound[3], bound[1]);
   });
@@ -1532,6 +1594,73 @@ describe('run', () => {
     const byEnv = await capture(() => handleRun([recipe, '--plan', ...common], planOptions));
     assert.equal(fixtureDetail(byFlag.stdout), 'fixture in temp/recipe/runtime-9303');
     assert.equal(fixtureDetail(byEnv.stdout), fixtureDetail(byFlag.stdout));
+  });
+
+  test('a run with a task dir records its proof targets in the acceptance ledger', async () => {
+    const target = checkout();
+    const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'shop-1');
+    fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, 'inputs', 'handoff.json'),
+      JSON.stringify({
+        task: { acceptanceCriteria: ['The shop answers a ping.', 'Not proven here.'] },
+      }),
+    );
+    const recipe = path.join(target, 'proof.recipe.json');
+    fs.writeFileSync(
+      recipe,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Shop proof',
+        description: 'Prove the ping.',
+        proofTargets: [{ id: 'AC1', claim: 'The shop answers a ping.' }],
+        workflow: {
+          entry: 'ping',
+          nodes: {
+            ping: {
+              action: 'shop.ping',
+              mode: 'fast',
+              intent: 'Ping the shop.',
+              proves: ['AC1'],
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    process.env.RECIPE_TASK_DIR = path.relative(target, taskDir);
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--cdp-port',
+          '9444',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.equal(lastJson(run.stdout).status, 'pass');
+    const ledger = JSON.parse(
+      fs.readFileSync(path.join(taskDir, 'artifacts', 'acceptance-status.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      ledger.criteria.map((entry: Record<string, unknown>) => [
+        entry.id,
+        entry.verdict,
+        entry.recipeNodes,
+        entry.evidence,
+      ]),
+      [['AC-1', 'proven', ['ping'], ['artifacts/trace.json']]],
+    );
   });
 
   test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
@@ -2053,6 +2182,119 @@ describe('call', () => {
     assert.equal(call.value, 0, call.stderr.join('\n'));
     assert.equal(calls.runners.length, 2);
     assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
+  });
+
+  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const unbound = {
+      ...callOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: base.load,
+          authorize: async (
+            ...args: Parameters<typeof base.authorize>
+          ): Promise<{ bound: string } | undefined> => {
+            await base.authorize(...args);
+            return undefined;
+          },
+        },
+      },
+    };
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=slow',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        unbound,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    // Two preflights (before and after the checkout lock), one runner each, none bound.
+    assert.deepEqual(calls.runners, [
+      { adapter: 'web', trustTaskActions: true },
+      { adapter: 'web', trustTaskActions: true },
+    ]);
+    assert.deepEqual(calls.mutationHooks, [
+      'load:web',
+      'authorize:web',
+      'load:web',
+      'authorize:web',
+    ]);
+  });
+
+  test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
+    const registry = createAdapterRegistry();
+    registry.register({ ...webAdapter(calls), targets: ['storefront'] });
+    registry.register(shopAdapter('api', calls));
+    configureHarnessAdapters(registry);
+    const target = checkout();
+    fs.writeFileSync(path.join(target, 'shop.json'), '{}');
+    const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
+    const ping = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
+      echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const cases = {
+      'call --adapter web': [
+        'web',
+        () => handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
+      ],
+      'call, detected': [
+        'web',
+        () => handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+      ],
+      'call --platform storefront': [
+        'web',
+        () =>
+          handleCall(
+            ['shop.ping', 'mode=slow', '--platform', 'storefront', ...funded],
+            callOptions,
+          ),
+      ],
+      'call --adapter api': [
+        'api',
+        () => handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
+      ],
+      'run, detected': ['web', () => handleRun([ping, ...funded], runOptions)],
+      'run --platform storefront': [
+        'web',
+        () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
+      ],
+      'run --adapter api': [
+        'api',
+        () => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
+      ],
+    } as const;
+    for (const [name, [adapter, invoke]] of Object.entries(cases)) {
+      calls.mutationHooks.length = 0;
+      const result = await capture(invoke);
+      assert.equal(
+        result.value,
+        0,
+        `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
+      );
+      assert.deepEqual(
+        [...new Set(calls.mutationHooks)],
+        [`load:${adapter}`, `authorize:${adapter}`],
+        name,
+      );
+    }
   });
 
   test('teaches unknown, unavailable and invalid actions', async () => {

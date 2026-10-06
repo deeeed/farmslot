@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { summarizeFrames } from '../src/frame-metrics.js';
+import { summarizeFrames } from '../src/runtime/frame-metrics.js';
 
 describe('frame metric summaries', () => {
   it('excludes idle gaps from cadence-based active FPS', () => {

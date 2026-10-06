@@ -78,6 +78,50 @@ export function validateActionInputs(
   return findings;
 }
 
+// A pipe into tail/head makes the shell report tail's exit code, so a failing
+// command passes; the runner already captures full stdout and stderr.
+const PIPE_TO_TAIL_OR_HEAD_RE = /(?:^|[^|])\|(?!\|)\s*(?:tail|head)\b/u;
+// A test runner as its own word (not jest.config.ts), or a `test` script such as
+// `test:verbose` (not `testing`).
+const TEST_RUNNER_RE =
+  /(?:^|[\s;&|(/])(?:jest|vitest|mocha)(?=\s|$)|\b(?:yarn|npm|pnpm)\b[^|;&]*\stest(?:[:.-][\w:.-]*)?(?=\s|$)/u;
+
+/** Warnings for `command` nodes whose exit code cannot prove what the recipe relies on it for. */
+export function validateCommandNodes(recipe: unknown): RecipeValidationFinding[] {
+  if (!isRecord(recipe) || !isRecord(recipe.workflow)) return [];
+  const nodes = isRecord(recipe.workflow.nodes) ? recipe.workflow.nodes : undefined;
+  if (!nodes) return [];
+  const outputAsserted = new Set(
+    Object.values(nodes).flatMap((node) =>
+      isRecord(node) && node.action === 'assert_output' ? [node.source ?? node.node] : [],
+    ),
+  );
+  const findings: RecipeValidationFinding[] = [];
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (!isRecord(node) || node.action !== 'command') continue;
+    const field = node.cmd !== undefined ? 'cmd' : 'command';
+    const command = node[field];
+    if (typeof command !== 'string') continue;
+    if (PIPE_TO_TAIL_OR_HEAD_RE.test(command)) {
+      findings.push({
+        severity: 'warning',
+        code: 'recipe.command_pipe_masks_exit',
+        path: `workflow.nodes.${nodeId}.${field}`,
+        message: `${nodeId} pipes into tail/head, so its exit code is tail's and a failing command passes. Drop the pipe: the node already records full stdout and stderr for assert_output.`,
+      });
+    }
+    if (TEST_RUNNER_RE.test(command) && !outputAsserted.has(nodeId)) {
+      findings.push({
+        severity: 'warning',
+        code: 'recipe.test_command_exit_code_only',
+        path: `workflow.nodes.${nodeId}`,
+        message: `${nodeId} runs tests but only its exit code is checked. Add assert_output on the literal pass count: jest -t exits 0 when no test matches.`,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function validateRecipeAdapterAware(
   adapter: string,
   recipe: unknown,
@@ -107,6 +151,7 @@ export async function validateRecipeAdapterAware(
         ).findings
       : []),
     ...validateActionInputs(recipe, adapter, params),
+    ...validateCommandNodes(params ? resolveRecipeParamValue(recipe, params) : recipe),
   ];
   if (withManifest.status === 'valid' && isRecord(recipe) && libraryResolution) {
     try {

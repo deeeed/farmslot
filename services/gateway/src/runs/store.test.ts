@@ -86,6 +86,28 @@ test('createRun records lifecycle startedAt for run detail telemetry', async (t)
   assert.equal(run.startedAt, run.createdAt);
 });
 
+test('updateRun stamps statusChangedAt only when the status changes', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-status-changed-at`,
+  });
+  t.after(() => cleanupRun(run.id));
+
+  const watching = updateRun(run.id, { status: 'ci-watching' });
+  const changedAt = watching.statusChangedAt;
+  assert.ok(changedAt);
+  await delay(5);
+  // A restart resuming its step re-applies the same status; other writes leave it too.
+  updateRun(run.id, { status: 'ci-watching' });
+  updateRun(run.id, { summary: 'retitled' });
+  assert.equal(getRun(run.id)?.statusChangedAt, changedAt);
+  await delay(5);
+  const paused = updateRun(run.id, { status: 'paused' });
+  assert.notEqual(paused.statusChangedAt, changedAt);
+  assert.equal(paused.statusChangedAt, paused.updatedAt);
+});
+
 test('createRun persists the domain overlay and omits it when unset', async (t) => {
   const withDomain = createRun({
     flowType: 'fix-bug',

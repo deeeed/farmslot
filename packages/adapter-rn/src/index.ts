@@ -16,7 +16,6 @@ export {
 } from './devices.js';
 export { runExpoRecipeDoctor } from './doctor.js';
 export { type FingerprintCheck, type FingerprintStatus } from './fingerprint-baseline.js';
-export { type FrameMetricSummary, type FrameSample, summarizeFrames } from './frame-metrics.js';
 export {
   metroEnvCheck,
   metroEnvFingerprint,

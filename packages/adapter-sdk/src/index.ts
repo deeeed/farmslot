@@ -10,6 +10,7 @@ export {
   type AdapterDevServer,
   type AdapterDevServerStop,
   type AdapterDiagnostics,
+  type AdapterDoctorCheck,
   type AdapterFailurePatterns,
   type AdapterFlags,
   type AdapterHarness,

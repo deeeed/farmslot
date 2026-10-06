@@ -5,6 +5,24 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `network-observer`: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture. Without it the observer still takes the first extension with a target, which in a branded Chrome can be a component or policy extension listed before the one under test.
+
+## 0.4.0 - 2026-10-06
+
+- Add `network-observer` (`createExtensionNetworkObserver({ cdpPort, runtimeDir })`) and `performance-observer` (`createExtensionPerformanceBackend({ cdpPort, extensionId, uiPaths, kind, platform, markerPrefix })`), the Extension network and performance observers moved from mm-harness. The network observer attaches to every target of the loaded extension and feeds their Network events to a `@farmslot/recipe-runner/cdp-broker`; it returns an `@farmslot/adapter-sdk` `NetworkCaptureBackend`. The performance observer traces the extension page found at the first of `uiPaths` with exactly one open renderer, through `@farmslot/recipe-runner/runtime/cdp-trace`. Both run on `connectBrowserCdp`; `connectTimeoutMs` and `commandTimeoutMs` default to 10 s. The package now depends on `@farmslot/recipe-runner` and `@farmslot/adapter-sdk`.
+- `browser-cdp`: `connectBrowserCdp` clients gain `onEvent(handler)` (every CDP event, as `{ method, params, sessionId? }`; events were dropped before) and `onClose(handler)` (once, when the socket closes; at once on a client that has already closed), each returning an unsubscribe function. `onEvent` on a closed client keeps nothing. Add `asBrowserCdpTarget` and `extensionIdFromCdpTargets`.
+- `page-target`: add `selectExtensionTarget(targets, extensionId, { paths })`, the extension UI renderer at the first path with any match, or null when that path has several.
+- Publish with adapter-sdk 0.5.1 and recipe-runner 0.26.0.
+
+## 0.3.1 - 2026-10-06
+
+- Browser probes no longer leave Chrome for Testing running when the resolver is stopped mid-probe (a hook timeout, a signal, or the resolver killed outright): the probe browser and its temporary profile are removed.
+  - A resolver killed outright cannot clean up; the next probe by the same user stops its browser and removes its profile. `browser-resolver` exports that step as `reapOrphanedProbes(tmp?)`.
+
+## 0.3.0 - 2026-10-05
+
+- Add `dapp`, the web3 layer for a dapp under test, moved from `@deeeed/metamask-harness`'s Web Terminal adapter: the strict EIP-1193 test wallet (`createStrictWallet`), the page script that wraps the app's provider and logs its wallet requests or injects a provider the host answers (`pageScriptSource`, `pageReadyExpression`), the host's side of its bindings (`createWalletRequestBinding`: frame and document attribution, `outside-app-frame` and `unattributed` records, refusals) and the wallet request log (`windowSinceCursor`, `resetWindow`, `evaluateSignatureLog`, `awaitSignatureLog`, `writeLogArtifact`). Product policy is passed in: the typed data to refuse (`refuseTypedData`), the injected wallet's EIP-6963 identity and the log entries and typed-data classes a product forbids. Page bindings are `__farmslotWallet{Log,Request,Resolve}` and the page marker `__farmslotDapp`.
+- Add `origin` (`isAppUrl`, `originOf`, `isAppTopFrameContext`, `shortUrl`): exact app-origin checks, moved from the same adapter.
 
 ## 0.2.0 - 2026-10-05
 
