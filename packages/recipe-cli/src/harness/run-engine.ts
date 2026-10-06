@@ -94,7 +94,9 @@ export interface RecipeEngine<
   ): Promise<RecipeRunner>;
   /**
    * Funded external mutations: the context loaded from the run's command line,
-   * then bound to the run's execution plan. Absent: no run binds one.
+   * then bound to the run's execution plan. Absent: no run binds one. The plan is
+   * computed without the mutation; `authorize` returning undefined means there is
+   * nothing to bind for this plan, and the run executes with no trusted mutation.
    */
   trustedMutation?: {
     load(input: TrustedMutationLoadInput): Promise<TMutation | undefined>;
@@ -102,7 +104,7 @@ export interface RecipeEngine<
       base: TMutation,
       plan: RecipeExecutionPlan,
       context: TrustedMutationAuthorizeContext,
-    ): Promise<TMutation>;
+    ): Promise<TMutation | undefined>;
   };
   /** The console rules run diagnostics classify with. */
   console: ConsoleClassifier<TAllowlist>;
@@ -336,10 +338,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     // so an untrusted worker cannot promote itself with CLI flags.
     trustTaskActions: (trust.source?.trust ?? 'trusted') === 'trusted',
   };
-  let runner = await engine.createRunner(adapter, manifest, {
-    ...runnerOptions,
-    trustedMutation,
-  });
+  // The loaded mutation is not bound to a plan yet, so the runner that computes
+  // the plan gets none; only an authorized mutation reaches execution.
+  let runner = await engine.createRunner(adapter, manifest, runnerOptions);
   // The wrapper-owned framed recorder is outside the generic execution plan.
   // Keep it for trusted operator runs only; restricted sources use the generic
   // recorder so capture remains plan-bound and approval-gated.
@@ -374,10 +375,12 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
       adapter,
     });
-    runner = await engine.createRunner(adapter, manifest, {
-      ...runnerOptions,
-      trustedMutation: authorizedMutation,
-    });
+    if (authorizedMutation !== undefined) {
+      runner = await engine.createRunner(adapter, manifest, {
+        ...runnerOptions,
+        trustedMutation: authorizedMutation,
+      });
+    }
   }
   const provenanceInput: ExecutionProvenanceInput = {
     adapter,

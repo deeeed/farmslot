@@ -1962,11 +1962,62 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
+    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
     const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
     assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
+    assert.deepEqual([bound[0], bound[2]], ['', '']);
     assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
     assert.equal(bound[3], bound[1]);
+  });
+
+  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const unbound = {
+      ...callOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: base.load,
+          authorize: async (
+            ...args: Parameters<typeof base.authorize>
+          ): Promise<{ bound: string } | undefined> => {
+            await base.authorize(...args);
+            return undefined;
+          },
+        },
+      },
+    };
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=slow',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        unbound,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    // Two preflights (before and after the checkout lock), one runner each, none bound.
+    assert.deepEqual(calls.runners, [
+      { adapter: 'web', trustTaskActions: true },
+      { adapter: 'web', trustTaskActions: true },
+    ]);
+    assert.deepEqual(calls.mutationHooks, [
+      'load:web',
+      'authorize:web',
+      'load:web',
+      'authorize:web',
+    ]);
   });
 
   test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
