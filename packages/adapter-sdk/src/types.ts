@@ -92,6 +92,108 @@ export interface PlatformAdapter<
   observation?: AdapterObservation;
   // Platform checks `doctor` reports after the shared ones.
   doctor?(target: string): Promise<AdapterDoctorCheck[]>;
+  // What `doctor`, `status` and `prepare` report and do beyond the shared steps.
+  // Absent: the shared checks only, no devices, no repairs.
+  readiness?: AdapterReadiness;
+}
+
+/** What `doctor`, `status` and `prepare` ask a platform. Every member is optional. */
+export interface AdapterReadiness {
+  // Platform checks in the doctor report, after the shared ones. `platform` is
+  // --platform when given.
+  checks?(target: string, platform?: string): AdapterDoctorCheck[];
+  // Checks that need the live runtime, appended after the runtime check.
+  liveChecks?(target: string): Promise<AdapterDoctorCheck[]>;
+  // Reported as the doctor report's `environment`.
+  environment?(target: string): Record<string, unknown>;
+  // Extra human doctor lines.
+  lines?(target: string): string[];
+  // Dev servers a killed launch left behind for this checkout (their pids).
+  orphanDevServers?(target: string, port: string | undefined): string[];
+  // Screenshot providers that work without the capture helper. Absent: the
+  // platform has no capture surface and doctor reports none.
+  captureProviders?: readonly string[];
+  // doctor --fix repairs: apply returns true when it changed something.
+  fixes?: ReadonlyArray<{ id: string; apply(target: string): boolean }>;
+  // A runtime state doctor --fix reports as failed, with its next step.
+  runtimeBlock?(
+    target: string,
+    runtime: AdapterRuntimeStatus | undefined,
+  ): { id: string; userAction?: string } | undefined;
+  // Feature flags readable without a runtime (a pinned build manifest). The
+  // overrides are the platform's own record; the host reports them.
+  pinnedFlags?(target: string): AdapterPinnedFlags | null;
+  // `status` probes the runtime unless --fast.
+  statusRuntime?: boolean;
+  // `doctor --print-ready` stdout when the runtime is live (Farmslot's
+  // health.ready_indicator); '' when the platform is live but not ready.
+  readyIndicator?(devices: readonly AdapterDevice[]): string;
+  // Connected devices for doctor and status; loaded on first use.
+  devices?(): Promise<AdapterDevices>;
+  // `prepare`. Absent: prepare does not support the platform.
+  prepare?: AdapterPrepare;
+}
+
+export interface AdapterPinnedFlags {
+  overrides: unknown;
+  error?: string;
+  sourcePath?: string;
+}
+
+/** A device doctor and status list; the platform owns the rest of the record. */
+export interface AdapterDevice {
+  id: string;
+  platform?: string;
+  selected?: boolean;
+}
+
+/** The connected devices, as `status` and `doctor` show them before any probe. */
+export interface AdapterDeviceView {
+  allConnectedDevices: readonly unknown[];
+  devices: AdapterDevice[];
+  deviceDiscoveryErrors: ReadonlyArray<{ message: string; userAction: string }>;
+}
+
+/** What one live probe of the devices answered. */
+export interface AdapterDeviceLiveView {
+  devicesWithLive: AdapterDevice[];
+  additionalReachableDevices: AdapterDevice[];
+  // Feature-flag overrides the running app reported (the platform's record).
+  featureFlags: unknown;
+  // Extra `status --json` fields this platform reports, in order.
+  statusFields?: Readonly<Record<string, unknown>>;
+  // The platform's per-device live state, passed back to its own renderers.
+  liveMap: unknown;
+}
+
+export type AdapterPaint = (style: string, text: string) => string;
+
+/** The devices surface: one view, one live probe, and their human rendering. */
+export interface AdapterDevices {
+  view(allDevices: boolean): AdapterDeviceView;
+  live(target: string, view: AdapterDeviceView): Promise<AdapterDeviceLiveView>;
+  renderList(view: AdapterDeviceView, paint: AdapterPaint): void;
+  renderAdditional(devices: AdapterDevice[], paint: AdapterPaint): void;
+  renderLive(devices: AdapterDevice[], liveMap: unknown, paint: AdapterPaint): void;
+  // Live hints `status` prints after the live block (e.g. reverse ports).
+  renderHints?(live: AdapterDeviceLiveView, paint: AdapterPaint): void;
+  // The next command after a live probe, given the platform's default.
+  nextForLive(fallback: string, liveMap: unknown): string;
+}
+
+export interface AdapterPrepare {
+  // Accepts --clear-metro.
+  clearMetro?: boolean;
+  // The device platform launch and fixtures target when none was given, from
+  // the checkout's pins and the devices `status` reported; undefined when it is
+  // ambiguous.
+  devicePlatform?(
+    target: string,
+    devices: ReadonlyArray<{ platform?: string; selected?: boolean }>,
+  ): string | undefined;
+  // The error prepare reports when devicePlatform cannot decide, with the
+  // numbered choices.
+  ambiguousTarget?(): { code: string; message: string; userAction: string };
 }
 
 /** One check a platform adds to the `doctor` report. */

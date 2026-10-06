@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add the optional `PlatformAdapter.readiness` member (`AdapterReadiness`): what `doctor`, `status` and `prepare` ask a platform: `checks`, `liveChecks`, `environment`, `lines`, `orphanDevServers`, `captureProviders`, `fixes`, `runtimeBlock`, `pinnedFlags`, `statusRuntime`, `readyIndicator` (the `doctor --print-ready` stdout), `devices` (`AdapterDevices`: one view, one live probe, their rendering) and `prepare` (`AdapterPrepare`: `clearMetro`, `devicePlatform`, `ambiguousTarget`). Also exports `AdapterDevice`, `AdapterDeviceView`, `AdapterDeviceLiveView`, `AdapterPaint` and `AdapterPinnedFlags`.
 
 ## 0.5.1 - 2026-10-06
 

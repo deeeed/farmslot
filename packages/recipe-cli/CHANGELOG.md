@@ -4,7 +4,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add the readiness and task commands to `@farmslot/recipe-cli/harness`, moved from mm-harness. Each takes the host's product parts as options; the platform parts come from the new adapter-sdk `readiness` member.
+  - `handleDoctor(parsed, { manifest, report, fix, advisory, checkoutView, featureFlags, previewDevice, orphanDevServers })`: the shared `manifest` and `runtime` checks, the platform's static, live and `doctor()` checks, the loaded plugins, runtime status, devices (one live probe), leaked dev servers, capture-helper health, and `next`. `--expect-live` is an exit-coded liveness gate, `--print-ready` prints only the platform's `readiness.readyIndicator` (nothing when it has none) for Farmslot's `health_check`, and `--fix` runs the platform's `fixes`, ensures the overlay, then the host's `fix.repair`, and lists the host's next steps first.
+  - `createDoctorReport`, `requiredDoctorCheckSummary`, `runnerProvenance` and `runnerInstallKind`: the report checks the host package name against `HarnessHost.packageName`, reads `<PREFIX>_INVOKED_AS`, and carries `recipeCliVersion`.
+  - `handleStatus(parsed, { checkoutView, featureFlags, previewDevice })`: the home dashboard (`--json`, `--fast`, `--all-devices`), and `--watch`/`--task`, the read-only task view (`collectTaskView`, `findTaskDir`, `renderTaskView`, `runStatusWatch` and the `TaskView` types).
+  - `handlePrepare(argv, { usage, steps, launchHint, deviceTarget, clearMetroOnly, forward, provenance })`: doctor --fix, status, launch and the host's steps, then verify, written as the protocol readiness record (`sandbox.json`) with `prepare/progress.json` (`PREPARE_PROGRESS_ARTIFACT`) while it runs. A headless platform records launch and the host steps as skipped.
+  - `handleTaskInit(argv, { surface })`, `handleExecutionTemplate(argv)`, `handleChecklist(argv, { closeout, stepGates, beforeComplete })` and `handleRecipeQuality(argv, { subcommands, subcommandOptions, missingAction, usageNote })`: the host's entries to agent-runtime's task directory, template catalog, checklist marks and recipe-quality builder. `checklist closeout` exists only when the host passes `closeout`.
 
 ## 0.7.0 - 2026-10-06
 
