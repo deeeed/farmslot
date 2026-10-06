@@ -151,6 +151,12 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /- `worker-terminal-contract\.json`/);
   assert.match(taskDocument, /- `bug-input\.json`/);
   assert.match(taskDocument, /## Runtime capability proof plan/);
+  // Farmslot's own rules for this autonomous fix-bug run follow Inputs.
+  assert.match(
+    taskDocument,
+    /- `bug-input\.json` — full ticket data as fetched\n\n## Run contract\n\nFarmslot runs this task unattended\./,
+  );
+  assert.match(taskDocument, /`[^`]+\/fix\/split-[^`]+\/mark blocked --reason "…"`/);
   assert.doesNotMatch(taskDocument, /- \[ \]/);
   assert.equal(enumerateChecklistCheckboxes(taskDocument).length, 0);
   assert.doesNotMatch(checklist, /Autonomous execution/);

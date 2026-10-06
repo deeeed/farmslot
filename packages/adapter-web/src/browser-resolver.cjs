@@ -529,8 +529,12 @@ async function withProbeLock(
   }
 }
 
-// Probes in flight, so a CLI watchdog can stop their browsers before exiting.
-const activeProbeProfiles = new Set();
+// Probes in flight (profile -> spawned browser pid, or null for LaunchServices),
+// so a watchdog, a signal or process exit can stop their browsers first.
+const activeProbes = new Map();
+const PROBE_PROFILE_PREFIX = 'farmslot-browser-probe-';
+const PROBE_PROFILE_OWNER = new RegExp(`^${PROBE_PROFILE_PREFIX}(\\d+)-`, 'u');
+const PROBE_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
 
 function profilePids(profile) {
   try {
@@ -556,6 +560,72 @@ function killProfile(profile) {
   }
 }
 
+// Synchronous, so it also runs from 'exit' and signal handlers. The browser is
+// outside the caller's process group (LaunchServices parents it; a spawned
+// probe is detached), so a group kill of the caller never reaches it.
+function stopProbe(profile) {
+  const pid = activeProbes.get(profile);
+  try {
+    if (pid) process.kill(-pid, 'SIGKILL');
+  } catch {
+    // Already exited.
+  }
+  killProfile(profile);
+  fs.rmSync(profile, { recursive: true, force: true });
+  activeProbes.delete(profile);
+}
+
+function stopActiveProbes() {
+  for (const profile of [...activeProbes.keys()]) stopProbe(profile);
+}
+
+// A hook timeout sends SIGTERM to the caller's process group. Stop the probe
+// browsers, then let the signal end the process as it would have; a host with
+// its own handler for that signal (a `once` handler is already gone by now, so
+// it is noted at install) keeps control of the exit.
+function onProbeSignal(signal) {
+  stopActiveProbes();
+  const hostHandles = hostSignals.has(signal) || process.listenerCount(signal) > 1;
+  setProbeExitHandlers(false);
+  if (!hostHandles) process.kill(process.pid, signal);
+}
+
+let probeExitHandlers = false;
+let hostSignals = new Set();
+
+function setProbeExitHandlers(on) {
+  if (probeExitHandlers === on) return;
+  probeExitHandlers = on;
+  if (on) hostSignals = new Set(PROBE_SIGNALS.filter((signal) => process.listenerCount(signal)));
+  for (const signal of PROBE_SIGNALS) {
+    if (on) process.on(signal, onProbeSignal);
+    else process.off(signal, onProbeSignal);
+  }
+  if (on) process.on('exit', stopActiveProbes);
+  else process.off('exit', stopActiveProbes);
+}
+
+function trackProbe(profile, pid = null) {
+  activeProbes.set(profile, pid);
+  setProbeExitHandlers(true);
+}
+
+// A resolver killed outright (SIGKILL) cannot clean up. Its profile name
+// carries its pid, so the next probe by the same user stops that browser and
+// removes the profile. Another user's profiles (a shared /tmp) are left alone.
+function reapOrphanedProbes(tmp = os.tmpdir()) {
+  for (const name of fs.readdirSync(tmp)) {
+    const owner = PROBE_PROFILE_OWNER.exec(name);
+    if (!owner || Number(owner[1]) === process.pid || pidAlive(Number(owner[1]))) continue;
+    const profile = path.join(tmp, name);
+    // Another resolver's reaper may have removed it already.
+    const stat = fs.lstatSync(profile, { throwIfNoEntry: false });
+    if (!stat || stat.uid !== process.getuid()) continue;
+    killProfile(profile);
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+}
+
 // `--version` succeeds even for a build that crashes at startup, so a browser
 // is accepted only when a start answers on DevTools, paints a frame, and
 // survives a settle without dying. The Chrome for Testing crash on macOS 26+
@@ -574,8 +644,9 @@ async function probeLaunch(
   } = {},
 ) {
   const method = effectiveLaunchMethod(executable, launchMethod);
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-browser-probe-'));
-  activeProbeProfiles.add(profile);
+  reapOrphanedProbes();
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), `${PROBE_PROFILE_PREFIX}${process.pid}-`));
+  trackProbe(profile);
   const startedAt = Date.now();
   const verdict = (ok, reason, transient = false) => ({
     ok,
@@ -589,6 +660,8 @@ async function probeLaunch(
   let exited = null;
   try {
     const port = await freePort();
+    // A host that survives a signal resumes here after stopProbe ran.
+    if (!activeProbes.has(profile)) return verdict(false, 'probe stopped by its caller', true);
     // A headful probe starts like the slot browsers (the launchers and the
     // library autolaunch): in the background with no startup window (Chrome
     // activates itself when it opens one); renderCheck opens a background
@@ -615,6 +688,7 @@ async function probeLaunch(
       });
     } else {
       child = spawn(executable, args, { detached: true, stdio: 'ignore' });
+      if (child.pid) trackProbe(profile, child.pid);
       child.on('exit', (code, signal) => {
         exited = signal ?? `code ${code}`;
       });
@@ -624,12 +698,16 @@ async function probeLaunch(
     }
     const alive = () =>
       method === LAUNCH_SERVICES ? profilePids(profile).length > 0 : exited === null;
+    // stopProbe removes the profile: the caller stopped the browser, so its
+    // exit says nothing about the binary.
     const died = (when) =>
-      verdict(
-        false,
-        `exited ${when}${exited ? ` (${exited})` : ''}`,
-        String(exited).startsWith('spawn failed'),
-      );
+      activeProbes.has(profile)
+        ? verdict(
+            false,
+            `exited ${when}${exited ? ` (${exited})` : ''}`,
+            String(exited).startsWith('spawn failed'),
+          )
+        : verdict(false, 'probe stopped by its caller', true);
     let up = false;
     while (!up && Date.now() - startedAt < startupMs) {
       if (exited) return died('during startup');
@@ -655,7 +733,9 @@ async function probeLaunch(
       if (!alive()) return died('after DevTools started');
       await sleep(250);
     }
-    if (await devtoolsAnswers(port)) return verdict(true, 'started and rendered');
+    const answers = await devtoolsAnswers(port);
+    if (!activeProbes.has(profile)) return verdict(false, 'probe stopped by its caller', true);
+    if (answers) return verdict(true, 'started and rendered');
     // Only a proven exit is a property of the binary.
     return alive()
       ? verdict(false, 'DevTools stopped answering after the settle', true)
@@ -663,15 +743,11 @@ async function probeLaunch(
   } catch (error) {
     return verdict(false, `launch failed: ${error.message}`, true);
   } finally {
-    try {
-      if (child?.pid) process.kill(-child.pid, 'SIGKILL');
-    } catch {
-      // Already exited.
-    }
-    killProfile(profile);
+    stopProbe(profile);
+    if (activeProbes.size === 0) setProbeExitHandlers(false);
+    // A dying browser can still write into its profile; remove it once more.
     await sleep(300);
     fs.rmSync(profile, { recursive: true, force: true });
-    activeProbeProfiles.delete(profile);
   }
 }
 
@@ -1093,10 +1169,7 @@ async function main(argv) {
   }
   const args = parseCliArgs(rest);
   const watchdog = setTimeout(() => {
-    for (const profile of activeProbeProfiles) {
-      killProfile(profile);
-      fs.rmSync(profile, { recursive: true, force: true });
-    }
+    stopActiveProbes();
     process.stderr.write(
       `browser-resolver ${command} did not finish within ${CLI_DEADLINE_MS}ms.\n`,
     );
@@ -1200,6 +1273,7 @@ module.exports = {
   probeCacheKey,
   probeLaunch,
   readProbeCache,
+  reapOrphanedProbes,
   renderCheck,
   resolveBrowser,
   withProbeLock,

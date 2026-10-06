@@ -219,6 +219,7 @@ export {
   resolveRecipeParamValue,
   type RunRecipeStaticValidation,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from './recipe-validation.js';
 export {
@@ -255,6 +256,8 @@ export {
   type RecipeEngineRunOptions,
   type RecipeRunnerOptions,
   runRecipe,
+  type TrustedMutationAuthorizeContext,
+  type TrustedMutationLoadInput,
 } from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
 export {

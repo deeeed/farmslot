@@ -5,7 +5,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Self-review and self-review fix templates can use `{{DEFAULT_BRANCH}}`, like worker task templates: the project's `default_branch`, else `main`. A farm self-review template that used it failed the run's self-review step.
+- Runs record `statusChangedAt` when their status changes. Re-applying the same status, as a restart does when it resumes a step, leaves it unchanged. Clients now get a run update when CI watch records progress and, at most once a minute, when a monitored worker reports structured progress, so the Runs list's last-progress time stays live.
 - A run created without a mode for a project with an execution-template catalog takes its default mode from the catalog `defaults` instead of the worker template files, so removing a farm template that a shared checklist replaced keeps the mode unchanged.
+- Autonomous dev and fix-bug TASK.md files carry a `## Run contract` section after `## Inputs`, from the run mode: never pause, `mark blocked` when blocked, commit locally and leave pushing to Farmslot until it publishes (CI-FIX follow-ups keep their push step), no AI attribution. Interactive, validation and artifact-only runs and other flows are unchanged.
+- A re-review after the PR was rebased or force-pushed runs as a full review that still rechecks the prior findings. Incremental review is offered only when the prior reviewed head is an ancestor of the current head; before, the incremental diff after a rebase contained every base-branch change.
 
 ## 0.20.1 - 2026-10-05
 

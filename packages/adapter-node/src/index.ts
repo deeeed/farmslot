@@ -15,7 +15,9 @@ export {
   type NodeDependencyUse,
 } from './node-adapter.js';
 export {
+  checkoutWorkspacePackages,
   type WorkspacePackageMap,
+  type WorkspacePackages,
   type WorkspaceTsconfig,
   workspaceTsconfig,
   workspaceTsconfigEnv,

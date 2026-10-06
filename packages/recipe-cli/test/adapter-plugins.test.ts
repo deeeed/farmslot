@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   ADAPTER_SDK_VERSION,
@@ -20,12 +21,16 @@ import {
   adapterSelectionFailureOut,
   composeAdapter,
   configureHarnessAdapters,
+  configureHarnessHost,
   declaredAdapterIds,
   ensureAdapterLoaded,
   harnessAdapter,
   harnessAdapters,
+  harnessHost,
+  resolveLiveAdapter,
   selectedAdapterId,
 } from '../src/harness/index.js';
+import { candidatePaths } from '../src/harness/live-adapter-contract.js';
 
 const roots: string[] = [];
 const savedLibraryPath = process.env.RECIPE_LIBRARY_PATH;
@@ -460,6 +465,132 @@ describe('adapter plugins', () => {
     assert.deepEqual(imports(), []);
   });
 
+  const importing = (specifier: string) =>
+    pluginSource('echo').replace(
+      'export const adapter = {',
+      `import ${JSON.stringify(specifier)};\nexport const adapter = {`,
+    );
+
+  // A package directory: <dir>/package.json and index.mjs.
+  function writePackage(dir: string, name: string): void {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, main: 'index.mjs' }));
+    fs.writeFileSync(path.join(dir, 'index.mjs'), 'export {};\n');
+  }
+
+  // Run `body` with the host's package root at `packageRoot`.
+  async function withHostAt(packageRoot: string, body: () => Promise<void>): Promise<void> {
+    const host = harnessHost();
+    configureHarnessHost({ ...host, packageRoot });
+    configureHarnessAdapters(createAdapterRegistry());
+    try {
+      await body();
+    } finally {
+      configureHarnessHost(host);
+    }
+  }
+
+  test("bare packages resolve from the host's install, never from the library's location", async () => {
+    // The host's package loads from a library outside the host's tree.
+    process.env.RECIPE_LIBRARY_PATH = `sdk=${dirLibrary('sdk', { echo: { source: importing('@farmslot/adapter-sdk') } })}`;
+    await ensureAdapterLoaded('echo');
+    assert.ok(harnessAdapters().has('echo'));
+
+    // A package in a node_modules above the library, which the host doesn't install.
+    const above = tempRoot('recipe-cli-plugins-above-');
+    writePackage(path.join(above, 'node_modules', 'above-dep'), 'above-dep');
+    const nested = path.join(above, 'lib');
+    fs.renameSync(dirLibrary('nested', { echo: { source: importing('above-dep') } }), nested);
+    process.env.RECIPE_LIBRARY_PATH = `nested=${nested}`;
+    configureHarnessAdapters(createAdapterRegistry());
+    const error = await refusal('echo');
+    assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+    assert.match(error.message, /the host's install does not provide/u);
+  });
+
+  test("a library inside the host's project imports the host's own dependencies", async () => {
+    // The product-repo layout: the host installed in <repo>/node_modules, the
+    // library a folder of the same repo. <repo>/node_modules is on the host's
+    // lookup chain, so it is the host's install, not a stray package above the library.
+    const repo = tempRoot('recipe-cli-plugins-repo-');
+    writePackage(path.join(repo, 'node_modules', '@scope', 'host'), '@scope/host');
+    writePackage(path.join(repo, 'node_modules', 'hostdep'), 'hostdep');
+    const library = path.join(repo, 'recipe-library');
+    fs.renameSync(dirLibrary('repo', { echo: { source: importing('hostdep') } }), library);
+    process.env.RECIPE_LIBRARY_PATH = `repo=${library}`;
+    await withHostAt(path.join(repo, 'node_modules', '@scope', 'host'), async () => {
+      await ensureAdapterLoaded('echo');
+      assert.ok(harnessAdapters().has('echo'));
+    });
+  });
+
+  test("a library at the repo root holds the host's node_modules, so its packages are refused", async () => {
+    // Layout D: the library is the repo itself, so <repo>/node_modules is inside the
+    // library root, where no digest covers it. Keep the library in a folder instead.
+    const repo = dirLibrary('rootlib', { echo: { source: importing('hostdep') } });
+    writePackage(path.join(repo, 'node_modules', '@scope', 'host'), '@scope/host');
+    writePackage(path.join(repo, 'node_modules', 'hostdep'), 'hostdep');
+    process.env.RECIPE_LIBRARY_PATH = `rootlib=${repo}`;
+    await withHostAt(path.join(repo, 'node_modules', '@scope', 'host'), async () => {
+      const error = await refusal('echo');
+      assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+      assert.match(error.message, /beside or above the library/u);
+    });
+  });
+
+  test("a node_modules above the library but off the host's lookup chain is refused, even when the host links to it", async () => {
+    // The host's resolution reaches the package only through a symlink in its own
+    // node_modules; the real files sit above the library, where no digest covers them.
+    const above = tempRoot('recipe-cli-plugins-stray-');
+    writePackage(path.join(above, 'node_modules', 'stray'), 'stray');
+    const library = path.join(above, 'lib');
+    fs.renameSync(dirLibrary('stray', { echo: { source: importing('stray') } }), library);
+    const hostRoot = path.join(tempRoot('recipe-cli-plugins-host-'), 'host');
+    writePackage(hostRoot, 'host');
+    fs.mkdirSync(path.join(hostRoot, 'node_modules'));
+    fs.symlinkSync(
+      path.join(above, 'node_modules', 'stray'),
+      path.join(hostRoot, 'node_modules', 'stray'),
+    );
+    process.env.RECIPE_LIBRARY_PATH = `stray=${library}`;
+    await withHostAt(hostRoot, async () => {
+      const error = await refusal('echo');
+      assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+      assert.match(error.message, /beside or above the library/u);
+    });
+  });
+
+  test('an actions/ file is fenced when plugin code reaches it, not when the host imports it', async () => {
+    const root = dirLibrary(
+      'shared',
+      {
+        echo: {
+          source: pluginSource('echo').replace(
+            'export const adapter = {',
+            "import '../../actions/reached.mjs';\nexport const adapter = {",
+          ),
+        },
+      },
+      {
+        'actions/reached.mjs': "import '../lib/outside.mjs';\n",
+        'actions/host-only.mjs': "export { outside } from '../lib/outside.mjs';\n",
+        'lib/outside.mjs': 'export const outside = 1;\n',
+      },
+    );
+    process.env.RECIPE_LIBRARY_PATH = `shared=${root}`;
+    // Through the plugin, actions/reached.mjs may not import outside the digest.
+    const error = await refusal('echo');
+    assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+    assert.match(error.message, /imports \.\.\/lib\/outside\.mjs/u);
+    // The host importing an actions/ file by itself is not plugin code.
+    const hostImport = (await import(
+      pathToFileURL(path.join(root, 'actions', 'host-only.mjs')).href
+    )) as {
+      outside: number;
+    };
+    assert.equal(hostImport.outside, 1);
+  });
+
   test('plugin code that imports later, while it runs, is fenced too', async () => {
     const root = dirLibrary(
       'late',
@@ -494,6 +625,89 @@ describe('adapter plugins', () => {
     // A library the hydrated env adds may not claim a built-in either way.
     process.env.RECIPE_LIBRARY_PATH = `hydrated=${library('claim', { core: { source: pluginSource('core') } })}`;
     await ensureAdapterLoaded('core', { env: operator });
+  });
+
+  test("live scripts: a child adapter finds its parents' scripts, child first, then shared", async () => {
+    harnessAdapters().register(builtin('web-dapp'));
+    harnessAdapters().register({ ...builtin('terminal'), extends: 'web-dapp' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('kiosk'), extends: 'terminal' } as PlatformAdapter);
+    const root = tempRoot('recipe-cli-live-chain-');
+    const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
+    const script = (platform: string) => {
+      const file = path.join(root, platform, 'team', 'probe.mjs');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'export default {};\n');
+      return file;
+    };
+    const resolve = (platform: string) => resolveLiveAdapter(platform, 'team.probe', 'shop', env);
+
+    const shared = script('shared');
+    const parent = script('web-dapp');
+    // A child finds its parent's script before the shared one.
+    assert.equal(await resolve('terminal'), parent);
+    // Two levels: the grandparent's script, through the parent.
+    assert.equal(await resolve('kiosk'), parent);
+    // The child's own script wins; a grandchild reaches its nearest ancestor's.
+    const child = script('terminal');
+    assert.equal(await resolve('terminal'), child);
+    assert.equal(await resolve('kiosk'), child);
+    assert.equal(await resolve('web-dapp'), parent);
+    // A built-in that extends nothing is unchanged: its own script, else shared.
+    assert.equal(await resolve('core'), shared);
+  });
+
+  test("live scripts: every one of a child's files comes before its parent's", async () => {
+    harnessAdapters().register(builtin('echo'));
+    harnessAdapters().register({ ...builtin('echo-child'), extends: 'echo' } as PlatformAdapter);
+    const action = 'metamask.app.launch';
+    const write = (root: string, file: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), 'export default {};\n');
+      return path.join(root, file);
+    };
+    const resolveIn = (root: string) =>
+      resolveLiveAdapter('echo-child', action, 'metamask', {
+        RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ [action]: root }),
+      });
+    // The child's short name beats the parent's qualified name.
+    const short = tempRoot('recipe-cli-live-short-');
+    write(short, 'echo/app/metamask.app.launch.mjs');
+    const childShort = write(short, 'echo-child/app/launch.mjs');
+    assert.equal(await resolveIn(short), childShort);
+    // The child's dispatcher beats the parent's short name.
+    const dispatcher = tempRoot('recipe-cli-live-dispatcher-');
+    write(dispatcher, 'echo/app/launch.mjs');
+    const childDispatcher = write(dispatcher, 'echo-child/app/app.mjs');
+    assert.equal(await resolveIn(dispatcher), childDispatcher);
+  });
+
+  test('live scripts: a built-in tries the same files, in the same order, as before extends', () => {
+    // The list a built-in got before live scripts followed `extends`.
+    assert.deepEqual(
+      candidatePaths('core', 'metamask.app.launch', 'metamask', {
+        RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'metamask.app.launch': '/R' }),
+      }),
+      [
+        '/R/core/app/metamask.app.launch.mjs',
+        '/R/shared/app/metamask.app.launch.mjs',
+        '/R/core/app/launch.mjs',
+        '/R/shared/app/launch.mjs',
+        '/R/core/app/app.mjs',
+        '/R/shared/app/app.mjs',
+      ],
+    );
+  });
+
+  test('live scripts: an extends cycle between registered adapters ends', async () => {
+    harnessAdapters().register({ ...builtin('loop-a'), extends: 'loop-b' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('loop-b'), extends: 'loop-a' } as PlatformAdapter);
+    const root = tempRoot('recipe-cli-live-cycle-');
+    const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
+    assert.equal(await resolveLiveAdapter('loop-a', 'team.probe', 'shop', env), null);
+    const file = path.join(root, 'loop-b', 'team', 'probe.mjs');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'export default {};\n');
+    assert.equal(await resolveLiveAdapter('loop-a', 'team.probe', 'shop', env), file);
   });
 
   test('prints a refusal as the --json envelope or the human line', () => {

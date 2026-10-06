@@ -5,6 +5,7 @@ import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
+import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { dispositionLabel } from './run-utils.js';
@@ -19,6 +20,105 @@ export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
 /** Matches Runs list "Active" tab — non-terminal runs, with failed kept visible. */
 export function isRunListActiveRun(run: Pick<Run, 'status'>): boolean {
   return !TERMINAL_STATUSES.has(run.status) || run.status === 'failed';
+}
+
+/** An unblocked run with no progress for this long is shown as stale. */
+export const RUN_STALE_AFTER_MS = 60 * 60_000;
+
+export interface RunProgressSummary {
+  /** Latest real progress: a step, a decision, a run start or CI-watch progress. */
+  lastProgressAt: string;
+  lastProgressAgo: string;
+  kind: 'gate' | 'stale' | 'step' | 'none';
+  /** What the run waits on or does now; empty for `none`. */
+  text: string;
+}
+
+type ProgressRun = Pick<
+  Run,
+  | 'status'
+  | 'statusChangedAt'
+  | 'createdAt'
+  | 'startedAt'
+  | 'steps'
+  | 'decisions'
+  | 'ciWatchState'
+  | 'monitorState'
+>;
+
+// When a held step stopped for the operator: its duration is stamped at the hold.
+function heldAtMs(step: Run['steps'][number]): number {
+  return step.startedAt && step.durationMs !== undefined
+    ? Date.parse(step.startedAt) + step.durationMs
+    : NaN;
+}
+
+// `updatedAt` moves on every write (tags, metrics, agent contexts), so it is not
+// progress. Neither is a running step's `startedAt`: a gateway restart re-enters
+// the step and rewrites it. Its real start is a status change, the previous
+// step's completion or the decision that released it; a Resume is a status change.
+function lastProgressMs(run: ProgressRun): number {
+  const stamps = [
+    run.createdAt,
+    run.startedAt,
+    run.statusChangedAt,
+    run.ciWatchState?.lastProgressAt,
+    // Structured runner activity while the worker is monitored.
+    run.monitorState?.lastStructuredProgressAt,
+    ...run.steps.flatMap((step) =>
+      step.status === 'running' ? [] : [step.startedAt, step.completedAt],
+    ),
+    ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),
+  ].map((stamp) => (stamp ? Date.parse(stamp) : NaN));
+  const held = run.steps.filter((step) => step.outputs?.awaitingOperator === true).map(heldAtMs);
+  return Math.max(...[...stamps, ...held].filter(Number.isFinite));
+}
+
+/** Runs that can still move: not terminal, and not blocked with nothing left to advance. */
+export function showsRunProgress(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+  return !TERMINAL_STATUSES.has(run.status) && !isSettledBlockedRun(run);
+}
+
+/** Whether an active run is moving, waiting on the operator, or stale. */
+export function runProgressSummary(
+  run: ProgressRun,
+  nowMs = Date.now(),
+): RunProgressSummary | null {
+  const lastMs = lastProgressMs(run);
+  // Every run has createdAt; a record without one valid timestamp has no clock to show.
+  if (!Number.isFinite(lastMs)) return null;
+  const lastProgressAt = new Date(lastMs).toISOString();
+  const lastProgressAgo = familyLearningTimeAgo(lastProgressAt, nowMs);
+  const summary = (kind: RunProgressSummary['kind'], text: string) => ({
+    lastProgressAt,
+    lastProgressAgo,
+    kind,
+    text,
+  });
+  const pending = run.decisions.find((decision) => !decision.resolvedAt);
+  if (pending) {
+    const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
+    return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
+  }
+  const step = run.steps.find((item) => item.status === 'running');
+  // A finished interactive worker, or a pause, waits on the operator without a decision.
+  if (step?.outputs?.awaitingOperator === true)
+    return summary('gate', step.detail ?? 'Waiting for operator action');
+  if (run.status === 'paused') return summary('gate', 'Paused');
+  // Blocked with nothing running or pending but not settled: an uncertain prompt
+  // delivery or worker operation is held for the operator to reconcile.
+  if (run.status === 'blocked' && !step && !isSettledBlockedRun(run)) {
+    const held = run.steps.find((item) => item.status === 'failed');
+    return summary('gate', held?.detail ?? 'Waiting for the operator to reconcile the worker');
+  }
+  if (nowMs - lastMs >= RUN_STALE_AFTER_MS)
+    return summary(
+      'stale',
+      `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')} and nothing pending`,
+    );
+  return step
+    ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
+    : summary('none', '');
 }
 
 function runMatchesMachineFilter(slotId: string | null | undefined, machines: string[]): boolean {
@@ -57,10 +157,15 @@ export interface FilterRunListInput {
 }
 
 export function filterRunList(input: FilterRunListInput): readonly Run[] {
+  // Family and tag views are fetched once; live run updates land in `runs`.
+  const live = new Map(input.runs.map((run) => [run.id, run]));
+  const withLive = (runs: readonly Run[]) => runs.map((run) => live.get(run.id) ?? run);
   let result: readonly Run[] = input.familyFilter
-    ? (input.familyRuns ?? [])
+    ? withLive(input.familyRuns ?? [])
     : input.tagFilter
-      ? (input.tagRuns ?? input.runs)
+      ? input.tagRuns
+        ? withLive(input.tagRuns)
+        : input.runs
       : input.runs;
   if (input.globalFilters.projects.length > 0) {
     result = result.filter((run) => input.globalFilters.projects.includes(run.project));

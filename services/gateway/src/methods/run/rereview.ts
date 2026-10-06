@@ -37,6 +37,7 @@ import {
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
+  confirmIncrementalAncestry,
 } from '../../run-engine/engine-decisions.js';
 import { applyChainedRunEngineFlags, startRun } from '../../run-engine/orchestrator.js';
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
@@ -63,8 +64,43 @@ export async function runRereviewLatestHead(
   // The head is fetched once for both paths: it keys the intake request and
   // seeds the warm continuation.
   const live = await fetchGitHubPR(`${target.repo}#${target.number}`);
+  const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
+  const runner = run.metrics.runner;
+  const model = run.metrics.model;
+  // The stale review is the prior round, the live head is the target, and the
+  // reviewer keeps its session. The context reads only the prior run, so its
+  // ancestry lookup runs before the child exists.
+  const context =
+    slot && runner && model
+      ? automatedRepeatReviewSelection(
+          await confirmIncrementalAncestry(
+            buildRepeatReviewContext(
+              run,
+              run,
+              {
+                project: run.project,
+                repository: target.repo.toLowerCase(),
+                prNumber: target.number,
+                headSha: live.headSha,
+              },
+              getAllRuns(),
+            ),
+          ),
+          {
+            ...DEFAULT_PR_REVIEW_OPTIONS,
+            validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
+            busySession: 'wait',
+          },
+        )
+      : undefined;
+
+  // The parent may have been cancelled or superseded while GitHub answered.
+  const parent = getRun(run.id);
+  if (!parent) throw new Error(`Run not found: ${params.runId}`);
+  assertRereviewable(parent);
 
   // A second click while the first chained round is still going returns it.
+  // No await follows this check before the new child carries the head it matches.
   const existing = getAllRuns().find(
     (candidate) =>
       candidate.parentRunId === run.id &&
@@ -74,13 +110,10 @@ export async function runRereviewLatestHead(
   );
   if (existing) return { mode: 'warm-handoff', runId: existing.id, headSha: live.headSha };
 
-  const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
-  const runner = run.metrics.runner;
-  const model = run.metrics.model;
-  if (!slot || !runner || !model) {
+  if (!slot || !runner || !model || !context) {
     // The blocked review still owns the PR for queue admission; retire it or
     // the replacement waits on the run it replaces.
-    supersedeBlockedReview(run, 'via review intake');
+    supersedeBlockedReview(parent, 'via review intake');
     const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
     return { mode: 'review-intake', ...intake };
   }
@@ -88,7 +121,7 @@ export async function runRereviewLatestHead(
   const child = createRun({
     flowType: 'review-pr',
     project: run.project,
-    // Original casing for display; the continuation context below compares
+    // Original casing for display; the continuation context compares
     // repositories lower-cased, as engine-decisions does.
     ticketOrPr: `${target.repo}#${target.number}`,
     slotId: slot.slot,
@@ -101,38 +134,18 @@ export async function runRereviewLatestHead(
     // Keep the parent's completion policy: the operator was trying to post
     // this review, so the child must offer the same posting gate.
     completionPolicy: run.completionPolicy,
-    reviewScope: 'incremental',
+    reviewScope: context.reviewScope,
     prNumber: target.number,
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
   });
-  // Attach the continuation up front: the stale review is the prior round,
-  // the live head is the target, and the reviewer keeps its session.
-  const context = automatedRepeatReviewSelection(
-    buildRepeatReviewContext(
-      child,
-      run,
-      {
-        project: run.project,
-        repository: target.repo.toLowerCase(),
-        prNumber: target.number,
-        headSha: live.headSha,
-      },
-      getAllRuns(),
-    ),
-    {
-      ...DEFAULT_PR_REVIEW_OPTIONS,
-      validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
-      busySession: 'wait',
-    },
-  );
   updateRun(child.id, {
     repeatReviewContext: context,
     reviewScope: context.reviewScope,
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });
-  supersedeBlockedReview(run, child.id);
+  supersedeBlockedReview(parent, child.id);
   console.log(
     `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${slot.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
   );

@@ -194,6 +194,8 @@ export async function monitorCI(
         s.lastActionableFingerprint = lastActionableFingerprint;
       if (lastHeadSha !== undefined) s.lastHeadSha = lastHeadSha;
     });
+    // Real CI progress (a check or head change): the Runs list times progress from it.
+    if (patch?.lastProgressAt) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     return {
       timeoutWindowStartedAt: windowStartIso,
       lastProgressAt: patch?.lastProgressAt ?? readDedup(runId).lastProgressAt,

@@ -51,7 +51,8 @@ function candidateFamilies(action: string, namespace: string) {
   return [...new Set(families)];
 }
 
-function candidatePaths(
+/** The live script files tried for `action`, in order; the first that exists runs. */
+export function candidatePaths(
   platform: string,
   action: string,
   namespace: string,
@@ -75,16 +76,44 @@ function candidatePaths(
       ).filter((entry): entry is string => Boolean(entry)),
     ),
   ];
+  // A child's every file (each stem, then its dispatcher) comes before its
+  // ancestor's. The adapter at the top of the chain keeps the order a built-in
+  // has always had: each stem, then the shared one, then the dispatchers.
+  const chain = platformChain(platform);
+  const descendants = chain.slice(0, -1);
+  const base = chain.at(-1)!;
   const files: string[] = [];
   for (const root of roots) {
     for (const family of families) {
-      for (const candidateStem of stems) {
-        pushCandidateFiles(files, root, platform, family, candidateStem);
+      for (const descendant of descendants) {
+        for (const candidateStem of stems) {
+          files.push(path.join(root, descendant, family, `${candidateStem}.mjs`));
+        }
+        files.push(path.join(root, descendant, family, `${family}.mjs`));
       }
-      pushDomainDispatcherFiles(files, root, platform, family);
+      for (const candidateStem of stems) {
+        pushCandidateFiles(files, root, base, family, candidateStem);
+      }
+      pushDomainDispatcherFiles(files, root, base, family);
     }
   }
   return files;
+}
+
+/**
+ * `platform`, then each adapter up its `extends` chain (a library plugin's
+ * composed adapter carries its parent's id), so a child adapter runs its
+ * parent's live scripts unless it has its own. A built-in extends nothing.
+ */
+function platformChain(platform: string): string[] {
+  const registry = harnessAdapters();
+  const chain = [platform];
+  let current = registry.has(platform) ? registry.get(platform).extends : undefined;
+  while (current !== undefined && !chain.includes(current)) {
+    chain.push(current);
+    current = registry.has(current) ? registry.get(current).extends : undefined;
+  }
+  return chain;
 }
 
 function declaredActionRoot(raw: string | undefined, action: string): string | undefined {

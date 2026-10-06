@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  DEFAULT_BRANCH,
   type IndependentReviewAttempt,
   isTerminalRunStatus,
   PipelineSteps,
@@ -29,7 +30,12 @@ import {
   selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectRuntimeDir,
+} from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
@@ -2085,6 +2091,7 @@ async function sendOwnedFeedbackToWorker(
     TICKET: run?.ticketOrPr ?? '',
     ISSUES: issueLines,
     RUNTIME_DIR: runtimeDir,
+    DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
   };
 
   assertNoUnknownPlaceholders(
