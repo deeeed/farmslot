@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { type ArtifactRef, isPublishEvidenceArtifact, type Run } from '@farmslot/protocol';
 
-import { inferArtifactPurpose } from '../core/index.js';
+import { getProjectField, inferArtifactPurpose } from '../core/index.js';
+import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 
 import {
   autoDetectEvidenceManifest,
@@ -28,7 +29,7 @@ function inferDraftPrTitleScope(run: Run): string {
 function sanitizeDraftPrTitleDescription(rawTitle: string): string {
   return rawTitle
     .trim()
-    .replace(/^\[(core|extension|mobile|mm[em])\]\s*[:—-]?\s*/i, '')
+    .replace(/^\[(core|extension|mobile|terminal|mm[em])\]\s*[:—-]?\s*/i, '')
     .replace(/[.\s]+$/, '');
 }
 
@@ -39,7 +40,10 @@ export function buildDraftPrTitle(run: Run): string {
   const rawTitle = run.ticketData?.title?.trim();
   if (rawTitle) {
     const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
-    const desc = sanitized.charAt(0).toLowerCase() + sanitized.slice(1);
+    // Lower-case a leading word, never a ticket key (`TAT-4037`).
+    const desc = /^[A-Z][A-Z0-9]*-\d+/.test(sanitized)
+      ? sanitized
+      : sanitized.charAt(0).toLowerCase() + sanitized.slice(1);
     return `${commitType}${scopePart}: ${desc}`;
   }
   const fallbackSubject =
@@ -121,6 +125,25 @@ export function isPackageSelectableEvidenceArtifact(
   );
 }
 
+// Without an artifacts repo nothing gets uploaded, so a local image preview
+// would publish as broken images. Unknown config keeps the image preview.
+async function projectHasNoArtifactsRepo(run: Run): Promise<boolean> {
+  const pv = await loadProjectVarsOrNull(run.project, 'draft evidence preview', run.id);
+  return pv !== null && !getProjectField(pv.projectJson, 'artifacts_repo');
+}
+
+function buildUnhostedEvidenceSection(run: Run, manifest: EvidenceManifest): string | null {
+  const names = [
+    ...new Set(evidenceManifestArtifactPaths(manifest).map((p) => path.posix.basename(p))),
+  ];
+  if (names.length === 0) return null;
+  return [
+    `Not embedded: this project has no artifacts repo to host them. They are in the Farmslot run \`${run.id.slice(0, 8)}\` evidence:`,
+    '',
+    ...names.map((name) => `- \`${name}\``),
+  ].join('\n');
+}
+
 async function applyLocalEvidencePreview(
   run: Run,
   body: string,
@@ -131,7 +154,9 @@ async function applyLocalEvidencePreview(
   const { manifestUrls, detectionUrls } = buildLocalArtifactUrlMaps(previewArtifacts);
   const manifest = manifestFromFile ?? autoDetectEvidenceManifest(detectionUrls);
   if (!manifest) return body;
-  const evidenceSection = buildEvidenceSection(manifest, manifestUrls);
+  const evidenceSection = (await projectHasNoArtifactsRepo(run))
+    ? buildUnhostedEvidenceSection(run, manifest)
+    : buildEvidenceSection(manifest, manifestUrls);
   if (!evidenceSection) return body;
   return replaceMarkdownSection(body, '## **Screenshots/Recordings**', evidenceSection);
 }
