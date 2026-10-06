@@ -369,6 +369,13 @@ describe('validatePublicInvocation', () => {
     );
   });
 
+  test('reads every value an option takes before --, separate or inline', () => {
+    assert.deepEqual(
+      optionValues(['--library', 'a', '--library=b', 'x', '--', '--library', 'c'], '--library'),
+      ['a', 'b'],
+    );
+  });
+
   test('lists every name and alias for completion', () => {
     assert.deepEqual(publicCommandTokens(table()).slice(0, 3), ['status', 'home', 'launch']);
   });
@@ -655,6 +662,15 @@ export const adapter = {
       exit: 'code',
     });
     assert.deepEqual(imported(), ['flagged']);
+    const inline = pluginLibrary('inline');
+    assert.deepEqual(
+      await cli.main(['doctor', '--adapter', 'inline', `--library=lib2=${inline}`]),
+      {
+        exitCode: 0,
+        exit: 'code',
+      },
+    );
+    assert.deepEqual(imported(), ['flagged', 'inline']);
   });
 
   test('loads an adapter from a library only the host configures', async () => {
