@@ -344,6 +344,33 @@ describe('adapter plugins', () => {
     assert.deepEqual(imports(), []);
   });
 
+  test("a relative --library entry overrides the env library its directory's name matches", async () => {
+    const older = library('older', {
+      core: { source: pluginSource('core') },
+      echo: { source: pluginSource('echo') },
+    });
+    const team = path.join(tempRoot('recipe-cli-plugins-cwd-'), 'team');
+    fs.mkdirSync(path.join(team, 'sub'), { recursive: true });
+    process.env.RECIPE_LIBRARY_PATH = `team=${older}`;
+    // Without an override, the older library's claim on the built-in stands.
+    await assert.rejects(ensureAdapterLoaded('core'), { code: 'ADAPTER_ID_CONFLICT' });
+    const cwd = process.cwd();
+    try {
+      for (const [dir, entry] of [
+        [team, '.'],
+        [path.join(team, 'sub'), '..'],
+      ] as const) {
+        process.chdir(dir);
+        // `.`/`..` take their directory's name, as the strict resolver names them.
+        await ensureAdapterLoaded('core', { libraries: [entry] });
+        assert.equal(adapterChoices([entry]).includes('echo'), false, entry);
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+    assert.deepEqual(imports(), []);
+  });
+
   test('refuses an extends cycle', async () => {
     process.env.RECIPE_LIBRARY_PATH = `lib=${library('cycle', {
       a: { source: pluginSource('a'), extends: 'b' },
