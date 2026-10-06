@@ -116,6 +116,26 @@ describe('createExtensionNetworkObserver', () => {
         .map((call) => call.params.targetId),
       ['worker', 'home'],
     );
+    cdp.emit('Target.targetCreated', {
+      targetInfo: { targetId: 'options', type: 'page', url: 'chrome-extension://component/o.html' },
+    });
+    await settle();
+    assert.equal(cdp.calls.filter((call) => call.method === 'Target.attachToTarget').length, 2);
+  });
+
+  it('refuses a named extension without targets and attaches nothing', async () => {
+    const cdp = await endpoint(TARGETS);
+    await assert.rejects(
+      createExtensionNetworkObserver({
+        cdpPort: cdp.port,
+        runtimeDir: root,
+        extensionId: 'missing',
+      }),
+      /Extension missing has no attachable CDP targets/u,
+    );
+    assert.equal(cdp.calls.filter((call) => call.method === 'Target.attachToTarget').length, 0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(cdp.clients(), 0);
   });
 
   it('attaches to an extension target created during a capture', async () => {

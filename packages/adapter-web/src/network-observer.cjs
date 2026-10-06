@@ -144,7 +144,11 @@ async function createExtensionNetworkObserver({
   await Promise.all(targets.map(asBrowserCdpTarget).filter(Boolean).map(attachTarget));
   if (targetSessions.size === 0) {
     connection.close();
-    throw new Error('Extension CDP exposes no attachable extension targets.');
+    throw new Error(
+      requestedExtensionId
+        ? `Extension ${extensionId} has no attachable CDP targets (service worker stopped and no extension page open?).`
+        : 'Extension CDP exposes no attachable extension targets.',
+    );
   }
 
   const sessions = new Map([[DEVICE_ID, { brokerReady: true }]]);
