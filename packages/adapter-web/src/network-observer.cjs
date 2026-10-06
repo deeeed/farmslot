@@ -27,14 +27,17 @@ const asRecord = (value) =>
   value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 /**
- * @param {{ cdpPort: number, runtimeDir: string, connectTimeoutMs?: number, commandTimeoutMs?: number }} options
+ * @param {{ cdpPort: number, runtimeDir: string, extensionId?: string, connectTimeoutMs?: number, commandTimeoutMs?: number }} options
  *   `runtimeDir` keys the broker socket; the timeouts bound the CDP connection
- *   and every command, broker call and capture control.
+ *   and every command, broker call and capture control. `extensionId` names the
+ *   extension to capture; without it, the first extension with a target is
+ *   used, which can be a component or policy extension in a branded Chrome.
  * @returns {Promise<import('@farmslot/adapter-sdk').NetworkCaptureBackend>}
  */
 async function createExtensionNetworkObserver({
   cdpPort,
   runtimeDir,
+  extensionId: requestedExtensionId,
   connectTimeoutMs = DEFAULT_TIMEOUT_MS,
   commandTimeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
@@ -133,7 +136,7 @@ async function createExtensionNetworkObserver({
   await send('Target.setDiscoverTargets', { discover: true });
   const targetInfos = asRecord(await send('Target.getTargets')).targetInfos;
   const targets = Array.isArray(targetInfos) ? targetInfos : [];
-  extensionId = extensionIdFromCdpTargets(targets);
+  extensionId = requestedExtensionId || extensionIdFromCdpTargets(targets);
   if (!extensionId) {
     connection.close();
     throw new Error('Extension CDP browser or loaded extension target is unavailable.');

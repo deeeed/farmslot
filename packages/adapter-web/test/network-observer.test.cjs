@@ -94,6 +94,30 @@ describe('createExtensionNetworkObserver', () => {
     assert.deepEqual(summary.requestsByHost, { 'api.example.com': 1 });
   });
 
+  it('captures the named extension when another extension lists first', async () => {
+    // A branded Chrome lists component and policy extensions; their service
+    // worker can come before the extension under test.
+    const component = {
+      targetId: 'component',
+      type: 'service_worker',
+      url: 'chrome-extension://component/sw.js',
+    };
+    const cdp = await endpoint([component, ...TARGETS]);
+    const observer = await createExtensionNetworkObserver({
+      cdpPort: cdp.port,
+      runtimeDir: root,
+      extensionId: 'ext',
+    });
+    cleanups.push(() => observer.close());
+
+    assert.deepEqual(
+      cdp.calls
+        .filter((call) => call.method === 'Target.attachToTarget')
+        .map((call) => call.params.targetId),
+      ['worker', 'home'],
+    );
+  });
+
   it('attaches to an extension target created during a capture', async () => {
     const cdp = await endpoint(TARGETS);
     const observer = await observe(cdp);
