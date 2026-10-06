@@ -652,15 +652,20 @@ function recordRunAcceptance(
   target: string,
   result: { recipePath: string; tracePath: string },
 ): void {
-  let taskDir: string | null;
   try {
-    taskDir = runTaskDir(target);
+    const taskDir = runTaskDir(target);
     if (!taskDir) return;
-    const { refused } = recordRecipeAcceptance(taskDir, target, result);
+    const { recorded, refused } = recordRecipeAcceptance(taskDir, target, result);
     for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
+    if (recorded.length > 0 && recorded.every((entry) => entry.evidence.length === 0)) {
+      console.error(
+        'acceptance ledger: verdicts recorded without evidence; the run artifacts are outside the task dir',
+      );
+    }
   } catch (error) {
+    // The stack too: an unexpected error here is a bug, not a ledger state.
     console.error(
-      `acceptance ledger: not written: ${error instanceof Error ? error.message : String(error)}`,
+      `acceptance ledger: not written: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     );
   }
 }

@@ -51,55 +51,67 @@ export function recordRecipeAcceptance(
   if (ledger.handoffAcceptanceCriteria(taskDir).length === 0) return record;
   const recipe = readJson(result.recipePath);
   const trace = readJson(result.tracePath);
-  const entries: unknown[] = Array.isArray(trace.entries) ? trace.entries : [];
+  // The protocol allows a bare array of entries or `{ entries }`.
+  const entries: unknown[] = Array.isArray(trace)
+    ? trace
+    : isRecord(trace) && Array.isArray(trace.entries)
+      ? trace.entries
+      : [];
   // The last entry per node is its outcome (a retried node may appear twice).
   const outcome = new Map<string, Record<string, unknown>>();
   for (const entry of entries) {
     if (isRecord(entry) && typeof entry.nodeId === 'string') outcome.set(entry.nodeId, entry);
   }
-  const nodes =
-    isRecord(recipe.workflow) && isRecord(recipe.workflow.nodes) ? recipe.workflow.nodes : {};
-  const artifactsDir = path.dirname(result.tracePath);
+  const workflow = isRecord(recipe) && isRecord(recipe.workflow) ? recipe.workflow : {};
+  const nodes = isRecord(workflow.nodes) ? workflow.nodes : {};
+  // AC1 and AC-1 name the same criterion: its provers are the nodes proving either.
+  const provers = new Map<string, string[]>();
   for (const proofTarget of proofTargetIds(recipe)) {
     const id = acceptanceIdForProofTarget(proofTarget);
     if (!id) continue;
-    const provers = Object.entries(nodes)
-      .filter(
-        ([, node]) =>
-          isRecord(node) && Array.isArray(node.proves) && node.proves.includes(proofTarget),
-      )
-      .map(([nodeId]) => nodeId);
-    if (provers.length === 0) continue;
-    const verdict = provers.every((nodeId) => outcome.get(nodeId)?.ok === true)
+    const ids = new Set(provers.get(id));
+    for (const [nodeId, node] of Object.entries(nodes)) {
+      if (isRecord(node) && Array.isArray(node.proves) && node.proves.includes(proofTarget)) {
+        ids.add(nodeId);
+      }
+    }
+    provers.set(id, [...ids]);
+  }
+  const artifactsDir = path.dirname(result.tracePath);
+  const realTaskDir = fs.realpathSync(taskDir);
+  for (const [id, recipeNodes] of provers) {
+    if (recipeNodes.length === 0) continue;
+    const verdict = recipeNodes.every((nodeId) => outcome.get(nodeId)?.ok === true)
       ? 'proven'
       : 'missing';
     const evidence = [
       ...new Set(
         [
           result.tracePath,
-          ...provers.flatMap((nodeId) =>
+          ...recipeNodes.flatMap((nodeId) =>
             nodeArtifactPaths(outcome.get(nodeId), artifactsDir, target),
           ),
         ]
-          .map((file) => taskRelative(taskDir, file))
+          .map((file) => taskRelative(realTaskDir, file))
           .filter((file): file is string => file !== null),
       ),
     ];
     try {
-      ledger.setAcceptanceVerdict(taskDir, { id, verdict, evidence, recipeNodes: provers });
-      record.recorded.push({ id, verdict, evidence, recipeNodes: provers });
+      ledger.setAcceptanceVerdict(taskDir, { id, verdict, evidence, recipeNodes });
+      record.recorded.push({ id, verdict, evidence, recipeNodes });
     } catch (error) {
       if (!(error instanceof ledger.AcceptanceRefusal)) throw error;
-      record.refused.push(`${proofTarget}: ${error.message}`);
+      record.refused.push(`${id}: ${error.message}`);
     }
   }
   return record;
 }
 
-function proofTargetIds(recipe: Record<string, unknown>): string[] {
-  const targets = Array.isArray(recipe.proofTargets) ? recipe.proofTargets : [];
+// Proof targets are `{ id, claim }` objects (the recipe contract rejects any other shape).
+function proofTargetIds(recipe: unknown): string[] {
+  const targets = isRecord(recipe) && Array.isArray(recipe.proofTargets) ? recipe.proofTargets : [];
   return targets
-    .map((target) => (typeof target === 'string' ? target : isRecord(target) ? target.id : null))
+    .map((target) => (isRecord(target) ? target.id : null))
     .filter((id): id is string => typeof id === 'string');
 }
 
@@ -126,14 +138,28 @@ function nodeArtifactPaths(
     .filter((file): file is string => typeof file === 'string');
 }
 
-// The ledger keeps task-dir relative paths only; a file outside the task dir is not evidence it can hold.
-function taskRelative(taskDir: string, file: string): string | null {
-  const relative = path.relative(taskDir, file);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return fs.existsSync(file) ? relative.split(path.sep).join('/') : null;
+// The ledger keeps task-dir relative paths only. Both sides are resolved first, so a
+// symlink can't carry evidence from outside the task dir in, nor a symlinked checkout
+// path drop evidence that is inside.
+function taskRelative(realTaskDir: string, file: string): string | null {
+  let real: string;
+  try {
+    real = fs.realpathSync(file);
+  } catch {
+    return null;
+  }
+  const relative = path.relative(realTaskDir, real);
+  if (
+    !relative ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return null;
+  }
+  return relative.split(path.sep).join('/');
 }
 
-function readJson(file: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return isRecord(value) ? value : {};
+function readJson(file: string): unknown {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
 }

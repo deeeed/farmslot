@@ -24,9 +24,12 @@ const CRITERIA = ['no discount', 'rewards discount', 'subscription waiver', 'twa
 // trace, as a run with RECIPE_TASK_DIR leaves them.
 function taskRun(options: {
   criteria?: string[];
-  proofTargets: unknown[];
+  /** Proof target ids; each becomes a `{ id, claim }` target. */
+  proofTargets: string[];
   nodes: Record<string, string[]>;
   trace: Array<{ nodeId: string; ok: boolean; artifacts?: Array<{ path: string }> }>;
+  /** Write the trace as a bare array of entries, the other shape the protocol allows. */
+  bareTrace?: boolean;
 }): { target: string; taskDir: string; result: { recipePath: string; tracePath: string } } {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-acceptance-'));
   const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'tat-1');
@@ -44,9 +47,15 @@ function taskRun(options: {
   const tracePath = path.join(artifacts, 'trace.json');
   fs.writeFileSync(
     recipePath,
-    JSON.stringify({ proofTargets: options.proofTargets, workflow: { nodes } }),
+    JSON.stringify({
+      proofTargets: options.proofTargets.map((id) => ({ id, claim: `claim ${id}` })),
+      workflow: { nodes },
+    }),
   );
-  fs.writeFileSync(tracePath, JSON.stringify({ entries: options.trace }));
+  fs.writeFileSync(
+    tracePath,
+    JSON.stringify(options.bareTrace ? options.trace : { entries: options.trace }),
+  );
   return { target, taskDir, result: { recipePath, tracePath } };
 }
 
@@ -66,7 +75,7 @@ describe('recipe acceptance ledger', () => {
 
   test('proven when every proving node passed, missing when one failed or did not run, else unrecorded', () => {
     const run = taskRun({
-      proofTargets: [{ id: 'AC1' }, { id: 'AC2' }, { id: 'AC3' }, { id: 'AC4' }],
+      proofTargets: ['AC1', 'AC2', 'AC3', 'AC4'],
       nodes: {
         'assert-default': ['AC1'],
         'assert-unit-default': ['AC1'],
@@ -148,7 +157,7 @@ describe('recipe acceptance ledger', () => {
       ['AC-1'],
     );
     assert.equal(refused.length, 1);
-    assert.match(refused[0]!, /^AC2: unknown acceptance criterion AC-2/u);
+    assert.match(refused[0]!, /^AC-2: unknown acceptance criterion AC-2/u);
   });
 
   test('writes nothing when the handoff lists no criteria', () => {
@@ -187,6 +196,89 @@ describe('recipe acceptance ledger', () => {
       [
         ['AC-1', 'proven'],
         ['AC-5', 'untestable'],
+      ],
+    );
+  });
+
+  test('AC1 and AC-1 are one criterion: every node proving either must pass', () => {
+    const run = taskRun({
+      proofTargets: ['AC1', 'AC-1'],
+      nodes: { a: ['AC1'], b: ['AC-1'] },
+      trace: [
+        { nodeId: 'a', ok: true },
+        { nodeId: 'b', ok: false },
+      ],
+    });
+    const { recorded } = recordRecipeAcceptance(run.taskDir, run.target, run.result);
+    assert.deepEqual(recorded, [
+      {
+        id: 'AC-1',
+        verdict: 'missing',
+        recipeNodes: ['a', 'b'],
+        evidence: ['artifacts/trace.json'],
+      },
+    ]);
+  });
+
+  test('reads a bare-array trace, and a retried node counts by its last entry', () => {
+    const run = taskRun({
+      proofTargets: ['AC1'],
+      nodes: { a: ['AC1'] },
+      trace: [
+        { nodeId: 'a', ok: false },
+        { nodeId: 'a', ok: true },
+      ],
+      bareTrace: true,
+    });
+    recordRecipeAcceptance(run.taskDir, run.target, run.result);
+    assert.equal(readLedger(run.taskDir).criteria[0]!.verdict, 'proven');
+  });
+
+  test('keeps no evidence a symlink brings in from outside the task dir', () => {
+    const run = taskRun({
+      proofTargets: ['AC1'],
+      nodes: { a: ['AC1'] },
+      trace: [
+        {
+          nodeId: 'a',
+          ok: true,
+          artifacts: [{ path: 'linked.json' }, { path: '..cache/in.json' }],
+        },
+      ],
+    });
+    const artifacts = path.dirname(run.result.tracePath);
+    fs.writeFileSync(path.join(run.target, 'outside.json'), '{}');
+    fs.symlinkSync(path.join(run.target, 'outside.json'), path.join(artifacts, 'linked.json'));
+    fs.mkdirSync(path.join(artifacts, '..cache'));
+    fs.writeFileSync(path.join(artifacts, '..cache', 'in.json'), '{}');
+    recordRecipeAcceptance(run.taskDir, run.target, run.result);
+    assert.deepEqual(readLedger(run.taskDir).criteria[0]!.evidence, [
+      'artifacts/trace.json',
+      'artifacts/..cache/in.json',
+    ]);
+  });
+
+  test('a run replaces the verdict of the ids it proves, including a manual one, and keeps the rest', () => {
+    const run = taskRun({
+      proofTargets: ['AC1'],
+      nodes: { a: ['AC1'] },
+      trace: [{ nodeId: 'a', ok: true }],
+    });
+    for (const id of ['AC-1', 'AC-2']) {
+      shared.setAcceptanceVerdict(run.taskDir, {
+        id,
+        verdict: 'untestable',
+        evidence: [],
+        recipeNodes: [],
+        note: 'manual',
+      });
+    }
+    recordRecipeAcceptance(run.taskDir, run.target, run.result);
+    assert.deepEqual(
+      readLedger(run.taskDir).criteria.map((entry) => [entry.id, entry.verdict]),
+      [
+        ['AC-1', 'proven'],
+        ['AC-2', 'untestable'],
       ],
     );
   });
