@@ -5,7 +5,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document adapter plugins declared in `recipe-library.json` `adapters`: loading on selection, the checks, `extends` composition, the trust rule (the exact operator library list, the plugin digest an approved plan binds, the files a plugin may import and the ones refused, the doctor check), and the Adapter SDK members `extends?`, `doctor?`, `actions.manifestPaths?` and `actions.adapters?`.
-- Add the Node adapter reference (`@farmslot/adapter-node`: `createNodeAdapter`, `nodeDependencyBlock` with a host `resolveBin`, `workspaceTsconfigEnv`, `scripts/cleanup.sh`).
+- Web adapter reference: document `dapp` (record or answer a dapp's wallet requests, assert the request log, product signing policy as input) and `origin`.
+- Add the Node adapter reference (`@farmslot/adapter-node`: `createNodeAdapter`, `nodeDependencyBlock` with a host `resolveBin`, `workspaceTsconfigEnv` mapping each package to its `src`, `checkoutWorkspacePackages`, `scripts/cleanup.sh`).
 - The Expo guide becomes the React Native adapter guide at `/docs/guides/adapter-rn` (`@farmslot/adapter-rn`, renamed from `@farmslot/expo-recipe`).
 
 - Rename the recipe harness package pages to `@farmslot/recipe-runner` (`/docs/architecture/recipe-runner`).

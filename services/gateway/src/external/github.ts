@@ -170,6 +170,27 @@ export async function fetchPRDiffFiles(
   }));
 }
 
+/** True when `ancestorSha` is reachable from `headSha`; false after a rebase or force-push. */
+export async function isGitHubAncestor(
+  repo: string,
+  ancestorSha: string,
+  headSha: string,
+  opts?: GhRequestOpts,
+): Promise<boolean> {
+  if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) {
+    throw new Error(`Invalid repo format: ${repo}. Expected owner/repo.`);
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(ancestorSha) || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
+    throw new Error('GitHub ancestry check requires concrete commit SHAs.');
+  }
+  const result = await ghRequest(
+    ['api', `repos/${repo}/compare/${ancestorSha}...${headSha}`, '--jq', '.status'],
+    opts,
+  );
+  const status = result.stdout.trim();
+  return status === 'ahead' || status === 'identical';
+}
+
 export async function fetchGitHubCompareFiles(
   repo: string,
   baseSha: string,

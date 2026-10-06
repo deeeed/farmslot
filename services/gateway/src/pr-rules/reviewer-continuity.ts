@@ -43,6 +43,8 @@ export function preferRetainedReviewer(
   };
   const prior = findLatestPriorReviewRun(identity, runs);
   if (!prior) return choices;
+  // Only picks a retained reviewer. The run's own context build confirms the
+  // prior head is an ancestor before it settles on incremental scope.
   const context = automatedRepeatReviewSelection(
     buildRepeatReviewContext(
       identity,
