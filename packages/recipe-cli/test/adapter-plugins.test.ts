@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   ADAPTER_SDK_VERSION,
@@ -20,10 +21,12 @@ import {
   adapterSelectionFailureOut,
   composeAdapter,
   configureHarnessAdapters,
+  configureHarnessHost,
   declaredAdapterIds,
   ensureAdapterLoaded,
   harnessAdapter,
   harnessAdapters,
+  harnessHost,
   selectedAdapterId,
 } from '../src/harness/index.js';
 
@@ -458,6 +461,83 @@ describe('adapter plugins', () => {
     (globalThis as Record<string, unknown>).__pluginImports = [];
     assert.equal((await refusal('echo')).code, 'RECIPE_SOURCE_INVALID');
     assert.deepEqual(imports(), []);
+  });
+
+  test("bare packages resolve from the host's install, never beside or above the library", async () => {
+    const importing = (specifier: string) =>
+      pluginSource('echo').replace(
+        'export const adapter = {',
+        `import ${JSON.stringify(specifier)};\nexport const adapter = {`,
+      );
+    // The host's package loads from a library outside the host's tree.
+    process.env.RECIPE_LIBRARY_PATH = `sdk=${dirLibrary('sdk', { echo: { source: importing('@farmslot/adapter-sdk') } })}`;
+    await ensureAdapterLoaded('echo');
+    assert.ok(harnessAdapters().has('echo'));
+
+    // A package in a node_modules above the library: the host doesn't provide it.
+    const above = tempRoot('recipe-cli-plugins-above-');
+    fs.mkdirSync(path.join(above, 'node_modules', 'above-dep'), { recursive: true });
+    fs.writeFileSync(
+      path.join(above, 'node_modules', 'above-dep', 'package.json'),
+      '{"name":"above-dep","main":"index.mjs"}',
+    );
+    fs.writeFileSync(path.join(above, 'node_modules', 'above-dep', 'index.mjs'), 'export {};\n');
+    const nested = path.join(above, 'lib');
+    fs.renameSync(dirLibrary('nested', { echo: { source: importing('above-dep') } }), nested);
+    process.env.RECIPE_LIBRARY_PATH = `nested=${nested}`;
+    configureHarnessAdapters(createAdapterRegistry());
+    let error = await refusal('echo');
+    assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+    assert.match(error.message, /the host's install does not provide/u);
+
+    // Even when the host's resolution reaches it, a node_modules above the library is refused.
+    // (A second library: the module that failed above stays failed in the ESM cache.)
+    const nested2 = path.join(above, 'lib2');
+    fs.renameSync(dirLibrary('nested2', { echo: { source: importing('above-dep') } }), nested2);
+    process.env.RECIPE_LIBRARY_PATH = `nested2=${nested2}`;
+    const host = harnessHost();
+    fs.mkdirSync(path.join(above, 'host'));
+    fs.writeFileSync(path.join(above, 'host', 'package.json'), '{"name":"host"}');
+    configureHarnessHost({ ...host, packageRoot: path.join(above, 'host') });
+    try {
+      configureHarnessAdapters(createAdapterRegistry());
+      error = await refusal('echo');
+      assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+      assert.match(error.message, /beside or above the library/u);
+    } finally {
+      configureHarnessHost(host);
+    }
+  });
+
+  test('an actions/ file is fenced when plugin code reaches it, not when the host imports it', async () => {
+    const root = dirLibrary(
+      'shared',
+      {
+        echo: {
+          source: pluginSource('echo').replace(
+            'export const adapter = {',
+            "import '../../actions/reached.mjs';\nexport const adapter = {",
+          ),
+        },
+      },
+      {
+        'actions/reached.mjs': "import '../lib/outside.mjs';\n",
+        'actions/host-only.mjs': "export { outside } from '../lib/outside.mjs';\n",
+        'lib/outside.mjs': 'export const outside = 1;\n',
+      },
+    );
+    process.env.RECIPE_LIBRARY_PATH = `shared=${root}`;
+    // Through the plugin, actions/reached.mjs may not import outside the digest.
+    const error = await refusal('echo');
+    assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+    assert.match(error.message, /imports \.\.\/lib\/outside\.mjs/u);
+    // The host importing an actions/ file by itself is not plugin code.
+    const hostImport = (await import(
+      pathToFileURL(path.join(root, 'actions', 'host-only.mjs')).href
+    )) as {
+      outside: number;
+    };
+    assert.equal(hostImport.outside, 1);
   });
 
   test('plugin code that imports later, while it runs, is fenced too', async () => {

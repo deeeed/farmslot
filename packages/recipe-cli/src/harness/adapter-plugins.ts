@@ -283,13 +283,22 @@ async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAda
     );
   // The plugin may import from disk only the files its digest covers.
   const covered = await libraryAdapterFiles(declaration.root, declaration);
+  const moduleDir = path.posix.dirname(
+    path
+      .relative(declaration.root, path.resolve(declaration.root, declaration.module))
+      .split(path.sep)
+      .join('/'),
+  );
+  const inModuleDir = (relative: string) =>
+    moduleDir === '.' ? !relative.startsWith('actions/') : relative.startsWith(`${moduleDir}/`);
+  const real = (relative: string) => fs.realpathSync(path.join(declaration.root, relative));
   fencePluginImports({
     id: declaration.id,
     library: declaration.library,
     root: fs.realpathSync(declaration.root),
-    files: new Set(
-      covered.map((relative) => fs.realpathSync(path.join(declaration.root, relative))),
-    ),
+    moduleFiles: new Set(covered.filter(inModuleDir).map(real)),
+    files: new Set(covered.map(real)),
+    hostURL: pathToFileURL(path.join(harnessHost().packageRoot, 'package.json')).href,
   });
   let module: Record<string, unknown>;
   try {
