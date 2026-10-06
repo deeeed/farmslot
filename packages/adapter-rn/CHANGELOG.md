@@ -5,7 +5,11 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-10-06
+
 - **Breaking:** `summarizeFrames`, `FrameSample` and `FrameMetricSummary` are no longer exported from the index. They moved to `@farmslot/recipe-runner/runtime/cdp-trace`, unchanged; import them from there.
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.17.1 - 2026-10-06
 
