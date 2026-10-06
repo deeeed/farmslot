@@ -316,7 +316,7 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
   );
   assert.equal(
     sanitizePRBody('| a | b |\n| --- | --- |\n| x | artifacts/y/z.png |\n| q | r |'),
-    '| a | b |\n| --- | --- |\n| q | r |',
+    '| a | b |\n| --- | --- |\n| x |  |\n| q | r |',
   );
   assert.equal(sanitizePRBody('- one\n- see artifacts/y/z.png\n- three'), '- one\n- three');
   assert.equal(
@@ -377,6 +377,43 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
   assert.equal(
     sanitizePRBody('__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown),
     '__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown,
+  );
+});
+
+test('sanitizePRBody keeps AC table rows and unlinks task-relative links', () => {
+  const body = [
+    '- Recipe: [`recipe/drawer.recipe.json`](recipe/drawer.recipe.json)',
+    '',
+    '| AC | Criterion | Screenshot | Video |',
+    '|---|---|---|---|',
+    '| AC-1 | Drawer opens | [01-drawer-open](recipe-run/screenshots/recipe/01-drawer-open.png) | not available ([why](recipe-run/video-unavailable.md)) |',
+    '| AC-2 | Search filters | ![02](artifacts/recipe-run/screenshots/02-search.png) | [hosted](https://cdn.example/a.mp4) |',
+    '',
+    'See [the anchor](#acceptance) and [PR](/owner/repo/pull/1).',
+  ].join('\n');
+
+  const sanitized = sanitizePRBody(body);
+  assert.match(sanitized, /^- Recipe: `recipe\/drawer\.recipe\.json`$/m);
+  assert.match(
+    sanitized,
+    /^\| AC-1 \| Drawer opens \| 01-drawer-open \| not available \(why\) \|$/m,
+  );
+  assert.match(
+    sanitized,
+    /^\| AC-2 \| Search filters \|\s+\| \[hosted\]\(https:\/\/cdn\.example\/a\.mp4\) \|$/m,
+  );
+  assert.match(sanitized, /\[the anchor\]\(#acceptance\) and \[PR\]\(\/owner\/repo\/pull\/1\)/);
+  assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+});
+
+test('sanitizePRBody drops local images from generated captions instead of renaming their src', () => {
+  const row =
+    '<tr><td align="center"><strong>01 Drawer Open</strong><br/><img src="artifacts/recipe-run/screenshots/recipe/01-drawer-open.png" alt="01 Drawer Open" width="320" /><br/><sub>note</sub></td></tr>';
+
+  const sanitized = sanitizePRBody(row).trim();
+  assert.equal(
+    sanitized,
+    '<tr><td align="center"><strong>01 Drawer Open</strong><br/><sub>note</sub></td></tr>',
   );
 });
 
