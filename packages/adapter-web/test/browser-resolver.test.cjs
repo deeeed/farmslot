@@ -1510,4 +1510,44 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it(
+    'stops the browser when the caller calls process.exit mid-probe',
+    { timeout: 30000 },
+    async () => {
+      const { caller, exited } = probingCaller("process.on('SIGUSR2', () => process.exit(3));");
+      const browser = await waitFor(() => browserOf(caller.pid));
+      process.kill(caller.pid, 'SIGUSR2');
+      assertMatch(await exited, { code: 3 });
+      assert.equal(running(browser.pid), false);
+      assert.equal(fs.existsSync(browser.profile), false);
+    },
+  );
+
+  it('lets concurrent reapers share orphaned profiles', { timeout: 30000 }, async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-'));
+    const dead = spawnSync('true').pid;
+    for (let index = 0; index < 60; index += 1)
+      fs.mkdirSync(path.join(tmp, `farmslot-browser-probe-${dead}-${index}`));
+    try {
+      const reapers = Array.from(
+        { length: 8 },
+        () =>
+          new Promise((resolve) =>
+            execFile(
+              process.execPath,
+              [
+                '-e',
+                `require(${JSON.stringify(require.resolve('../src/browser-resolver.cjs'))}).reapOrphanedProbes(${JSON.stringify(tmp)})`,
+              ],
+              (error, stdout, stderr) => resolve(error ? stderr : ''),
+            ),
+          ),
+      );
+      assert.deepEqual(await Promise.all(reapers), Array(8).fill(''));
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

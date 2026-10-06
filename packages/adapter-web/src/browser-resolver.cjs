@@ -618,7 +618,9 @@ function reapOrphanedProbes(tmp = os.tmpdir()) {
     const owner = PROBE_PROFILE_OWNER.exec(name);
     if (!owner || Number(owner[1]) === process.pid || pidAlive(Number(owner[1]))) continue;
     const profile = path.join(tmp, name);
-    if (fs.lstatSync(profile).uid !== process.getuid()) continue;
+    // Another resolver's reaper may have removed it already.
+    const stat = fs.lstatSync(profile, { throwIfNoEntry: false });
+    if (!stat || stat.uid !== process.getuid()) continue;
     killProfile(profile);
     fs.rmSync(profile, { recursive: true, force: true });
   }
@@ -731,7 +733,9 @@ async function probeLaunch(
       if (!alive()) return died('after DevTools started');
       await sleep(250);
     }
-    if (await devtoolsAnswers(port)) return verdict(true, 'started and rendered');
+    const answers = await devtoolsAnswers(port);
+    if (!activeProbes.has(profile)) return verdict(false, 'probe stopped by its caller', true);
+    if (answers) return verdict(true, 'started and rendered');
     // Only a proven exit is a property of the binary.
     return alive()
       ? verdict(false, 'DevTools stopped answering after the settle', true)
