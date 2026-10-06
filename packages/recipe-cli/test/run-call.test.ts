@@ -155,6 +155,8 @@ function manifestFor(adapter: string, team = false): RecipeActionManifestDocumen
 
 interface Calls {
   runners: Array<{ adapter: string; trustedMutation?: string; trustTaskActions: boolean }>;
+  // Each trustedMutation hook call, as `<hook>:<adapter it received>`.
+  mutationHooks: string[];
   events: RecipeNodeEvent[];
   members: string[];
   networkStarts: Record<string, unknown>[];
@@ -162,7 +164,14 @@ interface Calls {
 }
 
 function newCalls(): Calls {
-  return { runners: [], events: [], members: [], networkStarts: [], performanceFinalized: [] };
+  return {
+    runners: [],
+    mutationHooks: [],
+    events: [],
+    members: [],
+    networkStarts: [],
+    performanceFinalized: [],
+  };
 }
 
 const pingAdapter: ActionAdapter = {
@@ -263,9 +272,14 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
       });
     },
     trustedMutation: {
-      load: async ({ cli }) =>
-        typeof cli.fundingToken === 'string' ? { bound: cli.fundingToken } : undefined,
-      authorize: async (base, plan) => ({ bound: `${base.bound}@${plan.digest.slice(0, 15)}` }),
+      load: async ({ cli, adapter }) => {
+        calls.mutationHooks.push(`load:${adapter}`);
+        return typeof cli.fundingToken === 'string' ? { bound: cli.fundingToken } : undefined;
+      },
+      authorize: async (base, plan, { adapter }) => {
+        calls.mutationHooks.push(`authorize:${adapter}`);
+        return { bound: `${base.bound}@${plan.digest.slice(0, 15)}` };
+      },
     },
     console: classifier,
     runnerIncludes: ['package.json'],
@@ -1953,6 +1967,61 @@ describe('call', () => {
     assert.deepEqual([bound[0], bound[2]], ['grant', 'grant']);
     assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
     assert.equal(bound[3], bound[1]);
+  });
+
+  test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
+    const registry = createAdapterRegistry();
+    registry.register({ ...webAdapter(calls), targets: ['storefront'] });
+    registry.register(shopAdapter('api', calls));
+    configureHarnessAdapters(registry);
+    const target = checkout();
+    fs.writeFileSync(path.join(target, 'shop.json'), '{}');
+    const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
+    const ping = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const cases = {
+      'call --adapter web': [
+        'web',
+        () => handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
+      ],
+      'call, detected': [
+        'web',
+        () => handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+      ],
+      'call --platform storefront': [
+        'web',
+        () =>
+          handleCall(
+            ['shop.ping', 'mode=slow', '--platform', 'storefront', ...funded],
+            callOptions,
+          ),
+      ],
+      'call --adapter api': [
+        'api',
+        () => handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
+      ],
+      'run, detected': ['web', () => handleRun([ping, ...funded], runOptions)],
+      'run --platform storefront': [
+        'web',
+        () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
+      ],
+    } as const;
+    for (const [name, [adapter, invoke]] of Object.entries(cases)) {
+      calls.mutationHooks.length = 0;
+      const result = await capture(invoke);
+      assert.equal(
+        result.value,
+        0,
+        `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
+      );
+      assert.deepEqual(
+        [...new Set(calls.mutationHooks)],
+        [`load:${adapter}`, `authorize:${adapter}`],
+        name,
+      );
+    }
   });
 
   test('teaches unknown, unavailable and invalid actions', async () => {

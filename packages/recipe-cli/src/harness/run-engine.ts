@@ -66,6 +66,22 @@ export interface RecipeRunnerOptions<TMutation> {
   onActionEvent?(event: RecipeNodeEvent): void;
 }
 
+/** What `trustedMutation.load` receives: the run's command line and what the command resolved. */
+export interface TrustedMutationLoadInput {
+  /** The adapter the command resolved: `--adapter`, a `--platform` target, or the detected one. */
+  adapter: string;
+  cli: CommandOptions;
+  artifactsDir: string;
+  projectRoot: string;
+  rootRecipe: unknown;
+}
+
+/** What `trustedMutation.authorize` receives besides the loaded mutation and the plan. */
+export interface TrustedMutationAuthorizeContext {
+  /** The adapter the command resolved, the same one `load` received. */
+  adapter: string;
+}
+
 /** What a host executes recipes with, on top of its catalog. */
 export interface RecipeEngine<
   TMutation = unknown,
@@ -81,13 +97,12 @@ export interface RecipeEngine<
    * then bound to the run's execution plan. Absent: no run binds one.
    */
   trustedMutation?: {
-    load(input: {
-      cli: CommandOptions;
-      artifactsDir: string;
-      projectRoot: string;
-      rootRecipe: unknown;
-    }): Promise<TMutation | undefined>;
-    authorize(base: TMutation, plan: RecipeExecutionPlan): Promise<TMutation>;
+    load(input: TrustedMutationLoadInput): Promise<TMutation | undefined>;
+    authorize(
+      base: TMutation,
+      plan: RecipeExecutionPlan,
+      context: TrustedMutationAuthorizeContext,
+    ): Promise<TMutation>;
   };
   /** The console rules run diagnostics classify with. */
   console: ConsoleClassifier<TAllowlist>;
@@ -297,6 +312,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const mutation = engine.trustedMutation;
   const trustedMutation = mutation
     ? await mutation.load({
+        adapter,
         cli: runtimeOptions.cli ?? {},
         artifactsDir: absoluteArtifactsDir,
         projectRoot,
@@ -355,7 +371,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   if (mutation && trustedMutation) {
     const executionPlan = await runner.preflight(runRequest);
-    const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan);
+    const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
+      adapter,
+    });
     runner = await engine.createRunner(adapter, manifest, {
       ...runnerOptions,
       trustedMutation: authorizedMutation,
