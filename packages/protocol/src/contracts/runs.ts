@@ -2425,6 +2425,8 @@ export interface Run {
   /** Timestamp when the supervised run lifecycle started. */
   startedAt?: string;
   updatedAt: string;
+  /** When `status` last changed, stamped by the gateway store; absent on older runs. */
+  statusChangedAt?: string;
   /** Present on archived run records so archive-aware readers can suppress them from active timelines. */
   archivedAt?: string;
   ticketData?: RunTicketData;

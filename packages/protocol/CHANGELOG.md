@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `Run.statusChangedAt` (optional): when the run's status last changed, stamped by the gateway. Absent on older runs.
 - The acceptance contract's comments name both writers of `artifacts/acceptance-status.json` (`farmslot-agent ac` and recipe runs with a task dir). No type or behavior change.
 - `catalogDefaultRunMode` derives the omitted run mode from execution-template `defaults`: a flow with an interactive rule and a general rule defaults to autonomous, the same rule a default worker template with an interactive sibling follows.
 - Register the `artifactView` Command Center link parameter, which marks an artifact opened in the step inspector's own viewer.

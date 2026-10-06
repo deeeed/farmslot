@@ -35,6 +35,7 @@ import {
   shouldHoldForMissingTerminalSignal,
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
+  structuredProgressMovedMinute,
 } from './run-monitor.js';
 
 test('monitor turns terminal runner quota and auth blockers into error violations', () => {
@@ -1079,5 +1080,23 @@ test('rearmInteractiveHandoffAutoRecovery declines when only non-handoff decisio
   assert.equal(
     rearmInteractiveHandoffAutoRecovery(run, async () => {}),
     undefined,
+  );
+});
+
+test('structured runner progress is announced once per later minute', () => {
+  assert.equal(structuredProgressMovedMinute(undefined, '2026-05-14T01:00:10.000Z'), true);
+  assert.equal(
+    structuredProgressMovedMinute('2026-05-14T01:00:10.000Z', '2026-05-14T01:00:50.000Z'),
+    false,
+    'polls within the same minute stay quiet',
+  );
+  assert.equal(
+    structuredProgressMovedMinute('2026-05-14T01:00:50.000Z', '2026-05-14T01:01:05.000Z'),
+    true,
+  );
+  assert.equal(
+    structuredProgressMovedMinute('2026-05-14T01:05:00.000Z', '2026-05-14T01:05:00.000Z'),
+    false,
+    'an unchanged clock is not announced',
   );
 });
