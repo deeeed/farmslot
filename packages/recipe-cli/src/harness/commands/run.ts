@@ -9,6 +9,7 @@ import type { RecipeValidationFinding } from '@farmslot/protocol';
 import { type RecipeLibrarySource, redactRecipeParams } from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
+import { recordRecipeAcceptance } from '../acceptance-ledger.js';
 import { harnessAdapter } from '../adapters.js';
 import {
   actionLibraryContextArgs,
@@ -523,6 +524,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         adapter,
         result.browser ?? null,
       );
+      recordRunAcceptance(target, result);
       if (violation !== null) {
         const userAction =
           violation.userAction ??
@@ -628,17 +630,39 @@ function formatDiagnosticLine(line: string, out: (style: string, text: string) =
 
 function resolveRunArtifactsDir(target: string, explicit: string | undefined): string {
   if (explicit !== undefined) return path.resolve(explicit);
-  const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
-  if (taskDir) {
-    const resolvedTask = path.resolve(target, taskDir);
-    const relative = path.relative(path.resolve(target), resolvedTask);
-    if (!relative.startsWith(`..${path.sep}`) && relative !== '..') {
-      return path.join(resolvedTask, 'artifacts');
-    }
-    throw new Error(`task directory must be inside the target checkout: ${taskDir}`);
-  }
+  const taskDir = runTaskDir(target);
+  if (taskDir) return path.join(taskDir, 'artifacts');
   const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
   return path.join(target, 'temp', 'recipe', 'runs', `${stamp}-${process.pid}`);
+}
+
+/** The run's task dir (RECIPE_TASK_DIR / FARMSLOT_TASK_DIR), resolved inside the checkout, or null. */
+function runTaskDir(target: string): string | null {
+  const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
+  if (!taskDir) return null;
+  const resolvedTask = path.resolve(target, taskDir);
+  const relative = path.relative(path.resolve(target), resolvedTask);
+  if (!relative.startsWith(`..${path.sep}`) && relative !== '..') return resolvedTask;
+  throw new Error(`task directory must be inside the target checkout: ${taskDir}`);
+}
+
+// The task's acceptance ledger from the recipe's proof targets. The run's result
+// stands either way: a ledger the run can't write is a warning, not a failure.
+function recordRunAcceptance(
+  target: string,
+  result: { recipePath: string; tracePath: string },
+): void {
+  let taskDir: string | null;
+  try {
+    taskDir = runTaskDir(target);
+    if (!taskDir) return;
+    const { refused } = recordRecipeAcceptance(taskDir, target, result);
+    for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
+  } catch (error) {
+    console.error(
+      `acceptance ledger: not written: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 interface RunArtifactDisplay {
