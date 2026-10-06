@@ -523,6 +523,20 @@ describe('adapter plugins', () => {
     });
   });
 
+  test("a library at the repo root holds the host's node_modules, so its packages are refused", async () => {
+    // Layout D: the library is the repo itself, so <repo>/node_modules is inside the
+    // library root, where no digest covers it. Keep the library in a folder instead.
+    const repo = dirLibrary('rootlib', { echo: { source: importing('hostdep') } });
+    writePackage(path.join(repo, 'node_modules', '@scope', 'host'), '@scope/host');
+    writePackage(path.join(repo, 'node_modules', 'hostdep'), 'hostdep');
+    process.env.RECIPE_LIBRARY_PATH = `rootlib=${repo}`;
+    await withHostAt(path.join(repo, 'node_modules', '@scope', 'host'), async () => {
+      const error = await refusal('echo');
+      assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+      assert.match(error.message, /beside or above the library/u);
+    });
+  });
+
   test("a node_modules above the library but off the host's lookup chain is refused, even when the host links to it", async () => {
     // The host's resolution reaches the package only through a symlink in its own
     // node_modules; the real files sit above the library, where no digest covers them.
