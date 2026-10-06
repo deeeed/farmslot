@@ -34,6 +34,11 @@ export interface PlatformAdapter<
   readonly id: string;
   /** The SDK version this adapter was written against. A host refuses any other. */
   readonly sdkVersion: AdapterSdkVersion;
+  /**
+   * The adapter this one composes on. Set on an adapter a recipe library
+   * declares with `extends` in recipe-library.json `adapters`.
+   */
+  readonly extends?: string;
   // A headless platform runs no app or dev server. Commands ask this instead of
   // comparing adapter ids.
   readonly headless: boolean;
@@ -85,6 +90,19 @@ export interface PlatformAdapter<
   run?: AdapterRun<TPlatform, TBrowser>;
   // Network and performance observation around a run.
   observation?: AdapterObservation;
+  // Platform checks `doctor` reports after the shared ones.
+  doctor?(target: string): Promise<AdapterDoctorCheck[]>;
+}
+
+/** One check a platform adds to the `doctor` report. */
+export interface AdapterDoctorCheck {
+  id: string;
+  status: 'pass' | 'fail';
+  /** A required check that fails makes the report fail. */
+  required: boolean;
+  message: string;
+  detail?: string;
+  userAction?: string;
 }
 
 export interface AdapterDetect {
@@ -329,6 +347,12 @@ export interface AdapterHints {
 export interface AdapterActions {
   // The bundled action manifest.
   manifestPath(): string;
+  // Every action manifest the platform declares, in order: an adapter that
+  // extends another lists its parent's first. Absent: [manifestPath()].
+  manifestPaths?(): readonly string[];
+  // Action implementations the platform ships in code, registered for the
+  // actions its manifests declare instead of a library's live adapter scripts.
+  adapters?(): Promise<ActionAdapter[]>;
   // Semantic actions this platform bundles beyond the ones every platform
   // bundles. Any other declared action must come from a live adapter script.
   semantic: readonly string[];
