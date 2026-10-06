@@ -1381,6 +1381,15 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
     return !state.stdout.trim().startsWith('Z');
   }
 
+  // Test cleanup: the browser may be reaped between the check and the kill.
+  function killStray(pid) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  }
+
   async function stopped(pid, ms = 3000) {
     const deadline = Date.now() + ms;
     while (running(pid)) {
@@ -1409,11 +1418,12 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         const browser = await waitFor(() => browserOf(caller.pid));
         process.kill(-caller.pid, signal);
         try {
-          assertMatch(await exited, { signal });
+          const result = await exited;
+          assert.equal(result.signal, signal, JSON.stringify(result));
           assert.equal(await stopped(browser.pid), true, 'the probe browser outlived its caller');
           assert.equal(fs.existsSync(browser.profile), false);
         } finally {
-          if (running(browser.pid)) process.kill(browser.pid, 'SIGKILL');
+          if (running(browser.pid)) killStray(browser.pid);
         }
       },
     );
@@ -1435,7 +1445,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         assert.equal(fs.existsSync(browser.profile), false);
       } finally {
         // Never leave the fake behind when the reaper fails.
-        if (running(browser.pid)) process.kill(browser.pid, 'SIGKILL');
+        if (running(browser.pid)) killStray(browser.pid);
       }
     },
   );
@@ -1539,7 +1549,7 @@ resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then
         assert.equal(await stopped(browser.pid), true);
         assert.equal(fs.existsSync(browser.profile), false);
       } finally {
-        if (running(browser.pid)) process.kill(browser.pid, 'SIGKILL');
+        if (running(browser.pid)) killStray(browser.pid);
       }
     },
   );
