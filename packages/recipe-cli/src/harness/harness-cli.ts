@@ -8,12 +8,14 @@ import path from 'node:path';
 import { Command, CommanderError } from 'commander';
 
 import type { AdapterRegistry } from '@farmslot/adapter-sdk';
+import { RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { RECIPE_CLI_VERSION } from '../version.js';
 
 import { handleCallHelp } from './commands/call.js';
 import {
   type AdapterLoadOptions,
+  AdapterPluginError,
   adapterSelectionFailureOut,
   ensureAdapterLoaded,
   selectedAdapterId,
@@ -262,18 +264,16 @@ async function loadSelectedAdapter(
     await ensureAdapterLoaded(selected, { ...load, libraries: optionValues(tokens, '--library') });
     return undefined;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      typeof error.code === 'string' &&
-      'userAction' in error &&
-      typeof error.userAction === 'string'
-    ) {
-      return adapterSelectionFailureOut(requested(argv, '--json'), command, {
-        code: error.code,
-        message: error.message,
-        userAction: error.userAction,
-      });
+    // A refused plugin, or the library reader's refusal of its source.
+    if (error instanceof AdapterPluginError || error instanceof RecipeTrustError) {
+      const failure = { code: error.code, message: error.message, userAction: error.userAction };
+      if (requested(argv, '--json-stream')) {
+        const stream = new JsonStreamWriter(command, true);
+        stream.error(failure);
+        stream.complete('fail', 2);
+        return 2;
+      }
+      return adapterSelectionFailureOut(requested(argv, '--json'), command, failure);
     }
     return mapErrors(() => {
       throw error;
@@ -305,15 +305,13 @@ async function mapErrors(execute: () => number | Promise<number>): Promise<numbe
   }
 }
 
+// The host's own version. `host.packageRoot` is required config, so a missing or
+// unreadable package.json is a host wiring error, not a version to guess.
 function readPackageVersion(packageRoot: string): string {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')) as {
-      version?: string;
-    };
-    return parsed.version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  const file = path.join(packageRoot, 'package.json');
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: unknown };
+  if (typeof parsed.version !== 'string') throw new Error(`${file} has no version.`);
+  return parsed.version;
 }
 
 function groupedHelp(help: HarnessHelp, commands: readonly PublicHarnessCommand[]): string {
@@ -360,25 +358,30 @@ function detectedSlotLine(out: HelpPaint, slotAdapter: HarnessHelp['slotAdapter'
     process.env.RECIPE_RUNTIME_DIR || DEFAULT_RECIPE_RUNTIME_DIR,
     'agentic-runtime.json',
   );
+  let ctx: Record<string, unknown>;
   try {
-    const ctx = JSON.parse(fs.readFileSync(ctxPath, 'utf8')) as Record<string, unknown>;
-    const platform = typeof ctx.platform === 'string' ? ctx.platform : undefined;
-    const adapter =
-      (platform ? slotAdapter?.(platform) : undefined) ?? detectAdapter(process.cwd());
-    const parts: string[] = [];
-    if (ctx.slotId) parts.push(`slot ${out('ok', String(ctx.slotId))}`);
-    if (ctx.simulator) parts.push(`device ${out('ok', String(ctx.simulator))}`);
-    const devServerPort = ctx.watcherPort ?? ctx.devServerPort ?? ctx.metroPort;
-    const surface = adapter ? harnessAdapter(adapter) : undefined;
-    if (surface && !surface.headless && devServerPort) {
-      parts.push(`${surface.devServer.label} :${out('ok', String(devServerPort))}`);
+    ctx = JSON.parse(fs.readFileSync(ctxPath, 'utf8')) as Record<string, unknown>;
+  } catch (error) {
+    // No context file, or one mid-write: no slot line. Anything else is a bug.
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
     }
-    if (ctx.gitBranch) parts.push(`branch ${out('info', String(ctx.gitBranch))}`);
-    if (parts.length === 0) return null;
-    return `${out('label', 'SLOT')} — this checkout is a prepared slot: ${parts.join(' · ')}`;
-  } catch {
-    return null;
+    throw error;
   }
+  if (ctx === null || typeof ctx !== 'object') return null;
+  const platform = typeof ctx.platform === 'string' ? ctx.platform : undefined;
+  const adapter = (platform ? slotAdapter?.(platform) : undefined) ?? detectAdapter(process.cwd());
+  const parts: string[] = [];
+  if (ctx.slotId) parts.push(`slot ${out('ok', String(ctx.slotId))}`);
+  if (ctx.simulator) parts.push(`device ${out('ok', String(ctx.simulator))}`);
+  const devServerPort = ctx.watcherPort ?? ctx.devServerPort ?? ctx.metroPort;
+  const surface = adapter ? harnessAdapter(adapter) : undefined;
+  if (surface && !surface.headless && devServerPort) {
+    parts.push(`${surface.devServer.label} :${out('ok', String(devServerPort))}`);
+  }
+  if (ctx.gitBranch) parts.push(`branch ${out('info', String(ctx.gitBranch))}`);
+  if (parts.length === 0) return null;
+  return `${out('label', 'SLOT')} — this checkout is a prepared slot: ${parts.join(' · ')}`;
 }
 
 function writeUsageError(

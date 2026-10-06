@@ -27,6 +27,7 @@ import {
   optionValues,
   publicCommandTokens,
   type PublicHarnessCommand,
+  type RecipeCatalog,
   usageError,
   validatePublicInvocation,
   valueOption,
@@ -128,8 +129,18 @@ function shopCommands(): HarnessCommand[] {
         `List recipes: shop-harness run --list\n  Example: ${example}`,
     }),
     command('call', {
-      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--arg': optionalValueOption() }),
+      options: contractOptions(HELP, JSON_FLAG, TARGET, {
+        '--arg': optionalValueOption(),
+        '--list': booleanOption(),
+      }),
       positionals: [{ label: 'action' }],
+      minimumPositionals: 0,
+      requiredUnless: ['--list'],
+      noPositionalsWith: ['--list'],
+      leadingPositionals: 1,
+      variadic: { label: 'key=value', pattern: /^[^=\s]+=.*/u },
+      missingPositionalAction: (example) =>
+        `List actions: shop-harness call --list\n  Example: ${example}`,
     }),
     command('install', { options: contractOptions(HELP, TARGET), allowPassthrough: true }),
     command('update', { options: contractOptions(HELP) }, { exit: 'now', nudge: false }),
@@ -188,6 +199,8 @@ function cliOptions(overrides: Partial<HarnessCliOptions> = {}): HarnessCliOptio
 async function capture<T>(
   run: () => Promise<T>,
 ): Promise<{ result: T; stdout: string; stderr: string }> {
+  // node:test reports the previous test on a later tick; swapping stdout first would swallow it.
+  await new Promise((resolve) => setImmediate(resolve));
   const out: string[] = [];
   const err: string[] = [];
   const stdoutWrite = process.stdout.write;
@@ -207,6 +220,18 @@ async function capture<T>(
     process.stdout.write = stdoutWrite;
     process.stderr.write = stderrWrite;
   }
+}
+
+// NDJSON events in order, each with its timestamp checked and dropped.
+function streamEvents(stdout: string): Record<string, unknown>[] {
+  return stdout
+    .trim()
+    .split('\n')
+    .map((line) => {
+      const { ts, ...event } = JSON.parse(line) as Record<string, unknown>;
+      assert.match(String(ts), /^\d{4}-\d\d-\d\dT/u);
+      return event;
+    });
 }
 
 const savedEnv = { ...process.env };
@@ -317,6 +342,18 @@ describe('validatePublicInvocation', () => {
       'CLI_INVALID_POSITIONAL',
     );
     assert.equal(validatePublicInvocation(['run', 'smoke', 'market=BTC'], table()), null);
+  });
+
+  test('requires the call action before any flag, unless --list', () => {
+    assert.equal(validatePublicInvocation(['call', 'ping', '--json', 'n=1'], table()), null);
+    assert.equal(validatePublicInvocation(['call', '--list', '--json'], table()), null);
+    const missing = {
+      code: 'CLI_MISSING_POSITIONAL',
+      command: 'call',
+      message: 'call requires <action> first.',
+      userAction: 'List actions: shop-harness call --list\n  Example: shop-harness call example',
+    };
+    assert.deepEqual(validatePublicInvocation(['call', '--json', 'ping'], table()), missing);
   });
 
   test('applies passthrough policy and the accepted positional shape', () => {
@@ -451,6 +488,44 @@ describe('createHarnessCli', () => {
     assert.equal((await capture(() => own.main(['--version', '--verbose']))).stdout, '1.2.3\n');
   });
 
+  test('refuses a host whose package.json is missing or has no version', () => {
+    const missing = tempRoot();
+    assert.throws(
+      () => createHarnessCli(cliOptions({ host: { ...shopHost(), packageRoot: missing } })),
+      /ENOENT/u,
+    );
+    const host = shopHost();
+    fs.writeFileSync(path.join(host.packageRoot, 'package.json'), '{}');
+    assert.throws(() => createHarnessCli(cliOptions({ host })), /package\.json has no version\./u);
+  });
+
+  test('leaves the slot line out for an unreadable context, and surfaces a slot adapter bug', async () => {
+    const runtime = path.join(process.cwd(), 'temp/recipe/runtime');
+    fs.mkdirSync(runtime, { recursive: true });
+    fs.writeFileSync(path.join(runtime, 'agentic-runtime.json'), '{"slotId": "shop-');
+    const torn = await capture(() => createHarnessCli(cliOptions()).main([]));
+    assert.deepEqual(torn.result, { exitCode: 0, exit: 'now' });
+    assert.doesNotMatch(torn.stdout, /SLOT/u);
+    fs.writeFileSync(
+      path.join(runtime, 'agentic-runtime.json'),
+      JSON.stringify({ platform: 'web-extension', slotId: 'shop-1' }),
+    );
+    const options = cliOptions();
+    const broken = createHarnessCli({
+      ...options,
+      help: {
+        ...options.help,
+        slotAdapter: () => {
+          throw new Error('slot adapter bug');
+        },
+      },
+    });
+    await assert.rejects(
+      capture(() => broken.main([])),
+      /slot adapter bug/u,
+    );
+  });
+
   test('prints a command help text and its aliases resolve to it', async () => {
     const cli = createHarnessCli(cliOptions());
     const help = await capture(() => cli.main(['status', '--help']));
@@ -491,12 +566,21 @@ describe('createHarnessCli', () => {
       )}\n`,
     );
     const stream = await capture(() => cli.main(['launch', '--surface', 'popup', '--json-stream']));
-    const events = stream.stdout
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    assert.equal(events.at(-1)?.status, 'fail');
-    assert.equal(events.at(-1)?.exitCode, 2);
+    assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual(streamEvents(stream.stdout), [
+      {
+        schemaVersion: 1,
+        command: 'launch',
+        event: 'error',
+        error: {
+          code: 'CLI_INVALID_OPTION_VALUE',
+          message: "--surface must be fullscreen or sidepanel; received 'popup'.",
+          userAction: 'Try: shop-harness launch example',
+        },
+      },
+      { schemaVersion: 1, command: 'launch', event: 'complete', status: 'fail', exitCode: 2 },
+    ]);
+    assert.equal(stream.stderr, '');
     assert.deepEqual(calls, []);
   });
 
@@ -588,6 +672,38 @@ describe('createHarnessCli', () => {
     const { result, stderr } = await capture(() => cli.main(['call', 'x', '--arg', '--help']));
     assert.deepEqual(result, { exitCode: 2, exit: 'now' });
     assert.equal(stderr, '--arg requires k=v.\n');
+  });
+
+  test('renders a call action from the catalog above the generic call help', async () => {
+    const library = tempRoot();
+    fs.mkdirSync(path.join(library, 'recipes'));
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+    ) as Awaited<ReturnType<RecipeCatalog['resolveActionManifest']>>['manifest'];
+    const catalog: RecipeCatalog = {
+      bundledLibrary: { name: 'shop', root: library, actionNamespace: 'shop' },
+      resolveActionManifest: async () => ({ manifest, actionSources: new Map() }),
+      validateManifest: async () => undefined,
+      actionCapabilities: () => [],
+    };
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--adapter': valueOption(['web']) }),
+      positionals: [{ label: 'action' }],
+    });
+    const cli = createHarnessCli({
+      ...cliOptions({ catalog }),
+      commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
+    });
+    const { result, stdout } = await capture(() =>
+      cli.main(['call', 'switch', '--help', '--adapter', 'web', '--target', process.cwd()]),
+    );
+    assert.deepEqual(result, { exitCode: 0, exit: 'now' });
+    const value = stdout.search(/\n +value +string \(required\)/u);
+    const equals = stdout.search(/\n +equals +string \(required\)/u);
+    const generic = stdout.indexOf('shop-harness call [flags]\n\n  call help\n');
+    assert.ok(value > 0 && equals > 0, stdout);
+    assert.ok(generic > Math.max(value, equals), stdout);
+    assert.deepEqual(calls, []);
   });
 
   test('configures the host and adapters it is given', async () => {
@@ -759,7 +875,56 @@ export const adapter = {
     const json = await capture(() => cli.main(['doctor', '--adapter', 'old', '--json']));
     const envelope = JSON.parse(json.stdout) as { error: { code: string } };
     assert.equal(envelope.error.code, 'ADAPTER_SDK_UNSUPPORTED');
+    const stream = await capture(() => cli.main(['doctor', '--adapter', 'old', '--json-stream']));
+    assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
+    assert.equal(stream.stderr, '');
+    const events = streamEvents(stream.stdout);
+    assert.deepEqual(
+      events.map(({ event, status, exitCode }) => ({ event, status, exitCode })),
+      [
+        { event: 'error', status: undefined, exitCode: undefined },
+        { event: 'complete', status: 'fail', exitCode: 2 },
+      ],
+    );
+    assert.deepEqual(events[0]?.error, envelope.error);
     assert.equal(harnessAdapters().has('old'), false);
     assert.deepEqual(calls, []);
+  });
+
+  test("prints the fence's refusal of a plugin's import the same way", async () => {
+    const root = pluginLibrary('leaky');
+    const module = path.join(root, 'plugins', 'leaky.mjs');
+    fs.writeFileSync(path.join(root, 'outside.mjs'), 'export const x = 1;\n');
+    fs.writeFileSync(module, `import '../outside.mjs';\n${fs.readFileSync(module, 'utf8')}`);
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${root}`;
+    const json = await capture(() =>
+      createHarnessCli(pluginOptions()).main(['doctor', '--adapter', 'leaky', '--json']),
+    );
+    assert.deepEqual(json.result, { exitCode: 2, exit: 'now' });
+    const envelope = JSON.parse(json.stdout) as { error: { code: string; message: string } };
+    assert.equal(envelope.error.code, 'RECIPE_SOURCE_INVALID');
+    assert.match(
+      envelope.error.message,
+      /adapter 'leaky' \(library plugs\) imports \.\.\/outside\.mjs/u,
+    );
+  });
+
+  test("leaves an error from the host's adopt to the error mapper", async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('adopted')}`;
+    const cli = createHarnessCli({
+      ...pluginOptions(),
+      adopt: () => {
+        throw Object.assign(new Error('host adopt failed'), {
+          code: 'HOST_OWN',
+          userAction: 'not a refusal',
+        });
+      },
+    });
+    const { result, stdout, stderr } = await capture(() =>
+      cli.main(['doctor', '--adapter', 'adopted', '--json']),
+    );
+    assert.deepEqual(result, { exitCode: 1, exit: 'now' });
+    assert.equal(stdout, '');
+    assert.equal(stderr, 'host adopt failed\n');
   });
 });
