@@ -307,6 +307,24 @@ describe('adapter plugins', () => {
     await ensureAdapterLoaded('core');
   });
 
+  test('a library entry that does not parse never blocks a built-in; it still refuses a plugin', async () => {
+    const claims = library('claims', { core: { source: pluginSource('core') } });
+    process.env.RECIPE_LIBRARY_PATH = '=foo';
+    await ensureAdapterLoaded('core');
+    await ensureAdapterLoaded('core', { libraries: ['=bar'] });
+    const plugin = await refusal('echo');
+    assert.equal(plugin.code, 'RECIPE_LIBRARY_PATH_INVALID', plugin.message);
+    // The entries that do parse are still checked for a claim on the built-in.
+    await assert.rejects(ensureAdapterLoaded('core', { libraries: [`claims=${claims}`] }), {
+      code: 'ADAPTER_ID_CONFLICT',
+    });
+    process.env.RECIPE_LIBRARY_PATH = `claims=${claims}`;
+    await assert.rejects(ensureAdapterLoaded('core', { libraries: ['=bar'] }), {
+      code: 'ADAPTER_ID_CONFLICT',
+    });
+    assert.deepEqual(imports(), []);
+  });
+
   test('refuses an extends cycle', async () => {
     process.env.RECIPE_LIBRARY_PATH = `lib=${library('cycle', {
       a: { source: pluginSource('a'), extends: 'b' },

@@ -423,11 +423,15 @@ async function declarations(
   mode: { lenient: boolean },
 ): Promise<DeclaredAdapter[]> {
   // No recipePath: a task-local library beside a recipe never declares adapters.
+  // Selecting a built-in checks the entries that parse, the set adapterChoices
+  // reads, so an entry that doesn't parse never blocks it.
   const sources = withConfigured(
-    await resolveRecipeLibrarySources({
-      cliEntries: [...(options.libraries ?? [])],
-      ...(options.env ? { env: options.env } : {}),
-    }),
+    mode.lenient
+      ? librarySourcesSync(options.libraries ?? [], options.env)
+      : await resolveRecipeLibrarySources({
+          cliEntries: [...(options.libraries ?? [])],
+          ...(options.env ? { env: options.env } : {}),
+        }),
     options.configured,
   );
   const declared: DeclaredAdapter[] = [];

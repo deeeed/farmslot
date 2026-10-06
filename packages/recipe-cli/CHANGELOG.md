@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse (a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, or a bad `--library`). The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`. Its conflict check reads the entries that do parse, the same set `adapterChoices` lists, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`. A plugin id with a bad entry still refuses with `RECIPE_LIBRARY_PATH_INVALID`, and `createHarnessCli` now prints that, like the other library refusals, as the code, message and next step (`--json` envelope, NDJSON under `--json-stream`) with exit 2.
 
 ## 0.7.0 - 2026-10-06
 

@@ -901,6 +901,24 @@ export const adapter = {
     assert.deepEqual(calls, []);
   });
 
+  test('runs a built-in beside a library entry that does not parse; refuses a plugin there', async () => {
+    process.env.RECIPE_LIBRARY_PATH = '=foo';
+    const cli = createHarnessCli(pluginOptions());
+    assert.deepEqual(await cli.main(['doctor', '--adapter', 'web', '--json']), {
+      exitCode: 0,
+      exit: 'code',
+    });
+    assert.deepEqual(calls, [{ command: 'doctor', argv: ['--adapter', 'web', '--json'] }]);
+    const root = pluginLibrary('plug');
+    const plugin = await capture(() =>
+      cli.main(['doctor', '--adapter', 'plug', '--library', `plugs=${root}`, '--json']),
+    );
+    assert.deepEqual(plugin.result, { exitCode: 2, exit: 'now' });
+    const envelope = JSON.parse(plugin.stdout) as { error: { code: string } };
+    assert.equal(envelope.error.code, 'RECIPE_LIBRARY_PATH_INVALID');
+    assert.deepEqual(imported(), []);
+  });
+
   test("prints the fence's refusal of a plugin's import the same way", async () => {
     const root = pluginLibrary('leaky');
     const module = path.join(root, 'plugins', 'leaky.mjs');
