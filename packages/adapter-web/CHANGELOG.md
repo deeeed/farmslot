@@ -5,10 +5,14 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Browser probes no longer leave Chrome for Testing running when the resolver is stopped mid-probe (a hook timeout, a signal, or the resolver killed outright): the probe browser and its temporary profile are removed.
 - Add `network-observer` (`createExtensionNetworkObserver({ cdpPort, runtimeDir })`) and `performance-observer` (`createExtensionPerformanceBackend({ cdpPort, extensionId, uiPaths, kind, platform, markerPrefix })`), the Extension network and performance observers moved from mm-harness. The network observer attaches to every target of the loaded extension and feeds their Network events to a `@farmslot/recipe-runner/cdp-broker`; it returns an `@farmslot/adapter-sdk` `NetworkCaptureBackend`. The performance observer traces the extension page found at the first of `uiPaths` with exactly one open renderer, through `@farmslot/recipe-runner/runtime/cdp-trace`. Both run on `connectBrowserCdp`; `connectTimeoutMs` and `commandTimeoutMs` default to 10 s. The package now depends on `@farmslot/recipe-runner` and `@farmslot/adapter-sdk`.
 - `browser-cdp`: `connectBrowserCdp` clients gain `onEvent(handler)` (every CDP event, as `{ method, params, sessionId? }`; events were dropped before) and `onClose(handler)` (once, when the socket closes; at once on a client that has already closed), each returning an unsubscribe function. `onEvent` on a closed client keeps nothing. Add `asBrowserCdpTarget` and `extensionIdFromCdpTargets`.
 - `page-target`: add `selectExtensionTarget(targets, extensionId, { paths })`, the extension UI renderer at the first path with any match, or null when that path has several.
+
+## 0.3.1 - 2026-10-06
+
+- Browser probes no longer leave Chrome for Testing running when the resolver is stopped mid-probe (a hook timeout, a signal, or the resolver killed outright): the probe browser and its temporary profile are removed.
+  - A resolver killed outright cannot clean up; the next probe by the same user stops its browser and removes its profile. `browser-resolver` exports that step as `reapOrphanedProbes(tmp?)`.
 
 ## 0.3.0 - 2026-10-05
 
