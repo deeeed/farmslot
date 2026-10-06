@@ -369,29 +369,49 @@ test('run progress: stale only after an hour with nothing pending', () => {
         lastProgressAt: '2026-05-14T01:30:00.000Z',
         consecutiveAttempts: 0,
         totalAttempts: 0,
+        skips: 0,
       },
-    } as Run,
+    },
     started + RUN_STALE_AFTER_MS,
   );
   assert.equal(ciProgress.kind, 'step', 'CI-watch progress counts');
   assert.equal(ciProgress.lastProgressAgo, '30m ago');
 });
 
-test('run progress: a restart rewriting the running step is not progress', () => {
+test('run progress: a restart re-entering CI watch is not progress; a Resume is', () => {
   const now = Date.parse('2026-05-14T03:00:00.000Z');
-  const summary = runProgressSummary(
+  const restarted = runProgressSummary(
     run('restarted', {
       status: 'ci-watching',
       steps: [
-        { name: 'complete', status: 'done', completedAt: '2026-05-14T01:30:00.000Z' },
+        { name: 'complete', status: 'done', completedAt: '2026-05-14T01:00:00.000Z' },
         // The gateway restarted at 02:59 and re-entered the watch.
         { name: 'ci-watch', status: 'running', startedAt: '2026-05-14T02:59:00.000Z' },
+      ],
+      ciWatchState: {
+        lastProgressAt: '2026-05-14T01:30:00.000Z',
+        consecutiveAttempts: 0,
+        totalAttempts: 0,
+        skips: 0,
+      },
+    }),
+    now,
+  );
+  assert.equal(restarted.kind, 'stale');
+  assert.equal(restarted.lastProgressAgo, '1h ago');
+  // Resumed at 02:59 after a two-hour pause.
+  const resumed = runProgressSummary(
+    run('resumed', {
+      status: 'monitoring',
+      steps: [
+        { name: 'dispatch', status: 'done', completedAt: '2026-05-14T00:30:00.000Z' },
+        { name: 'monitor', status: 'running', startedAt: '2026-05-14T02:59:00.000Z' },
       ],
     }),
     now,
   );
-  assert.equal(summary.kind, 'stale');
-  assert.equal(summary.lastProgressAgo, '1h ago');
+  assert.equal(resumed.kind, 'step');
+  assert.equal(resumed.lastProgressAgo, '1m ago');
 });
 
 test('run progress: a finished interactive worker or a pause waits on the operator', () => {

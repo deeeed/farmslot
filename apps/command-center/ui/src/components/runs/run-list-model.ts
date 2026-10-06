@@ -47,16 +47,20 @@ function heldAtMs(step: Run['steps'][number]): number {
 }
 
 // `updatedAt` moves on every write (tags, metrics, agent contexts), so it is not
-// progress. Neither is a running step's `startedAt`: a gateway restart or Resume
-// rewrites it, and the step's real start is the previous step's completion or the
-// decision that released it.
+// progress. A running CI-watch step's `startedAt` is not either once CI watch has
+// its own clock: a gateway restart re-enters the step and rewrites it. (Run data
+// has no status-transition timestamp, so a restart re-entering another step still
+// counts, delaying "Stale" by at most an hour; a Resume must count.)
 function lastProgressMs(run: ProgressRun): number {
+  const ciWatchClock = run.ciWatchState?.lastProgressAt;
   const stamps = [
     run.createdAt,
     run.startedAt,
-    run.ciWatchState?.lastProgressAt,
+    ciWatchClock,
     ...run.steps.flatMap((step) =>
-      step.status === 'running' ? [] : [step.startedAt, step.completedAt],
+      step.status === 'running' && step.name === 'ci-watch' && ciWatchClock
+        ? []
+        : [step.startedAt, step.completedAt],
     ),
     ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),
   ].map((stamp) => (stamp ? Date.parse(stamp) : NaN));

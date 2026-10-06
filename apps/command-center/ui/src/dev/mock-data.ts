@@ -1396,6 +1396,7 @@ export function mockRuns(): Run[] {
         lastProgressReason: 'check status changed',
         consecutiveAttempts: 0,
         totalAttempts: 0,
+        skips: 0,
       },
       metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
       createdAt: new Date(now - 140 * 60000).toISOString(),
