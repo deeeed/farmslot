@@ -1,5 +1,6 @@
 import { isTerminalRunStatus, type RepeatReviewContext, type Run } from '@farmslot/protocol';
 
+import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { getRunnerDefinition } from '../runners/registry.js';
 
 type WorkspaceReviewerRun = Pick<
@@ -37,7 +38,7 @@ export function configureWorkspaceContinuity(
   prior: Run,
   context: RepeatReviewContext,
 ): void {
-  const incremental = run.reviewScope === 'incremental' && Boolean(context.priorReviewedHeadSha);
+  const incremental = run.reviewScope === 'incremental' && incrementalReviewAvailable(context);
   context.reviewScope = incremental ? 'incremental' : 'full';
   context.sessionIntent =
     run.prWork?.review?.options.sessionIntent ?? (incremental ? 'resume' : 'reset');

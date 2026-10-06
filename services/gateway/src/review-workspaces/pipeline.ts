@@ -15,6 +15,7 @@ import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import {
   buildRepeatReviewContext,
+  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
 } from '../run-engine/engine-decisions.js';
 import { BlockedRunError } from '../run-engine/errors.js';
@@ -212,19 +213,22 @@ async function freezeSubject(
     getAllRuns().filter((candidate) => candidate.createdByPrincipalId === run.createdByPrincipalId),
   );
   const context = prior
-    ? buildRepeatReviewContext(
-        run,
-        prior,
-        {
-          project: run.project,
-          repository: reference.repo,
-          prNumber: reference.number,
-          headSha: pr.headSha,
-          baseRef: pr.baseRef,
-        },
-        getAllRuns(),
+    ? await confirmIncrementalAncestry(
+        buildRepeatReviewContext(
+          run,
+          prior,
+          {
+            project: run.project,
+            repository: reference.repo,
+            prNumber: reference.number,
+            headSha: pr.headSha,
+            baseRef: pr.baseRef,
+          },
+          getAllRuns(),
+        ),
       )
     : undefined;
+  currentWorkspaceRun(runId, generation);
   if (context && prior) {
     const resumeRequested =
       (run.prWork?.review?.options.sessionIntent ??
