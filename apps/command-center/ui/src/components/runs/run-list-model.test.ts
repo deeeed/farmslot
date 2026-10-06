@@ -5,7 +5,13 @@ import type { Run } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
-import { filterRunList, isArchivableRun, runGradeColor } from './run-list-model.js';
+import {
+  filterRunList,
+  isArchivableRun,
+  RUN_STALE_AFTER_MS,
+  runGradeColor,
+  runProgressSummary,
+} from './run-list-model.js';
 
 function run(id: string, overrides: Partial<Run> = {}): Run {
   return {
@@ -299,4 +305,68 @@ test('isArchivableRun accepts terminal runs and settled blocked runs only', () =
     'a gate-blocked run is a live wait',
   );
   assert.equal(isArchivableRun({ ...settledBlocked, status: 'monitoring' }), false);
+});
+
+test('run progress: a pending gate names its primary action, however old', () => {
+  const now = Date.parse('2026-05-14T05:00:00.000Z');
+  const summary = runProgressSummary(
+    run('gate', {
+      status: 'blocked',
+      steps: [{ name: 'ci-watch', status: 'running', startedAt: '2026-05-14T00:10:00.000Z' }],
+      decisions: [
+        {
+          id: 'd1',
+          type: 'engine_ci_timeout',
+          title: 'CI made no progress',
+          description: '',
+          createdAt: '2026-05-14T01:00:00.000Z',
+          actions: [
+            { id: 'stop', label: 'Stop watching', style: 'secondary' },
+            { id: 'keep', label: 'Keep watching', style: 'primary' },
+          ],
+        },
+      ],
+    } as Partial<Run>),
+    now,
+  );
+  assert.equal(summary.kind, 'gate');
+  assert.equal(summary.text, 'CI made no progress → Keep watching');
+  assert.equal(summary.lastProgressAgo, '4h ago');
+});
+
+test('run progress: stale only after an hour with nothing pending', () => {
+  const started = Date.parse('2026-05-14T01:00:00.000Z');
+  const watching = run('watch', {
+    status: 'ci-watching',
+    // updatedAt moves on unrelated writes; it is not progress.
+    updatedAt: '2026-05-14T01:59:00.000Z',
+    steps: [
+      {
+        name: 'ci-watch',
+        status: 'running',
+        detail: 'waiting for checks',
+        startedAt: '2026-05-14T01:00:00.000Z',
+      },
+    ],
+  } as Partial<Run>);
+  const before = runProgressSummary(watching, started + RUN_STALE_AFTER_MS - 60_000);
+  assert.equal(before.kind, 'step');
+  assert.equal(before.text, 'ci-watch: waiting for checks');
+  assert.equal(before.lastProgressAgo, '59m ago');
+  const after = runProgressSummary(watching, started + RUN_STALE_AFTER_MS);
+  assert.equal(after.kind, 'stale');
+  assert.equal(after.text, 'Stale: no progress for 1h and nothing pending');
+  const ciProgress = runProgressSummary(
+    {
+      ...watching,
+      ciWatchState: {
+        lastProgressAt: '2026-05-14T01:30:00.000Z',
+        consecutiveAttempts: 0,
+        totalAttempts: 0,
+      },
+    } as Run,
+    started + RUN_STALE_AFTER_MS,
+  );
+  assert.equal(ciProgress.kind, 'step', 'CI-watch progress counts');
+  assert.equal(ciProgress.lastProgressAgo, '30m ago');
 });

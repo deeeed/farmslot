@@ -62,6 +62,7 @@ import {
   filterRunList,
   isArchivableRun,
   runGradeColor,
+  runProgressSummary,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
 import {
@@ -163,6 +164,7 @@ export class RunList extends RunListState {
   private narrowMedia?: MediaQueryList;
   private unsubProgress?: () => void;
   private readonly taskProgressFetches = new Set<string>();
+  private progressClock?: number;
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -211,10 +213,13 @@ export class RunList extends RunListState {
       this.narrowMedia.addEventListener('change', this.onNarrowChange);
     }
     this._onHashChange();
+    // "last progress Nm ago" and the stale line move with the clock, not with run events.
+    this.progressClock = window.setInterval(() => this.requestUpdate(), 60_000);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.clearInterval(this.progressClock);
     this.unsub?.();
     this.unsubProgress?.();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
@@ -760,7 +765,7 @@ export class RunList extends RunListState {
     const runnerLabel = engine.model
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
-    const runningDetail = run.steps.find((s) => s.status === 'running')?.detail;
+    const progress = isTerminal ? null : runProgressSummary(run);
     const cells = [
       ...(showCheckbox
         ? [
@@ -860,7 +865,15 @@ export class RunList extends RunListState {
                 Stop auto-recovering
               </button>`
             : nothing}
-          ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
+          ${progress
+            ? html`<span
+                class="run-progress ${progress.kind}"
+                data-testid="runs-progress"
+                title=${`Last progress ${progress.lastProgressAt}`}
+                >last progress
+                ${progress.lastProgressAgo}${progress.text ? ` · ${progress.text}` : ''}</span
+              >`
+            : nothing}
         </div>
       </div>`,
     ];

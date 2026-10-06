@@ -5,6 +5,7 @@ import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
+import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { dispositionLabel } from './run-utils.js';
@@ -19,6 +20,62 @@ export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
 /** Matches Runs list "Active" tab — non-terminal runs, with failed kept visible. */
 export function isRunListActiveRun(run: Pick<Run, 'status'>): boolean {
   return !TERMINAL_STATUSES.has(run.status) || run.status === 'failed';
+}
+
+/** An unblocked run with no progress for this long is shown as stale. */
+export const RUN_STALE_AFTER_MS = 60 * 60_000;
+
+export interface RunProgressSummary {
+  /** Latest real progress: a step, a decision, a run start or CI-watch progress. */
+  lastProgressAt: string;
+  lastProgressAgo: string;
+  kind: 'gate' | 'stale' | 'step' | 'none';
+  /** What the run waits on or does now; empty for `none`. */
+  text: string;
+}
+
+type ProgressRun = Pick<Run, 'createdAt' | 'startedAt' | 'steps' | 'decisions' | 'ciWatchState'>;
+
+// `updatedAt` moves on every write (tags, metrics, agent contexts), so it is
+// not progress. These timestamps only move when the run does.
+function lastProgressMs(run: ProgressRun): number {
+  const stamps = [
+    run.createdAt,
+    run.startedAt,
+    run.ciWatchState?.lastProgressAt,
+    ...run.steps.flatMap((step) => [step.startedAt, step.completedAt]),
+    ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),
+  ];
+  return Math.max(
+    ...stamps.map((stamp) => (stamp ? Date.parse(stamp) : NaN)).filter(Number.isFinite),
+  );
+}
+
+/** Whether an active run is moving, waiting on the operator, or stale. */
+export function runProgressSummary(run: ProgressRun, nowMs = Date.now()): RunProgressSummary {
+  const lastMs = lastProgressMs(run);
+  const lastProgressAt = new Date(lastMs).toISOString();
+  const lastProgressAgo = familyLearningTimeAgo(lastProgressAt, nowMs);
+  const summary = (kind: RunProgressSummary['kind'], text: string) => ({
+    lastProgressAt,
+    lastProgressAgo,
+    kind,
+    text,
+  });
+  const pending = run.decisions.find((decision) => !decision.resolvedAt);
+  if (pending) {
+    const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
+    return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
+  }
+  if (nowMs - lastMs >= RUN_STALE_AFTER_MS)
+    return summary(
+      'stale',
+      `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')} and nothing pending`,
+    );
+  const step = run.steps.find((item) => item.status === 'running');
+  return step
+    ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
+    : summary('none', '');
 }
 
 function runMatchesMachineFilter(slotId: string | null | undefined, machines: string[]): boolean {

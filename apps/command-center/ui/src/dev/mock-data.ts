@@ -1370,6 +1370,94 @@ export function mockRuns(): Run[] {
       completedAt: new Date(now - 177 * 60000).toISOString(),
       error: 'yarn install failed: lockfile conflict',
     },
+    // Runs-list progress line: moving (CI watch), waiting on a gate, stale.
+    {
+      id: 'e5f6a7b8-c9d0-1234-efab-345678901234',
+      familyId: 'e5f6a7b8-c9d0-1234-efab-345678901234',
+      flowType: 'fix-bug',
+      status: 'ci-watching',
+      project: 'example-mobile',
+      ticketOrPr: 'PROJ-2510',
+      slotId: 'runner-local-mobile-2',
+      branch: 'fix/proj-2510',
+      taskFile: 'tasks/PROJ-2510.md',
+      steps: [
+        { name: 'complete', status: 'done', completedAt: new Date(now - 95 * 60000).toISOString() },
+        {
+          name: 'ci-watch',
+          status: 'running',
+          detail: 'waiting for 3 checks',
+          startedAt: new Date(now - 95 * 60000).toISOString(),
+        },
+      ],
+      decisions: [],
+      ciWatchState: {
+        lastProgressAt: new Date(now - 6 * 60000).toISOString(),
+        lastProgressReason: 'check status changed',
+        consecutiveAttempts: 0,
+        totalAttempts: 0,
+      },
+      metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
+      createdAt: new Date(now - 140 * 60000).toISOString(),
+      updatedAt: new Date(now - 1 * 60000).toISOString(),
+    },
+    {
+      id: 'f6a7b8c9-d0e1-2345-fabc-456789012345',
+      familyId: 'f6a7b8c9-d0e1-2345-fabc-456789012345',
+      flowType: 'fix-bug',
+      status: 'blocked',
+      project: 'example-extension',
+      ticketOrPr: 'PROJ-2511',
+      slotId: 'runner-local-ext-1',
+      branch: 'fix/proj-2511',
+      taskFile: 'tasks/PROJ-2511.md',
+      steps: [
+        {
+          name: 'ci-watch',
+          status: 'running',
+          startedAt: new Date(now - 300 * 60000).toISOString(),
+        },
+      ],
+      decisions: [
+        {
+          id: 'ci-timeout-1',
+          type: 'engine_ci_timeout',
+          title: 'CI made no progress for 2h',
+          description: 'No watched check changed state.',
+          createdAt: new Date(now - 180 * 60000).toISOString(),
+          actions: [
+            { id: 'stop', label: 'Stop watching', style: 'secondary' },
+            { id: 'continue', label: 'Keep watching', style: 'primary' },
+          ],
+        },
+      ],
+      metrics: { nudgeCount: 0, model: 'opus', runner: 'claude' },
+      createdAt: new Date(now - 320 * 60000).toISOString(),
+      updatedAt: new Date(now - 3 * 60000).toISOString(),
+    },
+    {
+      id: 'a7b8c9d0-e1f2-3456-abcd-567890123456',
+      familyId: 'a7b8c9d0-e1f2-3456-abcd-567890123456',
+      flowType: 'dev',
+      status: 'monitoring',
+      project: 'example-mobile',
+      ticketOrPr: 'PROJ-2512',
+      slotId: 'runner-local-mobile-3',
+      branch: 'feat/proj-2512',
+      taskFile: 'tasks/PROJ-2512.md',
+      steps: [
+        {
+          name: 'monitor',
+          status: 'running',
+          startedAt: new Date(now - 130 * 60000).toISOString(),
+        },
+      ],
+      decisions: [],
+      metrics: { nudgeCount: 0, model: 'sonnet', runner: 'codex' },
+      createdAt: new Date(now - 150 * 60000).toISOString(),
+      // Unrelated writes move updatedAt; the row still reads as stale.
+      updatedAt: new Date(now - 4 * 60000).toISOString(),
+    },
   ].map((run) => ({ lane: 'production', variant: null, ...run }) as Run);
 }
 
