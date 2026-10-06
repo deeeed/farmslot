@@ -167,10 +167,11 @@ export async function observerCalls(runtimeDir: string) {
   });
   await performance.start('p1');
   const result = await performance.end('p1');
+  const platform: 'extension' = result.platform;
   const scope: string = result.trace.scope;
   const frames: number = result.nativeUi.summary.frameCount;
   await performance.close();
-  return { summary, scope, frames };
+  return { summary, platform, scope, frames };
 }
 
 // The MetaMask harness's Web Terminal wallet host and its wallet actions.

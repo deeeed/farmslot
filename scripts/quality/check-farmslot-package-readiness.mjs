@@ -87,10 +87,16 @@ const packages = [
       'LICENSE',
       'src/browser-cdp.cjs',
       'src/browser-resolver.cjs',
+      'src/network-observer.cjs',
+      'src/performance-observer.cjs',
       'dist/browser-cdp.d.cts',
+      'dist/network-observer.d.cts',
+      'dist/performance-observer.d.cts',
     ],
+    // performance-observer loads recipe-runner's trace engine on use; the
+    // last check loads it the way adapter-web resolves it.
     importCheck:
-      "const m = await import('./packages/adapter-web/src/browser-cdp.cjs'); if (typeof m.default.connectBrowserCdp !== 'function') throw new Error('missing connectBrowserCdp export');",
+      "const m = await import('./packages/adapter-web/src/browser-cdp.cjs'); if (typeof m.default.connectBrowserCdp !== 'function') throw new Error('missing connectBrowserCdp export'); const n = await import('./packages/adapter-web/src/network-observer.cjs'); if (typeof n.default.createExtensionNetworkObserver !== 'function') throw new Error('missing createExtensionNetworkObserver export'); const p = await import('./packages/adapter-web/src/performance-observer.cjs'); if (typeof p.default.createExtensionPerformanceBackend !== 'function') throw new Error('missing createExtensionPerformanceBackend export'); const { createRequire } = await import('node:module'); const t = createRequire(new URL('./packages/adapter-web/package.json', import.meta.url))('@farmslot/recipe-runner/runtime/cdp-trace'); if (typeof t.createCdpTraceCollector !== 'function') throw new Error('adapter-web cannot load createCdpTraceCollector');",
   },
   {
     name: '@farmslot/adapter-node',

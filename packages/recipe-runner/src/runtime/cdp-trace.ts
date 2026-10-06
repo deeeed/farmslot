@@ -71,8 +71,9 @@ export type NativeUiPerformanceSourceResult = PerformanceSourceResult<
   FrameMetricSummary
 >;
 
-export interface PerformanceCaptureResult {
-  platform: string;
+// `P` is the host's platform names, carried from the collector options to every result.
+export interface PerformanceCaptureResult<P extends string = string> {
+  platform: P;
   javascript: JavaScriptPerformanceSourceResult;
   nativeUi: NativeUiPerformanceSourceResult;
   trace: TraceEvidence;
@@ -91,9 +92,9 @@ export interface TraceEvidence {
   totalEventCount: number;
 }
 
-export interface PerformanceBackend {
+export interface PerformanceBackend<P extends string = string> {
   start(id: string): Promise<void>;
-  end(id: string): Promise<PerformanceCaptureResult>;
+  end(id: string): Promise<PerformanceCaptureResult<P>>;
   close(): Promise<void>;
 }
 
@@ -114,8 +115,8 @@ export interface TraceEvent {
   args?: Record<string, unknown>;
 }
 
-export interface TraceCapture {
-  platform: string;
+export interface TraceCapture<P extends string = string> {
+  platform: P;
   events: TraceEvent[];
   markerName?: string;
   markerHostEpochMs?: number;
@@ -132,20 +133,20 @@ export interface TraceClockSync {
   uncertaintyMs: number;
 }
 
-export interface CdpTraceCollectorOptions {
+export interface CdpTraceCollectorOptions<P extends string = string> {
   kind: TraceKind;
   // Reported as `platform` on every result.
-  platform: string;
+  platform: P;
   // Writes a trace event named `name` (e.g. `performance.mark(name)` in the page).
   marker(name: string): Promise<TraceClockSync>;
   // The marker is named `<markerPrefix><capture id>-<Date.now()>`.
   markerPrefix?: string;
 }
 
-export function createCdpTraceCollector(
+export function createCdpTraceCollector<P extends string = string>(
   client: CdpClient,
-  { kind, platform, marker, markerPrefix = DEFAULT_MARKER_PREFIX }: CdpTraceCollectorOptions,
-): PerformanceBackend {
+  { kind, platform, marker, markerPrefix = DEFAULT_MARKER_PREFIX }: CdpTraceCollectorOptions<P>,
+): PerformanceBackend<P> {
   let active:
     | {
         id: string;
@@ -273,10 +274,10 @@ export function createCdpTraceCollector(
   };
 }
 
-export function parseTraceCapture(
-  capture: TraceCapture,
+export function parseTraceCapture<P extends string = string>(
+  capture: TraceCapture<P>,
   kind: TraceKind,
-): PerformanceCaptureResult {
+): PerformanceCaptureResult<P> {
   const marker = findClockMarker(capture.events, capture.markerName);
   if (kind.rendererScoped && !finite(marker?.pid)) {
     const reason = 'Extension trace marker did not identify a renderer process.';

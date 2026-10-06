@@ -25,6 +25,7 @@ function deadlineError(what, ms) {
 
 /**
  * @typedef {{ method: string, params: Record<string, any>, sessionId?: string }} BrowserCdpEvent
+ * @typedef {{ targetId: string, type: string, url: string }} BrowserCdpTarget
  */
 
 async function connectBrowserCdp(
@@ -141,17 +142,34 @@ async function connectBrowserCdp(
   return {
     send,
     // Every CDP event (a message without an id), from the browser or an
-    // attached session. Returns the unsubscribe function.
-    /** @param {(event: BrowserCdpEvent) => void} handler */
+    // attached session. Returns the unsubscribe function; a closed client
+    // has no more events and keeps no handler.
+    /**
+     * @param {(event: BrowserCdpEvent) => void} handler
+     * @returns {() => void}
+     */
     onEvent: (handler) => {
+      if (closedError) return () => {};
       eventHandlers.add(handler);
-      return () => eventHandlers.delete(handler);
+      return () => {
+        eventHandlers.delete(handler);
+      };
     },
     // Once, when the socket closes: the browser exited or `close()` was called.
-    /** @param {() => void} handler */
+    // On a client that is already closed, the handler runs at once.
+    /**
+     * @param {() => void} handler
+     * @returns {() => void}
+     */
     onClose: (handler) => {
+      if (closedError) {
+        handler();
+        return () => {};
+      }
       closeHandlers.add(handler);
-      return () => closeHandlers.delete(handler);
+      return () => {
+        closeHandlers.delete(handler);
+      };
     },
     close: () => {
       failAll(new Error('Browser CDP client closed.'));
@@ -762,7 +780,7 @@ function expectedExtensionId(extensionDir) {
 // or null when it lacks an id, type or URL.
 /**
  * @param {unknown} value
- * @returns {{ targetId: string, type: string, url: string } | null}
+ * @returns {BrowserCdpTarget | null}
  */
 function asBrowserCdpTarget(value) {
   const target = /** @type {Record<string, unknown>} */ (

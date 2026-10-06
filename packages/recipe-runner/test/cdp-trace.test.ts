@@ -114,7 +114,9 @@ describe('CDP performance trace collector', () => {
     const result = await backend.end('flow');
 
     assert.match(markerName, /^farmslot-clock-flow-\d+$/u);
-    assert.equal(result.platform, 'android');
+    // The host's platform names carry through to the result's type.
+    const platform: 'android' = result.platform;
+    assert.equal(platform, 'android');
     assert.equal(result.nativeUi.summary.frameCount, 1);
     assert.equal(result.trace.beginFrameCount, 1);
     assert.equal(result.trace.drawFrameCount, 1);

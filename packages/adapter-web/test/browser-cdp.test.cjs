@@ -227,6 +227,34 @@ describe('connectBrowserCdp', () => {
     other.close();
     await ownClose;
   });
+
+  it('runs onClose at once on a closed client, and takes no event handler', async () => {
+    const port = await fakeEndpoint((_message, socket) => socket.terminate());
+    const client = await cdp.connectBrowserCdp(port, { timeoutMs: 3000 });
+    const closed = new Promise((resolve) => client.onClose(resolve));
+    await assert.rejects(client.send('Target.getTargets', {}), /socket closed/u);
+    await closed;
+
+    let lateCloses = 0;
+    const offClose = client.onClose(() => {
+      lateCloses += 1;
+    });
+    assert.equal(lateCloses, 1);
+    offClose();
+    const offEvent = client.onEvent(() => assert.fail('a closed client delivered an event'));
+    assert.equal(typeof offEvent, 'function');
+    offEvent();
+
+    // Closed by the caller: the socket may not have reported its close yet.
+    const quiet = await fakeEndpoint(() => {});
+    const other = await cdp.connectBrowserCdp(quiet, { timeoutMs: 3000 });
+    other.close();
+    let ranAtOnce = false;
+    other.onClose(() => {
+      ranAtOnce = true;
+    });
+    assert.equal(ranAtOnce, true);
+  });
 });
 
 describe('CDP target lists', () => {

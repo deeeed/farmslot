@@ -32,7 +32,7 @@ function selectPageTarget(targets, { origin, hash = '' }) {
  * @param {unknown} targets
  * @param {string} extensionId
  * @param {{ paths: readonly string[] }} options
- * @returns {{ targetId: string, type: string, url: string } | null}
+ * @returns {import('./browser-cdp.cjs').BrowserCdpTarget | null}
  */
 function selectExtensionTarget(targets, extensionId, { paths }) {
   const candidates = [];

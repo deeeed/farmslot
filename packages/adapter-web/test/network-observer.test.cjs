@@ -27,8 +27,10 @@ afterEach(async () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-async function endpoint(targets) {
+// `refuse(message)` makes a command fail with a CDP error.
+async function endpoint(targets, refuse = () => false) {
   const cdp = await startCdpEndpoint((message, emit) => {
+    if (refuse(message)) return new Error(`${message.method} refused`);
     if (message.method === 'Target.setDiscoverTargets') {
       for (const targetInfo of targets) emit('Target.targetCreated', { targetInfo });
     }
@@ -40,6 +42,20 @@ async function endpoint(targets) {
   });
   cleanups.push(cdp.close);
   return cdp;
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+const enabledSessions = (calls, from = 0) =>
+  calls
+    .slice(from)
+    .filter((call) => call.method === 'Network.enable')
+    .map((call) => call.sessionId)
+    .sort();
+
+async function observe(cdp) {
+  const observer = await createExtensionNetworkObserver({ cdpPort: cdp.port, runtimeDir: root });
+  cleanups.push(() => observer.close());
+  return observer;
 }
 
 describe('createExtensionNetworkObserver', () => {
@@ -76,6 +92,73 @@ describe('createExtensionNetworkObserver', () => {
     assert.equal(summary.status, 'complete');
     assert.equal(summary.totalRequests, 1);
     assert.deepEqual(summary.requestsByHost, { 'api.example.com': 1 });
+  });
+
+  it('attaches to an extension target created during a capture', async () => {
+    const cdp = await endpoint(TARGETS);
+    const observer = await observe(cdp);
+    await observer.start({ id: 'cap' });
+    const popup = { targetId: 'popup', type: 'page', url: 'chrome-extension://ext/popup.html' };
+    cdp.emit('Target.targetCreated', { targetInfo: popup });
+    cdp.emit('Target.targetCreated', {
+      targetInfo: { targetId: 'site', type: 'page', url: 'https://example.org/' },
+    });
+    await settle();
+
+    const attached = cdp.calls.filter((call) => call.method === 'Target.attachToTarget');
+    assert.deepEqual(attached.at(-1).params, { targetId: 'popup', flatten: true });
+    assert.equal(attached.length, 3);
+    assert.ok(enabledSessions(cdp.calls).includes('S-popup'));
+    cdp.emit(
+      'Network.requestWillBeSent',
+      { request: { url: 'https://api.example.com/', method: 'GET' } },
+      'S-popup',
+    );
+    await settle();
+    assert.equal((await observer.end('cap')).totalRequests, 1);
+  });
+
+  it('stops sending to a target once it detaches', async () => {
+    const cdp = await endpoint(TARGETS);
+    const observer = await observe(cdp);
+    await observer.start({ id: 'cap' });
+    const before = cdp.calls.length;
+    cdp.emit('Target.detachedFromTarget', { sessionId: 'S-worker' });
+    await settle();
+
+    assert.deepEqual(enabledSessions(cdp.calls, before), ['S-home']);
+    const summary = await observer.end('cap');
+    assert.equal(summary.reconnects, 1);
+    assert.equal(summary.status, 'partial');
+  });
+
+  it('drops the session a command failed on and keeps the others', async () => {
+    const cdp = await endpoint(
+      TARGETS,
+      (message) => message.method === 'Network.enable' && message.sessionId === 'S-worker',
+    );
+    const observer = await observe(cdp);
+    await observer.start({ id: 'cap' });
+    const first = await observer.end('cap');
+    assert.equal(first.status, 'partial');
+    assert.equal(first.reconnects, 1);
+
+    const before = cdp.calls.length;
+    await observer.start({ id: 'again' });
+    assert.deepEqual(enabledSessions(cdp.calls, before), ['S-home']);
+    assert.equal((await observer.end('again')).status, 'complete');
+  });
+
+  it('marks the capture partial when the browser connection closes', async () => {
+    const cdp = await endpoint(TARGETS);
+    const observer = await observe(cdp);
+    await observer.start({ id: 'cap' });
+    await cdp.close();
+    await settle();
+
+    const summary = await observer.end('cap');
+    assert.equal(summary.reconnects, 1);
+    assert.equal(summary.status, 'partial');
   });
 
   it('refuses a browser without a loaded extension and closes its connection', async () => {

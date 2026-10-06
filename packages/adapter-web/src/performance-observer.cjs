@@ -4,27 +4,26 @@
 // CDP trace collector.
 'use strict';
 
-const { createCdpTraceCollector } = require('@farmslot/recipe-runner/runtime/cdp-trace');
-
 const { connectBrowserCdp } = require('./browser-cdp.cjs');
 const { selectExtensionTarget } = require('./page-target.cjs');
 
 const DEFAULT_TIMEOUT_MS = 10000;
 
 /**
+ * @template {string} [P=string]
  * @param {{
  *   cdpPort: number,
  *   extensionId: string,
  *   uiPaths: readonly string[],
  *   kind: import('@farmslot/recipe-runner/runtime/cdp-trace').TraceKind,
- *   platform: string,
+ *   platform: P,
  *   markerPrefix?: string,
  *   connectTimeoutMs?: number,
  *   commandTimeoutMs?: number,
  * }} options
  *   `uiPaths` are the extension pages to trace, in order of preference (see
  *   `selectExtensionTarget`); `kind`, `platform` and `markerPrefix` go to the collector.
- * @returns {Promise<import('@farmslot/recipe-runner/runtime/cdp-trace').PerformanceBackend>}
+ * @returns {Promise<import('@farmslot/recipe-runner/runtime/cdp-trace').PerformanceBackend<P>>}
  */
 async function createExtensionPerformanceBackend({
   cdpPort,
@@ -39,6 +38,9 @@ async function createExtensionPerformanceBackend({
   if (!extensionId) {
     throw new Error('Extension performance observation requires the extension id.');
   }
+  // Loaded on use: recipe-runner's trace engine is an ES module built to dist,
+  // and the other adapter-web modules must load without it.
+  const { createCdpTraceCollector } = require('@farmslot/recipe-runner/runtime/cdp-trace');
   const browser = await connectBrowserCdp(cdpPort, {
     timeoutMs: connectTimeoutMs,
     commandTimeoutMs,
