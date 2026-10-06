@@ -308,9 +308,15 @@ test('isArchivableRun accepts terminal runs and settled blocked runs only', () =
   assert.equal(isArchivableRun({ ...settledBlocked, status: 'monitoring' }), false);
 });
 
+function summarize(...args: Parameters<typeof runProgressSummary>) {
+  const summary = runProgressSummary(...args);
+  assert.ok(summary);
+  return summary;
+}
+
 test('run progress: a pending gate names its primary action, however old', () => {
   const now = Date.parse('2026-05-14T05:00:00.000Z');
-  const summary = runProgressSummary(
+  const summary = summarize(
     run('gate', {
       status: 'blocked',
       steps: [{ name: 'ci-watch', status: 'running', startedAt: '2026-05-14T00:10:00.000Z' }],
@@ -356,14 +362,14 @@ test('run progress: stale only after an hour with nothing pending', () => {
       },
     ],
   } as Partial<Run>);
-  const before = runProgressSummary(watching, started + RUN_STALE_AFTER_MS - 60_000);
+  const before = summarize(watching, started + RUN_STALE_AFTER_MS - 60_000);
   assert.equal(before.kind, 'step');
   assert.equal(before.text, 'ci-watch: waiting for checks');
   assert.equal(before.lastProgressAgo, '59m ago');
-  const after = runProgressSummary(watching, started + RUN_STALE_AFTER_MS);
+  const after = summarize(watching, started + RUN_STALE_AFTER_MS);
   assert.equal(after.kind, 'stale');
   assert.equal(after.text, 'Stale: no progress for 1h and nothing pending');
-  const ciProgress = runProgressSummary(
+  const ciProgress = summarize(
     {
       ...watching,
       ciWatchState: {
@@ -398,11 +404,11 @@ test('run progress: a restart re-entering a step is not progress; a Resume is', 
       },
     });
   // A restart re-applies the same status, so the status clock stays put.
-  const restarted = runProgressSummary(ciWatch('2026-05-14T01:00:00.000Z'), now);
+  const restarted = summarize(ciWatch('2026-05-14T01:00:00.000Z'), now);
   assert.equal(restarted.kind, 'stale');
   assert.equal(restarted.lastProgressAgo, '1h ago');
   // A Resume after a two-hour pause changes the status.
-  const resumed = runProgressSummary(ciWatch('2026-05-14T02:59:00.000Z'), now);
+  const resumed = summarize(ciWatch('2026-05-14T02:59:00.000Z'), now);
   assert.equal(resumed.kind, 'step');
   assert.equal(resumed.lastProgressAgo, '1m ago');
 });
@@ -443,7 +449,7 @@ test('run progress: only runs that can still move show it', () => {
 
 test('run progress: a finished interactive worker or a pause waits on the operator', () => {
   const now = Date.parse('2026-05-14T03:00:00.000Z');
-  const held = runProgressSummary(
+  const held = summarize(
     run('held', {
       status: 'paused',
       steps: [
@@ -463,7 +469,7 @@ test('run progress: a finished interactive worker or a pause waits on the operat
   assert.equal(held.kind, 'gate');
   assert.equal(held.text, 'Worker finished; waiting for operator action');
   assert.equal(held.lastProgressAgo, '1h ago');
-  const paused = runProgressSummary(
+  const paused = summarize(
     run('paused', {
       status: 'paused',
       steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T00:00:00.000Z' }],
@@ -474,10 +480,52 @@ test('run progress: a finished interactive worker or a pause waits on the operat
 });
 
 function assertMatchKind(
-  summary: ReturnType<typeof runProgressSummary>,
+  summary: NonNullable<ReturnType<typeof runProgressSummary>>,
   kind: string,
   text: string,
 ): void {
   assert.equal(summary.kind, kind);
   assert.equal(summary.text, text);
 }
+
+test('run progress: structured runner activity keeps a long monitor moving', () => {
+  const now = Date.parse('2026-05-14T03:00:00.000Z');
+  const monitoring = (lastStructuredProgressAt?: string) =>
+    run('monitoring', {
+      status: 'monitoring',
+      statusChangedAt: '2026-05-14T01:00:00.000Z',
+      steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T01:00:00.000Z' }],
+      monitorState: {
+        nudgeCount: 0,
+        startedAt: '2026-05-14T01:00:00.000Z',
+        lastPollAt: '2026-05-14T02:59:00.000Z',
+        ...(lastStructuredProgressAt ? { lastStructuredProgressAt } : {}),
+      },
+    });
+  assert.equal(summarize(monitoring('2026-05-14T02:55:00.000Z'), now).kind, 'step');
+  // Polling alone is not progress.
+  assert.equal(summarize(monitoring(), now).kind, 'stale');
+});
+
+test('run progress: a worker held for reconciliation waits on the operator', () => {
+  const summary = summarize(
+    run('uncertain', {
+      status: 'blocked',
+      steps: [
+        {
+          name: 'dispatch',
+          status: 'failed',
+          detail: 'Prompt delivery uncertain; reconcile the worker',
+          completedAt: '2026-05-14T01:00:00.000Z',
+          outputs: { promptDeliveryUncertain: true },
+        },
+      ],
+    }),
+    Date.parse('2026-05-14T03:00:00.000Z'),
+  );
+  assertMatchKind(summary, 'gate', 'Prompt delivery uncertain; reconcile the worker');
+});
+
+test('run progress: a record with no valid timestamp has no summary', () => {
+  assert.equal(runProgressSummary(run('broken', { createdAt: 'not a date' })), null);
+});

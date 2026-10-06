@@ -36,7 +36,14 @@ export interface RunProgressSummary {
 
 type ProgressRun = Pick<
   Run,
-  'status' | 'statusChangedAt' | 'createdAt' | 'startedAt' | 'steps' | 'decisions' | 'ciWatchState'
+  | 'status'
+  | 'statusChangedAt'
+  | 'createdAt'
+  | 'startedAt'
+  | 'steps'
+  | 'decisions'
+  | 'ciWatchState'
+  | 'monitorState'
 >;
 
 // When a held step stopped for the operator: its duration is stamped at the hold.
@@ -56,6 +63,8 @@ function lastProgressMs(run: ProgressRun): number {
     run.startedAt,
     run.statusChangedAt,
     run.ciWatchState?.lastProgressAt,
+    // Structured runner activity while the worker is monitored.
+    run.monitorState?.lastStructuredProgressAt,
     ...run.steps.flatMap((step) =>
       step.status === 'running' ? [] : [step.startedAt, step.completedAt],
     ),
@@ -71,8 +80,13 @@ export function showsRunProgress(run: Pick<Run, 'status' | 'steps' | 'decisions'
 }
 
 /** Whether an active run is moving, waiting on the operator, or stale. */
-export function runProgressSummary(run: ProgressRun, nowMs = Date.now()): RunProgressSummary {
+export function runProgressSummary(
+  run: ProgressRun,
+  nowMs = Date.now(),
+): RunProgressSummary | null {
   const lastMs = lastProgressMs(run);
+  // Every run has createdAt; a record without one valid timestamp has no clock to show.
+  if (!Number.isFinite(lastMs)) return null;
   const lastProgressAt = new Date(lastMs).toISOString();
   const lastProgressAgo = familyLearningTimeAgo(lastProgressAt, nowMs);
   const summary = (kind: RunProgressSummary['kind'], text: string) => ({
@@ -91,6 +105,12 @@ export function runProgressSummary(run: ProgressRun, nowMs = Date.now()): RunPro
   if (step?.outputs?.awaitingOperator === true)
     return summary('gate', step.detail ?? 'Waiting for operator action');
   if (run.status === 'paused') return summary('gate', 'Paused');
+  // Blocked with nothing running or pending but not settled: an uncertain prompt
+  // delivery or worker operation is held for the operator to reconcile.
+  if (run.status === 'blocked' && !step && !isSettledBlockedRun(run)) {
+    const held = run.steps.find((item) => item.status === 'failed');
+    return summary('gate', held?.detail ?? 'Waiting for the operator to reconcile the worker');
+  }
   if (nowMs - lastMs >= RUN_STALE_AFTER_MS)
     return summary(
       'stale',
