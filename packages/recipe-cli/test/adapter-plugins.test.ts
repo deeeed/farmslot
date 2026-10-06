@@ -308,7 +308,10 @@ describe('adapter plugins', () => {
   });
 
   test('a library entry that does not parse never blocks a built-in; it still refuses a plugin', async () => {
-    const claims = library('claims', { core: { source: pluginSource('core') } });
+    const claims = library('claims', {
+      core: { source: pluginSource('core') },
+      echo: { source: pluginSource('echo') },
+    });
     process.env.RECIPE_LIBRARY_PATH = '=foo';
     await ensureAdapterLoaded('core');
     await ensureAdapterLoaded('core', { libraries: ['=bar'] });
@@ -322,6 +325,22 @@ describe('adapter plugins', () => {
     await assert.rejects(ensureAdapterLoaded('core', { libraries: ['=bar'] }), {
       code: 'ADAPTER_ID_CONFLICT',
     });
+    // A bad entry joined to a good one in the same value drops only itself:
+    // a malformed entry, an unset $VAR in a composed path, a joined --library.
+    for (const [value, libraries] of [
+      [`claims=${claims}:=foo`, []],
+      [`claims=${claims}:extra=`, []],
+      ['', [`claims=${claims}:=bar`]],
+    ] as const) {
+      process.env.RECIPE_LIBRARY_PATH = value;
+      await assert.rejects(
+        ensureAdapterLoaded('core', { libraries: [...libraries] }),
+        { code: 'ADAPTER_ID_CONFLICT' },
+        `${value} ${libraries.join(' ')}`,
+      );
+      // The grammar lists the same libraries: claims' plugin id is selectable.
+      assert.ok(adapterChoices([...libraries]).includes('echo'));
+    }
     assert.deepEqual(imports(), []);
   });
 

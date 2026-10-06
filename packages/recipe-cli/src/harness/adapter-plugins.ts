@@ -492,14 +492,18 @@ function withConfigured(
   return result;
 }
 
+// Each entry of a colon-joined value on its own, so a malformed entry drops
+// only itself and the libraries beside it still count.
 function safeParse(value: string): RecipeLibrarySource[] {
-  try {
-    return parseRecipeLibraryPath(value);
-  } catch {
-    // A malformed entry adds no adapter ids to the grammar; the command that
-    // resolves its libraries reports RECIPE_LIBRARY_PATH_INVALID itself.
-    return [];
-  }
+  return value.split(':').flatMap((entry) => {
+    try {
+      return parseRecipeLibraryPath(entry);
+    } catch {
+      // A malformed entry adds no adapter ids and claims nothing; the command
+      // that resolves its libraries reports RECIPE_LIBRARY_PATH_INVALID itself.
+      return [];
+    }
+  });
 }
 
 function declaredIdsIn(root: string): string[] {
