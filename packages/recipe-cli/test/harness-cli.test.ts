@@ -526,6 +526,16 @@ describe('createHarnessCli', () => {
     );
   });
 
+  test('surfaces a context path it cannot read for any other reason', async () => {
+    fs.mkdirSync(path.join(process.cwd(), 'temp/recipe/runtime/agentic-runtime.json'), {
+      recursive: true,
+    });
+    await assert.rejects(
+      capture(() => createHarnessCli(cliOptions()).main([])),
+      /EISDIR/u,
+    );
+  });
+
   test('prints a command help text and its aliases resolve to it', async () => {
     const cli = createHarnessCli(cliOptions());
     const help = await capture(() => cli.main(['status', '--help']));
