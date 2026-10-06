@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Web adapter reference: document `network-observer` and `performance-observer` (Extension network capture and CDP performance traces), `connectBrowserCdp` events and `selectExtensionTarget`.
 - Agent runtime and task directory contract: `artifacts/acceptance-status.json` is written by `farmslot-agent ac` and by a recipe run with a task dir, through one module.
 - Document adapter plugins declared in `recipe-library.json` `adapters`: loading on selection, the checks, `extends` composition, the trust rule (the exact operator library list, the plugin digest an approved plan binds, the files a plugin may import and the ones refused, the doctor check), and the Adapter SDK members `extends?`, `doctor?`, `actions.manifestPaths?` and `actions.adapters?`.
 - Web adapter reference: document `dapp` (record or answer a dapp's wallet requests, assert the request log, product signing policy as input) and `origin`.

@@ -63,6 +63,11 @@
       "import": "./dist/runtime/cdp.js",
       "default": "./dist/runtime/cdp.js"
     },
+    "./runtime/cdp-trace": {
+      "types": "./dist/runtime/cdp-trace.d.ts",
+      "import": "./dist/runtime/cdp-trace.js",
+      "default": "./dist/runtime/cdp-trace.js"
+    },
     "./runtime/react-native-bridge": {
       "types": "./dist/runtime/react-native-bridge.d.ts",
       "import": "./dist/runtime/react-native-bridge.js",

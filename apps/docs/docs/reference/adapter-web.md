@@ -18,21 +18,23 @@ const { selectPageTarget } = require('@farmslot/adapter-web/page-target');
 
 ## Modules
 
-| module                         | use it to                                                                                           |
-| ------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `browser-resolver`             | choose Chrome for Testing or branded Chrome (probe-launched, cached) and how to load an extension   |
-| `browser-cdp`                  | talk to the browser over CDP with deadlines, prove port ownership, load an extension, place windows |
-| `page-target`                  | pick the page on an origin, preferring one whose URL carries a hash                                 |
-| `chrome-args`                  | build remote-debugging and isolated-profile flags, runtime identity and launch quarantine markers   |
-| `dapp`                         | record a web dapp's wallet requests, or answer them with a strict test wallet; assert the log       |
-| `extension-id`                 | compute a Chromium extension id from a manifest key or unpacked directory                           |
-| `launch-browser`               | launch or release one isolated, detached, owned Chromium with an unpacked extension                 |
-| `macos-focus`                  | give the front back to the previous app after a headed launch, by pid                               |
-| `origin`                       | compare exact app origins and tell whether a CDP context is the app's top frame                     |
-| `playwright-cdp`               | evaluate in a page over a raw CDP session (safe where page globals are scuttled)                    |
-| `slot-title`                   | prefix the extension home tab's title with the farm slot id, across the page's own title resets     |
-| `validation-process-ownership` | find and stop the processes that own a slot profile                                                 |
-| `validation-launch-supervisor` | supervise one validation launch: port lease, quarantine, cleanup                                    |
+| module                         | use it to                                                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `browser-resolver`             | choose Chrome for Testing or branded Chrome (probe-launched, cached) and how to load an extension                      |
+| `browser-cdp`                  | talk to the browser over CDP with deadlines, follow its events, prove port ownership, load an extension, place windows |
+| `page-target`                  | pick the page on an origin, preferring one whose URL carries a hash, or an extension's UI renderer                     |
+| `performance-observer`         | trace an extension's UI renderer: frame timings and JavaScript tasks                                                   |
+| `chrome-args`                  | build remote-debugging and isolated-profile flags, runtime identity and launch quarantine markers                      |
+| `dapp`                         | record a web dapp's wallet requests, or answer them with a strict test wallet; assert the log                          |
+| `extension-id`                 | compute a Chromium extension id from a manifest key or unpacked directory                                              |
+| `launch-browser`               | launch or release one isolated, detached, owned Chromium with an unpacked extension                                    |
+| `macos-focus`                  | give the front back to the previous app after a headed launch, by pid                                                  |
+| `network-observer`             | capture the network requests of every target of a loaded extension                                                     |
+| `origin`                       | compare exact app origins and tell whether a CDP context is the app's top frame                                        |
+| `playwright-cdp`               | evaluate in a page over a raw CDP session (safe where page globals are scuttled)                                       |
+| `slot-title`                   | prefix the extension home tab's title with the farm slot id, across the page's own title resets                        |
+| `validation-process-ownership` | find and stop the processes that own a slot profile                                                                    |
+| `validation-launch-supervisor` | supervise one validation launch: port lease, quarantine, cleanup                                                       |
 
 ## Launching
 
@@ -44,6 +46,27 @@ const { selectPageTarget } = require('@farmslot/adapter-web/page-target');
 4. Record `browser-resolution.json` and the runtime identity under `runtimeDir`, then give the front back if the browser took it.
 
 The host passes what it knows about its product: `homePage`, `defaultTitle`, `extensionOwnerRoot`, `acquireRuntimeLock` (held for the whole launch) and the `rerunCommand` named in error hints.
+
+## Observing an extension
+
+Both observers connect with `connectBrowserCdp` to the browser on `cdpPort`. `connectTimeoutMs` and `commandTimeoutMs` default to 10 s.
+
+- `createExtensionNetworkObserver({ cdpPort, runtimeDir })` attaches to every target of the loaded extension (page, background, service worker) and follows the ones that start later. Their `Network` events feed a `@farmslot/recipe-runner/cdp-broker` whose socket is keyed by `runtimeDir`. It returns a `NetworkCaptureBackend` (`@farmslot/adapter-sdk`): `start({ id, urlIncludes, methods, bodyJsonFields, maxRequests, maxDurationMs })`, `end(id)` with the capture summary, `close()`.
+- `createExtensionPerformanceBackend({ cdpPort, extensionId, uiPaths, kind, platform, markerPrefix })` attaches to the extension's UI renderer. `selectExtensionTarget` picks it from `uiPaths`: the first path with an open page decides, and two renderers on that path refuse. It returns `@farmslot/recipe-runner/runtime/cdp-trace`'s collector. `kind` is the host's `TraceKind` (trace categories, scope, frame timing), and the clock marker `<markerPrefix><id>-<ms>` is written with `performance.mark` in that page.
+
+```js
+const { createExtensionPerformanceBackend } = require('@farmslot/adapter-web/performance-observer');
+
+const backend = await createExtensionPerformanceBackend({
+  cdpPort,
+  extensionId,
+  uiPaths: ['/home.html', '/sidepanel.html'],
+  kind: extensionTraceKind,
+  platform: 'extension',
+});
+await backend.start('swap');
+const result = await backend.end('swap'); // { platform, javascript, nativeUi, trace, rawTraceEvents }
+```
 
 ## Web dapps
 

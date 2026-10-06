@@ -4771,6 +4771,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/adapter-web@workspace:packages/adapter-web"
   dependencies:
+    "@farmslot/adapter-sdk": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"

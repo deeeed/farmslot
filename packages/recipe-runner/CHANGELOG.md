@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Add `@farmslot/recipe-runner/runtime/cdp-trace`, the CDP performance trace engine moved from mm-harness: `createCdpTraceCollector(client, { kind, platform, marker, markerPrefix })` runs one `Tracing` capture at a time and aligns it to the host clock through a marker the host writes into the trace; `parseTraceCapture(capture, kind)` turns a capture into JavaScript-task and native-frame samples with summaries. A `TraceKind` names what a trace captures (categories, renderer scoping, scope label, native source, JavaScript-task flag, `draw` or `cadence` frame timing), so the host keeps its own platform names. The marker prefix defaults to `farmslot-clock-`. `summarizeFrames` (from `@farmslot/adapter-rn`) and `summarizeJavaScriptTasks` move here too, unchanged.
 
 ## 0.25.0 - 2026-10-06
 
