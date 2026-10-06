@@ -51,7 +51,8 @@ function candidateFamilies(action: string, namespace: string) {
   return [...new Set(families)];
 }
 
-function candidatePaths(
+/** The live script files tried for `action`, in order; the first that exists runs. */
+export function candidatePaths(
   platform: string,
   action: string,
   namespace: string,
@@ -75,14 +76,25 @@ function candidatePaths(
       ).filter((entry): entry is string => Boolean(entry)),
     ),
   ];
-  const platforms = platformChain(platform);
+  // A child's every file (each stem, then its dispatcher) comes before its
+  // ancestor's. The adapter at the top of the chain keeps the order a built-in
+  // has always had: each stem, then the shared one, then the dispatchers.
+  const chain = platformChain(platform);
+  const descendants = chain.slice(0, -1);
+  const base = chain.at(-1)!;
   const files: string[] = [];
   for (const root of roots) {
     for (const family of families) {
-      for (const candidateStem of stems) {
-        pushCandidateFiles(files, root, platforms, family, candidateStem);
+      for (const descendant of descendants) {
+        for (const candidateStem of stems) {
+          files.push(path.join(root, descendant, family, `${candidateStem}.mjs`));
+        }
+        files.push(path.join(root, descendant, family, `${family}.mjs`));
       }
-      pushDomainDispatcherFiles(files, root, platforms, family);
+      for (const candidateStem of stems) {
+        pushCandidateFiles(files, root, base, family, candidateStem);
+      }
+      pushDomainDispatcherFiles(files, root, base, family);
     }
   }
   return files;
@@ -116,25 +128,24 @@ function declaredActionRoot(raw: string | undefined, action: string): string | u
   }
 }
 
-// The platforms' own scripts, child first, then the shared one.
 function pushCandidateFiles(
   files: string[],
   root: string,
-  platforms: readonly string[],
+  platform: string,
   family: string,
   stem: string,
 ) {
-  for (const platform of platforms) files.push(path.join(root, platform, family, `${stem}.mjs`));
+  files.push(path.join(root, platform, family, `${stem}.mjs`));
   files.push(path.join(root, 'shared', family, `${stem}.mjs`));
 }
 
 function pushDomainDispatcherFiles(
   files: string[],
   root: string,
-  platforms: readonly string[],
+  platform: string,
   family: string,
 ) {
-  for (const platform of platforms) files.push(path.join(root, platform, family, `${family}.mjs`));
+  files.push(path.join(root, platform, family, `${family}.mjs`));
   files.push(path.join(root, 'shared', family, `${family}.mjs`));
 }
 

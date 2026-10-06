@@ -30,6 +30,7 @@ import {
   resolveLiveAdapter,
   selectedAdapterId,
 } from '../src/harness/index.js';
+import { candidatePaths } from '../src/harness/live-adapter-contract.js';
 
 const roots: string[] = [];
 const savedLibraryPath = process.env.RECIPE_LIBRARY_PATH;
@@ -653,6 +654,60 @@ describe('adapter plugins', () => {
     assert.equal(await resolve('web-dapp'), parent);
     // A built-in that extends nothing is unchanged: its own script, else shared.
     assert.equal(await resolve('core'), shared);
+  });
+
+  test("live scripts: every one of a child's files comes before its parent's", async () => {
+    harnessAdapters().register(builtin('echo'));
+    harnessAdapters().register({ ...builtin('echo-child'), extends: 'echo' } as PlatformAdapter);
+    const action = 'metamask.app.launch';
+    const write = (root: string, file: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), 'export default {};\n');
+      return path.join(root, file);
+    };
+    const resolveIn = (root: string) =>
+      resolveLiveAdapter('echo-child', action, 'metamask', {
+        RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ [action]: root }),
+      });
+    // The child's short name beats the parent's qualified name.
+    const short = tempRoot('recipe-cli-live-short-');
+    write(short, 'echo/app/metamask.app.launch.mjs');
+    const childShort = write(short, 'echo-child/app/launch.mjs');
+    assert.equal(await resolveIn(short), childShort);
+    // The child's dispatcher beats the parent's short name.
+    const dispatcher = tempRoot('recipe-cli-live-dispatcher-');
+    write(dispatcher, 'echo/app/launch.mjs');
+    const childDispatcher = write(dispatcher, 'echo-child/app/app.mjs');
+    assert.equal(await resolveIn(dispatcher), childDispatcher);
+  });
+
+  test('live scripts: a built-in tries the same files, in the same order, as before extends', () => {
+    // The list a built-in got before live scripts followed `extends`.
+    assert.deepEqual(
+      candidatePaths('core', 'metamask.app.launch', 'metamask', {
+        RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'metamask.app.launch': '/R' }),
+      }),
+      [
+        '/R/core/app/metamask.app.launch.mjs',
+        '/R/shared/app/metamask.app.launch.mjs',
+        '/R/core/app/launch.mjs',
+        '/R/shared/app/launch.mjs',
+        '/R/core/app/app.mjs',
+        '/R/shared/app/app.mjs',
+      ],
+    );
+  });
+
+  test('live scripts: an extends cycle between registered adapters ends', async () => {
+    harnessAdapters().register({ ...builtin('loop-a'), extends: 'loop-b' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('loop-b'), extends: 'loop-a' } as PlatformAdapter);
+    const root = tempRoot('recipe-cli-live-cycle-');
+    const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
+    assert.equal(await resolveLiveAdapter('loop-a', 'team.probe', 'shop', env), null);
+    const file = path.join(root, 'loop-b', 'team', 'probe.mjs');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'export default {};\n');
+    assert.equal(await resolveLiveAdapter('loop-a', 'team.probe', 'shop', env), file);
   });
 
   test('prints a refusal as the --json envelope or the human line', () => {
