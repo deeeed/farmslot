@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - A run created without a mode for a project with an execution-template catalog takes its default mode from the catalog `defaults` instead of the worker template files, so removing a farm template that a shared checklist replaced keeps the mode unchanged.
+- Autonomous dev and fix-bug TASK.md files carry a `## Run contract` section after `## Inputs`, from the run mode: never pause, `mark blocked` when blocked, commit locally and leave pushing to Farmslot until it publishes (CI-FIX follow-ups keep their push step), no AI attribution. Interactive, validation and artifact-only runs and other flows are unchanged.
 - A re-review after the PR was rebased or force-pushed runs as a full review that still rechecks the prior findings. Incremental review is offered only when the prior reviewed head is an ancestor of the current head; before, the incremental diff after a rebase contained every base-branch change.
 
 ## 0.20.1 - 2026-10-05
