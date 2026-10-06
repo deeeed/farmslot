@@ -463,50 +463,85 @@ describe('adapter plugins', () => {
     assert.deepEqual(imports(), []);
   });
 
-  test("bare packages resolve from the host's install, never beside or above the library", async () => {
-    const importing = (specifier: string) =>
-      pluginSource('echo').replace(
-        'export const adapter = {',
-        `import ${JSON.stringify(specifier)};\nexport const adapter = {`,
-      );
+  const importing = (specifier: string) =>
+    pluginSource('echo').replace(
+      'export const adapter = {',
+      `import ${JSON.stringify(specifier)};\nexport const adapter = {`,
+    );
+
+  // A package directory: <dir>/package.json and index.mjs.
+  function writePackage(dir: string, name: string): void {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, main: 'index.mjs' }));
+    fs.writeFileSync(path.join(dir, 'index.mjs'), 'export {};\n');
+  }
+
+  // Run `body` with the host's package root at `packageRoot`.
+  async function withHostAt(packageRoot: string, body: () => Promise<void>): Promise<void> {
+    const host = harnessHost();
+    configureHarnessHost({ ...host, packageRoot });
+    configureHarnessAdapters(createAdapterRegistry());
+    try {
+      await body();
+    } finally {
+      configureHarnessHost(host);
+    }
+  }
+
+  test("bare packages resolve from the host's install, never from the library's location", async () => {
     // The host's package loads from a library outside the host's tree.
     process.env.RECIPE_LIBRARY_PATH = `sdk=${dirLibrary('sdk', { echo: { source: importing('@farmslot/adapter-sdk') } })}`;
     await ensureAdapterLoaded('echo');
     assert.ok(harnessAdapters().has('echo'));
 
-    // A package in a node_modules above the library: the host doesn't provide it.
+    // A package in a node_modules above the library, which the host doesn't install.
     const above = tempRoot('recipe-cli-plugins-above-');
-    fs.mkdirSync(path.join(above, 'node_modules', 'above-dep'), { recursive: true });
-    fs.writeFileSync(
-      path.join(above, 'node_modules', 'above-dep', 'package.json'),
-      '{"name":"above-dep","main":"index.mjs"}',
-    );
-    fs.writeFileSync(path.join(above, 'node_modules', 'above-dep', 'index.mjs'), 'export {};\n');
+    writePackage(path.join(above, 'node_modules', 'above-dep'), 'above-dep');
     const nested = path.join(above, 'lib');
     fs.renameSync(dirLibrary('nested', { echo: { source: importing('above-dep') } }), nested);
     process.env.RECIPE_LIBRARY_PATH = `nested=${nested}`;
     configureHarnessAdapters(createAdapterRegistry());
-    let error = await refusal('echo');
+    const error = await refusal('echo');
     assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
     assert.match(error.message, /the host's install does not provide/u);
+  });
 
-    // Even when the host's resolution reaches it, a node_modules above the library is refused.
-    // (A second library: the module that failed above stays failed in the ESM cache.)
-    const nested2 = path.join(above, 'lib2');
-    fs.renameSync(dirLibrary('nested2', { echo: { source: importing('above-dep') } }), nested2);
-    process.env.RECIPE_LIBRARY_PATH = `nested2=${nested2}`;
-    const host = harnessHost();
-    fs.mkdirSync(path.join(above, 'host'));
-    fs.writeFileSync(path.join(above, 'host', 'package.json'), '{"name":"host"}');
-    configureHarnessHost({ ...host, packageRoot: path.join(above, 'host') });
-    try {
-      configureHarnessAdapters(createAdapterRegistry());
-      error = await refusal('echo');
+  test("a library inside the host's project imports the host's own dependencies", async () => {
+    // The product-repo layout: the host installed in <repo>/node_modules, the
+    // library a folder of the same repo. <repo>/node_modules is on the host's
+    // lookup chain, so it is the host's install, not a stray package above the library.
+    const repo = tempRoot('recipe-cli-plugins-repo-');
+    writePackage(path.join(repo, 'node_modules', '@scope', 'host'), '@scope/host');
+    writePackage(path.join(repo, 'node_modules', 'hostdep'), 'hostdep');
+    const library = path.join(repo, 'recipe-library');
+    fs.renameSync(dirLibrary('repo', { echo: { source: importing('hostdep') } }), library);
+    process.env.RECIPE_LIBRARY_PATH = `repo=${library}`;
+    await withHostAt(path.join(repo, 'node_modules', '@scope', 'host'), async () => {
+      await ensureAdapterLoaded('echo');
+      assert.ok(harnessAdapters().has('echo'));
+    });
+  });
+
+  test("a node_modules above the library but off the host's lookup chain is refused, even when the host links to it", async () => {
+    // The host's resolution reaches the package only through a symlink in its own
+    // node_modules; the real files sit above the library, where no digest covers them.
+    const above = tempRoot('recipe-cli-plugins-stray-');
+    writePackage(path.join(above, 'node_modules', 'stray'), 'stray');
+    const library = path.join(above, 'lib');
+    fs.renameSync(dirLibrary('stray', { echo: { source: importing('stray') } }), library);
+    const hostRoot = path.join(tempRoot('recipe-cli-plugins-host-'), 'host');
+    writePackage(hostRoot, 'host');
+    fs.mkdirSync(path.join(hostRoot, 'node_modules'));
+    fs.symlinkSync(
+      path.join(above, 'node_modules', 'stray'),
+      path.join(hostRoot, 'node_modules', 'stray'),
+    );
+    process.env.RECIPE_LIBRARY_PATH = `stray=${library}`;
+    await withHostAt(hostRoot, async () => {
+      const error = await refusal('echo');
       assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
       assert.match(error.message, /beside or above the library/u);
-    } finally {
-      configureHarnessHost(host);
-    }
+    });
   });
 
   test('an actions/ file is fenced when plugin code reaches it, not when the host imports it', async () => {

@@ -26,6 +26,8 @@ export interface PluginImportScope {
   files: ReadonlySet<string>;
   /** A file URL inside the host's install that bare package specifiers resolve from. */
   hostURL: string;
+  /** Real path of the host's package root: the node_modules on its lookup chain are its install. */
+  hostRoot: string;
 }
 
 const scopes: PluginImportScope[] = [];
@@ -104,15 +106,19 @@ function markReached(file: string, scope: PluginImportScope): void {
   owners.add(scope);
 }
 
-// Inside the library, or in a node_modules whose parent directory holds the library.
+// Inside the library, or in a node_modules whose parent directory holds the
+// library but not the host. A node_modules on the host's own lookup chain (its
+// package directory or any directory above it) is the host's install, even when
+// the library sits under the same directory (a library folder in the product
+// repo, with the host in <repo>/node_modules).
 function inOrAboveLibrary(scope: PluginImportScope, file: string): boolean {
   if (isWithin(scope.root, file)) return true;
   const parts = file.split(path.sep);
-  return parts.some(
-    (part, index) =>
-      part === 'node_modules' &&
-      isWithin(parts.slice(0, index).join(path.sep) || path.sep, scope.root),
-  );
+  return parts.some((part, index) => {
+    if (part !== 'node_modules') return false;
+    const parent = parts.slice(0, index).join(path.sep) || path.sep;
+    return isWithin(parent, scope.root) && !isWithin(parent, scope.hostRoot);
+  });
 }
 
 function refusal(scope: PluginImportScope, specifier: string, reason: string): RecipeTrustError {

@@ -299,6 +299,7 @@ async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAda
     moduleFiles: new Set(covered.filter(inModuleDir).map(real)),
     files: new Set(covered.map(real)),
     hostURL: pathToFileURL(path.join(harnessHost().packageRoot, 'package.json')).href,
+    hostRoot: fs.realpathSync(harnessHost().packageRoot),
   });
   let module: Record<string, unknown>;
   try {
