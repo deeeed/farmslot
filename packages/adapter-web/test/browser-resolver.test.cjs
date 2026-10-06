@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { execFile, execFileSync, spawn } = require('node:child_process');
+const { execFile, execFileSync, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -1323,6 +1323,292 @@ describe('probeLaunch against a fake browser', () => {
       assertMatch(verdict, { ok: false, transient: true });
       assert.ok(verdict.reason.includes('no DevTools endpoint within 1500ms'));
       assert.equal(profilesLeft(), '');
+    },
+  );
+
+  // The caller runs in its own process group, like a hook under the node agent,
+  // whose timeout sends SIGTERM to that group (SIGKILL 5s later).
+  function probingCaller(script, env = {}) {
+    const caller = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const resolver = require(${JSON.stringify(require.resolve('../src/browser-resolver.cjs'))});
+${script}
+resolver.probeLaunch(${JSON.stringify(FAKE_BROWSER)}, { startupMs: 20000 }).then((verdict) => {
+  process.stdout.write(JSON.stringify(verdict));
+});`,
+      ],
+      {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'inherit'],
+        env: { ...process.env, FAKE_CDP_MODE: 'silent', ...env },
+      },
+    );
+    let stdout = '';
+    caller.stdout.on('data', (chunk) => (stdout += chunk));
+    const exited = new Promise((resolve) =>
+      caller.on('exit', (code, signal) => resolve({ code, signal, stdout })),
+    );
+    return { caller, exited };
+  }
+
+  // The probe browser is the caller's child until the caller dies.
+  function browserOf(callerPid) {
+    try {
+      const pid = Number(execFileSync('pgrep', ['-P', String(callerPid)], { encoding: 'utf8' }));
+      const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+        encoding: 'utf8',
+      });
+      const profile = /--user-data-dir=(\S+)/u.exec(command)?.[1];
+      return profile ? { pid, profile } : null;
+    } catch {
+      // pgrep and ps exit non-zero while no child is running yet.
+      return null;
+    }
+  }
+
+  // A killed child stays a zombie until it is reaped (on Linux, after its
+  // parent exits); a zombie is not a running browser.
+  function running(pid) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') return false;
+      throw error;
+    }
+    const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    return !state.stdout.trim().startsWith('Z');
+  }
+
+  // Test cleanup: the browser may be reaped between the check and the kill.
+  function killStray(pid) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  }
+
+  async function stopped(pid, ms = 3000) {
+    const deadline = Date.now() + ms;
+    while (running(pid)) {
+      if (Date.now() > deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  }
+
+  async function waitFor(check, ms = 10000) {
+    const deadline = Date.now() + ms;
+    let value;
+    while (!(value = check())) {
+      if (Date.now() > deadline) throw new Error('timed out waiting for the probe browser');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return value;
+  }
+
+  for (const signal of ['SIGTERM', 'SIGQUIT']) {
+    it(
+      `stops the browser when a group ${signal} ends the caller mid-probe`,
+      { timeout: 30000 },
+      async () => {
+        const { caller, exited } = probingCaller('');
+        const browser = await waitFor(() => browserOf(caller.pid));
+        process.kill(-caller.pid, signal);
+        try {
+          const result = await exited;
+          assert.equal(result.signal, signal, JSON.stringify(result));
+          assert.equal(await stopped(browser.pid), true, 'the probe browser outlived its caller');
+          assert.equal(fs.existsSync(browser.profile), false);
+        } finally {
+          if (running(browser.pid)) killStray(browser.pid);
+        }
+      },
+    );
+  }
+
+  it(
+    'reaps the browser of a caller killed outright on the next probe',
+    { timeout: 30000 },
+    async () => {
+      const { caller, exited } = probingCaller('');
+      const browser = await waitFor(() => browserOf(caller.pid));
+      process.kill(-caller.pid, 'SIGKILL');
+      await exited;
+      try {
+        assert.equal(running(browser.pid), true, 'SIGKILL leaves the browser running');
+        process.env.FAKE_CDP_MODE = 'ok';
+        await resolver.probeLaunch(FAKE_BROWSER, fast);
+        assert.equal(await stopped(browser.pid), true);
+        assert.equal(fs.existsSync(browser.profile), false);
+      } finally {
+        // Never leave the fake behind when the reaper fails.
+        if (running(browser.pid)) killStray(browser.pid);
+      }
+    },
+  );
+
+  it(
+    'keeps a probe stopped under a host signal handler transient',
+    { timeout: 30000 },
+    async () => {
+      const { caller, exited } = probingCaller("process.on('SIGTERM', () => {});");
+      const browser = await waitFor(() => browserOf(caller.pid));
+      process.kill(caller.pid, 'SIGTERM');
+      const { code, stdout } = await exited;
+      assert.equal(code, 0, 'the host decides the exit');
+      assertMatch(JSON.parse(stdout), {
+        ok: false,
+        transient: true,
+        reason: 'probe stopped by its caller',
+      });
+      assert.equal(await stopped(browser.pid), true);
+    },
+  );
+
+  it('removes its signal handlers once overlapping probes finish', { timeout: 30000 }, async () => {
+    const before = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'exit'].map((event) =>
+      process.listenerCount(event),
+    );
+    process.env.FAKE_CDP_MODE = 'ok';
+    const first = resolver.probeLaunch(FAKE_BROWSER, fast);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Promise.all([first, resolver.probeLaunch(FAKE_BROWSER, fast)]);
+    await resolver.probeLaunch(FAKE_BROWSER, fast);
+    assert.deepEqual(
+      ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'exit'].map((event) =>
+        process.listenerCount(event),
+      ),
+      before,
+    );
+  });
+
+  it('lets a host once-handler finish its own shutdown', { timeout: 30000 }, async () => {
+    const { caller, exited } = probingCaller(
+      "process.once('SIGTERM', () => setTimeout(() => { process.stdout.write('host-done|'); process.exit(0); }, 300));",
+    );
+    const browser = await waitFor(() => browserOf(caller.pid));
+    process.kill(caller.pid, 'SIGTERM');
+    const { code, stdout } = await exited;
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('host-done|'), stdout);
+    assert.equal(await stopped(browser.pid), true);
+  });
+
+  it('launches nothing when stopped before the browser starts', { timeout: 30000 }, async () => {
+    const host = () => {};
+    process.on('SIGTERM', host);
+    try {
+      process.env.FAKE_CDP_MODE = 'ok';
+      const probe = resolver.probeLaunch(FAKE_BROWSER, fast);
+      process.emit('SIGTERM', 'SIGTERM');
+      assertMatch(await probe, {
+        ok: false,
+        transient: true,
+        reason: 'probe stopped by its caller',
+      });
+    } finally {
+      process.off('SIGTERM', host);
+    }
+  });
+
+  it("leaves another user's orphaned probe profile alone", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-'));
+    const dead = spawnSync('true').pid;
+    const foreign = path.join(tmp, `farmslot-browser-probe-${dead}-abc`);
+    const mine = path.join(tmp, `farmslot-browser-probe-${dead}-def`);
+    fs.mkdirSync(foreign);
+    fs.mkdirSync(mine);
+    const realLstat = fs.lstatSync;
+    const lstat = mock.method(fs, 'lstatSync', (file, ...rest) =>
+      file === foreign
+        ? { ...realLstat(file, ...rest), uid: process.getuid() + 1 }
+        : realLstat(file, ...rest),
+    );
+    try {
+      resolver.reapOrphanedProbes(tmp);
+      assert.equal(fs.existsSync(foreign), true);
+      assert.equal(fs.existsSync(mine), false);
+    } finally {
+      lstat.mock.restore();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    'stops the browser when the caller calls process.exit mid-probe',
+    { timeout: 30000 },
+    async () => {
+      const { caller, exited } = probingCaller("process.on('SIGUSR2', () => process.exit(3));");
+      const browser = await waitFor(() => browserOf(caller.pid));
+      process.kill(caller.pid, 'SIGUSR2');
+      try {
+        assertMatch(await exited, { code: 3 });
+        assert.equal(await stopped(browser.pid), true);
+        assert.equal(fs.existsSync(browser.profile), false);
+      } finally {
+        if (running(browser.pid)) killStray(browser.pid);
+      }
+    },
+  );
+
+  it('skips an orphaned profile another reaper already removed', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-'));
+    const dead = spawnSync('true').pid;
+    const orphan = path.join(tmp, `farmslot-browser-probe-${dead}-left`);
+    fs.mkdirSync(orphan);
+    // Listed, then removed by a concurrent reaper before this one reaches it.
+    const realReaddir = fs.readdirSync;
+    const readdir = mock.method(fs, 'readdirSync', (dir, ...rest) =>
+      dir === tmp
+        ? [`farmslot-browser-probe-${dead}-gone`, ...realReaddir(dir, ...rest)]
+        : realReaddir(dir, ...rest),
+    );
+    try {
+      resolver.reapOrphanedProbes(tmp);
+      assert.equal(fs.existsSync(orphan), false);
+    } finally {
+      readdir.mock.restore();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    'does not approve a probe stopped during its last DevTools check',
+    { timeout: 30000 },
+    async () => {
+      const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-log-')), 'cdp.log');
+      const realFetch = globalThis.fetch;
+      const host = () => {};
+      process.on('SIGTERM', host);
+      // The settle loop makes no request, so the first /json/version after the
+      // screenshot is the final check: stop the probe once its answer is in.
+      const fetchMock = mock.method(globalThis, 'fetch', async (url, ...rest) => {
+        const response = await realFetch(url, ...rest);
+        if (
+          String(url).endsWith('/json/version') &&
+          fs.existsSync(log) &&
+          fs.readFileSync(log, 'utf8').includes('Page.captureScreenshot')
+        )
+          process.emit('SIGTERM', 'SIGTERM');
+        return response;
+      });
+      try {
+        process.env.FAKE_CDP_MODE = 'ok';
+        process.env.FAKE_CDP_LOG = log;
+        assertMatch(await resolver.probeLaunch(FAKE_BROWSER, fast), {
+          ok: false,
+          transient: true,
+          reason: 'probe stopped by its caller',
+        });
+      } finally {
+        fetchMock.mock.restore();
+        process.off('SIGTERM', host);
+        delete process.env.FAKE_CDP_LOG;
+        fs.rmSync(path.dirname(log), { recursive: true, force: true });
+      }
     },
   );
 });
