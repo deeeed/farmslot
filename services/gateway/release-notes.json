@@ -1,9 +1,11 @@
 {
-  "version": "0.20.1",
-  "date": "2026-10-05",
+  "version": "0.20.2",
+  "date": "2026-10-06",
   "items": [
-    "Jira tickets keep their structure and acceptance criteria in TASK.md",
-    "Slots no longer get stuck in busy/releasing after a fleet refresh",
-    "Farm hooks run from the node's matching config bundle, so they no longer exit 127 after a config update"
+    "Self-review templates can use {{DEFAULT_BRANCH}}, like worker task templates",
+    "A run created without a mode takes its default from the project's execution-template catalog",
+    "A re-review after a rebase or force-push runs as a full review that rechecks prior findings",
+    "Published PR bodies keep every AC table row and clean local paths and dead task links",
+    "Without artifacts_repo, draft PR bodies list the evidence files instead of a broken image table"
   ]
 }

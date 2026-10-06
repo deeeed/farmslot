@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.0 - 2026-10-06
+
 - Add `createHarnessCli({ host, adapters, libraries, commands, help, beforeDispatch, catalog, adopt, configuredLibraries, replacedOptions })` to `@farmslot/recipe-cli/harness`, the generic front door a product harness presets. `main(argv)` returns `{ exitCode, exit }` and `run()` exits with it.
   - It provides the grouped help (the host's intro, groups and footer, the `<PREFIX>_BIN` dev override line and the prepared-slot line), per-command `--help`, `-v/--version`, which prints the host's package version as one line (a host `package.json` without a version is a startup error), and `--version --verbose`, which adds `@farmslot/recipe-cli <version>` (one line when the host is recipe-cli itself).
   - Each public command carries its `contract`, so the command list and the grammar can't drift apart. Hidden commands keep their private grammar.
@@ -13,6 +17,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - Option builders: `booleanOption`, `valueOption`, `optionalValueOption`, `contractOptions`. `OptionSpec.choices` can be a function of the tokens after the command, read at validation time (for example `(tokens) => adapterChoices(optionValues(tokens, '--library'))`). `optionValues(tokens, option)` returns every value an option takes before `--`.
   - Command hooks: `bypass` (a sub-grammar another tool checks), `refine` (command rules, given `ContractFailures`) and `missingPositionalAction`.
   - `publicCommandTokens(commands)` lists every name and alias.
+- Publish with adapter-sdk 0.5.1, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.6.0 - 2026-10-06
 
