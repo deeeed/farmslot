@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Command, CommanderError } from 'commander';
 
 import type { AdapterRegistry } from '@farmslot/adapter-sdk';
-import { RecipeTrustError } from '@farmslot/recipe-runner';
+import { RecipeResolutionError, RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { RECIPE_CLI_VERSION } from '../version.js';
 
@@ -264,8 +264,12 @@ async function loadSelectedAdapter(
     await ensureAdapterLoaded(selected, { ...load, libraries: optionValues(tokens, '--library') });
     return undefined;
   } catch (error) {
-    // A refused plugin, or the library reader's refusal of its source.
-    if (error instanceof AdapterPluginError || error instanceof RecipeTrustError) {
+    // A refused plugin, or the library reader's refusal of its source or its path.
+    if (
+      error instanceof AdapterPluginError ||
+      error instanceof RecipeTrustError ||
+      error instanceof RecipeResolutionError
+    ) {
       const failure = { code: error.code, message: error.message, userAction: error.userAction };
       if (requested(argv, '--json-stream')) {
         const stream = new JsonStreamWriter(command, true);

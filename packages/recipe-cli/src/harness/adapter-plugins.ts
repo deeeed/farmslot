@@ -423,11 +423,15 @@ async function declarations(
   mode: { lenient: boolean },
 ): Promise<DeclaredAdapter[]> {
   // No recipePath: a task-local library beside a recipe never declares adapters.
+  // Selecting a built-in checks the entries that parse, the set adapterChoices
+  // reads, so an entry that doesn't parse never blocks it.
   const sources = withConfigured(
-    await resolveRecipeLibrarySources({
-      cliEntries: [...(options.libraries ?? [])],
-      ...(options.env ? { env: options.env } : {}),
-    }),
+    mode.lenient
+      ? librarySourcesSync(options.libraries ?? [], options.env)
+      : await resolveRecipeLibrarySources({
+          cliEntries: [...(options.libraries ?? [])],
+          ...(options.env ? { env: options.env } : {}),
+        }),
     options.configured,
   );
   const declared: DeclaredAdapter[] = [];
@@ -448,8 +452,10 @@ async function declarations(
   return declared;
 }
 
+// An unnamed entry takes its resolved directory's name, as recipe-runner's
+// resolver names it, so `--library .` overrides the same-named env library.
 function libraryName(source: RecipeLibrarySource): string {
-  return source.name ?? path.basename(source.root);
+  return source.name ?? path.basename(path.resolve(source.root));
 }
 
 /**
@@ -488,14 +494,18 @@ function withConfigured(
   return result;
 }
 
+// Each entry of a colon-joined value on its own, so a malformed entry drops
+// only itself and the libraries beside it still count.
 function safeParse(value: string): RecipeLibrarySource[] {
-  try {
-    return parseRecipeLibraryPath(value);
-  } catch {
-    // A malformed entry adds no adapter ids to the grammar; the command that
-    // resolves its libraries reports RECIPE_LIBRARY_PATH_INVALID itself.
-    return [];
-  }
+  return value.split(':').flatMap((entry) => {
+    try {
+      return parseRecipeLibraryPath(entry);
+    } catch {
+      // A malformed entry adds no adapter ids and claims nothing; the command
+      // that resolves its libraries reports RECIPE_LIBRARY_PATH_INVALID itself.
+      return [];
+    }
+  });
 }
 
 function declaredIdsIn(root: string): string[] {

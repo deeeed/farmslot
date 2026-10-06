@@ -307,6 +307,70 @@ describe('adapter plugins', () => {
     await ensureAdapterLoaded('core');
   });
 
+  test('a library entry that does not parse never blocks a built-in; it still refuses a plugin', async () => {
+    const claims = library('claims', {
+      core: { source: pluginSource('core') },
+      echo: { source: pluginSource('echo') },
+    });
+    process.env.RECIPE_LIBRARY_PATH = '=foo';
+    await ensureAdapterLoaded('core');
+    await ensureAdapterLoaded('core', { libraries: ['=bar'] });
+    const plugin = await refusal('echo');
+    assert.equal(plugin.code, 'RECIPE_LIBRARY_PATH_INVALID', plugin.message);
+    // The entries that do parse are still checked for a claim on the built-in.
+    await assert.rejects(ensureAdapterLoaded('core', { libraries: [`claims=${claims}`] }), {
+      code: 'ADAPTER_ID_CONFLICT',
+    });
+    process.env.RECIPE_LIBRARY_PATH = `claims=${claims}`;
+    await assert.rejects(ensureAdapterLoaded('core', { libraries: ['=bar'] }), {
+      code: 'ADAPTER_ID_CONFLICT',
+    });
+    // A bad entry joined to a good one in the same value drops only itself:
+    // a malformed entry, an unset $VAR in a composed path, a joined --library.
+    for (const [value, libraries] of [
+      [`claims=${claims}:=foo`, []],
+      [`claims=${claims}:extra=`, []],
+      ['', [`claims=${claims}:=bar`]],
+    ] as const) {
+      process.env.RECIPE_LIBRARY_PATH = value;
+      await assert.rejects(
+        ensureAdapterLoaded('core', { libraries: [...libraries] }),
+        { code: 'ADAPTER_ID_CONFLICT' },
+        `${value} ${libraries.join(' ')}`,
+      );
+      // The grammar lists the same libraries: claims' plugin id is selectable.
+      assert.ok(adapterChoices([...libraries]).includes('echo'));
+    }
+    assert.deepEqual(imports(), []);
+  });
+
+  test("a relative --library entry overrides the env library its directory's name matches", async () => {
+    const older = library('older', {
+      core: { source: pluginSource('core') },
+      echo: { source: pluginSource('echo') },
+    });
+    const team = path.join(tempRoot('recipe-cli-plugins-cwd-'), 'team');
+    fs.mkdirSync(path.join(team, 'sub'), { recursive: true });
+    process.env.RECIPE_LIBRARY_PATH = `team=${older}`;
+    // Without an override, the older library's claim on the built-in stands.
+    await assert.rejects(ensureAdapterLoaded('core'), { code: 'ADAPTER_ID_CONFLICT' });
+    const cwd = process.cwd();
+    try {
+      for (const [dir, entry] of [
+        [team, '.'],
+        [path.join(team, 'sub'), '..'],
+      ] as const) {
+        process.chdir(dir);
+        // `.`/`..` take their directory's name, as the strict resolver names them.
+        await ensureAdapterLoaded('core', { libraries: [entry] });
+        assert.equal(adapterChoices([entry]).includes('echo'), false, entry);
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+    assert.deepEqual(imports(), []);
+  });
+
   test('refuses an extends cycle', async () => {
     process.env.RECIPE_LIBRARY_PATH = `lib=${library('cycle', {
       a: { source: pluginSource('a'), extends: 'b' },
