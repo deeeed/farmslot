@@ -7,8 +7,10 @@ import dapp = require('@farmslot/adapter-web/dapp');
 import extensionId = require('@farmslot/adapter-web/extension-id');
 import launch = require('@farmslot/adapter-web/launch-browser');
 import macosFocus = require('@farmslot/adapter-web/macos-focus');
+import networkObserver = require('@farmslot/adapter-web/network-observer');
 import origin = require('@farmslot/adapter-web/origin');
 import pageTarget = require('@farmslot/adapter-web/page-target');
+import performanceObserver = require('@farmslot/adapter-web/performance-observer');
 import playwrightCdp = require('@farmslot/adapter-web/playwright-cdp');
 import slotTitle = require('@farmslot/adapter-web/slot-title');
 import ownership = require('@farmslot/adapter-web/validation-process-ownership');
@@ -27,6 +29,20 @@ export async function consumerCalls(
     height: 800,
   });
   await browserCdp.openBackgroundWindow(client.send, 'about:blank', 15000);
+  const offEvent: () => void = client.onEvent((event) => {
+    const method: string = event.method;
+    const sessionId: string | undefined = event.sessionId;
+    browserCdp.asBrowserCdpTarget(event.params.targetInfo)?.targetId.trim();
+    return { method, sessionId };
+  });
+  offEvent();
+  client.onClose(() => undefined);
+  const { targetInfos } = await client.send('Target.getTargets', {});
+  const extension: string | null = browserCdp.extensionIdFromCdpTargets(targetInfos);
+  const ui = pageTarget.selectExtensionTarget(targetInfos, extension ?? 'abc', {
+    paths: ['/home.html', '/sidepanel.html'],
+  });
+  ui?.targetId.trim();
   client.close();
   const pids: number[] = browserCdp.cdpListenerPids(9222);
   const owner = browserCdp.cdpOwner(9222, profile);
@@ -115,6 +131,46 @@ export async function consumerCalls(
   });
   stamp.stamped.toFixed();
   return { pids, owner, waited, loaded, selected, ownedPids, launchArgs };
+}
+
+// The MetaMask harness's Extension network and performance observers.
+export async function observerCalls(runtimeDir: string) {
+  const network = await networkObserver.createExtensionNetworkObserver({
+    cdpPort: 9222,
+    runtimeDir,
+  });
+  await networkObserver.createExtensionNetworkObserver({
+    cdpPort: 9222,
+    runtimeDir,
+    connectTimeoutMs: 10000,
+    commandTimeoutMs: 10000,
+  });
+  await network.start({ id: 'n1', urlIncludes: ['api'] });
+  const summary: Record<string, unknown> = await network.end('n1');
+  await network.close();
+  const performance = await performanceObserver.createExtensionPerformanceBackend({
+    cdpPort: 9222,
+    extensionId: 'abc',
+    uiPaths: ['/home.html', '/sidepanel.html'],
+    kind: {
+      categories: ['blink.user_timing'],
+      rendererScoped: true,
+      scope: 'extension-renderer',
+      nativeSource: 'chromium-cdp-frame-timings',
+      javascriptTasks: true,
+      frameTiming: 'draw',
+    },
+    platform: 'extension',
+    markerPrefix: 'mmh-clock-',
+    connectTimeoutMs: 10000,
+    commandTimeoutMs: 10000,
+  });
+  await performance.start('p1');
+  const result = await performance.end('p1');
+  const scope: string = result.trace.scope;
+  const frames: number = result.nativeUi.summary.frameCount;
+  await performance.close();
+  return { summary, scope, frames };
 }
 
 // The MetaMask harness's Web Terminal wallet host and its wallet actions.

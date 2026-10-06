@@ -180,6 +180,81 @@ describe('connectBrowserCdp', () => {
       /No browser CDP endpoint/u,
     );
   });
+
+  it('delivers CDP events to onEvent subscribers until they unsubscribe', async () => {
+    const port = await fakeEndpoint((message, socket) => {
+      socket.send(JSON.stringify({ method: 'Target.targetCreated', params: { targetInfo: {} } }));
+      socket.send(
+        JSON.stringify({ method: 'Network.requestWillBeSent', params: {}, sessionId: 'S1' }),
+      );
+      socket.send(JSON.stringify({ method: 'Inspector.detached' }));
+      socket.send(JSON.stringify({ id: message.id, result: { ok: true } }));
+    });
+    const client = await cdp.connectBrowserCdp(port, { timeoutMs: 3000 });
+    const events = [];
+    const unsubscribe = client.onEvent((event) => events.push(event));
+    assert.deepEqual(await client.send('Target.getTargets', {}), { ok: true });
+    assert.deepEqual(events, [
+      { method: 'Target.targetCreated', params: { targetInfo: {} } },
+      { method: 'Network.requestWillBeSent', params: {}, sessionId: 'S1' },
+      { method: 'Inspector.detached', params: {} },
+    ]);
+    unsubscribe();
+    await client.send('Target.getTargets', {});
+    assert.equal(events.length, 3);
+    client.close();
+  });
+
+  it('calls onClose once when the browser hangs up, and on close()', async () => {
+    const port = await fakeEndpoint((_message, socket) => socket.terminate());
+    const client = await cdp.connectBrowserCdp(port, { timeoutMs: 3000 });
+    let closes = 0;
+    const closed = new Promise((resolve) =>
+      client.onClose(() => {
+        closes += 1;
+        resolve();
+      }),
+    );
+    await assert.rejects(client.send('Target.getTargets', {}), /socket closed/u);
+    await closed;
+    assert.equal(closes, 1);
+
+    const quiet = await fakeEndpoint(() => {});
+    const other = await cdp.connectBrowserCdp(quiet, { timeoutMs: 3000 });
+    const ownClose = new Promise((resolve) => other.onClose(resolve));
+    const unsubscribed = other.onClose(() => assert.fail('unsubscribed handler ran'));
+    unsubscribed();
+    other.close();
+    await ownClose;
+  });
+});
+
+describe('CDP target lists', () => {
+  it('normalizes Target.getTargets and /json entries, and drops incomplete ones', () => {
+    const target = { targetId: 'T1', type: 'page', url: 'chrome-extension://abc/home.html' };
+    assert.deepEqual(cdp.asBrowserCdpTarget({ ...target, attached: true }), target);
+    assert.deepEqual(cdp.asBrowserCdpTarget({ id: 'T1', type: 'page', url: target.url }), target);
+    assert.equal(cdp.asBrowserCdpTarget({ id: 'T1', type: 'page' }), null);
+    assert.equal(cdp.asBrowserCdpTarget(null), null);
+    assert.equal(cdp.asBrowserCdpTarget([target]), null);
+  });
+
+  it('takes the extension id from the first extension target', () => {
+    assert.equal(
+      cdp.extensionIdFromCdpTargets([
+        { targetId: 'P', type: 'page', url: 'https://example.com/' },
+        { targetId: 'X', type: 'page', url: 'not a url' },
+        { targetId: 'W', type: 'service_worker', url: 'chrome-extension://abc/sw.js' },
+        { targetId: 'O', type: 'page', url: 'chrome-extension://def/home.html' },
+      ]),
+      'abc',
+    );
+    assert.equal(
+      cdp.extensionIdFromCdpTargets([{ id: 'P', type: 'page', url: 'about:blank' }]),
+      null,
+    );
+    assert.equal(cdp.extensionIdFromCdpTargets(undefined), null);
+  });
 });
 
 describe('CDP port ownership', () => {

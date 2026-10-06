@@ -14,6 +14,7 @@ test('package exports expose stable public harness subpaths', async () => {
   const adapters = await dynamicImport('@farmslot/recipe-runner/adapters/core');
   const appLifecycle = await dynamicImport('@farmslot/recipe-runner/adapters/app-lifecycle');
   const cdp = await dynamicImport('@farmslot/recipe-runner/runtime/cdp');
+  const cdpTrace = await dynamicImport('@farmslot/recipe-runner/runtime/cdp-trace');
   const cli = await dynamicImport('@farmslot/recipe-runner/cli');
   const cliSupport = await dynamicImport('@farmslot/recipe-runner/cli/support');
 
@@ -23,6 +24,8 @@ test('package exports expose stable public harness subpaths', async () => {
   assert.equal(typeof adapters.createStandardCoreAdapters, 'function');
   assert.equal(typeof appLifecycle.createAppLifecycleAdapter, 'function');
   assert.equal(typeof cdp.createCdpWebUiTransport, 'function');
+  assert.equal(typeof cdpTrace.createCdpTraceCollector, 'function');
+  assert.equal(typeof cdpTrace.summarizeFrames, 'function');
   assert.equal(typeof cli.runRecipeRunnerCli, 'function');
   assert.equal(typeof cliSupport.validateRecipeCliInput, 'function');
   assert.equal(root.runRecipeRunnerCli, undefined);
