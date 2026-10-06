@@ -1193,7 +1193,10 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
       partial.taskFile !== run.taskFile) ||
     (Object.prototype.hasOwnProperty.call(partial, 'slotId') && partial.slotId !== run.slotId) ||
     (Object.prototype.hasOwnProperty.call(partial, 'project') && partial.project !== run.project);
-  Object.assign(run, partial, { updatedAt });
+  // A real transition only: re-applying the same status (a restart resuming its
+  // step) is not progress for the Runs list.
+  const statusChanged = statusProvided && partial.status !== previousStatus;
+  Object.assign(run, partial, { updatedAt }, statusChanged ? { statusChangedAt: updatedAt } : {});
   syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
   if (shouldInvalidateRecipeRunGroups) {
     invalidateRecipeRunGroupCache(id);

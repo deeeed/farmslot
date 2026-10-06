@@ -63,6 +63,7 @@ import {
   isArchivableRun,
   runGradeColor,
   runProgressSummary,
+  showsRunProgress,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
 import {
@@ -765,7 +766,7 @@ export class RunList extends RunListState {
     const runnerLabel = engine.model
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
-    const progress = isTerminal ? null : runProgressSummary(run);
+    const progress = showsRunProgress(run) ? runProgressSummary(run) : null;
     const cells = [
       ...(showCheckbox
         ? [

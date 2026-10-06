@@ -11,6 +11,7 @@ import {
   RUN_STALE_AFTER_MS,
   runGradeColor,
   runProgressSummary,
+  showsRunProgress,
 } from './run-list-model.js';
 
 function run(id: string, overrides: Partial<Run> = {}): Run {
@@ -378,14 +379,15 @@ test('run progress: stale only after an hour with nothing pending', () => {
   assert.equal(ciProgress.lastProgressAgo, '30m ago');
 });
 
-test('run progress: a restart re-entering CI watch is not progress; a Resume is', () => {
+test('run progress: a restart re-entering a step is not progress; a Resume is', () => {
   const now = Date.parse('2026-05-14T03:00:00.000Z');
-  const restarted = runProgressSummary(
-    run('restarted', {
+  const ciWatch = (statusChangedAt: string) =>
+    run('ci', {
       status: 'ci-watching',
+      statusChangedAt,
       steps: [
         { name: 'complete', status: 'done', completedAt: '2026-05-14T01:00:00.000Z' },
-        // The gateway restarted at 02:59 and re-entered the watch.
+        // Re-entered at 02:59, by a gateway restart or by a Resume.
         { name: 'ci-watch', status: 'running', startedAt: '2026-05-14T02:59:00.000Z' },
       ],
       ciWatchState: {
@@ -394,24 +396,49 @@ test('run progress: a restart re-entering CI watch is not progress; a Resume is'
         totalAttempts: 0,
         skips: 0,
       },
-    }),
-    now,
-  );
+    });
+  // A restart re-applies the same status, so the status clock stays put.
+  const restarted = runProgressSummary(ciWatch('2026-05-14T01:00:00.000Z'), now);
   assert.equal(restarted.kind, 'stale');
   assert.equal(restarted.lastProgressAgo, '1h ago');
-  // Resumed at 02:59 after a two-hour pause.
-  const resumed = runProgressSummary(
-    run('resumed', {
-      status: 'monitoring',
-      steps: [
-        { name: 'dispatch', status: 'done', completedAt: '2026-05-14T00:30:00.000Z' },
-        { name: 'monitor', status: 'running', startedAt: '2026-05-14T02:59:00.000Z' },
-      ],
-    }),
-    now,
-  );
+  // A Resume after a two-hour pause changes the status.
+  const resumed = runProgressSummary(ciWatch('2026-05-14T02:59:00.000Z'), now);
   assert.equal(resumed.kind, 'step');
   assert.equal(resumed.lastProgressAgo, '1m ago');
+});
+
+test('run progress: only runs that can still move show it', () => {
+  assert.equal(showsRunProgress(run('active', { status: 'monitoring' })), true);
+  assert.equal(showsRunProgress(run('done', { status: 'done' })), false);
+  assert.equal(showsRunProgress(run('failed', { status: 'failed' })), false);
+  // Blocked with nothing running or pending: the worker settled on blocked.
+  assert.equal(
+    showsRunProgress(
+      run('settled', {
+        status: 'blocked',
+        steps: [{ name: 'monitor', status: 'done', completedAt: '2026-05-14T01:00:00.000Z' }],
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    showsRunProgress(
+      run('gated', {
+        status: 'blocked',
+        decisions: [
+          {
+            id: 'd',
+            type: 'engine_human_gate',
+            title: 'Approve',
+            description: '',
+            createdAt: '2026-05-14T01:00:00.000Z',
+            actions: [],
+          },
+        ],
+      }),
+    ),
+    true,
+  );
 });
 
 test('run progress: a finished interactive worker or a pause waits on the operator', () => {
