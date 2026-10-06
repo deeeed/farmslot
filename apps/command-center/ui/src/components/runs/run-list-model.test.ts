@@ -342,6 +342,12 @@ test('run progress: stale only after an hour with nothing pending', () => {
     updatedAt: '2026-05-14T01:59:00.000Z',
     steps: [
       {
+        name: 'complete',
+        status: 'done',
+        startedAt: '2026-05-14T00:55:00.000Z',
+        completedAt: '2026-05-14T01:00:00.000Z',
+      },
+      {
         name: 'ci-watch',
         status: 'running',
         detail: 'waiting for checks',
@@ -370,3 +376,61 @@ test('run progress: stale only after an hour with nothing pending', () => {
   assert.equal(ciProgress.kind, 'step', 'CI-watch progress counts');
   assert.equal(ciProgress.lastProgressAgo, '30m ago');
 });
+
+test('run progress: a restart rewriting the running step is not progress', () => {
+  const now = Date.parse('2026-05-14T03:00:00.000Z');
+  const summary = runProgressSummary(
+    run('restarted', {
+      status: 'ci-watching',
+      steps: [
+        { name: 'complete', status: 'done', completedAt: '2026-05-14T01:30:00.000Z' },
+        // The gateway restarted at 02:59 and re-entered the watch.
+        { name: 'ci-watch', status: 'running', startedAt: '2026-05-14T02:59:00.000Z' },
+      ],
+    }),
+    now,
+  );
+  assert.equal(summary.kind, 'stale');
+  assert.equal(summary.lastProgressAgo, '1h ago');
+});
+
+test('run progress: a finished interactive worker or a pause waits on the operator', () => {
+  const now = Date.parse('2026-05-14T03:00:00.000Z');
+  const held = runProgressSummary(
+    run('held', {
+      status: 'paused',
+      steps: [
+        {
+          name: 'monitor',
+          status: 'running',
+          startedAt: '2026-05-14T00:00:00.000Z',
+          // Held at 01:30, after a 90-minute task.
+          durationMs: 90 * 60_000,
+          detail: 'Worker finished; waiting for operator action',
+          outputs: { awaitingOperator: true },
+        },
+      ],
+    }),
+    now,
+  );
+  assert.equal(held.kind, 'gate');
+  assert.equal(held.text, 'Worker finished; waiting for operator action');
+  assert.equal(held.lastProgressAgo, '1h ago');
+  const paused = runProgressSummary(
+    run('paused', {
+      status: 'paused',
+      steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T00:00:00.000Z' }],
+    }),
+    now,
+  );
+  assertMatchKind(paused, 'gate', 'Paused');
+});
+
+function assertMatchKind(
+  summary: ReturnType<typeof runProgressSummary>,
+  kind: string,
+  text: string,
+): void {
+  assert.equal(summary.kind, kind);
+  assert.equal(summary.text, text);
+}

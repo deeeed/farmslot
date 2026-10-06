@@ -34,21 +34,34 @@ export interface RunProgressSummary {
   text: string;
 }
 
-type ProgressRun = Pick<Run, 'createdAt' | 'startedAt' | 'steps' | 'decisions' | 'ciWatchState'>;
+type ProgressRun = Pick<
+  Run,
+  'status' | 'createdAt' | 'startedAt' | 'steps' | 'decisions' | 'ciWatchState'
+>;
 
-// `updatedAt` moves on every write (tags, metrics, agent contexts), so it is
-// not progress. These timestamps only move when the run does.
+// When a held step stopped for the operator: its duration is stamped at the hold.
+function heldAtMs(step: Run['steps'][number]): number {
+  return step.startedAt && step.durationMs !== undefined
+    ? Date.parse(step.startedAt) + step.durationMs
+    : NaN;
+}
+
+// `updatedAt` moves on every write (tags, metrics, agent contexts), so it is not
+// progress. Neither is a running step's `startedAt`: a gateway restart or Resume
+// rewrites it, and the step's real start is the previous step's completion or the
+// decision that released it.
 function lastProgressMs(run: ProgressRun): number {
   const stamps = [
     run.createdAt,
     run.startedAt,
     run.ciWatchState?.lastProgressAt,
-    ...run.steps.flatMap((step) => [step.startedAt, step.completedAt]),
+    ...run.steps.flatMap((step) =>
+      step.status === 'running' ? [] : [step.startedAt, step.completedAt],
+    ),
     ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),
-  ];
-  return Math.max(
-    ...stamps.map((stamp) => (stamp ? Date.parse(stamp) : NaN)).filter(Number.isFinite),
-  );
+  ].map((stamp) => (stamp ? Date.parse(stamp) : NaN));
+  const held = run.steps.filter((step) => step.outputs?.awaitingOperator === true).map(heldAtMs);
+  return Math.max(...[...stamps, ...held].filter(Number.isFinite));
 }
 
 /** Whether an active run is moving, waiting on the operator, or stale. */
@@ -67,12 +80,16 @@ export function runProgressSummary(run: ProgressRun, nowMs = Date.now()): RunPro
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
     return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
   }
+  const step = run.steps.find((item) => item.status === 'running');
+  // A finished interactive worker, or a pause, waits on the operator without a decision.
+  if (step?.outputs?.awaitingOperator === true)
+    return summary('gate', step.detail ?? 'Waiting for operator action');
+  if (run.status === 'paused') return summary('gate', 'Paused');
   if (nowMs - lastMs >= RUN_STALE_AFTER_MS)
     return summary(
       'stale',
       `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')} and nothing pending`,
     );
-  const step = run.steps.find((item) => item.status === 'running');
   return step
     ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
     : summary('none', '');

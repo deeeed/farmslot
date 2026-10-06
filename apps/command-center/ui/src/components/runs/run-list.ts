@@ -869,7 +869,7 @@ export class RunList extends RunListState {
             ? html`<span
                 class="run-progress ${progress.kind}"
                 data-testid="runs-progress"
-                title=${`Last progress ${progress.lastProgressAt}`}
+                title=${`Last progress ${progress.lastProgressAt}${progress.text ? ` · ${progress.text}` : ''}`}
                 >last progress
                 ${progress.lastProgressAgo}${progress.text ? ` · ${progress.text}` : ''}</span
               >`
