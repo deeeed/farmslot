@@ -122,3 +122,20 @@ test('a retried click during the ancestry lookup reuses the first rebased re-rev
     { file: 'src/a.ts', line: 7, description: 'Fix this.' },
   ]);
 });
+
+test('a parent cancelled during the ancestry lookup gets no warm re-review', async () => {
+  for (const id of [...runs.keys()]) if (id !== prior.id) runs.delete(id);
+  runs.set(prior.id, { ...prior, status: 'blocked' } as Run);
+  ancestryCalls = 0;
+  const click = runRereviewLatestHead({ runId: prior.id });
+  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  runs.set(prior.id, { ...runs.get(prior.id)!, status: 'cancelled' } as Run);
+  releaseAncestry();
+  await assert.rejects(click, /is cancelled/);
+  assert.equal(
+    [...runs.values()].filter((run) => run.parentRunId === prior.id).length,
+    0,
+    'a cancelled review starts no child',
+  );
+  assert.equal(runs.get(prior.id)!.status, 'cancelled');
+});

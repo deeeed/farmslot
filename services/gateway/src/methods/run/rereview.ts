@@ -94,6 +94,11 @@ export async function runRereviewLatestHead(
         )
       : undefined;
 
+  // The parent may have been cancelled or superseded while GitHub answered.
+  const parent = getRun(run.id);
+  if (!parent) throw new Error(`Run not found: ${params.runId}`);
+  assertRereviewable(parent);
+
   // A second click while the first chained round is still going returns it.
   // No await follows this check before the new child carries the head it matches.
   const existing = getAllRuns().find(
@@ -108,7 +113,7 @@ export async function runRereviewLatestHead(
   if (!slot || !runner || !model || !context) {
     // The blocked review still owns the PR for queue admission; retire it or
     // the replacement waits on the run it replaces.
-    supersedeBlockedReview(run, 'via review intake');
+    supersedeBlockedReview(parent, 'via review intake');
     const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
     return { mode: 'review-intake', ...intake };
   }
@@ -129,7 +134,7 @@ export async function runRereviewLatestHead(
     // Keep the parent's completion policy: the operator was trying to post
     // this review, so the child must offer the same posting gate.
     completionPolicy: run.completionPolicy,
-    reviewScope: 'incremental',
+    reviewScope: context.reviewScope,
     prNumber: target.number,
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
@@ -140,7 +145,7 @@ export async function runRereviewLatestHead(
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });
-  supersedeBlockedReview(run, child.id);
+  supersedeBlockedReview(parent, child.id);
   console.log(
     `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${slot.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
   );
