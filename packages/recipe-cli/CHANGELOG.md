@@ -4,7 +4,6 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- **BREAKING:** a run plans with a runner that has no trusted mutation. `createRunner` no longer receives the mutation `trustedMutation.load` returned for the runner that computes the plan; only the mutation `authorize` returns reaches a runner. A host whose runner reads `options.trustedMutation` during construction or preflight now sees `undefined` there; move that check to `authorize`, which receives the loaded mutation and the plan.
 - Add `createHarnessCli({ host, adapters, libraries, commands, help, beforeDispatch, catalog, adopt, configuredLibraries, replacedOptions })` to `@farmslot/recipe-cli/harness`, the generic front door a product harness presets. `main(argv)` returns `{ exitCode, exit }` and `run()` exits with it.
   - It provides the grouped help (the host's intro, groups and footer, the `<PREFIX>_BIN` dev override line and the prepared-slot line), per-command `--help`, `-v/--version`, which prints the host's package version as one line (a host `package.json` without a version is a startup error), and `--version --verbose`, which adds `@farmslot/recipe-cli <version>` (one line when the host is recipe-cli itself).
   - Each public command carries its `contract`, so the command list and the grammar can't drift apart. Hidden commands keep their private grammar.
@@ -14,6 +13,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - Option builders: `booleanOption`, `valueOption`, `optionalValueOption`, `contractOptions`. `OptionSpec.choices` can be a function of the tokens after the command, read at validation time (for example `(tokens) => adapterChoices(optionValues(tokens, '--library'))`). `optionValues(tokens, option)` returns every value an option takes before `--`.
   - Command hooks: `bypass` (a sub-grammar another tool checks), `refine` (command rules, given `ContractFailures`) and `missingPositionalAction`.
   - `publicCommandTokens(commands)` lists every name and alias.
+
+## 0.6.0 - 2026-10-06
+
+- **BREAKING:** a run plans with a runner that has no trusted mutation. `createRunner` no longer receives the mutation `trustedMutation.load` returned for the runner that computes the plan; only the mutation `authorize` returns reaches a runner. A host whose runner reads `options.trustedMutation` during construction or preflight now sees `undefined` there; move that check to `authorize`, which receives the loaded mutation and the plan.
 - `RecipeEngine.trustedMutation` hooks receive the adapter the command resolved (`--adapter`, a `--platform` target, or the detected one): `load` gets an `adapter` field, and `authorize` a third argument `{ adapter }`. Both input types are exported from `@farmslot/recipe-cli/harness` as `TrustedMutationLoadInput` and `TrustedMutationAuthorizeContext`, so a host can gate a mutation on the platform without resolving the adapter again.
   - `authorize`'s third argument is required in the type: a host that calls `engine.trustedMutation.authorize(base, plan)` itself must pass `{ adapter }`. An implementation that declares two parameters still type-checks.
   - `authorize` may return `undefined`: nothing to bind for this plan. The run then keeps the runner it planned with and executes with no trusted mutation, instead of building a second runner.
@@ -28,6 +31,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Export `resolveTsxBin(tsxCandidates, projectRoot)` from `@farmslot/recipe-cli/harness`, the tsx lookup live adapter scripts run under (`TSX_BIN`, the checkout's tsx, the host package's tsx, the caller's candidates), so a host's readiness check can ask the same question.
 - **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
+- Publish with adapter-sdk 0.5.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.25.0.
 
 ## 0.5.0 - 2026-10-05
 
