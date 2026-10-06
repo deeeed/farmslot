@@ -210,6 +210,8 @@ export {
   type RecipeEngineRunOptions,
   type RecipeRunnerOptions,
   runRecipe,
+  type TrustedMutationAuthorizeContext,
+  type TrustedMutationLoadInput,
 } from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
 export {
