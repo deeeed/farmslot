@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Agent runtime and task directory contract: `artifacts/acceptance-status.json` is written by `farmslot-agent ac` and by a recipe run with a task dir, through one module.
 - Web adapter reference: document `dapp` (record or answer a dapp's wallet requests, assert the request log, product signing policy as input) and `origin`.
 - Add the Node adapter reference (`@farmslot/adapter-node`: `createNodeAdapter`, `nodeDependencyBlock` with a host `resolveBin`, `workspaceTsconfigEnv` mapping each package to its `src`, `checkoutWorkspacePackages`, `scripts/cleanup.sh`).
 - The Expo guide becomes the React Native adapter guide at `/docs/guides/adapter-rn` (`@farmslot/adapter-rn`, renamed from `@farmslot/expo-recipe`).

@@ -6,9 +6,11 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 // Acceptance-criteria ledger (ADR-060; contract in docs/reference/agent-runtime.md
 // and docs/reference/task-directory-contract.md).
 //
-// `farmslot-agent ac` is the only writer of artifacts/acceptance-status.json, the
-// way `mark` is the only writer of SIGNAL.json. The ids come from task init, which
-// records the criteria in inputs/handoff.json; this module never invents one.
+// This module is the only writer of artifacts/acceptance-status.json, the way
+// `mark` is the only writer of SIGNAL.json. Two commands call it: `farmslot-agent ac`
+// and a recipe run with a task dir, which records its proof targets
+// (@farmslot/recipe-cli). The ids come from task init, which records the criteria in
+// inputs/handoff.json; this module never invents one.
 //
 // The constants and the validate/summarize/render helpers are a behavioral mirror
 // of @farmslot/protocol/contracts/acceptance (see test/acceptance-ledger-sync.test.mjs).
