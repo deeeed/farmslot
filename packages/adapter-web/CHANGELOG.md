@@ -9,6 +9,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## 0.3.1 - 2026-10-06
 
 - Browser probes no longer leave Chrome for Testing running when the resolver is stopped mid-probe (a hook timeout, a signal, or the resolver killed outright): the probe browser and its temporary profile are removed.
+  - A resolver killed outright cannot clean up; the next probe by the same user stops its browser and removes its profile. `browser-resolver` exports that step as `reapOrphanedProbes(tmp?)`.
 
 ## 0.3.0 - 2026-10-05
 
