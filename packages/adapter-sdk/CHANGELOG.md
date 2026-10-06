@@ -4,6 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Add the optional members a library plugin needs: `PlatformAdapter.extends` (the adapter it composes on), `PlatformAdapter.doctor(target)` returning `AdapterDoctorCheck[]` (checks `doctor` reports after the shared ones), `actions.manifestPaths()` (every action manifest the platform declares, parent first) and `actions.adapters()` (action implementations shipped in code).
 - **BREAKING:** `observation.performance.start` no longer receives `ports`. The run's ports are in `env`, which now carries the slot's ports, `--cdp-port`/`--watcher-port` and the platform's run environment. `run.runtimeCheck` also runs on the run's ports and environment.
 
 ## 0.4.0 - 2026-10-05
