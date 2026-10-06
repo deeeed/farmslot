@@ -41,6 +41,7 @@ jobs:
       recipe_cli: ${{ steps.filter.outputs.recipe_cli }}
       adapter_sdk: ${{ steps.filter.outputs.adapter_sdk }}
       adapter_node: ${{ steps.filter.outputs.adapter_node }}
+      adapter_web: ${{ steps.filter.outputs.adapter_web }}
       skills: ${{ steps.filter.outputs.skills }}
       theme: ${{ steps.filter.outputs.theme }}
       gateway: ${{ steps.filter.outputs.gateway }}
@@ -182,6 +183,12 @@ jobs:
               - 'packages/adapter-node/**'
               - 'packages/adapter-sdk/**'
               - 'packages/recipe-runner/**'
+            adapter_web:
+              - '.github/workflows/farmslot-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - '.yarnrc.yml'
+              - 'packages/adapter-web/**'
             skills:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -676,6 +683,29 @@ jobs:
         run: yarn install --immutable
       - name: Node adapter quality
         run: yarn workspace @farmslot/adapter-node quality
+
+  adapter-web:
+    name: Web adapter package quality
+    needs: changes
+    if: needs.changes.outputs.adapter_web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Web adapter quality
+        run: yarn workspace @farmslot/adapter-web quality
 
   skills:
     name: Skills package quality

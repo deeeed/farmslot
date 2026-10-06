@@ -38,6 +38,11 @@ test('a gateway change selects exactly the targets that depend on it', () => {
   assert.deepEqual(matched, ['repo', 'command_center', 'docs', 'gateway']);
 });
 
+test('a web adapter change selects its own quality target', () => {
+  const { matched } = selectTargets(['packages/adapter-web/src/index.cjs'], { full: true });
+  assert.deepEqual(matched, ['repo', 'adapter_web']);
+});
+
 test('an unaffected file selects only the repo-wide target', () => {
   const { matched } = selectTargets(['docs/ROADMAP.md'], { full: true });
   assert.deepEqual(matched, ['repo']);
