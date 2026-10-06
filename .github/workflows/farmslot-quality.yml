@@ -188,6 +188,7 @@ jobs:
               - 'package.json'
               - 'yarn.lock'
               - '.yarnrc.yml'
+              - 'apps/command-center/tsconfig.base.json'
               - 'packages/adapter-web/**'
             skills:
               - '.github/workflows/farmslot-quality.yml'

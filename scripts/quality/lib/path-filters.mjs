@@ -119,6 +119,8 @@ export const PATH_FILTERS = {
     'package.json',
     'yarn.lock',
     '.yarnrc.yml',
+    // adapter-web's tsconfig extends it.
+    'apps/command-center/tsconfig.base.json',
     'packages/adapter-web/**',
   ],
   skills: [
