@@ -81,8 +81,10 @@ export function validateActionInputs(
 // A pipe into tail/head makes the shell report tail's exit code, so a failing
 // command passes; the runner already captures full stdout and stderr.
 const PIPE_TO_TAIL_OR_HEAD_RE = /(?:^|[^|])\|(?!\|)\s*(?:tail|head)\b/u;
+// A test runner as its own word (not jest.config.ts), or a `test` script such as
+// `test:verbose` (not `testing`).
 const TEST_RUNNER_RE =
-  /\b(?:jest|vitest|mocha)\b|\b(?:yarn|npm|pnpm)\b[^|;&]*\stest[\w:.-]*(?=\s|$)/u;
+  /(?:^|[\s;&|(/])(?:jest|vitest|mocha)(?=\s|$)|\b(?:yarn|npm|pnpm)\b[^|;&]*\stest(?:[:.-][\w:.-]*)?(?=\s|$)/u;
 
 /** Warnings for `command` nodes whose exit code cannot prove what the recipe relies on it for. */
 export function validateCommandNodes(recipe: unknown): RecipeValidationFinding[] {

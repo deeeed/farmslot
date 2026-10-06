@@ -746,11 +746,15 @@ describe('recipe validation', () => {
         asserted: { action: 'command', cmd: 'npx jest src/a.test.ts' },
         count: { action: 'assert_output', source: 'asserted', match: '1 passed' },
         notTests: { action: 'command', cmd: 'yarn workspace @metamask/test-utils build' },
+        config: { action: 'command', cmd: 'cat jest.config.ts vitest.config.ts' },
+        testing: { action: 'command', cmd: 'yarn run testing' },
+        binPath: { action: 'command', cmd: 'cd pkg && node_modules/.bin/jest' },
       }),
       [
         ['recipe.command_pipe_masks_exit', 'workflow.nodes.piped.cmd'],
         ['recipe.command_pipe_masks_exit', 'workflow.nodes.headed.command'],
         ['recipe.test_command_exit_code_only', 'workflow.nodes.tests'],
+        ['recipe.test_command_exit_code_only', 'workflow.nodes.binPath'],
       ],
     );
     const target = checkout();
