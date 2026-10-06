@@ -4,7 +4,12 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.5.0 - 2026-10-06
+
 - **BREAKING:** `observation.performance.start` no longer receives `ports`. The run's ports are in `env`, which now carries the slot's ports, `--cdp-port`/`--watcher-port` and the platform's run environment. `run.runtimeCheck` also runs on the run's ports and environment.
+- Publish with protocol 0.34.0 and recipe-runner 0.24.0.
 
 ## 0.4.0 - 2026-10-05
 

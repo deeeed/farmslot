@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-10-06
+
 - **BREAKING:** a run plans with a runner that has no trusted mutation. `createRunner` no longer receives the mutation `trustedMutation.load` returned for the runner that computes the plan; only the mutation `authorize` returns reaches a runner. A host whose runner reads `options.trustedMutation` during construction or preflight now sees `undefined` there; move that check to `authorize`, which receives the loaded mutation and the plan.
 - `RecipeEngine.trustedMutation` hooks receive the adapter the command resolved (`--adapter`, a `--platform` target, or the detected one): `load` gets an `adapter` field, and `authorize` a third argument `{ adapter }`. Both input types are exported from `@farmslot/recipe-cli/harness` as `TrustedMutationLoadInput` and `TrustedMutationAuthorizeContext`, so a host can gate a mutation on the platform without resolving the adapter again.
   - `authorize`'s third argument is required in the type: a host that calls `engine.trustedMutation.authorize(base, plan)` itself must pass `{ adapter }`. An implementation that declares two parameters still type-checks.
@@ -13,6 +17,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Export `resolveTsxBin(tsxCandidates, projectRoot)` from `@farmslot/recipe-cli/harness`, the tsx lookup live adapter scripts run under (`TSX_BIN`, the checkout's tsx, the host package's tsx, the caller's candidates), so a host's readiness check can ask the same question.
 - **BREAKING:** `runRecipe` and `preflightRecipe` no longer activate the run environment themselves; call them inside an `activateRecipeRuntimeEnvironment` scope.
 - `run` and `call` open one `activateRecipeRuntimeEnvironment` scope around preflight, the platform's `runtimeCheck`, the observers and the execution. All of them see the same ports (the slot's, then `--cdp-port`/`--watcher-port`) and the platform's run environment, and the scope restores the environment on every exit. Network and performance observers keep a copy of that environment taken as they start.
+- Publish with adapter-sdk 0.5.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.24.0.
 
 ## 0.5.0 - 2026-10-05
 
