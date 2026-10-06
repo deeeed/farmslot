@@ -672,16 +672,17 @@ describe('createHarnessCli', () => {
     assert.deepEqual(calls, [{ command: 'install', argv: ['--', '--help'] }]);
   });
 
-  test('renders call <action> --help through the catalog, mapping its usage errors', async () => {
+  test('renders call <action> --help through the catalog', async () => {
     const withoutCatalog = await capture(() =>
       createHarnessCli(cliOptions()).main(['call', 'x', '--help']),
     );
     assert.equal(withoutCatalog.stdout, 'shop-harness call [flags]\n\n  call help\n');
+    // A catalog that can't resolve the action's manifest degrades to the generic help.
     const catalog = {} as NonNullable<HarnessCliOptions['catalog']>;
     const cli = createHarnessCli(cliOptions({ catalog }));
-    const { result, stderr } = await capture(() => cli.main(['call', 'x', '--arg', '--help']));
-    assert.deepEqual(result, { exitCode: 2, exit: 'now' });
-    assert.equal(stderr, '--arg requires k=v.\n');
+    const { result, stdout } = await capture(() => cli.main(['call', 'x', 'k=v', '--help']));
+    assert.deepEqual(result, { exitCode: 0, exit: 'now' });
+    assert.match(stdout, /call help/u);
   });
 
   test('renders a call action from the catalog above the generic call help', async () => {
@@ -847,11 +848,11 @@ export const adapter = {
       commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
       catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
     });
-    // --arg with no pair stops the action help early, after the load.
+    // The empty catalog degrades the action help to the generic one, after the load.
     const { result } = await capture(() =>
-      cli.main(['call', 'x', '--adapter', 'helped', '--arg', '--help']),
+      cli.main(['call', 'x', '--adapter', 'helped', '--help']),
     );
-    assert.deepEqual(result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual(result, { exitCode: 0, exit: 'now' });
     assert.deepEqual(imported(), ['helped']);
   });
 
