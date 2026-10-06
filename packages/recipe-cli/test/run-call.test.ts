@@ -2032,6 +2032,10 @@ describe('call', () => {
       ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
       done: { action: 'end', status: 'pass' },
     });
+    const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
+      echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
     const cases = {
       'call --adapter web': [
         'web',
@@ -2057,6 +2061,10 @@ describe('call', () => {
       'run --platform storefront': [
         'web',
         () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
+      ],
+      'run --adapter api': [
+        'api',
+        () => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
       ],
     } as const;
     for (const [name, [adapter, invoke]] of Object.entries(cases)) {
