@@ -331,13 +331,19 @@ export const runListStyles = css`
     gap: 4px 6px;
     min-width: 0;
   }
-  .run-row-affordances .step-detail {
+  .run-row-affordances .run-progress {
     color: ${unsafeCSS(colors.textSecondary)};
     font-size: 10px;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .run-row-affordances .run-progress.gate {
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .run-row-affordances .run-progress.stale {
+    color: ${unsafeCSS(colors.statusWarn)};
   }
   .run-row-affordances .inline-action {
     background: transparent;
@@ -526,10 +532,6 @@ export const runListStyles = css`
   }
   .evidence-signal.video:hover {
     background: ${unsafeCSS(colors.accent)}22;
-  }
-  .step-detail {
-    font-size: 10px;
-    color: ${unsafeCSS(colors.textMuted)};
   }
   .info {
     display: flex;

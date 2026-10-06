@@ -2,12 +2,13 @@
 // evidence that proves it.
 //
 // Task init assigns the ids (`AC-<N>`, N the 1-based position of the criterion in
-// `inputs/handoff.json` `task.acceptanceCriteria`) and `farmslot-agent ac` is the
-// only writer of `artifacts/acceptance-status.json`. The markdown coverage table
-// workers hand-write today is a rendering of this file, so the terminal contract
-// check, the PR body, and the run-detail panel all read one structured source.
+// `inputs/handoff.json` `task.acceptanceCriteria`). One module writes
+// `artifacts/acceptance-status.json` (agent-runtime's acceptance-ledger.cjs), for
+// `farmslot-agent ac` and for recipe runs with a task dir. The markdown coverage
+// table workers hand-write today is a rendering of this file, so the terminal
+// contract check, the PR body, and the run-detail panel all read one source.
 
-/** Task-dir relative path of the ledger. Written only by `farmslot-agent ac`. */
+/** Task-dir relative path of the ledger. Written by `farmslot-agent ac` and recipe runs. */
 export const ACCEPTANCE_STATUS_ARTIFACT = 'artifacts/acceptance-status.json';
 
 export const ACCEPTANCE_VERDICTS = ['proven', 'weak', 'missing', 'untestable'] as const;

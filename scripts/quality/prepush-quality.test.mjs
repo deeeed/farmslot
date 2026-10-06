@@ -38,6 +38,17 @@ test('a gateway change selects exactly the targets that depend on it', () => {
   assert.deepEqual(matched, ['repo', 'command_center', 'docs', 'gateway']);
 });
 
+test('a web adapter change selects its own quality target', () => {
+  const { matched } = selectTargets(['packages/adapter-web/src/index.cjs'], { full: true });
+  assert.deepEqual(matched, ['repo', 'adapter_web']);
+  // Its tsconfig extends the Command Center base config.
+  assert.ok(
+    selectTargets(['apps/command-center/tsconfig.base.json'], { full: true }).matched.includes(
+      'adapter_web',
+    ),
+  );
+});
+
 test('an unaffected file selects only the repo-wide target', () => {
   const { matched } = selectTargets(['docs/ROADMAP.md'], { full: true });
   assert.deepEqual(matched, ['repo']);
@@ -61,6 +72,7 @@ test('selection is deterministic and order-independent for the same change set',
     'recipe_runner',
     'recipe_cli',
     'adapter_sdk',
+    'adapter_node',
     'gateway',
     'node',
   ]);

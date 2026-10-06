@@ -1,4 +1,5 @@
 import type { WorkerTemplateOption } from '../contracts/config.js';
+import type { ExecutionTemplateDefault } from '../contracts/execution-templates.js';
 import type { FlowType } from '../contracts/runs.js';
 
 export type DispatchRunMode = 'interactive' | 'autonomous';
@@ -52,6 +53,26 @@ export function selectedTemplateMode(
   }
   if (selected?.isDefault && interactiveWorkerTemplateOption(options)) return 'autonomous';
   return modeForFlow(flowType);
+}
+
+/**
+ * Omitted-mode default for a project with an execution-template catalog. The
+ * catalog's `defaults` play the part the worker template files play for
+ * template-folder projects: a flow with an interactive rule and a general rule
+ * (no `runMode`, or `autonomous`) defaults to autonomous, as a default `dev.md`
+ * with an interactive sibling does. A flow with no catalog rule returns `null`.
+ */
+export function catalogDefaultRunMode(
+  flowType: FlowType,
+  defaults: ReadonlyArray<ExecutionTemplateDefault>,
+): DispatchRunMode | null {
+  const rules = defaults.filter((rule) => rule.when.flow === flowType);
+  if (rules.length === 0) return null;
+  const hasInteractive = rules.some((rule) => rule.when.runMode === 'interactive');
+  const hasGeneral = rules.some(
+    (rule) => rule.when.runMode === undefined || rule.when.runMode === 'autonomous',
+  );
+  return hasInteractive && hasGeneral ? 'autonomous' : modeForFlow(flowType);
 }
 
 export function resolveRunCreateMode(input: {

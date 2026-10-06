@@ -19,7 +19,7 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 | `bridge-runtime/bridge-core.cjs`                                             | Generic bridge CLI (`runBridgeCli`); a host preset adds its commands, routes and recovery hints. |
 | `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.                   |
 | `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing.      |
-| `src/video-recorder.ts`, `src/frame-metrics.ts`                              | Device video recorders and frame-timing summaries.                                               |
+| `src/video-recorder.ts`                                                      | Device video recorders.                                                                          |
 | `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.              |
 
 ## Relationship to the harness

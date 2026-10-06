@@ -229,6 +229,7 @@ surface and capture ids; `feedbackDraftFromDocument` is the same restore for cod
 - `/runtime/cdp`, `/runtime/react-native-bridge`, `/runtime/browser-extension`
 - `/runtime/deps-readiness`, `/runtime/log-analysis`, `/runtime/metro-probe`
 - `/runtime/decision-types`, `/runtime/orchestrate-up`
+- `/runtime/cdp-trace` (CDP performance traces, frame and JavaScript-task summaries)
 - `/cli`, `/cli/support`
 - `/visual-review`
 

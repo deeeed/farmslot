@@ -137,6 +137,45 @@ test('buildDraftPrTitle strips the Core platform prefix', () => {
   assert.equal(buildDraftPrTitle(run), 'fix(perps): order 0: insufficient margin to place order');
 });
 
+test('buildDraftPrTitle strips the Terminal platform prefix', () => {
+  const run = makeRun({
+    flowType: 'dev',
+    ticketData: {
+      source: 'jira',
+      title: '[Terminal] Convert markets table into a search-and-select drawer',
+      description: '',
+      acceptanceCriteria: [],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+
+  assert.equal(
+    buildDraftPrTitle(run),
+    'feat: convert markets table into a search-and-select drawer',
+  );
+});
+
+test('buildDraftPrTitle keeps a ticket key title upper-case', () => {
+  const run = makeRun({
+    flowType: 'dev',
+    ticketData: {
+      source: 'manual',
+      title: 'TAT-4037',
+      description: '',
+      acceptanceCriteria: [],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+
+  assert.equal(buildDraftPrTitle(run), 'feat: TAT-4037');
+});
+
 test('buildDraftPrBody strips execution provenance before the public summary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-report-preamble-'));
   try {

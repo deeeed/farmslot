@@ -2,6 +2,23 @@
 // presets such as `mm-harness`): host identity, runtime paths, the resumability
 // journal, the checkout lock, JSON streaming and colour output.
 export {
+  adapterChoices,
+  type AdapterLibraryOptions,
+  type AdapterLoadOptions,
+  adapterPlugin,
+  adapterPluginChecks,
+  AdapterPluginError,
+  type AdapterPluginErrorCode,
+  adapterSelectionFailureOut,
+  composeAdapter,
+  type DeclaredAdapter,
+  declaredAdapterIds,
+  ensureAdapterLoaded,
+  type LoadedAdapterPlugin,
+  loadedAdapterPlugins,
+  selectedAdapterId,
+} from './adapter-plugins.js';
+export {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
@@ -44,6 +61,23 @@ export {
   stripAnsi,
 } from './cli-color.js';
 export {
+  booleanOption,
+  type CliUsageError,
+  type CliUsageErrorCode,
+  type CommandContract,
+  type ContractedCommand,
+  type ContractFailures,
+  contractOptions,
+  type ContractValidationOptions,
+  optionalValueOption,
+  type OptionSpec,
+  optionValues,
+  type PositionalSpec,
+  publicCommandTokens,
+  validatePublicInvocation,
+  valueOption,
+} from './command-contract.js';
+export {
   COMMAND_JOURNAL_FILE,
   commandJournalPath,
   type CommandJournalRecord,
@@ -81,6 +115,18 @@ export {
   writeExecutionProvenance,
 } from './execution-provenance.js';
 export {
+  createHarnessCli,
+  type HarnessCli,
+  type HarnessCliOptions,
+  type HarnessCliResult,
+  type HarnessCommand,
+  type HarnessHelp,
+  type HarnessHelpGroup,
+  type HelpPaint,
+  type HiddenHarnessCommand,
+  type PublicHarnessCommand,
+} from './harness-cli.js';
+export {
   checkHealBounds,
   classifyFailure,
   conciseFailureForHuman,
@@ -113,6 +159,7 @@ export {
   type PreparedLiveAdapter,
   prepareLiveAdapterScript,
   resolveLiveAdapter,
+  resolveTsxBin,
   runLiveAdapterScript,
 } from './live-adapter-contract.js';
 export { runNetworkCaptureAction } from './network-observation.js';
@@ -172,6 +219,7 @@ export {
   resolveRecipeParamValue,
   type RunRecipeStaticValidation,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from './recipe-validation.js';
 export {
@@ -208,6 +256,8 @@ export {
   type RecipeEngineRunOptions,
   type RecipeRunnerOptions,
   runRecipe,
+  type TrustedMutationAuthorizeContext,
+  type TrustedMutationLoadInput,
 } from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
 export {

@@ -51,7 +51,8 @@ function candidateFamilies(action: string, namespace: string) {
   return [...new Set(families)];
 }
 
-function candidatePaths(
+/** The live script files tried for `action`, in order; the first that exists runs. */
+export function candidatePaths(
   platform: string,
   action: string,
   namespace: string,
@@ -75,16 +76,44 @@ function candidatePaths(
       ).filter((entry): entry is string => Boolean(entry)),
     ),
   ];
+  // A child's every file (each stem, then its dispatcher) comes before its
+  // ancestor's. The adapter at the top of the chain keeps the order a built-in
+  // has always had: each stem, then the shared one, then the dispatchers.
+  const chain = platformChain(platform);
+  const descendants = chain.slice(0, -1);
+  const base = chain.at(-1)!;
   const files: string[] = [];
   for (const root of roots) {
     for (const family of families) {
-      for (const candidateStem of stems) {
-        pushCandidateFiles(files, root, platform, family, candidateStem);
+      for (const descendant of descendants) {
+        for (const candidateStem of stems) {
+          files.push(path.join(root, descendant, family, `${candidateStem}.mjs`));
+        }
+        files.push(path.join(root, descendant, family, `${family}.mjs`));
       }
-      pushDomainDispatcherFiles(files, root, platform, family);
+      for (const candidateStem of stems) {
+        pushCandidateFiles(files, root, base, family, candidateStem);
+      }
+      pushDomainDispatcherFiles(files, root, base, family);
     }
   }
   return files;
+}
+
+/**
+ * `platform`, then each adapter up its `extends` chain (a library plugin's
+ * composed adapter carries its parent's id), so a child adapter runs its
+ * parent's live scripts unless it has its own. A built-in extends nothing.
+ */
+function platformChain(platform: string): string[] {
+  const registry = harnessAdapters();
+  const chain = [platform];
+  let current = registry.has(platform) ? registry.get(platform).extends : undefined;
+  while (current !== undefined && !chain.includes(current)) {
+    chain.push(current);
+    current = registry.has(current) ? registry.get(current).extends : undefined;
+  }
+  return chain;
 }
 
 function declaredActionRoot(raw: string | undefined, action: string): string | undefined {
@@ -338,10 +367,16 @@ function commandFor(
   return { command: tsxBin, args: [file] };
 }
 
-// Prefer the TARGET checkout's own tsx (delegate-don't-duplicate): a thin-installed
-// slot has tsx in its node_modules, and a published host need not ship tsx.
-// Order: TSX_BIN seam → target tsx → host package tsx (dev) → the caller's candidates.
-function resolveTsxBin(tsxCandidates: readonly string[], projectRoot?: string): string | null {
+/**
+ * The tsx a live adapter script runs under, or null. Exported so a readiness
+ * check asks the same question execution does. Order: the `TSX_BIN` seam, the
+ * target checkout's own tsx (a thin-installed slot has it; a published host
+ * need not ship one), the host package's tsx, then the caller's candidates.
+ */
+export function resolveTsxBin(
+  tsxCandidates: readonly string[],
+  projectRoot?: string,
+): string | null {
   if (process.env.TSX_BIN) return process.env.TSX_BIN;
   const candidates: string[] = [];
   if (projectRoot) candidates.push(path.join(projectRoot, 'node_modules/.bin/tsx'));

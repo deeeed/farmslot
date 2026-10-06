@@ -3,10 +3,11 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR, type ReviewValidationDepth } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, DEFAULT_TASK_DIR, type ReviewValidationDepth } from '@farmslot/protocol';
 
 import {
   getOrchestratorTaskRoot,
+  getProjectField,
   loadProjectVars,
   loadSlotVars,
   resolveProjectRuntimeDir,
@@ -159,6 +160,8 @@ export async function expandSelfReviewTemplate(
     SESSION: vars.session,
     MOBILE_REPO: mobileRepo,
     VALIDATION_DEPTH: validationDepth,
+    // Same value worker TASK.md templates get.
+    DEFAULT_BRANCH: (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH,
     FARMSLOT_DIR: farmslotDir,
     farmslot_dir: farmslotDir,
   };
