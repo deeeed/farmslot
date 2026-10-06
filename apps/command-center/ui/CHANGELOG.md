@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Runs that can still move show, in the Runs list, when they last made progress (a status change, a step, a decision, the run start, CI-watch progress or structured runner activity) and one line on what they are doing: the pending decision with its primary action, a finished worker, a pause or an uncertain delivery waiting on the operator, the running step, or "Stale" after an hour with no progress and nothing pending.
 
 ## 0.20.1 - 2026-10-05
 
