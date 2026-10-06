@@ -113,6 +113,7 @@ export {
   type PreparedLiveAdapter,
   prepareLiveAdapterScript,
   resolveLiveAdapter,
+  resolveTsxBin,
   runLiveAdapterScript,
 } from './live-adapter-contract.js';
 export { runNetworkCaptureAction } from './network-observation.js';

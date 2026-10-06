@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.3.0 - 2026-10-05
+
+- Add `dapp`, the web3 layer for a dapp under test, moved from `@deeeed/metamask-harness`'s Web Terminal adapter: the strict EIP-1193 test wallet (`createStrictWallet`), the page script that wraps the app's provider and logs its wallet requests or injects a provider the host answers (`pageScriptSource`, `pageReadyExpression`), the host's side of its bindings (`createWalletRequestBinding`: frame and document attribution, `outside-app-frame` and `unattributed` records, refusals) and the wallet request log (`windowSinceCursor`, `resetWindow`, `evaluateSignatureLog`, `awaitSignatureLog`, `writeLogArtifact`). Product policy is passed in: the typed data to refuse (`refuseTypedData`), the injected wallet's EIP-6963 identity and the log entries and typed-data classes a product forbids. Page bindings are `__farmslotWallet{Log,Request,Resolve}` and the page marker `__farmslotDapp`.
+- Add `origin` (`isAppUrl`, `originOf`, `isAppTopFrameContext`, `shortUrl`): exact app-origin checks, moved from the same adapter.
+
 ## 0.2.0 - 2026-10-05
 
 - Add `launch-browser` (`launchBrowser`: launch or release one isolated, detached, owned Chromium with an unpacked extension; `homeTabsToClose`) and `slot-title` (stamp the farm slot id into the extension home tab's title), moved from `@deeeed/metamask-harness`. Product knowledge is now passed in: the home page, its default title, the owner-root rule, a lock held for the launch, and the rerun command named in hints. `slot-title`'s `applyPersistentSlotTitle` takes `{ slotId, defaultTitle }`, `buildStampExpression(slotId, defaultTitle)` and `stampHomeTabsViaCdp({ homePage, defaultTitle, ... })` match it, and CDP stamping uses the global `WebSocket` (else `ws`), loaded only when it stamps.

@@ -6,7 +6,7 @@ The host supplies the adapter id, detection, hints and wording, its action set a
 leaves; product checks stay in the host.
 
 ```ts
-import { createNodeAdapter } from '@farmslot/adapter-node';
+import { checkoutWorkspacePackages, createNodeAdapter } from '@farmslot/adapter-node';
 
 export const core = createNodeAdapter({
   id: 'core',
@@ -18,7 +18,7 @@ export const core = createNodeAdapter({
   },
   wording: { ready: 'Core is headless; dependencies are installed.' },
   dependencies: { runtimeDeps: ['immer'], requiredFor: (_target, use) => usesController(use) },
-  workspacePackages: { '@acme/messenger': 'packages/messenger' },
+  workspacePackages: checkoutWorkspacePackages, // or a fixed map: { '@acme/messenger': 'packages/messenger' }
   actions,
   harness,
 });
@@ -34,12 +34,12 @@ Docs: https://farmslot.io/docs/reference/adapter-node
 
 ## Source layout
 
-| path                        | owns                                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/node-adapter.ts`       | `createNodeAdapter`, its config and wording types, `HEADLESS_FORBIDDEN_FIELDS`           |
-| `src/dependencies.ts`       | `nodeDependencyBlock` (Yarn PnP, node_modules, bins, runtime deps), `pnpNodeOptions`     |
-| `src/workspace-tsconfig.ts` | `workspaceTsconfig`/`workspaceTsconfigEnv`: tsx paths to unbuilt workspace package `src` |
-| `scripts/cleanup.sh`        | `cleanup.sh --adapter <id> [--target <dir>]`: removes the adapter's overlay directory    |
+| path                        | owns                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `src/node-adapter.ts`       | `createNodeAdapter`, its config and wording types, `HEADLESS_FORBIDDEN_FIELDS`                                       |
+| `src/dependencies.ts`       | `nodeDependencyBlock` (Yarn PnP, node_modules, bins via `resolveBin`, runtime deps), `pnpNodeOptions`                |
+| `src/workspace-tsconfig.ts` | `checkoutWorkspacePackages`, `workspaceTsconfig`/`workspaceTsconfigEnv`: tsx paths to each workspace package's `src` |
+| `scripts/cleanup.sh`        | `cleanup.sh --adapter <id> [--target <dir>]`: removes the adapter's overlay directory                                |
 
 `scripts/cleanup.sh` is exported by path (`@farmslot/adapter-node/scripts/cleanup.sh`, also
 `NODE_CLEANUP_SCRIPT`). It honours `RECIPE_HARNESS_ROOT` (default `temp/recipe/harness`) and
