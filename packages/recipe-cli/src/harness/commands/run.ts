@@ -659,7 +659,7 @@ function recordRunAcceptance(
     for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
     if (recorded.length > 0 && recorded.every((entry) => entry.evidence.length === 0)) {
       console.error(
-        'acceptance ledger: verdicts recorded without evidence; the run artifacts are outside the task dir',
+        `acceptance ledger: verdicts recorded with no evidence inside the task dir (artifacts dir: ${path.dirname(result.tracePath)})`,
       );
     }
   } catch (error) {

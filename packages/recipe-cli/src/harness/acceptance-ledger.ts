@@ -142,12 +142,9 @@ function nodeArtifactPaths(
 // symlink can't carry evidence from outside the task dir in, nor a symlinked checkout
 // path drop evidence that is inside.
 function taskRelative(realTaskDir: string, file: string): string | null {
-  let real: string;
-  try {
-    real = fs.realpathSync(file);
-  } catch {
-    return null;
-  }
+  // A file the run didn't leave isn't evidence; any other error reaches the run's warning.
+  if (!fs.existsSync(file)) return null;
+  const real = fs.realpathSync(file);
   const relative = path.relative(realTaskDir, real);
   if (
     !relative ||

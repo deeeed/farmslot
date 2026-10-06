@@ -1431,6 +1431,73 @@ describe('run', () => {
     );
   });
 
+  test('a run with a task dir records its proof targets in the acceptance ledger', async () => {
+    const target = checkout();
+    const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'shop-1');
+    fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, 'inputs', 'handoff.json'),
+      JSON.stringify({
+        task: { acceptanceCriteria: ['The shop answers a ping.', 'Not proven here.'] },
+      }),
+    );
+    const recipe = path.join(target, 'proof.recipe.json');
+    fs.writeFileSync(
+      recipe,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Shop proof',
+        description: 'Prove the ping.',
+        proofTargets: [{ id: 'AC1', claim: 'The shop answers a ping.' }],
+        workflow: {
+          entry: 'ping',
+          nodes: {
+            ping: {
+              action: 'shop.ping',
+              mode: 'fast',
+              intent: 'Ping the shop.',
+              proves: ['AC1'],
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    process.env.RECIPE_TASK_DIR = path.relative(target, taskDir);
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--cdp-port',
+          '9444',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.equal(lastJson(run.stdout).status, 'pass');
+    const ledger = JSON.parse(
+      fs.readFileSync(path.join(taskDir, 'artifacts', 'acceptance-status.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      ledger.criteria.map((entry: Record<string, unknown>) => [
+        entry.id,
+        entry.verdict,
+        entry.recipeNodes,
+        entry.evidence,
+      ]),
+      [['AC-1', 'proven', ['ping'], ['artifacts/trace.json']]],
+    );
+  });
+
   test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
     const seen: string[] = [];
     const observerEnvs: NodeJS.ProcessEnv[] = [];
