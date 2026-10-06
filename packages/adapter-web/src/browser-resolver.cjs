@@ -534,7 +534,7 @@ async function withProbeLock(
 const activeProbes = new Map();
 const PROBE_PROFILE_PREFIX = 'farmslot-browser-probe-';
 const PROBE_PROFILE_OWNER = new RegExp(`^${PROBE_PROFILE_PREFIX}(\\d+)-`, 'u');
-const PROBE_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+const PROBE_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
 
 function profilePids(profile) {
   try {
