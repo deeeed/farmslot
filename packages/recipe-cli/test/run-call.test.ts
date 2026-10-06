@@ -1524,6 +1524,59 @@ describe('run', () => {
     assert.equal(bound[3], bound[1]);
   });
 
+  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const unbound = {
+      ...runOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: base.load,
+          authorize: async (
+            ...args: Parameters<typeof base.authorize>
+          ): Promise<{ bound: string } | undefined> => {
+            await base.authorize(...args);
+            return undefined;
+          },
+        },
+      },
+    };
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        unbound,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Two preflights (before and after the checkout lock), one runner each, none bound.
+    assert.deepEqual(calls.runners, [
+      { adapter: 'web', trustTaskActions: true },
+      { adapter: 'web', trustTaskActions: true },
+    ]);
+    assert.deepEqual(calls.mutationHooks, [
+      'load:web',
+      'authorize:web',
+      'load:web',
+      'authorize:web',
+    ]);
+  });
+
   test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
     const seen: Array<string | undefined> = [];
     const registry = createAdapterRegistry();
@@ -2184,56 +2237,6 @@ describe('call', () => {
     assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
   });
 
-  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
-    const target = checkout();
-    const base = engine.trustedMutation!;
-    const unbound = {
-      ...callOptions,
-      engine: {
-        ...engine,
-        trustedMutation: {
-          load: base.load,
-          authorize: async (
-            ...args: Parameters<typeof base.authorize>
-          ): Promise<{ bound: string } | undefined> => {
-            await base.authorize(...args);
-            return undefined;
-          },
-        },
-      },
-    };
-    const call = await capture(() =>
-      handleCall(
-        [
-          'shop.ping',
-          'mode=slow',
-          '--adapter',
-          'web',
-          '--target',
-          target,
-          '--heal',
-          'off',
-          '--funding-token',
-          'grant',
-          '--json',
-        ],
-        unbound,
-      ),
-    );
-    assert.equal(call.value, 0, call.stderr.join('\n'));
-    // Two preflights (before and after the checkout lock), one runner each, none bound.
-    assert.deepEqual(calls.runners, [
-      { adapter: 'web', trustTaskActions: true },
-      { adapter: 'web', trustTaskActions: true },
-    ]);
-    assert.deepEqual(calls.mutationHooks, [
-      'load:web',
-      'authorize:web',
-      'load:web',
-      'authorize:web',
-    ]);
-  });
-
   test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
     const registry = createAdapterRegistry();
     registry.register({ ...webAdapter(calls), targets: ['storefront'] });
@@ -2289,9 +2292,10 @@ describe('call', () => {
         0,
         `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
       );
+      // A call's load gets no command line, so it loads nothing to authorize.
       assert.deepEqual(
         [...new Set(calls.mutationHooks)],
-        [`load:${adapter}`, `authorize:${adapter}`],
+        name.startsWith('call') ? [`load:${adapter}`] : [`load:${adapter}`, `authorize:${adapter}`],
         name,
       );
     }
