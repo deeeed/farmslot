@@ -407,6 +407,7 @@ export async function handleRepeatReviewDecision(
     });
     return null;
   }
+  const generation = getRun(runId)?.engineState?.generation ?? 0;
   const context = await confirmIncrementalAncestry(
     buildRepeatReviewContext(
       current,
@@ -415,6 +416,16 @@ export async function handleRepeatReviewDecision(
       allRuns,
     ),
   );
+  // A cancel, pause or replay during the GitHub lookup owns the run now; opening
+  // a decision would revive it as blocked. The engine keeps the operator state.
+  const settled = getRun(runId);
+  if (
+    !settled ||
+    settled.status === 'cancelled' ||
+    settled.status === 'paused' ||
+    (settled.engineState?.generation ?? 0) !== generation
+  )
+    throw new Error(`Run ${runId.slice(0, 8)} changed during the review ancestry lookup`);
   if (current.prWork?.kind === 'review' && current.prWork.review) {
     const selected = automatedRepeatReviewSelection(context, current.prWork.review.options);
     updateRun(runId, {
