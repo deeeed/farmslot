@@ -698,9 +698,10 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
 export function stepEntryTiming(
   run: Pick<Run, 'queuedAt' | 'createdAt' | 'steps'>,
   stepName: string,
-): Pick<RunStep, 'queuedMs' | 'lastProgressAt'> {
+): Pick<RunStep, 'queuedMs' | 'queuedSince' | 'lastProgressAt'> {
   return {
     queuedMs: run.steps[0]?.name === stepName ? runDispatchQueueWaitMs(run) : undefined,
+    queuedSince: undefined,
     lastProgressAt: undefined,
   };
 }

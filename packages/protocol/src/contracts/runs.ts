@@ -127,6 +127,8 @@ export interface RunStep {
    * existed (`Run.queuedAt` to `Run.createdAt`). Resets with `startedAt`.
    */
   queuedMs?: number;
+  /** Set while the step waits; that open wait counts as queue time until it ends. */
+  queuedSince?: string;
   /** When the step last made real progress (a stage line, structured worker progress). */
   lastProgressAt?: string;
   inputs?: Record<string, unknown>;

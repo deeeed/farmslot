@@ -397,30 +397,40 @@ export interface ResourcePostureRequest {
 }
 
 /**
- * The run's steps with a finished claim wait added to the queue time of the
- * step it held up, or undefined when no queued wait just ended.
+ * The run's steps with a claim wait recorded on the step it holds up, or
+ * undefined when nothing changed. A wait that starts opens `queuedSince` on the
+ * running step; one that ends adds its time to that step's queue time.
  *
  * The wait counts from `queued` until the claim is granted or the wait clears:
  * a granted reservation is this run's own provider starting, which is work. It
  * is clamped to the step's `startedAt` so it stays inside the step's duration
  * when the step was re-entered while queued.
  */
-function stepsWithEndedClaimWait(
+function stepsWithClaimWait(
   run: Run,
   next: RunResourceWait | undefined,
   nowMs: number,
 ): RunStep[] | undefined {
   const previous = run.resourcePosture?.resourceWait;
-  if (previous?.phase !== 'queued') return undefined;
-  if (next?.phase === 'queued' && next.queuedLeaseId === previous.queuedLeaseId) return undefined;
+  const wasQueued = previous?.phase === 'queued';
+  const isQueued = next?.phase === 'queued';
+  if (wasQueued && isQueued && next.queuedLeaseId === previous.queuedLeaseId) return undefined;
+  if (!wasQueued && !isQueued) return undefined;
   const step = run.steps.find((candidate) => candidate.status === 'running');
-  if (!step?.startedAt) return undefined;
-  const sinceMs = Math.max(Date.parse(previous.since), Date.parse(step.startedAt));
-  if (!Number.isFinite(sinceMs)) return undefined;
-  const queuedMs = (step.queuedMs ?? 0) + Math.max(0, nowMs - sinceMs);
-  return run.steps.map((candidate) =>
-    candidate === step ? { ...candidate, queuedMs } : candidate,
-  );
+  const startedMs = step?.startedAt ? Date.parse(step.startedAt) : NaN;
+  if (!step || !Number.isFinite(startedMs)) return undefined;
+  const updated: RunStep = { ...step };
+  if (wasQueued) {
+    const sinceMs = Math.max(Date.parse(previous.since), startedMs);
+    if (Number.isFinite(sinceMs))
+      updated.queuedMs = (step.queuedMs ?? 0) + Math.max(0, nowMs - sinceMs);
+    updated.queuedSince = undefined;
+  }
+  if (isQueued) {
+    const sinceMs = Math.max(Date.parse(next.since), startedMs);
+    updated.queuedSince = new Date(Number.isFinite(sinceMs) ? sinceMs : nowMs).toISOString();
+  }
+  return run.steps.map((candidate) => (candidate === step ? updated : candidate));
 }
 
 export interface RunResourcePostureDeps {
@@ -1441,8 +1451,9 @@ export class RunResourcePostureReconciler {
       updatedAt: this.now().toISOString(),
     };
     if (!resourceWait) delete state.resourceWait;
+    // Read and write with no await between: the steps array is replaced whole.
     const current = this.deps.getRun(context.run.id) ?? context.run;
-    const steps = stepsWithEndedClaimWait(current, resourceWait, this.now().getTime());
+    const steps = stepsWithClaimWait(current, resourceWait, this.now().getTime());
     const updated = this.deps.updateRun(context.run.id, {
       resourcePosture: state,
       ...(steps ? { steps } : {}),

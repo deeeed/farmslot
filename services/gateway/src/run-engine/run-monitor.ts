@@ -119,10 +119,14 @@ export function structuredProgressMovedMinute(previous: string | undefined, next
   return !(minute(next) <= minute(previous));
 }
 
-/** The monitor step's last progress is the worker's structured progress. */
+/**
+ * The monitor step's last progress is the worker's structured progress, from
+ * this attempt only: a timestamp restored from before a re-entry is not.
+ */
 export function mirrorMonitorStepProgress(run: Run, structuredProgressAt: string): void {
   const step = run.steps.find((candidate) => candidate.name === PipelineSteps.MONITOR);
   if (step?.status !== 'running' || step.lastProgressAt === structuredProgressAt) return;
+  if (step.startedAt && structuredProgressAt < step.startedAt) return;
   updateRunStep(run.id, PipelineSteps.MONITOR, { lastProgressAt: structuredProgressAt });
 }
 
@@ -1625,9 +1629,12 @@ export async function monitorRun(
             budgetUsage: state.budgetUsage,
           },
         });
-        mirrorMonitorStepProgress(currentForPersist, structuredProgressAt);
-        // The Runs list times worker progress from this; per-poll writes stay quiet.
-        if (announceProgress) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        // The Runs list times worker progress from this; per-poll writes stay
+        // quiet. Minute precision is enough for the step's last progress too.
+        if (announceProgress) {
+          mirrorMonitorStepProgress(currentForPersist, structuredProgressAt);
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        }
       }
 
       // 5. Check total timeout

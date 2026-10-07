@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { Run, RunStep } from '../../src/contracts/runs.js';
-import { runDispatchQueueWaitMs, runStepExecutionMs } from '../../src/runs/step-timing.js';
+import {
+  runDispatchQueueWaitMs,
+  runStepExecutionMs,
+  runStepQueuedMs,
+} from '../../src/runs/step-timing.js';
 
 function runWith(steps: RunStep[], queuedAt?: string) {
   return { createdAt: '2026-10-07T10:02:00.000Z', queuedAt, steps } satisfies Pick<
@@ -49,4 +53,21 @@ test('a running step uses its elapsed time; a step that never ran has none', () 
   const run = runWith([{ name: 'find-slot', status: 'done' }, step]);
   assert.equal(runStepExecutionMs(run, step, Date.parse('2026-10-07T10:01:00.000Z')), 50_000);
   assert.equal(runStepExecutionMs(run, { name: 'monitor', status: 'pending' }), undefined);
+});
+
+test('a wait that is still open counts as queue time, not execution', () => {
+  const step: RunStep = {
+    name: 'prepare',
+    status: 'running',
+    startedAt: '2026-10-07T10:05:00.000Z',
+    queuedMs: 10_000,
+    queuedSince: '2026-10-07T10:06:00.000Z',
+  };
+  const nowMs = Date.parse('2026-10-07T10:08:00.000Z');
+  assert.equal(runStepQueuedMs(step, nowMs), 130_000);
+  assert.equal(
+    runStepExecutionMs(runWith([{ name: 'find-slot', status: 'done' }, step]), step, nowMs),
+    50_000,
+  );
+  assert.equal(runStepQueuedMs({ name: 'x', status: 'done' }), 0);
 });

@@ -4,7 +4,12 @@ import type {
   RunStep,
   SelfReviewIssue,
 } from '@farmslot/protocol';
-import { parseGitHubPullUrl, parseGitHubRef, runStepExecutionMs } from '@farmslot/protocol';
+import {
+  parseGitHubPullUrl,
+  parseGitHubRef,
+  runStepExecutionMs,
+  runStepQueuedMs,
+} from '@farmslot/protocol';
 
 import { hasMeaningfulReviewFixDelta } from '../../utils/review-gate-display.js';
 import { buildHash } from '../../utils/url-state.js';
@@ -142,8 +147,9 @@ export function stepQueueTimingRows(
   nowMs: number,
 ): Array<[label: string, value: string]> {
   const rows: Array<[string, string]> = [];
-  if (step.queuedMs) {
-    rows.push(['Queued', formatDuration(step.queuedMs)]);
+  const queuedMs = runStepQueuedMs(step, nowMs);
+  if (queuedMs) {
+    rows.push(['Queued', formatDuration(queuedMs)]);
     const executionMs = run ? runStepExecutionMs(run, step, nowMs) : undefined;
     if (executionMs !== undefined) rows.push(['Executing', formatDuration(executionMs) || '0s']);
   }

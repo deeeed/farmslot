@@ -2214,6 +2214,11 @@ test('a claim wait is queue time on the step it held up, counted until the grant
   const blocked = await prepareRunPostureForValidation('run-a', requirements, reconciler);
   assert.equal(blocked.ok, false);
   assert.equal(runs.get('run-a')?.steps[0].queuedMs, undefined, 'still waiting');
+  assert.equal(
+    runs.get('run-a')?.steps[0].queuedSince,
+    '2026-08-11T00:00:10.000Z',
+    'the open wait shows while it lasts',
+  );
 
   // A minute in line, then the holder releases and the grant completes the claim.
   clock = T0 + 70_000;
@@ -2222,6 +2227,7 @@ test('a claim wait is queue time on the step it held up, counted until the grant
   assert.equal((await prepareRunPostureForValidation('run-a', requirements, reconciler)).ok, true);
   const [prepare, dispatch] = runs.get('run-a')!.steps;
   assert.equal(prepare.queuedMs, 65_000, 'queued from the refusal until the grant was seen');
+  assert.equal(prepare.queuedSince, undefined);
   assert.equal(dispatch.queuedMs, undefined);
 });
 

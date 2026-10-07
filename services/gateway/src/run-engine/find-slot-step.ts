@@ -88,9 +88,10 @@ interface RunEngineFlags {
 }
 
 /**
- * Await a wait that blocks the step and record it as the step's queue time.
- * Timed around the await, so a decision an earlier attempt already resolved
- * replays at once and adds nothing.
+ * Await a wait that blocks the step and record it as the step's queue time,
+ * open (`queuedSince`) while it lasts. Timed around the await, so a decision an
+ * earlier attempt already resolved replays at once and adds nothing. A waiter
+ * that outlives a re-entry adds nothing either: that attempt times its own waits.
  */
 export async function awaitAsQueueTime<T>(
   runId: string,
@@ -98,11 +99,22 @@ export async function awaitAsQueueTime<T>(
   wait: () => Promise<T>,
   now: () => number = Date.now,
 ): Promise<T> {
+  const findStep = () => getRun(runId)?.steps.find((candidate) => candidate.name === stepName);
+  const startedAt = findStep()?.startedAt;
   const sinceMs = now();
-  const result = await wait();
-  const step = getRun(runId)?.steps.find((candidate) => candidate.name === stepName);
-  if (step) updateRunStep(runId, stepName, { queuedMs: (step.queuedMs ?? 0) + now() - sinceMs });
-  return result;
+  const queuedSince = new Date(sinceMs).toISOString();
+  if (findStep()) updateRunStep(runId, stepName, { queuedSince });
+  try {
+    return await wait();
+  } finally {
+    const step = findStep();
+    if (step && step.startedAt === startedAt && step.queuedSince === queuedSince) {
+      updateRunStep(runId, stepName, {
+        queuedMs: (step.queuedMs ?? 0) + Math.max(0, now() - sinceMs),
+        queuedSince: undefined,
+      });
+    }
+  }
 }
 
 export interface FindSlotStepContext {

@@ -23,6 +23,7 @@ import {
   modeForFlow,
   parseGitHubRef,
   runStepExecutionMs,
+  runStepQueuedMs,
 } from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
@@ -240,7 +241,8 @@ export function formatElapsed(startedAt?: string): string {
 
 /** Pipeline node time: `q 2m 10s · 5m 12s` when the step queued, else its duration or elapsed time. */
 export function stepNodeDurationLabel(run: Run, step: RunStep, nowMs = Date.now()): string {
-  if (!step.queuedMs) {
+  const queuedMs = runStepQueuedMs(step, nowMs);
+  if (!queuedMs) {
     return step.durationMs
       ? formatDuration(step.durationMs)
       : step.startedAt
@@ -249,7 +251,7 @@ export function stepNodeDurationLabel(run: Run, step: RunStep, nowMs = Date.now(
   }
   const executionMs = runStepExecutionMs(run, step, nowMs);
   const execution = executionMs === undefined ? '' : ` · ${formatDuration(executionMs) || '0s'}`;
-  return `q ${formatDuration(step.queuedMs)}${execution}`;
+  return `q ${formatDuration(queuedMs)}${execution}`;
 }
 
 export function flowLabel(flow: FlowType): string {

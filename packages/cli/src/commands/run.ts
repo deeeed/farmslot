@@ -28,6 +28,7 @@ import {
   type RunResumeResult,
   type RunSessionCommandResult,
   runStepExecutionMs,
+  runStepQueuedMs,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 
@@ -490,9 +491,10 @@ function formatSpan(ms: number): string {
 /** Human output for `run get`: per step, the time it queued, the time it ran and its last progress. */
 export function formatRunStepTimingLines(run: Run, nowMs = Date.now()): string[] {
   return run.steps.flatMap((step) => {
+    const queuedMs = runStepQueuedMs(step, nowMs);
     const executionMs = runStepExecutionMs(run, step, nowMs);
     const parts = [
-      ...(step.queuedMs ? [`queued ${formatSpan(step.queuedMs)}`] : []),
+      ...(queuedMs ? [`queued ${formatSpan(queuedMs)}`] : []),
       ...(executionMs !== undefined ? [`ran ${formatSpan(executionMs)}`] : []),
       ...(step.lastProgressAt
         ? [`last progress ${formatSpan(Math.max(0, nowMs - Date.parse(step.lastProgressAt)))} ago`]
