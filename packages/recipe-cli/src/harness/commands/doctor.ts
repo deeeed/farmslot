@@ -28,6 +28,7 @@ import {
 } from '../doctor-report.js';
 import { ensureOverlay, newHealState, recipeRunning } from '../heal-bounds.js';
 import { harnessHost, hostEnvName } from '../host.js';
+import { failStream, JsonStreamWriter } from '../json-stream.js';
 import { resolveRuntimeContextPath } from '../overlay.js';
 import {
   actionManifestPathOption,
@@ -114,13 +115,49 @@ function executableName(): string {
 }
 
 export async function handleDoctor(
+  parsed: ParsedArgs,
+  commandOptions: DoctorCommandOptions,
+): Promise<number> {
+  // --json-stream (doctor --fix): stdout is NDJSON, a `stage` event per fix and
+  // then `complete` with what was fixed; anything else printed goes to stderr.
+  const stream = new JsonStreamWriter('doctor', optionFlag(parsed.options, 'jsonStream'));
+  if (stream.enabled && !optionFlag(parsed.options, 'fix')) {
+    stream.error({
+      code: 'CLI_USAGE_ERROR',
+      message: '--json-stream is for doctor --fix; use doctor --json for the report',
+      userAction: `${harnessHost().name} doctor --fix --json-stream --adapter <adapter> --target <path>`,
+    });
+    stream.complete('fail', EXIT.usage);
+    return EXIT.usage;
+  }
+  const restoreStdout = stream.isolateStdout();
+  try {
+    const exitCode = await handleDoctorBody(parsed, commandOptions, stream);
+    // A refusal sent its error event; the stream still ends.
+    stream.complete(exitCode === EXIT.ok ? 'pass' : 'fail', exitCode);
+    return exitCode;
+  } catch (error) {
+    failStream(stream, error, 'DOCTOR_FAILED');
+    throw error;
+  } finally {
+    restoreStdout();
+  }
+}
+
+async function handleDoctorBody(
   { options }: ParsedArgs,
   commandOptions: DoctorCommandOptions,
+  stream: JsonStreamWriter,
 ): Promise<number> {
   applyRuntimeDirOption(options);
   const host = harnessHost().name;
   const target = targetPath(options);
-  const json = optionFlag(options, 'json');
+  const json = optionFlag(options, 'json') || stream.enabled;
+  // Under --json-stream a refusal is an error event too: its envelope goes to stderr.
+  const refuse = (message: string, userAction: string): number => {
+    stream.error({ code: 'USAGE', message, userAction });
+    return usageOut(json, 'doctor', message, userAction);
+  };
   const printReady = optionFlag(options, 'printReady');
   // Farmslot health_check uses --print-ready alone; it implies the exit-coded live probe.
   const expectLive = optionFlag(options, 'expectLive') || printReady;
@@ -129,23 +166,19 @@ export async function handleDoctor(
   const explicitAdapter = optionString(options, 'adapter') ?? adapterForPlatform(platformOption);
   const adapter = explicitAdapter ?? detectAdapter(target);
   if (!adapter) {
-    return usageOut(json, 'doctor', undetectedAdapterMessage(target), adapterDetectNext());
+    return refuse(undetectedAdapterMessage(target), adapterDetectNext());
   }
   assertAdapter(adapter);
   const surface = harnessAdapter(adapter);
   const readiness = adapterReadiness(surface);
   if (!fs.existsSync(target)) {
-    return usageOut(
-      json,
-      'doctor',
+    return refuse(
       `target does not exist: ${target}`,
       `pass --target <${harnessHost().product.toLowerCase()}-checkout> pointing to an existing checkout`,
     );
   }
   if (printReady && json) {
-    return usageOut(
-      json,
-      'doctor',
+    return refuse(
       '--print-ready owns stdout for Farmslot health_check; drop --json (use --expect-live --json for the doctor envelope)',
       `${host} doctor --print-ready --adapter <adapter> --target <path>`,
     );
@@ -163,11 +196,12 @@ export async function handleDoctor(
     surface.resolveSlotPorts(target);
     const preview = commandOptions.previewDevice?.('doctor', adapter, options);
     if (preview && !preview.ok) {
-      return usageOut(json, 'doctor', preview.message, preview.userAction);
+      return refuse(preview.message, preview.userAction);
     }
     applyDoctorRuntimePorts(options);
     const lock = acquireCheckoutLock(target, 'doctor-fix');
     if ('message' in lock) {
+      stream.error({ code: 'SANDBOX_BUSY', message: lock.message });
       return checkoutBusyOut(json, 'doctor', lock.message, lock.path);
     }
     let fixed: string[];
@@ -179,6 +213,7 @@ export async function handleDoctor(
         manifestValidation,
         json,
         commandOptions.fix,
+        stream.enabled ? (fields) => stream.emit('stage', fields) : undefined,
       ));
     } finally {
       lock.release();
@@ -215,7 +250,15 @@ export async function handleDoctor(
             userAction: fixUserAction,
           }
         : undefined;
-    if (json)
+    if (stream.enabled)
+      stream.complete(status, status === 'pass' ? 0 : 1, {
+        fixed,
+        failed,
+        ready,
+        nextActions,
+        ...(error ? { error } : {}),
+      });
+    else if (json)
       console.log(
         JSON.stringify(
           {
@@ -720,6 +763,8 @@ async function runDoctorFix(
   manifestValidation: { summary?: { errors?: number } },
   json: boolean,
   fix: DoctorFixOptions | undefined,
+  // The --json-stream `stage` event for each stage line.
+  onStageEvent?: (fields: Record<string, unknown>) => void,
 ): Promise<{ fixed: string[]; failed: string[] }> {
   const fixed: string[] = [];
   const failed: string[] = [];
@@ -733,7 +778,7 @@ async function runDoctorFix(
 
   // One stage per fix, on stderr, so a slow repair shows which one is running.
   const repairs = adapterReadiness(harnessAdapter(adapter)).fixes ?? [];
-  const stages = createStageReporter();
+  const stages = createStageReporter(onStageEvent ? { event: onStageEvent } : {});
   const total = 2 + repairs.length + (fix?.repair ? 1 : 0);
   let index = 0;
   const stage = (name: string) => stages.stage(name, { index: ++index, total });

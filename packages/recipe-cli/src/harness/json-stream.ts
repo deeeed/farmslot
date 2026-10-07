@@ -89,3 +89,19 @@ export class JsonStreamWriter implements CommandEventStream {
     this.completed = true;
   }
 }
+
+/** Ends a stream on a thrown error: an `error` event, then `complete` (fail). */
+export function failStream(stream: JsonStreamWriter, error: unknown, code: string): void {
+  const exitCode =
+    error !== null &&
+    typeof error === 'object' &&
+    'exitCode' in error &&
+    typeof (error as { exitCode?: unknown }).exitCode === 'number'
+      ? (error as { exitCode: number }).exitCode
+      : 1;
+  stream.error({
+    code: exitCode === 2 ? 'USAGE' : code,
+    message: error instanceof Error ? error.message : String(error),
+  });
+  stream.complete('fail', exitCode);
+}

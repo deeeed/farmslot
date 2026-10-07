@@ -131,6 +131,23 @@ async function captureStderr<T>(run: () => Promise<T>): Promise<{ result: T; lin
   }
 }
 
+// --json-stream writes NDJSON straight to stdout; each line parsed.
+async function captureStdout<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; events: Array<Record<string, unknown>> }> {
+  const chunks: string[] = [];
+  const write = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) =>
+    chunks.push(String(chunk)) > 0) as typeof process.stdout.write;
+  try {
+    const result = await run();
+    const lines = chunks.join('').split('\n').filter(Boolean);
+    return { result, events: lines.map((line) => JSON.parse(line) as Record<string, unknown>) };
+  } finally {
+    process.stdout.write = write;
+  }
+}
+
 // Devices with a counted live probe: doctor and status are held to one each.
 function fakeDevices(probes: { count: number }): AdapterDevices {
   return {
@@ -594,6 +611,92 @@ describe('doctor', () => {
     );
   });
 
+  test('--fix --json-stream streams a stage event per fix, then what was fixed', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop', { readiness: { fixes: [{ id: 'deps', apply: () => true }] } }));
+    const target = doctorTarget();
+    process.env.SHOP_HARNESS_INSTALL_BIN = '/usr/bin/true';
+    const { result, events } = await captureStdout(() =>
+      captureStderr(() =>
+        capture(() =>
+          handleDoctor(
+            parseArgs(['--adapter', 'shop', '--target', target, '--fix', '--json-stream']),
+            { manifest: manifestOk, fix: { repair: () => ({ fixed: ['wallet'], failed: [] }) } },
+          ),
+        ),
+      ),
+    );
+    // The fake overlay installer leaves the overlay missing: one known failure.
+    assert.equal(result.result.result, 1);
+    assert.equal(result.result.stdout, '', 'stdout carries only the stream');
+    assert.deepEqual(
+      events.filter((event) => event.event === 'stage').map((event) => [event.stage, event.status]),
+      [
+        ['runtime-context', 'start'],
+        ['runtime-context', 'done'],
+        ['deps', 'start'],
+        ['deps', 'done'],
+        ['overlay', 'start'],
+        ['overlay', 'failed'],
+        ['host repair', 'start'],
+        ['host repair', 'done'],
+      ],
+    );
+    const complete = events.at(-1)!;
+    assert.equal(complete.event, 'complete');
+    assert.equal(complete.status, 'fail');
+    assert.equal(complete.exitCode, 1);
+    assert.deepEqual(complete.fixed, ['deps', 'wallet']);
+    assert.deepEqual(complete.failed, ['overlay']);
+    assert.equal((complete.error as { code: string }).code, 'DOCTOR_FIX_INCOMPLETE');
+    assert.equal(events.filter((event) => event.event === 'complete').length, 1);
+  });
+
+  test('--fix --json-stream refusing a missing target sends the error, then complete', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop'));
+    const { result, events } = await captureStdout(() =>
+      captureStderr(() =>
+        handleDoctor(
+          parseArgs([
+            '--adapter',
+            'shop',
+            '--target',
+            path.join(tempRoot(), 'missing'),
+            '--fix',
+            '--json-stream',
+          ]),
+          { manifest: manifestOk },
+        ),
+      ),
+    );
+    assert.equal(result.result, 2);
+    assert.deepEqual(
+      events.map((event) => event.event),
+      ['error', 'complete'],
+    );
+    assert.match((events[0]!.error as { message: string }).message, /target does not exist/u);
+  });
+
+  test('--json-stream without --fix is a usage error that names --json', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop'));
+    const { result, events } = await captureStdout(() =>
+      handleDoctor(parseArgs(['--adapter', 'shop', '--target', doctorTarget(), '--json-stream']), {
+        manifest: manifestOk,
+      }),
+    );
+    assert.equal(result, 2);
+    assert.equal((events[0]!.error as { code: string }).code, 'CLI_USAGE_ERROR');
+    assert.match((events[0]!.error as { message: string }).message, /doctor --json/u);
+    assert.deepEqual(events.at(-1), {
+      ...events.at(-1),
+      event: 'complete',
+      status: 'fail',
+      exitCode: 2,
+    });
+  });
+
   test('--fix ends a stage left open when a fix throws', async () => {
     shopHost();
     useAdapters(fakeAdapter('shop', { readiness: { fixes: [] } }));
@@ -919,6 +1022,68 @@ describe('prepare', () => {
     assert.equal('mobilePlatform' in (await record('tablet')), false);
   });
 
+  test('--json-stream streams each step and its nested stages, then the readiness result', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    process.env.STAGE_LINES = '1';
+    useAdapters(fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }));
+    const target = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    const { result, events } = await captureStdout(() =>
+      captureStderr(() =>
+        capture(() =>
+          handlePrepare(
+            [
+              '--platform',
+              'shop',
+              '--target',
+              target,
+              '--artifacts-dir',
+              artifacts,
+              '--json-stream',
+            ],
+            { usage: 'u', steps: [fixtureStep] },
+          ),
+        ),
+      ),
+    );
+    assert.equal(result.result.result, 0);
+    assert.equal(result.result.stdout, '', 'stdout carries only the stream');
+    const stages = events.filter((event) => event.event === 'stage');
+    assert.deepEqual(
+      stages
+        .filter((event) => event.status !== 'progress')
+        .map((event) => [event.stage, event.status]),
+      [
+        ['doctor --fix', 'start'],
+        ['doctor --fix', 'done'],
+        ['status', 'start'],
+        ['status', 'done'],
+        ['launch --verify', 'start'],
+        ['launch --verify', 'done'],
+        ['seed', 'start'],
+        ['seed', 'done'],
+        ['verify', 'start'],
+        ['verify', 'done'],
+      ],
+    );
+    assert.ok(
+      stages.some(
+        (event) =>
+          event.stage === 'launch --verify' &&
+          event.child === '[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s',
+      ),
+      'a nested launch stage arrives as an event too',
+    );
+    const complete = events.at(-1)!;
+    assert.equal(complete.event, 'complete');
+    assert.equal(complete.status, 'pass');
+    assert.equal(complete.ready, true);
+    assert.equal(complete.recordPath, path.join(artifacts, 'sandbox.json'));
+    assert.equal((complete.steps as unknown[]).length, 5);
+  });
+
   test('a failing step keeps its own stage lines in the diagnostics it replays', async () => {
     shopHost();
     const root = tempRoot();
@@ -1103,6 +1268,55 @@ describe('prepare', () => {
       exitCode: 1,
       error: { code: 'SHOP_TARGET', message: 'which one?', userAction: '1. phone\n2. tablet' },
     });
+
+    // --json-stream ends with the error and one complete on these paths too.
+    const streamed = await captureStdout(() =>
+      captureStderr(() =>
+        handlePrepare(
+          [
+            '--platform',
+            'shop',
+            '--target',
+            target,
+            '--artifacts-dir',
+            path.join(root, 'b'),
+            '--json-stream',
+          ],
+          options,
+        ),
+      ),
+    );
+    assert.equal(streamed.result.result, 1);
+    assert.deepEqual(
+      streamed.events
+        .filter((event) => event.event === 'error')
+        .map((event) => (event.error as { code: string }).code),
+      ['SHOP_TARGET'],
+    );
+    assert.deepEqual(
+      streamed.events.filter((event) => event.event === 'complete').map((event) => event.status),
+      ['fail'],
+    );
+    assert.equal(streamed.events.at(-1)!.event, 'complete');
+    let thrown: unknown;
+    const refused = await captureStdout(async () => {
+      try {
+        return await handlePrepare(
+          ['--platform', 'headless', '--target', target, '--clear-metro', '--json-stream'],
+          options,
+        );
+      } catch (error) {
+        thrown = error;
+        return -1;
+      }
+    });
+    assert.ok(thrown, 'the usage error still reaches the caller');
+    assert.deepEqual(
+      refused.events.map((event) => event.event),
+      ['error', 'complete'],
+    );
+    assert.equal((refused.events[0]!.error as { code: string }).code, 'USAGE');
+    assert.equal(refused.events[1]!.exitCode, 2);
   });
 });
 
