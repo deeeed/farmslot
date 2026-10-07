@@ -17,6 +17,18 @@ describe('parseSessionLocked', () => {
     assert.equal(parseSessionLocked(plist(session({ locked: false, onConsole: true }))), false);
     assert.equal(parseSessionLocked(plist(session({ onConsole: true }))), false);
     assert.equal(parseSessionLocked('ioreg: not a plist'), null);
+    // The plist guard runs before the lock flag: text with the key but no plist is unknown.
+    assert.equal(parseSessionLocked('<key>CGSSessionScreenIsLocked</key><true/>'), null);
+    // A top-level flag without IOConsoleUsers.
+    const topLevel = (value) =>
+      `<plist version="1.0"><dict><key>CGSSessionScreenIsLocked</key>${value}</dict></plist>`;
+    assert.equal(parseSessionLocked(topLevel('<false/>')), false);
+    assert.equal(parseSessionLocked(topLevel('<true/>')), true);
+  });
+
+  it("counts any session's flag when none is on console", () => {
+    assert.equal(parseSessionLocked(plist(session({ locked: true, onConsole: false }))), true);
+    assert.equal(parseSessionLocked(plist(session({ locked: false, onConsole: false }))), false);
   });
 
   it('reads the on-console session when several are logged in', () => {
@@ -41,6 +53,11 @@ describe('macosSessionLocked', () => {
       return { status: 0, stdout: plist(session({ locked: true, onConsole: true })) };
     };
     assert.equal(macosSessionLocked({ platform: 'darwin', spawnSync }), true);
+    const unlocked = () => ({
+      status: 0,
+      stdout: plist(session({ locked: false, onConsole: true })),
+    });
+    assert.equal(macosSessionLocked({ platform: 'darwin', spawnSync: unlocked }), false);
     assert.deepEqual(calls[0].command, 'ioreg');
     assert.deepEqual(calls[0].args, ['-n', 'Root', '-d1', '-a']);
     assert.equal(calls[0].options.timeout, 3000);
@@ -50,12 +67,19 @@ describe('macosSessionLocked', () => {
     assert.equal(
       macosSessionLocked({
         platform: 'darwin',
-        spawnSync: () => ({ error: new Error('ETIMEDOUT') }),
+        spawnSync: () => ({
+          error: new Error('ETIMEDOUT'),
+          stdout: plist(session({ locked: true, onConsole: true })),
+        }),
       }),
       null,
     );
     assert.equal(
-      macosSessionLocked({ platform: 'darwin', spawnSync: () => ({ status: 1, stdout: '' }) }),
+      // A failed ioreg is unknown even when its output says locked.
+      macosSessionLocked({
+        platform: 'darwin',
+        spawnSync: () => ({ status: 1, stdout: plist(session({ locked: true, onConsole: true })) }),
+      }),
       null,
     );
     assert.equal(

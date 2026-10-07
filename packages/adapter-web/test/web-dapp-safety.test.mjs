@@ -245,6 +245,24 @@ describe('web-dapp launcher on a locked session', () => {
     assert.equal(processesMatching(`--runtime-dir ${s.runtime}`), '');
   });
 
+  it('lets a headful launch through when the session is unlocked or its state unknown', async () => {
+    for (const answer of [false, null]) {
+      const s = await slot();
+      const args = await launchArgs(s, { headless: false, headful: true });
+      let probes = 0;
+      const state = await launchWebDappBrowser(args, launchEnv(s), {
+        sessionLocked: () => {
+          probes += 1;
+          return answer;
+        },
+      });
+      trackPids(s.runtime);
+      assert.equal(probes, 1);
+      assert.equal(state.reused, false);
+      await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+    }
+  });
+
   it('launches a headless browser without probing the session', async () => {
     const s = await slot();
     const args = await launchArgs(s);
