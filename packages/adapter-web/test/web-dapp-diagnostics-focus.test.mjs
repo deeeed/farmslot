@@ -83,7 +83,11 @@ describe('web-dapp application diagnostics', () => {
   it('reads the terminal page console and keeps the other logs as sources', () => {
     const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'terminal-logs-')));
     const runtime = path.join(root, 'temp/recipe/runtime/terminal');
-    const adapter = createWebDappAdapter({ hooks: {} });
+    // A configured signer module makes extension the default signer, so its console is a source.
+    const adapter = createWebDappAdapter({
+      signerModule: fileURLToPath(new URL('./fixtures/web-dapp-test-signer.mjs', import.meta.url)),
+      hooks: {},
+    });
     assert.deepEqual(adapter.appLogSource(root), {
       label: 'app-console',
       path: path.join(runtime, 'app-console.log'),

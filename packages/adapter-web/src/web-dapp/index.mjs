@@ -35,12 +35,14 @@ export {
   backgroundWindowParams,
   checkFocusAfterLaunch,
   chromeForTestingCandidates,
+  LAUNCH_SERVICES,
   LAUNCH_TIMEOUTS,
   launchMethodFor,
   launchWebDappBrowser,
   macApplicationForExecutable,
   parseLaunchArgs,
   resolveBrowser,
+  SPAWN,
   spawnDetached,
 } from './launch.mjs';
 export { hostOf, hostResolverRules, isBlockedUrl } from './lib/blocked-hosts.mjs';

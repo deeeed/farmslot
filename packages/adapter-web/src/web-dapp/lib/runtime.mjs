@@ -132,7 +132,7 @@ export async function loadWalletFixture(projectRoot, env = process.env) {
   if (!fixture) {
     throw new Error(
       `wallet fixture not found at ${file}.\n` +
-        `Next: mm-harness install --adapter ${webDappPolicy().adapterId} --target <checkout> with RECIPE_WALLET_FIXTURE set, or copy the fixture there (0600).`,
+        `Next: run the host's install command (--adapter ${webDappPolicy().adapterId} --target <checkout>) with RECIPE_WALLET_FIXTURE set, or copy the fixture there (0600).`,
     );
   }
   if (!Array.isArray(fixture.accounts) || fixture.accounts.length === 0) {

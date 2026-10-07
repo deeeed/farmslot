@@ -21,9 +21,11 @@ import {
   createWebDappAdapter,
   DEV_SERVER_PID_FILE,
   devServerTestnetDiagnostic,
+  LAUNCH_SERVICES,
   parseLaunchArgs,
   resolveBrowser,
   resolveSigner,
+  SPAWN,
   webDappPolicy,
   webDappReadiness,
 } from '../src/web-dapp/index.mjs';
@@ -142,6 +144,11 @@ describe('web-dapp launch helpers', () => {
       },
     );
     assert.throws(() => parseLaunchArgs(['--target', '/t']), /--cdp-port/);
+  });
+
+  it('exports the launch methods a signer branches on', () => {
+    assert.equal(LAUNCH_SERVICES, 'launch-services');
+    assert.equal(SPAWN, 'spawn');
   });
 
   it('defaults to the extension signer only when a signer module is configured', () => {

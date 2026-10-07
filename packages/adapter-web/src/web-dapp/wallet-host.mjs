@@ -106,6 +106,13 @@ if (network === 'testnet' && mainnetHosts.length === 0)
 const testnetHosts = String(args['testnet-hosts'] ?? '')
   .split(',')
   .filter((host) => host && !LINK_HOSTS.has(host));
+// A policy that declares no served hosts (an app whose page makes no venue
+// requests of its own) has no served network to check: the served-network check
+// is not applicable, and the record says so. Mainnet blocking is unaffected.
+const servedApplicable =
+  String(args['testnet-hosts'] ?? '')
+    .split(',')
+    .filter(Boolean).length > 0;
 const PROBE_MARK = 'mm-harness-probe=1';
 // A testnet run never lets the typed data the policy refuses reach the signer.
 const refuseTypedData = network === 'testnet' ? policy.refuseTypedData : null;
@@ -677,6 +684,7 @@ if (network === 'testnet') {
   let traffic = venueTraffic.get(appSession);
   const servedTimeoutMs = Number(process.env.MM_HARNESS_SERVED_TIMEOUT_MS) || 90000;
   while (
+    servedApplicable &&
     (!traffic || (traffic.testnet.size === 0 && traffic.mainnet.size === 0)) &&
     Date.now() - servedStart < servedTimeoutMs
   ) {
@@ -687,7 +695,7 @@ if (network === 'testnet') {
     fail(
       `the app requested the mainnet venue (${[...traffic.mainnet].join(', ')}): the dev server does not serve testnet`,
     );
-  if (!traffic?.testnet.size)
+  if (servedApplicable && !traffic?.testnet.size)
     fail(
       `the app made no request to a testnet venue endpoint (${testnetHosts.join(', ') || 'none known'}) within ${Math.round(servedTimeoutMs / 1000)}s, so its network could not be checked`,
     );
@@ -697,7 +705,8 @@ if (network === 'testnet') {
     network,
     enforcement: 'enforced',
     mainnetHosts,
-    servedHosts: [...traffic.testnet],
+    servedHosts: [...(traffic?.testnet ?? [])],
+    ...(servedApplicable ? {} : { served: 'not-applicable' }),
     probes: {
       http: seen(probeFailures.http),
       resolver: seen(probeFailures.resolver),

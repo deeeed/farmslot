@@ -44,7 +44,7 @@ function specifiers(source, file) {
   const literalCalls = [...code.matchAll(LITERAL_CALL)].length;
   if ([...code.matchAll(ANY_CALL)].length > literalCalls) {
     throw new PolicyFenceError(
-      `web-dapp venue policy file ${file} imports or requires a computed specifier, which mm-harness can't check.`,
+      `web-dapp venue policy file ${file} imports or requires a computed specifier, which the host can't check.`,
     );
   }
   return found;
@@ -121,7 +121,7 @@ export function assertPolicyDigest(file, digest) {
   const now = digestFiles(policyClosure(file, () => {}));
   if (now !== digest) {
     throw new Error(
-      `web-dapp venue policy ${file} or a file it imports changed since mm-harness bound it.\n` +
+      `web-dapp venue policy ${file} or a file it imports changed since the host bound it.\n` +
         'Next: rerun the command, so it binds and checks the policy again.',
     );
   }

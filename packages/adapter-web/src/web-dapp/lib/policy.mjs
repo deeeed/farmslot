@@ -74,7 +74,7 @@ function checkPolicy(policy, file) {
   }
   if (problems.length) {
     throw new Error(
-      `web-dapp venue policy ${file}: ${problems.join('; ')}.\nNext: update the library that declares the adapter to a revision written for this mm-harness.`,
+      `web-dapp venue policy ${file}: ${problems.join('; ')}.\nNext: update the library that declares the adapter to a revision written for this host.`,
     );
   }
   return policy;

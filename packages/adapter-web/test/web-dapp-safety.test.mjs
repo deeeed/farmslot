@@ -662,6 +662,60 @@ describe('testnet enforced in the browser (round 3)', () => {
     assert.equal(processesMatching(`--runtime-dir ${s.runtime}`), '');
   });
 
+  // A policy that declares no served hosts: the app's page makes no venue requests.
+  const noServedLaunch = async (mode) => {
+    const s = await slot();
+    writeFileSync(
+      path.join(s.root, 'venue-hosts.json'),
+      JSON.stringify({ blocked: ['api.hyperliquid.xyz', 'rpc.hyperliquid.xyz'], served: [] }),
+    );
+    const args = await launchArgs(s);
+    const log = path.join(s.root, 'stub-cdp.jsonl');
+    const launched = launchWebDappBrowser(args, launchEnv(s, { mode, STUB_LOG: log }), quick);
+    return { s, args, log, launched };
+  };
+
+  it('skips the served-network check when the policy declares no served hosts, and says so', async () => {
+    const { s, args, launched } = await noServedLaunch('ok');
+    const state = await launched;
+    trackPids(s.runtime);
+    assertMatch(state.networkEnforcement, {
+      mode: 'enforced',
+      served: 'not-applicable',
+      mainnetHosts: ['api.hyperliquid.xyz', 'rpc.hyperliquid.xyz'],
+      testnetHosts: [],
+    });
+    assert.equal(state.networkEnforcement.layers.includes('served-network-check'), false);
+    assertMatch(
+      requestLog(s.runtime).find((entry) => entry.kind === 'network-enforcement'),
+      { enforcement: 'enforced', served: 'not-applicable', servedHosts: [] },
+    );
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('still blocks and fails on mainnet traffic when the served check is not applicable', async () => {
+    const { s, launched } = await noServedLaunch('mainnet-app');
+    await assert.rejects(launched, /wallet host exited before it was ready|wallet host ready/);
+    assert.match(messageOf(path.join(s.runtime, 'wallet-host.log')), /requested the mainnet venue/);
+    assert.deepEqual(
+      requestLog(s.runtime)
+        .filter((entry) => entry.kind === 'blocked-mainnet' && !entry.probe)
+        .map((entry) => entry.url),
+      ['https://api.hyperliquid.xyz/exchange'],
+    );
+  });
+
+  it('keeps the served-network check, and its record, for a policy that declares served hosts', async () => {
+    const { s, args, launched } = await probeLaunch('ok');
+    const state = await launched;
+    trackPids(s.runtime);
+    assert.equal('served' in state.networkEnforcement, false);
+    assert.ok(state.networkEnforcement.layers.includes('served-network-check'));
+    const entry = requestLog(s.runtime).find((item) => item.kind === 'network-enforcement');
+    assert.equal('served' in entry, false);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
   it('fails the launch when the mainnet probe gets through', async () => {
     const { s, launched } = await probeLaunch('probe-reaches');
     await assert.rejects(launched, /wallet host/);

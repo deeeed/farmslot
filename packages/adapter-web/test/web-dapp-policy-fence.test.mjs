@@ -181,7 +181,7 @@ describe('web-dapp venue policy fence', () => {
     fs.appendFileSync(file, '\n// edited after the bind\n');
     assert.throws(
       () => webDappPolicy({ [POLICY_ENV]: file, [POLICY_DIGEST_ENV]: digest }),
-      /changed since mm-harness bound it/u,
+      /changed since the host bound it/u,
     );
     assert.equal(
       typeof webDappPolicy({ [POLICY_ENV]: file, [POLICY_DIGEST_ENV]: await fenced(root, file) })

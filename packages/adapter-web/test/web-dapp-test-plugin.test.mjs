@@ -1,11 +1,14 @@
 // The test-dapp plugin fixture (test/fixtures/web-dapp-test-plugin): a plugin
 // library whose adapter extends web-dapp with a venue policy that holds
-// test-dapp-multichain to testnet and local hosts. It uses Node built-ins only,
+// test-dapp-multichain to testnet: the mainnet hosts are blocked, and no served
+// hosts are declared (its page makes no venue request of its own). It needs
+// signer=extension, with a host signer module. It uses Node built-ins only,
 // passes the policy fence, and loads through web-dapp's policy contract.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -56,21 +59,38 @@ describe('web-dapp test plugin fixture', () => {
     }
   });
 
-  it('blocks only mainnet endpoints and serves only testnet or local hosts', async () => {
+  it('blocks only mainnet endpoints, the Solana mainnet hosts included, and declares no served hosts', async () => {
     const { policy } = await adapter();
     const { blocked, served } = policy.venueHosts(PLUGIN);
     assert.ok(blocked.length > 0);
-    for (const host of served) assert.match(host, TESTNET_OR_LOCAL, host);
+    // The page fetches Solana blockhashes from these (src/helpers/solana-method-signatures.ts).
+    for (const host of ['api.mainnet-beta.solana.com', 'api.helius-rpc.com'])
+      assert.equal(blocked.includes(host), true, host);
+    assert.equal(blocked.includes('api.devnet.solana.com'), false);
+    // Empty served: web-dapp skips the served-network check for this policy.
+    assert.deepEqual(served, []);
     for (const host of blocked) assert.doesNotMatch(host, TESTNET_OR_LOCAL, host);
     assert.equal(blocked.includes(policy.probe.host), true);
     assert.equal(
-      policy.linkHosts.some((host) => blocked.includes(host) || served.includes(host)),
+      policy.linkHosts.some((host) => blocked.includes(host)),
       false,
     );
     assert.equal(isBlockedUrl(`https://${blocked[0]}/v3/key`, blocked), true);
-    assert.equal(isBlockedUrl(`https://${served[0]}/v3/key`, blocked), false);
+    assert.equal(isBlockedUrl('https://api.devnet.solana.com/', blocked), false);
     assert.match(hostResolverRules(blocked), /^--host-resolver-rules=MAP /u);
     assert.equal(policy.startChain, 11155111);
+  });
+
+  it('matches the real test-dapp-multichain package name', async () => {
+    const { policy } = await adapter();
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'test-dapp-checkout-'));
+    fs.writeFileSync(
+      path.join(checkout, 'package.json'),
+      JSON.stringify({ name: '@metamask/test-dapp-multichain' }),
+    );
+    assert.equal(policy.checkout.matches(checkout), true);
+    fs.writeFileSync(path.join(checkout, 'package.json'), JSON.stringify({ name: 'other-app' }));
+    assert.equal(policy.checkout.matches(checkout), false);
   });
 
   it('refuses typed data signed for mainnet and nothing else', async () => {

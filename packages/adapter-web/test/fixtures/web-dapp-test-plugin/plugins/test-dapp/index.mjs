@@ -1,6 +1,7 @@
 // A testnet-only plugin for MetaMask's test-dapp-multichain, as an adapter that
-// extends web-dapp: the generic slot browser, wallet host and strict injected
-// wallet, with a venue policy that holds the run to testnet and local hosts.
+// extends web-dapp: the generic slot browser and wallet host, with a venue
+// policy that blocks the mainnet hosts. The dapp needs signer=extension (a host
+// signer module): the injected strict wallet cannot drive the Multichain API.
 // Declared in ../../recipe-library.json `adapters`.
 
 import { policy } from './policy.mjs';

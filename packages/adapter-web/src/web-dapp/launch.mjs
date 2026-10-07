@@ -699,11 +699,12 @@ export async function launchWebDappBrowser(
               mainnetHosts,
               testnetHosts: venues.served,
               fingerprint: enforcementFingerprint,
+              ...(venues.served.length === 0 ? { served: 'not-applicable' } : {}),
               layers: [
                 'host-resolver-rules',
                 'cdp-fetch-block',
                 'wallet-refusal',
-                'served-network-check',
+                ...(venues.served.length === 0 ? [] : ['served-network-check']),
               ],
             }
           : {
