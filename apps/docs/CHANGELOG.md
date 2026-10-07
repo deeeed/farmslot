@@ -7,6 +7,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 - Adapter SDK reference: `CommandEventStream.stage(name, { index, total })`, the `StageHandle` a platform reports setup progress through (`StageProgress`), and `noopStage` for a stream without stages.
 - Adapter SDK reference: the optional `readiness` member (`AdapterReadiness`), what `doctor`, `status` and `prepare` ask a platform; `extends` merges it member by member.
 - Adapter SDK reference: `run`, `run --plan` and `call` refuse `--record-video` on an adapter without `recording` before recipe execution (`RECORDING_UNSUPPORTED`, exit 2); a run that still reaches the missing target fails with the same code, exit 4.
+- Adapter SDK reference: `call` reads an inline `--record-video=<mode>` after the action as the option, like `run`, so it is refused on an adapter without `recording` too.
 - Adapter SDK reference: the `environment` failure class (`ENVIRONMENT_NOT_READY`) in the classification order.
 - Web adapter reference: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture.
 - Web adapter reference: document `network-observer` and `performance-observer` (Extension network capture and CDP performance traces), `connectBrowserCdp` events and `selectExtensionTarget`.
