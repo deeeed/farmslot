@@ -409,3 +409,22 @@ describe('web-dapp venue policy binding', () => {
     );
   });
 });
+
+describe('injected strict wallet identity', () => {
+  it('is generic unless the signer module names one', async () => {
+    const { injectedWalletIdentity, GENERIC_INJECTED_IDENTITY } =
+      await import('../src/web-dapp/lib/signers.mjs');
+    assert.equal(injectedWalletIdentity({}), GENERIC_INJECTED_IDENTITY);
+    assert.equal(GENERIC_INJECTED_IDENTITY.isMetaMask, false);
+    assert.equal(GENERIC_INJECTED_IDENTITY.info.rdns, 'io.farmslot.strict-wallet');
+    const metamask = {
+      info: { uuid: 'u', name: 'MetaMask (strict test wallet)', icon: '', rdns: 'io.metamask' },
+      isMetaMask: true,
+    };
+    assert.equal(injectedWalletIdentity({ injected: { identity: metamask } }), metamask);
+    assert.throws(
+      () => injectedWalletIdentity({ injected: { identity: { info: { name: 'x' } } } }),
+      /injected\.identity needs info\.uuid, info\.name and info\.rdns/u,
+    );
+  });
+});

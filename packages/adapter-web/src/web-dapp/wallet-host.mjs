@@ -49,7 +49,7 @@ import { browserWebSocketUrl, CdpClient } from './lib/cdp-client.mjs';
 import { hudFile, hudRenderExpression, readHudState } from './lib/hud.mjs';
 import { ownedBrowserPids } from './lib/processes.mjs';
 import { fixtureAccount, webDappPolicy } from './lib/runtime.mjs';
-import { loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
+import { injectedWalletIdentity, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 
 const { captureMacFrontmost, macFocusDisabled } = createRequire(import.meta.url)(
   '../macos-focus.cjs',
@@ -109,17 +109,14 @@ const testnetHosts = String(args['testnet-hosts'] ?? '')
 const PROBE_MARK = 'mm-harness-probe=1';
 // A testnet run never lets the typed data the policy refuses reach the signer.
 const refuseTypedData = network === 'testnet' ? policy.refuseTypedData : null;
-// The injected strict wallet presents as MetaMask, so the app connects to it
-// the way it connects to the extension.
-const INJECTED_WALLET = {
-  info: {
-    uuid: '5d1e5b4e-e2e0-4c3f-9a1d-000000000001',
-    name: 'MetaMask (strict test wallet)',
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
-    rdns: 'io.metamask',
-  },
-  isMetaMask: true,
-};
+// The signer module (lib/signers.mjs): the extension signer's hooks and, under
+// `injected.identity`, how the injected strict wallet presents itself.
+const signerHooks = await loadSigners({
+  ...process.env,
+  ...(args['signer-module'] ? { [SIGNER_MODULE_ENV]: args['signer-module'] } : {}),
+});
+// How the injected strict wallet presents itself (see injectedWalletIdentity).
+const INJECTED_WALLET = injectedWalletIdentity(signerHooks);
 
 // The request log is evidence; keep it owner-only even when it already exists.
 if (existsSync(logFile)) chmodSync(logFile, 0o600);
@@ -182,12 +179,8 @@ function isAppUrl(url) {
 }
 
 // The extension signer's view of its own confirmation surfaces (its `confirm`
-// hook): which tab URLs are the wallet's, and what each one is showing. Without
-// the hook no tab counts as a wallet surface.
-const signerHooks = await loadSigners({
-  ...process.env,
-  ...(args['signer-module'] ? { [SIGNER_MODULE_ENV]: args['signer-module'] } : {}),
-});
+// hook, from signerHooks above): which tab URLs are the wallet's, and what each
+// one is showing. Without the hook no tab counts as a wallet surface.
 
 // A wallet notification or popup window opens as a new window and can
 // activate the browser. The host only observes this: it records in

@@ -31,6 +31,11 @@
 //     async readinessChecks({ target, env, required }) {},
 //   } };
 //
+// The module may also export `injected: { identity }`: the EIP-6963 identity
+// ({ info: { uuid, name, icon, rdns }, isMetaMask }) the injected strict wallet
+// presents, for an app that only connects to a known wallet. Without it the
+// strict wallet presents a generic identity.
+//
 // A leaf process finds the module through RECIPE_WEB_DAPP_SIGNER_MODULE (or
 // --signer-module on launch and verify).
 
@@ -51,4 +56,35 @@ export async function loadSigners(env = process.env) {
     );
   }
   return signers;
+}
+
+// The injected strict wallet's EIP-6963 identity: the signer module's
+// `injected.identity` when it gives one (a host whose app only connects to a
+// known wallet, e.g. mm-harness presenting MetaMask so the app connects to it
+// the way it connects to the extension), else a generic one.
+export const GENERIC_INJECTED_IDENTITY = Object.freeze({
+  info: Object.freeze({
+    uuid: '5d1e5b4e-e2e0-4c3f-9a1d-000000000001',
+    name: 'Strict test wallet',
+    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
+    rdns: 'io.farmslot.strict-wallet',
+  }),
+  isMetaMask: false,
+});
+
+export function injectedWalletIdentity(signers = {}) {
+  const identity = signers.injected?.identity;
+  if (identity === undefined) return GENERIC_INJECTED_IDENTITY;
+  const info = identity?.info;
+  if (
+    !info ||
+    typeof info.uuid !== 'string' ||
+    typeof info.name !== 'string' ||
+    typeof info.rdns !== 'string'
+  ) {
+    throw new Error(
+      'web-dapp signer module: injected.identity needs info.uuid, info.name and info.rdns strings.',
+    );
+  }
+  return identity;
 }
