@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -53,6 +53,13 @@ async function slotFixture(
   const slotId = `start-ref-${label}-${process.pid}`;
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
+    // Prepare's tmux phase opens a real session named after the slot.
+    spawnSync('tmux', ['kill-session', '-t', `=${slotId}`], { stdio: 'ignore' });
+    assert.notEqual(
+      spawnSync('tmux', ['has-session', '-t', `=${slotId}`], { stdio: 'ignore' }).status,
+      0,
+      `tmux session ${slotId} must not outlive the test`,
+    );
     await rm(poolPath, { force: true });
     await rm(fixtureRoot, { recursive: true, force: true });
   });

@@ -115,3 +115,9 @@ test('checkoutWorkspacePackages reads the workspaces the checkout declares', () 
     /workspace pattern "packages\/\*\*" is not supported/u,
   );
 });
+
+test('checkoutWorkspacePackages finds none in a target without a root package.json', () => {
+  const root = checkout(['temp/recipe/runtime/wallet-fixture.json']);
+  assert.deepEqual(checkoutWorkspacePackages(root), {});
+  assert.equal(workspaceTsconfig(root, checkoutWorkspacePackages), null);
+});

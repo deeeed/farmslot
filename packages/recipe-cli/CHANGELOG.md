@@ -10,6 +10,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - `handleStatus(parsed, { checkoutView, featureFlags, previewDevice })`: the home dashboard (`--json`, `--fast`, `--all-devices`), and `--watch`/`--task`, the read-only task view (`collectTaskView`, `findTaskDir`, `renderTaskView`, `runStatusWatch` and the `TaskView` types).
   - `handlePrepare(argv, { usage, steps, launchHint, deviceTarget, clearMetroOnly, forward, provenance })`: doctor --fix, status, launch and the host's steps, then verify, written as the protocol readiness record (`sandbox.json`) with `prepare/progress.json` (`PREPARE_PROGRESS_ARTIFACT`) while it runs. A headless platform records launch and the host steps as skipped.
   - `handleTaskInit(argv, { surface })`, `handleExecutionTemplate(argv)`, `handleChecklist(argv, { closeout, stepGates, beforeComplete })` and `handleRecipeQuality(argv, { subcommands, subcommandOptions, missingAction, usageNote })`: the host's entries to agent-runtime's task directory, template catalog, checklist marks and recipe-quality builder. `checklist closeout` exists only when the host passes `closeout`.
+- Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse: a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, an empty entry such as `extra=` from an unset variable, or a bad `--library`. The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`.
+  - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
+  - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
+  - A plugin id with a bad entry still refuses. `createHarnessCli` prints library refusals (path or manifest, a `RecipeResolutionError`) the way it prints other refusals: the code, message and next step (`--json` envelope, NDJSON under `--json-stream`), exit 2.
+- `spawnScriptStreaming` listens for parent signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) before it starts the leaf. A signal that arrived while the leaf was starting used to end the harness and leave the detached leaf running.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-10-06
 
