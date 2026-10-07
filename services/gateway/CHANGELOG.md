@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.20.4 - 2026-10-07
+## 0.20.4 - 2026-10-08
 
 - Run steps record queue time apart from execution: the dispatch-queue wait (queued item to run creation) and a `no_suitable_slot` wait go to find-slot, and a scoped resource-claim wait (queued until granted) goes to the step that was running. Queue time resets with the step's `startedAt` on re-entry, like its duration. The prepare step's `lastProgressAt` moves on each sub-step event and parsed `[i/n]` stage line, not on plain output or a `no progress for` stall line; the monitor step's mirrors structured worker progress. No new timeouts or failures.
 - Every self-review document ends with a gateway-owned "Description and evidence check": the reviewer compares the final PR description and commit subjects with the full diff against the PR's base (also in an incremental re-review), and requires a before/after pair labelled "flag off" and one labelled "flag on" when the change hides, gates or changes behaviour behind a feature flag or config switch. Findings are named `DESCRIPTION_CLAIM_NOT_IN_DIFF`, `DIFF_CHANGE_NOT_DESCRIBED` and `FLAG_STATE_EVIDENCE_MISSING`. A deterministic pre-check on the slot lists the claim and flag-evidence mismatches it can see for the reviewer to confirm or dismiss.

@@ -6,7 +6,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.9.0 - 2026-10-07
+## 0.9.0 - 2026-10-08
 
 - **BREAKING:** remove `adapterPortFlags`. `run` and `call` take the dev-server port from `--watcher-port` only.
 - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`.

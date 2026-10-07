@@ -1,8 +1,10 @@
 {
   "version": "0.20.4",
-  "date": "2026-10-07",
+  "date": "2026-10-08",
   "items": [
     "Self-review checks the PR description and commit subjects against the diff and evidence",
-    "Replaying a step recreates the slot's tmux session when it is gone after a reboot or tmux crash"
+    "Replaying a step recreates the slot's tmux session when it is gone after a reboot or tmux crash",
+    "Run steps show time waiting in the queue apart from execution, plus the last progress",
+    "A run blocked by a worker that then completes resumes instead of staying blocked"
   ]
 }

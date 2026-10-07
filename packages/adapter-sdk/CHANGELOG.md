@@ -6,7 +6,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.7.0 - 2026-10-07
+## 0.7.0 - 2026-10-08
 
 - **BREAKING:** remove `devServer.portFlags`. `--watcher-port` is the one option that gives `run` and `call` the dev-server port; a platform names its port environment with `devServer.portEnv`.
 - **BREAKING (implementers only):** `CommandEventStream` gains `stage(name, { index, total })`, a setup stage with `progress({ waitingFor, message, percent, current, total, unit, screen })`, `done(detail)` and `failed(detail)`. A platform calls it from `launch` to say what it is waiting for; the host prints it with the elapsed time and notes when nothing has changed for a while. It never fails the command. Another `CommandEventStream` implementation adds `stage: noopStage`. Also exports `StageHandle` and `StageProgress`.
