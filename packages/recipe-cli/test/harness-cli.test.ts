@@ -1114,6 +1114,44 @@ export const adapter = {
     assert.deepEqual(calls, []);
   });
 
+  test("afterAdapterLoad's refusal ends every help path before it prints", async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('fenced')}`;
+    const ran: string[] = [];
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, {
+        '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+      }),
+      positionals: [{ label: 'action' }],
+      allowPassthrough: true,
+    });
+    const options = pluginOptions();
+    const cli = createHarnessCli({
+      ...options,
+      commands: [...options.commands.filter((entry) => entry.name !== 'call'), call],
+      catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
+      afterAdapterLoad: (id) => {
+        ran.push(id);
+        throw new AdapterPluginError('ADAPTER_PLUGIN_INVALID', 'policy is unfenced.', 'fence it');
+      },
+    });
+    for (const argv of [
+      ['call', 'x', '--help', '--adapter', 'fenced'],
+      ['call', 'x', '--adapter', 'fenced', '--', '--help'],
+      ['doctor', '--help', '--adapter', 'fenced'],
+    ]) {
+      const out = await capture(() => cli.main(argv));
+      assert.deepEqual(out.result, { exitCode: 2, exit: 'now' }, argv.join(' '));
+      assert.equal(out.stdout, '', argv.join(' '));
+      assert.equal(
+        out.stderr,
+        `✗ shop-harness ${argv[0]}: policy is unfenced.\n  Next: fence it\n`,
+        argv.join(' '),
+      );
+    }
+    assert.deepEqual(ran, ['fenced', 'fenced', 'fenced']);
+    assert.deepEqual(calls, []);
+  });
+
   test("passes the host's explanation of a rejected choice through the grammar", async () => {
     const cli = createHarnessCli({
       ...pluginOptions(),

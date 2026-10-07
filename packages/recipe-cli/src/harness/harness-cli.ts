@@ -108,8 +108,8 @@ export interface HarnessCliOptions {
   /** The host's own error for a value an option's choices reject; null keeps the default. */
   explainInvalidChoice?: ContractValidationOptions['explainInvalidChoice'];
   /**
-   * Runs once the adapter a command selects has loaded (its plugin record set),
-   * before help or dispatch. A refusal it throws (AdapterPluginError, RecipeTrustError,
+   * Runs whenever a command selects an adapter, after the loader (a built-in or an
+   * undeclared id has no plugin record), before help or dispatch. A refusal it throws (AdapterPluginError, RecipeTrustError,
    * RecipeResolutionError) prints like the loader's and ends the command.
    */
   afterAdapterLoad?(adapterId: string): void | Promise<void>;
