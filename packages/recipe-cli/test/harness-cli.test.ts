@@ -1064,7 +1064,8 @@ export const adapter = {
     process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('fenced')}`;
     const refusing = createHarnessCli({
       ...pluginOptions(),
-      afterAdapterLoad: () => {
+      // An async hook: its rejection is the refusal.
+      afterAdapterLoad: async () => {
         throw new AdapterPluginError(
           'ADAPTER_PLUGIN_INVALID',
           "adapter 'fenced' policy imports a file its digest misses.",
