@@ -312,6 +312,9 @@ function childEnvironment(tmuxDir) {
 /** Test processes still running, so an interrupted run can stop them first. */
 const activeChildren = new Set();
 
+/** Set when a signal interrupts the run: no further test file starts. */
+let interrupted = false;
+
 /**
  * Pass a signal on to the running test processes and wait for them to close,
  * against one deadline, so none recreates files after the run's directories
@@ -343,6 +346,11 @@ export async function stopChildren(signal, children = activeChildren, timeoutMs 
 
 function runYarn(args, { cwd, env, buffered }) {
   return new Promise((resolvePromise, rejectPromise) => {
+    // An interrupted run starts nothing new: it could outlive the shutdown.
+    if (interrupted) {
+      resolvePromise({ status: 1, output: '' });
+      return;
+    }
     const child = spawn('yarn', args, {
       cwd,
       env,
@@ -570,6 +578,7 @@ async function runOne(file, context) {
 async function runLaneSequentially(files, context) {
   const records = [];
   for (const file of files) {
+    if (interrupted) break;
     records.push(await runOne(file, context));
   }
   return records;
@@ -728,9 +737,12 @@ async function main() {
   };
   process.once('exit', closeSandbox);
   // An interrupted run stops its test processes, removes its directories and
-  // ends its tmux server, then dies by the same signal.
+  // ends its tmux server, then dies by the same signal. A second signal during
+  // that shutdown gets the default action: the operator's override, which
+  // skips the cleanup.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.once(signal, () => {
+      interrupted = true;
       stopChildren(signal)
         .catch((error) => {
           // Reported and failing; the directories and sandbox are still removed.

@@ -1004,3 +1004,53 @@ test(
     assert.equal(survived, false, 'a test process outlived the run and recreated its TMPDIR');
   },
 );
+
+test(
+  'an interrupted run starts no further test file',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    t.after(() => rmSync(fixture, { recursive: true, force: true }));
+    const started = path.join(fixture, 'a-started');
+    const second = path.join(fixture, 'b-started');
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // One lane, a then b: a holds the run open until the runner is signalled.
+    writeFileSync(
+      path.join(fixture, 'src', 'a.test.ts'),
+      `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('a', async () => {
+  writeFileSync(${JSON.stringify(started)}, '');
+  await new Promise((resolve) => setTimeout(resolve, 10000));
+});
+`,
+    );
+    writeFileSync(
+      path.join(fixture, 'src', 'b.test.ts'),
+      `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
+`,
+    );
+    const runner = spawn(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '1', 'src'],
+      { stdio: 'ignore' },
+    );
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    for (let i = 0; i < 300 && !existsSync(started); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(started), 'the first test file never started');
+
+    runner.kill('SIGTERM');
+    assert.equal(await closed, 'SIGTERM');
+    // Long enough for a file the runner wrongly started to run.
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    assert.equal(existsSync(second), false, 'the interrupted run started another test file');
+  },
+);
