@@ -403,7 +403,9 @@ export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
 /**
  * Test files (`<workspace dir>/<path>`) that still leave entries in their
  * TMPDIR. The runner removes their TMPDIR either way, so nothing reaches the
- * machine's; the list only shrinks: make the file clean up, then delete it.
+ * machine's. The list only shrinks: make the file clean up, then delete it. A
+ * listed file that left nothing gets a notice, not a failure: some leak only
+ * where a tool is installed or a test is not skipped.
  */
 export const KNOWN_TMPDIR_LEAKERS = new Set([
   'agent-runtime/src/task-init/discover.test.ts',
@@ -461,7 +463,6 @@ export const KNOWN_TMPDIR_LEAKERS = new Set([
   'gateway/src/runners/provider-account-select.test.ts',
   'gateway/src/runners/provider-accounts.test.ts',
   'gateway/src/runners/quota-guard.test.ts',
-  'gateway/src/runners/status-provider.test.ts',
   'gateway/src/runners/usage-exhaustion-ledger.test.ts',
   'gateway/src/runs/analytics.test.ts',
   'gateway/src/runs/store.test.ts',
@@ -492,11 +493,12 @@ export const KNOWN_TMPDIR_LEAKERS = new Set([
 
 /**
  * Tool caches tests share through TMPDIR (tsx's transform cache, Node's compile
- * cache): each file's private TMPDIR links them to the real ones, so files keep
- * a warm cache and the links never count as leftovers.
+ * cache, the logs cursor-agent writes when a test runs an installed one): each
+ * file's private TMPDIR links them to the real ones, so files keep a warm cache
+ * and the links never count as leftovers.
  */
 export function sharedToolCaches(uid = process.getuid?.() ?? 0) {
-  return [`tsx-${uid}`, 'node-compile-cache'];
+  return [`tsx-${uid}`, 'node-compile-cache', `cursor-agent-logs-${uid}`];
 }
 
 /** Link the shared tool caches into a test file's private TMPDIR. */
@@ -508,19 +510,18 @@ export function linkToolCaches(fileTmp, realTmp = tmpdir()) {
   }
 }
 
-/**
- * What a test file left in its private TMPDIR, as a failure line, or null.
- * A `known` file may leak; one that no longer does must leave the list.
- */
+/** What a test file left in its private TMPDIR, as a failure line, or null. */
 export function tmpdirLeakFailure(label, entries, known = KNOWN_TMPDIR_LEAKERS) {
-  if (known.has(label)) {
-    return entries.length === 0
-      ? `[tsx-tests] ${label} no longer leaves anything in its TMPDIR: remove it from KNOWN_TMPDIR_LEAKERS.`
-      : null;
-  }
-  if (entries.length === 0) return null;
+  if (known.has(label) || entries.length === 0) return null;
   const shown = entries.slice(0, 10).join(', ') + (entries.length > 10 ? ', …' : '');
   return `[tsx-tests] ${label} left ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} in its TMPDIR: ${shown}. Remove temp directories in teardown.`;
+}
+
+/** A known leaker that left nothing this run: a hint to shrink the list, or null. */
+export function knownLeakerNotice(label, entries, known = KNOWN_TMPDIR_LEAKERS) {
+  return known.has(label) && entries.length === 0
+    ? `[tsx-tests] ${label} left nothing in its TMPDIR this run: if it no longer leaks anywhere, remove it from KNOWN_TMPDIR_LEAKERS.`
+    : null;
 }
 
 async function runOne(file, context) {
@@ -558,14 +559,13 @@ async function runOne(file, context) {
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
-  const leakFailure = tmpdirLeakFailure(
-    `${basename(context.cwd)}/${relative(context.cwd, file)}`,
-    leaked,
-  );
+  const label = `${basename(context.cwd)}/${relative(context.cwd, file)}`;
+  const leakFailure = tmpdirLeakFailure(label, leaked);
+  const leakMessage = leakFailure ?? knownLeakerNotice(label, leaked);
   // Buffered lanes print the message inside this file's own output block.
-  if (leakFailure && !context.buffered) console.error(leakFailure);
+  if (leakMessage && !context.buffered) console.error(leakMessage);
   const status = leakFailure && result.status === 0 ? 1 : result.status;
-  const output = leakFailure ? `${result.output}${leakFailure}\n` : result.output;
+  const output = leakMessage ? `${result.output}${leakMessage}\n` : result.output;
   const ms = performance.now() - started;
   if (context.buffered) {
     process.stdout.write(

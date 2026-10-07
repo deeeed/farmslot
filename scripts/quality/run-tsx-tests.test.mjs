@@ -22,6 +22,7 @@ import {
   classifyTest,
   discoverTests,
   finish,
+  knownLeakerNotice,
   parseArgs,
   partitionTests,
   resolveWorkers,
@@ -931,11 +932,15 @@ test('a test file that leaves something in its TMPDIR fails, unless it is a know
     /gateway\/src\/new\.test\.ts left 1 entry in its TMPDIR: probe-AbC123/,
   );
   assert.equal(tmpdirLeakFailure('gateway/src/known.test.ts', ['old-leak'], known), null);
-  // The list only shrinks: a listed file that stopped leaking must leave it.
+  // A listed file that left nothing does not fail (it may leak only where a
+  // tool is installed), but says the list can shrink.
+  assert.equal(tmpdirLeakFailure('gateway/src/known.test.ts', [], known), null);
   assert.match(
-    tmpdirLeakFailure('gateway/src/known.test.ts', [], known),
-    /no longer leaves anything in its TMPDIR: remove it from KNOWN_TMPDIR_LEAKERS/,
+    knownLeakerNotice('gateway/src/known.test.ts', [], known),
+    /left nothing in its TMPDIR this run: if it no longer leaks anywhere, remove it from KNOWN_TMPDIR_LEAKERS/,
   );
+  assert.equal(knownLeakerNotice('gateway/src/known.test.ts', ['old-leak'], known), null);
+  assert.equal(knownLeakerNotice('gateway/src/clean.test.ts', [], known), null);
 });
 
 test('a test file runs with a private TMPDIR; what it leaves fails it and never reaches the real one', (t) => {
