@@ -46,8 +46,11 @@ export {
   type NativeUiTransport,
   type NativeUiTransportOptions,
   type NetworkCaptureBackend,
+  noopStage,
   type PlatformAdapter,
   type RecipeNodeEvent,
   type RecipeRunOptions,
   type RunObserver,
+  type StageHandle,
+  type StageProgress,
 } from './types.js';

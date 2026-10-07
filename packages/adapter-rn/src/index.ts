@@ -22,6 +22,7 @@ export {
   type MetroEnvInputs,
   recordMetroEnvBaseline,
 } from './metro-env.js';
+export { type MetroBundleProgress, metroBundleProgress } from './metro-progress.js';
 export { createRedactingCoreAdapters } from './redaction.js';
 export {
   resolveExpoRecordingTarget,

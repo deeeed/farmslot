@@ -354,6 +354,14 @@ export {
   usageOut,
   writeInteractiveProgress,
 } from './shared.js';
+export {
+  createStageReporter,
+  formatElapsed,
+  type ReportedStage,
+  stageProgressText,
+  type StageReporter,
+  type StageReporterOptions,
+} from './stage-progress.js';
 export { closest } from './suggest.js';
 export {
   CHECKLIST_LABEL_LIMIT,
