@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## 0.6.1 - 2026-10-08
 
-- `web-dapp` refuses a headful launch while the macOS login session is locked (`SESSION_LOCKED`, with the unlock step), before starting, reusing or stopping a browser, as mm-harness does since its #363 (0.6.0 shipped `web-dapp` without it). `macosSessionLocked()` and `parseSessionLocked()` are exported.
+- `web-dapp` refuses a headful launch while the macOS login session is locked (`SESSION_LOCKED`, with the unlock step), before starting, reusing or stopping a browser, as mm-harness does since its #363 (0.6.0 shipped `web-dapp` without it). `macosSessionLocked()`, `parseSessionLocked()`, `SESSION_LOCKED_MESSAGE` and `SESSION_LOCKED_USER_ACTION` are exported.
 - Publish with adapter-sdk 0.7.1 and recipe-runner 0.27.0 so consumers share one adapter-sdk and one recipe-runner copy.
 
 ## 0.6.0 - 2026-10-08
