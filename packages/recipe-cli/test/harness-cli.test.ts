@@ -901,6 +901,73 @@ export const adapter = {
     assert.deepEqual(calls, []);
   });
 
+  test('runs a built-in beside a library entry that does not parse; refuses a plugin there', async () => {
+    process.env.RECIPE_LIBRARY_PATH = '=foo';
+    const cli = createHarnessCli(pluginOptions());
+    assert.deepEqual(await cli.main(['doctor', '--adapter', 'web', '--json']), {
+      exitCode: 0,
+      exit: 'code',
+    });
+    assert.deepEqual(calls, [{ command: 'doctor', argv: ['--adapter', 'web', '--json'] }]);
+    const root = pluginLibrary('plug');
+    const plugin = await capture(() =>
+      cli.main(['doctor', '--adapter', 'plug', '--library', `plugs=${root}`, '--json']),
+    );
+    assert.deepEqual(plugin.result, { exitCode: 2, exit: 'now' });
+    const envelope = JSON.parse(plugin.stdout) as { error: { code: string } };
+    assert.equal(envelope.error.code, 'RECIPE_LIBRARY_PATH_INVALID');
+    assert.deepEqual(imported(), []);
+  });
+
+  test('prints a library path or manifest refusal in human, --json and --json-stream form', async () => {
+    const broken = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(broken, 'recipe-library.json'),
+      JSON.stringify({ adapters: { broken: { module: '' } } }),
+    );
+    const cases = [
+      {
+        code: 'RECIPE_LIBRARY_PATH_INVALID',
+        env: '=foo',
+        argv: ['doctor', '--adapter', 'plug', '--library', `plugs=${pluginLibrary('plug')}`],
+        message:
+          /^✗ shop-harness doctor: Recipe library entry "=foo" must be name=path or path\.\n {2}Next: /u,
+      },
+      {
+        code: 'RECIPE_LIBRARY_MANIFEST_INVALID',
+        env: `bad=${broken}`,
+        argv: ['doctor', '--adapter', 'broken'],
+        message: /^✗ shop-harness doctor: .*adapters\.broken\.module must be a path\.\n {2}Next: /u,
+      },
+    ];
+    for (const { code, env, argv, message } of cases) {
+      process.env.RECIPE_LIBRARY_PATH = env;
+      const cli = createHarnessCli(pluginOptions());
+      const human = await capture(() => cli.main(argv));
+      assert.deepEqual(human.result, { exitCode: 2, exit: 'now' }, code);
+      assert.match(human.stderr, message, code);
+      const json = await capture(() => cli.main([...argv, '--json']));
+      assert.deepEqual(json.result, { exitCode: 2, exit: 'now' }, code);
+      const envelope = JSON.parse(json.stdout) as { error: Record<string, unknown> };
+      assert.equal(envelope.error.code, code);
+      const stream = await capture(() => cli.main([...argv, '--json-stream']));
+      assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' }, code);
+      assert.equal(stream.stderr, '', code);
+      const events = streamEvents(stream.stdout);
+      assert.deepEqual(
+        events.map(({ event, status, exitCode }) => ({ event, status, exitCode })),
+        [
+          { event: 'error', status: undefined, exitCode: undefined },
+          { event: 'complete', status: 'fail', exitCode: 2 },
+        ],
+        code,
+      );
+      assert.deepEqual(events[0]?.error, envelope.error, code);
+    }
+    assert.deepEqual(imported(), []);
+    assert.deepEqual(calls, []);
+  });
+
   test("prints the fence's refusal of a plugin's import the same way", async () => {
     const root = pluginLibrary('leaky');
     const module = path.join(root, 'plugins', 'leaky.mjs');

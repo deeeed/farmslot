@@ -7,6 +7,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - **BREAKING:** remove `adapterPortFlags`. `run` and `call` take the dev-server port from `--watcher-port` only.
 - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`.
 - `call` no longer passes its command line to `trustedMutation.load` (it gets `cli: {}`), so a funding flag never binds a mutation to a call: funded mutations run through `run`, bound to the reviewed recipe.
+- Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse: a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, an empty entry such as `extra=` from an unset variable, or a bad `--library`. The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`.
+  - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
+  - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
+  - A plugin id with a bad entry still refuses. `createHarnessCli` prints library refusals (path or manifest, a `RecipeResolutionError`) the way it prints other refusals: the code, message and next step (`--json` envelope, NDJSON under `--json-stream`), exit 2.
+- `spawnScriptStreaming` listens for parent signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) before it starts the leaf. A signal that arrived while the leaf was starting used to end the harness and leave the detached leaf running.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-10-06
 
