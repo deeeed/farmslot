@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Bounded healing classifies a failure matching an adapter's `failurePatterns.environment` as `ENVIRONMENT_NOT_READY` (exit 4, the adapter's message and next step) instead of `APP_LOGIC_FAILURE`. `FailureClass` gains `'environment'`.
 - Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse: a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, an empty entry such as `extra=` from an unset variable, or a bad `--library`. The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`.
   - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
   - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
