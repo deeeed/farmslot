@@ -2235,6 +2235,48 @@ describe('call', () => {
     assert.equal(call.value, 0, call.stderr.join('\n'));
     assert.equal(calls.runners.length, 2);
     assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
+    assert.deepEqual(calls.mutationHooks, ['load:web', 'load:web']);
+  });
+
+  test('binds a mutation that load returns for the adapter alone, as a fixture policy does', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const byAdapter = {
+      ...callOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: async (input: Parameters<typeof base.load>[0]) => {
+            calls.mutationHooks.push(`load:${input.adapter}`);
+            return input.adapter === 'web' ? { bound: 'policy' } : undefined;
+          },
+          authorize: base.authorize,
+        },
+      },
+    };
+    const call = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=slow',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--json',
+        ],
+        byAdapter,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.deepEqual([...new Set(calls.mutationHooks)], ['load:web', 'authorize:web']);
+    assert.ok(
+      calls.runners.some((runner) =>
+        /^policy@sha256:[0-9a-f]{8}$/u.test(String(runner.trustedMutation)),
+      ),
+    );
   });
 
   test('passes the adapter the command resolved to the trusted mutation hooks', async () => {

@@ -375,8 +375,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     process.env.FARMSLOT_RECIPE_SOURCE_NAME ||
     process.env.FARMSLOT_RECIPE_SOURCE_DIGEST;
   let observers: RunObservers | undefined;
-  // No `cli`: a call never loads the engine's trusted mutation (funded
-  // mutations run through `run`, bound to a reviewed recipe).
+  // No `cli`: a call's trustedMutation.load gets no command line, so no funding
+  // flag binds a mutation to a call (funded mutations run through `run`, bound
+  // to a reviewed recipe).
   const callRuntimeOptions: RecipeEngineRunOptions = {
     ...requestedRuntimeOptions,
     librarySources,
