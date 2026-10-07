@@ -5,8 +5,14 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - **BREAKING:** remove `devServer.portFlags`. `--watcher-port` is the one option that gives `run` and `call` the dev-server port; a platform names its port environment with `devServer.portEnv`.
-- Add `AdapterFailurePatterns.environment` (`pattern`, `message`, `userAction`): a failure the target's environment causes (a missing runtime dependency or build output), which neither healing nor the app can fix.
+- **BREAKING:** Add the optional `PlatformAdapter.readiness` member (`AdapterReadiness`): what `doctor`, `status` and `prepare` ask a platform: `checks`, `liveChecks`, `environment`, `lines`, `orphanDevServers`, `captureProviders`, `fixes`, `runtimeBlock`, `pinnedFlags`, `statusRuntime`, `readyIndicator` (the `doctor --print-ready` stdout), `devices` (`AdapterDevices`: one view, one live probe, their rendering) and `prepare` (`AdapterPrepare`: `clearMetro`, `devicePlatform`, `ambiguousTarget`). Also exports `AdapterDevice`, `AdapterDeviceView`, `AdapterDeviceLiveView`, `AdapterPaint` and `AdapterPinnedFlags`.
+  - Breaking for host types only: a host type that extends `PlatformAdapter` and declares its own `readiness` member no longer compiles unless that member extends `AdapterReadiness`. Migrate by typing it as `AdapterReadiness & { … }` (or an interface that extends `AdapterReadiness`). Runtime behaviour is unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-10-07
+
+- Add `AdapterFailurePatterns.environment` (`pattern`, `message`, `userAction`): a failure the target's environment causes (a missing runtime dependency or build output), which neither healing nor the app can fix.
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.5.1 - 2026-10-06
 

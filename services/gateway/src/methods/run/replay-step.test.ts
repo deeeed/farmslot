@@ -189,14 +189,6 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
     null,
   );
-  assert.deepEqual(
-    freshBlockedMonitorAttempt(
-      run,
-      { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: 'old' } },
-      context,
-    ),
-    null,
-  );
   assert.equal(
     freshBlockedMonitorAttempt(
       run,
@@ -226,6 +218,31 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     ),
     null,
   );
+});
+
+test('blocked monitor replay accepts the blocked attempt completing later without ./mark start', () => {
+  const blocked = { status: 'blocked', attemptId: 'a1', timestamp: '2026-09-23T01:00:00Z' };
+  const run = {
+    status: 'blocked' as const,
+    steps: [
+      { name: 'monitor', status: 'done', outputs: { workerSignal: blocked } },
+    ] as Run['steps'],
+  };
+  const context = { id: 'worker', role: 'fix-bug' } as const;
+  const probe = (signal: Record<string, unknown>) =>
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: true, code: 'ready', message: '', signal: signal as never },
+      context,
+    );
+  const complete = { status: 'complete', attemptId: 'a1', timestamp: '2026-09-23T01:05:00Z' };
+
+  assert.deepEqual(probe(complete), complete);
+  assert.deepEqual(probe({ ...complete, status: 'done' }), { ...complete, status: 'done' });
+  // Still the blocked attempt unless it finished, and only after the block.
+  assert.equal(probe({ ...complete, status: 'running' }), null);
+  assert.equal(probe({ ...complete, status: 'blocked' }), null);
+  assert.equal(probe({ ...complete, timestamp: blocked.timestamp }), null);
 });
 
 test('blocked monitor replay needs the recorded proof plan and fresh healthy leases', () => {

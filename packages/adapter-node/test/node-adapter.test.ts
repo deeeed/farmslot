@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   type AdapterLaunchContext,
+  type AdapterReadiness,
   createAdapterRegistry,
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
@@ -227,7 +228,8 @@ test('workspacePackages wire tsx live scripts unless the host set its own', asyn
 
 test('a host extends the adapter by spreading it', () => {
   interface HostAdapter extends PlatformAdapter {
-    readiness: { mode(): string };
+    // A host's own readiness members extend the SDK's.
+    readiness: AdapterReadiness & { mode(): string };
   }
   const registry = createAdapterRegistry<HostAdapter>();
   registry.register({ ...createNodeAdapter(BASE), readiness: { mode: () => 'headless' } });

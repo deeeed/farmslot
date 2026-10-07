@@ -8,6 +8,7 @@ import {
   findLatestResolvedDecision,
   isReplayableResolvedHumanGateDecision,
   latestResolvedHumanGateDecision,
+  markResolvedHumanGateApprovalHeld,
   markResolvedHumanGateReviewRequestConsumed,
   requiresCollisionPrecheck,
 } from './decision-replay.js';
@@ -218,4 +219,23 @@ test('latestResolvedHumanGateDecision(approvalOnly) accepts close-as-shipped res
   ] as unknown as RunDecision[];
   const latest = latestResolvedHumanGateDecision(decisions, true);
   assert.equal(latest?.resolvedAction, 'close-as-shipped');
+});
+
+test('a held approval is neither replayed nor seen by finalize; the next decision is', () => {
+  const approval = (id: string, resolvedAt: string): RunDecision => ({
+    id,
+    type: 'engine_human_gate',
+    title: 'gate',
+    description: '',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    createdAt: resolvedAt,
+    resolvedAt,
+    resolvedAction: 'approve-publish',
+  });
+  const held = approval('held', '2026-10-07T00:00:01Z');
+  markResolvedHumanGateApprovalHeld(held);
+  assert.equal(latestResolvedHumanGateDecision([held]), undefined);
+  assert.equal(latestResolvedHumanGateDecision([held], true), undefined);
+  const again = approval('again', '2026-10-07T00:05:00Z');
+  assert.equal(latestResolvedHumanGateDecision([held, again], true), again);
 });

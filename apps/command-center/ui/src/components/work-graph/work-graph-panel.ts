@@ -417,6 +417,7 @@ export class WorkGraphPanel extends LitElement {
     if (edge.condition.kind === 'family-done') {
       return edge.condition.outcome ? `upstream ${edge.condition.outcome}` : 'upstream done';
     }
+    if (edge.condition.kind === 'published') return 'upstream PR published';
     return edge.condition.targetRef ? `merged ${edge.condition.targetRef}` : 'merged';
   }
 

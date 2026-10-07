@@ -26,6 +26,7 @@ import { color } from './cli-color.js';
 import {
   type CliUsageError,
   type CommandContract,
+  type ContractValidationOptions,
   optionValues,
   validatePublicInvocation,
 } from './command-contract.js';
@@ -104,6 +105,15 @@ export interface HarnessCliOptions {
   configuredLibraries?(): AdapterLoadOptions['configured'];
   /** Retired option spellings and their replacements, for the unknown-option suggestion. */
   replacedOptions?: Readonly<Record<string, string>>;
+  /** The host's own error for a value an option's choices reject; null keeps the default. */
+  explainInvalidChoice?: ContractValidationOptions['explainInvalidChoice'];
+  /**
+   * Runs whenever a command selects an adapter, after the loader (a built-in or an
+   * undeclared id has no plugin record), before help or dispatch. A refusal it
+   * throws (AdapterPluginError, RecipeTrustError, RecipeResolutionError) prints
+   * like the loader's and ends the command.
+   */
+  afterAdapterLoad?(adapterId: string): void | Promise<void>;
 }
 
 export interface HarnessCliResult {
@@ -162,6 +172,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
     if (!command?.hidden) {
       const usageError = validatePublicInvocation(argv, publicCommands, {
         replacedOptions: options.replacedOptions,
+        explainInvalidChoice: options.explainInvalidChoice,
       });
       if (usageError) {
         writeUsageError(
@@ -178,11 +189,12 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     // A library-declared adapter loads only when the command selects it.
     if (command) {
-      const refused = await loadSelectedAdapter(command.name, argv, {
-        adopt: options.adopt,
-        configured: options.configuredLibraries?.(),
-        env: operatorEnv,
-      });
+      const refused = await loadSelectedAdapter(
+        command.name,
+        argv,
+        { adopt: options.adopt, configured: options.configuredLibraries?.(), env: operatorEnv },
+        options.afterAdapterLoad,
+      );
       if (refused !== undefined) return { exitCode: refused, exit: 'now' };
     }
 
@@ -256,12 +268,14 @@ async function loadSelectedAdapter(
   command: string,
   argv: readonly string[],
   load: Pick<AdapterLoadOptions, 'adopt' | 'configured' | 'env'>,
+  afterAdapterLoad: HarnessCliOptions['afterAdapterLoad'],
 ): Promise<number | undefined> {
   const tokens = argv.slice(1);
   const selected = selectedAdapterId(tokens);
   if (selected === undefined) return undefined;
   try {
     await ensureAdapterLoaded(selected, { ...load, libraries: optionValues(tokens, '--library') });
+    await afterAdapterLoad?.(selected);
     return undefined;
   } catch (error) {
     // A refused plugin, or the library reader's refusal of its source or its path.

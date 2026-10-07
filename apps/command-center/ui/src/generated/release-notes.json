@@ -1,5 +1,5 @@
 {
-  "version": "0.20.2",
-  "date": "2026-10-06",
-  "items": ["The Runs list shows when each active run last made progress and what it is doing next"]
+  "version": "0.20.3",
+  "date": "2026-10-07",
+  "items": ["The work graph shows and composes \"upstream PR published\" edges for stacked runs"]
 }

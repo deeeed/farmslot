@@ -68,6 +68,7 @@ export {
   type ContractFailures,
   contractOptions,
   type ContractValidationOptions,
+  type InvalidChoice,
   optionalValueOption,
   type OptionSpec,
   optionValues,
@@ -90,9 +91,32 @@ export {
   withCommandJournal,
 } from './command-journal.js';
 export { type CallCommandOptions, handleCall, handleCallHelp } from './commands/call.js';
+export {
+  type ChecklistCommandOptions,
+  type ChecklistStepGate,
+  handleChecklist,
+} from './commands/checklist.js';
 export { handleActions } from './commands/discover.js';
+export {
+  type DoctorAdvisorySection,
+  type DoctorCommandOptions,
+  doctorFixNextActions,
+  type DoctorFixOptions,
+  handleDoctor,
+} from './commands/doctor.js';
+export { handleExecutionTemplate } from './commands/execution-template.js';
 export { handleLast } from './commands/last.js';
 export { handleLaunch } from './commands/launch.js';
+export {
+  handlePrepare,
+  type PrepareCommandOptions,
+  type PrepareStep,
+  type StatusDevice,
+} from './commands/prepare.js';
+export {
+  handleRecipeQuality,
+  type RecipeQualityCommandOptions,
+} from './commands/recipe-quality.js';
 export { handleReload } from './commands/reload.js';
 export {
   type DeviceTargeting,
@@ -100,7 +124,32 @@ export {
   type RunCommandOptions,
   type RunPlanStep,
 } from './commands/run.js';
+export { handleStatus, type StatusCommandOptions } from './commands/status.js';
+export {
+  changedLines,
+  formatDuration,
+  handleStatusTaskView,
+  renderAcceptanceLines,
+  renderTaskView,
+  runStatusWatch,
+  type StatusWatchDeps,
+  type StatusWatchOptions,
+} from './commands/status-watch.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
+export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
+export {
+  createDoctorReport,
+  type DoctorCheck,
+  type DoctorReport,
+  type DoctorReportOptions,
+  type RequiredDoctorChecks,
+  requiredDoctorCheckSummary,
+  type RunnerInstallKind,
+  runnerInstallKind,
+  type RunnerProvenance,
+  runnerProvenance,
+  type RunnerProvenanceOptions,
+} from './doctor-report.js';
 export {
   captureExecutionProvenance,
   type ExecutionProvenanceDrift,
@@ -200,11 +249,18 @@ export {
   DEFAULT_RECIPE_HARNESS_ROOT,
   DEFAULT_RECIPE_RUNTIME_DIR,
   harnessExecutable,
+  PREPARE_PROGRESS_ARTIFACT,
   recipeHarnessPath,
   recipeHarnessRoot,
   recipeRuntimeDir,
   recipeRuntimePath,
 } from './paths.js';
+export {
+  type DevicePreview,
+  type FeatureFlagReport,
+  type ReadinessViewOptions,
+  renderFeatureFlagLine,
+} from './readiness.js';
 export {
   describeRunnableRecipe,
   listRunnableRecipes,
@@ -298,6 +354,27 @@ export {
   writeInteractiveProgress,
 } from './shared.js';
 export { closest } from './suggest.js';
+export {
+  CHECKLIST_LABEL_LIMIT,
+  collectTaskView,
+  findTaskDir,
+  TASK_SILENT_AFTER_MS,
+  type TaskView,
+  type TaskViewActivity,
+  type TaskViewCheckout,
+  type TaskViewCommand,
+  type TaskViewFixture,
+  type TaskViewHarness,
+  type TaskViewIsolation,
+  type TaskViewLibrary,
+  type TaskViewPrepare,
+  type TaskViewRow,
+  type TaskViewSandbox,
+  type TaskViewSignal,
+  type TaskViewSubtask,
+  type TaskViewSubtaskSource,
+  type TaskViewTemplate,
+} from './task-view.js';
 export {
   explicitRecipeTrustOptions,
   type RecipeTrustFailure,

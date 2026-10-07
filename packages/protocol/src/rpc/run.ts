@@ -10,6 +10,7 @@ import type {
   RunStatus,
   SlotRunHistoryEntry,
 } from '../contracts/index.js';
+import type { WorkerSignalProbeResult } from '../transport/signal.js';
 
 import { Methods } from './registry.js';
 
@@ -566,7 +567,13 @@ export interface RunProbeWorkerSignalParams {
   runId: string;
 }
 
-export type RunProbeWorkerSignalResult = import('../transport/signal.js').WorkerSignalProbeResult;
+export interface RunProbeWorkerSignalResult extends WorkerSignalProbeResult {
+  /**
+   * Set on a blocked run: true when this signal lets `run resume` continue it (a
+   * later attempt, or the blocked attempt finishing without `./mark start`).
+   */
+  resumable?: boolean;
+}
 
 export interface RunSessionCommandParams {
   runId: string;

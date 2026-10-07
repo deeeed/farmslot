@@ -25,6 +25,7 @@ import {
 } from '../run-completion/orchestrator.js';
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun } from '../runs/store.js';
+import { reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -248,15 +249,18 @@ export async function refreshPublishPackage(params: {
           requireCrossRunnerCertification: reviewDepth?.requireCrossRunner,
         })
       : 0;
+  // A refresh after the description or evidence changed needs a new review.
+  const reviewedInputsStale = await reviewedInputsChanged(refreshedRun);
   const reviewSatisfied =
-    independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0;
+    independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
+    staleReviewCount === 0 &&
+    !reviewedInputsStale;
   // Offer the human evidence-refresh override only when the refresh regenerated
-  // evidence digests but the reviewed HEAD is unchanged — never on code drift.
-  const evidenceRefreshAction = buildEvidenceRefreshAction(
-    independentReviews,
-    prPackage,
-    reviewDepth,
-  );
+  // evidence digests but the reviewed HEAD is unchanged — never on code drift,
+  // and never when what the last review judged has changed since.
+  const evidenceRefreshAction = reviewedInputsStale
+    ? null
+    : buildEvidenceRefreshAction(independentReviews, prPackage, reviewDepth);
   const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
   const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const actions = publicationGateDecisionActions({

@@ -42,6 +42,7 @@ import {
 } from '../parse-args.js';
 import { resolveCommandManifest } from '../recipe-library.js';
 import { validateRecipeAdapterAware } from '../recipe-validation.js';
+import { recordingUnsupported } from '../recording-target.js';
 import {
   type ConsoleAllowlist,
   formatRunDiagnosticsForHuman,
@@ -152,6 +153,31 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   // The runtime directory names where the slot's context and the call's runtime
   // state live, so it applies before the slot resolves.
   applyRuntimeDirOption(options);
+
+  const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
+  if (recording) {
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            command: 'call',
+            adapter,
+            status: 'fail',
+            exitCode: EXIT.usage,
+            error: recording,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.error(`✗ call: ${recording.message}`);
+      console.error(`  Next: ${recording.userAction}`);
+    }
+    return EXIT.usage;
+  }
+
   harnessAdapter(adapter).resolveSlotPorts(target);
   // Resolve/gate the device target before the engine reads process.env.
   const device = commandOptions.targetDevice?.('call', adapter, options);

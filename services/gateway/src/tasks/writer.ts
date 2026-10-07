@@ -68,6 +68,7 @@ import {
 } from './planning-context.js';
 import { buildQaTaskSection, writeQaInput } from './qa-input.js';
 import { runContractSection } from './run-contract.js';
+import { stackSection } from './stack-section.js';
 import { renderAcceptanceCriteria } from './task-document.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
@@ -1233,9 +1234,11 @@ export async function writeTaskFile(
   const appendTaskContext = async (base: string): Promise<string> => {
     const runContract = runContractSection(run, vars.TASK_DIR);
     const withRunContract = runContract ? `${base.trimEnd()}\n\n${runContract}\n` : base;
+    const stack = stackSection(run);
+    const withStack = stack ? `${withRunContract.trimEnd()}\n\n${stack}\n` : withRunContract;
     const withInheritedContext = inheritedContext
-      ? `${withRunContract.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
-      : withRunContract;
+      ? `${withStack.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
+      : withStack;
     const withInteractivePrCompleteHandoff =
       run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
