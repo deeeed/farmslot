@@ -1290,12 +1290,22 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 
   // A step that stops running ends a wait still open on it (a claim not yet
   // granted, a decision a worker signal outran): that time stays queue time.
+  // A step that ends keeps its duration so far on every path, a throw included;
+  // one reset to pending does not.
   const stops =
     step.status === 'running' && partial.status !== undefined && partial.status !== 'running';
-  Object.assign(
-    step,
-    stops && !('queuedSince' in partial) ? { ...closeStepWait(step), ...partial } : partial,
-  );
+  if (stops) {
+    const startedMs = step.startedAt ? Date.parse(step.startedAt) : NaN;
+    Object.assign(step, {
+      ...(!('queuedSince' in partial) ? closeStepWait(step) : {}),
+      ...(partial.status !== 'pending' && !('durationMs' in partial) && Number.isFinite(startedMs)
+        ? { durationMs: Math.max(0, Date.now() - startedMs) }
+        : {}),
+      ...partial,
+    });
+  } else {
+    Object.assign(step, partial);
+  }
   run.updatedAt = new Date().toISOString();
   persistRunBackground(run, 'step update');
   return run;

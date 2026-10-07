@@ -93,6 +93,17 @@ test('a step that finishes with a wait still open keeps that wait as queue time'
   assert.ok(done.queuedMs! >= 121_000 && done.queuedMs! < 125_000, `${done.queuedMs}`);
 });
 
+test('a step that fails keeps its duration so far', (t) => {
+  const run = devRun(t);
+  const startedAt = new Date(Date.now() - 300_000).toISOString();
+  updateRunStep(run.id, 'prepare', { status: 'running', startedAt, queuedMs: 60_000 });
+  updateRunStep(run.id, 'prepare', { status: 'failed', detail: 'preflight exited 1' });
+  const failed = step(run.id, 'prepare');
+  assert.ok(failed.durationMs! >= 300_000 && failed.durationMs! < 305_000, `${failed.durationMs}`);
+  const execution = runStepExecutionMs(getRun(run.id)!, failed)!;
+  assert.ok(execution >= 240_000 && execution < 245_000, `${execution}`);
+});
+
 test('a waiter that outlives a re-entry adds nothing to the new attempt', async (t) => {
   const run = devRun(t);
   updateRunStep(run.id, 'find-slot', { status: 'running', startedAt: iso(T0) });
