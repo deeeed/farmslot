@@ -9,9 +9,14 @@ export function runDispatchQueueWaitMs(
   return Number.isFinite(ms) ? Math.max(0, ms) : undefined;
 }
 
-/** Queue time so far, counting a wait that is still open. */
+/**
+ * Queue time so far, counting a wait that is still open on a running step. A
+ * step that ended (a cancelled run, say) with a wait open counts only what was
+ * recorded.
+ */
 export function runStepQueuedMs(step: RunStep, nowMs = Date.now()): number {
-  const sinceMs = step.queuedSince ? Date.parse(step.queuedSince) : NaN;
+  const sinceMs =
+    step.status === 'running' && step.queuedSince ? Date.parse(step.queuedSince) : NaN;
   return (step.queuedMs ?? 0) + (Number.isFinite(sinceMs) ? Math.max(0, nowMs - sinceMs) : 0);
 }
 

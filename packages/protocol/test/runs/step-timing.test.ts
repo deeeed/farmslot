@@ -70,4 +70,6 @@ test('a wait that is still open counts as queue time, not execution', () => {
     50_000,
   );
   assert.equal(runStepQueuedMs({ name: 'x', status: 'done' }), 0);
+  // Cancelled while waiting: the step is skipped and its open wait stops counting.
+  assert.equal(runStepQueuedMs({ ...step, status: 'skipped' }, nowMs), 10_000);
 });
