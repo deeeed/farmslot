@@ -69,6 +69,7 @@ export {
   type ContractFailures,
   contractOptions,
   type ContractValidationOptions,
+  type InvalidChoice,
   optionalValueOption,
   type OptionSpec,
   optionValues,
