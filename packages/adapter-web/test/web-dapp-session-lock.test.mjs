@@ -29,6 +29,12 @@ describe('parseSessionLocked', () => {
   it("counts any session's flag when none is on console", () => {
     assert.equal(parseSessionLocked(plist(session({ locked: true, onConsole: false }))), true);
     assert.equal(parseSessionLocked(plist(session({ locked: false, onConsole: false }))), false);
+    // Not only the first session: the lock flag of a later off-console session counts too.
+    const second = plist(
+      session({ locked: false, onConsole: false }),
+      session({ locked: true, onConsole: false }),
+    );
+    assert.equal(parseSessionLocked(second), true);
   });
 
   it('reads the on-console session when several are logged in', () => {

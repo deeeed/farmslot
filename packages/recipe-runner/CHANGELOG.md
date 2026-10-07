@@ -4,7 +4,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.27.0 - 2026-10-08
+
 - Add a `lenient` option to `resolveRecipeValue(value, params, outputs, { lenient })`: only an exact reference to a parameter that exists resolves, anything else stays as written, and nothing throws. Static validation in `@farmslot/recipe-cli` resolves parameters this way.
+- Publish with protocol 0.34.0.
 
 ## 0.26.0 - 2026-10-06
 
