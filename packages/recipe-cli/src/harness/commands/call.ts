@@ -68,7 +68,13 @@ import { closest } from '../suggest.js';
 import { recipeTrustFailure } from '../trust.js';
 
 import { handleListExecutables } from './discover.js';
-import { type DeviceTargeting, provenanceFailure, reportTrustFailure } from './run.js';
+import {
+  type DeviceTargeting,
+  provenanceFailure,
+  type RecipeArtifactsLayout,
+  reportTrustFailure,
+  resolveRecipeArtifactsDir,
+} from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
@@ -94,7 +100,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     // The public wrapper catches this with the structured grammar. Keep the
     // guard for direct callers: without it, parseCallArgs can mistake an
     // option value (for example `core`) for the action.
-    const message = `call requires <action> first: ${host} call <action> [key=value ...] [--arg k=v ...] [flags]`;
+    const message = `call requires <action> first: ${host} call <action> [key=value ...] [flags]`;
     console.error(message);
     return EXIT.usage;
   }
@@ -391,8 +397,21 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     return EXIT.validation;
   }
 
-  const artifactsDir =
-    optionString(options, 'artifactsDir') ?? defaultCallArtifactsDir(target, resolvedAction);
+  let artifactsDir: string;
+  try {
+    artifactsDir = resolveRecipeArtifactsDir(
+      target,
+      optionString(options, 'artifactsDir'),
+      callArtifactsLayout(resolvedAction),
+    );
+  } catch (error) {
+    return usageOut(
+      json,
+      'call',
+      error instanceof Error ? error.message : String(error),
+      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+    );
+  }
   recordCommandEvidence(artifactsDir);
   const requestedRuntimeOptions = recipeRunOptionsFromCli(adapter, options);
   const inheritedSource =
@@ -717,10 +736,10 @@ function renderDefaultsUsed(defaults: Record<string, unknown>, stream: NodeJS.Wr
   return `${out('label', 'Defaults used:')} ${values}`;
 }
 
-/** A fresh artifacts directory per call, under the checkout's recipe calls. */
-export function defaultCallArtifactsDir(target: string, action: string): string {
-  const actionStem = action.replace(/[^a-zA-Z0-9._-]/gu, '_');
-  return path.join(target, 'temp', 'recipe', 'calls', `${actionStem}-${randomUUID()}`);
+/** Each call writes to its own `calls/<action>-<uuid>`, under the task's artifacts or temp/recipe. */
+export function callArtifactsLayout(action: string): RecipeArtifactsLayout {
+  const own = path.join('calls', `${action.replace(/[^a-zA-Z0-9._-]/gu, '_')}-${randomUUID()}`);
+  return { fresh: own, taskSubdir: own };
 }
 
 function readCallOutput(tracePath: string): unknown {
@@ -759,7 +778,8 @@ export function redactCallValue(value: unknown, key = ''): unknown {
 // `actions --action <name>` prints) above the generic call flags, so parameter
 // help for the action the user asked about is not hidden behind the generic call
 // help. An unresolvable name falls back to the generic help plus a pointer to
-// the vocabulary. Help is never an error: exit 0.
+// the vocabulary: exit 0. A refused input, such as the removed `--arg`, still
+// exits 2.
 export async function handleCallHelp(
   argv: string[],
   genericHelp: string,
@@ -825,13 +845,9 @@ function parseCallArgs(argv: string[]): CallArgs {
   let action: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    // Refuse rather than let parseArgs take the next token as its value.
     if (arg === '--arg' || arg.startsWith('--arg=')) {
-      const pair = arg === '--arg' ? argv[(i += 1)] : arg.slice('--arg='.length);
-      if (pair === undefined) throw usageError('--arg requires k=v.');
-      const eq = pair.indexOf('=');
-      if (eq === -1) throw usageError(`--arg must be k=v: ${pair}`);
-      args[pair.slice(0, eq)] = parseCallValue(pair.slice(eq + 1));
-      continue;
+      throw usageError('--arg was removed; pass the input as key=value');
     }
     if (!arg.startsWith('--') && action === undefined) {
       action = arg;
@@ -869,9 +885,9 @@ function parseCallValue(value: string): unknown {
   return value;
 }
 
+// An action input: `key=value`, never an inline `--flag=value`.
 function isArgPair(value: string): boolean {
-  const eq = value.indexOf('=');
-  return eq > 0;
+  return !value.startsWith('-') && value.indexOf('=') > 0;
 }
 
 function isForwardedOptionValue(argv: string[], index: number): boolean {

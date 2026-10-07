@@ -23,13 +23,24 @@ export function resolveRecipeParams(
   return params;
 }
 
+/**
+ * `value` with its `{{params.*}}`/`{{outputs.*}}` references resolved. Strict
+ * (the default) interpolates every reference and throws on a missing one.
+ * `lenient` is the static view before a run: only an exact reference to a
+ * parameter that exists resolves; anything else stays as written.
+ */
 export function resolveRecipeValue(
   value: unknown,
   params: Record<string, unknown>,
   outputs?: ReadonlyMap<string, unknown>,
+  options: { lenient?: boolean } = {},
 ): unknown {
   if (typeof value === 'string') {
     const exact = /^\{\{(params|outputs)\.([A-Za-z0-9_.-]+)\}\}$/u.exec(value);
+    if (options.lenient) {
+      const found = exact?.[1] === 'params' ? nestedValue(params, exact[2]!) : undefined;
+      return found ? found.value : value;
+    }
     if (exact) {
       if (exact[1] === 'outputs' && !outputs) return value;
       return getRecipeReference(exact[1]!, exact[2]!, params, outputs);
@@ -42,10 +53,15 @@ export function resolveRecipeValue(
           : String(getRecipeReference(source, key, params, outputs)),
     );
   }
-  if (Array.isArray(value)) return value.map((entry) => resolveRecipeValue(entry, params, outputs));
+  if (Array.isArray(value)) {
+    return value.map((entry) => resolveRecipeValue(entry, params, outputs, options));
+  }
   if (!isRecord(value)) return value;
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, resolveRecipeValue(entry, params, outputs)]),
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      resolveRecipeValue(entry, params, outputs, options),
+    ]),
   );
 }
 
@@ -69,19 +85,26 @@ function getRecipeReference(
 }
 
 function getNestedValue(value: unknown, path: string, kind: 'parameter' | 'output'): unknown {
-  if (!path) return value;
+  const found = nestedValue(value, path);
+  if (!found) {
+    throw new RecipeResolutionError(
+      'RECIPE_PARAMS_INVALID',
+      `Recipe ${kind} ${path} is not defined.`,
+      kind === 'parameter'
+        ? `declare ${path} in paramsSchema or provide it before running the recipe`
+        : `inspect the producing node output before referencing ${path}`,
+    );
+  }
+  return found.value;
+}
+
+// The value at a dotted path, or undefined when a segment is missing.
+function nestedValue(value: unknown, path: string): { value: unknown } | undefined {
   let current: unknown = value;
+  if (!path) return { value: current };
   for (const segment of path.split('.')) {
-    if (!isRecord(current) || !Object.hasOwn(current, segment)) {
-      throw new RecipeResolutionError(
-        'RECIPE_PARAMS_INVALID',
-        `Recipe ${kind} ${path} is not defined.`,
-        kind === 'parameter'
-          ? `declare ${path} in paramsSchema or provide it before running the recipe`
-          : `inspect the producing node output before referencing ${path}`,
-      );
-    }
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return undefined;
     current = current[segment];
   }
-  return current;
+  return { value: current };
 }

@@ -132,7 +132,7 @@ function shopCommands(): HarnessCommand[] {
     }),
     command('call', {
       options: contractOptions(HELP, JSON_FLAG, TARGET, {
-        '--arg': optionalValueOption(),
+        '--slot': optionalValueOption(),
         '--list': booleanOption(),
       }),
       positionals: [{ label: 'action' }],
@@ -730,11 +730,15 @@ describe('createHarnessCli', () => {
       createHarnessCli(cliOptions()).main(['call', 'x', '--help']),
     );
     assert.equal(withoutCatalog.stdout, 'shop-harness call [flags]\n\n  call help\n');
+    // A catalog that can't resolve the action's manifest degrades to the generic help.
     const catalog = {} as NonNullable<HarnessCliOptions['catalog']>;
     const cli = createHarnessCli(cliOptions({ catalog }));
-    const { result, stderr } = await capture(() => cli.main(['call', 'x', '--arg', '--help']));
+    const degraded = await capture(() => cli.main(['call', 'x', 'k=v', '--help']));
+    assert.deepEqual(degraded.result, { exitCode: 0, exit: 'now' });
+    assert.match(degraded.stdout, /call help/u);
+    const { result, stderr } = await capture(() => cli.main(['call', 'x', '--slot', '--help']));
     assert.deepEqual(result, { exitCode: 2, exit: 'now' });
-    assert.equal(stderr, '--arg requires k=v.\n');
+    assert.equal(stderr, 'Missing value for --slot\n');
   });
 
   test('renders a call action from the catalog above the generic call help', async () => {
@@ -891,7 +895,7 @@ export const adapter = {
     const call = command('call', {
       options: contractOptions(HELP, JSON_FLAG, {
         '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
-        '--arg': optionalValueOption(),
+        '--slot': optionalValueOption(),
       }),
       positionals: [{ label: 'action' }],
     });
@@ -900,9 +904,9 @@ export const adapter = {
       commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
       catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
     });
-    // --arg with no pair stops the action help early, after the load.
+    // --slot with no value stops the action help early, after the load.
     const { result } = await capture(() =>
-      cli.main(['call', 'x', '--adapter', 'helped', '--arg', '--help']),
+      cli.main(['call', 'x', '--adapter', 'helped', '--slot', '--help']),
     );
     assert.deepEqual(result, { exitCode: 2, exit: 'now' });
     assert.deepEqual(imported(), ['helped']);
@@ -1027,7 +1031,7 @@ export const adapter = {
     const call = command('call', {
       options: contractOptions(HELP, JSON_FLAG, {
         '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
-        '--arg': optionalValueOption(),
+        '--note': optionalValueOption(),
       }),
       positionals: [{ label: 'action' }],
       allowPassthrough: true,
@@ -1045,7 +1049,7 @@ export const adapter = {
     assert.deepEqual(loaded, []);
     await cli.main(['doctor', '--adapter', 'hooked']);
     await cli.main(['doctor', '--adapter', 'web']);
-    await capture(() => cli.main(['call', 'x', '--adapter', 'hooked', '--arg', '--help']));
+    await capture(() => cli.main(['call', 'x', '--adapter', 'hooked', '--note', '--help']));
     await cli.main(['call', 'x', '--adapter', 'hooked', '--', '--help']);
     // `calls` counts dispatches so far: the hook runs before each command's own.
     assert.deepEqual(loaded, [

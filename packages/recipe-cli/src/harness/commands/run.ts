@@ -423,7 +423,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   }
   let artifactsDir: string;
   try {
-    artifactsDir = resolveRunArtifactsDir(target, optionString(options, 'artifactsDir'));
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
+    artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
+      fresh: path.join('runs', `${stamp}-${process.pid}`),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return emitRunUsageError(
@@ -666,12 +669,27 @@ function formatDiagnosticLine(line: string, out: (style: string, text: string) =
   return `${out(style, status)}${match[2]}`;
 }
 
-function resolveRunArtifactsDir(target: string, explicit: string | undefined): string {
+/** A run's or call's own directory: `fresh` under temp/recipe, `taskSubdir` under a task's artifacts. */
+export interface RecipeArtifactsLayout {
+  fresh: string;
+  taskSubdir?: string;
+}
+
+/**
+ * Where a run or call writes its artifacts: `--artifacts-dir`; else, inside a
+ * task (RECIPE_TASK_DIR/FARMSLOT_TASK_DIR, which must be inside the checkout),
+ * the task's `artifacts` directory plus `taskSubdir`; else `fresh` under the
+ * checkout's temp/recipe.
+ */
+export function resolveRecipeArtifactsDir(
+  target: string,
+  explicit: string | undefined,
+  layout: RecipeArtifactsLayout,
+): string {
   if (explicit !== undefined) return path.resolve(explicit);
   const taskDir = runTaskDir(target);
-  if (taskDir) return path.join(taskDir, 'artifacts');
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
-  return path.join(target, 'temp', 'recipe', 'runs', `${stamp}-${process.pid}`);
+  if (taskDir) return path.join(taskDir, 'artifacts', layout.taskSubdir ?? '');
+  return path.join(target, 'temp', 'recipe', layout.fresh);
 }
 
 /** The run's task dir (RECIPE_TASK_DIR / FARMSLOT_TASK_DIR), resolved inside the checkout, or null. */

@@ -203,10 +203,7 @@ export function renderActionDetail(
       ? schema.required.filter((r): r is string => typeof r === 'string')
       : [],
   );
-  const lines: string[] = [
-    `${host} call ${entry.name} [key=value ...] [--arg k=v ...] [flags]`,
-    '',
-  ];
+  const lines: string[] = [`${host} call ${entry.name} [key=value ...] [flags]`, ''];
   if (entry.description) lines.push(`  ${entry.description}`, '');
   lines.push(
     `  Source: ${entry.source}${entry.sourceManifest ? ` (${entry.sourceManifest})` : ''} · adapter ${adapter}`,
@@ -217,7 +214,7 @@ export function renderActionDetail(
   if (entry.fields.length === 0) {
     lines.push('  Fields: (none)');
   } else {
-    lines.push('  Fields (pass as <name>=<value> or --arg <name>=<value>):');
+    lines.push('  Fields (pass as <name>=<value>):');
     const width = Math.max(...entry.fields.map((name) => name.length));
     for (const name of entry.fields) {
       const prop = isRecord(properties[name]) ? properties[name] : {};
