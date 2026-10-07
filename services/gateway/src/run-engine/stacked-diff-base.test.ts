@@ -55,7 +55,11 @@ async function fixture(t: import('node:test').TestContext) {
       return { stdout: e.stdout ?? '', stderr: e.stderr ?? '', exitCode: e.code ?? 1 };
     }
   };
-  const stacked: DiffBaseSpec = { baseRef: 'stack:feat/a', commitish: branchPoint };
+  const stacked: DiffBaseSpec = {
+    baseRef: 'stack:feat/a',
+    commitish: branchPoint,
+    stackBranch: 'feat/a',
+  };
   // What captureRunDiffSnapshot diffs for a settled base.
   const contribution = async () => {
     const base = await settleStackedDiffBase(exec, 'main', stacked);
@@ -213,5 +217,24 @@ test('a conflict between upstream and default branch counts only the resolution'
     (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n').sort(),
     ['b.txt', 'shared.txt'],
     'a.txt is the upstream’s; the conflict B resolved in shared.txt is B’s',
+  );
+});
+
+test("a checkout rebased onto the upstream's newer head measures from that head", async (t) => {
+  const { author, slot, stacked, exec } = await fixture(t);
+  // A gets a review fix; B rebases onto it while A is still open.
+  await git(author, 'checkout', '-q', 'feat/a');
+  const fixed = await commitFile(author, 'a-fix.txt', 'A review fix');
+  await git(author, 'push', '-q', 'origin', 'feat/a');
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'rebase', '-q', 'origin/feat/a');
+
+  const base = await settleStackedDiffBase(exec, 'main', stacked);
+  assert.equal(base.commitish, fixed, 'the branch point moved with the upstream, on origin');
+  const from = base.diffFrom ?? (await git(slot, 'merge-base', base.commitish, 'HEAD'));
+  assert.deepEqual(
+    (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n'),
+    ['b.txt'],
+    "A's fix is not B's work",
   );
 });

@@ -2773,3 +2773,28 @@ test('an operator-cancelled stacked run still has its open PR retargeted', async
     'the node stays held for the operator',
   );
 });
+
+test('a merge observed after the upstream run was archived still retargets', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, workGraph } =
+    await stackedPair('Stack archived upstream');
+  workGraph.setUpstreamObserverForTests(async (_project, prNumber) => ({
+    state: 'closed',
+    merged: true,
+    headRef: 'feat/upstream',
+    sameRepo: true,
+    url: `https://github.invalid/pull/${prNumber}`,
+    mergedAt: '2026-10-07T00:00:00.000Z',
+  }));
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  runs.updateRun(upstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(await runs.archiveRun(upstreamRun.id), true);
+  await workGraph.schedulerTick({ graphId, operator: true });
+  assert.equal(runs.getRun(downstreamRun.id)?.stack?.upstreamMergedAt, '2026-10-07T00:00:00.000Z');
+  assert.deepEqual(moved, [downstreamRun.id]);
+});

@@ -1468,6 +1468,8 @@ export interface RunStack {
   retargetedTo?: string;
   /** The upstream PR's merge commit on that branch, recorded with `retargetedTo`. */
   upstreamMergeSha?: string;
+  /** When Farmslot saw the upstream PR merge, kept here so it outlives the upstream run. */
+  upstreamMergedAt?: string;
 }
 
 export interface SlotRunHistoryEntry {

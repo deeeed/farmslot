@@ -953,7 +953,8 @@ function stackObserveJob(
   const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
   const stack = run?.stack;
   if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
-  if (upstreamPrMerged(runs, run.project, stack.upstreamPrNumber)) return null;
+  if (stack.upstreamMergedAt || upstreamPrMerged(runs, run.project, stack.upstreamPrNumber))
+    return null;
   const key = `${snapshot.graph.id}:${node.id}:observe:${stack.upstreamPrNumber}`;
   if (stackRetargetsInFlight.has(key)) return null;
   return {
@@ -998,7 +999,8 @@ function nextStackStep(
   const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
   const stack = run?.stack;
   if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
-  if (!upstreamPrMerged(runs, run.project, stack.upstreamPrNumber)) return null;
+  if (!stack.upstreamMergedAt && !upstreamPrMerged(runs, run.project, stack.upstreamPrNumber))
+    return null;
   const owed = (key: string) => {
     const recorded = snapshot.ledger.find((entry) => entry.key === key);
     return !recorded || (recorded.status === 'failed' && retryFailed);
@@ -1055,6 +1057,14 @@ async function observeUpstreamMerge(job: StackRetargetJob): Promise<void> {
   }
   if (!pr.merged) return;
   const mergedAt = pr.mergedAt ?? new Date().toISOString();
+  // On the stacked run itself: the upstream run may be archived and gone.
+  const latest = getAllRuns().find((candidate) => candidate.id === run.id);
+  if (latest?.stack) {
+    await persistRunNow(
+      updateRun(latest.id, { stack: { ...latest.stack, upstreamMergedAt: mergedAt } }),
+      'stack upstream merge observed',
+    );
+  }
   for (const upstream of getAllRuns()) {
     if (upstream.project !== run.project || upstream.prNumber !== upstreamPrNumber) continue;
     await persistRunNow(

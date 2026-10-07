@@ -472,6 +472,7 @@ export function contributionDiffBaseSpec(
     return {
       baseRef: `stack:${run.stack.baseBranch}`,
       commitish: run.stack.resolvedSha,
+      stackBranch: run.stack.baseBranch,
       ...(run.stack.upstreamMergeSha ? { upstreamMergeSha: run.stack.upstreamMergeSha } : {}),
     };
   }
@@ -497,6 +498,8 @@ export interface DiffBaseSpec {
   diffFrom?: string;
   /** Stacked runs: the upstream PR's merge commit on the default branch, once known. */
   upstreamMergeSha?: string;
+  /** Stacked runs: the upstream PR's head branch on origin. */
+  stackBranch?: string;
 }
 
 /**
@@ -514,9 +517,30 @@ export async function settleStackedDiffBase(
 ): Promise<DiffBaseSpec> {
   if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
   const remote = `origin/${defaultBranch}`;
-  const branchPoint = baseSpec.commitish;
+  let branchPoint = baseSpec.commitish;
   const plain = { baseRef: remote, commitish: remote };
   try {
+    // The upstream may have moved on (a review fix) and the checkout taken its
+    // newer head: the branch point is the newest upstream commit HEAD contains.
+    if (baseSpec.stackBranch) {
+      const upstream = `origin/${baseSpec.stackBranch}`;
+      const fetchedUpstream = await exec(
+        `git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`,
+      );
+      const taken =
+        fetchedUpstream.exitCode === 0
+          ? await exec(`git merge-base HEAD ${shellQuote(upstream)}`)
+          : null;
+      const newer = taken?.exitCode === 0 ? taken.stdout.trim() : '';
+      if (
+        newer &&
+        newer !== branchPoint &&
+        (await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} ${shellQuote(newer)}`))
+          .exitCode === 0
+      ) {
+        branchPoint = newer;
+      }
+    }
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
     const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
     if (stacked.exitCode !== 0) return plain;
@@ -532,11 +556,11 @@ export async function settleStackedDiffBase(
     await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
     const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
     const taken = mergeBase.stdout.trim();
-    if (mergeBase.exitCode !== 0 || !taken) return baseSpec;
+    if (mergeBase.exitCode !== 0 || !taken) return { ...baseSpec, commitish: branchPoint };
     const stillStacked = await exec(
       `git merge-base --is-ancestor ${shellQuote(taken)} ${shellQuote(branchPoint)}`,
     );
-    if (stillStacked.exitCode === 0) return baseSpec;
+    if (stillStacked.exitCode === 0) return { ...baseSpec, commitish: branchPoint };
     const tree = await exec(
       `git merge-tree --write-tree ${shellQuote(branchPoint)} ${shellQuote(taken)}`,
     );
@@ -547,7 +571,8 @@ export async function settleStackedDiffBase(
     const commit = await exec(
       `git -c user.name=farmslot -c user.email=farmslot@localhost commit-tree ${shellQuote(tree.stdout.trim().split('\n')[0]!)} -p ${shellQuote(branchPoint)} -p ${shellQuote(taken)} -m ${shellQuote('farmslot stacked diff base')}`,
     );
-    if (commit.exitCode !== 0 || !commit.stdout.trim()) return baseSpec;
+    if (commit.exitCode !== 0 || !commit.stdout.trim())
+      return { ...baseSpec, commitish: branchPoint };
     return {
       baseRef: `${baseSpec.baseRef}+${remote}`,
       commitish: branchPoint,
