@@ -7,8 +7,19 @@ import test from 'node:test';
 
 import { NODE_CLEANUP_SCRIPT } from '../src/index.js';
 
+// Temp directories this file makes, removed when its tests end.
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function overlay(): string {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-cleanup-')));
+  const root = fs.realpathSync(tempDir('adapter-node-cleanup-'));
   for (const rel of [
     'temp/recipe/harness/core/runner/.runner-source',
     'temp/recipe/harness/web/keep.txt',

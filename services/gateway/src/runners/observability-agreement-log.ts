@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { shouldUseIsolatedRunsDir } from '../runs/store.js';
 
@@ -33,7 +33,7 @@ function agreementLogDir(): string {
   if (process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR) {
     _agreementDir = process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR;
   } else if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
-    _agreementDir = path.join(os.tmpdir(), `farmslot-test-obs-agreement-${process.pid}`);
+    _agreementDir = isolatedTestPath('farmslot-test-obs-agreement');
   } else {
     _agreementDir = path.join(farmslotRoot, '.runs', 'observability-agreement');
   }

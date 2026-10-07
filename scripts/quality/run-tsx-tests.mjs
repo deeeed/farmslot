@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -357,12 +358,142 @@ export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
   return command;
 }
 
+/**
+ * Test files (`<workspace dir>/<path>`) that still leave entries in their
+ * TMPDIR. The runner removes their TMPDIR either way, so nothing reaches the
+ * machine's; the list only shrinks: make the file clean up, then delete it.
+ */
+export const KNOWN_TMPDIR_LEAKERS = new Set([
+  'agent-runtime/src/task-init/discover.test.ts',
+  'cli/src/commands/credential.test.ts',
+  'cli/src/commands/recipe-artifacts.test.ts',
+  'cli/src/commands/run.test.ts',
+  'cli/src/gateway-profiles.test.ts',
+  'cli/src/onboarding/add.test.ts',
+  'cli/src/onboarding/migrations.test.ts',
+  'cli/src/onboarding/pack.test.ts',
+  'cli/src/onboarding/pool-config.test.ts',
+  'cli/src/slot-context.test.ts',
+  'gateway/src/backlog/provenance.test.ts',
+  'gateway/src/chat/chat-action-normalization.test.ts',
+  'gateway/src/chat/chat-actions.test.ts',
+  'gateway/src/ci-monitor/blocked-fix.test.ts',
+  'gateway/src/ci-monitor/merge-observation.test.ts',
+  'gateway/src/copilot-runtime/compatibility.test.ts',
+  'gateway/src/copilot-runtime/isolation.test.ts',
+  'gateway/src/copilot-runtime/launcher.test.ts',
+  'gateway/src/copilot-runtime/session-lifecycle.test.ts',
+  'gateway/src/copilot-runtime/session-store.test.ts',
+  'gateway/src/copilot-runtime/transcript.test.ts',
+  'gateway/src/copilot-runtime/transport.test.ts',
+  'gateway/src/family-observability/change-ledger.test.ts',
+  'gateway/src/family-observability/context.test.ts',
+  'gateway/src/family-observability/provenance.test.ts',
+  'gateway/src/family-observability/retrospective.test.ts',
+  'gateway/src/family-observability/snapshot.test.ts',
+  'gateway/src/fleet/pairing.test.ts',
+  'gateway/src/fleet/pressure-history-store.test.ts',
+  'gateway/src/fleet/project-config-load.test.ts',
+  'gateway/src/fleet/slot-storage-cleanup.test.ts',
+  'gateway/src/machine-parking/journal.test.ts',
+  'gateway/src/methods/chat.test.ts',
+  'gateway/src/methods/dispatch/pressure-admission-control.test.ts',
+  'gateway/src/methods/dispatch/pressure-admission.test.ts',
+  'gateway/src/methods/dispatch/preview.test.ts',
+  'gateway/src/methods/eval.test.ts',
+  'gateway/src/methods/gateway-doctor-auth.test.ts',
+  'gateway/src/methods/provider-accounts.test.ts',
+  'gateway/src/methods/slot/prepare-command.test.ts',
+  'gateway/src/node-support/files.test.ts',
+  'gateway/src/quality/pr-body-recipe.test.ts',
+  'gateway/src/quality/recipe-quality.test.ts',
+  'gateway/src/review-workspaces/completion-record.test.ts',
+  'gateway/src/run-completion/orchestrator.test.ts',
+  'gateway/src/run-completion/retrospective-feedback.test.ts',
+  'gateway/src/run-engine/branch-freshness.test.ts',
+  'gateway/src/run-engine/budget-usage-sample.test.ts',
+  'gateway/src/run-engine/diff-artifacts.test.ts',
+  'gateway/src/run-engine/run-monitor.test.ts',
+  'gateway/src/runners/model-catalog.test.ts',
+  'gateway/src/runners/observability-agreement-log.test.ts',
+  'gateway/src/runners/provider-account-select.test.ts',
+  'gateway/src/runners/provider-accounts.test.ts',
+  'gateway/src/runners/quota-guard.test.ts',
+  'gateway/src/runners/status-provider.test.ts',
+  'gateway/src/runners/usage-exhaustion-ledger.test.ts',
+  'gateway/src/runs/analytics.test.ts',
+  'gateway/src/runs/store.test.ts',
+  'gateway/src/runtime/session-usage-script.test.ts',
+  'gateway/src/security/auth.test.ts',
+  'gateway/src/server-ws-payload.test.ts',
+  'gateway/src/server/authorization.test.ts',
+  'gateway/src/tasks/sidecars.test.ts',
+  'gateway/src/tasks/writer.test.ts',
+  'handoff/test/assemble.test.ts',
+  'handoff/test/closeout.test.ts',
+  'handoff/test/grade.test.ts',
+  'handoff/test/integrity.test.ts',
+  'handoff/test/pr-publish.test.ts',
+  'handoff/test/resolve.test.ts',
+  'handoff/test/safe-path.test.ts',
+  'handoff/test/task-io.test.ts',
+  'handoff/test/task-key.test.ts',
+  'handoff/test/validate.test.ts',
+  'handoff/test/write.test.ts',
+  'node/src/commands/tmux.test.ts',
+  'node/src/gateway-credential.test.ts',
+  'protocol/test/node/capture-helper-path.test.ts',
+  'recipe-runner/src/core/observations.test.ts',
+  'recipe-runner/test/runtime-readiness.test.ts',
+  'slot-config/src/session-usage.test.ts',
+]);
+
+/**
+ * Tool caches tests share through TMPDIR (tsx's transform cache, Node's compile
+ * cache): each file's private TMPDIR links them to the real ones, so files keep
+ * a warm cache and the links never count as leftovers.
+ */
+export function sharedToolCaches(uid = process.getuid?.() ?? 0) {
+  return [`tsx-${uid}`, 'node-compile-cache'];
+}
+
+/** Link the shared tool caches into a test file's private TMPDIR. */
+export function linkToolCaches(fileTmp, realTmp = tmpdir()) {
+  for (const name of sharedToolCaches()) {
+    const shared = join(realTmp, name);
+    mkdirSync(shared, { recursive: true });
+    symlinkSync(shared, join(fileTmp, name));
+  }
+}
+
+/**
+ * What a test file left in its private TMPDIR, as a failure line, or null.
+ * A `known` file may leak; one that no longer does must leave the list.
+ */
+export function tmpdirLeakFailure(label, entries, known = KNOWN_TMPDIR_LEAKERS) {
+  if (known.has(label)) {
+    return entries.length === 0
+      ? `[tsx-tests] ${label} no longer leaves anything in its TMPDIR: remove it from KNOWN_TMPDIR_LEAKERS.`
+      : null;
+  }
+  if (entries.length === 0) return null;
+  const shown = entries.slice(0, 10).join(', ') + (entries.length > 10 ? ', …' : '');
+  return `[tsx-tests] ${label} left ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} in its TMPDIR: ${shown}. Remove temp directories in teardown.`;
+}
+
 async function runOne(file, context) {
   const started = performance.now();
-  const stateDir = mkdtempSync(join(tmpdir(), 'farmslot-test-status-'));
+  // Per-file state and a private TMPDIR, inside the run's root: anything the
+  // file (or a process it starts) creates under os.tmpdir() lands there, is
+  // checked, and is removed with it. Short names keep socket paths in range.
+  const stateDir = mkdtempSync(join(context.runRoot, 'f'));
+  const fileTmp = join(stateDir, 't');
+  mkdirSync(fileTmp);
+  linkToolCaches(fileTmp);
   const testStatusFile = join(stateDir, '.farm-status.json');
   writeFileSync(testStatusFile, '{"slots":[]}\n');
   let result;
+  let leaked = [];
   try {
     result = await runYarn(testCommand(file, context), {
       cwd: context.cwd,
@@ -370,13 +501,24 @@ async function runOne(file, context) {
         ...context.env,
         ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
         [TEST_STATUS_ENV]: testStatusFile,
+        TMPDIR: fileTmp,
+        TMP: fileTmp,
+        TEMP: fileTmp,
       },
       buffered: context.buffered,
     });
+    const caches = new Set(sharedToolCaches());
+    leaked = readdirSync(fileTmp).filter((entry) => !caches.has(entry));
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
-  const { status, output } = result;
+  const leakFailure = tmpdirLeakFailure(
+    `${basename(context.cwd)}/${relative(context.cwd, file)}`,
+    leaked,
+  );
+  if (leakFailure) console.error(leakFailure);
+  const status = leakFailure && result.status === 0 ? 1 : result.status;
+  const { output } = result;
   const ms = performance.now() - started;
   if (context.buffered) {
     process.stdout.write(
@@ -527,8 +669,12 @@ async function main() {
   });
 
   const env = childEnvironment(openTmuxSandbox());
+  // Every file's state and private TMPDIR live here; removed when the run ends,
+  // interrupted or not.
+  const runRoot = mkdtempSync(join(tmpdir(), 'fst-'));
   const closeSandbox = () => {
     try {
+      rmSync(runRoot, { recursive: true, force: true });
       closeTmuxSandbox(env);
     } catch (error) {
       // Reported and failing: a sandbox server left running is a broken run.
@@ -559,7 +705,7 @@ async function main() {
   // active lane keeps the historical live-streaming behaviour.
   const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
   const buffered = activeLanes.length > 1;
-  const context = { cwd, env, tsconfig, toLabel, buffered: false };
+  const context = { cwd, env, tsconfig, toLabel, buffered: false, runRoot };
   const started = performance.now();
   const records = [];
 

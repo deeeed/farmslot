@@ -56,6 +56,17 @@ import {
   registerGatewayPresence,
 } from './gateway-presence.js';
 
+// Temp directories this file makes, removed when its tests end.
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 const operatorMethods = [
   Methods.NODES_LIST,
   Methods.NODE_HEALTH,
@@ -204,7 +215,7 @@ test('credential lock serializes concurrent writers, reclaims stale locks, and p
 });
 
 test('identity domains isolate homes while gateways in one home share activation and credentials', () => {
-  const fakeUserHome = mkdtempSync(join(tmpdir(), 'farmslot-fake-user-home-'));
+  const fakeUserHome = tempDir('farmslot-fake-user-home-');
   const firstEnv = isolatedEnv({ HOME: fakeUserHome });
   const secondEnv = isolatedEnv({ HOME: fakeUserHome });
   const first = createGatewayAuthRuntime(firstEnv);
@@ -683,7 +694,7 @@ test('stored effects fail closed against live originator authority and name the 
 });
 
 function isolatedEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const home = mkdtempSync(join(tmpdir(), 'farmslot-principal-core-'));
+  const home = tempDir('farmslot-principal-core-');
   return { ...extra, FARMSLOT_HOME: home, GATEWAY_HOST: '127.0.0.1' };
 }
 

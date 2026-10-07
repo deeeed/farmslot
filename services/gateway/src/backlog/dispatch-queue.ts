@@ -4,7 +4,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -26,6 +25,7 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
@@ -77,7 +77,7 @@ function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly strin
 function resolveQueueFile(): string {
   if (process.env.FARMSLOT_DISPATCH_QUEUE_FILE) return process.env.FARMSLOT_DISPATCH_QUEUE_FILE;
   if (shouldUseIsolatedQueueFile(process.env, process.argv)) {
-    return path.join(os.tmpdir(), `farmslot-test-dispatch-queue-${process.pid}.json`);
+    return isolatedTestPath('farmslot-test-dispatch-queue', '.json');
   }
   return path.join(farmslotRoot, '.dispatch-queue.json');
 }

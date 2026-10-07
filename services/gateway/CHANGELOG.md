@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A test process's gateway state (runs, analytics, observability log, dispatch queue, backlog, work graphs, eval suite caps, runtime capabilities under `os.tmpdir()`) is removed when the process exits; test runs left one set per process in TMPDIR.
 
 ## 0.20.4 - 2026-10-08
 

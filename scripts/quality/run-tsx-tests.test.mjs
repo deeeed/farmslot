@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -28,6 +29,7 @@ import {
   summaryLines,
   TEST_STATUS_ENV,
   testCommand,
+  tmpdirLeakFailure,
   verifyAssignment,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
@@ -919,3 +921,41 @@ test(
     );
   },
 );
+
+test('a test file that leaves something in its TMPDIR fails, unless it is a known leaker', () => {
+  const known = new Set(['gateway/src/known.test.ts']);
+  assert.equal(tmpdirLeakFailure('gateway/src/clean.test.ts', [], known), null);
+  assert.match(
+    tmpdirLeakFailure('gateway/src/new.test.ts', ['probe-AbC123'], known),
+    /gateway\/src\/new\.test\.ts left 1 entry in its TMPDIR: probe-AbC123/,
+  );
+  assert.equal(tmpdirLeakFailure('gateway/src/known.test.ts', ['old-leak'], known), null);
+  // The list only shrinks: a listed file that stopped leaking must leave it.
+  assert.match(
+    tmpdirLeakFailure('gateway/src/known.test.ts', [], known),
+    /no longer leaves anything in its TMPDIR: remove it from KNOWN_TMPDIR_LEAKERS/,
+  );
+});
+
+test('a test file runs with a private TMPDIR; what it leaves fails it and never reaches the real one', (t) => {
+  const { fixture, args, env } = sandboxFixture(
+    `const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  mkdtempSync(join(tmpdir(), 'leak-probe-'));`,
+  );
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const realTmp = tmpdir();
+  const before = new Set(readdirSync(realTmp).filter((entry) => entry.startsWith('leak-probe-')));
+
+  const run = spawnSync(process.execPath, args, { encoding: 'utf8', env });
+
+  assert.notEqual(run.status, 0, 'a file that leaks fails the run');
+  assert.match(`${run.stdout}${run.stderr}`, /left 1 entry in its TMPDIR: leak-probe-/);
+  const after = readdirSync(realTmp).filter((entry) => entry.startsWith('leak-probe-'));
+  assert.deepEqual(
+    after.filter((entry) => !before.has(entry)),
+    [],
+    'nothing reached the real TMPDIR',
+  );
+});

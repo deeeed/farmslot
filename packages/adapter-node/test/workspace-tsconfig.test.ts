@@ -10,8 +10,19 @@ import {
   workspaceTsconfigEnv,
 } from '../src/index.js';
 
+// Temp directories this file makes, removed when its tests end.
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function checkout(files: string[]): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-ws-'));
+  const root = tempDir('adapter-node-ws-');
   for (const rel of files) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), '');
@@ -52,7 +63,7 @@ test('maps every package that has src/index.ts, built or not', () => {
 
 test('workspaceTsconfigEnv writes the tsconfig and points tsx at it', async () => {
   const root = checkout(['packages/unbuilt/src/index.ts']);
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-ws-tmp-'));
+  const temp = tempDir('adapter-node-ws-tmp-');
   const env = await workspaceTsconfigEnv(root, temp, { packages: PACKAGES, fileName: 'x.json' });
   const tsconfigPath = path.join(temp, 'x.json');
   assert.deepEqual(env, {
@@ -71,7 +82,7 @@ test('workspaceTsconfigEnv writes the tsconfig and points tsx at it', async () =
 test('workspaceTsconfigEnv adds the PnP loader and is empty when nothing maps', async () => {
   const root = checkout(['packages/unbuilt/src/index.ts', '.pnp.cjs']);
   fs.writeFileSync(path.join(root, '.yarnrc.yml'), 'nodeLinker: pnp\n');
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-ws-tmp-'));
+  const temp = tempDir('adapter-node-ws-tmp-');
   const env = await workspaceTsconfigEnv(root, temp, { packages: PACKAGES });
   assert.ok(env.NODE_OPTIONS?.endsWith(`--require ${path.join(root, '.pnp.cjs')}`));
 

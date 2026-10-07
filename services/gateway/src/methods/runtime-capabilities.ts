@@ -1,4 +1,3 @@
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -29,6 +28,7 @@ import {
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { probeResourceProcess } from '../fleet/resource-process.js';
@@ -70,7 +70,7 @@ let broadcastFn: BroadcastFn | null = null;
 let keepWarmCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 function testStorePath(): string {
-  return path.join(os.tmpdir(), `farmslot-test-runtime-capabilities-${process.pid}.json`);
+  return isolatedTestPath('farmslot-test-runtime-capabilities', '.json');
 }
 
 function runtimeCapabilityStorePath(): string {
