@@ -399,7 +399,11 @@ describe('process ownership', () => {
   });
 });
 
-describe('dev server testnet diagnostic (advisory)', () => {
+// The diagnostic reads a process's argv and environment through macOS sysctl
+// (KERN_PROCARGS2); elsewhere it reports unknown, an advisory warning.
+const MACOS_ONLY =
+  process.platform !== 'darwin' && 'reads process environments through macOS sysctl';
+describe('dev server testnet diagnostic (advisory)', { skip: MACOS_ONLY }, () => {
   it('passes for the farm next dev, or its child, serving the app port from this checkout', async () => {
     const devArgv = (port) => ['next', 'dev', port];
     for (const listen of ['self', 'child']) {
