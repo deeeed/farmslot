@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** remove `resolveRecipeParamValue` (needs the `@farmslot/recipe-runner` release that adds `lenient`; a recipe-cli cut must not pin recipe-runner 0.26.0). Static validation resolves parameters with `@farmslot/recipe-runner`'s `resolveRecipeValue(value, params, undefined, { lenient: true })`, which keeps the same semantics: only an exact reference to a parameter that exists resolves; anything else stays as written.
+- Add `countRecipeNodes(recipe)`: a recipe's node count, from a v1 node graph (a `call` node counts once) or the arrays older recipes kept (`nodes`, `steps`, `workflow.<phase>[]`); undefined when the document has none of these.
+
+## 0.9.0 - 2026-10-08
+
 - **BREAKING:** remove `adapterPortFlags`. `run` and `call` take the dev-server port from `--watcher-port` only.
 - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`.
 - `call` no longer passes its command line to `trustedMutation.load` (it gets `cli: {}`), so a funding flag never binds a mutation to a call: funded mutations run through `run`, bound to the reviewed recipe.
@@ -19,8 +24,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Add `afterAdapterLoad(adapterId)` to `createHarnessCli`. It runs whenever a command selects an adapter, after the loader (a built-in or an undeclared id has no plugin record), before passthrough help, `call <action> --help`, command help and dispatch, for a host check that needs the loaded plugin (mm-harness fences a web-dapp venue policy there). A refusal it throws (`AdapterPluginError`, `RecipeTrustError`, `RecipeResolutionError`) prints like a loader refusal, exit 2; any other error goes to the error mapper.
 - Add `explainInvalidChoice` to `validatePublicInvocation`'s options and to `createHarnessCli`. When an option value fails its choices, the host can return its own usage error (for an adapter that lives in a recipe library the operator hasn't added); null keeps `CLI_INVALID_OPTION_VALUE`, byte for byte. The argument type is exported as `InvalidChoice`.
   - `CliUsageError.code` is now `CliUsageErrorCode | (string & {})`, so a host's own code type-checks. A consumer that switches exhaustively on the code with a `never` check needs a default branch; no known consumer does.
-- **BREAKING:** remove `resolveRecipeParamValue` (needs the `@farmslot/recipe-runner` release that adds `lenient`; a recipe-cli cut must not pin recipe-runner 0.26.0). Static validation resolves parameters with `@farmslot/recipe-runner`'s `resolveRecipeValue(value, params, undefined, { lenient: true })`, which keeps the same semantics: only an exact reference to a parameter that exists resolves; anything else stays as written.
-- Add `countRecipeNodes(recipe)`: a recipe's node count, from a v1 node graph (a `call` node counts once) or the arrays older recipes kept (`nodes`, `steps`, `workflow.<phase>[]`); undefined when the document has none of these.
+- Publish with adapter-sdk 0.7.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.8.0 - 2026-10-07
 
