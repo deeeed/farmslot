@@ -312,7 +312,7 @@ function shopAdapter(
       label: `${id}-server`,
       describe: () => `${id} dev server`,
       stop: () => ({ kind: 'stopped', status: 0, summary: `stopped ${id}` }),
-      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'], portFlags: ['bundlerPort'] } : {}),
+      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'] } : {}),
     },
     logSources: () => [],
     appLogSource: () => null,
@@ -1500,6 +1500,163 @@ describe('run', () => {
     );
   });
 
+  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
+    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
+    assert.equal(bound.length, 4);
+    assert.deepEqual([bound[0], bound[2]], ['', '']);
+    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
+    assert.equal(bound[3], bound[1]);
+  });
+
+  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const unbound = {
+      ...runOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: base.load,
+          authorize: async (
+            ...args: Parameters<typeof base.authorize>
+          ): Promise<{ bound: string } | undefined> => {
+            await base.authorize(...args);
+            return undefined;
+          },
+        },
+      },
+    };
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        unbound,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Two preflights (before and after the checkout lock), one runner each, none bound.
+    assert.deepEqual(calls.runners, [
+      { adapter: 'web', trustTaskActions: true },
+      { adapter: 'web', trustTaskActions: true },
+    ]);
+    assert.deepEqual(calls.mutationHooks, [
+      'load:web',
+      'authorize:web',
+      'load:web',
+      'authorize:web',
+    ]);
+  });
+
+  test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
+    const seen: Array<string | undefined> = [];
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...webAdapter(calls),
+      resolveSlotPorts() {
+        seen.push(process.env.RECIPE_RUNTIME_DIR);
+      },
+    });
+    configureHarnessAdapters(registry);
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const common = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const run = await capture(() =>
+      handleRun([recipe, ...common, '--runtime-dir', 'temp/recipe/runtime-9301'], runOptions),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.ok(fs.existsSync(path.join(target, 'temp/recipe/runtime-9301')));
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const call = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast', ...common, '--runtime-dir', 'temp/recipe/runtime-9302'],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.equal(seen[0], 'temp/recipe/runtime-9301');
+    assert.ok(
+      seen
+        .slice(0, seen.indexOf('temp/recipe/runtime-9302'))
+        .every((dir) => dir === 'temp/recipe/runtime-9301'),
+    );
+    assert.equal(seen.at(-1), 'temp/recipe/runtime-9302');
+
+    // --plan sees the same runtime directory, whether the flag or the
+    // environment selects it.
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const planOptions = {
+      ...runOptions,
+      plan: {
+        steps: () => [
+          {
+            step: 'fixture.file',
+            confidence: 'static' as const,
+            status: 'ok' as const,
+            detail: `fixture in ${process.env.RECIPE_RUNTIME_DIR ?? 'the default runtime dir'}`,
+          },
+        ],
+        launchDetail: 'would open the shop',
+      },
+    };
+    const fixtureDetail = (lines: string[]) =>
+      (lastJson(lines).plan as Array<{ step: string; detail: string }>).find(
+        (step) => step.step === 'fixture.file',
+      )?.detail;
+    const byFlag = await capture(() =>
+      handleRun(
+        [recipe, '--plan', ...common, '--runtime-dir', 'temp/recipe/runtime-9303'],
+        planOptions,
+      ),
+    );
+    delete process.env.RECIPE_RUNTIME_DIR;
+    process.env.RECIPE_RUNTIME_DIR = 'temp/recipe/runtime-9303';
+    const byEnv = await capture(() => handleRun([recipe, '--plan', ...common], planOptions));
+    assert.equal(fixtureDetail(byFlag.stdout), 'fixture in temp/recipe/runtime-9303');
+    assert.equal(fixtureDetail(byEnv.stdout), fixtureDetail(byFlag.stdout));
+  });
+
   test('a run with a task dir records its proof targets in the acceptance ledger', async () => {
     const target = checkout();
     const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'shop-1');
@@ -2248,13 +2405,13 @@ describe('call', () => {
     const artifacts = tempRoot('recipe-cli-call-artifacts-');
     const call = await capture(() =>
       handleCall(
-        // The adapter's port flag takes a value, so `port=8099` is not an action input.
+        // --slot takes a value, so `lane=7` is not an action input.
         [
           'ping',
           'mode=fast',
           'password=hunter2',
-          '--bundler-port',
-          'port=8099',
+          '--slot',
+          'lane=7',
           '--adapter',
           'web',
           '--target',
@@ -2277,7 +2434,7 @@ describe('call', () => {
     assert.deepEqual(calls.runners.at(-1), { adapter: 'web', trustTaskActions: true });
   });
 
-  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+  test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
     const target = checkout();
     const call = await capture(() =>
       handleCall(
@@ -2298,29 +2455,24 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
-    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
-    assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['', '']);
-    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
-    assert.equal(bound[3], bound[1]);
+    assert.equal(calls.runners.length, 2);
+    assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
+    assert.deepEqual(calls.mutationHooks, ['load:web', 'load:web']);
   });
 
-  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+  test('binds a mutation that load returns for the adapter alone, as a fixture policy does', async () => {
     const target = checkout();
     const base = engine.trustedMutation!;
-    const unbound = {
+    const byAdapter = {
       ...callOptions,
       engine: {
         ...engine,
         trustedMutation: {
-          load: base.load,
-          authorize: async (
-            ...args: Parameters<typeof base.authorize>
-          ): Promise<{ bound: string } | undefined> => {
-            await base.authorize(...args);
-            return undefined;
+          load: async (input: Parameters<typeof base.load>[0]) => {
+            calls.mutationHooks.push(`load:${input.adapter}`);
+            return input.adapter === 'web' ? { bound: 'policy' } : undefined;
           },
+          authorize: base.authorize,
         },
       },
     };
@@ -2335,25 +2487,18 @@ describe('call', () => {
           target,
           '--heal',
           'off',
-          '--funding-token',
-          'grant',
           '--json',
         ],
-        unbound,
+        byAdapter,
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    // Two preflights (before and after the checkout lock), one runner each, none bound.
-    assert.deepEqual(calls.runners, [
-      { adapter: 'web', trustTaskActions: true },
-      { adapter: 'web', trustTaskActions: true },
-    ]);
-    assert.deepEqual(calls.mutationHooks, [
-      'load:web',
-      'authorize:web',
-      'load:web',
-      'authorize:web',
-    ]);
+    assert.deepEqual([...new Set(calls.mutationHooks)], ['load:web', 'authorize:web']);
+    assert.ok(
+      calls.runners.some((runner) =>
+        /^policy@sha256:[0-9a-f]{8}$/u.test(String(runner.trustedMutation)),
+      ),
+    );
   });
 
   test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
@@ -2411,9 +2556,10 @@ describe('call', () => {
         0,
         `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
       );
+      // A call's load gets no command line, so it loads nothing to authorize.
       assert.deepEqual(
         [...new Set(calls.mutationHooks)],
-        [`load:${adapter}`, `authorize:${adapter}`],
+        name.startsWith('call') ? [`load:${adapter}`] : [`load:${adapter}`, `authorize:${adapter}`],
         name,
       );
     }

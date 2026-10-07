@@ -474,9 +474,6 @@ export interface AdapterDevServer {
   // WATCHER_PORT and RECIPE_WATCHER_PORT. Hosts set them for every registered
   // platform when a port is given explicitly.
   portEnv?: readonly string[];
-  // More option names (camelCase, as parsed) that give the dev-server port to
-  // `run` and `call`, after --watcher-port.
-  portFlags?: readonly string[];
 }
 
 // Platform-phrased Next: hints so no command prints another platform's vocabulary.
