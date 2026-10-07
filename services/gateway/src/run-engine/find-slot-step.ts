@@ -63,7 +63,7 @@ import {
   nativeProfileAllowedSlots,
 } from '../runners/native/worker-profile.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
-import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -85,6 +85,36 @@ interface RunEngineFlags {
   nudgeReuse?: true;
   freshReuse?: true;
   warmSessionReuse?: true;
+}
+
+/**
+ * Await a wait that blocks the step and record it as the step's queue time,
+ * open (`queuedSince`) while it lasts. Timed around the await, so a decision an
+ * earlier attempt already resolved replays at once and adds nothing. A waiter
+ * that outlives a re-entry adds nothing either: that attempt times its own waits.
+ */
+export async function awaitAsQueueTime<T>(
+  runId: string,
+  stepName: string,
+  wait: () => Promise<T>,
+  now: () => number = Date.now,
+): Promise<T> {
+  const findStep = () => getRun(runId)?.steps.find((candidate) => candidate.name === stepName);
+  const startedAt = findStep()?.startedAt;
+  const sinceMs = now();
+  const queuedSince = new Date(sinceMs).toISOString();
+  if (findStep()) updateRunStep(runId, stepName, { queuedSince });
+  try {
+    return await wait();
+  } finally {
+    const step = findStep();
+    if (step && step.startedAt === startedAt && step.queuedSince === queuedSince) {
+      updateRunStep(runId, stepName, {
+        queuedMs: (step.queuedMs ?? 0) + Math.max(0, now() - sinceMs),
+        queuedSince: undefined,
+      });
+    }
+  }
 }
 
 export interface FindSlotStepContext {
@@ -925,15 +955,18 @@ export async function executeFindSlotStep(
       reason,
     };
 
-    const actionId = await createEngineDecision(
-      runId,
-      'no_suitable_slot',
-      desc,
-      [
-        { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
-        { id: 'abort', label: 'Abort Run', style: 'danger' },
-      ],
-      slotPickerPayload,
+    // The run waits here until a slot frees up or the operator picks one.
+    const actionId = await awaitAsQueueTime(runId, 'find-slot', () =>
+      createEngineDecision(
+        runId,
+        'no_suitable_slot',
+        desc,
+        [
+          { id: 'pick', label: 'Use Selected Slot', style: 'primary' },
+          { id: 'abort', label: 'Abort Run', style: 'danger' },
+        ],
+        slotPickerPayload,
+      ),
     );
 
     if (actionId === 'abort') throw new Error('Aborted: no suitable slot');

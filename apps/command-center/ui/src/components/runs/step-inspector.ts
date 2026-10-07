@@ -55,6 +55,7 @@ import {
   type StepCostInfo,
   stepDurationLabel,
   stepHasReviewLoop,
+  stepQueueTimingRows,
 } from './step-inspector-model.js';
 import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 import { StepInspectorState } from './step-inspector-state.js';
@@ -264,6 +265,14 @@ export class StepInspector extends StepInspectorState {
                 </div>
               `
             : nothing}
+        ${stepQueueTimingRows(this.run, s, this._tickNow).map(
+          ([key, value]) => html`
+            <div class="kv-row">
+              <span class="kv-key">${key}</span>
+              <span class="kv-value v-duration">${value}</span>
+            </div>
+          `,
+        )}
         ${inputs.length > 0
           ? html`
               <div class="section-title">Inputs</div>

@@ -289,6 +289,8 @@ export interface RunResourceWait {
   position: number;
   since: string;
   reason: string;
+  /** The run step this wait holds up, fixed when the wait starts; its queue time takes the wait. */
+  heldStep?: string;
 }
 
 /** How many transitions a run keeps for operation-id replay. */
