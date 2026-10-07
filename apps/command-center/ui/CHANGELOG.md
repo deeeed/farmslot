@@ -5,6 +5,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.3 - 2026-10-07
+
 - The work-graph panel labels a `published` edge "upstream PR published", and the roadmap graph composer offers `published` as an edge condition.
 
 ## 0.20.2 - 2026-10-06
