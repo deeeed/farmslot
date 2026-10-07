@@ -90,6 +90,53 @@ test('configured review depth selects canonical bytes and records provenance wit
   );
 });
 
+test('a farm self-review template can use {{DEFAULT_BRANCH}}', async (t) => {
+  // The va-mmcx-terminal-farm self-review template diffs against the default branch.
+  const project = `.default-branch-review-${process.pid}`;
+  const root = path.join(farmslotRoot, 'projects', project);
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(
+    path.join(root, 'templates/worker/self-review.md'),
+    '# Review\n\n- [ ] git diff origin/{{DEFAULT_BRANCH}}...HEAD in {{REPO}}\n',
+  );
+  const save = async (config: Record<string, unknown>) => {
+    await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project, ...config }));
+    invalidateProjectVarsCache(project);
+  };
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project,
+    ticketOrPr: 'TEST-BRANCH',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    await rm(root, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
+  const vars = {
+    slotId: 'fixture',
+    projectName: project,
+    host: 'localhost',
+    machine: 'fixture',
+    remoteRepo: '/tmp/fixture',
+    platform: 'cli',
+    session: 'fixture',
+    resourceVars: {},
+  } as never;
+  await save({ default_branch: 'develop' });
+  assert.match(
+    await expandSelfReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code'),
+    /git diff origin\/develop\.\.\.HEAD in \/tmp\/fixture/,
+  );
+  await save({});
+  assert.match(
+    await expandSelfReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code'),
+    /git diff origin\/main\.\.\.HEAD/,
+  );
+});
+
 test('expandSelfReviewTemplate resolves farmslot_dir placeholders', async (t) => {
   const run = createRun({
     flowType: 'dev',

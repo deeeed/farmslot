@@ -110,6 +110,29 @@ type BroadcastFn = (event: string, payload: unknown) => void;
 
 let broadcastFn: BroadcastFn = () => {};
 
+/**
+ * Clients see structured runner progress at minute resolution, so announce a
+ * persisted progress time only when it moves into a later minute.
+ */
+export function structuredProgressMovedMinute(previous: string | undefined, next: string): boolean {
+  const minute = (iso: string | undefined) => (iso ? Math.floor(Date.parse(iso) / 60_000) : NaN);
+  return !(minute(next) <= minute(previous));
+}
+
+/**
+ * The monitor step's last progress is the worker's structured progress, from
+ * this attempt only: a timestamp restored from before a re-entry is not. Minute
+ * precision against the step's own value, so a re-entered step takes the first
+ * real event and a busy worker writes at most once a minute.
+ */
+export function mirrorMonitorStepProgress(run: Run, structuredProgressAt: string): void {
+  const step = run.steps.find((candidate) => candidate.name === PipelineSteps.MONITOR);
+  if (step?.status !== 'running') return;
+  if (step.startedAt && structuredProgressAt < step.startedAt) return;
+  if (!structuredProgressMovedMinute(step.lastProgressAt, structuredProgressAt)) return;
+  updateRunStep(run.id, PipelineSteps.MONITOR, { lastProgressAt: structuredProgressAt });
+}
+
 export function initRunMonitor(broadcast: BroadcastFn): void {
   broadcastFn = broadcast;
 }
@@ -1590,13 +1613,18 @@ export async function monitorRun(
       // 4. Persist monitor state to Run (survives gateway restart)
       const currentForPersist = getRun(runId);
       if (currentForPersist) {
+        const structuredProgressAt = new Date(state.lastStructuredProgressAt).toISOString();
+        const announceProgress = structuredProgressMovedMinute(
+          currentForPersist.monitorState?.lastStructuredProgressAt,
+          structuredProgressAt,
+        );
         updateRun(runId, {
           monitorState: {
             nudgeCount: currentForPersist.metrics.nudgeCount,
             lastPollAt: new Date().toISOString(),
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
-            lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
+            lastStructuredProgressAt: structuredProgressAt,
             // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
             // second writer's value with Math.max hid a lost update rather than
             // preventing one — it cannot tell "someone got there first" from "mine is
@@ -1604,6 +1632,12 @@ export async function monitorRun(
             budgetUsage: state.budgetUsage,
           },
         });
+        // The monitor's own start seeds its stuck timer; it is not progress.
+        if (state.lastStructuredProgressAt > state.startedAt) {
+          mirrorMonitorStepProgress(currentForPersist, structuredProgressAt);
+        }
+        // The Runs list times worker progress from this; per-poll writes stay quiet.
+        if (announceProgress) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       }
 
       // 5. Check total timeout

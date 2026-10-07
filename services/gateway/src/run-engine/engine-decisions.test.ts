@@ -11,6 +11,7 @@ import {
   buildRepeatReviewContext,
   collisionAutoResolveAction,
   collisionDecisionActions,
+  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
   repeatReviewDecisionActions,
 } from './engine-decisions.js';
@@ -314,6 +315,84 @@ test('missing prior reviewed head disables only incremental continuation', () =>
     repeatReviewDecisionActions(context).map((action) => action.id),
     ['reuse-full-static', 'fresh-full-static'],
   );
+});
+
+test('a rebased prior head falls back to a full review that keeps prior findings', async () => {
+  // MetaMask/metamask-mobile#36969: the author rebased between review generations.
+  const priorHead = '5f85b47bfa4f7d8ec1888605f0cd2f025fffb804';
+  const rebasedHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
+  const prior = makeRun({
+    id: 'prior-review',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'metamask/metamask-mobile#36969',
+    status: 'done',
+    decisions: [
+      reviewDecision({
+        reviewSnapshot: {
+          source: 'github-pr',
+          capturedAt: '2026-10-05T09:00:00.000Z',
+          headSha: priorHead,
+        },
+      }),
+    ],
+  });
+  const build = (headSha: string) =>
+    buildRepeatReviewContext(
+      makeRun({
+        project: 'farm-a',
+        flowType: 'review-pr',
+        ticketOrPr: 'metamask/metamask-mobile#36969',
+      }),
+      prior,
+      {
+        project: 'farm-a',
+        repository: 'metamask/metamask-mobile',
+        prNumber: 36969,
+        headSha,
+      },
+      [prior],
+    );
+  const checked: string[] = [];
+  const isAncestor = async (repo: string, ancestor: string, head: string) => {
+    checked.push(`${repo} ${ancestor}...${head}`);
+    return head !== rebasedHead;
+  };
+
+  const rebased = await confirmIncrementalAncestry(build(rebasedHead), isAncestor);
+  assert.deepEqual(checked, [`metamask/metamask-mobile ${priorHead}...${rebasedHead}`]);
+  assert.equal(rebased.reviewScope, 'full');
+  assert.equal(rebased.sessionIntent, 'reset');
+  assert.equal(rebased.priorReviewedHeadSha, priorHead);
+  assert.match(rebased.incrementalUnavailableReason ?? '', /not an ancestor/);
+  assert.deepEqual(rebased.unresolvedFindings, [
+    { file: 'src/a.ts', line: 7, description: 'Fix this.' },
+  ]);
+  assert.deepEqual(
+    repeatReviewDecisionActions(rebased).map((action) => action.id),
+    ['reuse-full-static', 'fresh-full-static'],
+  );
+  const automated = automatedRepeatReviewSelection(rebased, {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    validationDepth: 'static-code',
+  });
+  assert.equal(automated.reviewScope, 'full');
+  assert.deepEqual(automated.unresolvedFindings, rebased.unresolvedFindings);
+
+  const descendant = build('b2cabb9ef367a86aeb273dbbf1a6b38e91852209');
+  assert.equal(await confirmIncrementalAncestry(descendant, isAncestor), descendant);
+  assert.equal(descendant.reviewScope, 'incremental');
+
+  const unverified = await confirmIncrementalAncestry(build(rebasedHead), async () => {
+    throw new Error('HTTP 404: No commit found');
+  });
+  assert.equal(unverified.reviewScope, 'full');
+  assert.match(unverified.incrementalUnavailableReason ?? '', /HTTP 404/);
+
+  checked.length = 0;
+  assert.equal(await confirmIncrementalAncestry(rebased, isAncestor), rebased);
+  assert.deepEqual(checked, [], 'an unavailable delta needs no second lookup');
 });
 
 test('full repeat-review selections always reset reviewer reasoning', () => {

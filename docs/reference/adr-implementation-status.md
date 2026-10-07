@@ -32,7 +32,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                   | Accepted   | Shipped        | Automatic profile selection deferred by ADR                                  |
 | [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session           | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening                |
 | [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles               | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                           |
-| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration           | Proposed   | Partial        | Scheduler/graph UI exists; dispatch config parity + E2E polish open          |
+| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration           | Accepted   | Partial        | Scheduler/graph UI and stacked runs exist; dispatch config parity open       |
 | [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out             |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc |
 | [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                          |
@@ -215,22 +215,23 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 ---
 
-## ADR-040 — Work-Graph Orchestration (Proposed)
+## ADR-040 — Work-Graph Orchestration
 
 **Implementation: Partial (foundation exists; product closure open)**
 
-ADR-040 remains Proposed as an ADR, but its v1 implementation is now partially present.
+ADR-040 is accepted and its v1 implementation is partially present.
 The shipped slice is useful for dogfooding roadmap promotion into graph-linked backlog
 items, but it is not yet a complete execution product.
 
-| ADR requirement                                    | Status  | Evidence / gap                                                                                                                        |
-| -------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| WorkGraph / WorkNode / WorkEdge protocol contracts | Shipped | Protocol contracts and graph state are present                                                                                        |
-| Gateway graph store + action ledger                | Partial | Graph store/projection exists; restart and ledger edge cases need more E2E coverage                                                   |
-| Scheduler events and graph enqueue authority       | Partial | Graph-linked backlog items route through `workGraph.schedulerTick`; result UX and queue linkage still need polish                     |
-| Command Center graph surface                       | Partial | Graph/node URL state, selected-node styling, and slot filtering exist; config/review flows remain incomplete                          |
-| Dispatch configuration parity                      | Partial | Shared runner/model/effort control exists; mode, task template, prepare profile, and publication review reuse are still being unified |
-| Roadmap promotion into graph-linked backlog specs  | Partial | Promotion can draft graph/backlog outputs; review/accept UI and attachment visibility are still rough                                 |
+| ADR requirement                                                                                | Status  | Evidence / gap                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| WorkGraph / WorkNode / WorkEdge protocol contracts                                             | Shipped | Protocol contracts and graph state are present                                                                                        |
+| Gateway graph store + action ledger                                                            | Partial | Graph store/projection exists; restart and ledger edge cases need more E2E coverage                                                   |
+| Scheduler events and graph enqueue authority                                                   | Partial | Graph-linked backlog items route through `workGraph.schedulerTick`; result UX and queue linkage still need polish                     |
+| Command Center graph surface                                                                   | Partial | Graph/node URL state, selected-node styling, and slot filtering exist; config/review flows remain incomplete                          |
+| Dispatch configuration parity                                                                  | Partial | Shared runner/model/effort control exists; mode, task template, prepare profile, and publication review reuse are still being unified |
+| Roadmap promotion into graph-linked backlog specs                                              | Partial | Promotion can draft graph/backlog outputs; review/accept UI and attachment visibility are still rough                                 |
+| Stacked runs (`published` edge, stacked prepare/PR base, Stack section, stacked `rebase-onto`) | Shipped | Retarget merges the default branch into the PR head; conflicts go to update-branch; non-stacked `rebase-onto` asks the operator       |
 
 ---
 

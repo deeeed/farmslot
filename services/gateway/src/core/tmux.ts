@@ -441,18 +441,40 @@ export async function ensureTmuxWindow(
 ): Promise<{ disposition: 'existing' | 'created'; windows: TmuxWindowRef[] }> {
   const existing = await listExactTmuxWindows(vars, session, windowName);
   if (existing.length > 0) return { disposition: 'existing', windows: existing };
-  const created = await execOnSlot(
+  // A reboot (or a killed tmux server) takes the slot session with it: create
+  // the session with this window as its first, in the slot checkout, as
+  // dispatch would.
+  const probe = await execOnSlot(
     vars,
-    tmuxShellSnippet(
-      `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
-    ),
+    tmuxShellSnippet(`has-session -t ${shellQuote(`=${session}`)} 2>/dev/null`),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
+  throwIfTmuxQueryTimedOut(probe, `ensureTmuxWindow has-session ${session}`);
+  const newWindow = tmuxShellSnippet(
+    `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
+  );
+  let created = await execOnSlot(
+    vars,
+    probe.exitCode === 0
+      ? newWindow
+      : tmuxShellSnippet(
+          `new-session -d -s ${shellQuote(session)} -n ${shellQuote(windowName)} -c ${shellQuote(vars.remoteRepo)} 2>&1`,
+        ),
+  );
+  // The probe and the create are not atomic: another caller recreating its own
+  // window after the same reboot can create the session first. Add this window
+  // to the session it made. If that fails too, the session create's own error
+  // is the one that explains why.
+  const sessionFailure = probe.exitCode !== 0 && created.exitCode !== 0 ? created : null;
+  if (sessionFailure) created = await execOnSlot(vars, newWindow);
   const afterCreate = await listExactTmuxWindows(vars, session, windowName);
   if (afterCreate.length > 0) {
     return { disposition: created.exitCode === 0 ? 'created' : 'existing', windows: afterCreate };
   }
+  const output = (result: typeof created) =>
+    result.stderr || result.stdout || `exit ${result.exitCode}`;
   throw new Error(
-    `Failed to create tmux window ${session}:${windowName}: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
+    `Failed to create tmux window ${session}:${windowName}: ${sessionFailure ? `${output(sessionFailure)} (then ${output(created)})` : output(created)}`,
   );
 }
 

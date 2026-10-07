@@ -16,13 +16,13 @@ export {
 } from './devices.js';
 export { runExpoRecipeDoctor } from './doctor.js';
 export { type FingerprintCheck, type FingerprintStatus } from './fingerprint-baseline.js';
-export { type FrameMetricSummary, type FrameSample, summarizeFrames } from './frame-metrics.js';
 export {
   metroEnvCheck,
   metroEnvFingerprint,
   type MetroEnvInputs,
   recordMetroEnvBaseline,
 } from './metro-env.js';
+export { type MetroBundleProgress, metroBundleProgress } from './metro-progress.js';
 export { createRedactingCoreAdapters } from './redaction.js';
 export {
   resolveExpoRecordingTarget,

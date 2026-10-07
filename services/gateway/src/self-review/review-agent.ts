@@ -92,6 +92,7 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
 import { broadcastSelfReviewRun, startProgressWatcher } from './progress.js';
+import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
   claimWarmReviewerSession,
   DEFAULT_REVIEW_SESSION_POLICY,
@@ -1096,6 +1097,8 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
+    // What this document gives the reviewer; a pass records it (F42).
+    await noteReviewInputsAtLaunch(_runId);
     if (loopNumber > 1 || sessionIntent === 'resume') {
       const priorScope =
         loopNumber > 1

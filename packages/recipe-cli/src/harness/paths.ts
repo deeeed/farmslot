@@ -4,6 +4,8 @@ import { harnessHost, hostEnvName, validateRelativeRecipePath } from './host.js'
 
 // The checkout layout every host and shell leaf shares (`temp/recipe/runtime/<adapter>/`).
 export const DEFAULT_RECIPE_RUNTIME_DIR = 'temp/recipe/runtime';
+/** Where `prepare` keeps its running progress, under the artifacts dir. */
+export const PREPARE_PROGRESS_ARTIFACT = 'prepare/progress.json';
 export const DEFAULT_RECIPE_HARNESS_ROOT = 'temp/recipe/harness';
 
 /** The checkout-relative runtime directory: `RECIPE_RUNTIME_DIR`, else the default. */

@@ -2,10 +2,26 @@
 // presets such as `mm-harness`): host identity, runtime paths, the resumability
 // journal, the checkout lock, JSON streaming and colour output.
 export {
+  adapterChoices,
+  type AdapterLibraryOptions,
+  type AdapterLoadOptions,
+  adapterPlugin,
+  adapterPluginChecks,
+  AdapterPluginError,
+  type AdapterPluginErrorCode,
+  adapterSelectionFailureOut,
+  composeAdapter,
+  type DeclaredAdapter,
+  declaredAdapterIds,
+  ensureAdapterLoaded,
+  type LoadedAdapterPlugin,
+  loadedAdapterPlugins,
+  selectedAdapterId,
+} from './adapter-plugins.js';
+export {
   adapterDetectNext,
   adapterFlags,
   adapterForPlatform,
-  adapterPortFlags,
   assertAdapter,
   configureHarnessAdapters,
   detectAdapter,
@@ -44,6 +60,24 @@ export {
   stripAnsi,
 } from './cli-color.js';
 export {
+  booleanOption,
+  type CliUsageError,
+  type CliUsageErrorCode,
+  type CommandContract,
+  type ContractedCommand,
+  type ContractFailures,
+  contractOptions,
+  type ContractValidationOptions,
+  type InvalidChoice,
+  optionalValueOption,
+  type OptionSpec,
+  optionValues,
+  type PositionalSpec,
+  publicCommandTokens,
+  validatePublicInvocation,
+  valueOption,
+} from './command-contract.js';
+export {
   COMMAND_JOURNAL_FILE,
   commandJournalPath,
   type CommandJournalRecord,
@@ -57,9 +91,32 @@ export {
   withCommandJournal,
 } from './command-journal.js';
 export { type CallCommandOptions, handleCall, handleCallHelp } from './commands/call.js';
+export {
+  type ChecklistCommandOptions,
+  type ChecklistStepGate,
+  handleChecklist,
+} from './commands/checklist.js';
 export { handleActions } from './commands/discover.js';
+export {
+  type DoctorAdvisorySection,
+  type DoctorCommandOptions,
+  doctorFixNextActions,
+  type DoctorFixOptions,
+  handleDoctor,
+} from './commands/doctor.js';
+export { handleExecutionTemplate } from './commands/execution-template.js';
 export { handleLast } from './commands/last.js';
 export { handleLaunch } from './commands/launch.js';
+export {
+  handlePrepare,
+  type PrepareCommandOptions,
+  type PrepareStep,
+  type StatusDevice,
+} from './commands/prepare.js';
+export {
+  handleRecipeQuality,
+  type RecipeQualityCommandOptions,
+} from './commands/recipe-quality.js';
 export { handleReload } from './commands/reload.js';
 export {
   type DeviceTargeting,
@@ -67,7 +124,32 @@ export {
   type RunCommandOptions,
   type RunPlanStep,
 } from './commands/run.js';
+export { handleStatus, type StatusCommandOptions } from './commands/status.js';
+export {
+  changedLines,
+  formatDuration,
+  handleStatusTaskView,
+  renderAcceptanceLines,
+  renderTaskView,
+  runStatusWatch,
+  type StatusWatchDeps,
+  type StatusWatchOptions,
+} from './commands/status-watch.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
+export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
+export {
+  createDoctorReport,
+  type DoctorCheck,
+  type DoctorReport,
+  type DoctorReportOptions,
+  type RequiredDoctorChecks,
+  requiredDoctorCheckSummary,
+  type RunnerInstallKind,
+  runnerInstallKind,
+  type RunnerProvenance,
+  runnerProvenance,
+  type RunnerProvenanceOptions,
+} from './doctor-report.js';
 export {
   captureExecutionProvenance,
   type ExecutionProvenanceDrift,
@@ -80,6 +162,18 @@ export {
   type SourceProvenanceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
+export {
+  createHarnessCli,
+  type HarnessCli,
+  type HarnessCliOptions,
+  type HarnessCliResult,
+  type HarnessCommand,
+  type HarnessHelp,
+  type HarnessHelpGroup,
+  type HelpPaint,
+  type HiddenHarnessCommand,
+  type PublicHarnessCommand,
+} from './harness-cli.js';
 export {
   checkHealBounds,
   classifyFailure,
@@ -113,6 +207,7 @@ export {
   type PreparedLiveAdapter,
   prepareLiveAdapterScript,
   resolveLiveAdapter,
+  resolveTsxBin,
   runLiveAdapterScript,
 } from './live-adapter-contract.js';
 export { runNetworkCaptureAction } from './network-observation.js';
@@ -154,11 +249,18 @@ export {
   DEFAULT_RECIPE_HARNESS_ROOT,
   DEFAULT_RECIPE_RUNTIME_DIR,
   harnessExecutable,
+  PREPARE_PROGRESS_ARTIFACT,
   recipeHarnessPath,
   recipeHarnessRoot,
   recipeRuntimeDir,
   recipeRuntimePath,
 } from './paths.js';
+export {
+  type DevicePreview,
+  type FeatureFlagReport,
+  type ReadinessViewOptions,
+  renderFeatureFlagLine,
+} from './readiness.js';
 export {
   describeRunnableRecipe,
   listRunnableRecipes,
@@ -171,6 +273,7 @@ export {
 export {
   type RunRecipeStaticValidation,
   validateActionInputs,
+  validateCommandNodes,
   validateRunRecipeStatic,
 } from './recipe-validation.js';
 export {
@@ -208,6 +311,8 @@ export {
   type RecipeEngineRunOptions,
   type RecipeRunnerOptions,
   runRecipe,
+  type TrustedMutationAuthorizeContext,
+  type TrustedMutationLoadInput,
 } from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
 export {
@@ -248,7 +353,36 @@ export {
   usageOut,
   writeInteractiveProgress,
 } from './shared.js';
+export {
+  createStageReporter,
+  formatElapsed,
+  type ReportedStage,
+  stageProgressText,
+  type StageReporter,
+  type StageReporterOptions,
+} from './stage-progress.js';
 export { closest } from './suggest.js';
+export {
+  CHECKLIST_LABEL_LIMIT,
+  collectTaskView,
+  findTaskDir,
+  TASK_SILENT_AFTER_MS,
+  type TaskView,
+  type TaskViewActivity,
+  type TaskViewCheckout,
+  type TaskViewCommand,
+  type TaskViewFixture,
+  type TaskViewHarness,
+  type TaskViewIsolation,
+  type TaskViewLibrary,
+  type TaskViewPrepare,
+  type TaskViewRow,
+  type TaskViewSandbox,
+  type TaskViewSignal,
+  type TaskViewSubtask,
+  type TaskViewSubtaskSource,
+  type TaskViewTemplate,
+} from './task-view.js';
 export {
   explicitRecipeTrustOptions,
   type RecipeTrustFailure,

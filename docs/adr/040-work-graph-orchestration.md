@@ -1,6 +1,6 @@
 # ADR-040: Work-Graph Orchestration for Backlog Dependency DAGs
 
-- **Status:** Proposed
+- **Status:** Accepted, partially implemented (scheduler, graph store and UI, stacked runs). See [ADR implementation status](../reference/adr-implementation-status.md#adr-040--work-graph-orchestration).
 - **Date:** 2026-06-27
 - **Relates-to:**
   - ADR-005 (state persistence) — graph store follows gateway-owned atomic state patterns
@@ -812,3 +812,57 @@ The scheduler currently infers operator cancellation while polling `getAllRuns()
 (`status === 'cancelled' && !redirectedToRunId`, added by #466). Under ADR-053 the graph is told
 with intent instead, and that inference becomes a backstop rather than the only signal. Scheduler
 authority over active-graph edges is unchanged.
+
+## Amendment: stacked runs (2026-10-07)
+
+A run can start on top of another run's PR. Slots are separate checkouts, often on other
+nodes, so the only base one slot can share with another is a branch pushed to origin.
+
+- **Edge condition `published`.** Satisfied when the upstream family's newest PR-bearing
+  run has a PR number and a head branch, and no family run has seen that PR closed
+  unmerged. It is the stack edge: adding it records the upstream as the target's
+  `upstreamBaseNodeIds` (one base per node, same project only), and the downstream node
+  waits until the PR exists. A node is never stacked on unpublished work. Only this edge
+  opts a node in: `upstreamBaseNodeIds` set without it changes nothing. This replaces the
+  `pr-open` placeholder in §3.
+- **Prepare.** For a dev or fix-bug run on a stacked node, Farmslot records `run.stack`
+  before writing the task. It asks GitHub for the upstream PR: merged means an ordinary run
+  from the default branch, closed or from a fork stops the run, open gives the head branch.
+  Prepare fetches `refs/heads/<branch>` from origin, creates the work branch from its head,
+  checks that the branch really sits there, and records the commit before any later
+  prepare phase runs.
+- **Publication.** The PR targets the upstream branch. The contribution diff of the stacked
+  run and of the follow-ups that continue it starts at the recorded commit. Once the
+  checkout has merged default-branch commits past that point, it starts at a commit whose
+  tree merges the recorded commit with what the checkout took from the default branch, so
+  neither the upstream's files nor default-branch work count as this run's, before or
+  after the upstream squash-merges. The recorded diff base stays the branch point, which
+  origin can serve to a replay. A checkout rebased off the stack is measured like any
+  other run. When the upstream and default branch conflict, the base keeps the conflict
+  markers, so only the files this run had to resolve count as its work.
+- **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
+  stacked on top. Runs without `run.stack` get no section; their task documents are
+  byte-identical to before (golden tests).
+- **`rebase-onto` on a stacked node.** When the upstream PR the run recorded merges (even if
+  a newer upstream attempt keeps the edge itself pending), a `merged` + `rebase-onto` edge
+  from the stack base retargets the downstream PR to the default branch and sets
+  `run.stack.retargetedTo`; a run that has not published
+  yet opens its PR against that base, and a PR that appears later is retargeted on the
+  next tick (the ledger key carries the PR number). Once nothing in the run's family is
+  active, so no warm worker holds a local branch, Farmslot merges the default branch into
+  the PR head through GitHub's update-branch API so a squash-merged upstream leaves the
+  diff; a conflict is left to the update-branch flow. A graph with a step still owed is
+  not marked done, so the background sweep finishes it. GitHub calls use REST (`repo` scope),
+  run outside the graph mutation lock and have a 90 s deadline; a failure is recorded once
+  in the ledger and retried by an operator-targeted `farmslot graph tick <graphId>`.
+  Merges are recorded by ci-watch; because it stops when a run finishes, an operator tick
+  also asks GitHub about a stacked node's recorded upstream PR and records its merge. Each
+  step's follow-on (retarget after an observed merge, update-branch after a retarget) runs
+  in the same tick, since nothing else ticks a quiet graph. A follow-up without graph links
+  (pr-complete, ci-fix) ticks its stacked run's graph when it settles, so a deferred
+  update-branch runs once the family goes idle. Run-event ticks never call GitHub. Limit: a merge ci-watch recorded on an upstream run that is then archived before the deferred update-branch runs needs one more operator tick. Archiving a stacked run whose PR is still open takes it out of this maintenance; retarget that PR by hand. The retarget records the
+  upstream's merge commit; a checkout that contains it is measured like any other run. Other
+  rebase edges, and every rebase edge on a node without a published edge, keep the
+  operator-attention path.
+
+Operator steps: [Stacked work](../operations/stacked-work.md).

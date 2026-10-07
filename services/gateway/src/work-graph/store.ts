@@ -11,6 +11,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
+  type RunStack,
   type WaitingReason,
   type WorkEdge,
   type WorkGraph,
@@ -43,8 +44,16 @@ import {
   markBacklogItemReady,
 } from '../backlog/store.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
+
+import {
+  readUpstreamPr,
+  retargetStackedPr,
+  type StackRetargetResult,
+  updateStackedPrBranch,
+  type UpstreamPr,
+} from './stack-retarget.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type WorkGraphRecord = WorkGraphSnapshot & { originator?: WorkOriginator };
@@ -513,6 +522,8 @@ export async function addWorkGraphEdge(
     if (params.condition.kind === 'reference-status' && !isReferenceNode(fromNode)) {
       throw new Error('reference-status edges must originate from reference nodes');
     }
+    const toNode = snapshot.nodes.find((node) => node.id === params.toNodeId)!;
+    if (params.condition.kind === 'published') assertStackEdge(snapshot, fromNode, toNode);
     const edge: WorkEdge = {
       id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
       graphId: snapshot.graph.id,
@@ -527,6 +538,8 @@ export async function addWorkGraphEdge(
     const candidate = { ...snapshot, edges: [...snapshot.edges, edge] };
     assertNoCycle(candidate);
     snapshot.edges.push(edge);
+    // The published edge is the stack edge: record the base where prepare reads it.
+    if (edge.condition.kind === 'published') toNode.upstreamBaseNodeIds = [fromNode.id];
     snapshot.graph.updatedAt = new Date().toISOString();
     restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
@@ -549,7 +562,18 @@ export async function removeWorkGraphEdge(
     }
     const edgeIndex = snapshot.edges.findIndex((edge) => edge.id === params.edgeId);
     if (edgeIndex < 0) throw new Error(`Work edge not found: ${params.edgeId}`);
-    snapshot.edges.splice(edgeIndex, 1);
+    const [removed] = snapshot.edges.splice(edgeIndex, 1);
+    if (removed?.condition.kind === 'published') {
+      const toNode = snapshot.nodes.find((node) => node.id === removed.toNodeId);
+      // A second published edge from the same node still holds the base.
+      if (
+        toNode &&
+        toNode.upstreamBaseNodeIds?.[0] === removed.fromNodeId &&
+        !stackUpstreamId(snapshot, toNode)
+      ) {
+        delete toNode.upstreamBaseNodeIds;
+      }
+    }
     snapshot.graph.updatedAt = new Date().toISOString();
     restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
@@ -748,6 +772,382 @@ function mergedEvidenceFromRuns(runs: readonly Run[]): { prNumber?: number } | n
     }
   }
   return null;
+}
+
+function backlogProject(node: WorkNode): string | undefined {
+  return node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId)?.project : undefined;
+}
+
+function assertStackEdge(snapshot: WorkGraphSnapshot, fromNode: WorkNode, toNode: WorkNode): void {
+  if (!isBacklogNode(fromNode) || !isBacklogNode(toNode)) {
+    throw new Error(
+      'published edges connect backlog nodes: the upstream must be able to open a PR',
+    );
+  }
+  // A branch name only means the same code inside one repository.
+  if (backlogProject(fromNode) !== backlogProject(toNode)) {
+    throw new Error('published edges connect nodes of the same project: a stack shares one repo');
+  }
+  // Only a live published edge holds the base; a leftover field does not.
+  const existing = stackUpstreamId(snapshot, toNode);
+  if (existing && existing !== fromNode.id) {
+    throw new Error(
+      `Work node ${toNode.id} already stacks on ${existing}; a branch has exactly one base`,
+    );
+  }
+}
+
+/**
+ * The node this one stacks on. `upstreamBaseNodeIds` alone does not opt in:
+ * only a published edge from that node does, so graphs that set the field
+ * before stacked runs existed keep their old behaviour.
+ */
+function stackUpstreamId(snapshot: WorkGraphSnapshot, node: WorkNode): string | undefined {
+  const upstreamId = node.upstreamBaseNodeIds?.[0];
+  if (!upstreamId) return undefined;
+  const optedIn = snapshot.edges.some(
+    (edge) =>
+      edge.toNodeId === node.id &&
+      edge.fromNodeId === upstreamId &&
+      edge.condition.kind === 'published',
+  );
+  return optedIn ? upstreamId : undefined;
+}
+
+/**
+ * The upstream family's PR: its newest run carrying a PR number and a head
+ * branch. Only a pushed head can be a stack base: other slots and nodes reach it
+ * through origin alone. A CLOSED observation of that PR on any family run wins
+ * over an older run that never saw it, unless the PR merged.
+ */
+function publishedPrForNode(
+  node: WorkNode,
+  runs: readonly Run[],
+): { run: Run & { prNumber: number; branch: string }; merged: boolean } | undefined {
+  if (!node.currentFamilyId) return undefined;
+  const withPr = runs
+    .filter(
+      (run) =>
+        (run.familyId === node.currentFamilyId || run.id === node.currentFamilyId) &&
+        !!run.prNumber &&
+        !!run.branch,
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latest = withPr[0];
+  if (!latest?.prNumber || !latest.branch) return undefined;
+  const samePr = withPr.filter((run) => run.prNumber === latest.prNumber);
+  const merged = samePr.some((run) => run.prState === 'MERGED' || !!run.mergedAt);
+  if (!merged && samePr.some((run) => run.prState === 'CLOSED')) return undefined;
+  return { run: latest as Run & { prNumber: number; branch: string }, merged };
+}
+
+export type StackBase = Pick<
+  RunStack,
+  'upstreamNodeId' | 'upstreamRunId' | 'baseBranch' | 'upstreamPrNumber' | 'downstream'
+>;
+
+/**
+ * The published PR a graph node's run stacks on, or null when the node has no
+ * stack edge or its upstream already merged (the run then starts from the
+ * default branch like any other). Throws rather than stack on unpublished work.
+ */
+export function stackBaseForNode(graphId: string, nodeId: string): StackBase | null {
+  const snapshot = graphs.get(graphId);
+  const node = snapshot?.nodes.find((candidate) => candidate.id === nodeId);
+  const upstreamId = snapshot && node ? stackUpstreamId(snapshot, node) : undefined;
+  if (!snapshot || !node || !upstreamId) return null;
+  if ((node.upstreamBaseNodeIds?.length ?? 0) > 1) {
+    throw new Error(
+      `Work node ${nodeId} lists ${node.upstreamBaseNodeIds!.length} stack bases; a branch has one`,
+    );
+  }
+  const upstream = snapshot.nodes.find((candidate) => candidate.id === upstreamId);
+  if (!upstream) throw new Error(`Stack base node ${upstreamId} is not in work graph ${graphId}`);
+  const published = publishedPrForNode(upstream, getAllRuns());
+  if (!published) {
+    throw new Error(
+      `Stack base ${upstream.id} has no published PR; a stacked run starts only from a pushed branch`,
+    );
+  }
+  if (published.merged) return null;
+  const project = backlogProject(node);
+  if (project && published.run.project !== project) {
+    throw new Error(
+      `Stack base ${upstream.id} ran in ${published.run.project}, not ${project}; a stack shares one repo`,
+    );
+  }
+  const downstream = snapshot.nodes
+    .filter((candidate) => stackUpstreamId(snapshot, candidate) === nodeId)
+    .map((candidate) => {
+      const title = candidate.backlogItemId
+        ? getBacklogItemSnapshot(candidate.backlogItemId)?.title
+        : undefined;
+      return title ? `${title} (${candidate.id})` : candidate.id;
+    });
+  return {
+    upstreamNodeId: upstream.id,
+    upstreamRunId: published.run.id,
+    baseBranch: published.run.branch,
+    upstreamPrNumber: published.run.prNumber,
+    ...(downstream.length ? { downstream } : {}),
+  };
+}
+
+type StackPrAction = (run: Run) => Promise<StackRetargetResult>;
+
+let stackRetargeter: StackPrAction = retargetStackedPr;
+let stackBranchUpdater: StackPrAction = updateStackedPrBranch;
+
+export function setStackRetargeterForTests(
+  fn: StackPrAction | null,
+  updater: StackPrAction | null = null,
+): void {
+  stackRetargeter = fn ?? retargetStackedPr;
+  stackBranchUpdater =
+    updater ??
+    (fn ? async () => ({ base: 'main', result: 'update-branch:test' }) : updateStackedPrBranch);
+}
+
+let upstreamPrObserver: (project: string, prNumber: number) => Promise<UpstreamPr> = readUpstreamPr;
+
+export function setUpstreamObserverForTests(
+  fn: ((project: string, prNumber: number) => Promise<UpstreamPr>) | null,
+): void {
+  upstreamPrObserver = fn ?? readUpstreamPr;
+}
+
+interface StackRetargetJob {
+  kind: 'retarget' | 'update-branch' | 'observe-upstream';
+  graphId: string;
+  nodeId: string;
+  runId: string;
+  key: string;
+}
+
+const stackRetargetsInFlight = new Set<string>();
+
+function upstreamPrMerged(runs: readonly Run[], project: string, prNumber: number): boolean {
+  return runs.some(
+    (candidate) =>
+      candidate.project === project &&
+      candidate.prNumber === prNumber &&
+      (candidate.prState === 'MERGED' || !!candidate.mergedAt),
+  );
+}
+
+/**
+ * Only ci-watch records a merge, and it stops once a run finishes. When an
+ * operator ticks a graph, a stacked node whose recorded upstream PR has no merge
+ * on record asks GitHub, so a merge after the upstream run ended is still seen.
+ */
+function stackObserveJob(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+): StackRetargetJob | null {
+  const upstreamId = stackUpstreamId(snapshot, node);
+  if (
+    !snapshot.edges.some((edge) => edge.toNodeId === node.id && isStackRebaseEdge(edge, upstreamId))
+  )
+    return null;
+  const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
+  const stack = run?.stack;
+  if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
+  if (stack.upstreamMergedAt || upstreamPrMerged(runs, run.project, stack.upstreamPrNumber))
+    return null;
+  const key = `${snapshot.graph.id}:${node.id}:observe:${stack.upstreamPrNumber}`;
+  if (stackRetargetsInFlight.has(key)) return null;
+  return {
+    kind: 'observe-upstream',
+    graphId: snapshot.graph.id,
+    nodeId: node.id,
+    runId: run.id,
+    key,
+  };
+}
+
+function isStackRebaseEdge(edge: WorkEdge, upstreamId: string | undefined): boolean {
+  return (
+    !!upstreamId &&
+    edge.fromNodeId === upstreamId &&
+    edge.blocks === 'completion' &&
+    edge.unlock.kind === 'rebase-onto' &&
+    edge.condition.kind === 'merged'
+  );
+}
+
+/**
+ * The next GitHub step a stacked node owes, judged by the upstream PR its run
+ * recorded rather than by the upstream node's current family or its edge status
+ * (a replacement attempt can leave the `merged` edge pending while the recorded
+ * PR merges). First the PR moves to the default branch, keyed by PR number so a
+ * PR that publishes after the merge was first seen still moves; then the
+ * default branch is merged into its head. A failed step is not owed again until
+ * an operator-targeted tick retries it.
+ */
+function nextStackStep(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+  retryFailed: boolean,
+): (StackRetargetJob & { run: Run }) | null {
+  const upstreamId = stackUpstreamId(snapshot, node);
+  if (
+    !snapshot.edges.some((edge) => edge.toNodeId === node.id && isStackRebaseEdge(edge, upstreamId))
+  )
+    return null;
+  const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
+  const stack = run?.stack;
+  if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
+  if (!stack.upstreamMergedAt && !upstreamPrMerged(runs, run.project, stack.upstreamPrNumber))
+    return null;
+  const owed = (key: string) => {
+    const recorded = snapshot.ledger.find((entry) => entry.key === key);
+    return !recorded || (recorded.status === 'failed' && retryFailed);
+  };
+  const job = { graphId: snapshot.graph.id, nodeId: node.id, runId: run.id, run };
+  const retargetKey = `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}:${run.prNumber ?? 'unpublished'}`;
+  if (owed(retargetKey)) return { ...job, kind: 'retarget', key: retargetKey };
+  const retargeted = snapshot.ledger.some(
+    (entry) => entry.key === retargetKey && entry.status === 'completed',
+  );
+  const updateKey = `${retargetKey}:update-branch`;
+  if (!run.prNumber || !retargeted || !owed(updateKey)) return null;
+  return { ...job, kind: 'update-branch', key: updateKey };
+}
+
+/**
+ * The step to start now, if any. update-branch also waits until nothing in the
+ * run's family is active, so no warm worker holds a local branch that the
+ * remote merge would leave behind.
+ */
+function stackRetargetJob(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+  retryFailed: boolean,
+): StackRetargetJob | null {
+  const step = nextStackStep(snapshot, node, runs, retryFailed);
+  if (!step || stackRetargetsInFlight.has(step.key)) return null;
+  if (step.kind === 'update-branch') {
+    const familyActive = runs.some(
+      (candidate) =>
+        (candidate.familyId === step.run.familyId || candidate.id === step.run.familyId) &&
+        !isTerminalRunStatus(candidate.status),
+    );
+    if (familyActive) return null;
+  }
+  const { run: _run, ...job } = step;
+  return job;
+}
+
+/** Records a merge GitHub reports for the recorded upstream PR, as ci-watch would. */
+async function observeUpstreamMerge(job: StackRetargetJob): Promise<void> {
+  const run = getAllRuns().find((candidate) => candidate.id === job.runId);
+  if (!run?.stack) return;
+  const { upstreamPrNumber } = run.stack;
+  let pr: UpstreamPr;
+  try {
+    pr = await upstreamPrObserver(run.project, upstreamPrNumber);
+  } catch (err) {
+    console.error(
+      `[work-graph] reading upstream PR #${upstreamPrNumber} failed: ${errorMessage(err)}`,
+    );
+    return;
+  }
+  if (!pr.merged) return;
+  const mergedAt = pr.mergedAt ?? new Date().toISOString();
+  // On the stacked run itself: the upstream run may be archived and gone.
+  const latest = getAllRuns().find((candidate) => candidate.id === run.id);
+  if (latest?.stack) {
+    await persistRunNow(
+      updateRun(latest.id, { stack: { ...latest.stack, upstreamMergedAt: mergedAt } }),
+      'stack upstream merge observed',
+    );
+  }
+  for (const upstream of getAllRuns()) {
+    if (upstream.project !== run.project || upstream.prNumber !== upstreamPrNumber) continue;
+    await persistRunNow(
+      updateRun(upstream.id, { prState: 'MERGED', mergedAt }),
+      'stack upstream merge observed',
+    );
+  }
+}
+
+/**
+ * Runs one retarget outside the graph mutation lock, so a slow GitHub call never
+ * holds up other graphs, then records the outcome under the lock.
+ */
+async function runStackRetarget(job: StackRetargetJob): Promise<void> {
+  if (stackRetargetsInFlight.has(job.key)) return;
+  stackRetargetsInFlight.add(job.key);
+  const startedAt = new Date().toISOString();
+  try {
+    if (job.kind === 'observe-upstream') {
+      await observeUpstreamMerge(job);
+      return;
+    }
+    let outcome: {
+      status: 'completed' | 'failed';
+      result: string;
+      base?: string;
+      upstreamMergeSha?: string;
+    };
+    try {
+      const run = getAllRuns().find((candidate) => candidate.id === job.runId);
+      if (!run?.stack) return;
+      const action = job.kind === 'retarget' ? stackRetargeter : stackBranchUpdater;
+      const retarget = await action(run);
+      outcome = {
+        status: 'completed',
+        result: retarget.result,
+        base: retarget.base,
+        upstreamMergeSha: retarget.upstreamMergeSha,
+      };
+    } catch (err) {
+      outcome = { status: 'failed', result: errorMessage(err) };
+      console.error(`[work-graph] stack retarget ${job.key} failed: ${outcome.result}`);
+    }
+    await withMutation(async () => {
+      const snapshot = graphs.get(job.graphId);
+      const node = snapshot?.nodes.find((candidate) => candidate.id === job.nodeId);
+      if (!snapshot || !node) return;
+      const run = getAllRuns().find((candidate) => candidate.id === job.runId);
+      if (
+        outcome.base &&
+        run?.stack &&
+        (run.stack.retargetedTo !== outcome.base ||
+          (outcome.upstreamMergeSha && run.stack.upstreamMergeSha !== outcome.upstreamMergeSha))
+      ) {
+        await persistRunNow(
+          updateRun(run.id, {
+            stack: {
+              ...run.stack,
+              retargetedTo: outcome.base,
+              ...(outcome.upstreamMergeSha ? { upstreamMergeSha: outcome.upstreamMergeSha } : {}),
+            },
+          }),
+          'stack retarget',
+        );
+      }
+      snapshot.ledger = snapshot.ledger.filter((entry) => entry.key !== job.key);
+      snapshot.ledger.push({
+        key: job.key,
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+        actionKind: 'rebase-onto',
+        readinessVersion: readinessVersion(snapshot, node, ['rebase-onto']),
+        status: outcome.status,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        result: outcome.result,
+      });
+      await persistNow(snapshot);
+      emit(snapshot);
+    });
+  } finally {
+    stackRetargetsInFlight.delete(job.key);
+  }
 }
 
 const OPERATOR_CANCEL_WAIT_DETAIL =
@@ -994,6 +1394,15 @@ function evaluateEdge(
     } else if (outcome && outcome !== 'success' && edge.required) {
       edge.status = 'failed';
       edge.evidence = { observedAt: now };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'published') {
+    const published = publishedPrForNode(from, runs);
+    if (published) {
+      edge.status = 'satisfied';
+      edge.evidence = { prNumber: published.run.prNumber, observedAt: now };
     } else {
       edge.status = 'pending';
       delete edge.evidence;
@@ -1324,7 +1733,35 @@ function acquireLease(snapshot: WorkGraphSnapshot, owner: string, nowMs: number)
 }
 
 export async function schedulerTick(
-  params: { graphId?: string; forceEnqueue?: boolean } = {},
+  params: { graphId?: string; forceEnqueue?: boolean; operator?: boolean } = {},
+): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
+  // Only an operator's tick (the workGraph.schedulerTick RPC) retries failed
+  // stack steps and asks GitHub; run events also tick one graph and must not.
+  const operatorTargeted = params.operator === true;
+  let retargets: StackRetargetJob[] = [];
+  const result = await schedulerTickLocked(params, retargets, operatorTargeted);
+  if (retargets.length === 0) return result;
+  // Nothing else ticks a quiet graph, so each step's follow-on (a retarget after
+  // an observed merge, update-branch after a retarget) runs in this same call.
+  for (let pass = 0; retargets.length > 0 && pass < 3; pass += 1) {
+    const graphIds = [...new Set(retargets.map((job) => job.graphId))];
+    await Promise.all(retargets.map(runStackRetarget));
+    retargets = [];
+    // Follow-on passes neither retry what just failed nor ask GitHub again.
+    for (const graphId of graphIds) {
+      await schedulerTickLocked({ graphId, forceEnqueue: params.forceEnqueue }, retargets, false);
+    }
+  }
+  return {
+    ok: true,
+    graphs: result.graphs.map((projection) => project(requireGraph(projection.graph.id))),
+  };
+}
+
+function schedulerTickLocked(
+  params: { graphId?: string; forceEnqueue?: boolean },
+  retargets: StackRetargetJob[],
+  operatorTargeted: boolean,
 ): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
   return withMutation(async () => {
     const owner = `gateway-${process.pid}`;
@@ -1360,6 +1797,16 @@ export async function schedulerTick(
         const latestRun = node.latestRunId
           ? runs.find((candidate) => candidate.id === node.latestRunId)
           : undefined;
+        // A stacked node's open PR is kept off a merged base whatever state the
+        // node is in (failed, held after an operator cancel, waiting on a
+        // resource): nextStackStep checks the run, its stack and the merge.
+        const stackUpstream = stackUpstreamId(snapshot, node);
+        if (stackUpstream) {
+          const job =
+            stackRetargetJob(snapshot, node, runs, operatorTargeted) ??
+            (operatorTargeted ? stackObserveJob(snapshot, node, runs) : null);
+          if (job) retargets.push(job);
+        }
         if (isOperatorCancelledRun(latestRun)) {
           node.status = 'needs-attention';
           node.waitingOn = [
@@ -1398,7 +1845,12 @@ export async function schedulerTick(
           node.updatedAt = now;
           continue;
         }
-        const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
+        // A `merged` rebase edge from the node this one stacks on retargets its
+        // PR and does not hold the node; every other rebase edge keeps the
+        // operator path.
+        const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound).filter(
+          (edge) => !isStackRebaseEdge(edge, stackUpstream),
+        );
         if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
           try {
             await executeNodeUnlock(snapshot, node, completionRebaseInbound, now, unlockOptions);
@@ -1527,8 +1979,16 @@ export async function schedulerTick(
         const allRequiredEdgesSettled = snapshot.edges.every(
           (edge) => !edge.required || edge.status === 'satisfied' || edge.status === 'waived',
         );
+        // A stacked PR still owed a GitHub step keeps the graph swept.
+        const stackStepOwed = snapshot.nodes.some(
+          (node) => !!nextStackStep(snapshot, node, runs, false),
+        );
         snapshot.graph.status =
-          allDone && allRequiredEdgesSettled ? 'done' : runnable === 0 ? 'waiting' : 'active';
+          allDone && allRequiredEdgesSettled && !stackStepOwed
+            ? 'done'
+            : runnable === 0
+              ? 'waiting'
+              : 'active';
       }
       snapshot.graph.updatedAt = now;
       await persistNow(snapshot);

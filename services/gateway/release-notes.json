@@ -1,9 +1,5 @@
 {
-  "version": "0.20.1",
-  "date": "2026-10-05",
-  "items": [
-    "Jira tickets keep their structure and acceptance criteria in TASK.md",
-    "Slots no longer get stuck in busy/releasing after a fleet refresh",
-    "Farm hooks run from the node's matching config bundle, so they no longer exit 127 after a config update"
-  ]
+  "version": "0.20.3",
+  "date": "2026-10-07",
+  "items": ["Stacked runs: a dev or fix-bug run can start on top of another run's published PR"]
 }

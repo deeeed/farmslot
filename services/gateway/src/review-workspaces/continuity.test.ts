@@ -77,3 +77,12 @@ test('an explicit fresh-session choice still preserves incremental findings cont
   assert.equal(result.sessionIntent, 'reset');
   assert.equal(result.session?.continuity, 'fresh');
 });
+
+test('a rebased prior head keeps the round full even when incremental was requested', () => {
+  const result = {
+    ...context(),
+    incrementalUnavailableReason: 'Prior reviewed head is not an ancestor (rebase or force-push).',
+  } as RepeatReviewContext;
+  configureWorkspaceContinuity(current, prior, result);
+  assert.equal(result.reviewScope, 'full');
+});

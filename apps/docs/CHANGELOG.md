@@ -4,12 +4,23 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Adapter SDK reference: `CommandEventStream.stage(name, { index, total })`, the `StageHandle` a platform reports setup progress through (`StageProgress`), and `noopStage` for a stream without stages.
+- Adapter SDK reference: the optional `readiness` member (`AdapterReadiness`), what `doctor`, `status` and `prepare` ask a platform; `extends` merges it member by member.
+- Adapter SDK reference: `run`, `run --plan` and `call` refuse `--record-video` on an adapter without `recording` before recipe execution (`RECORDING_UNSUPPORTED`, exit 2); a run that still reaches the missing target fails with the same code, exit 4.
+- Adapter SDK reference: the `environment` failure class (`ENVIRONMENT_NOT_READY`) in the classification order.
+- Web adapter reference: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture.
+- Web adapter reference: document `network-observer` and `performance-observer` (Extension network capture and CDP performance traces), `connectBrowserCdp` events and `selectExtensionTarget`.
+- Agent runtime and task directory contract: `artifacts/acceptance-status.json` is written by `farmslot-agent ac` and by a recipe run with a task dir, through one module.
+- Document adapter plugins declared in `recipe-library.json` `adapters`: loading on selection, the checks, `extends` composition, the trust rule (the exact operator library list, the plugin digest an approved plan binds, the files a plugin may import and the ones refused, the doctor check), and the Adapter SDK members `extends?`, `doctor?`, `actions.manifestPaths?` and `actions.adapters?`.
+- Web adapter reference: document `dapp` (record or answer a dapp's wallet requests, assert the request log, product signing policy as input) and `origin`.
+- Add the Node adapter reference (`@farmslot/adapter-node`: `createNodeAdapter`, `nodeDependencyBlock` with a host `resolveBin`, `workspaceTsconfigEnv` mapping each package to its `src`, `checkoutWorkspacePackages`, `scripts/cleanup.sh`).
 - The Expo guide becomes the React Native adapter guide at `/docs/guides/adapter-rn` (`@farmslot/adapter-rn`, renamed from `@farmslot/expo-recipe`).
 
 - Rename the recipe harness package pages to `@farmslot/recipe-runner` (`/docs/architecture/recipe-runner`).
 - Add the Adapter SDK reference (`@farmslot/adapter-sdk`: `PlatformAdapter`, `defineAdapter`, the adapter registry), including the lifecycle members (`launch`, `detect`, `targets`, `flags`, `failurePatterns`, `devServer.portEnv`) and the detection and failure-classification rules.
-- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `devServer.portFlags`, `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
+- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
 - Document the Adapter SDK `observation` member (`network.backend`, `network.actions`, `performance.start`) and the `RunObserver` and `NetworkCaptureBackend` types.
+- Drop `devServer.portFlags` from the Adapter SDK reference (removed from the SDK).
 - Add the `@farmslot/adapter-web` reference page.
 - Web adapter reference: add `launch-browser` and `slot-title`, the launch sequence, and the `browser-resolver.cjs` command contract.
 

@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  DEFAULT_BRANCH,
   type IndependentReviewAttempt,
   isTerminalRunStatus,
   PipelineSteps,
@@ -29,7 +30,12 @@ import {
   selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectRuntimeDir,
+} from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
@@ -95,6 +101,7 @@ import {
 } from './native-review-operation.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   DEFAULT_REVIEW_SESSION_POLICY,
   invalidateWarmReviewerSessions,
@@ -262,7 +269,18 @@ export async function executeSelfReview(
 ): Promise<SelfReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
-  return withNativeReviewOperation(run, () => executeOwnedSelfReview(runId, slotId, options));
+  const result = await withNativeReviewOperation(run, () =>
+    executeOwnedSelfReview(runId, slotId, options),
+  );
+  // Pipeline and publication reviews both end here: a pass is what was reviewed.
+  if (result.verdict === 'pass' && !result.skipped) {
+    await recordReviewedInputs(runId).catch((err: Error) =>
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — reviewed inputs not recorded: ${err.message}`,
+      ),
+    );
+  }
+  return result;
 }
 
 async function executeOwnedSelfReview(
@@ -2085,6 +2103,7 @@ async function sendOwnedFeedbackToWorker(
     TICKET: run?.ticketOrPr ?? '',
     ISSUES: issueLines,
     RUNTIME_DIR: runtimeDir,
+    DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
   };
 
   assertNoUnknownPlaceholders(

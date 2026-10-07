@@ -43,6 +43,10 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
+import {
+  markReviewedInputsRerun,
+  reviewedInputsAwaitingReview,
+} from '../self-review/reviewed-inputs.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
@@ -816,6 +820,52 @@ export async function holdSlotForPublicationGate(
   broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
 }
 
+/**
+ * F42: when the description, evidence or HEAD changed after the last passing
+ * review, self-review runs again before the publication gate is presented, once
+ * per changed state: one that does not pass leaves review unsatisfied at the
+ * gate instead of looping. Returns whether a review ran.
+ */
+export async function rerunSelfReviewIfReviewedInputsChanged(
+  runId: string,
+  context: Pick<
+    PostDispatchStepContext,
+    'executePublishGateReviewPlan' | 'getDiffStat' | 'prepareCompletionPackageForRun'
+  >,
+): Promise<boolean> {
+  const latest = getRun(runId);
+  const reviewSlotId = latest?.slotId;
+  if (!latest || !reviewSlotId) return false;
+  const changedInputs = await reviewedInputsAwaitingReview(latest);
+  if (!changedInputs) return false;
+  console.log(
+    `[run-engine] run ${runId.slice(0, 8)} — description, evidence or HEAD changed since the last review; running self-review again`,
+  );
+  const plan: ReviewLoopRequest[] = [{ order: 1, runner: 'same', validationDepth: 'static-code' }];
+  const reviewedPackage = await readReadyGatePreparedPackage(latest);
+  const reviewPlanResult = await context.executePublishGateReviewPlan(
+    runId,
+    reviewSlotId,
+    plan,
+    'dispatch',
+  );
+  await reconcilePublishGateReviewPlanResult(runId, plan, reviewPlanResult, context, {
+    reviewedPackage,
+    stampFreshReviews: true,
+  });
+  // Marked only once a review attempt settled: a restart or a launch that ran
+  // nothing leaves the change pending, so the next presentation re-runs it.
+  if (reviewPlanResult.reviewIds.length === 0) return false;
+  // A pass already recorded what it was given. A re-run that did not pass marks
+  // what its last attempt was given (after any fix loops), never the slot as it
+  // is now: an edit made while it ran is still unreviewed.
+  const after = getRun(runId)?.engineState;
+  const lastReviewed = after?.reviewInputsAtLaunch;
+  if (lastReviewed && lastReviewed !== after?.reviewedInputs?.fingerprint)
+    await markReviewedInputsRerun(runId, lastReviewed);
+  return true;
+}
+
 export async function executeHumanGateStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -1096,7 +1146,11 @@ export async function executeHumanGateStep(
         stampFreshReviewsForPreparedPackage(runId, recoveredReviewIds, prepared.prPackage);
       }
     }
-    let gateAction = await executeReadyGate(runId);
+    const presentReadyGate = async (): Promise<string> => {
+      if (publicationApprovalGate) await rerunSelfReviewIfReviewedInputsChanged(runId, context);
+      return executeReadyGate(runId);
+    };
+    let gateAction = await presentReadyGate();
     let reviewRequestLoops = 0;
     while (
       publicationApprovalGate &&
@@ -1104,7 +1158,7 @@ export async function executeHumanGateStep(
       gateAction !== CLOSE_AS_SHIPPED_ACTION
     ) {
       if (gateAction === 'hold') {
-        gateAction = await executeReadyGate(runId);
+        gateAction = await presentReadyGate();
         continue;
       }
       if (gateAction === CONTINUE_REVIEW_FIX_ACTION) {
@@ -1124,7 +1178,7 @@ export async function executeHumanGateStep(
             gateAction,
           );
         }
-        gateAction = await executeReadyGate(runId);
+        gateAction = await presentReadyGate();
         continue;
       }
       if (gateAction === 'request-extra-review' || gateAction === 'request-cross-runner-review') {
@@ -1152,7 +1206,7 @@ export async function executeHumanGateStep(
         // rejecting an accepted decision here terminally blocks the run.
         const boundedPlan = plan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         if (!boundedPlan.length) {
-          gateAction = await executeReadyGate(runId);
+          gateAction = await presentReadyGate();
           continue;
         }
         const reviewSlotId = current.slotId;
@@ -1171,7 +1225,7 @@ export async function executeHumanGateStep(
           reviewedPackage,
           stampFreshReviews: true,
         });
-        gateAction = await executeReadyGate(runId);
+        gateAction = await presentReadyGate();
         continue;
       }
       throw blockedRunError(`Publication gate blocked by action: ${gateAction}`, gateAction);

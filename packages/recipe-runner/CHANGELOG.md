@@ -6,6 +6,16 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Add a `lenient` option to `resolveRecipeValue(value, params, outputs, { lenient })`: only an exact reference to a parameter that exists resolves, anything else stays as written, and nothing throws. Static validation in `@farmslot/recipe-cli` resolves parameters this way.
 
+## 0.26.0 - 2026-10-06
+
+- Add `@farmslot/recipe-runner/runtime/cdp-trace`, the CDP performance trace engine moved from mm-harness: `createCdpTraceCollector(client, { kind, platform, marker, markerPrefix })` runs one `Tracing` capture at a time and aligns it to the host clock through a marker the host writes into the trace; `parseTraceCapture(capture, kind)` turns a capture into JavaScript-task and native-frame samples with summaries. A `TraceKind` names what a trace captures (categories, renderer scoping, scope label, native source, JavaScript-task flag, `draw` or `cadence` frame timing), so the host keeps its own platform names. The marker prefix defaults to `farmslot-clock-`. `summarizeFrames` (from `@farmslot/adapter-rn`) and `summarizeJavaScriptTasks` move here too, unchanged.
+- Publish with protocol 0.34.0.
+
+## 0.25.0 - 2026-10-06
+
+- The library digest (`digestRecipeLibrary`) covers every file under each declared adapter module's directory, not only the module file, so a plugin's helper files move it. A module at the library root contributes itself and the library's `actions/`, not the whole root. Add `libraryAdapterFiles(root, declaration)` (the module's directory plus the library's `actions/`, the files a host lets the plugin import) and `digestLibraryAdapter(root, declaration)` for one plugin. The module's directory is listed strictly (`listLibraryFiles(root, directory, { strict: true })`): dot-files are digested, and a `node_modules`, a symlinked directory, or more than `MAX_LIBRARY_ADAPTER_FILES` (1,000) files fails with `RECIPE_SOURCE_INVALID`.
+- Publish with protocol 0.34.0.
+
 ## 0.24.0 - 2026-10-05
 
 - Add `@farmslot/recipe-runner/cdp-broker`: the CDP broker that shares one inspector connection between bridge commands and long-lived collectors, moved from mm-harness. Both React Native and browser-extension network capture use it.

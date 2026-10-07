@@ -120,6 +120,17 @@ export interface RunStep {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  /**
+   * Time the step waited for a slot, a resource claim or the dispatch queue
+   * rather than working. Waits inside the step are part of `durationMs`; the
+   * first step's share also carries the dispatch-queue wait before the run
+   * existed (`Run.queuedAt` to `Run.createdAt`). Resets with `startedAt`.
+   */
+  queuedMs?: number;
+  /** Set while the step waits; that open wait counts as queue time until it ends. */
+  queuedSince?: string;
+  /** When the step last made real progress (a stage line, structured worker progress). */
+  lastProgressAt?: string;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
@@ -1448,6 +1459,30 @@ export interface RunStartRefProvenance {
   source?: RunStartRefSource;
 }
 
+/**
+ * Where a stacked run sits (ADR-040 stacked work). Present only on a dev/fix-bug
+ * run whose work-graph node stacks on another node's published PR; every other
+ * run leaves it unset and behaves as before.
+ */
+export interface RunStack {
+  upstreamNodeId: string;
+  upstreamRunId: string;
+  /** Upstream PR head branch on origin. The work branch starts here and the PR targets it. */
+  baseBranch: string;
+  upstreamPrNumber: number;
+  upstreamPrUrl?: string;
+  /** Commit the work branch was created from, recorded by prepare. */
+  resolvedSha?: string;
+  /** Work-graph nodes stacked on this run, for the task brief. */
+  downstream?: string[];
+  /** Set once the upstream merged and the PR base moved to this branch. */
+  retargetedTo?: string;
+  /** The upstream PR's merge commit on that branch, recorded with `retargetedTo`. */
+  upstreamMergeSha?: string;
+  /** When Farmslot saw the upstream PR merge, kept here so it outlives the upstream run. */
+  upstreamMergedAt?: string;
+}
+
 export interface SlotRunHistoryEntry {
   runId: string;
   familyId: string;
@@ -2402,6 +2437,8 @@ export interface Run {
   pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
+  /** Stack position when this run builds on another run's published PR. */
+  stack?: RunStack;
   /** Gateway-captured template provenance for the rendered worker task. */
   templateProvenance?: TemplateProvenance | null;
   taskFile: string | null;
@@ -2422,9 +2459,13 @@ export interface Run {
   reviewResult?: RunReviewResult;
   metrics: RunMetrics;
   createdAt: string;
+  /** When the dispatch-queue item that created this run was queued; absent for direct runs. */
+  queuedAt?: string;
   /** Timestamp when the supervised run lifecycle started. */
   startedAt?: string;
   updatedAt: string;
+  /** When `status` last changed, stamped by the gateway store; absent on older runs. */
+  statusChangedAt?: string;
   /** Present on archived run records so archive-aware readers can suppress them from active timelines. */
   archivedAt?: string;
   ticketData?: RunTicketData;
@@ -2520,6 +2561,16 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 
 /** Persisted run-engine state — see ADR-027. */
 export interface RunEngineState {
+  /**
+   * What the last passing review (pipeline self-review or a publication review)
+   * judged on the slot: HEAD, the PR description, the evidence manifest and the
+   * evidence files. When any of them changes, self-review must run again before
+   * publication is approved. `rerunFor` is the changed state self-review already
+   * ran again for, so it runs once per change.
+   */
+  reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
+  /** The same fingerprint, taken when the latest review document was written. */
+  reviewInputsAtLaunch?: string;
   /** Persisted before branch mutations. A matching false value proves an early
    * prepare failure never reached branch setup; absent historical state is unknown. */
   prepareBranch?: { slotId: string; branch: string; started: boolean };

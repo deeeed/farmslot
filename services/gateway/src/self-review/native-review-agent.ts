@@ -52,6 +52,7 @@ import {
   scopeReviewFeedbackPath,
   selfReviewChecklistMarkPrompt,
 } from './review-agent.js';
+import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import type { ReviewSessionPolicy } from './session-policy.js';
 import {
   captureReviewSnapshot,
@@ -195,6 +196,8 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           feedbackRelPath,
           resultRelPath,
         );
+        // What this document gives the reviewer; a pass records it (F42).
+        await noteReviewInputsAtLaunch(runId);
         if (loopNumber > 1) {
           const previous = await readPersistedReviewSnapshot(
             vars,

@@ -31,7 +31,8 @@ import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
-import { createSubStepCollector } from './sub-step-collector.js';
+import { ensureRunStack } from './stack-base.js';
+import { createSubStepCollector, type SubStepCollector } from './sub-step-collector.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -173,6 +174,70 @@ interface RunEngineFlags {
   warmSessionReuse?: true;
 }
 
+/** Stage lines carry this token when a stage shows no change; they say so without being progress. */
+const STALL_NOTICE = 'no progress for';
+/** A stage line's trailing elapsed time (`, 1m42s`): a heartbeat changes only that. */
+const ELAPSED_SUFFIX = /, \d+(?:h\d{2}m|m\d{2}s|s)$/u;
+
+/**
+ * Live prepare progress. A named sub-step event (a stage, a parsed `[i/n]`
+ * preflight line) updates the step's detail and sub-steps and is the step's
+ * last progress when it says something new (not a stall notice or a repeat). Raw output only refreshes
+ * `lastOutput`, throttled: output alone does not prove a stage is moving.
+ */
+export function createPrepareProgressEmitter(params: {
+  runId: string;
+  inputs: Record<string, unknown>;
+  baseOutputs: Record<string, unknown>;
+  collector: SubStepCollector;
+  stepPartialIO: Map<string, StepIO>;
+  broadcastFn: BroadcastFn;
+}): (event: string, payload: unknown) => void {
+  const { runId, inputs, baseOutputs, collector, stepPartialIO, broadcastFn } = params;
+  let lastStreamBroadcast = 0;
+  const STREAM_THROTTLE_MS = 1500;
+  let lastProgressText: string | undefined;
+  return (event: string, payload: unknown) => {
+    collector.emit(event, payload);
+    const p = payload as { name?: string; detail?: string; stream?: string } | undefined;
+    if (p?.name) {
+      // Named step events are infrequent — safe to snapshot + broadcast
+      const lo = collector.getLastOutput();
+      const outputs: Record<string, unknown> = {
+        ...baseOutputs,
+        subSteps: collector.snapshot(),
+      };
+      if (lo) outputs.lastOutput = lo;
+      // Progress is a line that says something new: not a stall notice, and not
+      // a heartbeat repeating the last line with a later elapsed time.
+      const text = (p.detail || p.name).replace(ELAPSED_SUFFIX, '');
+      const moved = !text.includes(STALL_NOTICE) && text !== lastProgressText;
+      if (moved) lastProgressText = text;
+      updateRunStep(runId, 'prepare', {
+        detail: p.detail || p.name,
+        outputs,
+        ...(moved ? { lastProgressAt: new Date().toISOString() } : {}),
+      });
+      stepPartialIO.set(runId, { inputs, outputs });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      lastStreamBroadcast = Date.now();
+    } else if (p?.stream) {
+      // Output events — keep lastOutput fresh + throttled broadcast to UI
+      const lo = collector.getLastOutput();
+      if (lo) {
+        const outputs = { ...stepPartialIO.get(runId)?.outputs, lastOutput: lo };
+        stepPartialIO.set(runId, { inputs, outputs });
+        const now = Date.now();
+        if (now - lastStreamBroadcast >= STREAM_THROTTLE_MS) {
+          lastStreamBroadcast = now;
+          updateRunStep(runId, 'prepare', { outputs });
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        }
+      }
+    }
+  };
+}
+
 export interface PrepareStepContext {
   activeMonitors: Map<string, AbortController>;
   broadcastFn: BroadcastFn;
@@ -194,6 +259,14 @@ export async function executePrepareStep(
   } = context;
   const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
+  // Normally resolved at write-task; repeated here for runs that brought their own task.
+  const stack = (await ensureRunStack(runId)).stack;
+  // A replay rebuilds from the recorded commit so the base cannot move under it.
+  // A branch name resolves only as a head on origin, never as a same-named tag.
+  const stackBaseRef =
+    stack && !stack.retargetedTo
+      ? (stack.resolvedSha ?? `refs/heads/${stack.baseBranch}`)
+      : undefined;
   // pr-complete and update-branch flows leave the merge to the worker so it
   // can resolve conflicts in-session. review-pr checks out the PR branch as
   // pushed; integration with main is informational (TASK.md) unless the
@@ -209,6 +282,7 @@ export async function executePrepareStep(
     app: current.app,
     ...(current.prepareProfile ? { prepareProfile: current.prepareProfile } : {}),
     ...(current.startRef ? { startRef: current.startRef.requestedRef } : {}),
+    ...(stackBaseRef ? { stackBase: stackBaseRef } : {}),
   };
 
   // skipPrepare is the pure binary "run no preparation at all" — the operator
@@ -250,39 +324,14 @@ export async function executePrepareStep(
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
-  let lastStreamBroadcast = 0;
-  const STREAM_THROTTLE_MS = 1500;
-  const emitWithBroadcast = (event: string, payload: unknown) => {
-    collector.emit(event, payload);
-    const p = payload as { name?: string; detail?: string; stream?: string } | undefined;
-    if (p?.name) {
-      // Named step events are infrequent — safe to snapshot + broadcast
-      const lo = collector.getLastOutput();
-      const outputs: Record<string, unknown> = {
-        cliCommand,
-        hostLoad,
-        subSteps: collector.snapshot(),
-      };
-      if (lo) outputs.lastOutput = lo;
-      updateRunStep(runId, 'prepare', { detail: p.detail || p.name, outputs });
-      stepPartialIO.set(runId, { inputs, outputs });
-      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-      lastStreamBroadcast = Date.now();
-    } else if (p?.stream) {
-      // Output events — keep lastOutput fresh + throttled broadcast to UI
-      const lo = collector.getLastOutput();
-      if (lo) {
-        const outputs = { ...stepPartialIO.get(runId)?.outputs, lastOutput: lo };
-        stepPartialIO.set(runId, { inputs, outputs });
-        const now = Date.now();
-        if (now - lastStreamBroadcast >= STREAM_THROTTLE_MS) {
-          lastStreamBroadcast = now;
-          updateRunStep(runId, 'prepare', { outputs });
-          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-        }
-      }
-    }
-  };
+  const emitWithBroadcast = createPrepareProgressEmitter({
+    runId,
+    inputs,
+    baseOutputs: { cliCommand, hostLoad },
+    collector,
+    stepPartialIO,
+    broadcastFn,
+  });
   // F2.10 preflight: remote slots must expose tmux/lsof/node on PATH
   // before prepare runs. Failing early with a readable error avoids minutes
   // of confusing "metro up but capture-helper silently dies" diagnostics.
@@ -386,6 +435,23 @@ export async function executePrepareStep(
           ? {
               startRef: {
                 requestedRef: current.startRef.resolvedSha ?? current.startRef.requestedRef,
+              },
+            }
+          : {}),
+        ...(stackBaseRef
+          ? {
+              stackBase: { requestedRef: stackBaseRef },
+              // Recorded before later prepare phases run, so a failed prepare
+              // still leaves the base a replay and the diff can use.
+              onStackBaseResolved: async (resolution) => {
+                const latest = getRun(runId);
+                if (!latest?.stack || latest.stack.resolvedSha) return;
+                await persistRunNow(
+                  updateRun(runId, {
+                    stack: { ...latest.stack, resolvedSha: resolution.resolvedSha },
+                  }),
+                  'stack base resolved',
+                );
               },
             }
           : {}),

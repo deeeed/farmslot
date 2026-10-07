@@ -17,6 +17,7 @@ import {
   buildRunCreateParams,
   formatReviewChainLine,
   formatRunSessionLines,
+  formatRunStepTimingLines,
   parseAgentRole,
   parseOptionalPrNumber,
   parseTaskPath,
@@ -547,6 +548,29 @@ test('run session reports an unsupported runner instead of printing a guessed co
   assert.equal(lines.length, 2);
   assert.match(lines[0]!, /session-reload-unsupported/);
   assert.match(lines[1]!, /cursor/);
+});
+
+test('run get shows each step queue time, run time and last progress', () => {
+  const run = {
+    createdAt: '2026-10-07T10:02:10.000Z',
+    queuedAt: '2026-10-07T10:00:00.000Z',
+    steps: [
+      // 2m10s in the dispatch queue before the run existed, then 3s finding a slot.
+      { name: 'find-slot', status: 'done', durationMs: 3_000, queuedMs: 130_000 },
+      {
+        name: 'prepare',
+        status: 'running',
+        startedAt: '2026-10-07T10:02:13.000Z',
+        lastProgressAt: '2026-10-07T10:06:45.000Z',
+      },
+      { name: 'dispatch', status: 'pending' },
+    ],
+  } as unknown as Run;
+
+  assert.deepEqual(formatRunStepTimingLines(run, Date.parse('2026-10-07T10:07:25.000Z')), [
+    'find-slot: queued 2m10s · ran 3s',
+    'prepare: ran 5m12s · last progress 40s ago',
+  ]);
 });
 
 test('parseAgentRole accepts a known role and rejects the rest', () => {
