@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { settleStackedDiffBase } from './diff-artifacts.js';
+import { type DiffBaseSpec, settleStackedDiffBase } from './diff-artifacts.js';
 
 const execFileAsync = promisify(execFile);
 const gitEnv = ['-c', 'user.name=Farmslot Test', '-c', 'user.email=farmslot-test@example.invalid'];
@@ -16,14 +16,18 @@ async function git(repo: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-async function commitFile(repo: string, file: string, content: string, message: string) {
-  await writeFile(path.join(repo, file), content);
+async function commitFile(repo: string, file: string, message: string) {
+  await writeFile(path.join(repo, file), `${message}\n`);
   await git(repo, 'add', file);
   await git(repo, 'commit', '-q', '-m', message);
   return git(repo, 'rev-parse', 'HEAD');
 }
 
-test('a stacked diff keeps its branch point until the checkout merges the default branch', async (t) => {
+/**
+ * origin/main at O; upstream A (a.txt) on feat/a; the slot's B (b.txt) stacked
+ * on A's head. `author` stands in for other slots and GitHub.
+ */
+async function fixture(t: import('node:test').TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-stacked-diff-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const origin = path.join(root, 'origin.git');
@@ -31,21 +35,16 @@ test('a stacked diff keeps its branch point until the checkout merges the defaul
   const slot = path.join(root, 'slot');
   await execFileAsync('git', ['init', '-q', '--bare', '--initial-branch=main', origin]);
   await execFileAsync('git', ['init', '-q', '--initial-branch=main', author]);
-  await commitFile(author, 'README.md', 'base\n', 'base');
+  await commitFile(author, 'README.md', 'base');
   await git(author, 'remote', 'add', 'origin', origin);
   await git(author, 'push', '-q', 'origin', 'main');
-  // Upstream A on its own branch; B stacks on A's head.
   await git(author, 'checkout', '-q', '-b', 'feat/a');
-  const branchPoint = await commitFile(author, 'a.txt', 'A\n', 'A');
+  const branchPoint = await commitFile(author, 'a.txt', 'A');
   await git(author, 'push', '-q', 'origin', 'feat/a');
+  await git(author, 'checkout', '-q', 'main');
   await execFileAsync('git', ['clone', '-q', '-b', 'feat/a', origin, slot]);
   await git(slot, 'checkout', '-q', '-b', 'feat/b');
-  await commitFile(slot, 'b.txt', 'B\n', 'B');
-  // A squash-merges: main gets A's content as a new commit.
-  await git(author, 'checkout', '-q', 'main');
-  await git(author, 'merge', '-q', '--squash', 'feat/a');
-  await git(author, 'commit', '-q', '-m', 'A (squash)');
-  await git(author, 'push', '-q', 'origin', 'main');
+  await commitFile(slot, 'b.txt', 'B');
 
   const exec = async (command: string) => {
     try {
@@ -56,32 +55,58 @@ test('a stacked diff keeps its branch point until the checkout merges the defaul
       return { stdout: e.stdout ?? '', stderr: e.stderr ?? '', exitCode: e.code ?? 1 };
     }
   };
-  const stacked = { baseRef: 'stack:feat/a', commitish: branchPoint };
+  const stacked: DiffBaseSpec = { baseRef: 'stack:feat/a', commitish: branchPoint };
+  // What captureRunDiffSnapshot diffs for a settled base.
+  const contribution = async () => {
+    const base = await settleStackedDiffBase(exec, 'main', stacked);
+    const from =
+      base.useMergeBase === false
+        ? base.commitish
+        : await git(slot, 'merge-base', base.commitish, 'HEAD');
+    return (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n').sort();
+  };
+  const onMain = async (step: () => Promise<void>) => {
+    await git(author, 'checkout', '-q', 'main');
+    await git(author, 'pull', '-q', 'origin', 'main');
+    await step();
+    await git(author, 'push', '-q', 'origin', 'main');
+  };
+  return { author, exec, slot, stacked, contribution, onMain };
+}
 
-  assert.deepEqual(
-    await settleStackedDiffBase(exec, 'main', stacked),
-    stacked,
-    'retargeted but not integrated: origin/main would count a.txt as B',
-  );
+test('a stacked contribution never counts the upstream or default-branch work', async (t) => {
+  const { author, slot, stacked, exec, contribution, onMain } = await fixture(t);
 
-  await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
-  assert.deepEqual(await settleStackedDiffBase(exec, 'main', stacked), {
-    baseRef: 'origin/main',
-    commitish: 'origin/main',
+  assert.deepEqual(await settleStackedDiffBase(exec, 'main', stacked), stacked);
+  assert.deepEqual(await contribution(), ['b.txt'], 'plain stack');
+
+  // B merges unrelated default-branch work while A is still open.
+  await onMain(async () => {
+    await commitFile(author, 'x.txt', 'X');
   });
-  assert.deepEqual(
-    (
-      await git(
-        slot,
-        'diff',
-        '--name-only',
-        `${await git(slot, 'merge-base', 'HEAD', 'origin/main')}..HEAD`,
-      )
-    ).split('\n'),
-    ['b.txt'],
-    'after integration the default branch isolates B',
-  );
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
+  assert.deepEqual(await contribution(), ['b.txt'], 'neither a.txt nor x.txt is B');
 
-  const plain = { baseRef: 'origin/main', commitish: 'origin/main' };
+  // A squash-merges; B is retargeted but has not integrated it yet.
+  await onMain(async () => {
+    await git(author, 'merge', '-q', '--squash', 'origin/feat/a');
+    await git(author, 'commit', '-q', '-m', 'A (squash)');
+  });
+  assert.deepEqual(await contribution(), ['b.txt'], 'squash not yet integrated');
+
+  // B integrates the squash and more unrelated work.
+  await onMain(async () => {
+    await commitFile(author, 'y.txt', 'Y');
+  });
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
+  assert.deepEqual(await contribution(), ['b.txt'], 'after integration');
+
+  // Origin unreachable: the local remote-tracking ref still holds what B merged.
+  await git(slot, 'remote', 'set-url', 'origin', path.join(author, 'missing.git'));
+  assert.deepEqual(await contribution(), ['b.txt'], 'fetch failed');
+
+  const plain: DiffBaseSpec = { baseRef: 'origin/main', commitish: 'origin/main' };
   assert.equal(await settleStackedDiffBase(exec, 'main', plain), plain, 'non-stacked: untouched');
 });

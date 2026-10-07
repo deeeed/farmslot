@@ -13,7 +13,8 @@ process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_WORK_GRAPH_DIR = path.join(testDir, 'graphs');
 process.env.FARMSLOT_RUNS_DIR = path.join(testDir, 'runs');
 
-test.after(() => rm(testDir, { recursive: true, force: true }));
+// Run persistence may still be flushing when the suite ends.
+test.after(() => rm(testDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const backlog = await import('../backlog/store.js');
 const queue = await import('../backlog/dispatch-queue.js');
@@ -146,7 +147,7 @@ test('ensureRunStack stamps a stacked graph run and leaves every other run alone
   await assert.rejects(ensureRunStack(fresh()), /comes from a fork/);
 });
 
-test('a follow-up in a stacked family measures its diff from the stacked run', () => {
+test('a follow-up measures its diff from the stacked run it continues', () => {
   const root = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'S-1' });
   runs.updateRun(root.id, { stack: STACK });
   const followUp = runs.createRun({
@@ -157,6 +158,25 @@ test('a follow-up in a stacked family measures its diff from the stacked run', (
     parentRunId: root.id,
   });
   assert.deepEqual(contributionStack(runs.getRun(followUp.id)!), STACK);
+  // A sibling candidate in the same family stacked on a newer upstream commit:
+  // its own follow-up takes the candidate's stack, not the family root's.
+  const candidate = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'S-1',
+    familyId: root.familyId,
+    parentRunId: root.id,
+  });
+  const newer = { ...STACK, resolvedSha: 'b'.repeat(40) };
+  runs.updateRun(candidate.id, { stack: newer });
+  const candidateFollowUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#43',
+    familyId: root.familyId,
+    parentRunId: candidate.id,
+  });
+  assert.deepEqual(contributionStack(runs.getRun(candidateFollowUp.id)!), newer);
   const unrelated = runs.createRun({
     flowType: 'dev',
     project: 'farmslot-farm',

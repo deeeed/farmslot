@@ -832,9 +832,11 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   checks that the branch really sits there, and records the commit before any later
   prepare phase runs.
 - **Publication.** The PR targets the upstream branch. The contribution diff of the stacked
-  run and its ci-watch follow-ups starts at the recorded commit until the checkout merges
-  the default branch past it, then at the default branch, so review sees only this run's
-  changes before and after the upstream squash-merges.
+  run and of the follow-ups that continue it starts at the recorded commit. Once the
+  checkout has merged default-branch commits past that point, it starts at a commit whose
+  tree merges the recorded commit with what the checkout took from the default branch, so
+  neither the upstream's files nor default-branch work count as this run's, before or
+  after the upstream squash-merges.
 - **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
   stacked on top. Runs without `run.stack` get no section; their task documents are
   byte-identical to before (golden tests).

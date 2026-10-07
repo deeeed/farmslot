@@ -448,10 +448,17 @@ export function cappedRunSourceDiffCommand(
 
 /**
  * The stack a run's contribution is measured against: its own, or for a
- * follow-up in a stacked family (ci-fix, pr-complete) the stacked run's.
+ * follow-up (ci-fix, pr-complete) the stacked run it continues.
  */
-export function contributionStack(run: Pick<Run, 'stack' | 'familyId'>): Run['stack'] {
-  return run.stack ?? (run.familyId ? getRun(run.familyId)?.stack : undefined);
+export function contributionStack(run: Pick<Run, 'stack' | 'parentRunId'>): Run['stack'] {
+  // Walk the follow-up's own lineage: a family can hold candidates stacked on
+  // different upstream commits.
+  let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
+  for (let hops = 0; current && hops < 20; hops += 1) {
+    if (current.stack) return current.stack;
+    current = current.parentRunId ? getRun(current.parentRunId) : undefined;
+  }
+  return undefined;
 }
 
 export function contributionDiffBaseSpec(
@@ -478,33 +485,55 @@ type GitExec = (
   command: string,
 ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>;
 
+export interface DiffBaseSpec {
+  baseRef: string;
+  commitish: string;
+  /** False when `commitish` already is the exact base; default diffs from merge-base. */
+  useMergeBase?: boolean;
+}
+
 /**
- * Chooses between a stacked run's branch point and the default branch by the
- * checkout's history, not by whether the PR was retargeted. Until the checkout
- * merges the default branch past the branch point, the branch point is the base
- * (after a squash merge of the upstream, the default branch would count the
- * upstream's files as this run's). Once it has, the default branch is.
+ * The base a stacked contribution is measured from, by the checkout's history.
+ * While nothing from the default branch past the branch point is in HEAD, the
+ * branch point is the base. Once HEAD has merged default-branch commits (a
+ * squash of the upstream, unrelated work, or both), the base is a commit whose
+ * tree merges the branch point with what HEAD took from the default branch, so
+ * neither the upstream's files nor default-branch commits count as this run's.
  */
 export async function settleStackedDiffBase(
   exec: GitExec,
   defaultBranch: string,
-  baseSpec: { baseRef: string; commitish: string },
-): Promise<{ baseRef: string; commitish: string }> {
+  baseSpec: DiffBaseSpec,
+): Promise<DiffBaseSpec> {
   if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
   const remote = `origin/${defaultBranch}`;
+  const branchPoint = baseSpec.commitish;
   try {
-    const fetched = await exec(
-      `git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
-    );
-    if (fetched.exitCode !== 0) return baseSpec;
+    // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
+    await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
     const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
-    if (mergeBase.exitCode !== 0 || !mergeBase.stdout.trim()) return baseSpec;
+    const taken = mergeBase.stdout.trim();
+    if (mergeBase.exitCode !== 0 || !taken) return baseSpec;
     const stillStacked = await exec(
-      `git merge-base --is-ancestor ${shellQuote(mergeBase.stdout.trim())} ${shellQuote(baseSpec.commitish)}`,
+      `git merge-base --is-ancestor ${shellQuote(taken)} ${shellQuote(branchPoint)}`,
     );
-    return stillStacked.exitCode === 0 ? baseSpec : { baseRef: remote, commitish: remote };
+    if (stillStacked.exitCode === 0) return baseSpec;
+    const tree = await exec(
+      `git merge-tree --write-tree ${shellQuote(branchPoint)} ${shellQuote(taken)}`,
+    );
+    // Upstream and default branch disagree: fall back to GitHub's own view.
+    if (tree.exitCode !== 0) return { baseRef: remote, commitish: remote };
+    const commit = await exec(
+      `git -c user.name=farmslot -c user.email=farmslot@localhost commit-tree ${shellQuote(tree.stdout.trim().split('\n')[0]!)} -p ${shellQuote(branchPoint)} -p ${shellQuote(taken)} -m ${shellQuote('farmslot stacked diff base')}`,
+    );
+    if (commit.exitCode !== 0 || !commit.stdout.trim()) return baseSpec;
+    return {
+      baseRef: `${baseSpec.baseRef}+${remote}`,
+      commitish: commit.stdout.trim(),
+      useMergeBase: false,
+    };
   } catch {
-    // The branch point is never wrong before integration; keep it when git can't tell.
+    // Before any integration the branch point is right; keep it when git can't tell.
     return baseSpec;
   }
 }
@@ -526,7 +555,7 @@ export async function captureWorktreeHeadSha(
 }
 
 type CaptureRunDiffSnapshotOptions = {
-  baseSpec?: { baseRef: string; commitish: string };
+  baseSpec?: DiffBaseSpec;
   /** When true (default), diff from merge-base(base, HEAD); when false, diff from base..HEAD. */
   useMergeBase?: boolean;
   kind?: FamilyDiffKind;
@@ -581,7 +610,7 @@ export async function captureRunDiffSnapshot(
         defaultBranch,
       ),
     ));
-  const useMergeBase = options.useMergeBase ?? true;
+  const useMergeBase = options.useMergeBase ?? baseSpec.useMergeBase ?? true;
   const diffArtifactPath = options.diffArtifactPath ?? 'artifacts/diff.txt';
   const sourcePathspecList = sourceCodeGitPathspecs(sourceFilter);
   try {
