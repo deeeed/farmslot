@@ -36,10 +36,10 @@ export function recordingUnsupported(
     code: 'RECORDING_UNSUPPORTED',
     message: recordingUnsupportedMessage(adapter),
     userAction:
-      'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; ' +
+      "rerun without --record-video; for visual evidence use the adapter's own screenshot action where its manifest has one" +
       (recorders.length > 0
-        ? `adapters that support --record-video: ${recorders.join(', ')}`
-        : 'no registered adapter supports --record-video'),
+        ? `, or an adapter that records: ${recorders.join(', ')}`
+        : '; no registered adapter records'),
   };
 }
 
@@ -51,6 +51,8 @@ export function recordingUnsupportedFailure(
   return adapter && harnessAdapters().has(adapter) ? recordingUnsupported(adapter) : undefined;
 }
 
+// recordingUnsupportedFailure parses this exact message: rewording it here
+// without updating that pattern disables the net in checkHealBounds.
 function recordingUnsupportedMessage(adapter: string): string {
   return `--record-video is not implemented for the ${adapter} adapter.`;
 }

@@ -75,6 +75,7 @@ import {
   emitHealViolation,
   executeWithHealBounds,
   prepareHeal,
+  runRecipe,
   synthesizeOneNodeRecipe,
 } from '../src/harness/run-engine.js';
 
@@ -606,26 +607,6 @@ describe('engine door', () => {
       state,
     );
     assert.equal(passed.violation, null);
-  });
-
-  test('a recording the adapter cannot make fails as a capability refusal, not app logic', async () => {
-    const root = tempRoot('recipe-cli-heal-');
-    const tracePath = path.join(root, 'trace.json');
-    const error = '--record-video is not implemented for the api adapter.';
-    fs.writeFileSync(tracePath, JSON.stringify({ entries: [{ ok: false, error }] }));
-    const { violation } = await executeWithHealBounds(
-      async () => ({ status: 'fail', tracePath }) as RecipeRunResult,
-      root,
-      newHealState(),
-    );
-    assert.deepEqual(violation, {
-      code: 'RECORDING_UNSUPPORTED',
-      message: error,
-      userAction:
-        'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; no registered adapter supports --record-video',
-      exitCode: 2,
-      originalError: error,
-    });
   });
 
   test('keeps the pinned device over the slot default, applies the platform env, and restores every key', () => {
@@ -1953,7 +1934,7 @@ describe('--record-video', () => {
     code: 'RECORDING_UNSUPPORTED',
     message: '--record-video is not implemented for the api adapter.',
     userAction:
-      'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; adapters that support --record-video: web',
+      "rerun without --record-video; for visual evidence use the adapter's own screenshot action where its manifest has one, or an adapter that records: web",
   };
   let asked: string[];
   let recorded: string[];
@@ -2030,6 +2011,81 @@ describe('--record-video', () => {
     assert.deepEqual(recorded, ['web']);
   });
 
+  test('run --json-stream reports the refusal as an error event and a failed completion', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const streamed = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'api', '--target', target, '--record-video', '--json-stream'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(streamed.value, 2);
+    const events = streamed.stdout
+      .join('')
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(
+      events.map((event) => [event.event, event.phase ?? event.status]),
+      [
+        ['phase', 'resolve'],
+        ['error', undefined],
+        ['complete', 'fail'],
+      ],
+    );
+    assert.deepEqual(events[1]?.error, unsupported);
+    assert.equal(events[2]?.exitCode, 2);
+    assert.deepEqual(calls.runners, []);
+  });
+
+  test('run --plan refuses it like the run, and plans it on an adapter that records', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const plan = (adapter: string) =>
+      capture(() =>
+        handleRun(
+          [recipe, '--plan', '--adapter', adapter, '--target', target, '--record-video', '--json'],
+          { engine: recordingEngine },
+        ),
+      );
+    const refused = await plan('api');
+    assert.equal(refused.value, 2);
+    const envelope = lastJson(refused.stdout);
+    assert.equal(envelope.mode, 'plan');
+    assert.deepEqual(envelope.error, unsupported);
+    assert.equal(envelope.plan, undefined);
+    const planned = await plan('web');
+    assert.equal(planned.value, 0, planned.stderr.join('\n'));
+    assert.equal(lastJson(planned.stdout).status, 'pass');
+  });
+
+  test('a run that reaches the missing target fails as a bounded capability refusal, not app logic', async () => {
+    // Programmatic callers skip the run/call preflight: the runner asks the
+    // harness provider, which throws, and the heal bounds classify the failure.
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifacts = path.join(tempRoot('recipe-cli-record-'), 'artifacts');
+    const { result, violation } = await executeWithHealBounds(
+      () =>
+        runRecipe(recordingEngine, 'api', recipe, artifacts, target, undefined, {
+          recordVideo: 'full-run',
+        }),
+      target,
+      newHealState(),
+    );
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(asked, ['api']);
+    assert.deepEqual(recorded, []);
+    assert.deepEqual(violation, {
+      ...unsupported,
+      exitCode: 4,
+      originalError: unsupported.message,
+    });
+  });
+
   test('call refuses it before execution on an adapter that cannot record', async () => {
     const target = checkout();
     const json = await capture(() =>
@@ -2056,6 +2112,29 @@ describe('--record-video', () => {
     ]);
     assert.deepEqual(calls.runners, []);
     assert.deepEqual(asked, []);
+
+    const call = (adapter: string, flag: string) =>
+      capture(() =>
+        handleCall(
+          ['command', 'cmd=pwd', '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', path.join(tempRoot('recipe-cli-call-record-'), 'artifacts')],
+            [flag, '--json'],
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    // After the action, call reads every `key=value` token as an action input,
+    // `--record-video=off` included, so off is not a recording request here.
+    const off = await call('api', '--record-video=off');
+    assert.notEqual(
+      (lastJson(off.stdout).error as { code?: string } | undefined)?.code,
+      'RECORDING_UNSUPPORTED',
+    );
+    assert.deepEqual(asked, []);
+    const supported = await call('web', '--record-video');
+    assert.equal(supported.value, 0, supported.stdout.join('\n') + supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
   });
 });
 

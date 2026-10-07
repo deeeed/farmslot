@@ -758,6 +758,18 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
   const { adapter, target } = resolveAdapter(options);
 
   stream.phase('resolve', { adapter, target, recipe: recipeArg });
+  const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
+  if (recording) {
+    return emitPlanUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      recipeArg,
+      recording.code,
+      recording.message,
+      recording.userAction,
+    );
+  }
   stream.phase('validate');
   const validated = await validateRunRecipeStatic(engine, recipeArg, adapter, options, params);
   if (validated.usageError) {

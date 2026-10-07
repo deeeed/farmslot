@@ -208,9 +208,10 @@ export function checkHealBounds(
       originalError,
     };
   }
-  // A missing harness capability, not app logic.
+  // A missing harness capability, not app logic. The run already started, so
+  // this is bounded (4), not the preflight's usage refusal (2).
   const recording = recordingUnsupportedFailure(output);
-  if (recording) return { ...recording, exitCode: EXIT.usage, originalError };
+  if (recording) return { ...recording, exitCode: EXIT.bounded, originalError };
   const concise = conciseFailureForHuman(output);
   const failureClass = classifyFailure(concise);
   const protectedCapture =
