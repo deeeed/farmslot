@@ -1,6 +1,7 @@
-import type { CommandEventStream } from '@farmslot/adapter-sdk';
+import type { CommandEventStream, StageHandle } from '@farmslot/adapter-sdk';
 
 import { recordCommandStage } from './command-journal.js';
+import { createStageReporter } from './stage-progress.js';
 type JsonFields = Record<string, unknown>;
 
 export class JsonStreamWriter implements CommandEventStream {
@@ -8,7 +9,9 @@ export class JsonStreamWriter implements CommandEventStream {
   readonly command: string;
 
   private completed = false;
+  private lastError: string | undefined;
   private readonly writeLine: (line: string) => void;
+  private readonly stages = createStageReporter({ event: (fields) => this.emit('stage', fields) });
 
   constructor(
     command: string,
@@ -60,6 +63,10 @@ export class JsonStreamWriter implements CommandEventStream {
     this.emit('node', { nodeId, action, status });
   }
 
+  stage(name: string, position: { index: number; total: number }): StageHandle {
+    return this.stages.stage(name, position);
+  }
+
   mutation(mutation: JsonFields): void {
     this.emit('mutation', { mutation });
   }
@@ -69,10 +76,14 @@ export class JsonStreamWriter implements CommandEventStream {
   }
 
   error(error: JsonFields): void {
+    if (typeof error.message === 'string') this.lastError = error.message;
     this.emit('error', { error });
   }
 
   complete(status: 'pass' | 'fail' | 'unknown', exitCode: number, fields: JsonFields = {}): void {
+    // A stage the platform left running ends with the command, on stderr too.
+    if (status === 'pass') this.stages.close('done');
+    else this.stages.close('failed', this.lastError ?? `exit ${exitCode}`);
     if (!this.enabled || this.completed) return;
     this.emit('complete', { status, exitCode, ...fields });
     this.completed = true;
