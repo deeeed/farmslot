@@ -2124,11 +2124,16 @@ describe('--record-video', () => {
         ),
       );
     // After the action, call reads every `key=value` token as an action input,
-    // `--record-video=off` included, so off is not a recording request here.
+    // `--record-video=off` included (a known parser gap): it fails validation as
+    // an unknown input, never as a recording refusal, and records nothing.
     const off = await call('api', '--record-video=off');
-    assert.notEqual(
-      (lastJson(off.stdout).error as { code?: string } | undefined)?.code,
-      'RECORDING_UNSUPPORTED',
+    assert.equal(off.value, 5);
+    const offEnvelope = lastJson(off.stdout);
+    assert.equal((offEnvelope.error as { code?: string }).code, 'RECIPE_VALIDATION_FAILED');
+    assert.deepEqual(offEnvelope.args, { cmd: 'pwd', '--record-video': 'off' });
+    assert.equal(
+      (offEnvelope.findings as Array<{ code: string }>)[0]?.code,
+      'recipe.unknown_param',
     );
     assert.deepEqual(asked, []);
     const supported = await call('web', '--record-video');

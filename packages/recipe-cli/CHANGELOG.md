@@ -4,14 +4,17 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- `run`, `run --plan` and `call` refuse `--record-video` on an adapter whose harness surface has no `recording`, before recipe execution: `RECORDING_UNSUPPORTED`, exit 2 (the `--json` envelope or human output; `run` also emits NDJSON under `--json-stream`). The next step says to rerun without `--record-video`, or use the adapter's own screenshot action or an adapter that records. It used to fail mid-run as `APP_LOGIC_FAILURE`; a run that still reaches the missing target now fails with `RECORDING_UNSUPPORTED`, exit 4.
+- `run`, `run --plan` and `call` refuse `--record-video` on an adapter whose harness surface has no `recording`, before recipe execution (on `call`, the bare `--record-video`/`--record` flag; an inline `--record-video=<mode>` after the action is still read as an action input): `RECORDING_UNSUPPORTED`, exit 2 (the `--json` envelope or human output; `run` also emits NDJSON under `--json-stream`). The next step says to rerun without `--record-video`, or use the adapter's own screenshot action or an adapter that records. It used to fail mid-run as `APP_LOGIC_FAILURE`; a run that still reaches the missing target now fails with `RECORDING_UNSUPPORTED`, exit 4.
+
+## 0.8.0 - 2026-10-07
+
 - Bounded healing classifies a failure matching an adapter's `failurePatterns.environment` as `ENVIRONMENT_NOT_READY` (exit 4, the adapter's message and next step) instead of `APP_LOGIC_FAILURE`. `FailureClass` gains `'environment'`.
 - Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse: a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, an empty entry such as `extra=` from an unset variable, or a bad `--library`. The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`.
   - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
   - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
   - A plugin id with a bad entry still refuses. `createHarnessCli` prints library refusals (path or manifest, a `RecipeResolutionError`) the way it prints other refusals: the code, message and next step (`--json` envelope, NDJSON under `--json-stream`), exit 2.
 - `spawnScriptStreaming` listens for parent signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) before it starts the leaf. A signal that arrived while the leaf was starting used to end the harness and leave the detached leaf running.
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Publish with adapter-sdk 0.6.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.7.0 - 2026-10-06
 
