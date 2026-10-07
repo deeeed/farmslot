@@ -551,7 +551,8 @@ describe('doctor', () => {
       fakeAdapter('shop', {
         readiness: {
           fixes: [
-            { id: 'deps', apply: () => true },
+            // A long fix can be async, so the heartbeat keeps ticking.
+            { id: 'deps', apply: async () => true },
             {
               id: 'ports',
               apply: () => {
@@ -733,6 +734,7 @@ describe('prepare', () => {
         "const results = JSON.parse(process.env.STEP_RESULTS || '{}');",
         "if (step === 'launch' && process.env.STAGE_LINES) process.stderr.write('[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s\\n');",
         "if (step === 'doctor' && process.env.CR_PROGRESS) process.stderr.write('x\\r'.repeat(10000));",
+        "if (step === 'doctor' && process.env.LONG_TAIL) process.stderr.write('boom: cause\\n' + 'y'.repeat(9000));",
         "if (step === 'status' && !results.status) console.log(JSON.stringify({ devices: [{ platform: process.env.DEVICE_PLATFORM || 'phone', selected: true }] }));",
         "else console.log(JSON.stringify({ step, args: process.argv.slice(3), ...(results[step] ? { error: { message: step + ' broke' } } : {}) }));",
         // exitCode, not exit(): stderr to a pipe drains first.
@@ -958,6 +960,27 @@ describe('prepare', () => {
     );
     // 20 KB with no newline: held to the bounded tail, not to a line, and replayed whole.
     assert.equal(lines.join('').split('x\r').length - 1, 10_000);
+  });
+
+  test('a failing step replays its stderr in order when a long unfinished line follows', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    process.env.LONG_TAIL = '1';
+    process.env.STEP_RESULTS = JSON.stringify({ doctor: 1 });
+    useAdapters(fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }));
+    const target = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    const { lines } = await captureStderr(() =>
+      capture(() =>
+        handlePrepare(['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts], {
+          usage: 'u',
+          steps: [fixtureStep],
+        }),
+      ),
+    );
+    const replayed = lines.join('\n');
+    assert.ok(replayed.indexOf('boom: cause') < replayed.indexOf('y'.repeat(9000)));
   });
 
   test('a headless platform skips launch and the host steps; the first failure skips the rest', async () => {

@@ -114,7 +114,9 @@ export interface AdapterReadiness {
   // platform has no capture surface and doctor reports none.
   captureProviders?: readonly string[];
   // doctor --fix repairs: apply returns true when it changed something.
-  fixes?: ReadonlyArray<{ id: string; apply(target: string): boolean }>;
+  // A fix that takes long can return a promise, so the host's stage heartbeat
+  // keeps ticking while it works; a synchronous one blocks it.
+  fixes?: ReadonlyArray<{ id: string; apply(target: string): boolean | Promise<boolean> }>;
   // A runtime state doctor --fix reports as failed, with its next step.
   runtimeBlock?(
     target: string,

@@ -256,3 +256,25 @@ test('a heartbeat waits while another stage speaks for the command', () => {
   stages.close('done');
   assert.deepEqual(lines.slice(-2), ['[1/2] metro: done, 55s', '[1/1] launch: done, 55s']);
 });
+
+test('a stuck stage says so while another stage keeps the command busy', () => {
+  const { stages, lines } = reporter();
+  stages.stage('launch', { index: 1, total: 1 });
+  const metro = stages.stage('metro', { index: 1, total: 2 });
+  const wallet = stages.stage('wallet', { index: 2, total: 2 });
+  wallet.progress({ waitingFor: 'unlock', screen: '#onboarding/welcome' });
+  for (let percent = 1; percent <= 9; percent += 1) {
+    advance(10_000);
+    metro.progress({ message: 'bundling', percent });
+  }
+  // 90 s: metro moved every 10 s, wallet never did.
+  assert.ok(
+    lines.some((line) =>
+      /^\[2\/2\] wallet: no progress for 1m\d\ds, still on #onboarding\/welcome/u.test(line),
+    ),
+    lines.join('\n'),
+  );
+  // The outer launch stage moves with the command: no false stall.
+  assert.ok(!lines.some((line) => line.startsWith('[1/1] launch: no progress')));
+  stages.close('done');
+});

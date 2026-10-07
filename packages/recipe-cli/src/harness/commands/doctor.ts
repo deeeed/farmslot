@@ -754,7 +754,7 @@ async function runDoctorFix(
     for (const repair of repairs) {
       const repairStage = stage(repair.id);
       try {
-        const repaired = repair.apply(target);
+        const repaired = await repair.apply(target);
         if (repaired) fixed.push(repair.id);
         repairStage.done(repaired ? 'fixed' : undefined);
       } catch (error) {

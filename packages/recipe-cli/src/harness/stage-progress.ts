@@ -88,14 +88,19 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const stallMs = options.stallMs ?? stallNoticeMs();
   const open = new Set<ReportedStage>();
-  // A heartbeat is owed when the command has been quiet, not each stage: a
-  // stage that speaks for the whole command keeps another one quiet.
+  // A plain heartbeat is owed when the command has been quiet, not each stage:
+  // a stage that speaks for the whole command keeps another one quiet. A stall
+  // notice is always said.
   let lastLineAt = 0;
+  // When any stage last moved: an outer stage with no progress of its own
+  // (`launch` around an adapter's stages) moves when the command does.
+  let lastChangeAt = 0;
 
   return {
     stage(name, { index, total }) {
       const prefix = `[${index}/${total}] ${name}`;
       const startedAt = Date.now();
+      lastChangeAt = startedAt;
       let latest: StageProgress = {};
       let latestKey = '{}';
       let changedAt = startedAt;
@@ -109,12 +114,14 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
         options.event?.({ stage: name, index, total, status, elapsedMs, ...fields });
       };
       const heartbeat = (): void => {
-        const quietMs = Date.now() - lastLineAt;
-        if (quietMs < heartbeatMs) {
+        const now = Date.now();
+        const movedAt = latestKey === '{}' ? Math.max(changedAt, lastChangeAt) : changedAt;
+        const stalledMs = now - movedAt;
+        const quietMs = now - lastLineAt;
+        if (stalledMs < stallMs && quietMs < heartbeatMs) {
           schedule(heartbeatMs - quietMs);
           return;
         }
-        const stalledMs = Date.now() - changedAt;
         const text = stageProgressText(latest);
         if (stalledMs >= stallMs) {
           const still = latest.screen ? `still on ${latest.screen}` : text && `still ${text}`;
@@ -149,6 +156,7 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
           latest = { ...progress };
           latestKey = key;
           changedAt = Date.now();
+          lastChangeAt = changedAt;
           line(stageProgressText(latest) || 'running', 'progress', fields);
           schedule(heartbeatMs);
         },
@@ -158,7 +166,10 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
           if (ended) return;
           lastLineAt = Date.now();
           write(`${prefix} › ${childLine}`);
-          if (!childLine.includes('no progress for')) changedAt = Date.now();
+          if (!childLine.includes('no progress for')) {
+            changedAt = Date.now();
+            lastChangeAt = changedAt;
+          }
           // A child line counts as this stage's line: the parent speaks only
           // when the child has been quiet for a heartbeat.
           schedule(heartbeatMs);

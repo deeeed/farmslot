@@ -336,14 +336,15 @@ function spawnStep(
     child.stderr?.on('data', (chunk: string) => {
       const lines = `${partial}${chunk}`.split('\n');
       partial = lines.pop() ?? '';
-      if (partial.length > PARTIAL_LINE_LIMIT) {
-        stderr.append(partial);
-        partial = '';
-      }
       for (const line of lines) {
         if (onStageLine && STAGE_LINE.test(line)) onStageLine(line);
         // Kept in the tail too: a child's last `failed` stage line may be the cause.
         stderr.append(`${line}\n`);
+      }
+      // After the whole lines, so the tail keeps the order they came in.
+      if (partial.length > PARTIAL_LINE_LIMIT) {
+        stderr.append(partial);
+        partial = '';
       }
     });
     child.on('error', (error: Error) =>
