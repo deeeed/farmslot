@@ -8,6 +8,19 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
 const execFileAsync = promisify(execFile);
 
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
@@ -54,9 +67,13 @@ async function slotFixture(
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
     // Prepare's tmux phase opens a real session named after the slot.
-    spawnSync('tmux', ['kill-session', '-t', `=${slotId}`], { stdio: 'ignore' });
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
+      stdio: 'ignore',
+    });
     assert.notEqual(
-      spawnSync('tmux', ['has-session', '-t', `=${slotId}`], { stdio: 'ignore' }).status,
+      spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
+        stdio: 'ignore',
+      }).status,
       0,
       `tmux session ${slotId} must not outlive the test`,
     );
@@ -118,31 +135,35 @@ async function cleanTree(slotRepo: string): Promise<string[]> {
 // Regression: a QA dispatch to a slot already on the PR branch returned no
 // start-ref provenance (the dispatch refused it) and would otherwise have
 // reported the frozen head while the tree sat at origin/<branch>.
-test('qa: a slot already on the PR branch lands on the frozen head with provenance', async (t) => {
-  const { slotId, slotRepo, frozenHead } = await slotFixture(t, 'warm', true, 48810);
-  const events: Array<{ event: string; payload: unknown }> = [];
-  const result = await slotPrepare(
-    { slotId, branch: 'work', prepareProfile: 'core', flowType: 'qa' },
-    (event, payload) => events.push({ event, payload }),
-    undefined,
-    { startRef: { requestedRef: frozenHead } },
-  );
-  assert.equal(result.prepared, true);
-  assert.equal(result.startRef?.requestedRef, frozenHead, 'start ref provenance is missing');
-  assert.equal(result.startRef?.resolvedSha, frozenHead);
-  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'work');
-  assert.equal(
-    await git(slotRepo, 'rev-parse', 'HEAD'),
-    frozenHead,
-    'the tree must sit at the frozen head, not at origin/work',
-  );
-  assert.deepEqual(await cleanTree(slotRepo), []);
-  assert.match(JSON.stringify(events), /reset to requested start ref/);
-});
+test(
+  'qa: a slot already on the PR branch lands on the frozen head with provenance',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, frozenHead } = await slotFixture(t, 'warm', true, 48810);
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const result = await slotPrepare(
+      { slotId, branch: 'work', prepareProfile: 'core', flowType: 'qa' },
+      (event, payload) => events.push({ event, payload }),
+      undefined,
+      { startRef: { requestedRef: frozenHead } },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(result.startRef?.requestedRef, frozenHead, 'start ref provenance is missing');
+    assert.equal(result.startRef?.resolvedSha, frozenHead);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'work');
+    assert.equal(
+      await git(slotRepo, 'rev-parse', 'HEAD'),
+      frozenHead,
+      'the tree must sit at the frozen head, not at origin/work',
+    );
+    assert.deepEqual(await cleanTree(slotRepo), []);
+    assert.match(JSON.stringify(events), /reset to requested start ref/);
+  },
+);
 
 // A cold slot takes the fresh-branch path: the PR branch exists on origin, which
 // the dev/fix-bug replay policy refuses, but a qa frozen head is not a replay.
-test('qa: a cold slot checks out the PR branch at the frozen head', async (t) => {
+test('qa: a cold slot checks out the PR branch at the frozen head', needsTmuxSandbox, async (t) => {
   const { slotId, slotRepo, frozenHead } = await slotFixture(t, 'cold', false, 48812);
   const result = await slotPrepare(
     { slotId, branch: 'work', prepareProfile: 'core', flowType: 'qa' },
@@ -158,20 +179,24 @@ test('qa: a cold slot checks out the PR branch at the frozen head', async (t) =>
 
 // For dev/fix-bug the start ref is an artifact-only replay base and the work
 // branch must stay local-only, on the already-on-branch path as on the fresh one.
-test('dev: a remote-published branch already checked out is refused for a start ref', async (t) => {
-  const { slotId, slotRepo, frozenHead, laterHead } = await slotFixture(t, 'policy', true, 48814);
-  await assert.rejects(
-    slotPrepare(
-      { slotId, branch: 'work', prepareProfile: 'core', flowType: 'dev' },
-      () => undefined,
-      undefined,
-      { startRef: { requestedRef: frozenHead } },
-    ),
-    /refuses to mutate or reuse existing remote branch/,
-  );
-  assert.equal(
-    await git(slotRepo, 'rev-parse', 'HEAD'),
-    laterHead,
-    'a refused prepare must not rewind the branch',
-  );
-});
+test(
+  'dev: a remote-published branch already checked out is refused for a start ref',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, frozenHead, laterHead } = await slotFixture(t, 'policy', true, 48814);
+    await assert.rejects(
+      slotPrepare(
+        { slotId, branch: 'work', prepareProfile: 'core', flowType: 'dev' },
+        () => undefined,
+        undefined,
+        { startRef: { requestedRef: frozenHead } },
+      ),
+      /refuses to mutate or reuse existing remote branch/,
+    );
+    assert.equal(
+      await git(slotRepo, 'rev-parse', 'HEAD'),
+      laterHead,
+      'a refused prepare must not rewind the branch',
+    );
+  },
+);
