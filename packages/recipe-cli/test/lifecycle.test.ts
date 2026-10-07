@@ -246,6 +246,11 @@ describe('bounded healing', () => {
             message: 'the window blocks capture.',
             userAction: 'open another screen',
           },
+          environment: {
+            pattern: /MISSING_BUILD/gu,
+            message: 'a workspace package has no build output.',
+            userAction: 'build the workspace',
+          },
           transportFirst: /bridge timed out/u,
           walletState: /seed phrase/u,
         },
@@ -253,6 +258,9 @@ describe('bounded healing', () => {
       fakeAdapter('web', { failurePatterns: { transport: /ECONNREFUSED|seed phrase server/u } }),
     );
     assert.equal(classifyFailure('SECURE_WINDOW'), 'capture-protected');
+    assert.equal(classifyFailure('MISSING_BUILD while reading the seed phrase'), 'environment');
+    assert.equal(classifyFailure('SECURE_WINDOW and MISSING_BUILD'), 'capture-protected');
+    assert.equal(classifyFailure('bridge timed out: MISSING_BUILD'), 'environment');
     assert.equal(classifyFailure('bridge timed out while reading the seed phrase'), 'infra');
     assert.equal(classifyFailure('seed phrase server missing'), 'wallet');
     assert.equal(classifyFailure('ECONNREFUSED'), 'infra');
@@ -265,6 +273,19 @@ describe('bounded healing', () => {
       message: 'the window blocks capture.',
       userAction: 'open another screen',
       originalError: 'SECURE_WINDOW',
+    });
+    // A global pattern is tested again for the violation; it must still match.
+    for (let i = 0; i < 2; i += 1)
+      assert.equal(
+        checkHealBounds(target, 'MISSING_BUILD', newHealState())?.code,
+        'ENVIRONMENT_NOT_READY',
+      );
+    assert.deepEqual(checkHealBounds(target, 'MISSING_BUILD', newHealState()), {
+      code: 'ENVIRONMENT_NOT_READY',
+      exitCode: 4,
+      message: 'a workspace package has no build output.',
+      userAction: 'build the workspace',
+      originalError: 'MISSING_BUILD',
     });
     assert.equal(
       checkHealBounds(target, 'seed phrase missing', newHealState())?.userAction,

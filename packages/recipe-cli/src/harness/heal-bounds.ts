@@ -121,12 +121,14 @@ export async function ensureOverlay(
 // attempted, failure surfaced verbatim). Defaulting to 'infra' would cause
 // self-healing to mask real app-logic breakage.
 // The patterns come from every registered adapter, in this order: capture
-// protection, transport errors that look like wallet state, wallet state, then
-// transport. Classification does not depend on which adapter is running.
-export type FailureClass = 'capture-protected' | 'wallet' | 'infra' | 'app';
+// protection, environment gaps, transport errors that look like wallet state,
+// wallet state, then transport. Classification does not depend on which adapter
+// is running.
+export type FailureClass = 'capture-protected' | 'environment' | 'wallet' | 'infra' | 'app';
 
 export function classifyFailure(output: string): FailureClass {
   if (captureProtection(output)) return 'capture-protected';
+  if (environmentGap(output)) return 'environment';
   if (matchesAny('transportFirst', output)) return 'infra';
   if (matchesAny('walletState', output)) return 'wallet';
   if (matchesAny('transport', output)) return 'infra';
@@ -143,14 +145,28 @@ function adapterPatterns(): AdapterFailurePatterns[] {
   });
 }
 
+// A global or sticky pattern keeps lastIndex between calls; classification
+// tests the same pattern more than once, so every test starts from 0.
+function matches(pattern: RegExp | undefined, output: string): boolean {
+  if (!pattern) return false;
+  pattern.lastIndex = 0;
+  return pattern.test(output);
+}
+
 function matchesAny(kind: 'transportFirst' | 'walletState' | 'transport', output: string): boolean {
-  return adapterPatterns().some((patterns) => patterns[kind]?.test(output) ?? false);
+  return adapterPatterns().some((patterns) => matches(patterns[kind], output));
 }
 
 function captureProtection(output: string): AdapterFailurePatterns['captureProtected'] {
   return adapterPatterns()
     .map((patterns) => patterns.captureProtected)
-    .find((entry) => entry?.pattern.test(output));
+    .find((entry) => matches(entry?.pattern, output));
+}
+
+function environmentGap(output: string): AdapterFailurePatterns['environment'] {
+  return adapterPatterns()
+    .map((patterns) => patterns.environment)
+    .find((entry) => matches(entry?.pattern, output));
 }
 
 // Refuse ALL recovery while a recipe is executing (mid-run recovery would corrupt
@@ -201,6 +217,16 @@ export function checkHealBounds(
       exitCode: EXIT.runtime,
       message: protectedCapture.message,
       userAction: protectedCapture.userAction,
+      originalError,
+    };
+  }
+  const gap = failureClass === 'environment' ? environmentGap(concise) : undefined;
+  if (gap) {
+    return {
+      code: 'ENVIRONMENT_NOT_READY',
+      exitCode: EXIT.bounded,
+      message: gap.message,
+      userAction: gap.userAction,
       originalError,
     };
   }
