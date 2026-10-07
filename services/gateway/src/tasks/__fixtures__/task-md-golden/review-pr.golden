@@ -1,0 +1,107 @@
+# review-pr: Golden task document
+
+> Autonomous execution: complete the authorized work. Respect task and repository approval requirements; missing authority is a blocker. This mode grants no additional permission.
+
+## Task
+
+```text
+TICKET: farmslot-golden/missing#123
+TITLE: Golden task document
+RUN_ID: run-golden-review-pr
+FAMILY_ID: family-golden-review-pr
+BRANCH: feature/golden-pr
+PR_NUMBER: 123
+PR_URL: https://github.com/farmslot-golden/missing/pull/123
+PR_BRANCH: feature/golden-pr
+GH_REPO: farmslot-golden/missing
+PR_INTEGRATION: GitHub merge state not fetched — review the PR diff; comment on merge readiness if relevant.
+REVIEW_TIER: standard
+BRANCH_UPDATE_STRATEGY: project-default
+TASK_DIR: .sandbox/farmslot-farm/worker-task/review/<TASK_ID>
+SESSION: demo-1
+REPO: /Users/deeeed/dev/farmslot-worktrees/stacked-runs
+PLATFORM: cli
+SLOT_ID: demo-ff-1
+RUNTIME_DIR: .sandbox/farmslot-farm/agent
+WATCHER_PORT: 7777
+```
+
+## Description
+
+Render the task document for a run that is not stacked.
+
+## Acceptance Criteria
+
+- The task document is unchanged
+- No stack section appears
+
+## Affected Area
+
+Task writer
+
+## Recipe tooling
+
+Resolve once, then reuse:
+
+```bash
+cd /Users/deeeed/dev/farmslot-worktrees/stacked-runs
+RUNNER="node /Users/deeeed/dev/farmslot-worktrees/stacked-runs/apps/command-center/scripts/agentic/run-recipe.mjs"
+MANIFEST="/Users/deeeed/dev/farmslot-worktrees/stacked-runs/docs/examples/recipes/farmslot-v1.action-manifest.json"
+WRAPPER="/Users/deeeed/dev/farmslot-worktrees/stacked-runs/projects/farmslot-farm/setup/validate-recipe.sh"
+```
+
+Read `.sandbox/farmslot-farm/agent/recipe-quality.md` before writing any recipe.
+
+## Checklist
+
+Follow `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>/CHECKLIST.md` top to bottom. That file is the only checklist that counts.
+Marker: `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>/mark`, run from the repo root. `mark start` once when work begins, `mark N` after each step (visible 1-based number), then `mark complete --mark-last`, `mark no-change --reason "…"`, or `mark blocked --reason "…"`.
+Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.
+
+## Inputs
+
+Under `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>/inputs/`:
+
+- `handoff.json` — run identity, selected checklist provenance, and terminal report paths
+- `worker-terminal-contract.json` — artifacts required before a terminal mark
+- `bug-input.json` — full ticket data as fetched
+
+## Runtime capability proof plan
+
+Preparation has completed. Runtime capability providers, when configured, are not implicitly
+granted as proof resources. **Before the first
+`runtime.capability.acquire` call**, map each executable acceptance criterion to `state`,
+`visual`, or `mixed` proof and write a version-1 proof plan listing each required capability id,
+reason, mode, and typed parameters. A state-only plan may request none.
+
+Discover current availability and action metadata with `runtime.capability.list`; use only
+`runtime.capability.acquire|status|release` for lifecycle changes. Do not grep project scripts or
+invent long-lived shell launch commands. Review and QA runs use the same lease contract. The frozen
+dispatch-time catalog is at `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>/inputs/runtime-capability-catalog.json`.
+
+### Configured capability ids
+
+- `android-device` — Android Device; high cost; exclusive; dependencies: `companion-metro`.
+- `browser-cdp` — Browser / CDP; high cost; exclusive; dependencies: none.
+- `companion-metro` — Companion / Metro; high cost; shared; dependencies: none.
+- `companion-native-client-ios` — Companion native dev client (iOS); high cost; exclusive; dependencies: `ios-simulator`.
+- `ios-simulator` — iOS Simulator; high cost; exclusive; dependencies: `companion-metro`.
+- `recording` — Screen recording; medium cost; exclusive; dependencies: none.
+- `sandbox-gateway-ui` — Sandbox Gateway / UI; medium cost; shared; dependencies: none.
+
+---
+
+## Related planning context
+
+- No related planning context: this run is not linked to a backlog item.
+
+## Review execution contract
+
+- **Frozen scope:** `full` over `PR base..frozen current head`.
+- **Validation depth:** `static-code`.
+- Use the normal runner review capability against the frozen files under `inputs/`.
+- Read the frozen project review guidance: `inputs/review-instructions/runtime/review-quality.md`.
+- Recheck prior findings and expand beyond the incremental range only when the delta invalidates an earlier assumption.
+- Start with fresh reviewer context.
+- **Static review:** do not prepare or start the project, run CDP, execute recipes, capture screenshots, or perform runtime QA. Audit any linked frozen Farmslot evidence and report gaps without manufacturing replacement proof.
+
