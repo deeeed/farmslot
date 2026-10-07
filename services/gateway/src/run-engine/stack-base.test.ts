@@ -147,7 +147,7 @@ test('ensureRunStack stamps a stacked graph run and leaves every other run alone
   await assert.rejects(ensureRunStack(fresh()), /comes from a fork/);
 });
 
-test('a follow-up measures its diff from the stacked run it continues', () => {
+test('a follow-up measures its diff from the stacked run it continues', async () => {
   const root = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'S-1' });
   runs.updateRun(root.id, { stack: STACK });
   const followUp = runs.createRun({
@@ -157,7 +157,7 @@ test('a follow-up measures its diff from the stacked run it continues', () => {
     familyId: root.familyId,
     parentRunId: root.id,
   });
-  assert.deepEqual(contributionStack(runs.getRun(followUp.id)!), STACK);
+  assert.deepEqual(await contributionStack(runs.getRun(followUp.id)!), STACK);
   // A sibling candidate in the same family stacked on a newer upstream commit:
   // its own follow-up takes the candidate's stack, not the family root's.
   const candidate = runs.createRun({
@@ -176,13 +176,13 @@ test('a follow-up measures its diff from the stacked run it continues', () => {
     familyId: root.familyId,
     parentRunId: candidate.id,
   });
-  assert.deepEqual(contributionStack(runs.getRun(candidateFollowUp.id)!), newer);
+  assert.deepEqual(await contributionStack(runs.getRun(candidateFollowUp.id)!), newer);
   const unrelated = runs.createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
     ticketOrPr: 'S-2',
   });
-  assert.equal(contributionStack(unrelated), undefined);
+  assert.equal(await contributionStack(unrelated), undefined);
 });
 
 test('stackPrBase targets the upstream branch until the run is retargeted', () => {
@@ -259,4 +259,24 @@ test("a follow-up of a stacked run reports that run's graph; other runs only the
   });
   assert.equal(scheduledGraphOf(runs.getRun(plainFollowUp.id)!), undefined, 'unchanged');
   assert.equal(scheduledGraphOf(plainParent), 'wg_plain');
+});
+
+test('a follow-up keeps its stack after the stacked run is archived', async () => {
+  const stacked = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'AR-1' });
+  runs.updateRun(stacked.id, {
+    stack: STACK,
+    status: 'done',
+    completedAt: new Date().toISOString(),
+  });
+  const followUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#46',
+    familyId: stacked.familyId,
+    parentRunId: stacked.id,
+  });
+  await runs.persistRunNow(runs.getRun(stacked.id)!, 'test');
+  assert.equal(await runs.archiveRun(stacked.id), true);
+  assert.equal(runs.getRun(stacked.id), undefined, 'gone from the live store');
+  assert.deepEqual(await contributionStack(runs.getRun(followUp.id)!), STACK);
 });

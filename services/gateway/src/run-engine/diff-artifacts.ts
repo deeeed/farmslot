@@ -35,7 +35,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
-import { getRun } from '../runs/store.js';
+import { getRunWithArchived } from '../runs/store.js';
 
 import { atomicWriteTextFile, parseDiffTooLargeBytes, withTimeout } from './diff-artifact-utils.js';
 
@@ -450,13 +450,16 @@ export function cappedRunSourceDiffCommand(
  * The stack a run's contribution is measured against: its own, or for a
  * follow-up (ci-fix, pr-complete) the stacked run it continues.
  */
-export function contributionStack(run: Pick<Run, 'stack' | 'parentRunId'>): Run['stack'] {
+export async function contributionStack(
+  run: Pick<Run, 'stack' | 'parentRunId'>,
+): Promise<Run['stack']> {
   // Walk the follow-up's own lineage: a family can hold candidates stacked on
-  // different upstream commits.
+  // different upstream commits. Archived ancestors still count: the follow-up
+  // can outlive the stacked run it continues in the live store.
   let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
   for (let hops = 0; current && hops < 20; hops += 1) {
     if (current.stack) return current.stack;
-    current = current.parentRunId ? getRun(current.parentRunId) : undefined;
+    current = current.parentRunId ? await getRunWithArchived(current.parentRunId) : undefined;
   }
   return undefined;
 }
@@ -649,7 +652,7 @@ export async function captureRunDiffSnapshot(
       (command) => execOnSlot(vars, command, { timeout: 15000 }),
       defaultBranch,
       contributionDiffBaseSpec(
-        { startRef: run.startRef, stack: contributionStack(run) },
+        { startRef: run.startRef, stack: await contributionStack(run) },
         defaultBranch,
       ),
     ));
