@@ -347,15 +347,19 @@ async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAda
  * `child` on top of `parent`: the child's members replace the parent's, except
  * three that append, parent first: the action manifests (`actions.manifestPaths`),
  * the action implementations (`actions.adapters`) and the doctor checks (`doctor`).
+ * `readiness` merges member by member, so a child that sets one keeps the rest.
  */
 export function composeAdapter(parent: PlatformAdapter, child: PlatformAdapter): PlatformAdapter {
   const parentActions = parent.actions;
   const childActions: Partial<PlatformAdapter['actions']> = child.actions ?? {};
   const manifestPaths = (actions: Partial<PlatformAdapter['actions']>): readonly string[] =>
     actions.manifestPaths?.() ?? (actions.manifestPath ? [actions.manifestPath()] : []);
+  const readiness =
+    parent.readiness || child.readiness ? { ...parent.readiness, ...child.readiness } : undefined;
   return {
     ...parent,
     ...child,
+    ...(readiness ? { readiness } : {}),
     extends: parent.id,
     actions: {
       ...parentActions,

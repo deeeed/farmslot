@@ -1,0 +1,80 @@
+# Worker: Self-Review
+
+> Operator-requested publication review for a completed Farmslot run.
+> Execute the checklist directly. Do not use shortcut review commands.
+
+> Checklist marker: run `temp/tasks/golden/self-review/mark start` once, then `temp/tasks/golden/self-review/mark N`
+> after each checklist item. Finish with `temp/tasks/golden/self-review/mark complete --mark-last`.
+
+## Task
+
+```
+TASK_DIR: temp/tasks/golden/self-review
+REPO: /nonexistent/golden-repo
+PLATFORM: cli
+WATCHER_PORT: 8061
+CDP_PORT: 
+SESSION: golden-slot
+RUNTIME_DIR: .sandbox/farmslot-farm/agent
+TICKET: GOLDEN-SELF-REVIEW
+VALIDATION_DEPTH: static-code
+```
+
+## Checklist
+
+- [ ] **1. Start** — run `temp/tasks/golden/self-review/mark start` and `temp/tasks/golden/self-review/mark 1`.
+- [ ] **2. Read quality rules**:
+  ```bash
+  cd /nonexistent/golden-repo
+  cat .sandbox/farmslot-farm/agent/review-quality.md 2>/dev/null || true
+  ```
+- [ ] **3. Inspect the worker output**:
+  ```bash
+  cd /nonexistent/golden-repo
+  git diff main...HEAD --stat
+  git diff main...HEAD
+  cat temp/tasks/golden/self-review/artifacts/pr-description.md 2>/dev/null || true
+  cat temp/tasks/golden/self-review/artifacts/recipe-coverage.md 2>/dev/null || true
+  cat temp/tasks/golden/self-review/artifacts/recipe-quality.json 2>/dev/null || true
+  ```
+- [ ] **4. Run focused validation** - prefer the worker-recorded commands. For command-center changes, run:
+  ```bash
+  cd /nonexistent/golden-repo/apps/command-center && yarn typecheck
+  ```
+  Then run changed tests listed in the worker report or visible in the diff.
+- [ ] **5. Audit evidence**:
+  ```bash
+  cd /nonexistent/golden-repo
+  node <FARMSLOT_ROOT>/scripts/quality/check-task-artifact-contract.mjs temp/tasks/golden/self-review --require-recipe-coverage-if-recipe
+  ```
+  If screenshots are present, inspect whether the claimed UI state is actually visible.
+- [ ] **6. Judge the change** - check correctness, minimality, test coverage, recipe quality, evidence quality, and whether any introduced issue should block publishing.
+- [ ] **7. Write `temp/tasks/golden/self-review/artifacts/review-feedback.md`**:
+  ```markdown
+  # Self-Review: GOLDEN-SELF-REVIEW
+
+  ## Verdict: PASS
+
+  ## Summary
+  <brief summary of what changed and whether it is correct>
+
+  ## Validation
+  - <commands run and result>
+
+  ## Evidence
+  - <artifact/evidence assessment>
+
+  ## Issues
+  - <empty for PASS, or file:line findings for ISSUES>
+  ```
+  Use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains.
+- [ ] **8. Complete** - run:
+  ```bash
+  temp/tasks/golden/self-review/mark complete --mark-last
+  ```
+
+---
+
+## Related planning context
+
+- No related planning context: the worker task carried no frozen planning-context snapshot.

@@ -20,6 +20,7 @@ import { assertAdaptersRegistered, harnessAdapter, harnessAdapters } from './ada
 import { harnessHost, hostEnvName } from './host.js';
 import { handleHarness } from './overlay.js';
 import { recipeHarnessPath, recipeRuntimePath } from './paths.js';
+import { recordingUnsupportedFailure } from './recording-target.js';
 import { EXIT } from './shared.js';
 
 export function newHealState(): HealState {
@@ -207,6 +208,10 @@ export function checkHealBounds(
       originalError,
     };
   }
+  // A missing harness capability, not app logic. The run already started, so
+  // this is bounded (4), not the preflight's usage refusal (2).
+  const recording = recordingUnsupportedFailure(output);
+  if (recording) return { ...recording, exitCode: EXIT.bounded, originalError };
   const concise = conciseFailureForHuman(output);
   const failureClass = classifyFailure(concise);
   const protectedCapture =
