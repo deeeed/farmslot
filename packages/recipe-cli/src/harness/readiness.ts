@@ -12,7 +12,6 @@ export interface FeatureFlagReport {
   // null: no runtime answered (never rendered as zero overrides).
   overrideCount: number | null;
   error?: string;
-  [key: string]: unknown;
 }
 
 /** The device-targeting preview doctor and status run (it never gates). */
