@@ -110,6 +110,10 @@ export async function terminate(pid, graceMs = 8000) {
 
 // The console collector a run started (the host's console capture)
 // outlives browser relaunches inside the run; stop and cleanup end it.
+/**
+ * @param {string} target
+ * @param {{ log?: (message: string) => void, runtimeDir?: string }} [options]
+ */
 export async function stopConsoleCollector(target, { log = () => {}, runtimeDir } = {}) {
   const runtime = runtimeDir ?? webDappRuntimeDir(target);
   const pidFile = path.join(runtime, 'console-tail.pid');
@@ -164,6 +168,10 @@ export function cdpListenerPids(port) {
   }
 }
 
+/**
+ * @param {string} target
+ * @param {{ cdpPort?: number, log?: (message: string) => void, runtimeDir?: string }} [options]
+ */
 export async function stopWebDappBrowser(target, { cdpPort, log = () => {}, runtimeDir } = {}) {
   const runtime = runtimeDir ?? webDappRuntimeDir(target);
   const stopped = [];

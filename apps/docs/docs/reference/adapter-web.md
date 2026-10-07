@@ -35,6 +35,7 @@ const { selectPageTarget } = require('@farmslot/adapter-web/page-target');
 | `slot-title`                   | prefix the extension home tab's title with the farm slot id, across the page's own title resets                        |
 | `validation-process-ownership` | find and stop the processes that own a slot profile                                                                    |
 | `validation-launch-supervisor` | supervise one validation launch: port lease, quarantine, cleanup                                                       |
+| `web-dapp`                     | the generic web-dapp lifecycle as an adapter-sdk `PlatformAdapter` (ESM): slot browser, wallet host, readiness, stop   |
 
 ## Launching
 
@@ -116,6 +117,25 @@ const binding = createWalletRequestBinding({
   wallet,
   refuseTypedData,
   record: (entry) => appendLine(logFile, entry),
+});
+```
+
+## Web-dapp adapter
+
+`@farmslot/adapter-web/web-dapp` (ESM) is the lifecycle of a web app under test whose dev server the slot owns. `createWebDappAdapter({ id, signers, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter`: launch, stop, runtime status, doctor checks, logs and the wallet request-log findings. It runs one slot browser per slot, and a wallet host attached to it over CDP that records the wallet requests (and, with `signer=injected`, answers them with the strict wallet from `dapp`).
+
+- **Venue policy.** The app's venue (the hosts a testnet run blocks and serves, the typed data to refuse, the start page) comes from the adapter that `extends: 'web-dapp'`: its policy module goes to `RECIPE_WEB_DAPP_POLICY` through `bindWebDappPolicy(adapter)`. Bare web-dapp has no policy and refuses to launch. `fencePolicy` and `assertPolicyDigest` hold the module and what it imports to the files the plugin digest covers.
+- **Signers.** `signer=injected` needs nothing. `signer=extension` belongs to the host: a signer module exports `signers.extension` with `prepareProfile` (load the extension, seed the profile; its result may carry an `afterBrowserStart` step), `confirm` and `readinessChecks`; the leaf processes find it through `--signer-module` or `RECIPE_WEB_DAPP_SIGNER_MODULE`.
+- **Hooks.** The action set, console capture, and network and performance observation are the host's; pass them as `hooks`. `diagnostics`, `readiness` and `harness` merge over the generic members.
+- **Leaves.** `webDappLeafPath('launch' | 'wallet-host' | 'inject' | 'verify' | 'stop' | 'cleanup')` names the CLI scripts.
+
+```js
+import { createWebDappAdapter } from '@farmslot/adapter-web/web-dapp';
+
+const adapter = createWebDappAdapter({
+  id: 'web-dapp',
+  signerModule: '/path/to/signers.mjs', // exports { signers: { extension } }; omit for injected-only
+  hooks: { actions },
 });
 ```
 

@@ -64,16 +64,20 @@
     "./validation-process-ownership": {
       "types": "./dist/validation-process-ownership.d.cts",
       "default": "./src/validation-process-ownership.cjs"
+    },
+    "./web-dapp": {
+      "types": "./dist/web-dapp/index.d.mts",
+      "default": "./src/web-dapp/index.mjs"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json && yarn build && tsc --project tsconfig.consumer.json",
-    "test": "node --test \"test/*.test.cjs\"",
+    "test": "node --test \"test/*.test.cjs\" \"test/*.test.mjs\"",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
-    "lint": "eslint \"src/**/*.cjs\" \"test/**/*.cjs\" \"test/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.cjs\" \"test/**/*.cjs\" \"test/**/*.ts\" --fix",
-    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.cjs\" \"test/**/*.cjs\" \"test/**/*.ts\" && yarn typecheck && yarn test",
+    "lint": "eslint \"src/**/*.cjs\" \"src/**/*.mjs\" \"test/**/*.cjs\" \"test/**/*.mjs\" \"test/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.cjs\" \"src/**/*.mjs\" \"test/**/*.cjs\" \"test/**/*.mjs\" \"test/**/*.ts\" --fix",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.cjs\" \"src/**/*.mjs\" \"test/**/*.cjs\" \"test/**/*.mjs\" \"test/**/*.ts\" && yarn typecheck && yarn test",
     "build": "yarn workspace @farmslot/adapter-sdk build && rm -rf dist && tsc --project tsconfig.build.json",
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/adapter-web && yarn workspace @farmslot/adapter-web build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/adapter-web"
@@ -87,7 +91,8 @@
     "@types/node": "^22.0.0",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "viem": "^2.54.3"
   },
   "repository": {
     "type": "git",
@@ -115,7 +120,9 @@
     "LICENSE",
     "CHANGELOG.md",
     "src/**/*.cjs",
-    "dist/**/*.d.cts"
+    "src/**/*.mjs",
+    "dist/**/*.d.cts",
+    "dist/**/*.d.mts"
   ],
   "publishConfig": {
     "access": "public"

@@ -1,3 +1,4 @@
+// @ts-check
 // The generic web-dapp lifecycle as an adapter-sdk PlatformAdapter: a web app
 // under test whose dev server the slot owns; the adapter owns the slot browser
 // (an extension signer or the injected strict wallet) and its wallet host. What
@@ -16,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 
 import { recipeRuntimePath, shellQuote } from './lib/paths.mjs';
 import { POLICY_ENV, webDappAdapterId, webDappPolicy } from './lib/policy.mjs';
-import { check } from './lib/readiness.mjs';
+import { check, webDappReadiness } from './lib/readiness.mjs';
 import { loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
+import { resolveBrowser } from './launch.mjs';
 
 export {
   loadSigners,
@@ -27,6 +29,20 @@ export {
   webDappAdapterId,
   webDappPolicy,
 };
+export { cleanupWebDappRuntime } from './cleanup.mjs';
+export { installWebDappRuntime } from './inject.mjs';
+export {
+  backgroundWindowParams,
+  checkFocusAfterLaunch,
+  chromeForTestingCandidates,
+  LAUNCH_TIMEOUTS,
+  launchMethodFor,
+  launchWebDappBrowser,
+  macApplicationForExecutable,
+  parseLaunchArgs,
+  resolveBrowser,
+  spawnDetached,
+} from './launch.mjs';
 export { hostOf, hostResolverRules, isBlockedUrl } from './lib/blocked-hosts.mjs';
 export { browserWebSocketUrl, CdpClient } from './lib/cdp-client.mjs';
 export {
@@ -59,6 +75,7 @@ export {
   assertLaunchNetwork,
   DEV_SERVER_PID_FILE,
   devServerTestnetDiagnostic,
+  pythonFor,
   webDappReadiness,
 } from './lib/readiness.mjs';
 export {
@@ -171,6 +188,7 @@ export function parseWebDappLauncherOutput(output) {
   }
 }
 
+/** @param {...string} names */
 function portFromEnv(...names) {
   for (const name of names) {
     const raw = process.env[name];
@@ -188,6 +206,7 @@ export function webDappCdpPort() {
 }
 
 // The running browser's signer, else the requested one, else extension.
+/** @param {string} target */
 function webDappSignerFor(target) {
   try {
     const state = JSON.parse(fs.readFileSync(webDappRuntimeFile(target, 'browser.json'), 'utf8'));
@@ -221,6 +240,7 @@ export function bindWebDappPolicy(adapter) {
  * @returns {import('@farmslot/adapter-sdk').AdapterLogFinding[]}
  */
 export function walletRequestFindings(lines) {
+  /** @type {import('@farmslot/adapter-sdk').AdapterLogFinding[]} */
   const findings = [];
   for (const line of lines) {
     let entry;
@@ -242,8 +262,22 @@ export function walletRequestFindings(lines) {
   return findings;
 }
 
+/**
+ * @param {Record<string, string | boolean>} options
+ * @param {string} key
+ */
 const str = (options, key) => (typeof options[key] === 'string' ? options[key] : undefined);
+/**
+ * @param {Record<string, string | boolean>} options
+ * @param {string} key
+ */
 const flag = (options, key) => options[key] === true;
+
+/**
+ * @typedef {Partial<Omit<import('@farmslot/adapter-sdk').PlatformAdapter, 'id' | 'sdkVersion' | 'harness'>> & {
+ *   harness?: Partial<import('@farmslot/adapter-sdk').AdapterHarness>,
+ * }} WebDappAdapterHooks
+ */
 
 /**
  * @typedef {object} WebDappAdapterOptions
@@ -253,7 +287,7 @@ const flag = (options, key) => options[key] === true;
  * @property {string} [signerModule] Absolute path of the ESM module exporting the
  *   same `signers`, which the leaf processes load; read in-process too when `signers` is absent.
  * @property {string} [cli] The host's bin name, for `Next:` lines. farmslot-recipe by default.
- * @property {Partial<Omit<import('@farmslot/adapter-sdk').PlatformAdapter, 'id' | 'sdkVersion'>>} [hooks]
+ * @property {WebDappAdapterHooks} [hooks]
  *   Anything of the PlatformAdapter the host supplies or replaces. `actions` is
  *   required in practice (web-dapp ships no action manifest); `diagnostics`,
  *   `readiness` and `harness` merge over the generic members, the rest replace.
@@ -300,7 +334,6 @@ export function createWebDappAdapter({
         };
       }
       const policy = webDappPolicy();
-      const { webDappReadiness } = await import('./lib/readiness.mjs');
       const report = await webDappReadiness({
         policy,
         signers: await resolveSigners(),
@@ -437,7 +470,7 @@ export function createWebDappAdapter({
         });
       } catch (error) {
         status = 1;
-        output = String(error?.stdout ?? '');
+        output = String(/** @type {{ stdout?: string }} */ (error)?.stdout ?? '');
       }
       const result =
         /** @type {{ status?: string, reused?: boolean, cdpPort?: number, signer?: string, account?: { name?: string }, error?: string }} */ (
@@ -520,8 +553,6 @@ export function createWebDappAdapter({
           ];
         }
         const policy = webDappPolicy();
-        const { webDappReadiness } = await import('./lib/readiness.mjs');
-        const { resolveBrowser } = await import('./launch.mjs');
         const report = await webDappReadiness({
           policy,
           signers: await resolveSigners(),

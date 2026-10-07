@@ -19,6 +19,12 @@ import {
   webDappRuntimeDir,
 } from './runtime.mjs';
 
+/**
+ * @param {string} id
+ * @param {boolean} ok
+ * @param {string} detail
+ * @param {{ required?: boolean, status?: 'pass' | 'fail' | 'warn' }} [options]
+ */
 export function check(id, ok, detail, { required = true, status } = {}) {
   return { id, status: status ?? (ok ? 'pass' : 'fail'), required, detail };
 }
@@ -170,6 +176,10 @@ function chainTo(listener, root, parents) {
   return null;
 }
 
+/**
+ * @param {string} target
+ * @param {{ appPort?: number, variable?: string, probe?: typeof systemProbe }} [options]
+ */
 export function devServerTestnetDiagnostic(
   target,
   { appPort, variable, probe = systemProbe } = {},
@@ -246,6 +256,11 @@ export const MAINNET_CONFIRMATION = 'REAL_FUNDS';
 
 // The launch only checks the requested network: mainnet needs the real-funds
 // confirmation. Testnet is enforced inside the browser (the venue policy's blocked hosts).
+/**
+ * @param {string} _target
+ * @param {{ network?: string | null, mainnetConfirmation?: string }} [options]
+ * @returns {'testnet' | 'mainnet'}
+ */
 export function assertLaunchNetwork(_target, { network, mainnetConfirmation } = {}) {
   const requested = network == null || network === '' ? 'testnet' : String(network);
   if (requested !== 'testnet' && requested !== 'mainnet') {
@@ -268,6 +283,19 @@ function listing(names) {
 // by default the one RECIPE_WEB_DAPP_POLICY names. `signers`: the signer hooks
 // by mode; signer=extension is judged by `signers.extension.readinessChecks`
 // (`{ target, env, required }`, returning checks built with `check`).
+/**
+ * @param {{
+ *   policy?: any,
+ *   signers?: Record<string, any>,
+ *   target: string,
+ *   appPort?: number,
+ *   cdpPort?: number,
+ *   signer?: string,
+ *   account?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   probeBrowser?: (env: NodeJS.ProcessEnv) => Promise<{ bin: string, version: string | null, source: string }>,
+ * }} options
+ */
 export async function webDappReadiness({
   policy = webDappPolicy(),
   signers = {},
