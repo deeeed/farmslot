@@ -91,6 +91,14 @@ async function freshStores() {
     async () => {},
   );
   workGraph.initWorkGraphStore(() => {});
+  // Never ask real GitHub: PR numbers here name real PRs on the project repo.
+  workGraph.setUpstreamObserverForTests(async () => ({
+    state: 'open',
+    merged: false,
+    headRef: 'feat/upstream',
+    sameRepo: true,
+    url: 'https://github.invalid/pr',
+  }));
   await queue.loadQueue();
   await backlog.loadBacklog();
   await workGraph.loadWorkGraphs();
@@ -2616,20 +2624,18 @@ test('a replacement upstream attempt does not hide the recorded PR merging', asy
   assert.deepEqual(moved, [downstreamRun.id], 'the recorded PR merged, so the PR moves');
 });
 
-test('a graph whose runs finished stays swept until the stacked PR is updated', async (t) => {
+test('a finished stacked family is retargeted and updated in the same tick', async (t) => {
   const { graphId, runs, upstreamRun, downstreamRun, workGraph } = await stackedPair(
     'Stack finished then merged',
   );
   const calls: string[] = [];
-  let failUpdate = true;
   workGraph.setStackRetargeterForTests(
     async () => {
       calls.push('retarget');
-      return { base: 'main', result: 'retargeted' };
+      return { base: 'main', result: 'retargeted', upstreamMergeSha: 'c'.repeat(40) };
     },
     async () => {
       calls.push('update-branch');
-      if (failUpdate) throw new Error('HTTP 502');
       return { base: 'main', result: 'updated' };
     },
   );
@@ -2639,17 +2645,51 @@ test('a graph whose runs finished stays swept until the stacked PR is updated', 
   runs.updateRun(downstreamRun.id, { status: 'done', completedAt: finished });
   await workGraph.schedulerTick({ graphId });
   runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
-  failUpdate = false;
-  await workGraph.schedulerTick({ graphId });
-  assert.equal(
-    workGraph.getWorkGraph({ graphId }).graph.graph.status === 'done',
-    false,
-    'the update-branch step is still owed',
-  );
-  await workGraph.schedulerTick();
-  assert.deepEqual(calls, ['retarget', 'update-branch'], 'the background sweep finishes it');
+  // A background tick, like the one at gateway startup: nothing else will
+  // tick this graph again, so both steps must run now.
   await workGraph.schedulerTick();
   assert.deepEqual(calls, ['retarget', 'update-branch']);
+  assert.equal(runs.getRun(downstreamRun.id)?.stack?.upstreamMergeSha, 'c'.repeat(40));
+  await workGraph.schedulerTick();
+  assert.deepEqual(calls, ['retarget', 'update-branch'], 'nothing is repeated');
+});
+
+test('an operator tick asks GitHub whether the recorded upstream merged', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, workGraph } = await stackedPair(
+    'Stack merge after finish',
+  );
+  const reads: number[] = [];
+  let merged = false;
+  workGraph.setUpstreamObserverForTests(async (_project, prNumber) => {
+    reads.push(prNumber);
+    return {
+      state: merged ? 'closed' : 'open',
+      merged,
+      headRef: 'feat/upstream',
+      sameRepo: true,
+      url: `https://github.com/deeeed/farmslot/pull/${prNumber}`,
+      ...(merged ? { mergedAt: '2026-10-07T00:00:00.000Z' } : {}),
+    };
+  });
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  // The upstream run finished, so ci-watch will never see the merge.
+  runs.updateRun(upstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick();
+  assert.deepEqual(reads, [], 'background ticks stay off GitHub');
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(reads.length, 1, 'open: nothing recorded');
+  assert.deepEqual(moved, []);
+
+  merged = true;
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(runs.getRun(upstreamRun.id)?.prState, 'MERGED');
+  assert.equal(runs.getRun(upstreamRun.id)?.mergedAt, '2026-10-07T00:00:00.000Z');
+  assert.deepEqual(moved, [downstreamRun.id], 'the retarget follows in the same tick');
 });
 
 test('stack base survives a duplicate edge removal and a removed upstream frees the node', async () => {

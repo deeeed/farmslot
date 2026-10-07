@@ -17,6 +17,8 @@ export interface StackRetargetResult {
   base: string;
   /** Ledger text describing what happened. */
   result: string;
+  /** The upstream PR's merge commit on the default branch, when it merged. */
+  upstreamMergeSha?: string;
 }
 
 export interface UpstreamPr {
@@ -26,6 +28,8 @@ export interface UpstreamPr {
   /** False when the head lives in a fork: a stack shares one repository. */
   sameRepo: boolean;
   url: string;
+  mergeSha?: string;
+  mergedAt?: string;
 }
 
 async function withDeadline<T>(operation: Promise<T>, what: string): Promise<T> {
@@ -65,6 +69,8 @@ export async function readUpstreamPr(project: string, prNumber: number): Promise
   const pr = JSON.parse(output.stdout) as {
     state: 'open' | 'closed';
     merged?: boolean;
+    merged_at?: string | null;
+    merge_commit_sha?: string | null;
     html_url: string;
     head: { ref: string; repo?: { full_name?: string } | null };
   };
@@ -74,6 +80,8 @@ export async function readUpstreamPr(project: string, prNumber: number): Promise
     headRef: pr.head.ref,
     sameRepo: pr.head.repo?.full_name?.toLowerCase() === repo.toLowerCase(),
     url: pr.html_url,
+    ...(pr.merged && pr.merge_commit_sha ? { mergeSha: pr.merge_commit_sha } : {}),
+    ...(pr.merged && pr.merged_at ? { mergedAt: pr.merged_at } : {}),
   };
 }
 
@@ -83,15 +91,20 @@ export async function readUpstreamPr(project: string, prNumber: number): Promise
  */
 export async function retargetStackedPr(run: Run): Promise<StackRetargetResult> {
   const { repo, base } = await projectGitHub(run.project);
-  if (!run.prNumber) return { base, result: `retargeted:before-publish->${base}` };
+  // The merge commit tells a later diff whether a checkout has taken the upstream in.
+  const upstreamMergeSha = run.stack
+    ? (await readUpstreamPr(run.project, run.stack.upstreamPrNumber)).mergeSha
+    : undefined;
+  const merge = upstreamMergeSha ? { upstreamMergeSha } : {};
+  if (!run.prNumber) return { base, result: `retargeted:before-publish->${base}`, ...merge };
   if (run.prState === 'MERGED' || run.prState === 'CLOSED') {
-    return { base, result: `skipped:#${run.prNumber} ${run.prState.toLowerCase()}` };
+    return { base, result: `skipped:#${run.prNumber} ${run.prState.toLowerCase()}`, ...merge };
   }
   await ghApi(
     ['-X', 'PATCH', `repos/${repo}/pulls/${run.prNumber}`, '-f', `base=${base}`],
     `retargeting PR #${run.prNumber}`,
   );
-  return { base, result: `retargeted:#${run.prNumber}->${base}` };
+  return { base, result: `retargeted:#${run.prNumber}->${base}`, ...merge };
 }
 
 /**

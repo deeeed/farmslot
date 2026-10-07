@@ -1466,6 +1466,8 @@ export interface RunStack {
   downstream?: string[];
   /** Set once the upstream merged and the PR base moved to this branch. */
   retargetedTo?: string;
+  /** The upstream PR's merge commit on that branch, recorded with `retargetedTo`. */
+  upstreamMergeSha?: string;
 }
 
 export interface SlotRunHistoryEntry {

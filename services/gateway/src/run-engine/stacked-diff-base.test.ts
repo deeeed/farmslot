@@ -133,3 +133,36 @@ test('a stacked contribution never counts the upstream or default-branch work', 
   const plain: DiffBaseSpec = { baseRef: 'origin/main', commitish: 'origin/main' };
   assert.equal(await settleStackedDiffBase(exec, 'main', plain), plain, 'non-stacked: untouched');
 });
+
+test('once the checkout has the upstream merge, a later revert is not its work', async (t) => {
+  const { author, slot, stacked, exec, onMain } = await fixture(t);
+  let squash = '';
+  await onMain(async () => {
+    await git(author, 'merge', '-q', '--squash', 'origin/feat/a');
+    await git(author, 'commit', '-q', '-m', 'A (squash)');
+    squash = await git(author, 'rev-parse', 'HEAD');
+  });
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
+  await onMain(async () => {
+    await git(author, 'revert', '--no-edit', squash);
+  });
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
+
+  const contribution = async (spec: DiffBaseSpec) => {
+    const base = await settleStackedDiffBase(exec, 'main', spec);
+    const from = base.diffFrom ?? (await git(slot, 'merge-base', base.commitish, 'HEAD'));
+    return (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n').sort();
+  };
+  assert.deepEqual(
+    await contribution({ ...stacked, upstreamMergeSha: squash }),
+    ['b.txt'],
+    'the revert of a.txt belongs to the default branch',
+  );
+  assert.deepEqual(
+    await contribution(stacked),
+    ['a.txt', 'b.txt'],
+    'without the merge commit the synthetic base would restore a.txt',
+  );
+});

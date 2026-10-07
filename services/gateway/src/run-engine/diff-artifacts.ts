@@ -464,12 +464,16 @@ export function contributionStack(run: Pick<Run, 'stack' | 'parentRunId'>): Run[
 export function contributionDiffBaseSpec(
   run: Pick<Run, 'startRef' | 'stack'>,
   defaultBranch: string,
-): { baseRef: string; commitish: string } {
+): DiffBaseSpec {
   const requested = run.startRef?.requestedRef?.trim();
   // A stacked run's own contribution starts where it branched from the upstream
   // PR; settleStackedDiffBase moves it to the default branch once integrated.
   if (!requested && run.stack?.resolvedSha) {
-    return { baseRef: `stack:${run.stack.baseBranch}`, commitish: run.stack.resolvedSha };
+    return {
+      baseRef: `stack:${run.stack.baseBranch}`,
+      commitish: run.stack.resolvedSha,
+      ...(run.stack.upstreamMergeSha ? { upstreamMergeSha: run.stack.upstreamMergeSha } : {}),
+    };
   }
   if (!requested) {
     const remote = `origin/${defaultBranch}`;
@@ -491,6 +495,8 @@ export interface DiffBaseSpec {
   commitish: string;
   /** A local-only commit to diff from instead of merge-base(commitish, HEAD). */
   diffFrom?: string;
+  /** Stacked runs: the upstream PR's merge commit on the default branch, once known. */
+  upstreamMergeSha?: string;
 }
 
 /**
@@ -514,6 +520,14 @@ export async function settleStackedDiffBase(
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
     const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
     if (stacked.exitCode !== 0) return plain;
+    // The checkout took the upstream in through the default branch: whatever the
+    // default branch did since (a revert included) is not this run's either.
+    if (baseSpec.upstreamMergeSha) {
+      const integrated = await exec(
+        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} HEAD`,
+      );
+      if (integrated.exitCode === 0) return plain;
+    }
     // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
     await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
     const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);

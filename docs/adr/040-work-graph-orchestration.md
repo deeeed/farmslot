@@ -854,7 +854,12 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   diff; a conflict is left to the update-branch flow. A graph with a step still owed is
   not marked done, so the background sweep finishes it. GitHub calls use REST (`repo` scope),
   run outside the graph mutation lock and have a 90 s deadline; a failure is recorded once
-  in the ledger and retried by an operator-targeted `farmslot graph tick <graphId>`. Other
+  in the ledger and retried by an operator-targeted `farmslot graph tick <graphId>`.
+  Merges are recorded by ci-watch; because it stops when a run finishes, an operator tick
+  also asks GitHub about a stacked node's recorded upstream PR and records its merge. Each
+  step's follow-on (retarget after an observed merge, update-branch after a retarget) runs
+  in the same tick, since nothing else ticks a quiet graph. The retarget records the
+  upstream's merge commit; a checkout that contains it is measured like any other run. Other
   rebase edges, and every rebase edge on a node without a published edge, keep the
   operator-attention path.
 

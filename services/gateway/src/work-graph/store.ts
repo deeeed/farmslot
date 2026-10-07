@@ -48,9 +48,11 @@ import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 import {
+  readUpstreamPr,
   retargetStackedPr,
   type StackRetargetResult,
   updateStackedPrBranch,
+  type UpstreamPr,
 } from './stack-retarget.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -906,8 +908,16 @@ export function setStackRetargeterForTests(
     (fn ? async () => ({ base: 'main', result: 'update-branch:test' }) : updateStackedPrBranch);
 }
 
+let upstreamPrObserver: (project: string, prNumber: number) => Promise<UpstreamPr> = readUpstreamPr;
+
+export function setUpstreamObserverForTests(
+  fn: ((project: string, prNumber: number) => Promise<UpstreamPr>) | null,
+): void {
+  upstreamPrObserver = fn ?? readUpstreamPr;
+}
+
 interface StackRetargetJob {
-  kind: 'retarget' | 'update-branch';
+  kind: 'retarget' | 'update-branch' | 'observe-upstream';
   graphId: string;
   nodeId: string;
   runId: string;
@@ -915,6 +925,45 @@ interface StackRetargetJob {
 }
 
 const stackRetargetsInFlight = new Set<string>();
+
+function upstreamPrMerged(runs: readonly Run[], project: string, prNumber: number): boolean {
+  return runs.some(
+    (candidate) =>
+      candidate.project === project &&
+      candidate.prNumber === prNumber &&
+      (candidate.prState === 'MERGED' || !!candidate.mergedAt),
+  );
+}
+
+/**
+ * Only ci-watch records a merge, and it stops once a run finishes. When an
+ * operator ticks a graph, a stacked node whose recorded upstream PR has no merge
+ * on record asks GitHub, so a merge after the upstream run ended is still seen.
+ */
+function stackObserveJob(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+): StackRetargetJob | null {
+  const upstreamId = stackUpstreamId(snapshot, node);
+  if (
+    !snapshot.edges.some((edge) => edge.toNodeId === node.id && isStackRebaseEdge(edge, upstreamId))
+  )
+    return null;
+  const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
+  const stack = run?.stack;
+  if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
+  if (upstreamPrMerged(runs, run.project, stack.upstreamPrNumber)) return null;
+  const key = `${snapshot.graph.id}:${node.id}:observe:${stack.upstreamPrNumber}`;
+  if (stackRetargetsInFlight.has(key)) return null;
+  return {
+    kind: 'observe-upstream',
+    graphId: snapshot.graph.id,
+    nodeId: node.id,
+    runId: run.id,
+    key,
+  };
+}
 
 function isStackRebaseEdge(edge: WorkEdge, upstreamId: string | undefined): boolean {
   return (
@@ -949,13 +998,7 @@ function nextStackStep(
   const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
   const stack = run?.stack;
   if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
-  const upstreamMerged = runs.some(
-    (candidate) =>
-      candidate.project === run.project &&
-      candidate.prNumber === stack.upstreamPrNumber &&
-      (candidate.prState === 'MERGED' || !!candidate.mergedAt),
-  );
-  if (!upstreamMerged) return null;
+  if (!upstreamPrMerged(runs, run.project, stack.upstreamPrNumber)) return null;
   const owed = (key: string) => {
     const recorded = snapshot.ledger.find((entry) => entry.key === key);
     return !recorded || (recorded.status === 'failed' && retryFailed);
@@ -996,6 +1039,31 @@ function stackRetargetJob(
   return job;
 }
 
+/** Records a merge GitHub reports for the recorded upstream PR, as ci-watch would. */
+async function observeUpstreamMerge(job: StackRetargetJob): Promise<void> {
+  const run = getAllRuns().find((candidate) => candidate.id === job.runId);
+  if (!run?.stack) return;
+  const { upstreamPrNumber } = run.stack;
+  let pr: UpstreamPr;
+  try {
+    pr = await upstreamPrObserver(run.project, upstreamPrNumber);
+  } catch (err) {
+    console.error(
+      `[work-graph] reading upstream PR #${upstreamPrNumber} failed: ${errorMessage(err)}`,
+    );
+    return;
+  }
+  if (!pr.merged) return;
+  const mergedAt = pr.mergedAt ?? new Date().toISOString();
+  for (const upstream of getAllRuns()) {
+    if (upstream.project !== run.project || upstream.prNumber !== upstreamPrNumber) continue;
+    await persistRunNow(
+      updateRun(upstream.id, { prState: 'MERGED', mergedAt }),
+      'stack upstream merge observed',
+    );
+  }
+}
+
 /**
  * Runs one retarget outside the graph mutation lock, so a slow GitHub call never
  * holds up other graphs, then records the outcome under the lock.
@@ -1005,13 +1073,27 @@ async function runStackRetarget(job: StackRetargetJob): Promise<void> {
   stackRetargetsInFlight.add(job.key);
   const startedAt = new Date().toISOString();
   try {
-    let outcome: { status: 'completed' | 'failed'; result: string; base?: string };
+    if (job.kind === 'observe-upstream') {
+      await observeUpstreamMerge(job);
+      return;
+    }
+    let outcome: {
+      status: 'completed' | 'failed';
+      result: string;
+      base?: string;
+      upstreamMergeSha?: string;
+    };
     try {
       const run = getAllRuns().find((candidate) => candidate.id === job.runId);
       if (!run?.stack) return;
       const action = job.kind === 'retarget' ? stackRetargeter : stackBranchUpdater;
       const retarget = await action(run);
-      outcome = { status: 'completed', result: retarget.result, base: retarget.base };
+      outcome = {
+        status: 'completed',
+        result: retarget.result,
+        base: retarget.base,
+        upstreamMergeSha: retarget.upstreamMergeSha,
+      };
     } catch (err) {
       outcome = { status: 'failed', result: errorMessage(err) };
       console.error(`[work-graph] stack retarget ${job.key} failed: ${outcome.result}`);
@@ -1021,9 +1103,20 @@ async function runStackRetarget(job: StackRetargetJob): Promise<void> {
       const node = snapshot?.nodes.find((candidate) => candidate.id === job.nodeId);
       if (!snapshot || !node) return;
       const run = getAllRuns().find((candidate) => candidate.id === job.runId);
-      if (outcome.base && run?.stack && run.stack.retargetedTo !== outcome.base) {
+      if (
+        outcome.base &&
+        run?.stack &&
+        (run.stack.retargetedTo !== outcome.base ||
+          (outcome.upstreamMergeSha && run.stack.upstreamMergeSha !== outcome.upstreamMergeSha))
+      ) {
         await persistRunNow(
-          updateRun(run.id, { stack: { ...run.stack, retargetedTo: outcome.base } }),
+          updateRun(run.id, {
+            stack: {
+              ...run.stack,
+              retargetedTo: outcome.base,
+              ...(outcome.upstreamMergeSha ? { upstreamMergeSha: outcome.upstreamMergeSha } : {}),
+            },
+          }),
           'stack retarget',
         );
       }
@@ -1632,10 +1725,22 @@ function acquireLease(snapshot: WorkGraphSnapshot, owner: string, nowMs: number)
 export async function schedulerTick(
   params: { graphId?: string; forceEnqueue?: boolean } = {},
 ): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
-  const retargets: StackRetargetJob[] = [];
-  const result = await schedulerTickLocked(params, retargets);
+  // Only an operator-targeted tick retries failed stack steps and asks GitHub.
+  const operatorTargeted = !!params.graphId;
+  let retargets: StackRetargetJob[] = [];
+  const result = await schedulerTickLocked(params, retargets, operatorTargeted);
   if (retargets.length === 0) return result;
-  await Promise.all(retargets.map(runStackRetarget));
+  // Nothing else ticks a quiet graph, so each step's follow-on (a retarget after
+  // an observed merge, update-branch after a retarget) runs in this same call.
+  for (let pass = 0; retargets.length > 0 && pass < 3; pass += 1) {
+    const graphIds = [...new Set(retargets.map((job) => job.graphId))];
+    await Promise.all(retargets.map(runStackRetarget));
+    retargets = [];
+    // Follow-on passes neither retry what just failed nor ask GitHub again.
+    for (const graphId of graphIds) {
+      await schedulerTickLocked({ graphId, forceEnqueue: params.forceEnqueue }, retargets, false);
+    }
+  }
   return {
     ok: true,
     graphs: result.graphs.map((projection) => project(requireGraph(projection.graph.id))),
@@ -1645,6 +1750,7 @@ export async function schedulerTick(
 function schedulerTickLocked(
   params: { graphId?: string; forceEnqueue?: boolean },
   retargets: StackRetargetJob[],
+  operatorTargeted: boolean,
 ): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
   return withMutation(async () => {
     const owner = `gateway-${process.pid}`;
@@ -1726,7 +1832,9 @@ function schedulerTickLocked(
           (edge) => !isStackRebaseEdge(edge, stackUpstream),
         );
         if (stackUpstream && canRequireCompletionUnlock(node)) {
-          const job = stackRetargetJob(snapshot, node, runs, !!params.graphId);
+          const job =
+            stackRetargetJob(snapshot, node, runs, operatorTargeted) ??
+            (operatorTargeted ? stackObserveJob(snapshot, node, runs) : null);
           if (job) retargets.push(job);
         }
         if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
