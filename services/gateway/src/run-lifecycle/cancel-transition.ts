@@ -184,16 +184,22 @@ export function cancelPlan(
         // awaited backlog settle, so archive/delete must see this synchronously and
         // refuse eviction until markBacklogRunObserved clears it after a durable write.
         backlogReconcilePending: true,
-        // A wait still open (a slot decision nobody will answer) ends here.
-        steps: run.steps.map((step) =>
-          step.status === 'running' || step.status === 'pending'
-            ? {
-                ...closeStepWait(step, Date.parse(completedAt)),
-                status: 'skipped' as const,
-                completedAt,
-              }
-            : step,
-        ),
+        // A running step ends here: its time so far is its duration, and a wait
+        // still open (a slot decision nobody will answer) is queue time.
+        steps: run.steps.map((step) => {
+          if (step.status === 'pending')
+            return { ...step, status: 'skipped' as const, completedAt };
+          if (step.status !== 'running') return step;
+          const startedMs = step.startedAt ? Date.parse(step.startedAt) : NaN;
+          return {
+            ...closeStepWait(step, Date.parse(completedAt)),
+            status: 'skipped' as const,
+            completedAt,
+            ...(Number.isFinite(startedMs)
+              ? { durationMs: Math.max(0, Date.parse(completedAt) - startedMs) }
+              : {}),
+          };
+        }),
         metrics: { ...run.metrics, outcome: 'cancelled' },
         // Both transports need their exact worker identities during terminal cleanup.
         // Keep them afterward so an unconfirmed stop retains its ownership evidence.

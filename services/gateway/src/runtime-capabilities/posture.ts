@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  closeStepWait,
   type DeviceInventoryRefusal,
   hasLiveParkRecord,
   MachineParkEligibilityCodes,
@@ -397,49 +398,45 @@ export interface ResourcePostureRequest {
 }
 
 /**
- * The run's steps with a claim wait recorded on the step it holds up, or
- * undefined when nothing changed. A wait that starts opens `queuedSince` on the
- * running step; one that ends adds its time to that step's queue time.
+ * A claim wait as queue time on the step it holds up: the running step when the
+ * wait starts, kept as `heldStep` for the wait's life. A wait opens
+ * `queuedSince` on that step (again after a restart's re-entry cleared it) and
+ * closes into its `queuedMs` when it ends, if the step still runs; a step that
+ * stopped closed its own wait. Returns the steps when they changed.
  *
  * The wait counts from `queued` until the claim is granted or the wait clears:
  * a granted reservation is this run's own provider starting, which is work. It
  * is clamped to the step's `startedAt` so it stays inside the step's duration
  * when the step was re-entered while queued.
  */
-function stepsWithClaimWait(
+function claimWaitTiming(
   run: Run,
   next: RunResourceWait | undefined,
   nowMs: number,
-): RunStep[] | undefined {
+): { steps?: RunStep[]; heldStep?: string } {
   const previous = run.resourcePosture?.resourceWait;
   const wasQueued = previous?.phase === 'queued';
   const isQueued = next?.phase === 'queued';
-  if (!wasQueued && !isQueued) return undefined;
-  const step = run.steps.find((candidate) => candidate.status === 'running');
-  const startedMs = step?.startedAt ? Date.parse(step.startedAt) : NaN;
-  if (!step || !Number.isFinite(startedMs)) return undefined;
-  if (wasQueued && isQueued && next.queuedLeaseId === previous.queuedLeaseId) {
-    // The same wait goes on. A re-entry (a restart) cleared the step's open
-    // wait, so reopen it from the re-entry.
-    if (step.queuedSince) return undefined;
-    const sinceMs = Math.max(Date.parse(next.since), startedMs);
+  const sameWait = wasQueued && isQueued && next.queuedLeaseId === previous.queuedLeaseId;
+  const running = run.steps.find((candidate) => candidate.status === 'running')?.name;
+  // A wait recorded before `heldStep` existed belongs to the running step.
+  const heldStep = !isQueued ? undefined : sameWait ? (previous.heldStep ?? running) : running;
+  let steps = run.steps;
+  const runningStep = (name: string | undefined) =>
+    steps.find((candidate) => candidate.name === name && candidate.status === 'running');
+  const replace = (step: RunStep, updated: RunStep) => {
+    steps = steps.map((candidate) => (candidate === step ? updated : candidate));
+  };
+  const ended = wasQueued && !sameWait ? runningStep(previous.heldStep ?? running) : undefined;
+  if (ended?.queuedSince) replace(ended, closeStepWait(ended, nowMs));
+  const held = isQueued ? runningStep(heldStep) : undefined;
+  const startedMs = held?.startedAt ? Date.parse(held.startedAt) : NaN;
+  if (held && !held.queuedSince && Number.isFinite(startedMs)) {
+    const sinceMs = Math.max(Date.parse(next!.since), startedMs);
     const queuedSince = new Date(Number.isFinite(sinceMs) ? sinceMs : nowMs).toISOString();
-    return run.steps.map((candidate) =>
-      candidate === step ? { ...step, queuedSince } : candidate,
-    );
+    replace(held, { ...held, queuedSince });
   }
-  const updated: RunStep = { ...step };
-  if (wasQueued) {
-    const sinceMs = Math.max(Date.parse(previous.since), startedMs);
-    if (Number.isFinite(sinceMs))
-      updated.queuedMs = (step.queuedMs ?? 0) + Math.max(0, nowMs - sinceMs);
-    updated.queuedSince = undefined;
-  }
-  if (isQueued) {
-    const sinceMs = Math.max(Date.parse(next.since), startedMs);
-    updated.queuedSince = new Date(Number.isFinite(sinceMs) ? sinceMs : nowMs).toISOString();
-  }
-  return run.steps.map((candidate) => (candidate === step ? updated : candidate));
+  return { ...(steps === run.steps ? {} : { steps }), ...(heldStep ? { heldStep } : {}) };
 }
 
 export interface RunResourcePostureDeps {
@@ -1462,7 +1459,8 @@ export class RunResourcePostureReconciler {
     if (!resourceWait) delete state.resourceWait;
     // Read and write with no await between: the steps array is replaced whole.
     const current = this.deps.getRun(context.run.id) ?? context.run;
-    const steps = stepsWithClaimWait(current, resourceWait, this.now().getTime());
+    const { steps, heldStep } = claimWaitTiming(current, resourceWait, this.now().getTime());
+    if (resourceWait && heldStep) resourceWait.heldStep = heldStep;
     const updated = this.deps.updateRun(context.run.id, {
       resourcePosture: state,
       ...(steps ? { steps } : {}),

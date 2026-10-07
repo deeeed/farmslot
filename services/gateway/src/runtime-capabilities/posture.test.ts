@@ -2231,6 +2231,54 @@ test('a claim wait is queue time on the step it held up, counted until the grant
   assert.equal(dispatch.queuedMs, undefined);
 });
 
+test('a claim wait stays with the step it held up when that step ends first', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const T0 = Date.parse('2026-08-11T00:00:00.000Z');
+  let clock = T0;
+  const { reconciler, registry, runs } = await harness(t, {
+    capabilities: [recording],
+    now: () => new Date(clock),
+    run: makeRun({
+      steps: [
+        { name: 'monitor', status: 'running', startedAt: '2026-08-11T00:00:00.000Z' },
+        { name: 'finalize', status: 'pending' },
+      ],
+    }),
+  });
+  const requirements = [
+    { capabilityId: 'recording', reason: 'validation', mode: 'state' as const },
+  ];
+  await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  clock = T0 + 10_000;
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(runs.get('run-a')!.resourcePosture?.resourceWait?.heldStep, 'monitor');
+  // A worker signal ends monitor before the claim clears (the store closes the
+  // open wait as the step stops), and finalize starts.
+  const [monitor, finalize] = runs.get('run-a')!.steps;
+  Object.assign(monitor!, { status: 'done', queuedMs: 20_000, queuedSince: undefined });
+  Object.assign(finalize!, { status: 'running', startedAt: new Date(T0 + 30_000).toISOString() });
+  clock = T0 + 40_000;
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(finalize!.queuedSince, undefined, 'the wait is not reopened on another step');
+  clock = T0 + 70_000;
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  const [after, next] = runs.get('run-a')!.steps;
+  assert.equal(after!.queuedMs, 20_000, 'counted once, on the step it held up');
+  assert.equal(next!.queuedMs, undefined);
+  assert.equal(next!.queuedSince, undefined);
+});
+
 test('a claim wait that began before a step re-entry counts only from the re-entry', async (t) => {
   const recording = entry('recording', {
     cost: {

@@ -584,9 +584,10 @@ test('a partially applied cancel is visible to human-facing callers', async () =
 
 test('cancelling during a wait keeps the time already waited as queue time', () => {
   const since = new Date(Date.now() - 600_000).toISOString();
+  const startedAt = new Date(Date.now() - 900_000).toISOString();
   const seed = run({
     steps: [
-      { name: 'find-slot', status: 'running', queuedMs: 5_000, queuedSince: since },
+      { name: 'find-slot', status: 'running', startedAt, queuedMs: 5_000, queuedSince: since },
       { name: 'prepare', status: 'pending' },
     ] as Run['steps'],
   });
@@ -597,5 +598,10 @@ test('cancelling during a wait keeps the time already waited as queue time', () 
     steps[0]!.queuedMs! >= 605_000 && steps[0]!.queuedMs! < 610_000,
     `${steps[0]!.queuedMs}`,
   );
+  assert.ok(
+    steps[0]!.durationMs! >= 900_000 && steps[0]!.durationMs! < 905_000,
+    'and its duration',
+  );
   assert.equal(steps[1]!.queuedMs, undefined);
+  assert.equal(steps[1]!.durationMs, undefined);
 });
