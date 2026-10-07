@@ -536,7 +536,10 @@ async function main(): Promise<void> {
           observedBroadcast,
           {
             beforeCreate,
-            afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
+            afterCreateSync: (created) => {
+              created.queuedAt = item.createdAt;
+              stampQueueItemRunId(item.id, created.id);
+            },
             durableStamp: async (created) => {
               await stampQueueItemRunIdNow(item.id, created.id);
             },
@@ -620,6 +623,8 @@ async function main(): Promise<void> {
         beforeCreate,
         afterCreateSync: (created) => {
           if (item.prWork) created.prWork = structuredClone(item.prWork);
+          // The dispatch-queue wait becomes the first step's queue time.
+          created.queuedAt = item.createdAt;
           stampQueueItemRunId(item.id, created.id);
         },
         durableStamp: async (created) => {
