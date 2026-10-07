@@ -351,7 +351,8 @@ describe('launch', () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(
       events.map((event) => event.phase ?? event.event),
-      ['resolve', 'app-started', 'complete'],
+      // The launch stage opens after resolve and ends with the command.
+      ['resolve', 'stage', 'app-started', 'stage', 'complete'],
     );
     assert.equal(events[0]?.platform, 'ios');
     // The checkout lock is released afterwards.
@@ -395,11 +396,13 @@ describe('launch', () => {
     assert.equal(captured.result, 0);
     assert.equal(captured.stdout, JSON.stringify(document));
     assert.deepEqual(chunks.join('').split('\n').filter(Boolean), [
+      '[1/1] launch: started, 0s',
       '[1/2] metro: started, 0s',
       '[1/2] metro: bundling 61% (4,210/6,900 modules), 0s',
       '[1/2] metro: done, 0s',
       '[2/2] wallet: started, 0s',
       '[2/2] wallet: done, 0s',
+      '[1/1] launch: done, 0s',
     ]);
   });
 

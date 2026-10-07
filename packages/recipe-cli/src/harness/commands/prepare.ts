@@ -62,6 +62,9 @@ const REPORT_DIR = 'prepare';
 const SKIPPED_AFTER_FAILURE = 'previous step failed';
 // A step's stage name says what it runs when that is more than its id.
 const STAGE_NAME: Record<string, string> = { doctor: 'doctor --fix', launch: 'launch --verify' };
+// Longer than any stage line: past it the pending text (`\r` progress, say)
+// goes to the bounded tail rather than growing until a newline.
+const PARTIAL_LINE_LIMIT = 8 * 1024;
 
 export interface StatusDevice {
   platform?: string;
@@ -333,6 +336,10 @@ function spawnStep(
     child.stderr?.on('data', (chunk: string) => {
       const lines = `${partial}${chunk}`.split('\n');
       partial = lines.pop() ?? '';
+      if (partial.length > PARTIAL_LINE_LIMIT) {
+        stderr.append(partial);
+        partial = '';
+      }
       for (const line of lines) {
         if (onStageLine && STAGE_LINE.test(line)) onStageLine(line);
         // Kept in the tail too: a child's last `failed` stage line may be the cause.

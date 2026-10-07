@@ -732,9 +732,11 @@ describe('prepare', () => {
         'const [step] = process.argv.slice(2);',
         "const results = JSON.parse(process.env.STEP_RESULTS || '{}');",
         "if (step === 'launch' && process.env.STAGE_LINES) process.stderr.write('[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s\\n');",
+        "if (step === 'doctor' && process.env.CR_PROGRESS) process.stderr.write('x\\r'.repeat(10000));",
         "if (step === 'status' && !results.status) console.log(JSON.stringify({ devices: [{ platform: process.env.DEVICE_PLATFORM || 'phone', selected: true }] }));",
         "else console.log(JSON.stringify({ step, args: process.argv.slice(3), ...(results[step] ? { error: { message: step + ' broke' } } : {}) }));",
-        'process.exit(results[step] ?? 0);',
+        // exitCode, not exit(): stderr to a pipe drains first.
+        'process.exitCode = results[step] ?? 0;',
       ].join('\n'),
     );
     fs.chmodSync(bin, 0o755);
@@ -935,6 +937,27 @@ describe('prepare', () => {
     const child = '[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s';
     assert.ok(lines.includes(`[3/5] launch --verify › ${child}`), 'forwarded as it happened');
     assert.ok(lines.includes(child), 'replayed with the failure');
+  });
+
+  test('a failing step replays carriage-return progress that never ends a line', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    process.env.CR_PROGRESS = '1';
+    process.env.STEP_RESULTS = JSON.stringify({ doctor: 1 });
+    useAdapters(fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }));
+    const target = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    const { lines } = await captureStderr(() =>
+      capture(() =>
+        handlePrepare(['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts], {
+          usage: 'u',
+          steps: [fixtureStep],
+        }),
+      ),
+    );
+    // 20 KB with no newline: held to the bounded tail, not to a line, and replayed whole.
+    assert.equal(lines.join('').split('x\r').length - 1, 10_000);
   });
 
   test('a headless platform skips launch and the host steps; the first failure skips the rest', async () => {

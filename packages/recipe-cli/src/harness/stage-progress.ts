@@ -88,6 +88,9 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const stallMs = options.stallMs ?? stallNoticeMs();
   const open = new Set<ReportedStage>();
+  // A heartbeat is owed when the command has been quiet, not each stage: a
+  // stage that speaks for the whole command keeps another one quiet.
+  let lastLineAt = 0;
 
   return {
     stage(name, { index, total }) {
@@ -101,10 +104,16 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
 
       const line = (text: string, status: string, fields: Record<string, unknown> = {}): void => {
         const elapsedMs = Date.now() - startedAt;
+        lastLineAt = Date.now();
         write(`${prefix}: ${text}, ${formatElapsed(elapsedMs)}`);
         options.event?.({ stage: name, index, total, status, elapsedMs, ...fields });
       };
       const heartbeat = (): void => {
+        const quietMs = Date.now() - lastLineAt;
+        if (quietMs < heartbeatMs) {
+          schedule(heartbeatMs - quietMs);
+          return;
+        }
         const stalledMs = Date.now() - changedAt;
         const text = stageProgressText(latest);
         if (stalledMs >= stallMs) {
@@ -147,6 +156,7 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
         failed: (detail) => end('failed', detail),
         forward(childLine) {
           if (ended) return;
+          lastLineAt = Date.now();
           write(`${prefix} › ${childLine}`);
           if (!childLine.includes('no progress for')) changedAt = Date.now();
           // A child line counts as this stage's line: the parent speaks only
@@ -160,7 +170,8 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
       return handle;
     },
     close(status, detail) {
-      for (const stage of [...open]) {
+      // Innermost first: a stage opened inside another ends before it.
+      for (const stage of [...open].reverse()) {
         if (status === 'done') stage.done(detail);
         else stage.failed(detail);
       }

@@ -236,3 +236,23 @@ describe('stage progress', () => {
     ]);
   });
 });
+
+test('a heartbeat waits while another stage speaks for the command', () => {
+  const { stages, lines } = reporter();
+  stages.stage('launch', { index: 1, total: 1 });
+  const metro = stages.stage('metro', { index: 1, total: 2 });
+  for (let percent = 10; percent <= 40; percent += 10) {
+    advance(10_000);
+    metro.progress({ message: 'bundling', percent });
+  }
+  // 40 s of metro progress: the outer launch stage stayed quiet.
+  assert.equal(lines.filter((line) => line.startsWith('[1/1] launch')).length, 1);
+  advance(15_000);
+  assert.ok(
+    lines.at(-1)?.startsWith('[1/2] metro: bundling 40%'),
+    'the quiet command gets one line',
+  );
+  assert.equal(lines.filter((line) => line.startsWith('[1/1] launch')).length, 1);
+  stages.close('done');
+  assert.deepEqual(lines.slice(-2), ['[1/2] metro: done, 55s', '[1/1] launch: done, 55s']);
+});
