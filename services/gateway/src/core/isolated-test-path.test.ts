@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -13,7 +13,7 @@ test('a test process removes its isolated state and sidecars when it exits', (t)
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const unrelated = path.join(tmp, 'farmslot-test-backlog-1.json');
   // Another process's file sharing the prefix must survive.
-  spawnSync('touch', [unrelated]);
+  writeFileSync(unrelated, '{}');
 
   const child = spawnSync(
     process.execPath,
@@ -27,8 +27,7 @@ test('a test process removes its isolated state and sidecars when it exits', (t)
        const file = isolatedTestPath('farmslot-test-backlog', '.json');
        writeFileSync(file, '{}');
        writeFileSync(file + '.provenance-v1', '{}');
-       mkdirSync(isolatedTestPath('farmslot-test-runs'), { recursive: true });
-       process.stdout.write(String(process.pid));`,
+       mkdirSync(isolatedTestPath('farmslot-test-runs'), { recursive: true });`,
     ],
     { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } },
   );

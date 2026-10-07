@@ -975,7 +975,11 @@ test(
   await new Promise((resolve) => setTimeout(resolve, 10000));`,
     );
     t.after(() => rmSync(fixture, { recursive: true, force: true }));
-    const runner = spawn(process.execPath, args, { env, stdio: 'ignore' });
+    const runner = spawn(process.execPath, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    runner.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
     const closed = new Promise((resolve) =>
       runner.once('close', (_code, signal) => resolve(signal)),
     );
@@ -985,8 +989,13 @@ test(
     assert.ok(existsSync(report), 'the fixture test never started');
     const runRoot = path.dirname(path.dirname(JSON.parse(readFileSync(report, 'utf8')).TMPDIR));
 
+    const signalledAt = Date.now();
     runner.kill('SIGTERM');
     assert.equal(await closed, 'SIGTERM');
+    // The test process stops promptly: no wait-out of the deadline, no false timeout.
+    const shutdownMs = Date.now() - signalledAt;
+    assert.ok(shutdownMs < 3000, `shutdown took ${shutdownMs} ms`);
+    assert.doesNotMatch(stderr, /did not exit/);
     // Long enough for a surviving test process to recreate the path.
     await new Promise((resolve) => setTimeout(resolve, 500));
 

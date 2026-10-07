@@ -313,17 +313,30 @@ function childEnvironment(tmuxDir) {
 const activeChildren = new Set();
 
 /**
- * Pass a signal on to the running test processes and wait (bounded) for them
- * to exit, so none recreates files after the run's directories are removed.
+ * Pass a signal on to the running test processes and wait for them to close,
+ * against one deadline, so none recreates files after the run's directories
+ * are removed. Asynchronous: Node reaps an exited child only while the event
+ * loop runs. Only the yarn children are signalled; yarn passes the signal to
+ * the test process, but a process a test started itself is not tracked here.
  */
-export function stopChildren(signal, children = activeChildren, timeoutMs = 5000) {
-  for (const child of children) {
-    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
-  }
-  for (const child of children) {
-    if (child.pid !== undefined && !waitForExit(child.pid, timeoutMs)) {
-      console.error(`[tsx-tests] test process ${child.pid} did not exit after ${signal}`);
-      process.exitCode = 1;
+export async function stopChildren(signal, children = activeChildren, timeoutMs = 5000) {
+  const running = [...children].filter(
+    (child) => child.exitCode === null && child.signalCode === null,
+  );
+  const closed = running.map((child) => new Promise((resolve) => child.once('close', resolve)));
+  for (const child of running) child.kill(signal);
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  const outcome = await Promise.race([Promise.all(closed), deadline]);
+  clearTimeout(timer);
+  if (outcome === 'timeout') {
+    for (const child of running) {
+      if (child.exitCode === null && child.signalCode === null) {
+        console.error(`[tsx-tests] test process ${child.pid} did not exit after ${signal}`);
+        process.exitCode = 1;
+      }
     }
   }
 }
@@ -718,9 +731,16 @@ async function main() {
   // ends its tmux server, then dies by the same signal.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.once(signal, () => {
-      stopChildren(signal);
-      closeSandbox();
-      process.kill(process.pid, signal);
+      stopChildren(signal)
+        .catch((error) => {
+          // Reported and failing; the directories and sandbox are still removed.
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exitCode = 1;
+        })
+        .finally(() => {
+          closeSandbox();
+          process.kill(process.pid, signal);
+        });
     });
   }
   env = childEnvironment(openTmuxSandbox());
