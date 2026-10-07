@@ -858,6 +858,7 @@ test('records its tmux environment', async () => {
     TMUX_PANE: process.env.TMUX_PANE ?? null,
     TMUX_TMPDIR: process.env.TMUX_TMPDIR ?? null,
     FARMSLOT_TMUX_SANDBOX: process.env.FARMSLOT_TMUX_SANDBOX ?? null,
+    TMPDIR: process.env.TMPDIR ?? null,
   }));
   ${testBody}
 });
@@ -959,3 +960,38 @@ test('a test file runs with a private TMPDIR; what it leaves fails it and never 
     'nothing reached the real TMPDIR',
   );
 });
+
+test(
+  'an interrupted run stops its test processes before removing their TMPDIR',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    // The test keeps recreating a path under its TMPDIR (recursively, so the run
+    // directory too) until it is stopped.
+    const { fixture, report, env, args } = sandboxFixture(
+      `const { mkdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const dir = join(process.env.TMPDIR, 'still-writing');
+  setInterval(() => mkdirSync(dir, { recursive: true }), 20);
+  await new Promise((resolve) => setTimeout(resolve, 10000));`,
+    );
+    t.after(() => rmSync(fixture, { recursive: true, force: true }));
+    const runner = spawn(process.execPath, args, { env, stdio: 'ignore' });
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    for (let i = 0; i < 300 && !existsSync(report); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(report), 'the fixture test never started');
+    const runRoot = path.dirname(path.dirname(JSON.parse(readFileSync(report, 'utf8')).TMPDIR));
+
+    runner.kill('SIGTERM');
+    assert.equal(await closed, 'SIGTERM');
+    // Long enough for a surviving test process to recreate the path.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const survived = existsSync(runRoot);
+    rmSync(runRoot, { recursive: true, force: true });
+    assert.equal(survived, false, 'a test process outlived the run and recreated its TMPDIR');
+  },
+);

@@ -309,6 +309,25 @@ function childEnvironment(tmuxDir) {
   return env;
 }
 
+/** Test processes still running, so an interrupted run can stop them first. */
+const activeChildren = new Set();
+
+/**
+ * Pass a signal on to the running test processes and wait (bounded) for them
+ * to exit, so none recreates files after the run's directories are removed.
+ */
+export function stopChildren(signal, children = activeChildren, timeoutMs = 5000) {
+  for (const child of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+  }
+  for (const child of children) {
+    if (child.pid !== undefined && !waitForExit(child.pid, timeoutMs)) {
+      console.error(`[tsx-tests] test process ${child.pid} did not exit after ${signal}`);
+      process.exitCode = 1;
+    }
+  }
+}
+
 function runYarn(args, { cwd, env, buffered }) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn('yarn', args, {
@@ -317,6 +336,8 @@ function runYarn(args, { cwd, env, buffered }) {
       shell: false,
       stdio: buffered ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
+    activeChildren.add(child);
+    child.once('close', () => activeChildren.delete(child));
     let output = '';
     if (buffered) {
       child.stdout.setEncoding('utf-8');
@@ -486,7 +507,10 @@ async function runOne(file, context) {
   // Per-file state and a private TMPDIR, inside the run's root: anything the
   // file (or a process it starts) creates under os.tmpdir() lands there, is
   // checked, and is removed with it. Short names keep socket paths in range.
-  const stateDir = mkdtempSync(join(context.runRoot, 'f'));
+  // A counter shared by every lane (each lane's context is a copy).
+  context.files.count += 1;
+  const stateDir = join(context.runRoot, String(context.files.count));
+  mkdirSync(stateDir);
   const fileTmp = join(stateDir, 't');
   mkdirSync(fileTmp);
   linkToolCaches(fileTmp);
@@ -508,7 +532,8 @@ async function runOne(file, context) {
       buffered: context.buffered,
     });
     const caches = new Set(sharedToolCaches());
-    leaked = readdirSync(fileTmp).filter((entry) => !caches.has(entry));
+    // A test that removed its whole TMPDIR left nothing behind.
+    leaked = existsSync(fileTmp) ? readdirSync(fileTmp).filter((entry) => !caches.has(entry)) : [];
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
@@ -516,9 +541,10 @@ async function runOne(file, context) {
     `${basename(context.cwd)}/${relative(context.cwd, file)}`,
     leaked,
   );
-  if (leakFailure) console.error(leakFailure);
+  // Buffered lanes print the message inside this file's own output block.
+  if (leakFailure && !context.buffered) console.error(leakFailure);
   const status = leakFailure && result.status === 0 ? 1 : result.status;
-  const { output } = result;
+  const output = leakFailure ? `${result.output}${leakFailure}\n` : result.output;
   const ms = performance.now() - started;
   if (context.buffered) {
     process.stdout.write(
@@ -668,28 +694,36 @@ async function main() {
     classify: (file) => classifyTest(readFileSync(file, 'utf8')),
   });
 
-  const env = childEnvironment(openTmuxSandbox());
   // Every file's state and private TMPDIR live here; removed when the run ends,
-  // interrupted or not.
+  // interrupted or not. Created and registered before the tmux sandbox, so a
+  // failure opening that cannot leave it behind.
   const runRoot = mkdtempSync(join(tmpdir(), 'fst-'));
-  const closeSandbox = () => {
+  let env;
+  // Each cleanup reports its own failure: one cannot skip the other.
+  const cleanupStep = (step) => {
     try {
-      rmSync(runRoot, { recursive: true, force: true });
-      closeTmuxSandbox(env);
+      step();
     } catch (error) {
-      // Reported and failing: a sandbox server left running is a broken run.
+      // Reported and failing: a directory or sandbox server left behind is a broken run.
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
   };
+  const closeSandbox = () => {
+    cleanupStep(() => rmSync(runRoot, { recursive: true, force: true }));
+    if (env) cleanupStep(() => closeTmuxSandbox(env));
+  };
   process.once('exit', closeSandbox);
-  // An interrupted run ends its server too, then dies by the same signal.
+  // An interrupted run stops its test processes, removes its directories and
+  // ends its tmux server, then dies by the same signal.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.once(signal, () => {
+      stopChildren(signal);
       closeSandbox();
       process.kill(process.pid, signal);
     });
   }
+  env = childEnvironment(openTmuxSandbox());
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file
@@ -705,7 +739,7 @@ async function main() {
   // active lane keeps the historical live-streaming behaviour.
   const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
   const buffered = activeLanes.length > 1;
-  const context = { cwd, env, tsconfig, toLabel, buffered: false, runRoot };
+  const context = { cwd, env, tsconfig, toLabel, buffered: false, runRoot, files: { count: 0 } };
   const started = performance.now();
   const records = [];
 

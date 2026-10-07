@@ -1,18 +1,24 @@
-import { readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 const isolatedTestPaths = new Set<string>();
 
 function removeIsolatedTestPaths(): void {
+  const byDir = new Map<string, string[]>();
   for (const isolated of isolatedTestPaths) {
-    const dir = path.dirname(isolated);
-    const base = path.basename(isolated);
     rmSync(isolated, { recursive: true, force: true });
-    // Sidecars written next to a test-mode file (`<file>.provenance-v1`).
+    const dir = path.dirname(isolated);
+    byDir.set(dir, [...(byDir.get(dir) ?? []), `${path.basename(isolated)}.`]);
+  }
+  // Sidecars written next to a test-mode file (`<file>.provenance-v1`): one
+  // listing per directory, which may already be gone.
+  for (const [dir, prefixes] of byDir) {
+    if (!existsSync(dir)) continue;
     for (const entry of readdirSync(dir)) {
-      if (entry.startsWith(`${base}.`))
+      if (prefixes.some((prefix) => entry.startsWith(prefix))) {
         rmSync(path.join(dir, entry), { recursive: true, force: true });
+      }
     }
   }
 }
