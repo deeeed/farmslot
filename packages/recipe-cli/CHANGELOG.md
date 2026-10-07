@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.9.0 - 2026-10-07
+
 - Add the readiness and task commands to `@farmslot/recipe-cli/harness`, moved from mm-harness. Each takes the host's product parts as options; the platform parts come from the new adapter-sdk `readiness` member.
   - `handleDoctor(parsed, { manifest, report, fix, advisory, checkoutView, featureFlags, previewDevice, orphanDevServers })`: the shared `manifest` and `runtime` checks, the platform's static, live and `doctor()` checks, the loaded plugins, runtime status, devices (one live probe), leaked dev servers, capture-helper health, and `next`. `--expect-live` is an exit-coded liveness gate, `--print-ready` prints only the platform's `readiness.readyIndicator` for Farmslot's `health_check` (a live platform without one prints `not-ready` on stderr and exits 1), and `--fix` runs the platform's `fixes`, ensures the overlay, then the host's `fix.repair`, and lists the host's next steps first.
   - `createDoctorReport`, `requiredDoctorCheckSummary`, `runnerProvenance` and `runnerInstallKind`: the report checks the host package name against `HarnessHost.packageName`, reads `<PREFIX>_INVOKED_AS`, and carries `recipeCliVersion`. A host report field named like a report or doctor envelope key (`status`, `checks`, `runner`, `ready`, `devices`, …) is refused.
@@ -15,6 +19,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Add `afterAdapterLoad(adapterId)` to `createHarnessCli`. It runs whenever a command selects an adapter, after the loader (a built-in or an undeclared id has no plugin record), before passthrough help, `call <action> --help`, command help and dispatch, for a host check that needs the loaded plugin (mm-harness fences a web-dapp venue policy there). A refusal it throws (`AdapterPluginError`, `RecipeTrustError`, `RecipeResolutionError`) prints like a loader refusal, exit 2; any other error goes to the error mapper.
 - Add `explainInvalidChoice` to `validatePublicInvocation`'s options and to `createHarnessCli`. When an option value fails its choices, the host can return its own usage error (for an adapter that lives in a recipe library the operator hasn't added); null keeps `CLI_INVALID_OPTION_VALUE`, byte for byte. The argument type is exported as `InvalidChoice`.
   - `CliUsageError.code` is now `CliUsageErrorCode | (string & {})`, so a host's own code type-checks. A consumer that switches exhaustively on the code with a `never` check needs a default branch; no known consumer does.
+- Publish with adapter-sdk 0.7.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.8.0 - 2026-10-07
 

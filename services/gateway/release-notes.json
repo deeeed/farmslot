@@ -1,5 +1,8 @@
 {
-  "version": "0.20.3",
+  "version": "0.20.4",
   "date": "2026-10-07",
-  "items": ["Stacked runs: a dev or fix-bug run can start on top of another run's published PR"]
+  "items": [
+    "Self-review checks the PR description and commit subjects against the diff and evidence",
+    "Replaying a step recreates the slot's tmux session when it is gone after a reboot or tmux crash"
+  ]
 }
