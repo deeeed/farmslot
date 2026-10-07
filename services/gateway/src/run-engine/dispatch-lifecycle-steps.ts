@@ -176,11 +176,13 @@ interface RunEngineFlags {
 
 /** Stage lines carry this token when a stage shows no change; they say so without being progress. */
 const STALL_NOTICE = 'no progress for';
+/** A stage line's trailing elapsed time (`, 1m42s`): a heartbeat changes only that. */
+const ELAPSED_SUFFIX = /, \d+(?:h\d{2}m|m\d{2}s|s)$/u;
 
 /**
  * Live prepare progress. A named sub-step event (a stage, a parsed `[i/n]`
  * preflight line) updates the step's detail and sub-steps and is the step's
- * last progress unless it is a stall notice. Raw output only refreshes
+ * last progress when it says something new (not a stall notice or a repeat). Raw output only refreshes
  * `lastOutput`, throttled: output alone does not prove a stage is moving.
  */
 export function createPrepareProgressEmitter(params: {
@@ -194,6 +196,7 @@ export function createPrepareProgressEmitter(params: {
   const { runId, inputs, baseOutputs, collector, stepPartialIO, broadcastFn } = params;
   let lastStreamBroadcast = 0;
   const STREAM_THROTTLE_MS = 1500;
+  let lastProgressText: string | undefined;
   return (event: string, payload: unknown) => {
     collector.emit(event, payload);
     const p = payload as { name?: string; detail?: string; stream?: string } | undefined;
@@ -205,10 +208,15 @@ export function createPrepareProgressEmitter(params: {
         subSteps: collector.snapshot(),
       };
       if (lo) outputs.lastOutput = lo;
+      // Progress is a line that says something new: not a stall notice, and not
+      // a heartbeat repeating the last line with a later elapsed time.
+      const text = (p.detail || p.name).replace(ELAPSED_SUFFIX, '');
+      const moved = !text.includes(STALL_NOTICE) && text !== lastProgressText;
+      if (moved) lastProgressText = text;
       updateRunStep(runId, 'prepare', {
         detail: p.detail || p.name,
         outputs,
-        ...(p.detail?.includes(STALL_NOTICE) ? {} : { lastProgressAt: new Date().toISOString() }),
+        ...(moved ? { lastProgressAt: new Date().toISOString() } : {}),
       });
       stepPartialIO.set(runId, { inputs, outputs });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });

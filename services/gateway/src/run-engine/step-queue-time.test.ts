@@ -77,6 +77,22 @@ test('a decision an earlier attempt resolved replays without adding queue time',
   assert.equal(step(run.id, 'find-slot').queuedMs, 4_000);
 });
 
+test('a step that finishes with a wait still open keeps that wait as queue time', (t) => {
+  const run = devRun(t);
+  const since = new Date(Date.now() - 120_000).toISOString();
+  updateRunStep(run.id, 'monitor', {
+    status: 'running',
+    startedAt: iso(T0),
+    queuedMs: 1_000,
+    queuedSince: since,
+  });
+  // A terminal worker signal completes the step before the claim clears.
+  updateRunStep(run.id, 'monitor', { status: 'done', durationMs: 600_000 });
+  const done = step(run.id, 'monitor');
+  assert.equal(done.queuedSince, undefined);
+  assert.ok(done.queuedMs! >= 121_000 && done.queuedMs! < 125_000, `${done.queuedMs}`);
+});
+
 test('a waiter that outlives a re-entry adds nothing to the new attempt', async (t) => {
   const run = devRun(t);
   updateRunStep(run.id, 'find-slot', { status: 'running', startedAt: iso(T0) });
@@ -162,6 +178,19 @@ test('prepare stage lines are progress; stall notices and plain output are not',
 
   emit('script.step', { name: 'preflight', detail: 'Running preflight (metro) — [3/5] app: open' });
   assert.notEqual(step(run.id, 'prepare').lastProgressAt, progressAt);
+
+  // A heartbeat repeats the last line with a later elapsed time: not progress.
+  emit('script.step', {
+    name: 'preflight',
+    detail: 'Running preflight (metro) — [3/5] app: waiting for bridge, 15s',
+  });
+  const movedAt = iso(T0 + 1);
+  updateRunStep(run.id, 'prepare', { lastProgressAt: movedAt });
+  emit('script.step', {
+    name: 'preflight',
+    detail: 'Running preflight (metro) — [3/5] app: waiting for bridge, 30s',
+  });
+  assert.equal(step(run.id, 'prepare').lastProgressAt, movedAt);
 });
 
 test('the monitor step mirrors structured worker progress', (t) => {

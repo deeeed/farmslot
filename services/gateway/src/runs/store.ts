@@ -22,6 +22,7 @@ import {
   type AgentContextStatus,
   agentContextTaskFile,
   agentRoleLabel,
+  closeStepWait,
   contextIdFor,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
@@ -1287,7 +1288,14 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
   const step = run.steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step not found: ${stepName}`);
 
-  Object.assign(step, partial);
+  // A step that stops running ends a wait still open on it (a claim not yet
+  // granted, a decision a worker signal outran): that time stays queue time.
+  const stops =
+    step.status === 'running' && partial.status !== undefined && partial.status !== 'running';
+  Object.assign(
+    step,
+    stops && !('queuedSince' in partial) ? { ...closeStepWait(step), ...partial } : partial,
+  );
   run.updatedAt = new Date().toISOString();
   persistRunBackground(run, 'step update');
   return run;
