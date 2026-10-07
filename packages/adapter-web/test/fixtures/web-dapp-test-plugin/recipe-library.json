@@ -1,0 +1,10 @@
+{
+  "platforms": ["test-dapp"],
+  "adapters": {
+    "test-dapp": {
+      "module": "./plugins/test-dapp/index.mjs",
+      "export": "testDappAdapter",
+      "extends": "web-dapp"
+    }
+  }
+}

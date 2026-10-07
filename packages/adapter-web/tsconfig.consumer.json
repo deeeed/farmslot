@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "files": ["test/types/consumer.ts"]
+  "files": ["test/types/consumer.ts", "test/types/web-dapp.consumer.mts"]
 }

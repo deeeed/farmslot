@@ -35,6 +35,7 @@ const { selectPageTarget } = require('@farmslot/adapter-web/page-target');
 | `slot-title`                   | prefix the extension home tab's title with the farm slot id, across the page's own title resets                        |
 | `validation-process-ownership` | find and stop the processes that own a slot profile                                                                    |
 | `validation-launch-supervisor` | supervise one validation launch: port lease, quarantine, cleanup                                                       |
+| `web-dapp`                     | the generic web-dapp lifecycle as an adapter-sdk `PlatformAdapter` (ESM): slot browser, wallet host, readiness, stop   |
 
 ## Launching
 
@@ -116,6 +117,28 @@ const binding = createWalletRequestBinding({
   wallet,
   refuseTypedData,
   record: (entry) => appendLine(logFile, entry),
+});
+```
+
+## Web-dapp adapter
+
+`@farmslot/adapter-web/web-dapp` (ESM) is the lifecycle of a web app under test whose dev server the slot owns. `createWebDappAdapter({ id, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter`: launch, stop, runtime status, doctor checks, logs and the wallet request-log findings. It runs one slot browser per slot, and a wallet host attached to it over CDP that records the wallet requests (and, with `signer=injected`, answers them with the strict wallet from `dapp`).
+
+- **Venue policy.** The app's venue (the hosts a testnet run blocks and serves, the typed data to refuse, the start page) comes from the adapter that `extends: 'web-dapp'`: its policy module goes to `RECIPE_WEB_DAPP_POLICY` through `bindWebDappPolicy(adapter)`. Bare web-dapp has no policy and refuses to launch. `fencePolicy` and `assertPolicyDigest` hold the module and what it imports to the files the plugin digest covers.
+- **Served network.** A policy that declares served hosts (`venueHosts().served`) has the wallet host wait for the app to request one of them, which proves the dev server serves testnet. A policy for an app whose page makes no venue request of its own (such as test-dapp-multichain, whose wallet traffic goes through the extension) opts out explicitly: `venueHosts()` returns `served: []` with `servedCheck: 'not-applicable'`. The check is then skipped, and `networkEnforcement.served` in `browser.json` and the `network-enforcement` entry of the wallet request log say `not-applicable`. An empty `served` without that opt-out keeps the check, which fails closed, so a policy that computes its served hosts can't lose the check by finding none. Listing served hosts and opting out together is refused. Mainnet blocking is enforced either way.
+- **Signers.** `signer=injected` needs nothing. `signer=extension` belongs to the host: a signer module exports `signers.extension` with `prepareProfile` (load the extension, seed the profile; returns `{ browserArgs, secrets, state }` and may carry an `afterBrowserStart` step; both steps get `trackSecret` for key-material files), `confirm` (required with `prepareProfile`: without it the wallet host would close the wallet's own windows) and `readinessChecks`. `signers.injected.identity` sets the EIP-6963 identity the injected strict wallet presents. The module path (`signerModule`, `--signer-module` or `RECIPE_WEB_DAPP_SIGNER_MODULE`) is the one source: readiness, launch, verify and the wallet host all load it, and `createWebDappAdapter` throws if given an in-process `signers` object. With no signer requested, the signer is `extension` when a module is configured and `injected` otherwise, so a host whose module exports only `injected` sets the signer explicitly (`--signer injected` or `TERMINAL_SIGNER=injected`).
+- **Hooks.** The action set, console capture, and network and performance observation are the host's; pass them as `hooks`. `diagnostics`, `readiness` and `harness` merge over the generic members.
+- **Leaves.** `webDappLeafPath('launch' | 'wallet-host' | 'inject' | 'verify' | 'stop' | 'cleanup')` names the CLI scripts.
+- **Test fixture.** `test/fixtures/web-dapp-test-plugin` is a `test-dapp` adapter for MetaMask's test-dapp-multichain. That dapp needs `signer=extension` with a host signer module: it talks to the wallet through the Multichain API, which the injected EIP-1193 strict wallet cannot drive.
+- **Kept for compatibility.** These generic-code names still carry the host's old product name, because renaming them needs both sides to change together: the `TERMINAL_*` environment names (`TERMINAL_CHROME_BIN`, `TERMINAL_APP_PORT`, `TERMINAL_SIGNER`, `TERMINAL_ACCOUNT`, `TERMINAL_HEADLESS`, `TERMINAL_SLOW_MO`, `TERMINAL_WINDOW`, `TERMINAL_SCREEN`); `MM_HARNESS_SERVED_TIMEOUT_MS`, `MM_HARNESS_APP_COMMIT_TIMEOUT_MS` and `MM_HARNESS_FOCUS_SETTLE_MS`; the `--mm-harness-owner` process marker (process ownership is matched on argv); the `mm-harness-probe=1` probe marker; and the `mm-harness-hud` overlay element.
+
+```js
+import { createWebDappAdapter } from '@farmslot/adapter-web/web-dapp';
+
+const adapter = createWebDappAdapter({
+  id: 'web-dapp',
+  signerModule: '/path/to/signers.mjs', // exports { signers: { extension, injected } }; omit for injected-only
+  hooks: { actions },
 });
 ```
 
