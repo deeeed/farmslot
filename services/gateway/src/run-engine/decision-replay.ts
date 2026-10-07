@@ -14,6 +14,8 @@ export const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
   'request-cross-runner-review',
 ]);
 const HUMAN_GATE_REVIEW_REQUEST_CONSUMED_CONTEXT_KEY = 'reviewRequestConsumedAt';
+// An approval the gate held because the reviewed inputs changed (F42).
+const HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY = 'approvalHeldAt';
 
 export function latestResolvedHumanGateDecision(
   decisions: RunDecision[],
@@ -25,6 +27,9 @@ export function latestResolvedHumanGateDecision(
     // Supersession is a replay barrier. Looking past it can resurrect the
     // approval whose stale waiter was deliberately invalidated.
     if (decision.resolvedAction === 'superseded') return undefined;
+    // So is a held approval: the operator decides again after the re-review.
+    if (typeof decision.context?.[HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY] === 'string')
+      return undefined;
     if (!approvalOnly || HUMAN_GATE_APPROVAL_ACTIONS.has(decision.resolvedAction ?? '')) {
       return decision;
     }
@@ -46,6 +51,17 @@ export function isReplayableResolvedHumanGateDecision(
   if (HUMAN_GATE_APPROVAL_ACTIONS.has(actionId)) return true;
   if (!isHumanGateReviewRequestAction(actionId)) return false;
   return typeof decision.context?.[HUMAN_GATE_REVIEW_REQUEST_CONSUMED_CONTEXT_KEY] !== 'string';
+}
+
+/** Marks a resolved approval as held so it is never replayed or finalized. */
+export function markResolvedHumanGateApprovalHeld(
+  decision: RunDecision,
+  heldAt = new Date().toISOString(),
+): void {
+  decision.context = {
+    ...(decision.context ?? {}),
+    [HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY]: heldAt,
+  };
 }
 
 export function markResolvedHumanGateReviewRequestConsumed(

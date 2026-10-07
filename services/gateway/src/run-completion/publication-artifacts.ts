@@ -540,22 +540,28 @@ export function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
+  // A relative link resolves against the PR page on GitHub, so it is always
+  // dead. Keep the link text; a relative image has nothing to show.
+  result = result.replace(
+    /(!?)\[([^\]]*)\]\((?![a-z][a-z0-9+.-]*:|\/|#)[^)\s]+(?:\s+"[^"]*")?\)/gi,
+    (_match, image: string, label: string) => (image ? '' : label),
+  );
   const localArtifactPath = new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'i');
   const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
-  // ATX headings are section titles, not disposable local-path lines. Keep the
-  // heading and still run in-place path cleanup so an embedded artifact path
-  // cannot leak. `## **Screenshots/Recordings**` stays intact because `**` is
-  // outside the cleaner boundary class.
-  const markdownHeadingLine = /^\s{0,3}#{1,6}(?:\s|$)/;
+  // ATX headings are section titles and table rows carry the rest of their
+  // cells (an AC table row is the AC), so neither is a disposable local-path
+  // line. Keep them and still run in-place path cleanup so an embedded artifact
+  // path cannot leak. `## **Screenshots/Recordings**` stays intact because `**`
+  // is outside the cleaner boundary class.
+  const keptLine = /^\s{0,3}#{1,6}(?:\s|$)|^\s*\|/;
   // Plain local-reference lines have no publishable value. Generated evidence
   // captions and lines containing hosted evidence keep their surrounding text.
   const originalLines = result.split('\n');
   result = originalLines
     .map((line) => {
       if (!localArtifactPath.test(line)) return line;
-      const isHeading = markdownHeadingLine.test(line);
       if (
-        !isHeading &&
+        !keptLine.test(line) &&
         !protectedLinks.hasProtectedLink(line) &&
         !generatedCaptionLine.test(line)
       ) {
@@ -575,6 +581,9 @@ export function sanitizePRBody(body: string): string {
         '',
       );
       if (generatedCaptionLine.test(cleaned)) {
+        // Hosted images were protected above, so any <img> left points at a
+        // local file and would render broken.
+        cleaned = cleaned.replace(/(?:<br\s*\/?>)?<img\b[^>]*>/gi, '');
         cleaned = cleaned.replace(
           new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'gi'),
           readableArtifactName,

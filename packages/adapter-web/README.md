@@ -12,21 +12,23 @@ Docs: https://farmslot.io/docs/reference/adapter-web
 
 ## Source layout
 
-| module                         | owns                                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `browser-resolver`             | Chrome for Testing vs branded Chrome, probe-launch and its cache, extension loading method; CLI entry          |
-| `browser-cdp`                  | browser-level CDP client with deadlines, CDP-port ownership proof, `Extensions.loadUnpacked`, window placement |
-| `chrome-args`                  | remote-debugging flags, isolated profile flags, runtime identity nonce, launch quarantine markers              |
-| `dapp`                         | web dapps: strict EIP-1193 test wallet, wallet-request page script and its host binding, wallet request log    |
-| `extension-id`                 | Chromium extension id from a manifest key or an unpacked directory                                             |
-| `launch-browser`               | launch (or release) one isolated, detached, owned Chromium with an unpacked extension                          |
-| `macos-focus`                  | capture the frontmost app before a headed launch and restore it if one of our browsers took it                 |
-| `origin`                       | exact app-origin checks, the app top-frame CDP context check, URLs without query strings                       |
-| `page-target`                  | pick the page on an origin, preferring one whose URL carries a hash                                            |
-| `playwright-cdp`               | page evaluation over a raw CDP session (safe under LavaMoat scuttling)                                         |
-| `slot-title`                   | prefix the extension home tab's title with the farm slot id, kept across the page's own title resets           |
-| `validation-process-ownership` | find and stop the processes that own a slot profile                                                            |
-| `validation-launch-supervisor` | supervised child for one validation launch: port lease, quarantine and cleanup                                 |
+| module                         | owns                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `browser-resolver`             | Chrome for Testing vs branded Chrome, probe-launch and its cache, extension loading method; CLI entry                     |
+| `browser-cdp`                  | browser-level CDP client with deadlines and events, CDP-port ownership proof, `Extensions.loadUnpacked`, window placement |
+| `chrome-args`                  | remote-debugging flags, isolated profile flags, runtime identity nonce, launch quarantine markers                         |
+| `dapp`                         | web dapps: strict EIP-1193 test wallet, wallet-request page script and its host binding, wallet request log               |
+| `extension-id`                 | Chromium extension id from a manifest key or an unpacked directory                                                        |
+| `launch-browser`               | launch (or release) one isolated, detached, owned Chromium with an unpacked extension                                     |
+| `macos-focus`                  | capture the frontmost app before a headed launch and restore it if one of our browsers took it                            |
+| `network-observer`             | network capture for every target of a loaded extension, through recipe-runner's CDP broker                                |
+| `origin`                       | exact app-origin checks, the app top-frame CDP context check, URLs without query strings                                  |
+| `page-target`                  | pick the page on an origin, or an extension's UI renderer by path                                                         |
+| `performance-observer`         | CDP performance traces of an extension's UI renderer, through recipe-runner's trace collector                             |
+| `playwright-cdp`               | page evaluation over a raw CDP session (safe under LavaMoat scuttling)                                                    |
+| `slot-title`                   | prefix the extension home tab's title with the farm slot id, kept across the page's own title resets                      |
+| `validation-process-ownership` | find and stop the processes that own a slot profile                                                                       |
+| `validation-launch-supervisor` | supervised child for one validation launch: port lease, quarantine and cleanup                                            |
 
 Sources are CommonJS (`src/**/*.cjs`) and ship as is; `yarn build` emits `.d.cts` declarations. Every library subpath can be `require`d or `import`ed with named imports, except `validation-launch-supervisor`: it is a child-process entry (it runs when loaded), so hosts `require.resolve` it and fork it.
 

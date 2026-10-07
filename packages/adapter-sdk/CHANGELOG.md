@@ -4,7 +4,27 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** remove `devServer.portFlags`. `--watcher-port` is the one option that gives `run` and `call` the dev-server port; a platform names its port environment with `devServer.portEnv`.
+- **BREAKING (implementers only):** `CommandEventStream` gains `stage(name, { index, total })`, a setup stage with `progress({ waitingFor, message, percent, current, total, unit, screen })`, `done(detail)` and `failed(detail)`. A platform calls it from `launch` to say what it is waiting for; the host prints it with the elapsed time and notes when nothing has changed for a while. It never fails the command. Another `CommandEventStream` implementation adds `stage: noopStage`. Also exports `StageHandle` and `StageProgress`.
+- `AdapterReadiness.fixes[].apply` may return a promise; `doctor --fix` awaits it, so a long fix that works asynchronously keeps the stage heartbeat going. Synchronous fixes work as before.
+- **BREAKING:** Add the optional `PlatformAdapter.readiness` member (`AdapterReadiness`): what `doctor`, `status` and `prepare` ask a platform: `checks`, `liveChecks`, `environment`, `lines`, `orphanDevServers`, `captureProviders`, `fixes`, `runtimeBlock`, `pinnedFlags`, `statusRuntime`, `readyIndicator` (the `doctor --print-ready` stdout), `devices` (`AdapterDevices`: one view, one live probe, their rendering) and `prepare` (`AdapterPrepare`: `clearMetro`, `devicePlatform`, `ambiguousTarget`). Also exports `AdapterDevice`, `AdapterDeviceView`, `AdapterDeviceLiveView`, `AdapterPaint` and `AdapterPinnedFlags`.
+  - Breaking for host types only: a host type that extends `PlatformAdapter` and declares its own `readiness` member no longer compiles unless that member extends `AdapterReadiness`. Migrate by typing it as `AdapterReadiness & { … }` (or an interface that extends `AdapterReadiness`). Runtime behaviour is unchanged.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-10-07
+
+- Add `AdapterFailurePatterns.environment` (`pattern`, `message`, `userAction`): a failure the target's environment causes (a missing runtime dependency or build output), which neither healing nor the app can fix.
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0.
+
+## 0.5.1 - 2026-10-06
+
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0 so consumers share one recipe-runner copy.
+
+## 0.5.0 - 2026-10-06
+
 - **BREAKING:** `observation.performance.start` no longer receives `ports`. The run's ports are in `env`, which now carries the slot's ports, `--cdp-port`/`--watcher-port` and the platform's run environment. `run.runtimeCheck` also runs on the run's ports and environment.
+- Add the optional members a library plugin needs: `PlatformAdapter.extends` (the adapter it composes on), `PlatformAdapter.doctor(target)` returning `AdapterDoctorCheck[]` (checks `doctor` reports after the shared ones), `actions.manifestPaths()` (every action manifest the platform declares, parent first) and `actions.adapters()` (action implementations shipped in code).
+- Publish with protocol 0.34.0 and recipe-runner 0.25.0.
 
 ## 0.4.0 - 2026-10-05
 

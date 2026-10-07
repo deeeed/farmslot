@@ -246,6 +246,11 @@ describe('bounded healing', () => {
             message: 'the window blocks capture.',
             userAction: 'open another screen',
           },
+          environment: {
+            pattern: /MISSING_BUILD/gu,
+            message: 'a workspace package has no build output.',
+            userAction: 'build the workspace',
+          },
           transportFirst: /bridge timed out/u,
           walletState: /seed phrase/u,
         },
@@ -253,6 +258,9 @@ describe('bounded healing', () => {
       fakeAdapter('web', { failurePatterns: { transport: /ECONNREFUSED|seed phrase server/u } }),
     );
     assert.equal(classifyFailure('SECURE_WINDOW'), 'capture-protected');
+    assert.equal(classifyFailure('MISSING_BUILD while reading the seed phrase'), 'environment');
+    assert.equal(classifyFailure('SECURE_WINDOW and MISSING_BUILD'), 'capture-protected');
+    assert.equal(classifyFailure('bridge timed out: MISSING_BUILD'), 'environment');
     assert.equal(classifyFailure('bridge timed out while reading the seed phrase'), 'infra');
     assert.equal(classifyFailure('seed phrase server missing'), 'wallet');
     assert.equal(classifyFailure('ECONNREFUSED'), 'infra');
@@ -265,6 +273,19 @@ describe('bounded healing', () => {
       message: 'the window blocks capture.',
       userAction: 'open another screen',
       originalError: 'SECURE_WINDOW',
+    });
+    // A global pattern is tested again for the violation; it must still match.
+    for (let i = 0; i < 2; i += 1)
+      assert.equal(
+        checkHealBounds(target, 'MISSING_BUILD', newHealState())?.code,
+        'ENVIRONMENT_NOT_READY',
+      );
+    assert.deepEqual(checkHealBounds(target, 'MISSING_BUILD', newHealState()), {
+      code: 'ENVIRONMENT_NOT_READY',
+      exitCode: 4,
+      message: 'a workspace package has no build output.',
+      userAction: 'build the workspace',
+      originalError: 'MISSING_BUILD',
     });
     assert.equal(
       checkHealBounds(target, 'seed phrase missing', newHealState())?.userAction,
@@ -330,11 +351,59 @@ describe('launch', () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(
       events.map((event) => event.phase ?? event.event),
-      ['resolve', 'app-started', 'complete'],
+      // The launch stage opens after resolve and ends with the command.
+      ['resolve', 'stage', 'app-started', 'stage', 'complete'],
     );
     assert.equal(events[0]?.platform, 'ios');
     // The checkout lock is released afterwards.
     assert.equal(fs.existsSync(path.join(target, 'temp/recipe/runtime/sandbox.lock')), false);
+  });
+
+  test('platform stages print on stderr while the --json document stays as it was', async () => {
+    const document = { schemaVersion: 1, command: 'launch', status: 'pass' };
+    useAdapters(
+      fakeAdapter('app', {
+        launch: (context) => {
+          const metro = context.stream.stage('metro', { index: 1, total: 2 });
+          metro.progress({
+            message: 'bundling',
+            percent: 61,
+            current: 4210,
+            total: 6900,
+            unit: 'modules',
+          });
+          metro.done();
+          // Left running: it ends with the command.
+          context.stream.stage('wallet', { index: 2, total: 2 });
+          console.log(JSON.stringify(document));
+          return Promise.resolve(0);
+        },
+      }),
+    );
+    const target = tempRoot();
+    const chunks: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) =>
+      chunks.push(String(chunk)) > 0) as typeof process.stderr.write;
+    let captured: { result: number; stdout: string; stderr: string };
+    try {
+      captured = await capture(() =>
+        handleLaunch(['--adapter', 'app', '--target', target, '--json']),
+      );
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.equal(captured.result, 0);
+    assert.equal(captured.stdout, JSON.stringify(document));
+    assert.deepEqual(chunks.join('').split('\n').filter(Boolean), [
+      '[1/1] launch: started, 0s',
+      '[1/2] metro: started, 0s',
+      '[1/2] metro: bundling 61% (4,210/6,900 modules), 0s',
+      '[1/2] metro: done, 0s',
+      '[2/2] wallet: started, 0s',
+      '[2/2] wallet: done, 0s',
+      '[1/1] launch: done, 0s',
+    ]);
   });
 
   test('teaches when no adapter matches the checkout', async () => {

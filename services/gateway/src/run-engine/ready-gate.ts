@@ -53,8 +53,12 @@ import {
 } from '../run-completion/orchestrator.js';
 import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-package.js';
 import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
+import {
+  reviewedInputsAwaitingReview,
+  reviewedInputsChanged,
+} from '../self-review/reviewed-inputs.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -71,6 +75,7 @@ import {
 } from './branch-freshness.js';
 import {
   latestResolvedHumanGateDecision,
+  markResolvedHumanGateApprovalHeld,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
@@ -857,13 +862,19 @@ export async function executeReadyGate(runId: string): Promise<string> {
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
+  // The description, evidence or HEAD changed after the last passing review:
+  // self-review must run again before publication, whatever the review minimum.
+  const reviewedInputsStale = publicationApprovalGate && (await reviewedInputsChanged(current));
   const reviewSatisfied =
     !publicationApprovalGate ||
-    (independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0);
+    (independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
+      staleReviewCount === 0 &&
+      !reviewedInputsStale);
   // The evidence-refresh override is offered ONLY when staleness is purely
-  // subject/evidence drift on a still-matching HEAD — never when code changed.
+  // subject/evidence drift on a still-matching HEAD — never when code changed,
+  // and never when what the last review judged has changed since.
   const evidenceRefreshAction =
-    publicationApprovalGate && preparedPackage
+    publicationApprovalGate && preparedPackage && !reviewedInputsStale
       ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
       : null;
   const unavailableSnapshotAction =
@@ -1094,6 +1105,26 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // record, which a `failed` run refuses.
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
+  // F42: the description, evidence or HEAD changed while the gate was open and
+  // self-review has not run again for it. Hold instead of approving: the gate
+  // step re-runs self-review and presents the gate again.
+  if (
+    publicationApprovalGate &&
+    isPublishApprovalAction(actionId) &&
+    (await reviewedInputsAwaitingReview(getRun(runId)!))
+  ) {
+    if (decision) {
+      markResolvedHumanGateApprovalHeld(decision);
+      await persistRunNow(
+        updateRun(runId, { decisions: afterDecisionRun.decisions }),
+        'approval held',
+      );
+    }
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: description, evidence or HEAD changed since the last review`,
+    );
+    return 'hold';
+  }
   // The operator's posture choice for the wait they just ended.
   const postureChoice = gateChoiceFromSelectionData(selectionData);
   const postureOutcome = await reconcileRunPosture({

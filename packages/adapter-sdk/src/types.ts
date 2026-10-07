@@ -34,6 +34,11 @@ export interface PlatformAdapter<
   readonly id: string;
   /** The SDK version this adapter was written against. A host refuses any other. */
   readonly sdkVersion: AdapterSdkVersion;
+  /**
+   * The adapter this one composes on. Set on an adapter a recipe library
+   * declares with `extends` in recipe-library.json `adapters`.
+   */
+  readonly extends?: string;
   // A headless platform runs no app or dev server. Commands ask this instead of
   // comparing adapter ids.
   readonly headless: boolean;
@@ -85,6 +90,123 @@ export interface PlatformAdapter<
   run?: AdapterRun<TPlatform, TBrowser>;
   // Network and performance observation around a run.
   observation?: AdapterObservation;
+  // Platform checks `doctor` reports after the shared ones.
+  doctor?(target: string): Promise<AdapterDoctorCheck[]>;
+  // What `doctor`, `status` and `prepare` report and do beyond the shared steps.
+  // Absent: the shared checks only, no devices, no repairs.
+  readiness?: AdapterReadiness;
+}
+
+/** What `doctor`, `status` and `prepare` ask a platform. Every member is optional. */
+export interface AdapterReadiness {
+  // Platform checks in the doctor report, after the shared ones. `platform` is
+  // --platform when given.
+  checks?(target: string, platform?: string): AdapterDoctorCheck[];
+  // Checks that need the live runtime, appended after the runtime check.
+  liveChecks?(target: string): Promise<AdapterDoctorCheck[]>;
+  // Reported as the doctor report's `environment`.
+  environment?(target: string): Record<string, unknown>;
+  // Extra human doctor lines.
+  lines?(target: string): string[];
+  // Dev servers a killed launch left behind for this checkout (their pids).
+  orphanDevServers?(target: string, port: string | undefined): string[];
+  // Screenshot providers that work without the capture helper. Absent: the
+  // platform has no capture surface and doctor reports none.
+  captureProviders?: readonly string[];
+  // doctor --fix repairs: apply returns true when it changed something.
+  // A fix that takes long can return a promise, so the host's stage heartbeat
+  // keeps ticking while it works; a synchronous one blocks it.
+  fixes?: ReadonlyArray<{ id: string; apply(target: string): boolean | Promise<boolean> }>;
+  // A runtime state doctor --fix reports as failed, with its next step.
+  runtimeBlock?(
+    target: string,
+    runtime: AdapterRuntimeStatus | undefined,
+  ): { id: string; userAction?: string } | undefined;
+  // Feature flags readable without a runtime (a pinned build manifest). The
+  // overrides are the platform's own record; the host reports them.
+  pinnedFlags?(target: string): AdapterPinnedFlags | null;
+  // `status` probes the runtime unless --fast.
+  statusRuntime?: boolean;
+  // `doctor --print-ready` stdout when the runtime is live (Farmslot's
+  // health.ready_indicator); '' when the platform is live but not ready.
+  readyIndicator?(devices: readonly AdapterDevice[]): string;
+  // Connected devices for doctor and status; loaded on first use.
+  devices?(): Promise<AdapterDevices>;
+  // `prepare`. Absent: prepare does not support the platform.
+  prepare?: AdapterPrepare;
+}
+
+export interface AdapterPinnedFlags {
+  overrides: unknown;
+  error?: string;
+  sourcePath?: string;
+}
+
+/** A device doctor and status list; the platform owns the rest of the record. */
+export interface AdapterDevice {
+  id: string;
+  platform?: string;
+  selected?: boolean;
+}
+
+/** The connected devices, as `status` and `doctor` show them before any probe. */
+export interface AdapterDeviceView {
+  allConnectedDevices: readonly unknown[];
+  devices: AdapterDevice[];
+  deviceDiscoveryErrors: ReadonlyArray<{ message: string; userAction: string }>;
+}
+
+/** What one live probe of the devices answered. */
+export interface AdapterDeviceLiveView {
+  devicesWithLive: AdapterDevice[];
+  additionalReachableDevices: AdapterDevice[];
+  // Feature-flag overrides the running app reported (the platform's record).
+  featureFlags: unknown;
+  // Extra `status --json` fields this platform reports, in order.
+  statusFields?: Readonly<Record<string, unknown>>;
+  // The platform's per-device live state, passed back to its own renderers.
+  liveMap: unknown;
+}
+
+export type AdapterPaint = (style: string, text: string) => string;
+
+/** The devices surface: one view, one live probe, and their human rendering. */
+export interface AdapterDevices {
+  view(allDevices: boolean): AdapterDeviceView;
+  live(target: string, view: AdapterDeviceView): Promise<AdapterDeviceLiveView>;
+  renderList(view: AdapterDeviceView, paint: AdapterPaint): void;
+  renderAdditional(devices: AdapterDevice[], paint: AdapterPaint): void;
+  renderLive(devices: AdapterDevice[], liveMap: unknown, paint: AdapterPaint): void;
+  // Live hints `status` prints after the live block (e.g. reverse ports).
+  renderHints?(live: AdapterDeviceLiveView, paint: AdapterPaint): void;
+  // The next command after a live probe, given the platform's default.
+  nextForLive(fallback: string, liveMap: unknown): string;
+}
+
+export interface AdapterPrepare {
+  // Accepts --clear-metro.
+  clearMetro?: boolean;
+  // The device platform launch and fixtures target when none was given, from
+  // the checkout's pins and the devices `status` reported; undefined when it is
+  // ambiguous.
+  devicePlatform?(
+    target: string,
+    devices: ReadonlyArray<{ platform?: string; selected?: boolean }>,
+  ): string | undefined;
+  // The error prepare reports when devicePlatform cannot decide, with the
+  // numbered choices.
+  ambiguousTarget?(): { code: string; message: string; userAction: string };
+}
+
+/** One check a platform adds to the `doctor` report. */
+export interface AdapterDoctorCheck {
+  id: string;
+  status: 'pass' | 'fail';
+  /** A required check that fails makes the report fail. */
+  required: boolean;
+  message: string;
+  detail?: string;
+  userAction?: string;
 }
 
 export interface AdapterDetect {
@@ -107,6 +229,10 @@ export interface AdapterFailurePatterns {
   // The screen refuses capture, so a screenshot can't be evidence. The platform
   // words the explanation and the next step.
   captureProtected?: { pattern: RegExp; message: string; userAction: string };
+  // The target's environment is missing something the action needs (a runtime
+  // dependency, a build output). Neither healing nor the app can fix it; the
+  // platform words the explanation and the next step.
+  environment?: { pattern: RegExp; message: string; userAction: string };
   // Transport failures that would otherwise read as wallet state.
   transportFirst?: RegExp;
   // Wallet or fixture state the harness never changes on its own.
@@ -140,10 +266,46 @@ export interface HealBoundViolation {
   originalError?: string;
 }
 
+// What a running setup stage is doing right now. The host renders it as one
+// line ("bundling 61% (4,210/6,900 modules)", "waiting for unlock, page is
+// #onboarding/welcome") and says "no progress" when it stops changing.
+export interface StageProgress {
+  waitingFor?: string;
+  message?: string;
+  percent?: number;
+  current?: number;
+  total?: number;
+  // What `current`/`total` count ("modules", "attempts").
+  unit?: string;
+  // The page or screen the app is on.
+  screen?: string;
+}
+
+// One setup stage (`[2/5] metro`). Feedback only: it never fails the command.
+export interface StageHandle {
+  progress(progress: StageProgress): void;
+  done(detail?: string): void;
+  failed(detail?: string): void;
+}
+
+const NOOP_STAGE: StageHandle = {
+  progress: () => undefined,
+  done: () => undefined,
+  failed: () => undefined,
+};
+
+/** `CommandEventStream.stage` for a stream that reports no stages. */
+export function noopStage(): StageHandle {
+  return NOOP_STAGE;
+}
+
 // The --json-stream events a command and its platform emit while it runs.
 export interface CommandEventStream {
   readonly enabled: boolean;
   phase(phase: string, fields?: Record<string, unknown>): void;
+  // A setup stage: a line on stderr with its elapsed time, at least every 15 s
+  // while it runs, plus a `stage` event on --json-stream.
+  stage(name: string, position: { index: number; total: number }): StageHandle;
   mutation(mutation: Record<string, unknown>): void;
   recovery(code: string): void;
   error(error: Record<string, unknown>): void;
@@ -312,9 +474,6 @@ export interface AdapterDevServer {
   // WATCHER_PORT and RECIPE_WATCHER_PORT. Hosts set them for every registered
   // platform when a port is given explicitly.
   portEnv?: readonly string[];
-  // More option names (camelCase, as parsed) that give the dev-server port to
-  // `run` and `call`, after --watcher-port.
-  portFlags?: readonly string[];
 }
 
 // Platform-phrased Next: hints so no command prints another platform's vocabulary.
@@ -329,6 +488,12 @@ export interface AdapterHints {
 export interface AdapterActions {
   // The bundled action manifest.
   manifestPath(): string;
+  // Every action manifest the platform declares, in order: an adapter that
+  // extends another lists its parent's first. Absent: [manifestPath()].
+  manifestPaths?(): readonly string[];
+  // Action implementations the platform ships in code, registered for the
+  // actions its manifests declare instead of a library's live adapter scripts.
+  adapters?(): Promise<ActionAdapter[]>;
   // Semantic actions this platform bundles beyond the ones every platform
   // bundles. Any other declared action must come from a live adapter script.
   semantic: readonly string[];

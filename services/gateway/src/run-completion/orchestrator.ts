@@ -33,6 +33,7 @@ import {
 import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { stackPrBase } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -1040,7 +1041,9 @@ async function createPrFromApprovedPackage(
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
   const pv = await loadProjectVars(run.project).catch(() => null);
-  const base = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
+  const base =
+    stackPrBase(getRun(run.id) ?? run) ??
+    ((pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH);
   const args = [
     'pr',
     'create',

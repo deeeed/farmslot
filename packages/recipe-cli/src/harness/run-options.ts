@@ -2,7 +2,7 @@
 // slot, video, HUD, trust input, and what the platform adds.
 import type { RecipeRunOptions } from '@farmslot/adapter-sdk';
 
-import { adapterPortFlags, harnessAdapter } from './adapters.js';
+import { harnessAdapter } from './adapters.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { explicitRecipeTrustOptions } from './trust.js';
 
@@ -19,7 +19,7 @@ export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): R
   const platform = harnessAdapter(adapter).run?.platformOptions?.(options);
   return {
     cdpPort: optionString(options, 'cdpPort'),
-    watcherPort: watcherPortOption(options),
+    watcherPort: optionString(options, 'watcherPort'),
     slot: optionString(options, 'slot'),
     validationRuntimeDir: optionString(options, 'validationRuntimeDir'),
     recordVideo: recordVideo === 'full-run' ? 'full-run' : false,
@@ -27,13 +27,4 @@ export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): R
     ...(platform ? { platform } : {}),
     ...trust,
   };
-}
-
-// --watcher-port, else the first port option a registered adapter adds.
-function watcherPortOption(options: CliOptions): string | undefined {
-  for (const flag of ['watcherPort', ...adapterPortFlags()]) {
-    const port = optionString(options, flag);
-    if (port !== undefined) return port;
-  }
-  return undefined;
 }

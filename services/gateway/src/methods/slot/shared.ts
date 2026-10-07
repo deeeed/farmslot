@@ -15,6 +15,8 @@ export type SlotPrepareResult = {
   prepared: boolean;
   requestId: string;
   startRef?: StartRefResolution;
+  /** Upstream PR head a stacked run's branch was created from. */
+  stackBase?: StartRefResolution;
   /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
 };
@@ -26,6 +28,10 @@ export interface SlotPrepareInternalOptions {
   allowMissingReplayBranch?: boolean;
   beforeBranchSetup?: () => Promise<void>;
   startRef?: { requestedRef: string };
+  /** Stacked run: create a new work branch from this pushed ref instead of the default branch. */
+  stackBase?: { requestedRef: string };
+  /** Called as soon as the stack base resolves, before any later prepare phase can fail. */
+  onStackBaseResolved?: (resolution: StartRefResolution) => Promise<void>;
 }
 
 export interface PrepareCommandError extends Error {

@@ -4,7 +4,17 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Add `metroBundleProgress(line)`: the percent and module counts of a Metro or Expo bundle progress line, ready for a stage's `progress`.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-10-06
+
+- **Breaking:** `summarizeFrames`, `FrameSample` and `FrameMetricSummary` are no longer exported from the index. They moved to `@farmslot/recipe-runner/runtime/cdp-trace`, unchanged; import them from there.
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0.
+
+## 0.17.1 - 2026-10-06
+
+- Publish with protocol 0.34.0 and recipe-runner 0.25.0 so consumers share one recipe-runner copy.
 
 ## 0.17.0 - 2026-10-05
 

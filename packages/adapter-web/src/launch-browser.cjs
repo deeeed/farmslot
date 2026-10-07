@@ -78,6 +78,8 @@ const BROWSER_RESOLVER_CLI = require.resolve('./browser-resolver.cjs');
  * @property {string} [rerunCommand] Command named in "Next:" hints.
  * @property {number} [focusSettleMs] macOS: wait before the one focus check (default 1000).
  * @property {(line: string) => void} [log] Progress lines (default stderr).
+ * @property {(progress: { message?: string, waitingFor?: string, current?: number, total?: number, unit?: string }) => void} [progress]
+ *   What the launch is waiting for, for a caller's stage handle (`stage.progress`).
  */
 
 /**
@@ -117,6 +119,7 @@ function normalizeOptions(options) {
     if (!opts[key]) throw new Error(`Missing --${flag}`);
   }
   opts.log = opts.log ?? ((line) => process.stderr.write(`${line}\n`));
+  opts.progress = opts.progress ?? (() => {});
   return opts;
 }
 
@@ -254,12 +257,13 @@ function runLaunch(opts, acquireLock) {
   try {
     try {
       beginDetachedLaunch(cdpPort, profile, activeValidationLease);
+      opts.progress({ message: 'starting the browser' });
       if (application) {
         execFileSync('open', macBackgroundOpenArgs(application, chromeArgs), {
           env: sanitizedChildEnv(),
           stdio: ['ignore', logFd, logFd],
         });
-        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser);
+        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser, opts.progress);
         if (browserPid === null) {
           stopProfileProcessesSync(profile, { waitForAppearanceMs: 400 });
           throw ownedListenerMissing();
@@ -271,7 +275,7 @@ function runLaunch(opts, acquireLock) {
           stdio: ['ignore', logFd, logFd],
         });
         child.unref();
-        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser);
+        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser, opts.progress);
         if (browserPid === null) {
           stopProfileProcessesSync(profile, { extraPids: child.pid ? [child.pid] : [] });
           throw ownedListenerMissing();
@@ -342,6 +346,7 @@ function runLaunch(opts, acquireLock) {
 // Without it the slot has no window at all, so a failure fails the launch:
 // the owned browser is stopped (its markers kept if it cannot be).
 function openBackgroundWindow(opts, pid, url, clearLaunchMarkers) {
+  opts.progress({ message: 'opening the start window' });
   const result = spawnSync(
     process.execPath,
     [BROWSER_RESOLVER_CLI, 'open-window', '--port', String(opts.cdpPort), '--url', url],
@@ -399,6 +404,7 @@ function writeBrowserResolution(runtime, resolution) {
 }
 
 function loadExtensionOverCdp(opts, pid, initialUrl, clearLaunchMarkers) {
+  opts.progress({ message: 'loading the extension over CDP' });
   const result = spawnSync(
     process.execPath,
     [
@@ -495,10 +501,20 @@ function macApplicationForExecutable(executable) {
   return null;
 }
 
-function waitForOwnedCdpPid(port, ownedBrowser) {
-  for (let i = 0; i < 300; i += 1) {
+function waitForOwnedCdpPid(port, ownedBrowser, progress) {
+  const attempts = 300;
+  for (let i = 0; i < attempts; i += 1) {
     const pid = cdpListenerPids(port).find(ownedBrowser);
     if (pid !== undefined) return pid;
+    // Every 50 attempts (about 5 s): enough to show the wait is moving.
+    if (i > 0 && i % 50 === 0) {
+      progress({
+        waitingFor: `an owned CDP listener on 127.0.0.1:${port}`,
+        current: i,
+        total: attempts,
+        unit: 'attempts',
+      });
+    }
     spawnSync('sleep', ['0.1']);
   }
   return null;

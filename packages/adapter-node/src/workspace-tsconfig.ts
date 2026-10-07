@@ -34,10 +34,15 @@ export interface WorkspaceTsconfigEnvOptions {
  * Every package the checkout's root `package.json` declares in `workspaces` (an
  * array or `{ packages }`), by name. A monorepo that moves a dependency into its
  * workspace (core's `@metamask/utils`) needs no host change. Patterns are literal
- * directories or `<dir>/*`; any other pattern throws.
+ * directories or `<dir>/*`; any other pattern throws. A checkout without a root
+ * `package.json` has none.
  */
 export function checkoutWorkspacePackages(projectRoot: string): WorkspacePackageMap {
-  const manifest = JSON.parse(readFileSync(path.join(projectRoot, 'package.json'), 'utf8')) as {
+  const rootManifest = path.join(projectRoot, 'package.json');
+  // A target without a root manifest declares no workspaces, as a workspace
+  // directory without one declares no package.
+  if (!existsSync(rootManifest)) return {};
+  const manifest = JSON.parse(readFileSync(rootManifest, 'utf8')) as {
     workspaces?: string[] | { packages?: string[] };
   };
   const patterns = Array.isArray(manifest.workspaces)

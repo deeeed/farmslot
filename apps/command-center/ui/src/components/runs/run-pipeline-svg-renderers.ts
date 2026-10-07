@@ -15,7 +15,7 @@ import {
   type NodePos,
   type PipelineLayout,
 } from './run-pipeline-model.js';
-import { formatDuration, formatElapsed, stepStatusColor } from './run-utils.js';
+import { formatDuration, stepNodeDurationLabel, stepStatusColor } from './run-utils.js';
 
 export function renderPipelineFocus(opts: {
   nodes: readonly { id: string; x: number; y: number; w: number; step: { name: string } }[];
@@ -162,11 +162,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
             ? `${colors.textMuted}66`
             : `${colors.textMuted}33`;
 
-  const duration = node.step.durationMs
-    ? formatDuration(node.step.durationMs)
-    : node.step.startedAt
-      ? formatElapsed(node.step.startedAt)
-      : '';
+  const duration = stepNodeDurationLabel(context.run, node.step);
   const statusIcon = isDone ? 'v' : isRunning ? '*' : isFailed ? 'x' : isSkipped ? '-' : '';
   const skippedReason = isSkipped
     ? (node.step.outputs as Record<string, unknown> | undefined)?.reason === 'disabled' &&

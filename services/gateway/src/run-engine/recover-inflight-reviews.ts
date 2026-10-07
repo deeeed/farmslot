@@ -39,6 +39,7 @@ import {
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
 } from '../self-review/review-agent.js';
+import { recordReviewedInputs } from '../self-review/reviewed-inputs.js';
 import { getSelfReviewConfig } from '../self-review/templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
@@ -713,6 +714,8 @@ async function ingestRecoveredReviewer(
       },
     },
   });
+  // A recovered pass vouches for what its document gave the reviewer (F42).
+  if (persisted.verdict === 'pass') await recordReviewedInputs(runId);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
