@@ -2391,7 +2391,7 @@ test('a PR published after the merge was first seen is still retargeted', async 
   assert.deepEqual(seen, [undefined, 42]);
 });
 
-test('a failed retarget is recorded once and retried only by a targeted tick', async (t) => {
+test('a failed retarget is recorded once and retried only by an operator tick', async (t) => {
   const { downstream, graphId, runs, upstream, workGraph, startRun } =
     await stackedGraph('Stack retarget failure');
   let calls = 0;
@@ -2432,6 +2432,8 @@ test('a failed retarget is recorded once and retried only by a targeted tick', a
 
   fail = false;
   await workGraph.schedulerTick({ graphId });
+  assert.equal(calls, 1, 'a run event ticking this graph is not an operator retry');
+  await workGraph.schedulerTick({ graphId, operator: true });
   assert.equal(calls, 2);
   entry = workGraph
     .getWorkGraph({ graphId })
@@ -2680,13 +2682,14 @@ test('an operator tick asks GitHub whether the recorded upstream merged', async 
   // The upstream run finished, so ci-watch will never see the merge.
   runs.updateRun(upstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
   await workGraph.schedulerTick();
-  assert.deepEqual(reads, [], 'background ticks stay off GitHub');
   await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(reads, [], 'background and run-event ticks stay off GitHub');
+  await workGraph.schedulerTick({ graphId, operator: true });
   assert.equal(reads.length, 1, 'open: nothing recorded');
   assert.deepEqual(moved, []);
 
   merged = true;
-  await workGraph.schedulerTick({ graphId });
+  await workGraph.schedulerTick({ graphId, operator: true });
   assert.equal(runs.getRun(upstreamRun.id)?.prState, 'MERGED');
   assert.equal(runs.getRun(upstreamRun.id)?.mergedAt, '2026-10-07T00:00:00.000Z');
   assert.deepEqual(moved, [downstreamRun.id], 'the retarget follows in the same tick');

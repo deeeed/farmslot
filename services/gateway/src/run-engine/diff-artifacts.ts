@@ -540,9 +540,10 @@ export async function settleStackedDiffBase(
     const tree = await exec(
       `git merge-tree --write-tree ${shellQuote(branchPoint)} ${shellQuote(taken)}`,
     );
-    // Upstream and default branch conflict: measure against the default branch,
-    // which counts the upstream's lines as this run's while the upstream is open.
-    if (tree.exitCode !== 0) return plain;
+    // Exit 1 is a conflict: the tree is still written, with markers only in the
+    // files both sides changed, which this run had to resolve anyway. Anything
+    // else is an error.
+    if (tree.exitCode !== 0 && tree.exitCode !== 1) return plain;
     const commit = await exec(
       `git -c user.name=farmslot -c user.email=farmslot@localhost commit-tree ${shellQuote(tree.stdout.trim().split('\n')[0]!)} -p ${shellQuote(branchPoint)} -p ${shellQuote(taken)} -m ${shellQuote('farmslot stacked diff base')}`,
     );

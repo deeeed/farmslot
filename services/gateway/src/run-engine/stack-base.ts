@@ -58,3 +58,21 @@ export async function ensureRunStack(runId: string): Promise<Run> {
 export function stackPrBase(run: Pick<Run, 'stack'>): string | undefined {
   return run.stack ? (run.stack.retargetedTo ?? run.stack.baseBranch) : undefined;
 }
+
+/**
+ * The work graph a run belongs to for scheduling: its own, or for a follow-up
+ * without graph links (pr-complete, ci-fix) the graph of the stacked run it
+ * continues, so its completion can unblock that run's deferred update-branch.
+ * Runs outside a stack get only their own link, exactly as before.
+ */
+export function scheduledGraphOf(
+  run: Pick<Run, 'workGraphId' | 'parentRunId'>,
+): string | undefined {
+  if (run.workGraphId) return run.workGraphId;
+  let parent = run.parentRunId ? getRun(run.parentRunId) : undefined;
+  for (let hops = 0; parent && hops < 20; hops += 1) {
+    if (parent.stack && parent.workGraphId) return parent.workGraphId;
+    parent = parent.parentRunId ? getRun(parent.parentRunId) : undefined;
+  }
+  return undefined;
+}

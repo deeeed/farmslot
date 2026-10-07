@@ -1723,10 +1723,11 @@ function acquireLease(snapshot: WorkGraphSnapshot, owner: string, nowMs: number)
 }
 
 export async function schedulerTick(
-  params: { graphId?: string; forceEnqueue?: boolean } = {},
+  params: { graphId?: string; forceEnqueue?: boolean; operator?: boolean } = {},
 ): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
-  // Only an operator-targeted tick retries failed stack steps and asks GitHub.
-  const operatorTargeted = !!params.graphId;
+  // Only an operator's tick (the workGraph.schedulerTick RPC) retries failed
+  // stack steps and asks GitHub; run events also tick one graph and must not.
+  const operatorTargeted = params.operator === true;
   let retargets: StackRetargetJob[] = [];
   const result = await schedulerTickLocked(params, retargets, operatorTargeted);
   if (retargets.length === 0) return result;

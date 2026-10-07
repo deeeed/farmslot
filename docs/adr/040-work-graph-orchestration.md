@@ -838,8 +838,8 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   neither the upstream's files nor default-branch work count as this run's, before or
   after the upstream squash-merges. The recorded diff base stays the branch point, which
   origin can serve to a replay. A checkout rebased off the stack is measured like any
-  other run. Limit: when the upstream and default branch conflict, the diff falls back to
-  the default branch and, while the upstream is open, counts its lines as this run's.
+  other run. When the upstream and default branch conflict, the base keeps the conflict
+  markers, so only the files this run had to resolve count as its work.
 - **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
   stacked on top. Runs without `run.stack` get no section; their task documents are
   byte-identical to before (golden tests).
@@ -858,7 +858,9 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   Merges are recorded by ci-watch; because it stops when a run finishes, an operator tick
   also asks GitHub about a stacked node's recorded upstream PR and records its merge. Each
   step's follow-on (retarget after an observed merge, update-branch after a retarget) runs
-  in the same tick, since nothing else ticks a quiet graph. The retarget records the
+  in the same tick, since nothing else ticks a quiet graph. A follow-up without graph links
+  (pr-complete, ci-fix) ticks its stacked run's graph when it settles, so a deferred
+  update-branch runs once the family goes idle. Run-event ticks never call GitHub. The retarget records the
   upstream's merge commit; a checkout that contains it is measured like any other run. Other
   rebase edges, and every rebase edge on a node without a published edge, keep the
   operator-attention path.

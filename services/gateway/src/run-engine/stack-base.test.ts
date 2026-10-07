@@ -21,7 +21,7 @@ const queue = await import('../backlog/dispatch-queue.js');
 const runs = await import('../runs/store.js');
 const workGraph = await import('../work-graph/store.js');
 const { contributionDiffBaseSpec, contributionStack } = await import('./diff-artifacts.js');
-const { ensureRunStack, setUpstreamPrReaderForTests, stackPrBase } =
+const { ensureRunStack, scheduledGraphOf, setUpstreamPrReaderForTests, stackPrBase } =
   await import('./stack-base.js');
 const { stackSection } = await import('../tasks/stack-section.js');
 
@@ -223,4 +223,39 @@ test('the Stack section names the upstream PR, its branch and the downstream nod
     stackSection({ stack: { ...STACK, retargetedTo: 'main' } }) ?? '',
     /That PR has merged, so your PR targets `main`\. .*\nDownstream: none\./,
   );
+});
+
+test("a follow-up of a stacked run reports that run's graph; other runs only their own", () => {
+  const stacked = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'G-1',
+    workGraphId: 'wg_stacked',
+    workNodeId: 'wn_b',
+  });
+  runs.updateRun(stacked.id, { stack: STACK });
+  const followUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#44',
+    familyId: stacked.familyId,
+    parentRunId: stacked.id,
+  });
+  assert.equal(scheduledGraphOf(runs.getRun(followUp.id)!), 'wg_stacked');
+  const plainParent = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'G-2',
+    workGraphId: 'wg_plain',
+    workNodeId: 'wn_x',
+  });
+  const plainFollowUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#45',
+    familyId: plainParent.familyId,
+    parentRunId: plainParent.id,
+  });
+  assert.equal(scheduledGraphOf(runs.getRun(plainFollowUp.id)!), undefined, 'unchanged');
+  assert.equal(scheduledGraphOf(plainParent), 'wg_plain');
 });

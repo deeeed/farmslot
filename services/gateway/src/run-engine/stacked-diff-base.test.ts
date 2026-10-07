@@ -166,3 +166,52 @@ test('once the checkout has the upstream merge, a later revert is not its work',
     'without the merge commit the synthetic base would restore a.txt',
   );
 });
+
+test('a conflict between upstream and default branch counts only the resolution', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-stacked-conflict-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const origin = path.join(root, 'origin.git');
+  const author = path.join(root, 'author');
+  const slot = path.join(root, 'slot');
+  await execFileAsync('git', ['init', '-q', '--bare', '--initial-branch=main', origin]);
+  await execFileAsync('git', ['init', '-q', '--initial-branch=main', author]);
+  await commitFile(author, 'shared.txt', 'base');
+  await git(author, 'remote', 'add', 'origin', origin);
+  await git(author, 'push', '-q', 'origin', 'main');
+  // A adds a.txt and changes shared.txt; main changes shared.txt another way.
+  await git(author, 'checkout', '-q', '-b', 'feat/a');
+  await commitFile(author, 'a.txt', 'A');
+  const branchPoint = await commitFile(author, 'shared.txt', 'A version');
+  await git(author, 'push', '-q', 'origin', 'feat/a');
+  await git(author, 'checkout', '-q', 'main');
+  await commitFile(author, 'shared.txt', 'main version');
+  await git(author, 'push', '-q', 'origin', 'main');
+  await execFileAsync('git', ['clone', '-q', '-b', 'feat/a', origin, slot]);
+  await git(slot, 'checkout', '-q', '-b', 'feat/b');
+  await commitFile(slot, 'b.txt', 'B');
+  await git(slot, 'fetch', '-q', 'origin');
+  await assert.rejects(git(slot, 'merge', '-q', '--no-edit', 'origin/main'));
+  await writeFile(path.join(slot, 'shared.txt'), 'resolved by B\n');
+  await git(slot, 'add', 'shared.txt');
+  await git(slot, 'commit', '-q', '--no-edit');
+
+  const exec = async (command: string) => {
+    try {
+      const { stdout, stderr } = await execFileAsync('sh', ['-c', command], { cwd: slot });
+      return { stdout, stderr, exitCode: 0 };
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; code?: number };
+      return { stdout: e.stdout ?? '', stderr: e.stderr ?? '', exitCode: e.code ?? 1 };
+    }
+  };
+  const base = await settleStackedDiffBase(exec, 'main', {
+    baseRef: 'stack:feat/a',
+    commitish: branchPoint,
+  });
+  const from = base.diffFrom ?? (await git(slot, 'merge-base', base.commitish, 'HEAD'));
+  assert.deepEqual(
+    (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n').sort(),
+    ['b.txt', 'shared.txt'],
+    'a.txt is the upstream’s; the conflict B resolved in shared.txt is B’s',
+  );
+});

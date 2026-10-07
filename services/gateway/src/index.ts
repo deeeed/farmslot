@@ -105,6 +105,7 @@ import {
   suspendPublicationReviewRecoveryForRun,
 } from './run-engine/orchestrator.js';
 import { initRunMonitor } from './run-engine/run-monitor.js';
+import { scheduledGraphOf } from './run-engine/stack-base.js';
 import { withRunSettlementLane } from './run-lifecycle/broadcast-lanes.js';
 import { loadAllRuns } from './runs/store.js';
 import { assertHostPressureAdmissionEnvValid } from './runtime-capabilities/host-pressure-config.js';
@@ -319,10 +320,11 @@ async function main(): Promise<void> {
     markBacklogRunObserved(run).catch((err) => {
       console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
     });
-    if (run.workGraphId) {
-      schedulerTick({ graphId: run.workGraphId }).catch((err) => {
+    const workGraphId = scheduledGraphOf(run);
+    if (workGraphId) {
+      schedulerTick({ graphId: workGraphId }).catch((err) => {
         console.error(
-          `[work-graph] run event reconciliation failed for ${run.workGraphId}: ${(err as Error).message}`,
+          `[work-graph] run event reconciliation failed for ${workGraphId}: ${(err as Error).message}`,
         );
       });
     }
