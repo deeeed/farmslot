@@ -288,8 +288,9 @@ export function spawnScriptStreaming(
       try {
         if (ownsProcessGroup && child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
-      } catch {
-        // The owned child tree already exited.
+      } catch (error) {
+        // ESRCH: the owned child tree already exited.
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
       }
     };
     const exitFromForwardedSignal = (): void => {
@@ -320,12 +321,20 @@ export function spawnScriptStreaming(
     if (ownsProcessGroup) {
       for (const signal of parentSignals) process.once(signal, parentSignalHandlers[signal]);
     }
-    child = spawn(invokeBin, spawnArgs, {
-      cwd,
-      env: spawnOptions.env ? { ...process.env, ...spawnOptions.env } : process.env,
-      stdio: [spawnOptions.stdin ?? 'ignore', 'pipe', 'pipe'],
-      detached: ownsProcessGroup,
-    });
+    try {
+      child = spawn(invokeBin, spawnArgs, {
+        cwd,
+        env: spawnOptions.env ? { ...process.env, ...spawnOptions.env } : process.env,
+        stdio: [spawnOptions.stdin ?? 'ignore', 'pipe', 'pipe'],
+        detached: ownsProcessGroup,
+      });
+    } catch (error) {
+      // spawn threw before any child existed (an invalid argument): stop
+      // listening, so a later signal takes its default action again.
+      removeParentSignalHandlers();
+      reject(error);
+      return;
+    }
     let untrack: (() => void) | undefined;
     try {
       untrack = child.pid ? trackCheckoutChild(cwd, child.pid, ownsProcessGroup) : undefined;
