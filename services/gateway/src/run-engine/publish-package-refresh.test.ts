@@ -19,9 +19,13 @@ import { farmslotRoot } from '../fleet/state.js';
 import { runResolveDecision } from '../methods/run.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
-import { APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION } from './gate-policy.js';
+import {
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  stampPublishGateReviewStatusForPackage,
+} from './gate-policy.js';
 import {
   refreshPublishPackage,
+  restampReviewsForRefreshedPackage,
   reviewDepthForPublishPackageRefresh,
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
@@ -714,5 +718,45 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
   assert.equal(
     await readFile(path.join(taskDir, 'artifacts/review-loop-1/review.diff'), 'utf-8'),
     'gateway diff\n',
+  );
+});
+
+test('a refresh carries a gate review forward only while description and evidence are unchanged', () => {
+  const reviewedPackage = makeReadyGatePackage({
+    draftBody: '## Summary\nRemove the swap banner.',
+    reviewSubjectHash: 'subject-reviewed',
+  });
+  const review = stampPublishGateReviewStatusForPackage(
+    {
+      id: 'review-1',
+      source: 'human-gate',
+      crossRunner: false,
+      loopNumber: 1,
+      verdict: 'pass',
+      unresolvedCount: 0,
+      reviewSnapshot: reviewedPackage.reviewSnapshot,
+    },
+    reviewedPackage,
+  );
+  const relinked = makeReadyGatePackage({
+    draftBody: `${reviewedPackage.draftBody}\n\n## **Screenshots/Recordings**\n![after](https://x/after.png)`,
+    reviewSubjectHash: 'subject-relinked',
+  });
+  assert.equal(
+    restampReviewsForRefreshedPackage([review], [reviewedPackage], relinked)[0]
+      ?.reviewedReviewSubjectHash,
+    'subject-relinked',
+    'a refresh that only re-links evidence keeps the review',
+  );
+  // The worker reworked delete into hide-behind-flag and updated the description.
+  const reworked = makeReadyGatePackage({
+    draftBody: '## Summary\nHide the swap banner behind a flag.',
+    reviewSubjectHash: 'subject-reworked',
+  });
+  assert.equal(
+    restampReviewsForRefreshedPackage([review], [reviewedPackage], reworked)[0]
+      ?.reviewedReviewSubjectHash,
+    'subject-reviewed',
+    'the review stays stale, so approval needs a new review',
   );
 });

@@ -518,6 +518,12 @@ export interface IndependentReviewStatus {
   reviewedHeadSha?: string | null;
   reviewedPackageInputHash?: string | null;
   reviewedReviewSubjectHash?: string | null;
+  /**
+   * Fingerprint of the PR description and evidence content the review was
+   * stamped for. A package whose description or evidence changed since needs a
+   * new review. Absent on reviews stamped before it existed.
+   */
+  reviewedInputsHash?: string | null;
   fixDelta?: ReviewFixDeltaSnapshot;
   stale?: boolean;
   startedAt?: string;

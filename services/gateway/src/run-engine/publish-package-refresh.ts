@@ -38,6 +38,7 @@ import {
   publicationGateDecisionActions,
   reviewerIsActiveForReview,
   reviewFinalSnapshotMatchesPreparedPackage,
+  reviewInputsDrifted,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
@@ -133,7 +134,7 @@ function reviewWasStampedForPackage(
   );
 }
 
-function restampReviewsForRefreshedPackage(
+export function restampReviewsForRefreshedPackage(
   independentReviews: IndependentReviewStatus[],
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
@@ -149,7 +150,11 @@ function restampReviewsForRefreshedPackage(
           readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
           reviewWasStampedForPackage(review, reviewedPackage),
       );
-    return canRestamp ? stampPublishGateReviewStatusForPackage(review, refreshedPackage) : review;
+    // Re-selecting or re-linking evidence carries a review forward; a changed
+    // description or evidence content does not (it needs a new review).
+    return canRestamp && !reviewInputsDrifted(review, refreshedPackage)
+      ? stampPublishGateReviewStatusForPackage(review, refreshedPackage)
+      : review;
   });
 }
 
