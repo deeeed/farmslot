@@ -403,8 +403,9 @@ describe('process ownership', () => {
 // (KERN_PROCARGS2); elsewhere it reports unknown, an advisory warning.
 const MACOS_ONLY =
   process.platform !== 'darwin' && 'reads process environments through macOS sysctl';
-describe('dev server testnet diagnostic (advisory)', { skip: MACOS_ONLY }, () => {
-  it('passes for the farm next dev, or its child, serving the app port from this checkout', async () => {
+describe('dev server testnet diagnostic (advisory)', () => {
+  it('passes for the farm next dev, or its child, serving the app port from this checkout', async (t) => {
+    if (MACOS_ONLY) return t.skip(MACOS_ONLY);
     const devArgv = (port) => ['next', 'dev', port];
     for (const listen of ['self', 'child']) {
       const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'terminal-diag-')));
@@ -421,7 +422,22 @@ describe('dev server testnet diagnostic (advisory)', { skip: MACOS_ONLY }, () =>
     }
   });
 
-  it('warns for the three reproduced bypasses: an unforced child, a lookalike variable, and next start', async () => {
+  it('fails safe where process environments cannot be read: unknown, never forced', async (t) => {
+    if (!MACOS_ONLY) return t.skip('macOS reads process environments');
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'terminal-diag-')));
+    mkdirSync(path.join(root, 'temp/farmslot'), { recursive: true });
+    const appPort = await freePort();
+    const listen = LISTEN.replace('process.argv[1]', 'process.argv[3]');
+    const server = nodeProcess(listen, ['next', 'dev', appPort], { env: FORCED, cwd: root });
+    writeFileSync(path.join(root, 'temp/farmslot/next-dev.pid'), `${server}\n`);
+    await listening(appPort);
+    const diagnostic = devServerTestnetDiagnostic(root, { appPort });
+    assert.equal(diagnostic.known, false);
+    assert.notEqual(diagnostic.forced, true);
+  });
+
+  it('warns for the three reproduced bypasses: an unforced child, a lookalike variable, and next start', async (t) => {
+    if (MACOS_ONLY) return t.skip(MACOS_ONLY);
     // A forced parent whose listening child runs with testnet off.
     const parentRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'terminal-diag-')));
     mkdirSync(path.join(parentRoot, 'temp/farmslot'), { recursive: true });
