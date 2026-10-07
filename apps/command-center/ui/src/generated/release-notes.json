@@ -1,5 +1,7 @@
 {
-  "version": "0.20.3",
-  "date": "2026-10-07",
-  "items": ["The work graph shows and composes \"upstream PR published\" edges for stacked runs"]
+  "version": "0.20.4",
+  "date": "2026-10-08",
+  "items": [
+    "Pipeline nodes and the step inspector show queue time, execution time and last progress"
+  ]
 }

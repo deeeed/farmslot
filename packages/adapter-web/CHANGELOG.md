@@ -4,8 +4,12 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- `launchBrowser` takes an optional `progress` callback for the caller's stage: starting the browser, waiting for the CDP listener (with the attempt count, about every 5 s), loading the extension over CDP and opening the start window. The `[launch]` log lines are unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.5.0 - 2026-10-08
+
+- `launchBrowser` takes an optional `progress` callback for the caller's stage: starting the browser, waiting for the CDP listener (with the attempt count, about every 5 s), loading the extension over CDP and opening the start window. The `[launch]` log lines are unchanged.
+- Publish with adapter-sdk 0.7.0 and recipe-runner 0.26.0 so consumers share one adapter-sdk copy.
 
 ## 0.4.1 - 2026-10-07
 
