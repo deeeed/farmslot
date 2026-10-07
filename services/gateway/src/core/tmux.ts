@@ -463,14 +463,18 @@ export async function ensureTmuxWindow(
   );
   // The probe and the create are not atomic: another caller recreating its own
   // window after the same reboot can create the session first. Add this window
-  // to the session it made.
-  if (probe.exitCode !== 0 && created.exitCode !== 0) created = await execOnSlot(vars, newWindow);
+  // to the session it made. If that fails too, the session create's own error
+  // is the one that explains why.
+  const sessionFailure = probe.exitCode !== 0 && created.exitCode !== 0 ? created : null;
+  if (sessionFailure) created = await execOnSlot(vars, newWindow);
   const afterCreate = await listExactTmuxWindows(vars, session, windowName);
   if (afterCreate.length > 0) {
     return { disposition: created.exitCode === 0 ? 'created' : 'existing', windows: afterCreate };
   }
+  const output = (result: typeof created) =>
+    result.stderr || result.stdout || `exit ${result.exitCode}`;
   throw new Error(
-    `Failed to create tmux window ${session}:${windowName}: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
+    `Failed to create tmux window ${session}:${windowName}: ${sessionFailure ? `${output(sessionFailure)} (then ${output(created)})` : output(created)}`,
   );
 }
 

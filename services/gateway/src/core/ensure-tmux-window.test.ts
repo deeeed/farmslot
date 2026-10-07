@@ -145,6 +145,6 @@ test('a create that tmux refuses is reported with its output', async () => {
 
   await assert.rejects(
     ensureTmuxWindow(vars, 'mm-1', 'self-review'),
-    /Failed to create tmux window mm-1:self-review: no server running/,
+    /Failed to create tmux window mm-1:self-review: no server running on \/tmp\/tmux-501\/default \(then /,
   );
 });

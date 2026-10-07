@@ -12,8 +12,9 @@ import { fileURLToPath } from 'node:url';
 // issues to a mocked exec layer instead.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-// Tests that predate the rule and still run real tmux sessions (each scoped to
-// its own pid-named session). The list only shrinks: convert a file to the
+// Tests that predate the rule and still run real tmux sessions on the default
+// server (most on pid-named sessions; test-onboarding.sh on example-app-1,
+// which it kills only if it created it). The list only shrinks: convert a file to the
 // mocked exec layer, then delete its entry.
 const KNOWN_REAL_TMUX_TESTS = new Set([
   '.agents/skills/tmux-model-driver/tests/send-and-verify.test.sh',
