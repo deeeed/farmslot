@@ -5,7 +5,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.4.1 - 2026-10-07
+
 - `network-observer`: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture. Without it the observer still takes the first extension with a target, which in a branded Chrome can be a component or policy extension listed before the one under test.
+- Publish with adapter-sdk 0.5.1 and recipe-runner 0.26.0.
 
 ## 0.4.0 - 2026-10-06
 
