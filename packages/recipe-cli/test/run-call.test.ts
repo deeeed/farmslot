@@ -1623,6 +1623,17 @@ describe('run', () => {
         .every((dir) => dir === 'temp/recipe/runtime-9301'),
     );
     assert.equal(seen.at(-1), 'temp/recipe/runtime-9302');
+    // The inline form after the action is the same option, never an input.
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const inline = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast', ...common, '--runtime-dir=temp/recipe/runtime-9304'],
+        callOptions,
+      ),
+    );
+    assert.equal(inline.value, 0, inline.stderr.join('\n'));
+    assert.deepEqual(lastJson(inline.stdout).args, { mode: 'fast' });
+    assert.equal(seen.at(-1), 'temp/recipe/runtime-9304');
 
     // --plan sees the same runtime directory, whether the flag or the
     // environment selects it.
@@ -1918,6 +1929,34 @@ describe('run', () => {
     assert.equal(process.env.WATCHER_PORT, undefined);
     assert.equal(process.env.CDP_PORT, '9555');
     assert.equal(process.env.RECIPE_CDP_PORT, '9555');
+
+    // So does the inline `--flag=value` form after the action.
+    seen.length = 0;
+    const inline = await capture(() =>
+      handleCall(
+        [
+          'shop.ping',
+          'mode=fast',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--cdp-port=9444',
+          '--watcher-port=8088',
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(inline.value, 0, inline.stderr.join('\n'));
+    assert.deepEqual(lastJson(inline.stdout).args, { mode: 'fast' });
+    assert.deepEqual(seen, [
+      'runtimeCheck:9444/9444/8088/8088/1',
+      'network:9444/9444/8088/8088/1',
+      'performance:9444/9444/8088/8088/1',
+    ]);
   });
 
   test('every exit of run and call restores the environment it found, but the slot ports it resolved', async () => {
@@ -2281,19 +2320,21 @@ describe('--record-video', () => {
           { engine: recordingEngine },
         ),
       );
-    // After the action, call reads every `key=value` token as an action input,
-    // `--record-video=off` included (a known parser gap): it fails validation as
-    // an unknown input, never as a recording refusal, and records nothing.
+    // After the action, an inline `--record-video=<mode>` is an option like the
+    // bare flag: `off` records nothing, and a mode the adapter can't record is
+    // refused before execution.
     const off = await call('api', '--record-video=off');
-    assert.equal(off.value, 5);
-    const offEnvelope = lastJson(off.stdout);
-    assert.equal((offEnvelope.error as { code?: string }).code, 'RECIPE_VALIDATION_FAILED');
-    assert.deepEqual(offEnvelope.args, { cmd: 'pwd', '--record-video': 'off' });
-    assert.equal(
-      (offEnvelope.findings as Array<{ code: string }>)[0]?.code,
-      'recipe.unknown_param',
-    );
+    assert.equal(off.value, 0, off.stdout.join('\n') + off.stderr.join('\n'));
+    assert.deepEqual(lastJson(off.stdout).args, { cmd: 'pwd' });
     assert.deepEqual(asked, []);
+    assert.deepEqual(recorded, []);
+    const runnersBefore = calls.runners.length;
+    const inline = await call('api', '--record-video=full-run');
+    assert.equal(inline.value, 2);
+    assert.deepEqual(lastJson(inline.stdout).error, unsupported);
+    assert.equal(calls.runners.length, runnersBefore);
+    assert.deepEqual(asked, []);
+    assert.deepEqual(recorded, []);
     const supported = await call('web', '--record-video');
     assert.equal(supported.value, 0, supported.stdout.join('\n') + supported.stderr.join('\n'));
     assert.deepEqual(asked, ['web']);
@@ -2540,6 +2581,29 @@ describe('call', () => {
     const envelope = lastJson(call.stdout);
     assert.deepEqual(envelope.args, { mode: 'fast' });
     assert.equal(path.dirname(String(envelope.summaryPath)), artifacts);
+  });
+
+  test('refuses the removed --arg instead of reading the next token as its value', async () => {
+    const target = checkout();
+    const refused = {
+      name: 'CliError',
+      exitCode: 2,
+      message: '--arg was removed; pass the input as key=value',
+    };
+    // `--arg` used to swallow the token after it: here `--adapter`, silently
+    // dropping the adapter the operator chose.
+    for (const argv of [
+      ['shop.ping', '--arg', 'mode=fast', '--adapter', 'web', '--target', target, '--json'],
+      ['shop.ping', '--arg=mode=fast', '--adapter', 'web', '--target', target, '--json'],
+      ['shop.ping', 'mode=fast', '--adapter', 'web', '--target', target, '--arg'],
+    ]) {
+      await assert.rejects(
+        capture(() => handleCall(argv, callOptions)),
+        refused,
+        argv.join(' '),
+      );
+    }
+    assert.deepEqual(calls.runners, []);
   });
 
   test('takes every input as key=value, values that look like flags included', async () => {

@@ -1031,7 +1031,7 @@ export const adapter = {
     const call = command('call', {
       options: contractOptions(HELP, JSON_FLAG, {
         '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
-        '--arg': optionalValueOption(),
+        '--note': optionalValueOption(),
       }),
       positionals: [{ label: 'action' }],
       allowPassthrough: true,
@@ -1049,7 +1049,7 @@ export const adapter = {
     assert.deepEqual(loaded, []);
     await cli.main(['doctor', '--adapter', 'hooked']);
     await cli.main(['doctor', '--adapter', 'web']);
-    await capture(() => cli.main(['call', 'x', '--adapter', 'hooked', '--arg', '--help']));
+    await capture(() => cli.main(['call', 'x', '--adapter', 'hooked', '--note', '--help']));
     await cli.main(['call', 'x', '--adapter', 'hooked', '--', '--help']);
     // `calls` counts dispatches so far: the hook runs before each command's own.
     assert.deepEqual(loaded, [

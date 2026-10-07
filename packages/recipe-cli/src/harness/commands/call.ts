@@ -844,6 +844,10 @@ function parseCallArgs(argv: string[]): CallArgs {
   let action: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    // Refuse rather than let parseArgs take the next token as its value.
+    if (arg === '--arg' || arg.startsWith('--arg=')) {
+      throw usageError('--arg was removed; pass the input as key=value');
+    }
     if (!arg.startsWith('--') && action === undefined) {
       action = arg;
       continue;
