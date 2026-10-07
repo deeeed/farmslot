@@ -5,7 +5,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-10-08
+
 - Add `web-dapp` (`@farmslot/adapter-web/web-dapp`, an ESM subpath): `createWebDappAdapter({ id, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter` for a web app under test whose dev server the slot owns, moved from mm-harness's Web Terminal adapter. It runs a slot browser and wallet host with the injected strict wallet or a host-supplied extension signer, held to the testnet venue of the adapter that extends it. See the adapter-web reference for the signer module, venue policy and hooks.
+- Publish with adapter-sdk 0.7.1 and recipe-runner 0.27.0 so consumers share one adapter-sdk and one recipe-runner copy.
 
 ## 0.5.0 - 2026-10-08
 

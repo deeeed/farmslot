@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/adapter-web",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Web platform adapter for Farmslot recipes: resolve and launch an isolated Chromium, own its CDP port, load unpacked extensions, and keep macOS focus.",
   "type": "commonjs",
   "exports": {
