@@ -403,9 +403,9 @@ export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
 /**
  * Test files (`<workspace dir>/<path>`) that still leave entries in their
  * TMPDIR. The runner removes their TMPDIR either way, so nothing reaches the
- * machine's. The list only shrinks: make the file clean up, then delete it. A
- * listed file that left nothing gets a notice, not a failure: some leak only
- * where a tool is installed or a test is not skipped.
+ * machine's. Make a file clean up, then delete its entry. A listed file that
+ * left nothing gets a notice, not a failure (some leak only where a tool is
+ * installed or a test is not skipped), so shrinking the list is a review step.
  */
 export const KNOWN_TMPDIR_LEAKERS = new Set([
   'agent-runtime/src/task-init/discover.test.ts',
@@ -493,12 +493,20 @@ export const KNOWN_TMPDIR_LEAKERS = new Set([
 
 /**
  * Tool caches tests share through TMPDIR (tsx's transform cache, Node's compile
- * cache, the logs cursor-agent writes when a test runs an installed one): each
- * file's private TMPDIR links them to the real ones, so files keep a warm cache
- * and the links never count as leftovers.
+ * cache): each file's private TMPDIR links them to the real ones, so files keep
+ * a warm cache and the links never count as leftovers.
  */
 export function sharedToolCaches(uid = process.getuid?.() ?? 0) {
-  return [`tsx-${uid}`, 'node-compile-cache', `cursor-agent-logs-${uid}`];
+  return [`tsx-${uid}`, 'node-compile-cache'];
+}
+
+/**
+ * What an installed tool writes to TMPDIR when a test runs it (cursor-agent's
+ * logs): not the test's own leftovers, so not counted, but kept in the file's
+ * private TMPDIR and removed with it.
+ */
+export function toolOutputs(uid = process.getuid?.() ?? 0) {
+  return [`cursor-agent-logs-${uid}`];
 }
 
 /** Link the shared tool caches into a test file's private TMPDIR. */
@@ -553,7 +561,7 @@ async function runOne(file, context) {
       },
       buffered: context.buffered,
     });
-    const caches = new Set(sharedToolCaches());
+    const caches = new Set([...sharedToolCaches(), ...toolOutputs()]);
     // A test that removed its whole TMPDIR left nothing behind.
     leaked = existsSync(fileTmp) ? readdirSync(fileTmp).filter((entry) => !caches.has(entry)) : [];
   } finally {
