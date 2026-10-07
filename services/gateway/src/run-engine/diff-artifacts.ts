@@ -524,14 +524,11 @@ export async function settleStackedDiffBase(
     // newer head: the branch point is the newest upstream commit HEAD contains.
     if (baseSpec.stackBranch) {
       const upstream = `origin/${baseSpec.stackBranch}`;
-      const fetchedUpstream = await exec(
-        `git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`,
-      );
-      const taken =
-        fetchedUpstream.exitCode === 0
-          ? await exec(`git merge-base HEAD ${shellQuote(upstream)}`)
-          : null;
-      const newer = taken?.exitCode === 0 ? taken.stdout.trim() : '';
+      // A failed fetch (the branch deleted after its merge) keeps the
+      // remote-tracking ref, which still holds the head this checkout took.
+      await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
+      const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
+      const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
       if (
         newer &&
         newer !== branchPoint &&

@@ -860,7 +860,7 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   step's follow-on (retarget after an observed merge, update-branch after a retarget) runs
   in the same tick, since nothing else ticks a quiet graph. A follow-up without graph links
   (pr-complete, ci-fix) ticks its stacked run's graph when it settles, so a deferred
-  update-branch runs once the family goes idle. Run-event ticks never call GitHub. The retarget records the
+  update-branch runs once the family goes idle. Run-event ticks never call GitHub. Limit: a merge ci-watch recorded on an upstream run that is then archived before the deferred update-branch runs needs one more operator tick. The retarget records the
   upstream's merge commit; a checkout that contains it is measured like any other run. Other
   rebase edges, and every rebase edge on a node without a published edge, keep the
   operator-attention path.

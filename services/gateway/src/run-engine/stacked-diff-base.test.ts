@@ -237,4 +237,18 @@ test("a checkout rebased onto the upstream's newer head measures from that head"
     ['b.txt'],
     "A's fix is not B's work",
   );
+
+  // A squash-merges and GitHub deletes its branch while B is still active.
+  await git(author, 'checkout', '-q', 'main');
+  await git(author, 'merge', '-q', '--squash', 'feat/a');
+  await git(author, 'commit', '-q', '-m', 'A (squash)');
+  await git(author, 'push', '-q', 'origin', 'main');
+  await git(author, 'push', '-q', 'origin', '--delete', 'feat/a');
+  const afterDelete = await settleStackedDiffBase(exec, 'main', stacked);
+  assert.equal(afterDelete.commitish, fixed, 'the cached upstream ref still knows the head');
+  const fromAfter =
+    afterDelete.diffFrom ?? (await git(slot, 'merge-base', afterDelete.commitish, 'HEAD'));
+  assert.deepEqual((await git(slot, 'diff', '--name-only', `${fromAfter}..HEAD`)).split('\n'), [
+    'b.txt',
+  ]);
 });
