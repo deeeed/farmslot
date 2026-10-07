@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -830,3 +838,84 @@ test('module-mock tests honor the requested TypeScript decorator configuration',
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A workspace-like fixture inside the repo (the runner launches tests through
+// `yarn exec`), with one test that records the tmux environment it was given.
+function sandboxFixture(testBody) {
+  const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+  const report = path.join(fixture, 'env.json');
+  writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+  mkdirSync(path.join(fixture, 'src'));
+  writeFileSync(
+    path.join(fixture, 'src', 'env.test.ts'),
+    `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('records its tmux environment', async () => {
+  writeFileSync(${JSON.stringify(report)}, JSON.stringify({
+    TMUX: process.env.TMUX ?? null,
+    TMUX_PANE: process.env.TMUX_PANE ?? null,
+    TMUX_TMPDIR: process.env.TMUX_TMPDIR ?? null,
+    FARMSLOT_TMUX_SANDBOX: process.env.FARMSLOT_TMUX_SANDBOX ?? null,
+  }));
+  ${testBody}
+});
+`,
+  );
+  // As if launched from a tmux pane. Nothing listens on this socket, and no
+  // test may see it.
+  const env = {
+    ...process.env,
+    TMUX: `${path.join(fixture, 'no-server.sock')},1,0`,
+    TMUX_PANE: '%9',
+  };
+  const args = [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', 'src'];
+  return { fixture, report, env, args };
+}
+
+test('test processes get a private tmux server and no $TMUX, and the run removes it', (t) => {
+  const { fixture, report, env, args } = sandboxFixture('');
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+
+  const run = spawnSync(process.execPath, args, { encoding: 'utf8', env });
+
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  const seen = JSON.parse(readFileSync(report, 'utf8'));
+  assert.equal(seen.TMUX, null);
+  assert.equal(seen.TMUX_PANE, null);
+  assert.equal(
+    seen.FARMSLOT_TMUX_SANDBOX,
+    path.join(seen.TMUX_TMPDIR, `tmux-${process.getuid?.() ?? 0}`, 'default'),
+  );
+  assert.equal(existsSync(seen.TMUX_TMPDIR), false, 'the run removes its sandbox directory');
+});
+
+test(
+  'an interrupted run still removes its tmux sandbox',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    // The test holds the run open until the runner is signalled.
+    const { fixture, report, env, args } = sandboxFixture(
+      'await new Promise((resolve) => setTimeout(resolve, 5000));',
+    );
+    t.after(() => rmSync(fixture, { recursive: true, force: true }));
+    const runner = spawn(process.execPath, args, { env, stdio: 'ignore' });
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    for (let i = 0; i < 300 && !existsSync(report); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(report), 'the fixture test never started');
+    const seen = JSON.parse(readFileSync(report, 'utf8'));
+    assert.equal(statSync(path.dirname(seen.FARMSLOT_TMUX_SANDBOX)).mode & 0o777, 0o700);
+
+    runner.kill('SIGTERM');
+
+    assert.equal(await closed, 'SIGTERM', 'the runner dies by the signal it received');
+    assert.equal(
+      existsSync(seen.TMUX_TMPDIR),
+      false,
+      'the interrupted run removes its sandbox directory',
+    );
+  },
+);

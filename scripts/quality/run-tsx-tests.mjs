@@ -249,15 +249,43 @@ export function tmuxSandboxEnvironment(env, dir, uid = process.getuid?.() ?? 0) 
   return sandboxed;
 }
 
-/** End the run's private tmux server (by its socket only) and remove its directory. */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** Wait (bounded, synchronously: it also runs on exit) for a process to end. */
+function waitForExit(pid, timeoutMs) {
+  const until = Date.now() + timeoutMs;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (processAlive(pid)) {
+    if (Date.now() >= until) return false;
+    Atomics.wait(sleeper, 0, 0, 50);
+  }
+  return true;
+}
+
+/**
+ * End the run's private tmux server, by its socket only, and remove its
+ * directory. The server's own pid, read before `kill-server`, decides whether
+ * it stopped; a socket with no server behind it has nothing to end.
+ */
 export function closeTmuxSandbox(env) {
   const socket = env.FARMSLOT_TMUX_SANDBOX;
   if (socket && existsSync(socket)) {
-    // kill-server also fails when the server already exited; what matters is
-    // that no server answers on the socket afterwards.
+    const probe = spawnSync('tmux', ['-S', socket, 'display-message', '-p', '#{pid}'], {
+      env,
+      encoding: 'utf8',
+    });
+    const pid = probe.status === 0 ? Number.parseInt(probe.stdout.trim(), 10) : Number.NaN;
     spawnSync('tmux', ['-S', socket, 'kill-server'], { env, stdio: 'ignore' });
-    if (spawnSync('tmux', ['-S', socket, 'list-sessions'], { env, stdio: 'ignore' }).status === 0) {
-      throw new Error(`[tsx-tests] the tmux sandbox server ${socket} is still running`);
+    if (Number.isInteger(pid) && !waitForExit(pid, 5000)) {
+      throw new Error(`[tsx-tests] the tmux sandbox server ${pid} on ${socket} did not stop`);
     }
   }
   rmSync(env.TMUX_TMPDIR, { recursive: true, force: true });
@@ -499,7 +527,7 @@ async function main() {
   });
 
   const env = childEnvironment(openTmuxSandbox());
-  process.once('exit', () => {
+  const closeSandbox = () => {
     try {
       closeTmuxSandbox(env);
     } catch (error) {
@@ -507,7 +535,15 @@ async function main() {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
-  });
+  };
+  process.once('exit', closeSandbox);
+  // An interrupted run ends its server too, then dies by the same signal.
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(signal, () => {
+      closeSandbox();
+      process.kill(process.pid, signal);
+    });
+  }
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file

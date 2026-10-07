@@ -34,7 +34,7 @@ const SPAWN_TMUX = new RegExp(
   'gu',
 );
 const SHELL_TMUX = new RegExp(
-  String.raw`(?:^\s*|\$\(|&&\s*|\|\|\s*|;\s*|\|\s*)(?:command\s+|exec\s+|${ENV_PREFIX})?(?:[^\s'"]*\/)?tmux\s+(?!-S\s)`,
+  String.raw`(?:^\s*|\$\(|&&\s*|\|\|\s*|;\s*|\|\s*)(?:command\s+|exec\s+|${ENV_PREFIX})?(?:[^\s'"]*\/)?tmux\s+(?!-S "\$FARMSLOT_TMUX_SANDBOX"\s)`,
   'mu',
 );
 
@@ -50,7 +50,8 @@ export function tmuxRuleViolations(rel, source) {
       .join('\n');
     if (!/(?:^|[^-\w])tmux\b/mu.test(code)) return violations;
     const unsandboxed = SHELL_TMUX.exec(code);
-    if (unsandboxed) violations.push(`runs tmux without -S: ${unsandboxed[0].trim()}`);
+    if (unsandboxed)
+      violations.push(`runs tmux without -S "$FARMSLOT_TMUX_SANDBOX": ${unsandboxed[0].trim()}`);
     if (!/^\s*unset TMUX TMUX_PANE\b/mu.test(code) || !/FARMSLOT_TMUX_SANDBOX=/u.test(code)) {
       violations.push(
         'runs tmux without the private-server setup (unset TMUX, FARMSLOT_TMUX_SANDBOX)',
@@ -177,6 +178,10 @@ test('the detector holds TypeScript and shell tests to the sandbox rule', () => 
     /without -S/u,
   );
   assert.match(tmuxRuleViolations('a.test.sh', `${setup}  /usr/bin/tmux ls\n`)[0], /without -S/u);
+  assert.match(
+    tmuxRuleViolations('a.test.sh', `${setup}tmux -S "$OTHER_SOCKET" new-session -d -s x\n`)[0],
+    /without -S/u,
+  );
   assert.match(
     tmuxRuleViolations('a.test.sh', 'tmux -S "$FARMSLOT_TMUX_SANDBOX" ls\n')[0],
     /private-server setup/u,

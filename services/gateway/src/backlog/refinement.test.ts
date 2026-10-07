@@ -24,7 +24,8 @@ const execFileAsync = promisify(execFile);
 const tmuxSandbox =
   !process.env.TMUX &&
   process.env.TMUX_TMPDIR &&
-  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
     ? process.env.FARMSLOT_TMUX_SANDBOX
     : null;
 const needsTmuxSandbox = {

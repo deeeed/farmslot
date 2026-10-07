@@ -36,16 +36,10 @@ export FARMSLOT_BIN_DIR="${FARMSLOT_WORKSPACE}/bin"
 export PATH="${FARMSLOT_BIN_DIR}:${PATH}"
 
 # The pack is copied so the update stage can bump its content without touching
-# the repo. The slot's tmux session is scratch-specific — clean it up, but only
-# if this run created it (never kill an operator's pre-existing session).
+# the repo. The slot's tmux session lives on this run's private server, which
+# cleanup ends.
 PACK="${SCRATCH}/example-app"
-SESSION_PRE_EXISTING=0
-tmux -S "$FARMSLOT_TMUX_SANDBOX" has-session -t '=example-app-1' 2>/dev/null && SESSION_PRE_EXISTING=1
 cleanup() {
-  if [ "$SESSION_PRE_EXISTING" = 0 ]; then
-    # =name forces exact match — plain -t prefix-matches other sessions.
-    tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-session -t '=example-app-1' 2>/dev/null || true # best-effort: session may not exist
-  fi
   rm -rf "$SCRATCH"
   tmux_sandbox_close
 }
