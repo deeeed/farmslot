@@ -22,6 +22,15 @@ import {
 } from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
 const execFileAsync = promisify(execFile);
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -53,8 +62,9 @@ function isProcessAlive(pid: number): boolean {
 /** Real tmux is required for the teardown tests below — mirrors the skip pattern used by
  *  services/node/src/commands/tmux.test.ts for machines/CI without tmux installed. */
 async function tmuxAvailable(): Promise<boolean> {
+  if (!tmuxSandbox) return false;
   try {
-    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, '-V'], { timeout: 2000 });
     return true;
   } catch {
     return false;
@@ -64,7 +74,7 @@ async function tmuxAvailable(): Promise<boolean> {
 /** Exact-match check, mirroring killTmuxSession's `=` prefix — a plain (unprefixed) `-t`
  *  would itself prefix-match, which is exactly the ambiguity these tests are guarding against. */
 function hasTmuxSession(session: string): boolean {
-  return spawnSync('tmux', ['has-session', '-t', `=${session}`]).status === 0;
+  return spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${session}`]).status === 0;
 }
 
 const KEEP = { history: 'keep', home: 'keep', dryRun: false } as const;
@@ -324,9 +334,39 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
     }),
   );
 
-  await execFileAsync('tmux', ['new-session', '-d', '-s', targetSession, '-c', root, 'bash']);
-  await execFileAsync('tmux', ['new-session', '-d', '-s', otherSession, '-c', root, 'bash']);
-  await execFileAsync('tmux', ['new-session', '-d', '-s', collisionSession, '-c', root, 'bash']);
+  await execFileAsync('tmux', [
+    '-S',
+    tmuxSandbox!,
+    'new-session',
+    '-d',
+    '-s',
+    targetSession,
+    '-c',
+    root,
+    'bash',
+  ]);
+  await execFileAsync('tmux', [
+    '-S',
+    tmuxSandbox!,
+    'new-session',
+    '-d',
+    '-s',
+    otherSession,
+    '-c',
+    root,
+    'bash',
+  ]);
+  await execFileAsync('tmux', [
+    '-S',
+    tmuxSandbox!,
+    'new-session',
+    '-d',
+    '-s',
+    collisionSession,
+    '-c',
+    root,
+    'bash',
+  ]);
 
   try {
     const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
@@ -346,8 +386,8 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
     );
     assert.ok(!existsSync(join(root, 'repos')), 'repos removed once its session stopped writing');
   } finally {
-    spawnSync('tmux', ['kill-session', '-t', `=${otherSession}`]);
-    spawnSync('tmux', ['kill-session', '-t', `=${collisionSession}`]);
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${otherSession}`]);
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${collisionSession}`]);
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }

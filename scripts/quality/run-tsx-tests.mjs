@@ -1,6 +1,14 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 
@@ -223,8 +231,39 @@ export function assignmentDiagnosticLines(check, toLabel = (file) => file) {
   return lines;
 }
 
-function childEnvironment() {
-  const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
+/**
+ * A private tmux server for one test run. Tests, and the production code they
+ * drive, call tmux; from inside a pane `$TMUX` would send those calls to the
+ * operator's own server, where a stray `kill-server` ends every session. Test
+ * processes get no `TMUX`/`TMUX_PANE` and a `TMUX_TMPDIR` the runner owns, so
+ * plain `tmux` lands on a server under that directory.
+ * `FARMSLOT_TMUX_SANDBOX` names its socket: tests that run tmux require it and
+ * pass it with `-S`.
+ */
+export function tmuxSandboxEnvironment(env, dir, uid = process.getuid?.() ?? 0) {
+  const sandboxed = { ...env, TMUX_TMPDIR: dir };
+  delete sandboxed.TMUX;
+  delete sandboxed.TMUX_PANE;
+  sandboxed.FARMSLOT_TMUX_SANDBOX = join(dir, `tmux-${uid}`, 'default');
+  return sandboxed;
+}
+
+/** End the run's private tmux server (by its socket only) and remove its directory. */
+export function closeTmuxSandbox(env) {
+  const socket = env.FARMSLOT_TMUX_SANDBOX;
+  if (socket && existsSync(socket)) {
+    // kill-server also fails when the server already exited; what matters is
+    // that no server answers on the socket afterwards.
+    spawnSync('tmux', ['-S', socket, 'kill-server'], { env, stdio: 'ignore' });
+    if (spawnSync('tmux', ['-S', socket, 'list-sessions'], { env, stdio: 'ignore' }).status === 0) {
+      throw new Error(`[tsx-tests] the tmux sandbox server ${socket} is still running`);
+    }
+  }
+  rmSync(env.TMUX_TMPDIR, { recursive: true, force: true });
+}
+
+function childEnvironment(tmuxDir) {
+  const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
   for (const key of GIT_LOCATION_ENV) delete env[key];
   return env;
 }
@@ -447,7 +486,17 @@ async function main() {
     classify: (file) => classifyTest(readFileSync(file, 'utf8')),
   });
 
-  const env = childEnvironment();
+  // Short directory name: tmux socket paths are limited to ~100 bytes.
+  const env = childEnvironment(mkdtempSync(join(tmpdir(), 'fs-tmux-')));
+  process.once('exit', () => {
+    try {
+      closeTmuxSandbox(env);
+    } catch (error) {
+      // Reported and failing: a sandbox server left running is a broken run.
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  });
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file

@@ -19,10 +19,22 @@ process.env.FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR = promptRoot;
 
 const execFileAsync = promisify(execFile);
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (the refinement launcher) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
 /** Kill a tmux session when present; only swallow the expected missing-session exit. */
 async function killTmuxSessionIfPresent(session: string): Promise<void> {
   try {
-    await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]);
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${session}`]);
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { status?: number };
     // tmux exits 1 when the named session does not exist.
@@ -213,86 +225,94 @@ test('backlog refinement preserves source identity for manual and external items
   assert.equal(refinedExternal.item.sourceRef, 'TAT-4242');
 });
 
-test('backlog refinement reuses one existing tmux session instead of creating a second', async () => {
-  const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem(
-    {
-      project: 'farmslot-farm',
-      title: 'Session reuse',
-      sourceKind: 'manual',
-      flowType: 'dev',
-    },
-    { kind: 'system' },
-  );
-  const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(created.item);
-  await killTmuxSessionIfPresent(session);
+test(
+  'backlog refinement reuses one existing tmux session instead of creating a second',
+  needsTmuxSandbox,
+  async () => {
+    const { backlog, refinement } = await fresh();
+    const created = await backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Session reuse',
+        sourceKind: 'manual',
+        flowType: 'dev',
+      },
+      { kind: 'system' },
+    );
+    const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(created.item);
+    await killTmuxSessionIfPresent(session);
 
-  const first = await refinement.startBacklogRefinement({
-    itemId: created.item.id,
-    launch: true,
-    runnerCommand: "bash -lc 'exec sleep 120'",
-  });
-  assert.equal(first.launched, true);
-  assert.equal(first.attachedExisting, undefined);
+    const first = await refinement.startBacklogRefinement({
+      itemId: created.item.id,
+      launch: true,
+      runnerCommand: "bash -lc 'exec sleep 120'",
+    });
+    assert.equal(first.launched, true);
+    assert.equal(first.attachedExisting, undefined);
 
-  const second = await refinement.startBacklogRefinement({
-    itemId: created.item.id,
-    launch: true,
-    runnerCommand: "bash -lc 'exec sleep 120'",
-  });
-  assert.equal(second.launched, false);
-  assert.equal(second.attachedExisting, true);
-  assert.equal(second.tmuxSession, first.tmuxSession);
+    const second = await refinement.startBacklogRefinement({
+      itemId: created.item.id,
+      launch: true,
+      runnerCommand: "bash -lc 'exec sleep 120'",
+    });
+    assert.equal(second.launched, false);
+    assert.equal(second.attachedExisting, true);
+    assert.equal(second.tmuxSession, first.tmuxSession);
 
-  const sessionStatus = await refinement.getBacklogRefinementSession({ itemId: created.item.id });
-  assert.equal(sessionStatus.exists, true);
-  assert.equal(sessionStatus.tmuxSession, first.tmuxSession);
+    const sessionStatus = await refinement.getBacklogRefinementSession({ itemId: created.item.id });
+    assert.equal(sessionStatus.exists, true);
+    assert.equal(sessionStatus.tmuxSession, first.tmuxSession);
 
-  await killTmuxSessionIfPresent(session);
-});
+    await killTmuxSessionIfPresent(session);
+  },
+);
 
-test('completing or reopening refinement does not mutate lifecycle or linkage', async () => {
-  const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem(
-    {
-      project: 'farmslot-farm',
-      title: 'Stable lifecycle',
-      sourceKind: 'manual',
-      flowType: 'dev',
-      roadmapItemId: 'ri_keep',
-    },
-    { kind: 'system' },
-  );
-  // Simulate linkage fields that refinement must never touch.
-  await backlog.updateBacklogItem({
-    itemId: created.item.id,
-    notes: 'linked context',
-  });
-  const ready = await backlog.markBacklogItemReady({ itemId: created.item.id });
-  const before = lifecycleSnapshot(ready.item);
+test(
+  'completing or reopening refinement does not mutate lifecycle or linkage',
+  needsTmuxSandbox,
+  async () => {
+    const { backlog, refinement } = await fresh();
+    const created = await backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Stable lifecycle',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        roadmapItemId: 'ri_keep',
+      },
+      { kind: 'system' },
+    );
+    // Simulate linkage fields that refinement must never touch.
+    await backlog.updateBacklogItem({
+      itemId: created.item.id,
+      notes: 'linked context',
+    });
+    const ready = await backlog.markBacklogItemReady({ itemId: created.item.id });
+    const before = lifecycleSnapshot(ready.item);
 
-  const prepared = await refinement.startBacklogRefinement({
-    itemId: ready.item.id,
-    launch: false,
-  });
-  assert.deepEqual(lifecycleSnapshot(prepared.item), before);
+    const prepared = await refinement.startBacklogRefinement({
+      itemId: ready.item.id,
+      launch: false,
+    });
+    assert.deepEqual(lifecycleSnapshot(prepared.item), before);
 
-  const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(ready.item);
-  await killTmuxSessionIfPresent(session);
-  const launched = await refinement.startBacklogRefinement({
-    itemId: ready.item.id,
-    launch: true,
-    runnerCommand: "bash -lc 'exec sleep 60'",
-  });
-  assert.deepEqual(lifecycleSnapshot(launched.item), before);
-  const reopened = await refinement.startBacklogRefinement({
-    itemId: ready.item.id,
-    launch: true,
-    runnerCommand: "bash -lc 'exec sleep 60'",
-  });
-  assert.deepEqual(lifecycleSnapshot(reopened.item), before);
-  await killTmuxSessionIfPresent(session);
-});
+    const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(ready.item);
+    await killTmuxSessionIfPresent(session);
+    const launched = await refinement.startBacklogRefinement({
+      itemId: ready.item.id,
+      launch: true,
+      runnerCommand: "bash -lc 'exec sleep 60'",
+    });
+    assert.deepEqual(lifecycleSnapshot(launched.item), before);
+    const reopened = await refinement.startBacklogRefinement({
+      itemId: ready.item.id,
+      launch: true,
+      runnerCommand: "bash -lc 'exec sleep 60'",
+    });
+    assert.deepEqual(lifecycleSnapshot(reopened.item), before);
+    await killTmuxSessionIfPresent(session);
+  },
+);
 
 test('backlog refinement does not inherit item.model across a runner override', async () => {
   const { backlog, refinement } = await fresh();

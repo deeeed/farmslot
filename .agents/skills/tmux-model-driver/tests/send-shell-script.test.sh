@@ -1,14 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
+# Real tmux only on a private server: no $TMUX, and a TMUX_TMPDIR this test
+# owns, so plain `tmux` here and in the scripts under test lands on it. Cleanup
+# ends that server by its socket, never the operator's.
+unset TMUX TMUX_PANE
+TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/fs-tmux-XXXXXX")"
+export TMUX_TMPDIR
+FARMSLOT_TMUX_SANDBOX="$TMUX_TMPDIR/tmux-$(id -u)/default"
+export FARMSLOT_TMUX_SANDBOX
+tmux_sandbox_close() {
+  # The socket exists only if the test started a server.
+  if [ -S "$FARMSLOT_TMUX_SANDBOX" ]; then
+    tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-server 2>/dev/null || true # the server may already be gone
+  fi
+  rm -rf "$TMUX_TMPDIR"
+}
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/scripts/send-shell-script.sh"
 
 tmp="$(mktemp -d)"
 session="tmux-model-driver-test-$$"
 cleanup() {
-  tmux kill-session -t "$session" 2>/dev/null || true
+  tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-session -t "$session" 2>/dev/null || true
   rm -rf "$tmp"
+  tmux_sandbox_close
 }
 trap cleanup EXIT
 
@@ -22,8 +39,8 @@ mkdir -p "$repo" "$stage_root"
 git -C "$repo" init --quiet
 before_status="$(git -C "$repo" status --short)"
 
-tmux new-session -d -s "$session" -c "$repo" 'bash --noprofile --norc'
-pane_id="$(tmux display-message -p -t "$session" '#{pane_id}')"
+tmux -S "$FARMSLOT_TMUX_SANDBOX" new-session -d -s "$session" -c "$repo" 'bash --noprofile --norc'
+pane_id="$(tmux -S "$FARMSLOT_TMUX_SANDBOX" display-message -p -t "$session" '#{pane_id}')"
 
 {
   printf 'if stat -f %%Lp "$0" >/dev/null 2>&1; then stat -f %%Lp "$0"; else stat -c %%a "$0"; fi > %q\n' "$mode_file"

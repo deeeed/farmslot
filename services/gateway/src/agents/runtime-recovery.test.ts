@@ -11,13 +11,23 @@ import { createRun, deleteRun, getRun, updateRun, updateRunAgentContexts } from 
 
 import { restoreTmuxWorker } from './runtime-recovery.js';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
 const testPoolFile = path.join(poolDir, `runtime-recovery-fixture-${process.pid}.json`);
 const slotId = `runtime-recovery-${process.pid}`;
 const sessionName = `fs-rt-recovery-${process.pid}`;
 
 function tmuxAvailable(): boolean {
+  if (!tmuxSandbox) return false;
   try {
-    execFileSync('tmux', ['-V'], { stdio: 'ignore' });
+    execFileSync('tmux', ['-S', tmuxSandbox!, '-V'], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -26,7 +36,9 @@ function tmuxAvailable(): boolean {
 
 function killTmuxSession(): void {
   try {
-    execFileSync('tmux', ['kill-session', '-t', `=${sessionName}`], { stdio: 'ignore' });
+    execFileSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${sessionName}`], {
+      stdio: 'ignore',
+    });
   } catch {
     // Test cleanup only: the session may not exist if setup failed before tmux launch.
   }
@@ -37,6 +49,8 @@ function launchLiveCodexPane(): string {
   execFileSync(
     'tmux',
     [
+      '-S',
+      tmuxSandbox!,
       'new-session',
       '-d',
       '-s',
@@ -52,7 +66,7 @@ function launchLiveCodexPane(): string {
   waitForLiveCodexPane();
   return execFileSync(
     'tmux',
-    ['display-message', '-p', '-t', `=${sessionName}:dev`, '#{pane_id}'],
+    ['-S', tmuxSandbox!, 'display-message', '-p', '-t', `=${sessionName}:dev`, '#{pane_id}'],
     { encoding: 'utf8' },
   ).trim();
 }

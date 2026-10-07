@@ -8,6 +8,18 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
 const execFileAsync = promisify(execFile);
 
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
@@ -55,9 +67,13 @@ async function stackFixture(
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
     // Prepare's tmux phase opens a real session named after the slot.
-    spawnSync('tmux', ['kill-session', '-t', `=${slotId}`], { stdio: 'ignore' });
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
+      stdio: 'ignore',
+    });
     assert.notEqual(
-      spawnSync('tmux', ['has-session', '-t', `=${slotId}`], { stdio: 'ignore' }).status,
+      spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
+        stdio: 'ignore',
+      }).status,
       0,
       `tmux session ${slotId} must not outlive the test`,
     );
@@ -116,69 +132,81 @@ async function stackFixture(
   return { slotId, slotRepo, mainHead, upstreamHead };
 }
 
-test('a stacked fix-bug branch starts from the upstream PR head fetched from origin', async (t) => {
-  const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'stacked', 48830);
-  const events: unknown[] = [];
-  const recorded: string[] = [];
-  const result = await slotPrepare(
-    {
-      slotId,
-      branch: 'feat/stacked',
-      prepareProfile: 'core',
-      flowType: 'fix-bug',
-      forceNewBranch: true,
-    },
-    (_event, payload) => events.push(payload),
-    undefined,
-    {
-      stackBase: { requestedRef: 'refs/heads/feat/upstream' },
-      onStackBaseResolved: async (resolution) => {
-        recorded.push(resolution.resolvedSha);
+test(
+  'a stacked fix-bug branch starts from the upstream PR head fetched from origin',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'stacked', 48830);
+    const events: unknown[] = [];
+    const recorded: string[] = [];
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/stacked',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
       },
-    },
-  );
-  assert.equal(result.stackBase?.resolvedSha, upstreamHead);
-  assert.deepEqual(recorded, [upstreamHead], 'provenance is handed over as soon as it resolves');
-  assert.equal(result.startRef, undefined, 'a stack base is not a replay start ref');
-  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
-  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
-  assert.match(JSON.stringify(events), /Created feat\/stacked from refs\/heads\/feat\/upstream/);
-});
+      (_event, payload) => events.push(payload),
+      undefined,
+      {
+        stackBase: { requestedRef: 'refs/heads/feat/upstream' },
+        onStackBaseResolved: async (resolution) => {
+          recorded.push(resolution.resolvedSha);
+        },
+      },
+    );
+    assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+    assert.deepEqual(recorded, [upstreamHead], 'provenance is handed over as soon as it resolves');
+    assert.equal(result.startRef, undefined, 'a stack base is not a replay start ref');
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
+    assert.match(JSON.stringify(events), /Created feat\/stacked from refs\/heads\/feat\/upstream/);
+  },
+);
 
-test('a reused linked worktree on the work branch still lands on the stack base', async (t) => {
-  const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {
-    linkedWorktreeOn: 'feat/stacked',
-  });
-  const result = await slotPrepare(
-    {
-      slotId,
-      branch: 'feat/stacked',
-      prepareProfile: 'core',
-      flowType: 'fix-bug',
-      forceNewBranch: true,
-    },
-    () => undefined,
-    undefined,
-    { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
-  );
-  assert.equal(result.stackBase?.resolvedSha, upstreamHead);
-  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
-  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
-});
+test(
+  'a reused linked worktree on the work branch still lands on the stack base',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {
+      linkedWorktreeOn: 'feat/stacked',
+    });
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/stacked',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
+      },
+      () => undefined,
+      undefined,
+      { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
+    );
+    assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
+  },
+);
 
-test('without a stack base the same prepare branches from the default branch', async (t) => {
-  const { slotId, slotRepo, mainHead } = await stackFixture(t, 'plain', 48832);
-  const result = await slotPrepare(
-    {
-      slotId,
-      branch: 'feat/plain',
-      prepareProfile: 'core',
-      flowType: 'fix-bug',
-      forceNewBranch: true,
-    },
-    () => undefined,
-  );
-  assert.equal(result.stackBase, undefined);
-  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/plain');
-  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead);
-});
+test(
+  'without a stack base the same prepare branches from the default branch',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'plain', 48832);
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/plain',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
+      },
+      () => undefined,
+    );
+    assert.equal(result.stackBase, undefined);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/plain');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead);
+  },
+);

@@ -30,6 +30,15 @@ import {
   slotRefreshBlockedReason,
 } from './slot.js';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX?.startsWith(process.env.TMUX_TMPDIR)
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
 const execFileAsync = promisify(execFile);
 
 function makeSlotVars(
@@ -223,8 +232,12 @@ test('buildPreparePreLaunchSweepCommand preserves same-run prepare windows', () 
 });
 
 test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare windows', async (t) => {
+  if (!tmuxSandbox) {
+    t.skip('needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)');
+    return;
+  }
   try {
-    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, '-V'], { timeout: 2000 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       t.skip('tmux is not installed');
@@ -235,19 +248,21 @@ test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare wi
 
   const session = `farmslot_prepare_dup_${process.pid}_${Date.now()}`;
   const windowName = 'prepare-6fb60a78-deps';
-  await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
-    () => undefined,
-  );
+  await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session], {
+    timeout: 2000,
+  }).catch(() => undefined);
   try {
     await execFileAsync(
       'tmux',
-      ['new-session', '-d', '-s', session, '-n', 'zsh', '--', 'sleep', '60'],
+      ['-S', tmuxSandbox!, 'new-session', '-d', '-s', session, '-n', 'zsh', '--', 'sleep', '60'],
       { timeout: 2000 },
     );
     for (let i = 0; i < 3; i += 1) {
       await execFileAsync(
         'tmux',
         [
+          '-S',
+          tmuxSandbox!,
           'new-window',
           '-d',
           '-t',
@@ -265,16 +280,20 @@ test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare wi
 
     const before = await execFileAsync(
       'tmux',
-      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      ['-S', tmuxSandbox!, 'list-windows', '-t', session, '-F', '#{window_name}'],
       { timeout: 2000 },
     );
     assert.equal(before.stdout.split('\n').filter((name) => name === windowName).length, 3);
 
     // Name targeting is poisoned once duplicates exist.
     await assert.rejects(
-      execFileAsync('tmux', ['pipe-pane', '-t', `${session}:${windowName}`, '-O', 'cat'], {
-        timeout: 2000,
-      }),
+      execFileAsync(
+        'tmux',
+        ['-S', tmuxSandbox!, 'pipe-pane', '-t', `${session}:${windowName}`, '-O', 'cat'],
+        {
+          timeout: 2000,
+        },
+      ),
       /can't find window/,
     );
 
@@ -288,21 +307,25 @@ test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare wi
 
     const after = await execFileAsync(
       'tmux',
-      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      ['-S', tmuxSandbox!, 'list-windows', '-t', session, '-F', '#{window_name}'],
       { timeout: 2000 },
     );
     assert.equal(after.stdout.split('\n').filter((name) => name === windowName).length, 0);
     assert(after.stdout.split('\n').includes('zsh'));
   } finally {
-    await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
-      () => undefined,
-    );
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session], {
+      timeout: 2000,
+    }).catch(() => undefined);
   }
 });
 
 test('buildPrepareNewWindowCommand recreates a missing tmux session before opening window', async (t) => {
+  if (!tmuxSandbox) {
+    t.skip('needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)');
+    return;
+  }
   try {
-    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, '-V'], { timeout: 2000 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       t.skip('tmux is not installed');
@@ -312,22 +335,22 @@ test('buildPrepareNewWindowCommand recreates a missing tmux session before openi
   }
 
   const session = `farmslot_prepare_missing_${process.pid}_${Date.now()}`;
-  await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
-    () => undefined,
-  );
+  await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session], {
+    timeout: 2000,
+  }).catch(() => undefined);
   const command = buildPrepareNewWindowCommand(session, 'prepare-test', '/tmp', 'sleep 60');
   try {
     await execFileAsync('/bin/bash', ['-lc', command], { timeout: 5000 });
     const { stdout } = await execFileAsync(
       'tmux',
-      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      ['-S', tmuxSandbox!, 'list-windows', '-t', session, '-F', '#{window_name}'],
       { timeout: 2000 },
     );
     assert(stdout.split('\n').includes('prepare-test'));
   } finally {
-    await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
-      () => undefined,
-    );
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session], {
+      timeout: 2000,
+    }).catch(() => undefined);
   }
 });
 
