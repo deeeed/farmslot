@@ -17,13 +17,15 @@ const EVIDENCE_MEDIA = ['png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'webm'];
 const EVIDENCE_INDEXES = ['evidence-manifest.json', 'latest-valid-recipe-run.json'];
 
 /**
- * Lists HEAD, then the description, the evidence manifest and every evidence
- * media file or evidence index under the task's artifacts with its git blob id.
+ * Lists HEAD, then the description, the evidence manifests (the task's own and
+ * the one inherited from an upstream run) and every evidence media file or
+ * evidence index under the task's artifacts or inherited inputs, with git blob ids.
  * Gateway-written review files are other names, so a review never changes its
  * own fingerprint.
  */
 export function reviewedInputsCommand(repo: string, taskDir: string): string {
   const artifacts = `${taskDir}/artifacts`;
+  const inherited = `${taskDir}/inputs/inherited`;
   const names = [
     ...EVIDENCE_MEDIA.map((ext) => `-iname ${shellQuote(`*.${ext}`)}`),
     ...EVIDENCE_INDEXES.map((name) => `-name ${shellQuote(name)}`),
@@ -31,7 +33,7 @@ export function reviewedInputsCommand(repo: string, taskDir: string): string {
   return [
     `cd ${shellQuote(repo)}`,
     'git rev-parse HEAD',
-    `{ printf '%s\\n' ${shellQuote(`${artifacts}/pr-description.md`)} ${shellQuote(`${artifacts}/evidence-manifest.json`)}; find ${shellQuote(artifacts)} -type f \\( ${names} \\) 2>/dev/null | LC_ALL=C sort; } | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s %s\\n' "$f" "$(git hash-object "$f")"; else printf '%s missing\\n' "$f"; fi; done`,
+    `{ printf '%s\\n' ${shellQuote(`${artifacts}/pr-description.md`)} ${shellQuote(`${artifacts}/evidence-manifest.json`)} ${shellQuote(`${inherited}/evidence-manifest.json`)}; find ${shellQuote(artifacts)} ${shellQuote(inherited)} -type f \\( ${names} \\) 2>/dev/null | LC_ALL=C sort; } | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s %s\\n' "$f" "$(git hash-object "$f")"; else printf '%s missing\\n' "$f"; fi; done`,
   ].join(' && ');
 }
 

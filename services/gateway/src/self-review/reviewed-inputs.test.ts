@@ -131,6 +131,16 @@ test('what a passing review judged changes with the description, evidence or HEA
   await reviewPasses(run.id);
   assert.equal(await changed(), false);
 
+  // Publication can fall back to the manifest inherited from an upstream run.
+  const inherited = path.join(artifacts, '..', 'inputs', 'inherited');
+  await mkdir(inherited, { recursive: true });
+  await writeFile(path.join(inherited, 'evidence-manifest.json'), '{"before_after_pairs":[]}');
+  assert.equal(await changed(), true, 'an inherited manifest');
+  await reviewPasses(run.id);
+  await writeFile(path.join(inherited, 'flag-on.png'), 'png');
+  assert.equal(await changed(), true, 'inherited evidence media');
+  await reviewPasses(run.id);
+
   await git(repo, 'commit', '-q', '--allow-empty', '-m', 'squash');
   assert.equal(await changed(), true, 'a new HEAD, e.g. a squash');
 });
