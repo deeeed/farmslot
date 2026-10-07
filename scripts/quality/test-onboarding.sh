@@ -19,6 +19,8 @@ TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/fs-tmux-XXXXXX")"
 export TMUX_TMPDIR
 FARMSLOT_TMUX_SANDBOX="$TMUX_TMPDIR/tmux-$(id -u)/default"
 export FARMSLOT_TMUX_SANDBOX
+# With -S, tmux does not create the per-user socket directory it would under TMUX_TMPDIR.
+mkdir -m 700 "$TMUX_TMPDIR/tmux-$(id -u)"
 tmux_sandbox_close() {
   # The socket exists only if the test started a server.
   if [ -S "$FARMSLOT_TMUX_SANDBOX" ]; then

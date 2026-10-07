@@ -2,6 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -262,6 +263,17 @@ export function closeTmuxSandbox(env) {
   rmSync(env.TMUX_TMPDIR, { recursive: true, force: true });
 }
 
+/**
+ * Create the sandbox directory with the per-user socket directory tmux would
+ * make under TMUX_TMPDIR (0700): with `-S`, tmux does not create it.
+ */
+export function openTmuxSandbox(uid = process.getuid?.() ?? 0) {
+  // Short directory name: tmux socket paths are limited to ~100 bytes.
+  const dir = mkdtempSync(join(tmpdir(), 'fs-tmux-'));
+  mkdirSync(join(dir, `tmux-${uid}`), { mode: 0o700 });
+  return dir;
+}
+
 function childEnvironment(tmuxDir) {
   const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
   for (const key of GIT_LOCATION_ENV) delete env[key];
@@ -486,8 +498,7 @@ async function main() {
     classify: (file) => classifyTest(readFileSync(file, 'utf8')),
   });
 
-  // Short directory name: tmux socket paths are limited to ~100 bytes.
-  const env = childEnvironment(mkdtempSync(join(tmpdir(), 'fs-tmux-')));
+  const env = childEnvironment(openTmuxSandbox());
   process.once('exit', () => {
     try {
       closeTmuxSandbox(env);
