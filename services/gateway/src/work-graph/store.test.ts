@@ -2152,10 +2152,12 @@ test('after the upstream merges, rebase-onto retargets the stacked PR to the def
   });
   t.after(() => workGraph.setStackRetargeterForTests(null));
 
+  const upstreamPr = nextPairPr++;
+  const downstreamPr = nextPairPr++;
   const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
   runs.updateRun(upstreamRun.id, {
     branch: 'feat/upstream',
-    prNumber: 41,
+    prNumber: upstreamPr,
     prState: 'OPEN',
     status: 'monitoring',
   });
@@ -2163,13 +2165,13 @@ test('after the upstream merges, rebase-onto retargets the stacked PR to the def
   const downstreamRun = await startRun('wn_down', downstream.item.id, downstream.item.sourceRef!);
   runs.updateRun(downstreamRun.id, {
     branch: 'feat/downstream',
-    prNumber: 42,
+    prNumber: downstreamPr,
     status: 'monitoring',
     stack: {
       upstreamNodeId: 'wn_up',
       upstreamRunId: upstreamRun.id,
       baseBranch: 'feat/upstream',
-      upstreamPrNumber: 41,
+      upstreamPrNumber: upstreamPr,
     },
   });
   await workGraph.schedulerTick({ graphId });
@@ -2189,7 +2191,7 @@ test('after the upstream merges, rebase-onto retargets the stacked PR to the def
   );
   assert.equal(ledger.length, 1);
   assert.equal(ledger[0]?.status, 'completed');
-  assert.equal(ledger[0]?.result, 'retargeted:#42->main; updated from main');
+  assert.equal(ledger[0]?.result, `retargeted:#${downstreamPr}->main; updated from main`);
 });
 
 test('a manual rebase edge from a non-base node keeps operator attention on a stacked node', async (t) => {
@@ -2357,8 +2359,9 @@ test('a PR published after the merge was first seen is still retargeted', async 
     };
   });
   t.after(() => workGraph.setStackRetargeterForTests(null));
+  const basePr = nextPairPr++;
   const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
-  runs.updateRun(upstreamRun.id, { branch: 'feat/upstream', prNumber: 41, prState: 'OPEN' });
+  runs.updateRun(upstreamRun.id, { branch: 'feat/upstream', prNumber: basePr, prState: 'OPEN' });
   await workGraph.schedulerTick({ graphId });
   const downstreamRun = await startRun('wn_down', downstream.item.id, downstream.item.sourceRef!);
   runs.updateRun(downstreamRun.id, {
@@ -2367,7 +2370,7 @@ test('a PR published after the merge was first seen is still retargeted', async 
       upstreamNodeId: 'wn_up',
       upstreamRunId: upstreamRun.id,
       baseBranch: 'feat/upstream',
-      upstreamPrNumber: 41,
+      upstreamPrNumber: basePr,
     },
   });
   runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
@@ -2391,8 +2394,9 @@ test('a failed retarget is recorded once and retried only by a targeted tick', a
     return { base: 'main', result: 'retargeted:#42->main' };
   });
   t.after(() => workGraph.setStackRetargeterForTests(null));
+  const basePr = nextPairPr++;
   const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
-  runs.updateRun(upstreamRun.id, { branch: 'feat/upstream', prNumber: 41, prState: 'OPEN' });
+  runs.updateRun(upstreamRun.id, { branch: 'feat/upstream', prNumber: basePr, prState: 'OPEN' });
   await workGraph.schedulerTick({ graphId });
   const downstreamRun = await startRun('wn_down', downstream.item.id, downstream.item.sourceRef!);
   runs.updateRun(downstreamRun.id, {
@@ -2402,7 +2406,7 @@ test('a failed retarget is recorded once and retried only by a targeted tick', a
       upstreamNodeId: 'wn_up',
       upstreamRunId: upstreamRun.id,
       baseBranch: 'feat/upstream',
-      upstreamPrNumber: 41,
+      upstreamPrNumber: basePr,
     },
   });
   runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
@@ -2573,4 +2577,77 @@ test('a non-merged rebase edge from the stack base keeps operator attention', as
   assert.equal(node?.status, 'needs-attention');
   assert.match(node?.waitingOn[0]?.detail ?? '', /rebase-onto unlock requires/);
   assert.deepEqual(moved, []);
+});
+
+test('a replacement upstream attempt does not hide the recorded PR merging', async (t) => {
+  const { graphId, runs, upstream, upstreamRun, downstreamRun, workGraph } = await stackedPair(
+    'Stack replacement family',
+  );
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  // A new attempt on the upstream node opens its own PR: the node now follows
+  // that family, so its `merged` edge waits on the new PR.
+  const retry = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: upstream.item.sourceRef!,
+    backlogItemId: upstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_up',
+  });
+  runs.updateRun(retry.id, {
+    branch: 'feat/upstream-retry',
+    prNumber: nextPairPr++,
+    prState: 'OPEN',
+    status: 'monitoring',
+  });
+  await workGraph.schedulerTick({ graphId });
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  const projection = (await workGraph.schedulerTick({ graphId })).graphs[0]!;
+  assert.equal(
+    projection.edges.find((edge) => edge.id === 'we_rebase')?.status,
+    'pending',
+    'the edge follows the retry',
+  );
+  assert.deepEqual(moved, [downstreamRun.id], 'the recorded PR merged, so the PR moves');
+});
+
+test('a graph whose runs finished stays swept until the stacked PR is updated', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, workGraph } = await stackedPair(
+    'Stack finished then merged',
+  );
+  const calls: string[] = [];
+  let failUpdate = true;
+  workGraph.setStackRetargeterForTests(
+    async () => {
+      calls.push('retarget');
+      return { base: 'main', result: 'retargeted' };
+    },
+    async () => {
+      calls.push('update-branch');
+      if (failUpdate) throw new Error('HTTP 502');
+      return { base: 'main', result: 'updated' };
+    },
+  );
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  const finished = new Date().toISOString();
+  runs.updateRun(upstreamRun.id, { status: 'done', completedAt: finished });
+  runs.updateRun(downstreamRun.id, { status: 'done', completedAt: finished });
+  await workGraph.schedulerTick({ graphId });
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  failUpdate = false;
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.graph.status === 'done',
+    false,
+    'the update-branch step is still owed',
+  );
+  await workGraph.schedulerTick();
+  assert.deepEqual(calls, ['retarget', 'update-branch'], 'the background sweep finishes it');
+  await workGraph.schedulerTick();
+  assert.deepEqual(calls, ['retarget', 'update-branch']);
 });

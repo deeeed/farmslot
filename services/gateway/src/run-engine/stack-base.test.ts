@@ -180,9 +180,11 @@ test('a stacked run diffs against the commit it branched from', () => {
     baseRef: 'stack:feat/upstream',
     commitish: STACK.resolvedSha,
   });
+  // Retargeting alone does not move the base: the checkout's history does
+  // (settleStackedDiffBase, covered with real git in stacked-diff-base.test.ts).
   assert.deepEqual(
     contributionDiffBaseSpec({ stack: { ...STACK, retargetedTo: 'main' } }, 'main'),
-    { baseRef: 'origin/main', commitish: 'origin/main' },
+    { baseRef: 'stack:feat/upstream', commitish: STACK.resolvedSha },
   );
 });
 

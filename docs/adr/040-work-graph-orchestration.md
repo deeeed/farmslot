@@ -831,20 +831,23 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   Prepare fetches `refs/heads/<branch>` from origin, creates the work branch from its head,
   checks that the branch really sits there, and records the commit before any later
   prepare phase runs.
-- **Publication.** The PR targets the upstream branch. The contribution diff starts at the
-  recorded commit, for the stacked run and for its ci-watch follow-ups, so review sees only
-  this run's changes.
+- **Publication.** The PR targets the upstream branch. The contribution diff of the stacked
+  run and its ci-watch follow-ups starts at the recorded commit until the checkout merges
+  the default branch past it, then at the default branch, so review sees only this run's
+  changes before and after the upstream squash-merges.
 - **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
   stacked on top. Runs without `run.stack` get no section; their task documents are
   byte-identical to before (golden tests).
-- **`rebase-onto` on a stacked node.** When the upstream PR the run recorded merges, a
-  satisfied `merged` + `rebase-onto` edge from the stack base retargets the downstream PR
-  to the default branch and sets `run.stack.retargetedTo`; a run that has not published
+- **`rebase-onto` on a stacked node.** When the upstream PR the run recorded merges (even if
+  a newer upstream attempt keeps the edge itself pending), a `merged` + `rebase-onto` edge
+  from the stack base retargets the downstream PR to the default branch and sets
+  `run.stack.retargetedTo`; a run that has not published
   yet opens its PR against that base, and a PR that appears later is retargeted on the
   next tick (the ledger key carries the PR number). Once nothing in the run's family is
   active, so no warm worker holds a local branch, Farmslot merges the default branch into
   the PR head through GitHub's update-branch API so a squash-merged upstream leaves the
-  diff; a conflict is left to the update-branch flow. GitHub calls use REST (`repo` scope),
+  diff; a conflict is left to the update-branch flow. A graph with a step still owed is
+  not marked done, so the background sweep finishes it. GitHub calls use REST (`repo` scope),
   run outside the graph mutation lock and have a 90 s deadline; a failure is recorded once
   in the ledger and retried by an operator-targeted `farmslot graph tick <graphId>`. Other
   rebase edges, and every rebase edge on a node without a published edge, keep the

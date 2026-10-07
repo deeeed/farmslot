@@ -909,21 +909,36 @@ interface StackRetargetJob {
 
 const stackRetargetsInFlight = new Set<string>();
 
+function isStackRebaseEdge(edge: WorkEdge, upstreamId: string | undefined): boolean {
+  return (
+    !!upstreamId &&
+    edge.fromNodeId === upstreamId &&
+    edge.blocks === 'completion' &&
+    edge.unlock.kind === 'rebase-onto' &&
+    edge.condition.kind === 'merged'
+  );
+}
+
 /**
- * The next GitHub step for a stacked node whose stack base merged, judged by the
- * upstream PR the run recorded, not by whatever the upstream node runs now.
- * First the PR moves to the default branch, keyed by PR number so a PR that
- * publishes after the merge was first seen still moves. Then, once nothing in
- * the run's family is active, the default branch is merged into its head. A
- * failed step waits for an operator-targeted tick.
+ * The next GitHub step a stacked node owes, judged by the upstream PR its run
+ * recorded rather than by the upstream node's current family or its edge status
+ * (a replacement attempt can leave the `merged` edge pending while the recorded
+ * PR merges). First the PR moves to the default branch, keyed by PR number so a
+ * PR that publishes after the merge was first seen still moves; then the
+ * default branch is merged into its head. A failed step is not owed again until
+ * an operator-targeted tick retries it.
  */
-function stackRetargetJob(
+function nextStackStep(
   snapshot: WorkGraphSnapshot,
   node: WorkNode,
-  upstreamId: string,
   runs: readonly Run[],
   retryFailed: boolean,
-): StackRetargetJob | null {
+): (StackRetargetJob & { run: Run }) | null {
+  const upstreamId = stackUpstreamId(snapshot, node);
+  if (
+    !snapshot.edges.some((edge) => edge.toNodeId === node.id && isStackRebaseEdge(edge, upstreamId))
+  )
+    return null;
   const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
   const stack = run?.stack;
   if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
@@ -934,26 +949,44 @@ function stackRetargetJob(
       (candidate.prState === 'MERGED' || !!candidate.mergedAt),
   );
   if (!upstreamMerged) return null;
-  const retargetKey = `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}:${run.prNumber ?? 'unpublished'}`;
-  const pending = (key: string) => {
+  const owed = (key: string) => {
     const recorded = snapshot.ledger.find((entry) => entry.key === key);
-    if (recorded?.status === 'completed') return false;
-    if (recorded?.status === 'failed' && !retryFailed) return false;
-    return !stackRetargetsInFlight.has(key);
+    return !recorded || (recorded.status === 'failed' && retryFailed);
   };
-  const job = { graphId: snapshot.graph.id, nodeId: node.id, runId: run.id };
-  if (pending(retargetKey)) return { ...job, kind: 'retarget', key: retargetKey };
+  const job = { graphId: snapshot.graph.id, nodeId: node.id, runId: run.id, run };
+  const retargetKey = `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}:${run.prNumber ?? 'unpublished'}`;
+  if (owed(retargetKey)) return { ...job, kind: 'retarget', key: retargetKey };
   const retargeted = snapshot.ledger.some(
     (entry) => entry.key === retargetKey && entry.status === 'completed',
   );
-  const familyActive = runs.some(
-    (candidate) =>
-      (candidate.familyId === run.familyId || candidate.id === run.familyId) &&
-      !isTerminalRunStatus(candidate.status),
-  );
   const updateKey = `${retargetKey}:update-branch`;
-  if (!run.prNumber || !retargeted || familyActive || !pending(updateKey)) return null;
+  if (!run.prNumber || !retargeted || !owed(updateKey)) return null;
   return { ...job, kind: 'update-branch', key: updateKey };
+}
+
+/**
+ * The step to start now, if any. update-branch also waits until nothing in the
+ * run's family is active, so no warm worker holds a local branch that the
+ * remote merge would leave behind.
+ */
+function stackRetargetJob(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+  retryFailed: boolean,
+): StackRetargetJob | null {
+  const step = nextStackStep(snapshot, node, runs, retryFailed);
+  if (!step || stackRetargetsInFlight.has(step.key)) return null;
+  if (step.kind === 'update-branch') {
+    const familyActive = runs.some(
+      (candidate) =>
+        (candidate.familyId === step.run.familyId || candidate.id === step.run.familyId) &&
+        !isTerminalRunStatus(candidate.status),
+    );
+    if (familyActive) return null;
+  }
+  const { run: _run, ...job } = step;
+  return job;
 }
 
 /**
@@ -1678,20 +1711,15 @@ function schedulerTickLocked(
           node.updatedAt = now;
           continue;
         }
-        const satisfiedRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
         // A `merged` rebase edge from the node this one stacks on retargets its
         // PR and does not hold the node; every other rebase edge keeps the
         // operator path.
         const stackUpstream = stackUpstreamId(snapshot, node);
-        const completionRebaseInbound = satisfiedRebaseInbound.filter(
-          (edge) => edge.fromNodeId !== stackUpstream || edge.condition.kind !== 'merged',
+        const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound).filter(
+          (edge) => !isStackRebaseEdge(edge, stackUpstream),
         );
-        if (
-          stackUpstream &&
-          completionRebaseInbound.length < satisfiedRebaseInbound.length &&
-          canRequireCompletionUnlock(node)
-        ) {
-          const job = stackRetargetJob(snapshot, node, stackUpstream, runs, !!params.graphId);
+        if (stackUpstream && canRequireCompletionUnlock(node)) {
+          const job = stackRetargetJob(snapshot, node, runs, !!params.graphId);
           if (job) retargets.push(job);
         }
         if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
@@ -1822,8 +1850,16 @@ function schedulerTickLocked(
         const allRequiredEdgesSettled = snapshot.edges.every(
           (edge) => !edge.required || edge.status === 'satisfied' || edge.status === 'waived',
         );
+        // A stacked PR still owed a GitHub step keeps the graph swept.
+        const stackStepOwed = snapshot.nodes.some(
+          (node) => !!nextStackStep(snapshot, node, runs, false),
+        );
         snapshot.graph.status =
-          allDone && allRequiredEdgesSettled ? 'done' : runnable === 0 ? 'waiting' : 'active';
+          allDone && allRequiredEdgesSettled && !stackStepOwed
+            ? 'done'
+            : runnable === 0
+              ? 'waiting'
+              : 'active';
       }
       snapshot.graph.updatedAt = now;
       await persistNow(snapshot);
