@@ -4,8 +4,12 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Add `metroBundleProgress(line)`: the percent and module counts of a Metro or Expo bundle progress line, ready for a stage's `progress`.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.19.0 - 2026-10-08
+
+- Add `metroBundleProgress(line)`: the percent and module counts of a Metro or Expo bundle progress line, ready for a stage's `progress`.
+- Publish with protocol 0.34.0 and recipe-runner 0.26.0.
 
 ## 0.18.0 - 2026-10-06
 

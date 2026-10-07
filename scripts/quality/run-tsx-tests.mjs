@@ -1,6 +1,15 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 
@@ -223,8 +232,78 @@ export function assignmentDiagnosticLines(check, toLabel = (file) => file) {
   return lines;
 }
 
-function childEnvironment() {
-  const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
+/**
+ * A private tmux server for one test run. Tests, and the production code they
+ * drive, call tmux; from inside a pane `$TMUX` would send those calls to the
+ * operator's own server, where a stray `kill-server` ends every session. Test
+ * processes get no `TMUX`/`TMUX_PANE` and a `TMUX_TMPDIR` the runner owns, so
+ * plain `tmux` lands on a server under that directory.
+ * `FARMSLOT_TMUX_SANDBOX` names its socket: tests that run tmux require it and
+ * pass it with `-S`.
+ */
+export function tmuxSandboxEnvironment(env, dir, uid = process.getuid?.() ?? 0) {
+  const sandboxed = { ...env, TMUX_TMPDIR: dir };
+  delete sandboxed.TMUX;
+  delete sandboxed.TMUX_PANE;
+  sandboxed.FARMSLOT_TMUX_SANDBOX = join(dir, `tmux-${uid}`, 'default');
+  return sandboxed;
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** Wait (bounded, synchronously: it also runs on exit) for a process to end. */
+function waitForExit(pid, timeoutMs) {
+  const until = Date.now() + timeoutMs;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (processAlive(pid)) {
+    if (Date.now() >= until) return false;
+    Atomics.wait(sleeper, 0, 0, 50);
+  }
+  return true;
+}
+
+/**
+ * End the run's private tmux server, by its socket only, and remove its
+ * directory. The server's own pid, read before `kill-server`, decides whether
+ * it stopped; a socket with no server behind it has nothing to end.
+ */
+export function closeTmuxSandbox(env) {
+  const socket = env.FARMSLOT_TMUX_SANDBOX;
+  if (socket && existsSync(socket)) {
+    const probe = spawnSync('tmux', ['-S', socket, 'display-message', '-p', '#{pid}'], {
+      env,
+      encoding: 'utf8',
+    });
+    const pid = probe.status === 0 ? Number.parseInt(probe.stdout.trim(), 10) : Number.NaN;
+    spawnSync('tmux', ['-S', socket, 'kill-server'], { env, stdio: 'ignore' });
+    if (Number.isInteger(pid) && !waitForExit(pid, 5000)) {
+      throw new Error(`[tsx-tests] the tmux sandbox server ${pid} on ${socket} did not stop`);
+    }
+  }
+  rmSync(env.TMUX_TMPDIR, { recursive: true, force: true });
+}
+
+/**
+ * Create the sandbox directory with the per-user socket directory tmux would
+ * make under TMUX_TMPDIR (0700): with `-S`, tmux does not create it.
+ */
+export function openTmuxSandbox(uid = process.getuid?.() ?? 0) {
+  // Short directory name: tmux socket paths are limited to ~100 bytes.
+  const dir = mkdtempSync(join(tmpdir(), 'fs-tmux-'));
+  mkdirSync(join(dir, `tmux-${uid}`), { mode: 0o700 });
+  return dir;
+}
+
+function childEnvironment(tmuxDir) {
+  const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
   for (const key of GIT_LOCATION_ENV) delete env[key];
   return env;
 }
@@ -447,7 +526,24 @@ async function main() {
     classify: (file) => classifyTest(readFileSync(file, 'utf8')),
   });
 
-  const env = childEnvironment();
+  const env = childEnvironment(openTmuxSandbox());
+  const closeSandbox = () => {
+    try {
+      closeTmuxSandbox(env);
+    } catch (error) {
+      // Reported and failing: a sandbox server left running is a broken run.
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  };
+  process.once('exit', closeSandbox);
+  // An interrupted run ends its server too, then dies by the same signal.
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(signal, () => {
+      closeSandbox();
+      process.kill(process.pid, signal);
+    });
+  }
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file
