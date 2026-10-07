@@ -11,6 +11,24 @@
 # changes are not exercised. Commit before running.
 set -euo pipefail
 
+# Real tmux only on a private server: no $TMUX, and a TMUX_TMPDIR this test
+# owns, so plain `tmux` here and in the scripts under test lands on it. Cleanup
+# ends that server by its socket, never the operator's.
+unset TMUX TMUX_PANE
+TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/fs-tmux-XXXXXX")"
+export TMUX_TMPDIR
+FARMSLOT_TMUX_SANDBOX="$TMUX_TMPDIR/tmux-$(id -u)/default"
+export FARMSLOT_TMUX_SANDBOX
+# With -S, tmux does not create the per-user socket directory it would under TMUX_TMPDIR.
+mkdir -m 700 "$TMUX_TMPDIR/tmux-$(id -u)"
+tmux_sandbox_close() {
+  # The socket exists only if the test started a server.
+  if [ -S "$FARMSLOT_TMUX_SANDBOX" ]; then
+    tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-server 2>/dev/null || true # the server may already be gone
+  fi
+  rm -rf "$TMUX_TMPDIR"
+}
+
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRATCH="$(mktemp -d)"
 export FARMSLOT_WORKSPACE="${SCRATCH}/fsw"
@@ -18,17 +36,12 @@ export FARMSLOT_BIN_DIR="${FARMSLOT_WORKSPACE}/bin"
 export PATH="${FARMSLOT_BIN_DIR}:${PATH}"
 
 # The pack is copied so the update stage can bump its content without touching
-# the repo. The slot's tmux session is scratch-specific — clean it up, but only
-# if this run created it (never kill an operator's pre-existing session).
+# the repo. The slot's tmux session lives on this run's private server, which
+# cleanup ends.
 PACK="${SCRATCH}/example-app"
-SESSION_PRE_EXISTING=0
-tmux has-session -t '=example-app-1' 2>/dev/null && SESSION_PRE_EXISTING=1
 cleanup() {
-  if [ "$SESSION_PRE_EXISTING" = 0 ]; then
-    # =name forces exact match — plain -t prefix-matches other sessions.
-    tmux kill-session -t '=example-app-1' 2>/dev/null || true # best-effort: session may not exist
-  fi
   rm -rf "$SCRATCH"
+  tmux_sandbox_close
 }
 trap cleanup EXIT
 

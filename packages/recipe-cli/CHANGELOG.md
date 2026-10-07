@@ -6,6 +6,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - **BREAKING:** `redactCommandArgs` no longer treats `--arg` specially: `call` takes action inputs as bare `key=value` pairs only, and a bare pair gets the same assignment redaction (plus URL redaction) a `--arg` value got; an inline `--option=value` gets it too.
 - **BREAKING:** `call` takes its action inputs as `key=value` only (`--arg`/`--arg=…` is refused: `--arg was removed; pass the input as key=value`, exit 2; an inline `--flag=value` is always an option, so `call`'s inline `--record-video=<mode>` is refused on an adapter that cannot record, like the bare flag), and writes its artifacts by `run`'s rule: `--artifacts-dir`, else `<task>/artifacts/calls/<action>-<uuid>` inside a task (`RECIPE_TASK_DIR`/`FARMSLOT_TASK_DIR`, which must be inside the checkout), else `temp/recipe/calls/<action>-<uuid>`. `call <action> --help` and `actions --action` no longer mention `--arg`.
+- `run` lists evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`, with an optional `metadata.fallbackReason`): `fallbacks` (`path`, `label`, `fallbackFrom`, `fallbackReason`) in `--json` and in the `--json-stream` completion event, and a marked artifact line in human output, on a failed run too, so an evidence gate need not read artifact metadata.
 
 ## 0.9.0 - 2026-10-08
 
