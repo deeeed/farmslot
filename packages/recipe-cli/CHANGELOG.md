@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `run`, `run --plan` and `call` refuse `--record-video` on an adapter whose harness surface has no `recording`, before recipe execution (on `call`, the bare `--record-video`/`--record` flag; an inline `--record-video=<mode>` after the action is still read as an action input): `RECORDING_UNSUPPORTED`, exit 2 (the `--json` envelope or human output; `run` also emits NDJSON under `--json-stream`). The next step says to rerun without `--record-video`, or use the adapter's own screenshot action or an adapter that records. It used to fail mid-run as `APP_LOGIC_FAILURE`; a run that still reaches the missing target now fails with `RECORDING_UNSUPPORTED`, exit 4.
 
 ## 0.8.0 - 2026-10-07
 
