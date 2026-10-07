@@ -47,7 +47,11 @@ import { farmslotRoot } from '../fleet/state.js';
 import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 
-import { retargetStackedPr, type StackRetargetResult } from './stack-retarget.js';
+import {
+  retargetStackedPr,
+  type StackRetargetResult,
+  updateStackedPrBranch,
+} from './stack-retarget.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type WorkGraphRecord = WorkGraphSnapshot & { originator?: WorkOriginator };
@@ -880,15 +884,23 @@ export function stackBaseForNode(graphId: string, nodeId: string): StackBase | n
   };
 }
 
-let stackRetargeter: (run: Run) => Promise<StackRetargetResult> = retargetStackedPr;
+type StackPrAction = (run: Run) => Promise<StackRetargetResult>;
+
+let stackRetargeter: StackPrAction = retargetStackedPr;
+let stackBranchUpdater: StackPrAction = updateStackedPrBranch;
 
 export function setStackRetargeterForTests(
-  fn: ((run: Run) => Promise<StackRetargetResult>) | null,
+  fn: StackPrAction | null,
+  updater: StackPrAction | null = null,
 ): void {
   stackRetargeter = fn ?? retargetStackedPr;
+  stackBranchUpdater =
+    updater ??
+    (fn ? async () => ({ base: 'main', result: 'update-branch:test' }) : updateStackedPrBranch);
 }
 
 interface StackRetargetJob {
+  kind: 'retarget' | 'update-branch';
   graphId: string;
   nodeId: string;
   runId: string;
@@ -898,10 +910,12 @@ interface StackRetargetJob {
 const stackRetargetsInFlight = new Set<string>();
 
 /**
- * Whether a stacked node's PR must move: its upstream PR merged, and this run
- * and PR number have no retarget on record. Keyed by PR number so a PR that
- * publishes after the merge was first seen still gets moved. A failed attempt
- * waits for an operator-targeted tick.
+ * The next GitHub step for a stacked node whose stack base merged, judged by the
+ * upstream PR the run recorded, not by whatever the upstream node runs now.
+ * First the PR moves to the default branch, keyed by PR number so a PR that
+ * publishes after the merge was first seen still moves. Then, once nothing in
+ * the run's family is active, the default branch is merged into its head. A
+ * failed step waits for an operator-targeted tick.
  */
 function stackRetargetJob(
   snapshot: WorkGraphSnapshot,
@@ -911,16 +925,35 @@ function stackRetargetJob(
   retryFailed: boolean,
 ): StackRetargetJob | null {
   const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
-  if (!run?.stack || run.stack.upstreamNodeId !== upstreamId) return null;
-  const upstream = snapshot.nodes.find((candidate) => candidate.id === upstreamId);
-  if (!upstream || !publishedPrForNode(upstream, runs)?.merged) return null;
-  const key = `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}:${run.prNumber ?? 'unpublished'}`;
-  const recorded = snapshot.ledger.find((entry) => entry.key === key);
-  if (recorded?.status === 'completed' || (recorded?.status === 'failed' && !retryFailed)) {
-    return null;
-  }
-  if (stackRetargetsInFlight.has(key)) return null;
-  return { graphId: snapshot.graph.id, nodeId: node.id, runId: run.id, key };
+  const stack = run?.stack;
+  if (!run || !stack || stack.upstreamNodeId !== upstreamId) return null;
+  const upstreamMerged = runs.some(
+    (candidate) =>
+      candidate.project === run.project &&
+      candidate.prNumber === stack.upstreamPrNumber &&
+      (candidate.prState === 'MERGED' || !!candidate.mergedAt),
+  );
+  if (!upstreamMerged) return null;
+  const retargetKey = `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}:${run.prNumber ?? 'unpublished'}`;
+  const pending = (key: string) => {
+    const recorded = snapshot.ledger.find((entry) => entry.key === key);
+    if (recorded?.status === 'completed') return false;
+    if (recorded?.status === 'failed' && !retryFailed) return false;
+    return !stackRetargetsInFlight.has(key);
+  };
+  const job = { graphId: snapshot.graph.id, nodeId: node.id, runId: run.id };
+  if (pending(retargetKey)) return { ...job, kind: 'retarget', key: retargetKey };
+  const retargeted = snapshot.ledger.some(
+    (entry) => entry.key === retargetKey && entry.status === 'completed',
+  );
+  const familyActive = runs.some(
+    (candidate) =>
+      (candidate.familyId === run.familyId || candidate.id === run.familyId) &&
+      !isTerminalRunStatus(candidate.status),
+  );
+  const updateKey = `${retargetKey}:update-branch`;
+  if (!run.prNumber || !retargeted || familyActive || !pending(updateKey)) return null;
+  return { ...job, kind: 'update-branch', key: updateKey };
 }
 
 /**
@@ -936,7 +969,8 @@ async function runStackRetarget(job: StackRetargetJob): Promise<void> {
     try {
       const run = getAllRuns().find((candidate) => candidate.id === job.runId);
       if (!run?.stack) return;
-      const retarget = await stackRetargeter(run);
+      const action = job.kind === 'retarget' ? stackRetargeter : stackBranchUpdater;
+      const retarget = await action(run);
       outcome = { status: 'completed', result: retarget.result, base: retarget.base };
     } catch (err) {
       outcome = { status: 'failed', result: errorMessage(err) };
@@ -1645,11 +1679,12 @@ function schedulerTickLocked(
           continue;
         }
         const satisfiedRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
-        // Rebase edges from the node this one stacks on retarget its PR and do
-        // not hold the node; every other rebase edge keeps the operator path.
+        // A `merged` rebase edge from the node this one stacks on retargets its
+        // PR and does not hold the node; every other rebase edge keeps the
+        // operator path.
         const stackUpstream = stackUpstreamId(snapshot, node);
         const completionRebaseInbound = satisfiedRebaseInbound.filter(
-          (edge) => edge.fromNodeId !== stackUpstream,
+          (edge) => edge.fromNodeId !== stackUpstream || edge.condition.kind !== 'merged',
         );
         if (
           stackUpstream &&

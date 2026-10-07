@@ -35,6 +35,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
+import { getRun } from '../runs/store.js';
 
 import { atomicWriteTextFile, parseDiffTooLargeBytes, withTimeout } from './diff-artifact-utils.js';
 
@@ -445,6 +446,14 @@ export function cappedRunSourceDiffCommand(
   return `bash -c ${shellQuote(script)}`;
 }
 
+/**
+ * The stack a run's contribution is measured against: its own, or for a
+ * follow-up in a stacked family (ci-fix, pr-complete) the stacked run's.
+ */
+export function contributionStack(run: Pick<Run, 'stack' | 'familyId'>): Run['stack'] {
+  return run.stack ?? (run.familyId ? getRun(run.familyId)?.stack : undefined);
+}
+
 export function contributionDiffBaseSpec(
   run: Pick<Run, 'startRef' | 'stack'>,
   defaultBranch: string,
@@ -526,7 +535,12 @@ export async function captureRunDiffSnapshot(
 
   const { defaultBranch, sourceFilter, configSource, configFallbackReason, configFallbackError } =
     await resolveDiffCaptureSettings(run.project);
-  const baseSpec = options.baseSpec ?? contributionDiffBaseSpec(run, defaultBranch);
+  const baseSpec =
+    options.baseSpec ??
+    contributionDiffBaseSpec(
+      { startRef: run.startRef, stack: contributionStack(run) },
+      defaultBranch,
+    );
   const useMergeBase = options.useMergeBase ?? true;
   const diffArtifactPath = options.diffArtifactPath ?? 'artifacts/diff.txt';
   const sourcePathspecList = sourceCodeGitPathspecs(sourceFilter);

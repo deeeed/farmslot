@@ -19,8 +19,9 @@ const backlog = await import('../backlog/store.js');
 const queue = await import('../backlog/dispatch-queue.js');
 const runs = await import('../runs/store.js');
 const workGraph = await import('../work-graph/store.js');
-const { contributionDiffBaseSpec } = await import('./diff-artifacts.js');
-const { ensureRunStack, stackPrBase } = await import('./stack-base.js');
+const { contributionDiffBaseSpec, contributionStack } = await import('./diff-artifacts.js');
+const { ensureRunStack, setUpstreamPrReaderForTests, stackPrBase } =
+  await import('./stack-base.js');
 const { stackSection } = await import('../tasks/stack-section.js');
 
 backlog.initBacklogStore(() => {});
@@ -43,7 +44,21 @@ const STACK: RunStack = {
   resolvedSha: 'a'.repeat(40),
 };
 
-test('ensureRunStack stamps a stacked graph run and leaves every other run alone', async () => {
+test('ensureRunStack stamps a stacked graph run and leaves every other run alone', async (t) => {
+  type Pr = Awaited<ReturnType<typeof import('../work-graph/stack-retarget.js').readUpstreamPr>>;
+  let upstreamPr: Pr = {
+    state: 'open',
+    merged: false,
+    headRef: 'feat/upstream',
+    sameRepo: true,
+    url: 'https://github.com/deeeed/farmslot/pull/41',
+  };
+  const reads: number[] = [];
+  setUpstreamPrReaderForTests(async (_project, prNumber) => {
+    reads.push(prNumber);
+    return upstreamPr;
+  });
+  t.after(() => setUpstreamPrReaderForTests(null));
   const items = await Promise.all(
     ['Upstream', 'Downstream'].map((title) =>
       backlog.createBacklogItem(
@@ -112,6 +127,42 @@ test('ensureRunStack stamps a stacked graph run and leaves every other run alone
   for (const run of [reviewOnSameNode, plain, bottom]) {
     assert.equal((await ensureRunStack(run.id)).stack, undefined, run.ticketOrPr);
   }
+  assert.deepEqual(reads, [41], 'only the stacked run asks GitHub');
+
+  // GitHub, not the last ci-watch observation, decides what the upstream PR is.
+  const fresh = () =>
+    runs.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: items[1]!.item.sourceRef,
+      workGraphId: graphId,
+      workNodeId: 'wn_down',
+    }).id;
+  upstreamPr = { ...upstreamPr, state: 'closed', merged: true };
+  assert.equal((await ensureRunStack(fresh())).stack, undefined, 'merged: start from default');
+  upstreamPr = { ...upstreamPr, merged: false };
+  await assert.rejects(ensureRunStack(fresh()), /is closed/);
+  upstreamPr = { ...upstreamPr, state: 'open', sameRepo: false };
+  await assert.rejects(ensureRunStack(fresh()), /comes from a fork/);
+});
+
+test('a follow-up in a stacked family measures its diff from the stacked run', () => {
+  const root = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'S-1' });
+  runs.updateRun(root.id, { stack: STACK });
+  const followUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#42',
+    familyId: root.familyId,
+    parentRunId: root.id,
+  });
+  assert.deepEqual(contributionStack(runs.getRun(followUp.id)!), STACK);
+  const unrelated = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'S-2',
+  });
+  assert.equal(contributionStack(unrelated), undefined);
 });
 
 test('stackPrBase targets the upstream branch until the run is retargeted', () => {

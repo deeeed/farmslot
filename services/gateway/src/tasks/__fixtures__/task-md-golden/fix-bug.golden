@@ -12,7 +12,7 @@ FAMILY_ID: family-golden-fix-bug
 BRANCH: golden/fix-bug
 TASK_DIR: .sandbox/farmslot-farm/worker-task/fix/<TASK_ID>
 SESSION: demo-1
-REPO: /Users/deeeed/dev/farmslot-worktrees/stacked-runs
+REPO: <FARMSLOT_ROOT>
 PLATFORM: cli
 SLOT_ID: demo-ff-1
 RUNTIME_DIR: .sandbox/farmslot-farm/agent
@@ -37,10 +37,10 @@ Task writer
 Resolve once, then reuse:
 
 ```bash
-cd /Users/deeeed/dev/farmslot-worktrees/stacked-runs
-RUNNER="node /Users/deeeed/dev/farmslot-worktrees/stacked-runs/apps/command-center/scripts/agentic/run-recipe.mjs"
-MANIFEST="/Users/deeeed/dev/farmslot-worktrees/stacked-runs/docs/examples/recipes/farmslot-v1.action-manifest.json"
-WRAPPER="/Users/deeeed/dev/farmslot-worktrees/stacked-runs/projects/farmslot-farm/setup/validate-recipe.sh"
+cd <FARMSLOT_ROOT>
+RUNNER="node <FARMSLOT_ROOT>/apps/command-center/scripts/agentic/run-recipe.mjs"
+MANIFEST="<FARMSLOT_ROOT>/docs/examples/recipes/farmslot-v1.action-manifest.json"
+WRAPPER="<FARMSLOT_ROOT>/projects/farmslot-farm/setup/validate-recipe.sh"
 ```
 
 Read `.sandbox/farmslot-farm/agent/recipe-quality.md` before writing any recipe.

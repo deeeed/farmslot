@@ -36,14 +36,14 @@ nodes must belong to the same project.
 
 1. A runs as usual and publishes its PR.
 2. The `published` edge is satisfied and B is enqueued.
-3. B's prepare fetches A's branch from origin and creates B's branch from its head, on
-   whichever slot or node B lands on.
+3. B's prepare checks A's PR on GitHub, fetches its branch from origin and creates B's
+   branch from its head, on whichever slot or node B lands on.
 4. B's TASK.md has a `## Stack` section: the PR it sits on, that branch, and the nodes
    stacked on B.
 5. B's PR targets A's branch, and B's diff covers only B's commits.
-6. When A merges, B's PR is retargeted to the default branch and the default branch is
-   merged into B's head on GitHub, so B's diff shows only B's work. If that merge
-   conflicts, ci-watch dispatches the usual update-branch run.
+6. When A merges, B's PR is retargeted to the default branch. Once B's run and its
+   follow-ups have finished, the default branch is merged into B's head on GitHub, so B's
+   diff shows only B's work. If that merge conflicts, dispatch update-branch.
 
 If A merged before B started, B is an ordinary run from the default branch.
 

@@ -826,25 +826,28 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   opts a node in: `upstreamBaseNodeIds` set without it changes nothing. This replaces the
   `pr-open` placeholder in §3.
 - **Prepare.** For a dev or fix-bug run on a stacked node, Farmslot records `run.stack`
-  (upstream node, run, PR and head branch) before writing the task. Prepare fetches
-  `refs/heads/<branch>` from origin, creates the work branch from its head, checks that the
-  branch really sits there, and records the commit before any later prepare phase runs. If
-  the upstream already merged, the run starts from the default branch as usual.
+  before writing the task. It asks GitHub for the upstream PR: merged means an ordinary run
+  from the default branch, closed or from a fork stops the run, open gives the head branch.
+  Prepare fetches `refs/heads/<branch>` from origin, creates the work branch from its head,
+  checks that the branch really sits there, and records the commit before any later
+  prepare phase runs.
 - **Publication.** The PR targets the upstream branch. The contribution diff starts at the
-  recorded commit, so review sees only the stacked run's own changes.
+  recorded commit, for the stacked run and for its ci-watch follow-ups, so review sees only
+  this run's changes.
 - **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
   stacked on top. Runs without `run.stack` get no section; their task documents are
   byte-identical to before (golden tests).
-- **`rebase-onto` on a stacked node.** When the stack base's PR merges, a satisfied
-  `rebase-onto` edge from that node retargets the downstream PR to the default branch
-  (`gh pr edit --base`) and merges the default branch into its head (`gh pr update-branch`),
-  so a squash-merged upstream drops out of the PR diff. A conflict is left to the
-  update-branch flow ci-watch dispatches. `run.stack.retargetedTo` records the new base; a
-  run that has not published yet opens its PR against it, and a PR that appears later is
-  retargeted on the next tick (the ledger key carries the PR number). The GitHub calls run
-  outside the graph mutation lock with a 60 s timeout; a failure is recorded once in the
-  ledger and retried by an operator-targeted `farmslot graph tick <graphId>`. Rebase edges
-  from any other node, and every rebase edge on a node without a stack edge, keep the
+- **`rebase-onto` on a stacked node.** When the upstream PR the run recorded merges, a
+  satisfied `merged` + `rebase-onto` edge from the stack base retargets the downstream PR
+  to the default branch and sets `run.stack.retargetedTo`; a run that has not published
+  yet opens its PR against that base, and a PR that appears later is retargeted on the
+  next tick (the ledger key carries the PR number). Once nothing in the run's family is
+  active, so no warm worker holds a local branch, Farmslot merges the default branch into
+  the PR head through GitHub's update-branch API so a squash-merged upstream leaves the
+  diff; a conflict is left to the update-branch flow. GitHub calls use REST (`repo` scope),
+  run outside the graph mutation lock and have a 90 s deadline; a failure is recorded once
+  in the ledger and retried by an operator-targeted `farmslot graph tick <graphId>`. Other
+  rebase edges, and every rebase edge on a node without a published edge, keep the
   operator-attention path.
 
 Operator steps: [Stacked work](../operations/stacked-work.md).

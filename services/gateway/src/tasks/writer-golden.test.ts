@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { FlowType, Run } from '@farmslot/protocol';
 
+import { farmslotRoot } from '../projects/repo-root.js';
+
 process.env.FARMSLOT_DEMO_POOL = '1';
 
 const { writeTaskFile } = await import('./writer.js');
@@ -73,6 +75,8 @@ function normalize(text: string, taskDir: string): string {
   return text
     .split(taskDir)
     .join('<TASK_DIR>')
+    .split(farmslotRoot)
+    .join('<FARMSLOT_ROOT>')
     .split(path.basename(taskDir))
     .join('<TASK_ID>')
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<TIMESTAMP>')

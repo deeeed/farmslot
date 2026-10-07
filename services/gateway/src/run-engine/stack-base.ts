@@ -3,9 +3,17 @@
 
 import type { Run } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars } from '../core/config.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { readUpstreamPr, type UpstreamPr } from '../work-graph/stack-retarget.js';
 import { stackBaseForNode } from '../work-graph/store.js';
+
+let upstreamPrReader: (project: string, prNumber: number) => Promise<UpstreamPr> = readUpstreamPr;
+
+export function setUpstreamPrReaderForTests(
+  fn: ((project: string, prNumber: number) => Promise<UpstreamPr>) | null,
+): void {
+  upstreamPrReader = fn ?? readUpstreamPr;
+}
 
 /**
  * Records `run.stack` once for a graph-linked dev/fix-bug run whose node stacks
@@ -26,16 +34,21 @@ export async function ensureRunStack(runId: string): Promise<Run> {
   }
   const base = stackBaseForNode(run.workGraphId, run.workNodeId);
   if (!base) return run;
-  const repo = await loadProjectVars(run.project)
-    .then((projectVars) => getProjectField(projectVars.projectJson, 'ci.repo'))
-    .catch(() => null);
+  // The graph knows what ci-watch last saw; GitHub says what the PR is now.
+  const pr = await upstreamPrReader(run.project, base.upstreamPrNumber);
+  if (pr.merged) return run;
+  if (pr.state !== 'open') {
+    throw new Error(
+      `Stack base PR #${base.upstreamPrNumber} is closed; a stacked run starts only from an open PR`,
+    );
+  }
+  if (!pr.sameRepo) {
+    throw new Error(
+      `Stack base PR #${base.upstreamPrNumber} comes from a fork; a stack shares one repository`,
+    );
+  }
   const updated = updateRun(runId, {
-    stack: {
-      ...base,
-      ...(repo
-        ? { upstreamPrUrl: `https://github.com/${repo}/pull/${base.upstreamPrNumber}` }
-        : {}),
-    },
+    stack: { ...base, baseBranch: pr.headRef, upstreamPrUrl: pr.url },
   });
   await persistRunNow(updated, 'stack base');
   return updated;

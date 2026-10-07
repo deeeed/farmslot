@@ -2429,3 +2429,148 @@ test('a failed retarget is recorded once and retried only by a targeted tick', a
   assert.equal(entry?.status, 'completed');
   assert.equal(runs.getRun(downstreamRun.id)?.stack?.retargetedTo, 'main');
 });
+
+// The run store outlives each test here, and a PR number names one PR per repo,
+// so every pair gets numbers no other test uses.
+let nextPairPr = 500;
+
+async function stackedPair(title: string) {
+  const ctx = await stackedGraph(title);
+  const { downstream, graphId, runs, upstream, workGraph, startRun } = ctx;
+  const upstreamPr = nextPairPr++;
+  const downstreamPr = nextPairPr++;
+  const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
+  runs.updateRun(upstreamRun.id, {
+    branch: 'feat/upstream',
+    prNumber: upstreamPr,
+    prState: 'OPEN',
+  });
+  await workGraph.schedulerTick({ graphId });
+  const downstreamRun = await startRun('wn_down', downstream.item.id, downstream.item.sourceRef!);
+  runs.updateRun(downstreamRun.id, {
+    prNumber: downstreamPr,
+    status: 'monitoring',
+    stack: {
+      upstreamNodeId: 'wn_up',
+      upstreamRunId: upstreamRun.id,
+      baseBranch: 'feat/upstream',
+      upstreamPrNumber: upstreamPr,
+    },
+  });
+  return { ...ctx, upstreamRun, downstreamRun, downstreamPr };
+}
+
+test('retarget follows the upstream PR the run recorded, not a replacement PR', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, workGraph } =
+    await stackedPair('Stack replacement PR');
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  // A replacement attempt on the upstream node opens and merges another PR.
+  const replacement = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'REPLACEMENT-1',
+    familyId: upstreamRun.familyId,
+  });
+  runs.updateRun(replacement.id, {
+    branch: 'feat/upstream-v2',
+    prNumber: nextPairPr++,
+    prState: 'MERGED',
+    mergedAt: new Date().toISOString(),
+  });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(moved, [], 'the recorded base PR is still open');
+
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(moved, [downstreamRun.id]);
+});
+
+test('update-branch waits until nothing in the stacked family is active', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, downstreamPr, workGraph } =
+    await stackedPair('Stack update-branch');
+  const calls: string[] = [];
+  workGraph.setStackRetargeterForTests(
+    async () => {
+      calls.push('retarget');
+      return { base: 'main', result: `retargeted:#${downstreamPr}->main` };
+    },
+    async () => {
+      calls.push('update-branch');
+      return { base: 'main', result: `update-branch:#${downstreamPr} merged main` };
+    },
+  );
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(calls, ['retarget'], 'a warm worker may still hold the local branch');
+
+  runs.updateRun(downstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(calls, ['retarget', 'update-branch']);
+  const results = workGraph
+    .getWorkGraph({ graphId })
+    .graph.ledger.filter(
+      (entry) => entry.nodeId === 'wn_down' && entry.actionKind === 'rebase-onto',
+    )
+    .map((entry) => entry.result);
+  assert.deepEqual(results, [
+    `retargeted:#${downstreamPr}->main`,
+    `update-branch:#${downstreamPr} merged main`,
+  ]);
+});
+
+test('a non-merged rebase edge from the stack base keeps operator attention', async (t) => {
+  const { backlog, workGraph } = await freshStores();
+  const items = await Promise.all(
+    ['Gate base', 'Gate stacked'].map((title) => createReadyBacklogItem(backlog, title)),
+  );
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Manual rebase from base' },
+    { kind: 'system' },
+  );
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_base', backlogItemId: items[0]!.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_top', backlogItemId: items[1]!.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    fromNodeId: 'wn_base',
+    toNodeId: 'wn_top',
+    condition: { kind: 'published' },
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_manual_rebase',
+    fromNodeId: 'wn_base',
+    toNodeId: 'wn_top',
+    condition: { kind: 'manual', gateId: 'base-done' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'update-branch' },
+  });
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_top', status: 'succeeded' });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_manual_rebase',
+    gateId: 'base-done',
+    reason: 'operator says rebase',
+    decision: 'approved',
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  const projection = (await workGraph.schedulerTick({ graphId })).graphs[0]!;
+  const node = projection.nodes.find((candidate) => candidate.id === 'wn_top');
+  assert.equal(node?.status, 'needs-attention');
+  assert.match(node?.waitingOn[0]?.detail ?? '', /rebase-onto unlock requires/);
+  assert.deepEqual(moved, []);
+});
