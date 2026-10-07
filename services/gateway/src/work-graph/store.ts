@@ -521,7 +521,7 @@ export async function addWorkGraphEdge(
       throw new Error('reference-status edges must originate from reference nodes');
     }
     const toNode = snapshot.nodes.find((node) => node.id === params.toNodeId)!;
-    if (params.condition.kind === 'published') assertStackEdge(fromNode, toNode);
+    if (params.condition.kind === 'published') assertStackEdge(snapshot, fromNode, toNode);
     const edge: WorkEdge = {
       id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
       graphId: snapshot.graph.id,
@@ -563,8 +563,14 @@ export async function removeWorkGraphEdge(
     const [removed] = snapshot.edges.splice(edgeIndex, 1);
     if (removed?.condition.kind === 'published') {
       const toNode = snapshot.nodes.find((node) => node.id === removed.toNodeId);
-      if (toNode?.upstreamBaseNodeIds?.[0] === removed.fromNodeId)
+      // A second published edge from the same node still holds the base.
+      if (
+        toNode &&
+        toNode.upstreamBaseNodeIds?.[0] === removed.fromNodeId &&
+        !stackUpstreamId(snapshot, toNode)
+      ) {
         delete toNode.upstreamBaseNodeIds;
+      }
     }
     snapshot.graph.updatedAt = new Date().toISOString();
     restampWorkGraph(snapshot, originator);
@@ -770,7 +776,7 @@ function backlogProject(node: WorkNode): string | undefined {
   return node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId)?.project : undefined;
 }
 
-function assertStackEdge(fromNode: WorkNode, toNode: WorkNode): void {
+function assertStackEdge(snapshot: WorkGraphSnapshot, fromNode: WorkNode, toNode: WorkNode): void {
   if (!isBacklogNode(fromNode) || !isBacklogNode(toNode)) {
     throw new Error(
       'published edges connect backlog nodes: the upstream must be able to open a PR',
@@ -780,7 +786,8 @@ function assertStackEdge(fromNode: WorkNode, toNode: WorkNode): void {
   if (backlogProject(fromNode) !== backlogProject(toNode)) {
     throw new Error('published edges connect nodes of the same project: a stack shares one repo');
   }
-  const existing = toNode.upstreamBaseNodeIds?.[0];
+  // Only a live published edge holds the base; a leftover field does not.
+  const existing = stackUpstreamId(snapshot, toNode);
   if (existing && existing !== fromNode.id) {
     throw new Error(
       `Work node ${toNode.id} already stacks on ${existing}; a branch has exactly one base`,

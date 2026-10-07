@@ -2651,3 +2651,41 @@ test('a graph whose runs finished stays swept until the stacked PR is updated', 
   await workGraph.schedulerTick();
   assert.deepEqual(calls, ['retarget', 'update-branch']);
 });
+
+test('stack base survives a duplicate edge removal and a removed upstream frees the node', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const items = await Promise.all(
+    ['Dup base', 'Dup stacked', 'New base'].map((title) => createReadyBacklogItem(backlog, title)),
+  );
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Stack edge removal' },
+    { kind: 'system' },
+  );
+  const graphId = graph.graph.graph.id;
+  for (const [index, id] of ['wn_a', 'wn_b', 'wn_c'].entries()) {
+    await workGraph.addWorkGraphNode({ graphId, id, backlogItemId: items[index]!.item.id });
+  }
+  for (const id of ['we_one', 'we_two']) {
+    await workGraph.addWorkGraphEdge({
+      graphId,
+      id,
+      fromNodeId: 'wn_a',
+      toNodeId: 'wn_b',
+      condition: { kind: 'published' },
+    });
+  }
+  await workGraph.removeWorkGraphEdge({ graphId, edgeId: 'we_one' });
+  const base = () =>
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_b')
+      ?.upstreamBaseNodeIds;
+  assert.deepEqual(base(), ['wn_a'], 'we_two still stacks B on A');
+
+  await workGraph.removeWorkGraphNode({ graphId, nodeId: 'wn_a' });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    fromNodeId: 'wn_c',
+    toNodeId: 'wn_b',
+    condition: { kind: 'published' },
+  });
+  assert.deepEqual(base(), ['wn_c'], 'a removed upstream no longer blocks a new base');
+});

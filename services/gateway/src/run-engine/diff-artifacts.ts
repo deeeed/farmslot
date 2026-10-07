@@ -487,9 +487,10 @@ type GitExec = (
 
 export interface DiffBaseSpec {
   baseRef: string;
+  /** The recorded base (provenance, replay start ref): always a commit origin can serve. */
   commitish: string;
-  /** False when `commitish` already is the exact base; default diffs from merge-base. */
-  useMergeBase?: boolean;
+  /** A local-only commit to diff from instead of merge-base(commitish, HEAD). */
+  diffFrom?: string;
 }
 
 /**
@@ -508,7 +509,11 @@ export async function settleStackedDiffBase(
   if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
   const remote = `origin/${defaultBranch}`;
   const branchPoint = baseSpec.commitish;
+  const plain = { baseRef: remote, commitish: remote };
   try {
+    // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
+    const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
+    if (stacked.exitCode !== 0) return plain;
     // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
     await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
     const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
@@ -521,16 +526,17 @@ export async function settleStackedDiffBase(
     const tree = await exec(
       `git merge-tree --write-tree ${shellQuote(branchPoint)} ${shellQuote(taken)}`,
     );
-    // Upstream and default branch disagree: fall back to GitHub's own view.
-    if (tree.exitCode !== 0) return { baseRef: remote, commitish: remote };
+    // Upstream and default branch conflict: measure against the default branch,
+    // which counts the upstream's lines as this run's while the upstream is open.
+    if (tree.exitCode !== 0) return plain;
     const commit = await exec(
       `git -c user.name=farmslot -c user.email=farmslot@localhost commit-tree ${shellQuote(tree.stdout.trim().split('\n')[0]!)} -p ${shellQuote(branchPoint)} -p ${shellQuote(taken)} -m ${shellQuote('farmslot stacked diff base')}`,
     );
     if (commit.exitCode !== 0 || !commit.stdout.trim()) return baseSpec;
     return {
       baseRef: `${baseSpec.baseRef}+${remote}`,
-      commitish: commit.stdout.trim(),
-      useMergeBase: false,
+      commitish: branchPoint,
+      diffFrom: commit.stdout.trim(),
     };
   } catch {
     // Before any integration the branch point is right; keep it when git can't tell.
@@ -610,7 +616,7 @@ export async function captureRunDiffSnapshot(
         defaultBranch,
       ),
     ));
-  const useMergeBase = options.useMergeBase ?? baseSpec.useMergeBase ?? true;
+  const useMergeBase = options.useMergeBase ?? true;
   const diffArtifactPath = options.diffArtifactPath ?? 'artifacts/diff.txt';
   const sourcePathspecList = sourceCodeGitPathspecs(sourceFilter);
   try {
@@ -644,8 +650,8 @@ export async function captureRunDiffSnapshot(
     }
     const baseSha = baseRefResult.stdout.trim();
     const headSha = headRefResult.stdout.trim();
-    let trackedDiffBase = baseSha;
-    if (useMergeBase) {
+    let trackedDiffBase = baseSpec.diffFrom ?? baseSha;
+    if (useMergeBase && !baseSpec.diffFrom) {
       const mergeBaseResult = await execOnSlot(vars, `git merge-base ${shellQuote(baseSha)} HEAD`, {
         timeout: 10000,
       });

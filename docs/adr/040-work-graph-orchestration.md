@@ -836,7 +836,10 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   checkout has merged default-branch commits past that point, it starts at a commit whose
   tree merges the recorded commit with what the checkout took from the default branch, so
   neither the upstream's files nor default-branch work count as this run's, before or
-  after the upstream squash-merges.
+  after the upstream squash-merges. The recorded diff base stays the branch point, which
+  origin can serve to a replay. A checkout rebased off the stack is measured like any
+  other run. Limit: when the upstream and default branch conflict, the diff falls back to
+  the default branch and, while the upstream is open, counts its lines as this run's.
 - **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
   stacked on top. Runs without `run.stack` get no section; their task documents are
   byte-identical to before (golden tests).

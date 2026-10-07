@@ -59,10 +59,7 @@ async function fixture(t: import('node:test').TestContext) {
   // What captureRunDiffSnapshot diffs for a settled base.
   const contribution = async () => {
     const base = await settleStackedDiffBase(exec, 'main', stacked);
-    const from =
-      base.useMergeBase === false
-        ? base.commitish
-        : await git(slot, 'merge-base', base.commitish, 'HEAD');
+    const from = base.diffFrom ?? (await git(slot, 'merge-base', base.commitish, 'HEAD'));
     return (await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n').sort();
   };
   const onMain = async (step: () => Promise<void>) => {
@@ -87,6 +84,13 @@ test('a stacked contribution never counts the upstream or default-branch work', 
   await git(slot, 'fetch', '-q', 'origin');
   await git(slot, 'merge', '-q', '--no-edit', 'origin/main');
   assert.deepEqual(await contribution(), ['b.txt'], 'neither a.txt nor x.txt is B');
+  const settled = await settleStackedDiffBase(exec, 'main', stacked);
+  assert.equal(
+    settled.commitish,
+    stacked.commitish,
+    'the recorded base stays the branch point, which origin can serve for a replay',
+  );
+  assert.ok(settled.diffFrom && settled.diffFrom !== stacked.commitish);
 
   // A squash-merges; B is retargeted but has not integrated it yet.
   await onMain(async () => {
@@ -106,6 +110,25 @@ test('a stacked contribution never counts the upstream or default-branch work', 
   // Origin unreachable: the local remote-tracking ref still holds what B merged.
   await git(slot, 'remote', 'set-url', 'origin', path.join(author, 'missing.git'));
   assert.deepEqual(await contribution(), ['b.txt'], 'fetch failed');
+
+  // Main reverts the squash and B rebases onto main, dropping A's commits:
+  // B is an ordinary branch again.
+  await git(slot, 'remote', 'set-url', 'origin', path.join(path.dirname(slot), 'origin.git'));
+  await onMain(async () => {
+    await git(author, 'revert', '--no-edit', 'HEAD~1');
+  });
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'checkout', '-q', '-B', 'feat/b2', 'origin/main');
+  await git(
+    slot,
+    'cherry-pick',
+    (await git(slot, 'log', '--format=%H', '-1', 'feat/b', '--', 'b.txt')).trim(),
+  );
+  assert.deepEqual(await settleStackedDiffBase(exec, 'main', stacked), {
+    baseRef: 'origin/main',
+    commitish: 'origin/main',
+  });
+  assert.deepEqual(await contribution(), ['b.txt'], 'rebased off the stack: a plain diff');
 
   const plain: DiffBaseSpec = { baseRef: 'origin/main', commitish: 'origin/main' };
   assert.equal(await settleStackedDiffBase(exec, 'main', plain), plain, 'non-stacked: untouched');
