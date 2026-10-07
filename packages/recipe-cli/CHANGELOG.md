@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- `prepare --json-stream` and `doctor --fix --json-stream`: stdout is NDJSON, a `stage` event per stage line (a step's own stages arrive under it with `child`, the child's line), then `complete`. `prepare` completes with `ready`, `recordPath` and each step's status and duration; `doctor --fix` with `fixed`, `failed`, `ready`, `nextActions` and the error when it fails. Anything else either command prints goes to stderr. `doctor --json-stream` without `--fix` is a usage error that points to `doctor --json`. `--json` output is unchanged.
 - **BREAKING:** remove `adapterPortFlags`. `run` and `call` take the dev-server port from `--watcher-port` only.
 - `run` (its `--plan` included) and `call` apply `--runtime-dir` (as `RECIPE_RUNTIME_DIR`) before the slot resolves, like `doctor`.
 - `call` no longer passes its command line to `trustedMutation.load` (it gets `cli: {}`), so a funding flag never binds a mutation to a call: funded mutations run through `run`, bound to the reviewed recipe.

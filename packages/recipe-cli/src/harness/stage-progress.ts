@@ -166,6 +166,14 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
           if (ended) return;
           lastLineAt = Date.now();
           write(`${prefix} › ${childLine}`);
+          options.event?.({
+            stage: name,
+            index,
+            total,
+            status: 'progress',
+            elapsedMs: Date.now() - startedAt,
+            child: childLine,
+          });
           if (!childLine.includes('no progress for')) {
             changedAt = Date.now();
             lastChangeAt = changedAt;

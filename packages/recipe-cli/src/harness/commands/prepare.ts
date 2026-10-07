@@ -15,6 +15,7 @@ import { color, stripAnsi } from '../cli-color.js';
 import { recordCommandStage } from '../command-journal.js';
 import { runnerProvenance, type RunnerProvenanceOptions } from '../doctor-report.js';
 import { harnessHost, hostEnvName } from '../host.js';
+import { JsonStreamWriter } from '../json-stream.js';
 import { optionFlag, optionString, parseArgs, targetPath, usageError } from '../parse-args.js';
 import { harnessExecutable, PREPARE_PROGRESS_ARTIFACT, recipeRuntimeDir } from '../paths.js';
 import { adapterReadiness } from '../readiness.js';
@@ -466,10 +467,31 @@ export async function handlePrepare(
 ): Promise<number> {
   const { options } = parseArgs(argv);
   const target = targetPath(options);
-  if (!fs.existsSync(target)) return handlePrepareLocked(argv, commandOptions);
+  // --json-stream: stdout is NDJSON (a `stage` event per stage line, then
+  // `complete`); anything else a step prints goes to stderr.
+  const stream = new JsonStreamWriter('prepare', optionFlag(options, 'jsonStream'));
+  const restoreStdout = stream.isolateStdout();
+  try {
+    return await handlePrepareUnlocked(argv, commandOptions, target, stream);
+  } finally {
+    restoreStdout();
+  }
+}
+
+async function handlePrepareUnlocked(
+  argv: string[],
+  commandOptions: PrepareCommandOptions,
+  target: string,
+  stream: JsonStreamWriter,
+): Promise<number> {
+  const { options } = parseArgs(argv);
+  if (!fs.existsSync(target)) return handlePrepareLocked(argv, commandOptions, stream);
   const lock = acquireCheckoutLock(target, 'prepare');
   if ('message' in lock) {
-    if (optionFlag(options, 'json'))
+    if (stream.enabled) {
+      stream.error({ code: 'SANDBOX_BUSY', message: lock.message });
+      stream.complete('fail', EXIT.runtime);
+    } else if (optionFlag(options, 'json'))
       console.log(
         JSON.stringify({
           status: 'fail',
@@ -484,7 +506,7 @@ export async function handlePrepare(
     return EXIT.runtime;
   }
   try {
-    return await handlePrepareLocked(argv, commandOptions);
+    return await handlePrepareLocked(argv, commandOptions, stream);
   } finally {
     lock.release();
   }
@@ -493,9 +515,11 @@ export async function handlePrepare(
 async function handlePrepareLocked(
   argv: string[],
   commandOptions: PrepareCommandOptions,
+  stream: JsonStreamWriter,
 ): Promise<number> {
   const { options } = parseArgs(argv);
-  const json = optionFlag(options, 'json');
+  // Machine output either way: no live step view on stdout.
+  const json = optionFlag(options, 'json') || stream.enabled;
   const target = targetPath(options);
   const usage = commandOptions.usage;
   const { surface, prepare } = resolvePlatform(optionString(options, 'platform'), target, usage);
@@ -557,7 +581,11 @@ async function handlePrepareLocked(
   // Stage lines on stderr, unless the live view repaints the same terminal
   // stderr goes to: there the running row carries the step's latest stage line.
   const stages =
-    json || !process.stdout.isTTY || !process.stderr.isTTY ? createStageReporter() : undefined;
+    json || !process.stdout.isTTY || !process.stderr.isTTY
+      ? createStageReporter(
+          stream.enabled ? { event: (fields) => stream.emit('stage', fields) } : {},
+        )
+      : undefined;
 
   const steps: TimedStep[] = [];
   let activeStep: { id: string; startedAt: string } | undefined;
@@ -697,10 +725,17 @@ async function handlePrepareLocked(
   fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
   fs.rmSync(progressPath, { force: true });
 
-  if (json) {
+  const exitCode = record.ready ? EXIT.ok : EXIT.runtime;
+  if (stream.enabled) {
+    stream.complete(record.ready ? 'pass' : 'fail', exitCode, {
+      ready: record.ready,
+      recordPath,
+      steps: steps.map(({ id, status, durationMs }) => ({ id, status, durationMs })),
+    });
+  } else if (json) {
     console.log(JSON.stringify(record, null, 2));
   } else {
     console.log(`readiness record: ${recordPath}`);
   }
-  return record.ready ? EXIT.ok : EXIT.runtime;
+  return exitCode;
 }
