@@ -153,6 +153,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   let passing = true;
   let fixLoopEdit: string | null = null;
   let launch: 'ok' | 'nothing' | 'crash' = 'ok';
+  let editWhileReviewing: string | null = null;
   const context = {
     executePublishGateReviewPlan: async (
       _runId: string,
@@ -165,6 +166,8 @@ test('the publication gate re-runs self-review once per change before it is pres
       if (fixLoopEdit) await writeFile(path.join(artifacts, 'pr-description.md'), fixLoopEdit);
       // As executeSelfReview does: the document notes the inputs, a pass records them.
       await noteReviewInputsAtLaunch(run.id);
+      if (editWhileReviewing)
+        await writeFile(path.join(artifacts, 'pr-description.md'), editWhileReviewing);
       if (passing) await recordReviewedInputs(run.id);
       return { reviewIds: [`review-${plans.length}`] };
     },
@@ -231,6 +234,18 @@ test('the publication gate re-runs self-review once per change before it is pres
   launch = 'ok';
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
   assert.equal(await awaiting(), false);
+
+  // An edit made while a re-run is reviewing is not what it reviewed, whether
+  // that review passes or not: it stays pending.
+  for (const pass of [true, false]) {
+    passing = pass;
+    await writeFile(path.join(artifacts, 'pr-description.md'), `## Before the re-run ${pass}\n`);
+    editWhileReviewing = `## Edited during the re-run ${pass}\n`;
+    assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
+    editWhileReviewing = null;
+    assert.equal(await awaiting(), true, `an edit during a ${pass ? 'passing' : 'failing'} re-run`);
+  }
+  passing = false;
 
   // A further change is a new state: reviewed again.
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, both states\n');

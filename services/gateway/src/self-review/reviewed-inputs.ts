@@ -110,7 +110,7 @@ export async function reviewedInputsAwaitingReview(run: Run): Promise<string | n
   return changed && changed !== run.engineState?.reviewedInputs?.rerunFor ? changed : null;
 }
 
-/** Marks `fingerprint` as re-reviewed, before that review runs, so a restart does not repeat it. */
+/** Marks `fingerprint` as re-reviewed, once a review given it settled, so the gate does not re-run it again. */
 export async function markReviewedInputsRerun(runId: string, fingerprint: string): Promise<void> {
   const recorded = getRun(runId)?.engineState?.reviewedInputs;
   if (!recorded) return;

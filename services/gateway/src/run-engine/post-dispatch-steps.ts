@@ -854,12 +854,15 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
     stampFreshReviews: true,
   });
   // Marked only once a review attempt settled: a restart or a launch that ran
-  // nothing leaves the change pending, so the next presentation re-runs it. A
-  // re-run that does not pass may have changed the slot through its fix loops;
-  // that end state counts as re-run too, or the gate would hold again.
+  // nothing leaves the change pending, so the next presentation re-runs it.
   if (reviewPlanResult.reviewIds.length === 0) return false;
-  const endState = await reviewedInputsAwaitingReview(getRun(runId)!);
-  if (endState) await markReviewedInputsRerun(runId, endState);
+  // A pass already recorded what it was given. A re-run that did not pass marks
+  // what its last attempt was given (after any fix loops), never the slot as it
+  // is now: an edit made while it ran is still unreviewed.
+  const after = getRun(runId)?.engineState;
+  const lastReviewed = after?.reviewInputsAtLaunch;
+  if (lastReviewed && lastReviewed !== after?.reviewedInputs?.fingerprint)
+    await markReviewedInputsRerun(runId, lastReviewed);
   return true;
 }
 
