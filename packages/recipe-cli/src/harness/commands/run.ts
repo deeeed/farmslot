@@ -24,6 +24,7 @@ import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
 import {
+  applyRuntimeDirOption,
   type CliOptions,
   isRecord,
   optionFlag,
@@ -311,6 +312,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     return handleDescribeRecipe(targetRecipe, options, { catalog: engine });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
+  // The runtime directory names where the slot's context and the run's runtime
+  // state live, so it applies before the plan and before the slot resolves.
+  applyRuntimeDirOption(options);
   if (optionFlag(options, 'plan')) {
     return handleRunPlan(targetRecipe, params, options, stream, commandOptions);
   }

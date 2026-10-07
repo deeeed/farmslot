@@ -120,6 +120,17 @@ export interface RunStep {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  /**
+   * Time the step waited for a slot, a resource claim or the dispatch queue
+   * rather than working. Waits inside the step are part of `durationMs`; the
+   * first step's share also carries the dispatch-queue wait before the run
+   * existed (`Run.queuedAt` to `Run.createdAt`). Resets with `startedAt`.
+   */
+  queuedMs?: number;
+  /** Set while the step waits; that open wait counts as queue time until it ends. */
+  queuedSince?: string;
+  /** When the step last made real progress (a stage line, structured worker progress). */
+  lastProgressAt?: string;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
@@ -2448,6 +2459,8 @@ export interface Run {
   reviewResult?: RunReviewResult;
   metrics: RunMetrics;
   createdAt: string;
+  /** When the dispatch-queue item that created this run was queued; absent for direct runs. */
+  queuedAt?: string;
   /** Timestamp when the supervised run lifecycle started. */
   startedAt?: string;
   updatedAt: string;

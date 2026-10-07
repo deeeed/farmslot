@@ -14,6 +14,7 @@ import {
   stepArtifactUrl,
   stepDurationLabel,
   stepHasReviewLoop,
+  stepQueueTimingRows,
 } from './step-inspector-model.js';
 
 test('static review recovery points to the existing PR request interface', () => {
@@ -48,6 +49,30 @@ test('stepDurationLabel formats completed and running step durations', () => {
       Date.parse('2026-06-01T00:01:30.000Z'),
     ),
     'elapsed 1m 30s',
+  );
+});
+
+test('the inspector shows queued, executing and last-progress rows when there is something to say', () => {
+  const run = {
+    createdAt: '2026-06-01T00:00:00.000Z',
+    steps: [{ name: 'find-slot', status: 'done' }],
+  } as unknown as Run;
+  const nowMs = Date.parse('2026-06-01T00:06:00.000Z');
+  const prepare = {
+    name: 'prepare',
+    status: 'running',
+    startedAt: '2026-06-01T00:00:00.000Z',
+    queuedMs: 60_000,
+    lastProgressAt: '2026-06-01T00:05:20.000Z',
+  } as RunStep;
+  assert.deepEqual(stepQueueTimingRows(run, prepare, nowMs), [
+    ['Queued', '1m 0s'],
+    ['Executing', '5m 0s'],
+    ['Last progress', '40s ago'],
+  ]);
+  assert.deepEqual(
+    stepQueueTimingRows(run, { name: 'dispatch', status: 'done', durationMs: 5_000 }, nowMs),
+    [],
   );
 });
 

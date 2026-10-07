@@ -38,9 +38,8 @@
 // presents, for an app that only connects to a known wallet. Without it the
 // strict wallet presents a generic identity.
 // A configured module makes signer=extension the default (`defaultSigner`), so
-// a host whose module exports only `injected` sets the signer explicitly
-// (--signer injected or TERMINAL_SIGNER=injected). A host that only sets an identity
-// exports `signers = { injected: { identity } }`.
+// a host whose module only sets an identity (`signers = { injected: { identity } }`)
+// sets the signer explicitly (--signer injected or TERMINAL_SIGNER=injected).
 //
 // The module path is the one source of these hooks: every process (readiness,
 // launch, verify, the wallet host) loads it through RECIPE_WEB_DAPP_SIGNER_MODULE

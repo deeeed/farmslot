@@ -158,7 +158,7 @@ import {
 import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
-import { runReplayStep } from './run/replay-step.js';
+import { freshBlockedMonitorAttempt, runReplayStep } from './run/replay-step.js';
 import {
   buildLocalDevRef,
   isInternalArtifactOnlyEvalTicket,
@@ -1394,7 +1394,9 @@ export async function runProbeWorkerSignal(
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const ctx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
-  return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
+  const probe = await probeWorkerSignalForRun(params.runId, run.slotId, ctx);
+  if (run.status !== 'blocked') return probe;
+  return { ...probe, resumable: freshBlockedMonitorAttempt(run, probe, ctx) !== null };
 }
 
 /**

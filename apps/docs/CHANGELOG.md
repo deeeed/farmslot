@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Web adapter reference: document `web-dapp` (`createWebDappAdapter`, the venue policy, the extension signer module and the hooks a host passes).
+- Adapter SDK reference: `CommandEventStream.stage(name, { index, total })`, the `StageHandle` a platform reports setup progress through (`StageProgress`), and `noopStage` for a stream without stages.
 - Adapter SDK reference: the optional `readiness` member (`AdapterReadiness`), what `doctor`, `status` and `prepare` ask a platform; `extends` merges it member by member.
 - Adapter SDK reference: `run`, `run --plan` and `call` refuse `--record-video` on an adapter without `recording` before recipe execution (`RECORDING_UNSUPPORTED`, exit 2); a run that still reaches the missing target fails with the same code, exit 4.
 - Adapter SDK reference: the `environment` failure class (`ENVIRONMENT_NOT_READY`) in the classification order.
@@ -18,8 +19,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Rename the recipe harness package pages to `@farmslot/recipe-runner` (`/docs/architecture/recipe-runner`).
 - Add the Adapter SDK reference (`@farmslot/adapter-sdk`: `PlatformAdapter`, `defineAdapter`, the adapter registry), including the lifecycle members (`launch`, `detect`, `targets`, `flags`, `failurePatterns`, `devServer.portEnv`) and the detection and failure-classification rules.
-- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `devServer.portFlags`, `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
+- Document the Adapter SDK run members: `run` (`AdapterRun`, with the platform's own run options and browser record as type parameters), `recording.framed.activePidEnv`, `diagnostics.requestLog`, and the shared run types.
 - Document the Adapter SDK `observation` member (`network.backend`, `network.actions`, `performance.start`) and the `RunObserver` and `NetworkCaptureBackend` types.
+- Drop `devServer.portFlags` from the Adapter SDK reference (removed from the SDK).
 - Add the `@farmslot/adapter-web` reference page.
 - Web adapter reference: add `launch-browser` and `slot-title`, the launch sequence, and the `browser-resolver.cjs` command contract.
 

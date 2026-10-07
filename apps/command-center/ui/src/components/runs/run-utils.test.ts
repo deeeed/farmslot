@@ -38,6 +38,7 @@ import {
   runTemplateFileName,
   sortProjectAnalyticsForDisplay,
   sortRunsForFamilyView,
+  stepNodeDurationLabel,
   summarizeEligibilityReasons,
 } from './run-utils.js';
 
@@ -904,5 +905,25 @@ test('sortProjectAnalyticsForDisplay orders newest projects first then by name',
   assert.deepEqual(
     sortProjectAnalyticsForDisplay(projects).map((project) => project.project),
     ['latest', 'alpha', 'zeta'],
+  );
+});
+
+test('a pipeline node shows queue and execution only when the step queued', () => {
+  const run = {
+    createdAt: '2026-10-07T10:00:00.000Z',
+    steps: [{ name: 'find-slot', status: 'done' }],
+  } as unknown as Run;
+  assert.equal(
+    stepNodeDurationLabel(run, {
+      name: 'prepare',
+      status: 'done',
+      durationMs: 432_000,
+      queuedMs: 120_000,
+    }),
+    'q 2m 0s · 5m 12s',
+  );
+  assert.equal(
+    stepNodeDurationLabel(run, { name: 'prepare', status: 'done', durationMs: 312_000 }),
+    '5m 12s',
   );
 });

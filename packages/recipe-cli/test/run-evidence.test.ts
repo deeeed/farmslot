@@ -184,22 +184,17 @@ describe('run options', () => {
     assert.equal(recipeRunOptionsFromCli('web', { hud: 'show' }).autoHud, true);
   });
 
-  test('a registered port flag stands in for --watcher-port; the platform adds its options', () => {
+  test('--watcher-port is the one dev-server port option; the platform adds its options', () => {
     useAdapters(
-      fakeAdapter('rn', {
-        devServer: { ...fakeAdapter('rn').devServer, portFlags: ['bundlerPort'] },
-      }),
+      fakeAdapter('rn'),
       fakeAdapter('web', {
         run: { platformOptions: (cli) => ({ reuseBrowser: cli.reuseBrowser === true }) },
       }),
     );
-    const options = recipeRunOptionsFromCli('web', { bundlerPort: '8088', reuseBrowser: true });
+    const options = recipeRunOptionsFromCli('web', { watcherPort: '8088', reuseBrowser: true });
     assert.equal(options.watcherPort, '8088');
     assert.deepEqual(options.platform, { reuseBrowser: true });
-    assert.equal(
-      recipeRunOptionsFromCli('rn', { watcherPort: '8081', bundlerPort: true }).watcherPort,
-      '8081',
-    );
+    assert.equal(recipeRunOptionsFromCli('rn', { metroPort: '8081' }).watcherPort, undefined);
     assert.equal('platform' in recipeRunOptionsFromCli('rn', {}), false);
   });
 });

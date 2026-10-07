@@ -100,11 +100,6 @@ export function adapterPortEnv(): string[] {
   return [...new Set(registered().flatMap((adapter) => [...(adapter.devServer.portEnv ?? [])]))];
 }
 
-/** More dev-server port option names every registered adapter accepts, after `watcherPort`. */
-export function adapterPortFlags(): string[] {
-  return [...new Set(registered().flatMap((adapter) => [...(adapter.devServer.portFlags ?? [])]))];
-}
-
 /** Boolean flags every registered adapter adds, for `launch` or for the other commands. */
 export function adapterFlags(kind: 'launch' | 'commands'): string[] {
   return registered().flatMap((adapter) => [...(adapter.flags?.[kind] ?? [])]);

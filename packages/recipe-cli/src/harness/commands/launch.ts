@@ -101,6 +101,9 @@ async function handleLaunchLocked(argv: string[], stream: JsonStreamWriter): Pro
     return launchUsage(jsonOutput, stream, undetectedAdapterMessage(target), adapterDetectNext());
   }
   stream.phase('resolve', { target, adapter, platform: platformTarget ?? null });
+  // A heartbeat for every adapter; one that reports its own stages speaks
+  // instead. The command's `complete` ends it.
+  stream.stage('launch', { index: 1, total: 1 });
   return harnessAdapter(adapter).launch({
     adapter,
     target,

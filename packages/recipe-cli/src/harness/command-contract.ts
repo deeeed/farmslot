@@ -32,7 +32,8 @@ export interface PositionalSpec {
 }
 
 export interface CliUsageError {
-  code: CliUsageErrorCode;
+  /** One of the built-in codes, or a host's own (from `explainInvalidChoice`). */
+  code: CliUsageErrorCode | (string & {});
   command: string;
   message: string;
   userAction: string;
@@ -74,9 +75,24 @@ export interface ContractedCommand {
   contract: CommandContract;
 }
 
+/** A value an option's choices reject, as `explainInvalidChoice` receives it. */
+export interface InvalidChoice {
+  command: string;
+  option: string;
+  value: string;
+  /** The tokens after the command. */
+  tokens: readonly string[];
+}
+
 export interface ContractValidationOptions {
   /** Retired option spellings and the option that replaces each, for the suggestion. */
   replacedOptions?: Readonly<Record<string, string>>;
+  /**
+   * The host's own error for a value an option's choices reject (an adapter
+   * that lives in a recipe library the operator hasn't added), or null for
+   * CLI_INVALID_OPTION_VALUE.
+   */
+  explainInvalidChoice?(choice: InvalidChoice): CliUsageError | null;
 }
 
 export const booleanOption = (): OptionSpec => ({ kind: 'boolean' });
@@ -200,6 +216,13 @@ export function validatePublicInvocation(
     if (inlineValue === undefined) index += 1;
     const choices = typeof spec.choices === 'function' ? spec.choices(tokens) : spec.choices;
     if (choices && !choices.includes(optionValue)) {
+      const explained = validation.explainInvalidChoice?.({
+        command: name,
+        option: optionName,
+        value: optionValue,
+        tokens,
+      });
+      if (explained) return explained;
       const suggestion = closest(optionValue, choices);
       return {
         code: 'CLI_INVALID_OPTION_VALUE',

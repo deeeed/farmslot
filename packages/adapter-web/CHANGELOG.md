@@ -4,6 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- `launchBrowser` takes an optional `progress` callback for the caller's stage: starting the browser, waiting for the CDP listener (with the attempt count, about every 5 s), loading the extension over CDP and opening the start window. The `[launch]` log lines are unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Add `web-dapp` (`@farmslot/adapter-web/web-dapp`, an ESM subpath): `createWebDappAdapter({ id, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter` for a web app under test whose dev server the slot owns, moved from mm-harness's Web Terminal adapter. It runs a slot browser and wallet host with the injected strict wallet or a host-supplied extension signer, held to the testnet venue of the adapter that extends it. See the adapter-web reference for the signer module, venue policy and hooks.
 
