@@ -872,7 +872,7 @@ test('records its tmux environment', async () => {
   return { fixture, report, env, args };
 }
 
-test('test processes get a private tmux server and no $TMUX, and the run removes it', (t) => {
+test('test processes get the private tmux sandbox environment and no $TMUX, and the run removes it', (t) => {
   const { fixture, report, env, args } = sandboxFixture('');
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
 

@@ -33,10 +33,10 @@ const SPAWN_TMUX = new RegExp(
   String.raw`\b(?:spawn|spawnSync|execFile|execFileSync|execFileAsync|exec|execSync|execa)\(\s*['"\x60](?:${ENV_PREFIX})?(?:[^'"\x60\s]*\/)?tmux\b`,
   'gu',
 );
-const SHELL_TMUX = new RegExp(
-  String.raw`(?:^\s*|\$\(|&&\s*|\|\|\s*|;\s*|\|\s*)(?:command\s+|exec\s+|${ENV_PREFIX})?(?:[^\s'"]*\/)?tmux\s+(?!-S "\$FARMSLOT_TMUX_SANDBOX"\s)`,
-  'mu',
-);
+// Any `tmux` command word in a shell test (after `if`, `!`, `$(`, a pipe, a
+// path, anywhere) must be followed by exactly the sandbox socket. Words that
+// only contain tmux (fs-tmux-, tmux_sandbox_close, tmux-model-driver/) do not count.
+const SHELL_TMUX = /(?:(?<![\w./-])|(?<=\/))tmux\s+(?!-S "\$FARMSLOT_TMUX_SANDBOX"\s)/u;
 
 const lineOf = (source, index) => source.slice(0, index).split('\n').length;
 
@@ -181,6 +181,26 @@ test('the detector holds TypeScript and shell tests to the sandbox rule', () => 
   assert.match(
     tmuxRuleViolations('a.test.sh', `${setup}tmux -S "$OTHER_SOCKET" new-session -d -s x\n`)[0],
     /without -S/u,
+  );
+  for (const control of [
+    'if tmux -S "$OTHER_SOCKET" has-session; then :; fi',
+    'while ! tmux has-session -t x; do sleep 1; done',
+    '{ tmux ls; }',
+    'id=`tmux display-message -p x`',
+    'echo x | tmux load-buffer -',
+  ]) {
+    assert.match(
+      tmuxRuleViolations('a.test.sh', `${setup}${control}\n`)[0],
+      /without -S/u,
+      control,
+    );
+  }
+  assert.deepEqual(
+    tmuxRuleViolations(
+      'a.test.sh',
+      `${setup}if tmux -S "$FARMSLOT_TMUX_SANDBOX" has-session -t x; then tmux_sandbox_close; fi\nls fs-tmux-x tmux-model-driver/tests\n`,
+    ),
+    [],
   );
   assert.match(
     tmuxRuleViolations('a.test.sh', 'tmux -S "$FARMSLOT_TMUX_SANDBOX" ls\n')[0],
