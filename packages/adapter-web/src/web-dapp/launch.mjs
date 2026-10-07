@@ -385,6 +385,11 @@ export const LAUNCH_TIMEOUTS = Object.freeze({ browserStartMs: 90000, hostReadyM
 // The venue policy comes from RECIPE_WEB_DAPP_POLICY (webDappPolicy), as for every web-dapp leaf.
 // `signers`: the signer hooks by mode (lib/signers.mjs); by default the module
 // --signer-module or RECIPE_WEB_DAPP_SIGNER_MODULE names.
+/**
+ * @param {Record<string, any>} args the parsed launch flags (see `parseLaunchArgs`)
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {{ timeouts?: { browserStartMs: number, hostReadyMs: number }, signers?: Record<string, any> }} [options]
+ */
 export async function launchWebDappBrowser(
   args,
   env = process.env,
