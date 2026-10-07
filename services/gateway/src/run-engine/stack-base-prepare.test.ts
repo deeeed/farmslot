@@ -40,7 +40,12 @@ async function git(repo: string, ...args: string[]): Promise<string> {
  * way another slot or node publishes it. The slot itself has never seen that
  * branch: origin is the only way to reach it.
  */
-async function stackFixture(t: import('node:test').TestContext, label: string, port: number) {
+async function stackFixture(
+  t: import('node:test').TestContext,
+  label: string,
+  port: number,
+  options: { linkedWorktreeOn?: string } = {},
+) {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), `farmslot-stack-${label}-`));
   const originRepo = path.join(fixtureRoot, 'origin.git');
   const otherSlot = path.join(fixtureRoot, 'other-slot');
@@ -60,7 +65,18 @@ async function stackFixture(t: import('node:test').TestContext, label: string, p
   await git(otherSlot, 'remote', 'add', 'origin', originRepo);
   await git(otherSlot, 'push', '--set-upstream', 'origin', 'main');
   const mainHead = await git(otherSlot, 'rev-parse', 'HEAD');
-  await execFileAsync('git', ['clone', originRepo, slotRepo]);
+  if (options.linkedWorktreeOn) {
+    // The slot is a linked worktree of another clone, still on the branch a
+    // previous run used, with a stale commit of its own.
+    const primary = path.join(fixtureRoot, 'primary');
+    await execFileAsync('git', ['clone', originRepo, primary]);
+    await git(primary, 'worktree', 'add', '-b', options.linkedWorktreeOn, slotRepo, 'origin/main');
+    await writeFile(path.join(slotRepo, 'stale.txt'), 'stale\n');
+    await git(slotRepo, 'add', 'stale.txt');
+    await git(slotRepo, 'commit', '-m', 'stale work from an earlier run');
+  } else {
+    await execFileAsync('git', ['clone', originRepo, slotRepo]);
+  }
   await git(otherSlot, 'checkout', '-b', 'feat/upstream');
   await writeFile(path.join(otherSlot, 'upstream.txt'), 'upstream work\n');
   await git(otherSlot, 'add', 'upstream.txt');
@@ -96,6 +112,7 @@ async function stackFixture(t: import('node:test').TestContext, label: string, p
 test('a stacked fix-bug branch starts from the upstream PR head fetched from origin', async (t) => {
   const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'stacked', 48830);
   const events: unknown[] = [];
+  const recorded: string[] = [];
   const result = await slotPrepare(
     {
       slotId,
@@ -106,13 +123,40 @@ test('a stacked fix-bug branch starts from the upstream PR head fetched from ori
     },
     (_event, payload) => events.push(payload),
     undefined,
-    { stackBase: { requestedRef: 'feat/upstream' } },
+    {
+      stackBase: { requestedRef: 'refs/heads/feat/upstream' },
+      onStackBaseResolved: async (resolution) => {
+        recorded.push(resolution.resolvedSha);
+      },
+    },
   );
   assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+  assert.deepEqual(recorded, [upstreamHead], 'provenance is handed over as soon as it resolves');
   assert.equal(result.startRef, undefined, 'a stack base is not a replay start ref');
   assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
   assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
-  assert.match(JSON.stringify(events), /Created feat\/stacked from feat\/upstream/);
+  assert.match(JSON.stringify(events), /Created feat\/stacked from refs\/heads\/feat\/upstream/);
+});
+
+test('a reused linked worktree on the work branch still lands on the stack base', async (t) => {
+  const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {
+    linkedWorktreeOn: 'feat/stacked',
+  });
+  const result = await slotPrepare(
+    {
+      slotId,
+      branch: 'feat/stacked',
+      prepareProfile: 'core',
+      flowType: 'fix-bug',
+      forceNewBranch: true,
+    },
+    () => undefined,
+    undefined,
+    { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
+  );
+  assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
+  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
 });
 
 test('without a stack base the same prepare branches from the default branch', async (t) => {

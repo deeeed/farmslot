@@ -231,7 +231,7 @@ items, but it is not yet a complete execution product.
 | Command Center graph surface                                                                   | Partial | Graph/node URL state, selected-node styling, and slot filtering exist; config/review flows remain incomplete                          |
 | Dispatch configuration parity                                                                  | Partial | Shared runner/model/effort control exists; mode, task template, prepare profile, and publication review reuse are still being unified |
 | Roadmap promotion into graph-linked backlog specs                                              | Partial | Promotion can draft graph/backlog outputs; review/accept UI and attachment visibility are still rough                                 |
-| Stacked runs (`published` edge, stacked prepare/PR base, Stack section, stacked `rebase-onto`) | Shipped | Rebase after retarget relies on ci-watch's update-branch on conflict; non-stacked `rebase-onto` still asks the operator               |
+| Stacked runs (`published` edge, stacked prepare/PR base, Stack section, stacked `rebase-onto`) | Shipped | Retarget merges the default branch into the PR head; conflicts go to update-branch; non-stacked `rebase-onto` asks the operator       |
 
 ---
 

@@ -30,6 +30,8 @@ export interface SlotPrepareInternalOptions {
   startRef?: { requestedRef: string };
   /** Stacked run: create a new work branch from this pushed ref instead of the default branch. */
   stackBase?: { requestedRef: string };
+  /** Called as soon as the stack base resolves, before any later prepare phase can fail. */
+  onStackBaseResolved?: (resolution: StartRefResolution) => Promise<void>;
 }
 
 export interface PrepareCommandError extends Error {

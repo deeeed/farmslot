@@ -29,7 +29,8 @@ farmslot graph add-edge <graphId> --from wn_a --to wn_b --condition merged \
 farmslot graph activate <graphId>
 ```
 
-The `published` edge records A as B's stack base. A node has one stack base.
+The `published` edge records A as B's stack base. A node has one stack base, and both
+nodes must belong to the same project.
 
 ## What happens
 
@@ -40,8 +41,9 @@ The `published` edge records A as B's stack base. A node has one stack base.
 4. B's TASK.md has a `## Stack` section: the PR it sits on, that branch, and the nodes
    stacked on B.
 5. B's PR targets A's branch, and B's diff covers only B's commits.
-6. When A merges, B's PR is retargeted to the default branch. If GitHub then reports a
-   conflict, ci-watch dispatches the usual update-branch run to rebase B.
+6. When A merges, B's PR is retargeted to the default branch and the default branch is
+   merged into B's head on GitHub, so B's diff shows only B's work. If that merge
+   conflicts, ci-watch dispatches the usual update-branch run.
 
 If A merged before B started, B is an ordinary run from the default branch.
 
@@ -50,7 +52,9 @@ If A merged before B started, B is an ordinary run from the default branch.
 - Only dev and fix-bug runs stack; other flows on the node run as usual.
 - If A's PR is closed without merging, the `published` edge goes back to pending and B
   needs attention.
-- A retargeted PR that merges cleanly is not rebased automatically; dispatch update-branch
-  if you want its history rewritten onto the default branch.
+- The catch-up after a retarget is a merge commit, not a rebase. Dispatch update-branch if
+  you want B's history rewritten onto the default branch.
+- A failed retarget shows in the graph ledger. Fix the cause, then run
+  `farmslot graph tick <graphId>` to retry it.
 - Runs without a `published` edge are unchanged: same branch base, same PR base, same
   TASK.md.

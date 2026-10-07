@@ -311,6 +311,7 @@ async function slotPrepareInner(
   const forceNewBranch = params.forceNewBranch ?? false;
   let resolvedStartRef: StartRefResolution | undefined;
   let resolvedStackBase: StartRefResolution | undefined;
+  let branchCreatedFromBase = false;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
   // Project command_env first, then the machine's pool env: pool overrides
@@ -623,6 +624,32 @@ async function slotPrepareInner(
       'stack-base',
       `Stack base ${resolvedStackBase.requestedRef} resolved to ${resolvedStackBase.resolvedSha}`,
     );
+    await opts.onStackBaseResolved?.(resolvedStackBase);
+  };
+  // The new-branch paths below do not check git's exit codes (a reused linked
+  // worktree cannot delete or recreate its own checked-out branch). A stacked
+  // branch must provably start at its base, so verify it and force it there.
+  const ensureBranchAtStackBase = async () => {
+    if (!resolvedStackBase || !branchCreatedFromBase || resolvedStartRef) return;
+    const sha = resolvedStackBase.resolvedSha;
+    const atBase = async () => {
+      const r = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref --short HEAD && git rev-parse HEAD`,
+      );
+      return r.exitCode === 0 && r.stdout.trim() === `${branch}\n${sha}`;
+    };
+    if (await atBase()) return;
+    await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && git checkout -B ${shellQuote(branch)} ${shellQuote(sha)}`,
+    );
+    if (!(await atBase())) {
+      throw new Error(
+        `Stacked branch ${branch} is not at its base ${sha} on ${vars.slotId} (${vars.remoteRepo})`,
+      );
+    }
+    step('branch', `Reset ${branch} to stack base ${sha}`);
   };
   // A start ref means two different things. For dev/fix-bug it is an
   // artifact-only replay base: the work branch must be local-only, and the
@@ -956,6 +983,7 @@ async function slotPrepareInner(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git push origin --delete ${shellQuote(branch)} 2>/dev/null`,
         );
+        branchCreatedFromBase = true;
         await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
@@ -1013,6 +1041,7 @@ async function slotPrepareInner(
                 `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
               );
             }
+            branchCreatedFromBase = true;
             await execOnSlot(
               vars,
               `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
@@ -1027,6 +1056,7 @@ async function slotPrepareInner(
             await resetBranchToStartRef();
           }
         } else {
+          branchCreatedFromBase = true;
           await execOnSlot(
             vars,
             `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
@@ -1036,6 +1066,8 @@ async function slotPrepareInner(
       }
     }
   }
+
+  if (branch) await ensureBranchAtStackBase();
 
   // 2c. Merge main (opt-in only for review-pr; worker flows use explicit mergeMain)
   if (mergeMain && branch) {

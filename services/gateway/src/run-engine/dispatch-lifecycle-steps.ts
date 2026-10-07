@@ -198,8 +198,11 @@ export async function executePrepareStep(
   // Normally resolved at write-task; repeated here for runs that brought their own task.
   const stack = (await ensureRunStack(runId)).stack;
   // A replay rebuilds from the recorded commit so the base cannot move under it.
+  // A branch name resolves only as a head on origin, never as a same-named tag.
   const stackBaseRef =
-    stack && !stack.retargetedTo ? (stack.resolvedSha ?? stack.baseBranch) : undefined;
+    stack && !stack.retargetedTo
+      ? (stack.resolvedSha ?? `refs/heads/${stack.baseBranch}`)
+      : undefined;
   // pr-complete and update-branch flows leave the merge to the worker so it
   // can resolve conflicts in-session. review-pr checks out the PR branch as
   // pushed; integration with main is informational (TASK.md) unless the
@@ -396,7 +399,23 @@ export async function executePrepareStep(
               },
             }
           : {}),
-        ...(stackBaseRef ? { stackBase: { requestedRef: stackBaseRef } } : {}),
+        ...(stackBaseRef
+          ? {
+              stackBase: { requestedRef: stackBaseRef },
+              // Recorded before later prepare phases run, so a failed prepare
+              // still leaves the base a replay and the diff can use.
+              onStackBaseResolved: async (resolution) => {
+                const latest = getRun(runId);
+                if (!latest?.stack || latest.stack.resolvedSha) return;
+                await persistRunNow(
+                  updateRun(runId, {
+                    stack: { ...latest.stack, resolvedSha: resolution.resolvedSha },
+                  }),
+                  'stack base resolved',
+                );
+              },
+            }
+          : {}),
       },
     );
     selectedPrepareProfile = prepareResult.profile;
@@ -411,11 +430,6 @@ export async function executePrepareStep(
           resolvedAt: prepareResult.startRef.resolvedAt,
         },
       });
-    }
-    const stackBase = prepareResult.stackBase;
-    const preparedStack = getRun(runId)?.stack;
-    if (stackBase && preparedStack && !preparedStack.resolvedSha) {
-      updateRun(runId, { stack: { ...preparedStack, resolvedSha: stackBase.resolvedSha } });
     }
     const afterPrepare = getRun(runId)!;
     if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
