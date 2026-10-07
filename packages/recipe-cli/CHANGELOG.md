@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `run` lists evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`, with an optional `metadata.fallbackReason`): `fallbacks` (`path`, `label`, `fallbackFrom`, `fallbackReason`) in `--json` and in the `--json-stream` completion event, and a marked artifact line in human output, on a failed run too, so an evidence gate need not read artifact metadata.
 
 ## 0.9.0 - 2026-10-08
 
