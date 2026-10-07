@@ -82,6 +82,41 @@ export interface DoctorReportOptions {
   provenance?: RunnerProvenanceOptions;
 }
 
+// Keys the report and the doctor envelope own. A host field with one of these
+// names would replace the shared value (a failing report reading `pass`) or move
+// its place in the JSON, so it is refused.
+const RESERVED_REPORT_KEYS = new Set([
+  'schemaVersion',
+  'protocolVersion',
+  'runner_protocol_version',
+  'status',
+  'checks',
+  'requiredChecks',
+  'adapter',
+  'target',
+  'runner',
+  'manifestValidation',
+  'ready',
+  'runtime',
+  'view',
+  'capture',
+  'featureFlags',
+  'devices',
+  'additionalReachableDevices',
+  'deviceDiscoveryErrors',
+  'next',
+  'error',
+]);
+
+function hostReportFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const reserved = Object.keys(fields).find((key) => RESERVED_REPORT_KEYS.has(key));
+  if (reserved !== undefined)
+    throw new Error(
+      `doctor report field '${reserved}' is reserved; ${harnessHost().name} must name its field differently.`,
+    );
+  return fields;
+}
+
 export function requiredDoctorCheckSummary(checks: readonly DoctorCheck[]): RequiredDoctorChecks {
   const required = checks.filter((check) => check.required);
   const failed = required.filter((check) => check.status === 'fail').map((check) => check.id);
@@ -128,7 +163,9 @@ export function createDoctorReport(
     adapter,
     target,
     runner: runnerProvenance(actionManifestPath, options.provenance),
-    ...(options.fields?.(target, adapter, environment) ?? { environment }),
+    ...(options.fields
+      ? hostReportFields(options.fields(target, adapter, environment))
+      : { environment }),
     manifestValidation: manifestValidation.summary,
   };
 }

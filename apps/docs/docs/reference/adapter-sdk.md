@@ -48,6 +48,7 @@ registry.register(web);
 | `reload?`, `sourceFingerprint?`                   | optional run support                                                                                                                                                    |
 | `extends?`                                        | the adapter this one composes on (a library plugin's `extends`)                                                                                                         |
 | `doctor?(target)`                                 | platform checks `doctor` reports after the shared ones (`AdapterDoctorCheck`)                                                                                           |
+| `readiness?`                                      | what `doctor`, `status` and `prepare` ask the platform (`AdapterReadiness`): checks, `--fix` repairs, the `--print-ready` indicator, devices, `prepare` hooks           |
 | `actions.manifestPaths?()`, `actions.adapters?()` | every action manifest the platform declares, parent first; action implementations the platform ships in code                                                            |
 
 ## Rules

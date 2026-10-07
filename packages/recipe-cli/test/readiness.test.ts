@@ -226,6 +226,27 @@ describe('the doctor report', () => {
     assert.deepEqual(Object.keys(report.runner).slice(-2), ['harnessPackage', 'recipeCliVersion']);
   });
 
+  test('refuses a host field that would replace a report or envelope key', () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop'));
+    const report = (fields: Record<string, unknown>) =>
+      createDoctorReport('shop', '/checkout', { summary: { errors: 0 } }, '/m.json', undefined, {
+        fields: () => fields,
+      });
+    for (const key of ['status', 'checks', 'runner', 'manifestValidation', 'ready', 'devices']) {
+      assert.throws(
+        () => report({ mode: 'bridged', [key]: 'host' }),
+        new RegExp(`doctor report field '${key}' is reserved`, 'u'),
+        key,
+      );
+    }
+    assert.deepEqual(Object.keys(report({ mode: 'bridged' })).slice(-3), [
+      'runner',
+      'mode',
+      'manifestValidation',
+    ]);
+  });
+
   test('refuses a host package that is not the configured one', () => {
     const { packageRoot } = shopHost();
     fs.writeFileSync(

@@ -227,10 +227,10 @@ test('workspacePackages wire tsx live scripts unless the host set its own', asyn
 
 test('a host extends the adapter by spreading it', () => {
   interface HostAdapter extends PlatformAdapter {
-    readiness: { mode(): string };
+    hostReadiness: { mode(): string };
   }
   const registry = createAdapterRegistry<HostAdapter>();
-  registry.register({ ...createNodeAdapter(BASE), readiness: { mode: () => 'headless' } });
-  assert.equal(registry.get('core').readiness.mode(), 'headless');
+  registry.register({ ...createNodeAdapter(BASE), hostReadiness: { mode: () => 'headless' } });
+  assert.equal(registry.get('core').hostReadiness.mode(), 'headless');
   assert.equal(registry.get('core').headless, true);
 });
