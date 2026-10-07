@@ -2772,6 +2772,17 @@ describe('call', () => {
         argv.join(' '),
       );
     }
+    // `call <action> --help` parses the same inputs, so `--arg` is refused there too.
+    await assert.rejects(
+      capture(() =>
+        handleCallHelp(
+          ['ping', '--arg', 'mode=fast', '--help', '--adapter', 'web', '--target', target],
+          'GENERIC',
+          { catalog: engine },
+        ),
+      ),
+      refused,
+    );
     assert.deepEqual(calls.runners, []);
   });
 

@@ -778,7 +778,8 @@ export function redactCallValue(value: unknown, key = ''): unknown {
 // `actions --action <name>` prints) above the generic call flags, so parameter
 // help for the action the user asked about is not hidden behind the generic call
 // help. An unresolvable name falls back to the generic help plus a pointer to
-// the vocabulary. Help is never an error: exit 0.
+// the vocabulary: exit 0. A refused input, such as the removed `--arg`, still
+// exits 2.
 export async function handleCallHelp(
   argv: string[],
   genericHelp: string,
