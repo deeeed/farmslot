@@ -123,10 +123,11 @@ export async function ensureOverlay(
 // The patterns come from every registered adapter, in this order: capture
 // protection, transport errors that look like wallet state, wallet state, then
 // transport. Classification does not depend on which adapter is running.
-export type FailureClass = 'capture-protected' | 'wallet' | 'infra' | 'app';
+export type FailureClass = 'capture-protected' | 'environment' | 'wallet' | 'infra' | 'app';
 
 export function classifyFailure(output: string): FailureClass {
   if (captureProtection(output)) return 'capture-protected';
+  if (environmentGap(output)) return 'environment';
   if (matchesAny('transportFirst', output)) return 'infra';
   if (matchesAny('walletState', output)) return 'wallet';
   if (matchesAny('transport', output)) return 'infra';
@@ -150,6 +151,12 @@ function matchesAny(kind: 'transportFirst' | 'walletState' | 'transport', output
 function captureProtection(output: string): AdapterFailurePatterns['captureProtected'] {
   return adapterPatterns()
     .map((patterns) => patterns.captureProtected)
+    .find((entry) => entry?.pattern.test(output));
+}
+
+function environmentGap(output: string): AdapterFailurePatterns['environment'] {
+  return adapterPatterns()
+    .map((patterns) => patterns.environment)
     .find((entry) => entry?.pattern.test(output));
 }
 
@@ -201,6 +208,16 @@ export function checkHealBounds(
       exitCode: EXIT.runtime,
       message: protectedCapture.message,
       userAction: protectedCapture.userAction,
+      originalError,
+    };
+  }
+  const gap = failureClass === 'environment' ? environmentGap(concise) : undefined;
+  if (gap) {
+    return {
+      code: 'ENVIRONMENT_NOT_READY',
+      exitCode: EXIT.bounded,
+      message: gap.message,
+      userAction: gap.userAction,
       originalError,
     };
   }

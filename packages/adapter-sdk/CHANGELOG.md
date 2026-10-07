@@ -4,6 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Add `AdapterFailurePatterns.environment` (`pattern`, `message`, `userAction`): a failure the target's environment causes (a missing runtime dependency or build output), which neither healing nor the app can fix.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.5.1 - 2026-10-06
