@@ -20,6 +20,7 @@ import { assertAdaptersRegistered, harnessAdapter, harnessAdapters } from './ada
 import { harnessHost, hostEnvName } from './host.js';
 import { handleHarness } from './overlay.js';
 import { recipeHarnessPath, recipeRuntimePath } from './paths.js';
+import { recordingUnsupportedFailure } from './recording-target.js';
 import { EXIT } from './shared.js';
 
 export function newHealState(): HealState {
@@ -207,6 +208,9 @@ export function checkHealBounds(
       originalError,
     };
   }
+  // A missing harness capability, not app logic.
+  const recording = recordingUnsupportedFailure(output);
+  if (recording) return { ...recording, exitCode: EXIT.usage, originalError };
   const concise = conciseFailureForHuman(output);
   const failureClass = classifyFailure(concise);
   const protectedCapture =

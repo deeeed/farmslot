@@ -8,18 +8,51 @@ import type {
   RecordingTargetProvider,
 } from '@farmslot/recipe-runner';
 
-import { harnessAdapter } from './adapters.js';
+import { harnessAdapter, harnessAdapters } from './adapters.js';
 
 /** The runner's `--record-video` target, resolved by the adapter's `recording`. */
 export function createRecordingTargetProvider(adapter: string): RecordingTargetProvider {
   return {
     async resolveRecordingTarget(context: RecordingTargetContext): Promise<RecordingTarget> {
       const recording = harnessAdapter(adapter).recording;
-      if (!recording)
-        throw new Error(`--record-video is not implemented for the ${adapter} adapter.`);
+      // `run` and `call` refuse this before execution; the throw guards other callers.
+      if (!recording) throw new Error(recordingUnsupportedMessage(adapter));
       return recording.target(context);
     },
   };
+}
+
+/**
+ * The capability refusal for `--record-video` on an adapter whose harness
+ * surface has no `recording`, or undefined when the adapter records.
+ */
+export function recordingUnsupported(
+  adapter: string,
+): { code: 'RECORDING_UNSUPPORTED'; message: string; userAction: string } | undefined {
+  if (harnessAdapter(adapter).recording) return undefined;
+  const registry = harnessAdapters();
+  const recorders = registry.list().filter((id) => registry.get(id).recording);
+  return {
+    code: 'RECORDING_UNSUPPORTED',
+    message: recordingUnsupportedMessage(adapter),
+    userAction:
+      'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; ' +
+      (recorders.length > 0
+        ? `adapters that support --record-video: ${recorders.join(', ')}`
+        : 'no registered adapter supports --record-video'),
+  };
+}
+
+/** The refusal a run failure carries when it came from the guard above. */
+export function recordingUnsupportedFailure(
+  output: string,
+): ReturnType<typeof recordingUnsupported> {
+  const adapter = /--record-video is not implemented for the (\S+) adapter\./u.exec(output)?.[1];
+  return adapter && harnessAdapters().has(adapter) ? recordingUnsupported(adapter) : undefined;
+}
+
+function recordingUnsupportedMessage(adapter: string): string {
+  return `--record-video is not implemented for the ${adapter} adapter.`;
 }
 
 export function captureHelperSupportsRecordSessionSnapshots(projectRoot: string): boolean {

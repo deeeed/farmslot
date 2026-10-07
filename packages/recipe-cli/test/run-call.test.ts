@@ -25,6 +25,7 @@ import {
   type ActionExecutionContext,
   createRecipeRunner,
   createStandardCoreAdapters,
+  type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
@@ -45,6 +46,7 @@ import {
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
   describeRunnableRecipe,
@@ -194,7 +196,11 @@ const classifier: ConsoleClassifier<{ entries: unknown[]; problems: string[] }> 
 
 type ShopEngine = RecipeEngine<{ bound: string }, { entries: unknown[]; problems: string[] }>;
 
-function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
+function shopEngine(
+  libraryRoot: string,
+  calls: Calls,
+  recording?: (adapter: string) => RecipeRecordingOptions,
+): ShopEngine {
   return {
     bundledLibrary: { name: 'shop', root: libraryRoot, actionNamespace: 'shop' },
     async resolveActionManifest(adapter, overridePath, sources) {
@@ -269,6 +275,7 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
         defaultSource: { kind: 'operator', trust: 'trusted', name: 'shop-harness' },
         logger: { info() {}, warn() {}, error() {} },
         hud: false,
+        ...(recording ? { recording: recording(adapter) } : {}),
         runner: { source: 'worktree', name: 'Shop test', git_ref: 'a'.repeat(40) },
       });
     },
@@ -599,6 +606,26 @@ describe('engine door', () => {
       state,
     );
     assert.equal(passed.violation, null);
+  });
+
+  test('a recording the adapter cannot make fails as a capability refusal, not app logic', async () => {
+    const root = tempRoot('recipe-cli-heal-');
+    const tracePath = path.join(root, 'trace.json');
+    const error = '--record-video is not implemented for the api adapter.';
+    fs.writeFileSync(tracePath, JSON.stringify({ entries: [{ ok: false, error }] }));
+    const { violation } = await executeWithHealBounds(
+      async () => ({ status: 'fail', tracePath }) as RecipeRunResult,
+      root,
+      newHealState(),
+    );
+    assert.deepEqual(violation, {
+      code: 'RECORDING_UNSUPPORTED',
+      message: error,
+      userAction:
+        'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; no registered adapter supports --record-video',
+      exitCode: 2,
+      originalError: error,
+    });
   });
 
   test('keeps the pinned device over the slot default, applies the platform env, and restores every key', () => {
@@ -1918,6 +1945,117 @@ describe('run', () => {
       (lastJson(notFound.stdout).error as { userAction: string }).userAction,
       'shop-harness run --list --adapter api --json',
     );
+  });
+});
+
+describe('--record-video', () => {
+  const unsupported = {
+    code: 'RECORDING_UNSUPPORTED',
+    message: '--record-video is not implemented for the api adapter.',
+    userAction:
+      'rerun without --record-video (or with --record-video=off) and capture screenshots in the recipe (ui.screenshot) as evidence; adapters that support --record-video: web',
+  };
+  let asked: string[];
+  let recorded: string[];
+  let recordingEngine: ShopEngine;
+
+  // `web` records; `api` has no `recording`. The engine's runner resolves the
+  // target through the harness provider and records with a fake recorder.
+  beforeEach(() => {
+    asked = [];
+    recorded = [];
+    const registry = createAdapterRegistry();
+    registry.register(
+      shopAdapter('web', calls, { recording: { target: async () => ({ kind: 'pid', pid: 1 }) } }),
+    );
+    registry.register(shopAdapter('api', calls));
+    configureHarnessAdapters(registry);
+    recordingEngine = shopEngine(library, calls, (adapter) => ({
+      targetProvider: {
+        resolveRecordingTarget(context) {
+          asked.push(adapter);
+          return createRecordingTargetProvider(adapter).resolveRecordingTarget(context);
+        },
+      },
+      videoRecorder: {
+        name: 'fake-recorder',
+        async start({ outputPath }) {
+          recorded.push(adapter);
+          fs.writeFileSync(outputPath, 'video');
+          return { stop: async () => ({}) };
+        },
+      },
+    }));
+  });
+
+  test('run refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifactsRoot = tempRoot('recipe-cli-record-');
+    const run = (adapter: string, ...flags: string[]) => {
+      const artifacts = path.join(artifactsRoot, `${adapter}${flags.join('')}`);
+      return capture(() =>
+        handleRun(
+          [recipe, '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', artifacts],
+            flags,
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    };
+
+    const json = await run('api', '--record-video=full-run', '--json');
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await run('api', '--record');
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ run: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    // No runner, so no node ran and no recording target was asked for.
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
+    assert.deepEqual(fs.readdirSync(artifactsRoot), []);
+
+    const off = await run('api', '--record-video=off', '--json');
+    assert.equal(off.value, 0, off.stderr.join('\n'));
+    assert.deepEqual(asked, []);
+    const supported = await run('web', '--record-video=full-run', '--json');
+    assert.equal(supported.value, 0, supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
+  });
+
+  test('call refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const json = await capture(() =>
+      handleCall(
+        ['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record-video', '--json'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await capture(() =>
+      handleCall(['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record'], {
+        engine: recordingEngine,
+      }),
+    );
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ call: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
   });
 });
 

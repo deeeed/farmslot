@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Adapter SDK reference: `run` and `call` refuse `--record-video` on an adapter without `recording` before execution (`RECORDING_UNSUPPORTED`, exit 2).
 - Adapter SDK reference: the `environment` failure class (`ENVIRONMENT_NOT_READY`) in the classification order.
 - Web adapter reference: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture.
 - Web adapter reference: document `network-observer` and `performance-observer` (Extension network capture and CDP performance traces), `connectBrowserCdp` events and `selectExtensionTarget`.

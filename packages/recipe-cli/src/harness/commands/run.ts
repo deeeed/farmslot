@@ -36,6 +36,7 @@ import {
   usageError,
 } from '../parse-args.js';
 import { validateRunRecipeStatic } from '../recipe-validation.js';
+import { recordingUnsupported } from '../recording-target.js';
 import {
   type ConsoleAllowlist,
   formatRunDiagnosticsForHuman,
@@ -328,6 +329,18 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       return EXIT.usage;
     }
     return usageOut(jsonOutput, 'run', message, userAction);
+  }
+  const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
+  if (recording) {
+    return emitRunUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      targetRecipe,
+      recording.code,
+      recording.message,
+      recording.userAction,
+    );
   }
   writeInteractiveProgress(machine, `→ recipe run — validating ${targetRecipe} · ${adapter}`);
   harnessAdapter(adapter).resolveSlotPorts(target);
