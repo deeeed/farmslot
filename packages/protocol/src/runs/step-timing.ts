@@ -20,6 +20,17 @@ export function runStepQueuedMs(step: RunStep, nowMs = Date.now()): number {
   return (step.queuedMs ?? 0) + (Number.isFinite(sinceMs) ? Math.max(0, nowMs - sinceMs) : 0);
 }
 
+/** The step with its open wait, if any, closed into `queuedMs`: for a step that stops running. */
+export function closeStepWait(step: RunStep, nowMs = Date.now()): RunStep {
+  const sinceMs = step.queuedSince ? Date.parse(step.queuedSince) : NaN;
+  if (!Number.isFinite(sinceMs)) return step;
+  return {
+    ...step,
+    queuedMs: (step.queuedMs ?? 0) + Math.max(0, nowMs - sinceMs),
+    queuedSince: undefined,
+  };
+}
+
 /**
  * Time a step spent working: its duration (elapsed while running) minus the
  * waits inside it. The first step's dispatch-queue wait lies before its

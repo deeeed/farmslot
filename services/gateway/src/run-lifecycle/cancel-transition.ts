@@ -5,7 +5,7 @@
 // `status: 'running'` and the work-graph node was never told; the scheduler only
 // discovered the stop later by polling and inferring it from run fields (#466).
 
-import { Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
+import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
@@ -184,9 +184,14 @@ export function cancelPlan(
         // awaited backlog settle, so archive/delete must see this synchronously and
         // refuse eviction until markBacklogRunObserved clears it after a durable write.
         backlogReconcilePending: true,
+        // A wait still open (a slot decision nobody will answer) ends here.
         steps: run.steps.map((step) =>
           step.status === 'running' || step.status === 'pending'
-            ? { ...step, status: 'skipped' as const, completedAt }
+            ? {
+                ...closeStepWait(step, Date.parse(completedAt)),
+                status: 'skipped' as const,
+                completedAt,
+              }
             : step,
         ),
         metrics: { ...run.metrics, outcome: 'cancelled' },

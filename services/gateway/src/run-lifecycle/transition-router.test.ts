@@ -581,3 +581,21 @@ test('a partially applied cancel is visible to human-facing callers', async () =
   const clean = await routeRunTransition(cancelRequest, harness(run({ workGraphId: 'wg_1' })).deps);
   assert.deepEqual(failedRunCancelEffects(clean.effects), []);
 });
+
+test('cancelling during a wait keeps the time already waited as queue time', () => {
+  const since = new Date(Date.now() - 600_000).toISOString();
+  const seed = run({
+    steps: [
+      { name: 'find-slot', status: 'running', queuedMs: 5_000, queuedSince: since },
+      { name: 'prepare', status: 'pending' },
+    ] as Run['steps'],
+  });
+  const steps = cancelPlan(cancelRequest, harness(seed).collaborators).mutate(seed).steps!;
+  assert.equal(steps[0]!.status, 'skipped');
+  assert.equal(steps[0]!.queuedSince, undefined);
+  assert.ok(
+    steps[0]!.queuedMs! >= 605_000 && steps[0]!.queuedMs! < 610_000,
+    `${steps[0]!.queuedMs}`,
+  );
+  assert.equal(steps[1]!.queuedMs, undefined);
+});
