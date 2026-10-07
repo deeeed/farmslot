@@ -73,6 +73,11 @@ import {
   webDappPolicy,
   webDappRuntimeDir,
 } from './lib/runtime.mjs';
+import {
+  macosSessionLocked,
+  SESSION_LOCKED_MESSAGE,
+  SESSION_LOCKED_USER_ACTION,
+} from './lib/session-lock.mjs';
 import { defaultSigner, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -393,12 +398,12 @@ export const LAUNCH_TIMEOUTS = Object.freeze({ browserStartMs: 90000, hostReadyM
 /**
  * @param {Record<string, any>} args the parsed launch flags (see `parseLaunchArgs`)
  * @param {NodeJS.ProcessEnv} [env]
- * @param {{ timeouts?: { browserStartMs: number, hostReadyMs: number } }} [options]
+ * @param {{ timeouts?: { browserStartMs: number, hostReadyMs: number }, sessionLocked?: () => boolean | null }} [options]
  */
 export async function launchWebDappBrowser(
   args,
   env = process.env,
-  { timeouts = LAUNCH_TIMEOUTS } = {},
+  { timeouts = LAUNCH_TIMEOUTS, sessionLocked = macosSessionLocked } = {},
 ) {
   const policy = webDappPolicy(env);
   const signerModule = args['signer-module'] ?? env[SIGNER_MODULE_ENV];
@@ -474,6 +479,13 @@ export async function launchWebDappBrowser(
   const appOrigin = `http://localhost:${appPort}`;
   const headless = resolveHeadless({ headless: args.headless, headful: args.headful, env });
   const slowMoMs = resolveSlowMo({ flag: args['slow-mo'], env });
+  // A headful browser can't paint while the macOS session is locked: refuse
+  // before starting, reusing or stopping one.
+  if (!headless && sessionLocked() === true) {
+    throw new Error(
+      `SESSION_LOCKED: ${SESSION_LOCKED_MESSAGE}\nNext: ${SESSION_LOCKED_USER_ACTION}`,
+    );
+  }
 
   const { fixture } = await loadWalletFixture(target, env);
   const accountAddress = viemAccountFromEntry(fixtureEntry(fixture, args.account), target).address;
