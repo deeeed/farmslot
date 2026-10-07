@@ -15,10 +15,8 @@ import {
   normalizeExhaustedReviewContinuation,
   pendingIndependentReviewContinuation,
   publicationGateDecisionActions,
-  reviewInputsDrifted,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
-  stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
@@ -649,46 +647,3 @@ for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
     );
   });
 }
-
-test('a review stamped for one description drifts when the description changes', () => {
-  const reviewed = makeReadyGatePackage({ draftBody: '## Summary\nRemove the swap banner.' });
-  const stamped = stampPublishGateReviewStatusForPackage(makeApprovingReview(), reviewed);
-  assert.ok(stamped.reviewedInputsHash);
-  assert.equal(reviewInputsDrifted(stamped, reviewed), false);
-  const reworked = makeReadyGatePackage({
-    draftBody: '## Summary\nHide the swap banner behind a flag.',
-  });
-  assert.equal(reviewInputsDrifted(stamped, reworked), true);
-  assert.equal(
-    reviewInputsDrifted(makeApprovingReview(), reworked),
-    false,
-    'a review stamped before fingerprints existed keeps the old behaviour',
-  );
-});
-
-test('the evidence-refresh override cannot carry a review across a description change', () => {
-  const reviewedPackage = makeReadyGatePackage({
-    headSha: 'abc1234',
-    draftBody: '## Summary\nRemove the swap banner.',
-  });
-  const review = stampPublishGateReviewStatusForPackage(
-    makeApprovingReview({ reviewedHeadSha: 'abc1234' }),
-    { ...reviewedPackage, reviewSubjectHash: 'subject-old' },
-  );
-  const sameDescription = makeReadyGatePackage({
-    headSha: 'abc1234',
-    draftBody: reviewedPackage.draftBody,
-    reviewSubjectHash: 'subject-new',
-  });
-  assert.equal(
-    staleReviewsAreEvidenceOnly([review], sameDescription),
-    true,
-    'evidence relinking alone keeps the override',
-  );
-  const reworked = makeReadyGatePackage({
-    headSha: 'abc1234',
-    draftBody: '## Summary\nHide the swap banner behind a flag.',
-    reviewSubjectHash: 'subject-new',
-  });
-  assert.equal(staleReviewsAreEvidenceOnly([review], reworked), false);
-});

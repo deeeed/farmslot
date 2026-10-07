@@ -87,7 +87,6 @@ import {
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
-  computeReadyGateReviewInputsHash,
   computeReadyGateReviewSubjectHash,
   resolveSelectedEvidenceRef,
   sha256Text,
@@ -775,7 +774,6 @@ export async function prepareCompletionPackage(
       reviewedHeadSha: prPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
       reviewedPackageInputHash: prPackage.packageInputHash ?? null,
       reviewedReviewSubjectHash: prPackage.reviewSubjectHash ?? null,
-      reviewedInputsHash: computeReadyGateReviewInputsHash(prPackage),
     }));
     prPackage.reviewArtifactIds = independentReviews.flatMap(
       (review) => review.artifactPaths ?? [review.id],

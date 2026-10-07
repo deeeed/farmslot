@@ -54,14 +54,15 @@ for (const depth of ['static-code', 'full-live'] as const) {
       .split(farmslotRoot)
       .join('<FARMSLOT_ROOT>');
     const goldenPath = path.join(GOLDEN_DIR, `${depth}.golden`);
+    const at = rendered.indexOf(SECTION_HEADING);
+    assert.ok(at > 0, 'the description and evidence check is rendered');
     if (UPDATE) {
+      // The golden is the document before the check, as captured on main.
       await mkdir(GOLDEN_DIR, { recursive: true });
-      await writeFile(goldenPath, rendered, 'utf-8');
+      await writeFile(goldenPath, `${rendered.slice(0, at).trimEnd()}\n`, 'utf-8');
       return;
     }
     const golden = await readFile(goldenPath, 'utf-8');
-    const at = rendered.indexOf(SECTION_HEADING);
-    assert.ok(at > 0, 'the description and evidence check is rendered');
     assert.equal(rendered.slice(0, at).trimEnd(), golden.trimEnd());
     assert.equal(
       rendered.indexOf('\n## ', at + SECTION_HEADING.length),

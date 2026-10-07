@@ -55,6 +55,7 @@ import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-packa
 import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
+import { reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -857,13 +858,19 @@ export async function executeReadyGate(runId: string): Promise<string> {
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
+  // The description, evidence or HEAD changed after the last passing review:
+  // self-review must run again before publication, whatever the review minimum.
+  const reviewedInputsStale = publicationApprovalGate && (await reviewedInputsChanged(current));
   const reviewSatisfied =
     !publicationApprovalGate ||
-    (independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0);
+    (independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
+      staleReviewCount === 0 &&
+      !reviewedInputsStale);
   // The evidence-refresh override is offered ONLY when staleness is purely
-  // subject/evidence drift on a still-matching HEAD — never when code changed.
+  // subject/evidence drift on a still-matching HEAD — never when code changed,
+  // and never when what the last review judged has changed since.
   const evidenceRefreshAction =
-    publicationApprovalGate && preparedPackage
+    publicationApprovalGate && preparedPackage && !reviewedInputsStale
       ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
       : null;
   const unavailableSnapshotAction =

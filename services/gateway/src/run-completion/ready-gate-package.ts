@@ -151,34 +151,6 @@ export function computeReadyGateReviewSubjectHash(
   );
 }
 
-/** Generated from the evidence manifest at package time; not author text. */
-const GENERATED_EVIDENCE_SECTION =
-  /^## \*\*Screenshots\/Recordings\*\*[^\n]*\n[\s\S]*?(?=^## |(?![\s\S]))/m;
-
-/**
- * Fingerprint of what a reviewer judges besides the code: the PR description
- * the worker wrote and the evidence content. Evidence selection, links and the
- * generated screenshots section are left out, so a gate refresh that only
- * re-selects or re-links evidence keeps it; an edited description or a
- * re-captured screenshot changes it.
- */
-export function computeReadyGateReviewInputsHash(
-  prPackage: Pick<ReadyGatePrPackageWithoutHash, 'draftTitle' | 'draftBody' | 'evidenceManifest'>,
-): string {
-  const evidence = (prPackage.evidenceManifest ?? [])
-    .filter((artifact) => isPublishEvidenceArtifact(artifact))
-    .map((artifact) => ({ path: artifact.path, sha256: artifact.sha256 ?? null }))
-    .sort((a, b) => a.path.localeCompare(b.path));
-  return sha256Text(
-    stableJson({
-      kind: 'ready-gate-review-inputs-v1',
-      draftTitle: prPackage.draftTitle,
-      draftBody: prPackage.draftBody.replace(GENERATED_EVIDENCE_SECTION, '').trim(),
-      evidence,
-    }),
-  );
-}
-
 export function verifyReadyGatePackageHash(prPackage: ReadyGatePrPackage): void {
   const expected = computeReadyGatePackageHash(prPackage);
   if (expected !== prPackage.packageHash) {

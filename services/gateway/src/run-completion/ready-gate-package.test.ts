@@ -8,7 +8,6 @@ import test from 'node:test';
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
-  computeReadyGateReviewInputsHash,
   computeReadyGateReviewSubjectHash,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
@@ -220,48 +219,4 @@ test('ready gate selected evidence checks and review hash use path variants', as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test('review inputs fingerprint follows the description and evidence content only', () => {
-  const evidence = [
-    { path: 'artifacts/before.png', purpose: 'screenshot', sha256: 'before-v1' },
-    { path: 'artifacts/after.png', purpose: 'screenshot', sha256: 'after-v1' },
-  ];
-  const body = '## Summary\nHide the swap banner behind a flag.\n\n## Notes\nnone';
-  const base = { draftTitle: 'feat: hide banner', draftBody: body, evidenceManifest: evidence };
-  const hash = computeReadyGateReviewInputsHash(base);
-
-  assert.equal(
-    computeReadyGateReviewInputsHash({ ...base, evidenceManifest: [...evidence].reverse() }),
-    hash,
-    'order is not content',
-  );
-  assert.equal(
-    computeReadyGateReviewInputsHash({
-      ...base,
-      draftBody: body.replace(
-        '## Notes',
-        '## **Screenshots/Recordings**\n![after](https://artifacts.example/after.png)\n\n## Notes',
-      ),
-    }),
-    hash,
-    'the generated evidence section is not author text',
-  );
-  assert.notEqual(
-    computeReadyGateReviewInputsHash({ ...base, draftBody: body.replace('Hide', 'Remove') }),
-    hash,
-    'an edited description is a new subject',
-  );
-  assert.notEqual(
-    computeReadyGateReviewInputsHash({ ...base, draftTitle: 'feat: strip banner' }),
-    hash,
-  );
-  assert.notEqual(
-    computeReadyGateReviewInputsHash({
-      ...base,
-      evidenceManifest: [evidence[0]!, { ...evidence[1]!, sha256: 'after-v2' }],
-    }),
-    hash,
-    're-captured evidence is a new subject',
-  );
 });

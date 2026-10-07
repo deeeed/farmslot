@@ -25,7 +25,6 @@ import {
 } from '../quality/review-policy.js';
 import { EXTRA_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
-import { computeReadyGateReviewInputsHash } from '../run-completion/ready-gate-package.js';
 import { normalizeRunner } from '../runners/registry.js';
 import type { SelfReviewResult } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -389,48 +388,15 @@ export function buildPublishGateReviewStatus({
   return stampPublishGateReviewStatusForPackage(capped, reviewedPackage);
 }
 
-type StampablePackage = Pick<
-  ReadyGatePrPackage,
-  'headSha' | 'packageInputHash' | 'reviewSubjectHash'
-> &
-  Partial<Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody' | 'evidenceManifest'>>;
-
-/** The description and evidence fingerprint of a package, when it carries them. */
-function packageReviewInputsHash(prPackage: StampablePackage): string | null {
-  return typeof prPackage.draftBody === 'string'
-    ? computeReadyGateReviewInputsHash({
-        draftTitle: prPackage.draftTitle ?? '',
-        draftBody: prPackage.draftBody,
-        evidenceManifest: prPackage.evidenceManifest,
-      })
-    : null;
-}
-
-/**
- * True when the review was stamped for a different PR description or evidence
- * content than the package now holds. Such a review never carries forward: the
- * description or evidence changed after it, so a new review must run. A review
- * stamped before fingerprints existed reports no drift.
- */
-export function reviewInputsDrifted(
-  review: IndependentReviewStatus,
-  prPackage: StampablePackage,
-): boolean {
-  if (!review.reviewedInputsHash) return false;
-  const current = packageReviewInputsHash(prPackage);
-  return current !== null && current !== review.reviewedInputsHash;
-}
-
 export function stampPublishGateReviewStatusForPackage(
   review: IndependentReviewStatus,
-  reviewedPackage: StampablePackage,
+  reviewedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'packageInputHash' | 'reviewSubjectHash'>,
 ): IndependentReviewStatus {
   return {
     ...review,
     reviewedHeadSha: reviewedPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
     reviewedPackageInputHash: reviewedPackage.packageInputHash ?? null,
     reviewedReviewSubjectHash: reviewedPackage.reviewSubjectHash ?? null,
-    reviewedInputsHash: packageReviewInputsHash(reviewedPackage),
   };
 }
 
@@ -729,14 +695,7 @@ function classifyStaleApprovingReviews(
       preparedPackage,
     );
     if (!diagnosis.stale) continue;
-    // A changed description or evidence content is not a refresh artifact: the
-    // review judged something else, so the override must not carry it forward.
-    if (
-      diagnosis.subjectDrift &&
-      !diagnosis.headDrift &&
-      !diagnosis.diffDrift &&
-      !reviewInputsDrifted(review, preparedPackage)
-    )
+    if (diagnosis.subjectDrift && !diagnosis.headDrift && !diagnosis.diffDrift)
       evidenceOnly.push(review);
     else hasHeadDriftedApproval = true;
   }

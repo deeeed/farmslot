@@ -25,6 +25,7 @@ import {
 } from '../run-completion/orchestrator.js';
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun } from '../runs/store.js';
+import { reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -38,7 +39,6 @@ import {
   publicationGateDecisionActions,
   reviewerIsActiveForReview,
   reviewFinalSnapshotMatchesPreparedPackage,
-  reviewInputsDrifted,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
@@ -134,7 +134,7 @@ function reviewWasStampedForPackage(
   );
 }
 
-export function restampReviewsForRefreshedPackage(
+function restampReviewsForRefreshedPackage(
   independentReviews: IndependentReviewStatus[],
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
@@ -150,11 +150,7 @@ export function restampReviewsForRefreshedPackage(
           readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
           reviewWasStampedForPackage(review, reviewedPackage),
       );
-    // Re-selecting or re-linking evidence carries a review forward; a changed
-    // description or evidence content does not (it needs a new review).
-    return canRestamp && !reviewInputsDrifted(review, refreshedPackage)
-      ? stampPublishGateReviewStatusForPackage(review, refreshedPackage)
-      : review;
+    return canRestamp ? stampPublishGateReviewStatusForPackage(review, refreshedPackage) : review;
   });
 }
 
@@ -253,15 +249,18 @@ export async function refreshPublishPackage(params: {
           requireCrossRunnerCertification: reviewDepth?.requireCrossRunner,
         })
       : 0;
+  // A refresh after the description or evidence changed needs a new review.
+  const reviewedInputsStale = await reviewedInputsChanged(refreshedRun);
   const reviewSatisfied =
-    independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0;
+    independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
+    staleReviewCount === 0 &&
+    !reviewedInputsStale;
   // Offer the human evidence-refresh override only when the refresh regenerated
-  // evidence digests but the reviewed HEAD is unchanged — never on code drift.
-  const evidenceRefreshAction = buildEvidenceRefreshAction(
-    independentReviews,
-    prPackage,
-    reviewDepth,
-  );
+  // evidence digests but the reviewed HEAD is unchanged — never on code drift,
+  // and never when what the last review judged has changed since.
+  const evidenceRefreshAction = reviewedInputsStale
+    ? null
+    : buildEvidenceRefreshAction(independentReviews, prPackage, reviewDepth);
   const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
   const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const actions = publicationGateDecisionActions({

@@ -518,12 +518,6 @@ export interface IndependentReviewStatus {
   reviewedHeadSha?: string | null;
   reviewedPackageInputHash?: string | null;
   reviewedReviewSubjectHash?: string | null;
-  /**
-   * Fingerprint of the PR description and evidence content the review was
-   * stamped for. A package whose description or evidence changed since needs a
-   * new review. Absent on reviews stamped before it existed.
-   */
-  reviewedInputsHash?: string | null;
   fixDelta?: ReviewFixDeltaSnapshot;
   stale?: boolean;
   startedAt?: string;
@@ -2554,6 +2548,13 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 
 /** Persisted run-engine state — see ADR-027. */
 export interface RunEngineState {
+  /**
+   * What the last passing review (pipeline self-review or a publication review)
+   * judged on the slot: HEAD, the PR description, the evidence manifest and the
+   * evidence files. When any of them changes, self-review must run again before
+   * publication is approved.
+   */
+  reviewedInputs?: { fingerprint: string; recordedAt: string };
   /** Persisted before branch mutations. A matching false value proves an early
    * prepare failure never reached branch setup; absent historical state is unknown. */
   prepareBranch?: { slotId: string; branch: string; started: boolean };
