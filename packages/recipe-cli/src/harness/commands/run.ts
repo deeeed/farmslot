@@ -48,12 +48,14 @@ import {
   countRecipeNodes,
   emitHealViolation,
   executeWithHealBounds,
+  fallbackMarker,
   persistRunEffects,
   preflightRecipe,
   type PreparedRecipeExecution,
   prepareHeal,
   type RecipeEngine,
   type RecipeEngineRunOptions,
+  type RunFallbackEvidence,
   runRecipe,
 } from '../run-engine.js';
 import { type RunObservers, startRunObservers } from '../run-observers.js';
@@ -542,6 +544,15 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         result.browser ?? null,
       );
       recordRunAcceptance(target, result);
+      const artifacts = runArtifactInventory(result.artifactManifestPath);
+      // Evidence an action produced through a fallback provider (for example a
+      // screenshot from a second capture path), so an evidence gate sees it here,
+      // on a failed run too.
+      const fallbacks: RunFallbackEvidence[] = artifacts.flatMap((artifact) =>
+        artifact.fallback
+          ? [{ path: artifact.absolutePath, label: artifact.label, ...artifact.fallback }]
+          : [],
+      );
       if (violation !== null) {
         const userAction =
           violation.userAction ??
@@ -552,18 +563,13 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           userAction,
           originalError: violation.originalError ?? null,
         });
-        return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter);
+        if (stream.enabled) {
+          stream.complete('fail', violation.exitCode, fallbacks.length > 0 ? { fallbacks } : {});
+        }
+        return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter, fallbacks);
       }
       const report = writeRunReport(result);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
-      const artifacts = runArtifactInventory(result.artifactManifestPath);
-      // Evidence an action produced through a fallback provider (for example a
-      // screenshot from a second capture path), so an evidence gate sees it here.
-      const fallbacks = artifacts.flatMap((artifact) =>
-        artifact.fallback
-          ? [{ path: artifact.absolutePath, label: artifact.label, ...artifact.fallback }]
-          : [],
-      );
       const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
       if (stream.enabled) {
         if (result.status === 'fail') {
@@ -624,7 +630,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         console.log(out('label', `artifacts (${artifacts.length}):`));
         for (const artifact of artifacts) {
           const fallback = artifact.fallback
-            ? ` ${out('err', `(fallback from ${artifact.fallback.fallbackFrom}${artifact.fallback.reason ? `: ${artifact.fallback.reason}` : ''})`)}`
+            ? ` ${out('warn', fallbackMarker(artifact.fallback))}`
             : '';
           console.log(
             `  ${out('dim', `${artifact.label}:`)} ${out('path', artifact.absolutePath)}${fallback}`,
@@ -699,10 +705,7 @@ function recordRunAcceptance(
   }
 }
 
-interface RunArtifactFallback {
-  fallbackFrom: string;
-  reason?: string;
-}
+type RunArtifactFallback = Pick<RunFallbackEvidence, 'fallbackFrom' | 'fallbackReason'>;
 
 interface RunArtifactDisplay {
   absolutePath: string;
@@ -741,7 +744,7 @@ function runArtifactInventory(manifestPathValue: unknown): RunArtifactDisplay[] 
         ? {
             fallbackFrom: metadata.fallbackFrom,
             ...(typeof metadata.fallbackReason === 'string'
-              ? { reason: metadata.fallbackReason }
+              ? { fallbackReason: metadata.fallbackReason }
               : {}),
           }
         : undefined;

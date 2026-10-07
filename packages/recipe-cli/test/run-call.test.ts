@@ -491,6 +491,16 @@ async function capture<T>(
   }
 }
 
+function streamComplete(lines: string[]): Record<string, unknown> {
+  const events = lines
+    .flatMap((line) => line.split('\n'))
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const complete = events.find((event) => event.event === 'complete');
+  assert.ok(complete, 'stream has a complete event');
+  return complete;
+}
+
 function lastJson(lines: string[]): Record<string, unknown> {
   const text = lines.join('\n');
   return JSON.parse(text.slice(text.lastIndexOf('\n{') + 1)) as Record<string, unknown>;
@@ -1377,19 +1387,18 @@ describe('run', () => {
         path: path.join(target, 'art-json', 'shot.png'),
         label: 'Ping shot',
         fallbackFrom: 'native',
-        reason: 'native timed out',
+        fallbackReason: 'native timed out',
       },
     ]);
     const stream = await run('art-stream', '--json-stream');
-    const complete = stream.stdout
-      .flatMap((line) => line.split('\n'))
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .find((event) => event.event === 'complete' || event.type === 'complete');
-    assert.equal(
-      (complete?.fallbacks as Array<{ fallbackFrom: string }>)?.[0]?.fallbackFrom,
-      'native',
-    );
+    assert.deepEqual(streamComplete(stream.stdout).fallbacks, [
+      {
+        path: path.join(target, 'art-stream', 'shot.png'),
+        label: 'Ping shot',
+        fallbackFrom: 'native',
+        fallbackReason: 'native timed out',
+      },
+    ]);
     const human = await run('art-human');
     assert.match(
       human.stdout.join('\n'),
@@ -1411,6 +1420,85 @@ describe('run', () => {
       ),
     );
     assert.equal('fallbacks' in lastJson(plain.stdout), false);
+    const plainHuman = await capture(() =>
+      handleRun(
+        [
+          recipeFile(target, { done: { action: 'end', status: 'pass' } }),
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(plainHuman.value, 0);
+    assert.doesNotMatch(
+      [...plainHuman.stdout, ...plainHuman.stderr].join('\n'),
+      /\(fallback from/u,
+    );
+  });
+
+  test('lists fallback evidence when a later assertion fails the run', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      shot: { action: 'shop.ping', mode: 'fast', count: 0, intent: 'Take a shot.', next: 'check' },
+      check: {
+        action: 'assert_output',
+        source: 'shot',
+        assert: { path: '$.pong', operator: 'eq', value: 1 },
+        intent: 'Expect one pong.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = (dir: string, ...flags: string[]) =>
+      capture(() =>
+        handleRun(
+          [
+            recipe,
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--artifacts-dir',
+            path.join(target, dir),
+            ...flags,
+          ],
+          runOptions,
+        ),
+      );
+    const expected = (dir: string) => [
+      {
+        path: path.join(target, dir, 'shot.png'),
+        label: 'Ping shot',
+        fallbackFrom: 'native',
+        fallbackReason: 'native timed out',
+      },
+    ];
+    const json = await run('fail-json', '--json');
+    assert.notEqual(json.value, 0);
+    const document = lastJson(json.stdout);
+    assert.equal(document.status, 'fail');
+    // The heal-violation output, not the report path.
+    assert.equal((document.error as { code?: unknown }).code, 'APP_LOGIC_FAILURE');
+    assert.deepEqual(document.fallbacks, expected('fail-json'));
+    const stream = await run('fail-stream', '--json-stream');
+    assert.notEqual(stream.value, 0);
+    const complete = streamComplete(stream.stdout);
+    assert.equal(complete.status, 'fail');
+    assert.equal(complete.exitCode, stream.value);
+    assert.deepEqual(complete.fallbacks, expected('fail-stream'));
+    const human = await run('fail-human');
+    assert.notEqual(human.value, 0);
+    assert.match(
+      [...human.stdout, ...human.stderr].join('\n'),
+      /Ping shot: .*shot\.png \(fallback from native: native timed out\)/u,
+    );
   });
 
   test('--plan lists the host steps and the platform launch, without executing', async () => {
