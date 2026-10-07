@@ -544,11 +544,12 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         result.browser ?? null,
       );
       recordRunAcceptance(target, result);
-      const artifacts = runArtifactInventory(result.artifactManifestPath);
       // Evidence an action produced through a fallback provider (for example a
       // screenshot from a second capture path), so an evidence gate sees it here,
       // on a failed run too.
-      const fallbacks: RunFallbackEvidence[] = artifacts.flatMap((artifact) =>
+      const fallbacks: RunFallbackEvidence[] = runArtifactInventory(
+        result.artifactManifestPath,
+      ).flatMap((artifact) =>
         artifact.fallback
           ? [{ path: artifact.absolutePath, label: artifact.label, ...artifact.fallback }]
           : [],
@@ -569,6 +570,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter, fallbacks);
       }
       const report = writeRunReport(result);
+      // Listed after the report is indexed, so the human list includes it.
+      const artifacts = runArtifactInventory(result.artifactManifestPath);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
       const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
       if (stream.enabled) {

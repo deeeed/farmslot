@@ -1404,6 +1404,7 @@ describe('run', () => {
       human.stdout.join('\n'),
       /Ping shot: .*shot\.png \(fallback from native: native timed out\)/u,
     );
+    assert.match(human.stdout.join('\n'), /Human run report: .*report\.md/u);
     const plain = await capture(() =>
       handleRun(
         [
