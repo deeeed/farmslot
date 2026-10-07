@@ -2012,3 +2012,181 @@ test('a run queued behind a scoped resource claim reports the node as waiting on
   await queue.persistQueueNow();
   await new Promise((resolve) => setTimeout(resolve, 25));
 });
+
+async function stackedGraph(title: string) {
+  const stores = await freshStores();
+  const { backlog, queue, runs, workGraph } = stores;
+  const upstream = await createReadyBacklogItem(backlog, `${title} upstream`);
+  const downstream = await createReadyBacklogItem(backlog, `${title} downstream`);
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title },
+    { kind: 'system' },
+  );
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_up', backlogItemId: upstream.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_down', backlogItemId: downstream.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_stack',
+    fromNodeId: 'wn_up',
+    toNodeId: 'wn_down',
+    condition: { kind: 'published' },
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_rebase',
+    fromNodeId: 'wn_up',
+    toNodeId: 'wn_down',
+    condition: { kind: 'merged' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'update-branch' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  const startRun = async (nodeId: string, itemId: string, ticket: string) => {
+    const queued = queue
+      .getQueueSnapshot()
+      .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+    assert.ok(queued, `${nodeId} must be queued before it starts`);
+    const run = runs.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: ticket,
+      backlogItemId: itemId,
+      workGraphId: graphId,
+      workNodeId: nodeId,
+    });
+    await backlog.markBacklogRunStarted(queued, run);
+    queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+    return run;
+  };
+  return { ...stores, graphId, upstream, downstream, startRun };
+}
+
+test('a published edge holds the stacked node until the upstream PR is pushed', async () => {
+  const { graphId, runs, upstream, workGraph, startRun } = await stackedGraph('Stack wait');
+  const planned = workGraph.getWorkGraph({ graphId }).graph;
+  assert.deepEqual(
+    planned.nodes.find((node) => node.id === 'wn_down')?.upstreamBaseNodeIds,
+    ['wn_up'],
+    'the published edge records the stack base on the downstream node',
+  );
+
+  const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
+  runs.updateRun(upstreamRun.id, { branch: 'feat/upstream', status: 'monitoring' });
+  let projection = (await workGraph.schedulerTick({ graphId })).graphs[0]!;
+  assert.equal(projection.edges.find((edge) => edge.id === 'we_stack')?.status, 'pending');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_down')?.status, 'waiting');
+  assert.throws(
+    () => workGraph.stackBaseForNode(graphId, 'wn_down'),
+    /no published PR/,
+    'an unpublished upstream is never a stack base',
+  );
+
+  runs.updateRun(upstreamRun.id, { prNumber: 41, prState: 'OPEN' });
+  projection = (await workGraph.schedulerTick({ graphId })).graphs[0]!;
+  const edge = projection.edges.find((candidate) => candidate.id === 'we_stack');
+  assert.equal(edge?.status, 'satisfied');
+  assert.equal(edge?.evidence?.prNumber, 41);
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_down')?.status, 'queued');
+  assert.deepEqual(workGraph.stackBaseForNode(graphId, 'wn_down'), {
+    upstreamNodeId: 'wn_up',
+    upstreamRunId: upstreamRun.id,
+    baseBranch: 'feat/upstream',
+    upstreamPrNumber: 41,
+  });
+  assert.equal(workGraph.stackBaseForNode(graphId, 'wn_up'), null, 'the bottom has no base');
+
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  assert.equal(
+    workGraph.stackBaseForNode(graphId, 'wn_down'),
+    null,
+    'a run starting after the upstream merged starts from the default branch',
+  );
+});
+
+test('a node takes one stack base and removing the edge clears it', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const items = await Promise.all(
+    ['First base', 'Second base', 'Stacked'].map((title) => createReadyBacklogItem(backlog, title)),
+  );
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'One base' },
+    { kind: 'system' },
+  );
+  const graphId = graph.graph.graph.id;
+  for (const [index, id] of ['wn_a', 'wn_b', 'wn_c'].entries()) {
+    await workGraph.addWorkGraphNode({ graphId, id, backlogItemId: items[index]!.item.id });
+  }
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_a_c',
+    fromNodeId: 'wn_a',
+    toNodeId: 'wn_c',
+    condition: { kind: 'published' },
+  });
+  await assert.rejects(
+    workGraph.addWorkGraphEdge({
+      graphId,
+      fromNodeId: 'wn_b',
+      toNodeId: 'wn_c',
+      condition: { kind: 'published' },
+    }),
+    /already stacks on wn_a/,
+  );
+  await workGraph.removeWorkGraphEdge({ graphId, edgeId: 'we_a_c' });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_c')
+      ?.upstreamBaseNodeIds,
+    undefined,
+  );
+});
+
+test('after the upstream merges, rebase-onto retargets the stacked PR to the default branch', async (t) => {
+  const { downstream, graphId, runs, upstream, workGraph, startRun } =
+    await stackedGraph('Stack retarget');
+  const retargeted: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    retargeted.push(run.id);
+    return 'main';
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+
+  const upstreamRun = await startRun('wn_up', upstream.item.id, upstream.item.sourceRef!);
+  runs.updateRun(upstreamRun.id, {
+    branch: 'feat/upstream',
+    prNumber: 41,
+    prState: 'OPEN',
+    status: 'monitoring',
+  });
+  await workGraph.schedulerTick({ graphId });
+  const downstreamRun = await startRun('wn_down', downstream.item.id, downstream.item.sourceRef!);
+  runs.updateRun(downstreamRun.id, {
+    branch: 'feat/downstream',
+    prNumber: 42,
+    status: 'monitoring',
+    stack: {
+      upstreamNodeId: 'wn_up',
+      upstreamRunId: upstreamRun.id,
+      baseBranch: 'feat/upstream',
+      upstreamPrNumber: 41,
+    },
+  });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(retargeted, [], 'nothing moves while the upstream PR is open');
+
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  const projection = (await workGraph.schedulerTick({ graphId })).graphs[0]!;
+
+  assert.deepEqual(retargeted, [downstreamRun.id], 'retargeted exactly once across ticks');
+  assert.equal(runs.getRun(downstreamRun.id)?.stack?.retargetedTo, 'main');
+  const node = projection.nodes.find((candidate) => candidate.id === 'wn_down');
+  assert.equal(node?.status, 'running', 'the stacked node keeps tracking its run');
+  assert.notEqual(projection.graph.status, 'needs-attention');
+  const ledger = projection.ledger.filter(
+    (entry) => entry.nodeId === 'wn_down' && entry.actionKind === 'rebase-onto',
+  );
+  assert.equal(ledger.length, 1);
+  assert.equal(ledger[0]?.status, 'completed');
+  assert.equal(ledger[0]?.result, 'retargeted:#42->main');
+});

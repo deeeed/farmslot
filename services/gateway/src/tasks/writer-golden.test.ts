@@ -96,3 +96,36 @@ for (const flowType of ['dev', 'fix-bug', 'review-pr', 'pr-complete'] as const) 
     assert.equal(actual, await readFile(goldenPath, 'utf-8'));
   });
 }
+
+test('a stacked dev run gets the golden document plus only a Stack section', async (t) => {
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  const run: Run = {
+    ...goldenRun('dev'),
+    stack: {
+      upstreamNodeId: 'wn_up',
+      upstreamRunId: 'run-up',
+      baseBranch: 'feat/upstream',
+      upstreamPrNumber: 41,
+      upstreamPrUrl: 'https://github.com/deeeed/farmslot/pull/41',
+      downstream: ['Polish (wn_polish)'],
+    },
+  };
+  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  const actual = normalize(await readFile(taskPath, 'utf-8'), path.dirname(taskPath));
+  const section = [
+    '## Stack',
+    '',
+    "You are on top of https://github.com/deeeed/farmslot/pull/41 (`feat/upstream`). Your branch starts from that PR's head and your PR targets `feat/upstream`. Do not change its files unless your task needs it.",
+    'Downstream: Polish (wn_polish).',
+    '',
+    '',
+  ].join('\n');
+  assert.ok(actual.includes(section), 'the Stack section is rendered');
+  assert.equal(
+    actual.replace(section, ''),
+    await readFile(path.join(GOLDEN_DIR, 'dev.golden'), 'utf-8'),
+  );
+});

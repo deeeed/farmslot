@@ -11,6 +11,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
+  type RunStack,
   type WaitingReason,
   type WorkEdge,
   type WorkGraph,
@@ -43,8 +44,10 @@ import {
   markBacklogItemReady,
 } from '../backlog/store.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
+
+import { retargetStackedPr } from './stack-retarget.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type WorkGraphRecord = WorkGraphSnapshot & { originator?: WorkOriginator };
@@ -513,6 +516,8 @@ export async function addWorkGraphEdge(
     if (params.condition.kind === 'reference-status' && !isReferenceNode(fromNode)) {
       throw new Error('reference-status edges must originate from reference nodes');
     }
+    const toNode = snapshot.nodes.find((node) => node.id === params.toNodeId)!;
+    if (params.condition.kind === 'published') assertStackEdge(fromNode, toNode);
     const edge: WorkEdge = {
       id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
       graphId: snapshot.graph.id,
@@ -527,6 +532,8 @@ export async function addWorkGraphEdge(
     const candidate = { ...snapshot, edges: [...snapshot.edges, edge] };
     assertNoCycle(candidate);
     snapshot.edges.push(edge);
+    // The published edge is the stack edge: record the base where prepare reads it.
+    if (edge.condition.kind === 'published') toNode.upstreamBaseNodeIds = [fromNode.id];
     snapshot.graph.updatedAt = new Date().toISOString();
     restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
@@ -549,7 +556,12 @@ export async function removeWorkGraphEdge(
     }
     const edgeIndex = snapshot.edges.findIndex((edge) => edge.id === params.edgeId);
     if (edgeIndex < 0) throw new Error(`Work edge not found: ${params.edgeId}`);
-    snapshot.edges.splice(edgeIndex, 1);
+    const [removed] = snapshot.edges.splice(edgeIndex, 1);
+    if (removed?.condition.kind === 'published') {
+      const toNode = snapshot.nodes.find((node) => node.id === removed.toNodeId);
+      if (toNode?.upstreamBaseNodeIds?.[0] === removed.fromNodeId)
+        delete toNode.upstreamBaseNodeIds;
+    }
     snapshot.graph.updatedAt = new Date().toISOString();
     restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
@@ -748,6 +760,125 @@ function mergedEvidenceFromRuns(runs: readonly Run[]): { prNumber?: number } | n
     }
   }
   return null;
+}
+
+function assertStackEdge(fromNode: WorkNode, toNode: WorkNode): void {
+  if (!isBacklogNode(fromNode) || !isBacklogNode(toNode)) {
+    throw new Error(
+      'published edges connect backlog nodes: the upstream must be able to open a PR',
+    );
+  }
+  const existing = toNode.upstreamBaseNodeIds?.[0];
+  if (existing && existing !== fromNode.id) {
+    throw new Error(
+      `Work node ${toNode.id} already stacks on ${existing}; a branch has exactly one base`,
+    );
+  }
+}
+
+/**
+ * The upstream family's run that carries its PR, newest first. Only a pushed
+ * head can be a stack base: other slots and nodes reach it through origin alone.
+ */
+function publishedRunForNode(node: WorkNode, runs: readonly Run[]): Run | undefined {
+  if (!node.currentFamilyId) return undefined;
+  return runs
+    .filter(
+      (run) =>
+        (run.familyId === node.currentFamilyId || run.id === node.currentFamilyId) &&
+        !!run.prNumber &&
+        !!run.branch &&
+        run.prState !== 'CLOSED',
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+export type StackBase = Pick<
+  RunStack,
+  'upstreamNodeId' | 'upstreamRunId' | 'baseBranch' | 'upstreamPrNumber' | 'downstream'
+>;
+
+/**
+ * The published PR a graph node's run stacks on, or null when the node has no
+ * stack base or its upstream already merged (the run then starts from the
+ * default branch like any other). Throws rather than stack on unpublished work.
+ */
+export function stackBaseForNode(graphId: string, nodeId: string): StackBase | null {
+  const snapshot = graphs.get(graphId);
+  const node = snapshot?.nodes.find((candidate) => candidate.id === nodeId);
+  const upstreamIds = node?.upstreamBaseNodeIds ?? [];
+  if (!snapshot || upstreamIds.length === 0) return null;
+  if (upstreamIds.length > 1) {
+    throw new Error(
+      `Work node ${nodeId} lists ${upstreamIds.length} stack bases; a branch has one`,
+    );
+  }
+  const upstream = snapshot.nodes.find((candidate) => candidate.id === upstreamIds[0]);
+  if (!upstream)
+    throw new Error(`Stack base node ${upstreamIds[0]} is not in work graph ${graphId}`);
+  const run = publishedRunForNode(upstream, getAllRuns());
+  if (!run?.prNumber || !run.branch) {
+    throw new Error(
+      `Stack base ${upstream.id} has no published PR; a stacked run starts only from a pushed branch`,
+    );
+  }
+  if (run.prState === 'MERGED' || run.mergedAt) return null;
+  const downstream = snapshot.nodes
+    .filter((candidate) => candidate.upstreamBaseNodeIds?.includes(nodeId))
+    .map((candidate) => {
+      const title = candidate.backlogItemId
+        ? getBacklogItemSnapshot(candidate.backlogItemId)?.title
+        : undefined;
+      return title ? `${title} (${candidate.id})` : candidate.id;
+    });
+  return {
+    upstreamNodeId: upstream.id,
+    upstreamRunId: run.id,
+    baseBranch: run.branch,
+    upstreamPrNumber: run.prNumber,
+    ...(downstream.length ? { downstream } : {}),
+  };
+}
+
+function isStackedNode(node: WorkNode): boolean {
+  return (node.upstreamBaseNodeIds?.length ?? 0) > 0;
+}
+
+let stackRetargeter: (run: Run) => Promise<string> = retargetStackedPr;
+
+export function setStackRetargeterForTests(fn: ((run: Run) => Promise<string>) | null): void {
+  stackRetargeter = fn ?? retargetStackedPr;
+}
+
+/**
+ * rebase-onto for a stacked node: the upstream merged, so the downstream PR
+ * moves to the default branch. A node with no stacked run yet needs nothing; its
+ * run will see the merge and start from the default branch.
+ */
+async function retargetStackedNode(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  runs: readonly Run[],
+  now: string,
+): Promise<void> {
+  const run = node.latestRunId ? runs.find((r) => r.id === node.latestRunId) : undefined;
+  if (!run?.stack || run.stack.retargetedTo) return;
+  const base = await stackRetargeter(run);
+  await persistRunNow(
+    updateRun(run.id, { stack: { ...run.stack, retargetedTo: base } }),
+    'stack retarget',
+  );
+  snapshot.ledger.push({
+    key: `${snapshot.graph.id}:${node.id}:rebase-onto:${run.id}`,
+    graphId: snapshot.graph.id,
+    nodeId: node.id,
+    actionKind: 'rebase-onto',
+    readinessVersion: readinessVersion(snapshot, node, ['rebase-onto']),
+    status: 'completed',
+    startedAt: now,
+    completedAt: now,
+    result: `retargeted:${run.prNumber ? `#${run.prNumber}` : 'before-publish'}->${base}`,
+  });
 }
 
 const OPERATOR_CANCEL_WAIT_DETAIL =
@@ -994,6 +1125,15 @@ function evaluateEdge(
     } else if (outcome && outcome !== 'success' && edge.required) {
       edge.status = 'failed';
       edge.evidence = { observedAt: now };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'published') {
+    const published = publishedRunForNode(from, runs);
+    if (published) {
+      edge.status = 'satisfied';
+      edge.evidence = { prNumber: published.prNumber, observedAt: now };
     } else {
       edge.status = 'pending';
       delete edge.evidence;
@@ -1399,7 +1539,27 @@ export async function schedulerTick(
           continue;
         }
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
-        if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
+        if (
+          completionRebaseInbound.length > 0 &&
+          canRequireCompletionUnlock(node) &&
+          isStackedNode(node)
+        ) {
+          // Retargeting does not hold the node: it keeps its normal start and run
+          // tracking below, which the operator-attention path skips.
+          try {
+            await retargetStackedNode(snapshot, node, runs, now);
+          } catch (err) {
+            recordNodeUnlockFailure(
+              snapshot,
+              node,
+              completionRebaseInbound,
+              now,
+              errorMessage(err),
+            );
+            graphNeedsAttention = true;
+            continue;
+          }
+        } else if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
           try {
             await executeNodeUnlock(snapshot, node, completionRebaseInbound, now, unlockOptions);
           } catch (err) {

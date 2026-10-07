@@ -1,6 +1,6 @@
 # ADR-040: Work-Graph Orchestration for Backlog Dependency DAGs
 
-- **Status:** Proposed
+- **Status:** Accepted, partially implemented (scheduler, graph store and UI, stacked runs). See [ADR implementation status](../reference/adr-implementation-status.md#adr-040--work-graph-orchestration).
 - **Date:** 2026-06-27
 - **Relates-to:**
   - ADR-005 (state persistence) — graph store follows gateway-owned atomic state patterns
@@ -812,3 +812,31 @@ The scheduler currently infers operator cancellation while polling `getAllRuns()
 (`status === 'cancelled' && !redirectedToRunId`, added by #466). Under ADR-053 the graph is told
 with intent instead, and that inference becomes a backstop rather than the only signal. Scheduler
 authority over active-graph edges is unchanged.
+
+## Amendment: stacked runs (2026-10-07)
+
+A run can start on top of another run's PR. Slots are separate checkouts, often on other
+nodes, so the only base one slot can share with another is a branch pushed to origin.
+
+- **Edge condition `published`.** Satisfied when the upstream family has a run with a PR
+  number and a head branch, and the PR is not closed unmerged. It is the stack edge: adding
+  it records the upstream as the target's `upstreamBaseNodeIds` (one base per node), and
+  the downstream node waits until the PR exists. A node is never stacked on unpublished work.
+  This replaces the `pr-open` placeholder in §3.
+- **Prepare.** For a dev or fix-bug run on a stacked node, Farmslot records `run.stack`
+  (upstream node, run, PR and head branch) before writing the task. Prepare fetches that
+  branch from origin and creates the work branch from its head; the resolved commit is
+  recorded. If the upstream already merged, the run starts from the default branch as usual.
+- **Publication.** The PR targets the upstream branch. The contribution diff starts at the
+  recorded commit, so review sees only the stacked run's own changes.
+- **TASK.md** gets a `## Stack` section naming the upstream PR, its branch and the nodes
+  stacked on top. Runs without `run.stack` get no section; their task documents are
+  byte-identical to before (golden tests).
+- **`rebase-onto` on a stacked node.** When the upstream merges, the downstream PR is
+  retargeted to the default branch (`gh pr edit --base`) and `run.stack.retargetedTo` is
+  set; a run that has not published yet opens its PR against the default branch. Rebasing
+  the branch itself stays with the existing update-branch flow, which ci-watch dispatches
+  when GitHub reports a conflict. On a node without a stack base, `rebase-onto` still
+  surfaces operator attention as before.
+
+Operator steps: [Stacked work](../operations/stacked-work.md).

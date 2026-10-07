@@ -446,10 +446,14 @@ export function cappedRunSourceDiffCommand(
 }
 
 export function contributionDiffBaseSpec(
-  run: Pick<Run, 'startRef'>,
+  run: Pick<Run, 'startRef' | 'stack'>,
   defaultBranch: string,
 ): { baseRef: string; commitish: string } {
   const requested = run.startRef?.requestedRef?.trim();
+  // A stacked run's own contribution starts where it branched from the upstream PR.
+  if (!requested && run.stack?.resolvedSha && !run.stack.retargetedTo) {
+    return { baseRef: `stack:${run.stack.baseBranch}`, commitish: run.stack.resolvedSha };
+  }
   if (!requested) {
     const remote = `origin/${defaultBranch}`;
     return { baseRef: remote, commitish: remote };
