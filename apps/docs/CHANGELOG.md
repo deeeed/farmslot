@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Adapter SDK reference: the `environment` failure class (`ENVIRONMENT_NOT_READY`) in the classification order.
 - Web adapter reference: `createExtensionNetworkObserver` takes an optional `extensionId`, the extension to capture.
 - Web adapter reference: document `network-observer` and `performance-observer` (Extension network capture and CDP performance traces), `connectBrowserCdp` events and `selectExtensionTarget`.
 - Agent runtime and task directory contract: `artifacts/acceptance-status.json` is written by `farmslot-agent ac` and by a recipe run with a task dir, through one module.

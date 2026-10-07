@@ -5,6 +5,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - **BREAKING:** remove `devServer.portFlags`. `--watcher-port` is the one option that gives `run` and `call` the dev-server port; a platform names its port environment with `devServer.portEnv`.
+- Add `AdapterFailurePatterns.environment` (`pattern`, `message`, `userAction`): a failure the target's environment causes (a missing runtime dependency or build output), which neither healing nor the app can fix.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.5.1 - 2026-10-06
 

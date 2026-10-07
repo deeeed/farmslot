@@ -125,6 +125,10 @@ export interface AdapterFailurePatterns {
   // The screen refuses capture, so a screenshot can't be evidence. The platform
   // words the explanation and the next step.
   captureProtected?: { pattern: RegExp; message: string; userAction: string };
+  // The target's environment is missing something the action needs (a runtime
+  // dependency, a build output). Neither healing nor the app can fix it; the
+  // platform words the explanation and the next step.
+  environment?: { pattern: RegExp; message: string; userAction: string };
   // Transport failures that would otherwise read as wallet state.
   transportFirst?: RegExp;
   // Wallet or fixture state the harness never changes on its own.
