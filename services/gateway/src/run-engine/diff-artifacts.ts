@@ -541,13 +541,16 @@ export async function settleStackedDiffBase(
       await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
       const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
       const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
-      if (newer && newer !== branchPoint) {
-        const advanced = await isAncestor(branchPoint, newer);
-        const replaced =
-          !advanced &&
-          !(await isAncestor(branchPoint, 'HEAD')) &&
-          !(await isAncestor(newer, remote));
-        if (advanced || replaced) branchPoint = newer;
+      // Adopt it when it is upstream-only (the default branch lacks it) and
+      // not already behind the recorded point: an advance, or a force-pushed
+      // replacement HEAD rebased onto or merged.
+      if (
+        newer &&
+        newer !== branchPoint &&
+        !(await isAncestor(newer, branchPoint)) &&
+        !(await isAncestor(newer, remote))
+      ) {
+        branchPoint = newer;
       }
     }
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
