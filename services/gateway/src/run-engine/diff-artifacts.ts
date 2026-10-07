@@ -526,8 +526,14 @@ export async function settleStackedDiffBase(
   let branchPoint = baseSpec.commitish;
   const plain = { baseRef: remote, commitish: remote };
   try {
-    // The upstream may have moved on (a review fix) and the checkout taken its
-    // newer head: the branch point is the newest upstream commit HEAD contains.
+    // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
+    await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
+    const isAncestor = async (ancestor: string, of: string) =>
+      (await exec(`git merge-base --is-ancestor ${shellQuote(ancestor)} ${shellQuote(of)}`))
+        .exitCode === 0;
+    // The upstream may have moved on (a review fix, or a rebase and force-push)
+    // and the checkout taken its newer head: the branch point is the newest
+    // upstream-only commit HEAD contains.
     if (baseSpec.stackBranch) {
       const upstream = `origin/${baseSpec.stackBranch}`;
       // A failed fetch (the branch deleted after its merge) keeps the
@@ -535,13 +541,13 @@ export async function settleStackedDiffBase(
       await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
       const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
       const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
-      if (
-        newer &&
-        newer !== branchPoint &&
-        (await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} ${shellQuote(newer)}`))
-          .exitCode === 0
-      ) {
-        branchPoint = newer;
+      if (newer && newer !== branchPoint) {
+        const advanced = await isAncestor(branchPoint, newer);
+        const replaced =
+          !advanced &&
+          !(await isAncestor(branchPoint, 'HEAD')) &&
+          !(await isAncestor(newer, remote));
+        if (advanced || replaced) branchPoint = newer;
       }
     }
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
@@ -555,8 +561,6 @@ export async function settleStackedDiffBase(
       );
       if (integrated.exitCode === 0) return plain;
     }
-    // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
-    await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
     const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
     const taken = mergeBase.stdout.trim();
     if (mergeBase.exitCode !== 0 || !taken) return { ...baseSpec, commitish: branchPoint };

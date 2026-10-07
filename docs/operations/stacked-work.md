@@ -57,6 +57,8 @@ If A merged before B started, B is an ordinary run from the default branch.
 - Farmslot learns that A merged from ci-watch on A's run. If A's run had already
   finished when A merged, run `farmslot graph tick <graphId>`: an operator tick asks GitHub
   about the PR B stacks on, records the merge and retargets B in the same call.
+- Don't archive B while its PR is open and A hasn't merged: an archived run drops out of
+  this maintenance, so you would retarget its PR by hand.
 - A failed retarget shows in the graph ledger. Fix the cause, then run
   `farmslot graph tick <graphId>` to retry it.
 - Runs without a `published` edge are unchanged: same branch base, same PR base, same

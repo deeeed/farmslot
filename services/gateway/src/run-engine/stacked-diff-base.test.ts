@@ -252,3 +252,24 @@ test("a checkout rebased onto the upstream's newer head measures from that head"
     'b.txt',
   ]);
 });
+
+test('a checkout rebased onto a force-pushed upstream measures from its new head', async (t) => {
+  const { author, slot, stacked, exec, onMain } = await fixture(t);
+  await onMain(async () => {
+    await commitFile(author, 'x.txt', 'X');
+  });
+  // A rebases onto the newer main and force-pushes; B follows it.
+  await git(author, 'checkout', '-q', 'feat/a');
+  await git(author, 'rebase', '-q', 'main');
+  const replacedHead = await git(author, 'rev-parse', 'HEAD');
+  await git(author, 'push', '-q', '--force', 'origin', 'feat/a');
+  await git(slot, 'fetch', '-q', 'origin');
+  await git(slot, 'rebase', '-q', '--onto', 'origin/feat/a', stacked.commitish);
+
+  const base = await settleStackedDiffBase(exec, 'main', stacked);
+  assert.equal(base.commitish, replacedHead);
+  const from = base.diffFrom ?? (await git(slot, 'merge-base', base.commitish, 'HEAD'));
+  assert.deepEqual((await git(slot, 'diff', '--name-only', `${from}..HEAD`)).split('\n'), [
+    'b.txt',
+  ]);
+});
