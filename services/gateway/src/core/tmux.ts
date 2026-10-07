@@ -441,10 +441,21 @@ export async function ensureTmuxWindow(
 ): Promise<{ disposition: 'existing' | 'created'; windows: TmuxWindowRef[] }> {
   const existing = await listExactTmuxWindows(vars, session, windowName);
   if (existing.length > 0) return { disposition: 'existing', windows: existing };
+  // A reboot (or a killed tmux server) takes the slot session with it: create
+  // the session with this window as its first, in the slot checkout, as
+  // dispatch would.
+  const probe = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`has-session -t ${shellQuote(`=${session}`)} 2>/dev/null`),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  throwIfTmuxQueryTimedOut(probe, `ensureTmuxWindow has-session ${session}`);
   const created = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
+      probe.exitCode === 0
+        ? `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`
+        : `new-session -d -s ${shellQuote(session)} -n ${shellQuote(windowName)} -c ${shellQuote(vars.remoteRepo)} 2>&1`,
     ),
   );
   const afterCreate = await listExactTmuxWindows(vars, session, windowName);

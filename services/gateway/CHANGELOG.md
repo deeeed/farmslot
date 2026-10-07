@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Replaying a step on a slot whose tmux session is gone (after a reboot or a killed tmux server) creates the session, with the step's window, in the slot checkout. It used to fail with `Failed to create tmux window`.
 
 ## 0.20.3 - 2026-10-07
 
