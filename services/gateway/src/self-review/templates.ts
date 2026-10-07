@@ -14,16 +14,24 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandTemplate,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
+import { shellQuote } from '../core/tmux.js';
+import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildIndependentReviewPlanningBrief } from '../run-engine/review-artifacts.js';
+import { stackPrBase } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
+import {
+  buildDescriptionCheckSection,
+  type DescriptionCheckFinding,
+  descriptionCheckFindings,
+} from './description-check.js';
 import { parseReviewSessionPolicy, type ReviewSessionPolicy } from './session-policy.js';
 
 interface SelfReviewConfig {
@@ -36,6 +44,71 @@ interface SelfReviewConfig {
 }
 
 const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
+/** Diffs past this size are cut for the pre-check scan; the reviewer still reads them whole. */
+const PRE_CHECK_DIFF_BYTES = 5_000_000;
+
+/**
+ * Reads the final description, commit subjects, diff and evidence manifest on
+ * the slot and scans them. Never fails the review: a read that does not work
+ * becomes a "not run" line the reviewer sees.
+ */
+async function runDescriptionPreCheck(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  baseBranch: string,
+): Promise<DescriptionCheckFinding[] | { unavailable: string }> {
+  const base = `origin/${baseBranch}`;
+  const inRepo = (command: string) =>
+    execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${command}`, { timeout: 60_000 });
+  try {
+    // A failed fetch still leaves the remote-tracking ref the checkout has.
+    await inRepo(`git fetch origin ${shellQuote(remoteBranchRefspec(baseBranch))}`);
+    const diff = await inRepo(
+      `git diff ${shellQuote(`${base}...HEAD`)} | head -c ${PRE_CHECK_DIFF_BYTES}`,
+    );
+    const log = await inRepo(`git log --format=%s ${shellQuote(`${base}..HEAD`)}`);
+    if (diff.exitCode !== 0 || log.exitCode !== 0)
+      return { unavailable: `could not read the diff against ${base}` };
+    const description = await inRepo(`cat ${shellQuote(`${taskDir}/artifacts/pr-description.md`)}`);
+    const manifestText = await inRepo(
+      `cat ${shellQuote(`${taskDir}/artifacts/evidence-manifest.json`)}`,
+    );
+    let evidenceManifest: unknown = null;
+    if (manifestText.exitCode === 0) {
+      try {
+        evidenceManifest = JSON.parse(manifestText.stdout);
+      } catch {
+        evidenceManifest = null;
+      }
+    }
+    return descriptionCheckFindings({
+      description: description.exitCode === 0 ? description.stdout : null,
+      commitSubjects: log.stdout.split('\n').filter((line) => line.trim()),
+      diff: diff.stdout,
+      evidenceManifest,
+    });
+  } catch (err) {
+    return { unavailable: (err as Error).message.split('\n')[0]!.slice(0, 200) };
+  }
+}
+
+/** The section every self-review document ends with, whatever template it came from. */
+async function descriptionCheckSection(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  run: NonNullable<ReturnType<typeof getRun>>,
+  projectJson: Awaited<ReturnType<typeof loadProjectVars>>['projectJson'] | undefined,
+): Promise<string> {
+  const baseBranch =
+    stackPrBase(run) ??
+    ((projectJson && getProjectField(projectJson, 'default_branch')) || DEFAULT_BRANCH);
+  return buildDescriptionCheckSection({
+    repo: vars.remoteRepo,
+    taskDir,
+    baseBranch,
+    preCheck: await runDescriptionPreCheck(vars, taskDir, baseBranch),
+  });
+}
 
 export async function expandSelfReviewTemplate(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -100,7 +173,9 @@ export async function expandSelfReviewTemplate(
       signalFile: 'SELF-REVIEW-SIGNAL.json',
     };
     const planningBrief = await buildIndependentReviewPlanningBrief(run.taskFile ?? null, taskDir);
-    return `${selected.markdown}\n## Review execution bindings\n\n\`\`\`json\n${JSON.stringify(bindings, null, 2)}\n\`\`\`\n\nUse the task's mark wrapper for this reviewer checklist. Preserve the parent worker's CHECKLIST.md. The gateway retains the indexed provenance artifact and owns session termination.\n${planningBrief}\n`;
+    const document = `${selected.markdown}\n## Review execution bindings\n\n\`\`\`json\n${JSON.stringify(bindings, null, 2)}\n\`\`\`\n\nUse the task's mark wrapper for this reviewer checklist. Preserve the parent worker's CHECKLIST.md. The gateway retains the indexed provenance artifact and owns session termination.\n${planningBrief}\n`;
+    const check = await descriptionCheckSection(vars, taskDir, run, configured.projectJson);
+    return `${document.trimEnd()}\n\n${check}\n`;
   }
 
   let template: string;
@@ -184,7 +259,8 @@ export async function expandSelfReviewTemplate(
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildIndependentReviewPlanningBrief(run?.taskFile ?? null, taskDir);
-  return `${expanded.trimEnd()}\n${planningBrief}\n`;
+  const check = await descriptionCheckSection(vars, taskDir, run, pv?.projectJson);
+  return `${expanded.trimEnd()}\n${planningBrief.trimEnd()}\n\n${check}\n`;
 }
 
 export async function getSelfReviewConfig(project: string): Promise<SelfReviewConfig> {
