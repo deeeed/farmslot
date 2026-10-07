@@ -12,6 +12,8 @@ import {
 
 import {
   adapterChoices,
+  adapterPlugin,
+  AdapterPluginError,
   booleanOption,
   type CommandContract,
   configureHarnessAdapters,
@@ -411,6 +413,57 @@ describe('validatePublicInvocation', () => {
       optionValues(['--library', 'a', '--library=b', 'x', '--', '--library', 'c'], '--library'),
       ['a', 'b'],
     );
+  });
+
+  test("a host explains a value an option's choices reject; a miss keeps the default", () => {
+    const seen: unknown[] = [];
+    const explainInvalidChoice = (choice: {
+      command: string;
+      option: string;
+      value: string;
+      tokens: readonly string[];
+    }) => {
+      seen.push(choice);
+      return choice.value === 'kiosk'
+        ? {
+            code: 'SHOP_SURFACE_RETIRED',
+            command: choice.command,
+            message: `${choice.option} ${choice.value} moved to the kiosk library.`,
+            userAction: `add the kiosk library, then rerun: shop-harness ${[choice.command, ...choice.tokens].join(' ')}`,
+          }
+        : null;
+    };
+    assert.deepEqual(
+      validatePublicInvocation(['launch', '--surface', 'kiosk', '--json'], table(), {
+        explainInvalidChoice,
+      }),
+      {
+        code: 'SHOP_SURFACE_RETIRED',
+        command: 'launch',
+        message: '--surface kiosk moved to the kiosk library.',
+        userAction: 'add the kiosk library, then rerun: shop-harness launch --surface kiosk --json',
+      },
+    );
+    assert.deepEqual(seen, [
+      {
+        command: 'launch',
+        option: '--surface',
+        value: 'kiosk',
+        tokens: ['--surface', 'kiosk', '--json'],
+      },
+    ]);
+    // A miss is the default error, byte for byte; a valid value never asks.
+    assert.deepEqual(
+      validatePublicInvocation(['launch', '--surface', 'popup'], table(), { explainInvalidChoice }),
+      validatePublicInvocation(['launch', '--surface', 'popup'], table()),
+    );
+    assert.equal(
+      validatePublicInvocation(['launch', '--surface', 'fullscreen'], table(), {
+        explainInvalidChoice,
+      }),
+      null,
+    );
+    assert.equal(seen.length, 2);
   });
 
   test('lists every name and alias for completion', () => {
@@ -965,6 +1018,169 @@ export const adapter = {
       assert.deepEqual(events[0]?.error, envelope.error, code);
     }
     assert.deepEqual(imported(), []);
+    assert.deepEqual(calls, []);
+  });
+
+  test('runs afterAdapterLoad once the selected adapter is loaded, before any help or dispatch', async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('hooked')}`;
+    const loaded: Array<{ id: string; recorded: boolean; calls: number }> = [];
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, {
+        '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+        '--arg': optionalValueOption(),
+      }),
+      positionals: [{ label: 'action' }],
+      allowPassthrough: true,
+    });
+    const options = pluginOptions();
+    const cli = createHarnessCli({
+      ...options,
+      commands: [...options.commands.filter((entry) => entry.name !== 'call'), call],
+      catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
+      afterAdapterLoad: async (id) => {
+        loaded.push({ id, recorded: adapterPlugin(id) !== undefined, calls: calls.length });
+      },
+    });
+    await cli.main(['doctor']);
+    assert.deepEqual(loaded, []);
+    await cli.main(['doctor', '--adapter', 'hooked']);
+    await cli.main(['doctor', '--adapter', 'web']);
+    await capture(() => cli.main(['call', 'x', '--adapter', 'hooked', '--arg', '--help']));
+    await cli.main(['call', 'x', '--adapter', 'hooked', '--', '--help']);
+    // `calls` counts dispatches so far: the hook runs before each command's own.
+    assert.deepEqual(loaded, [
+      { id: 'hooked', recorded: true, calls: 1 },
+      { id: 'web', recorded: false, calls: 2 },
+      { id: 'hooked', recorded: true, calls: 3 },
+      { id: 'hooked', recorded: true, calls: 3 },
+    ]);
+    assert.deepEqual(
+      calls.map((entry) => entry.command),
+      ['doctor', 'doctor', 'doctor', 'call'],
+    );
+  });
+
+  test("prints afterAdapterLoad's refusal like the loader's; leaves any other error to the mapper", async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('fenced')}`;
+    const refusing = createHarnessCli({
+      ...pluginOptions(),
+      // An async hook: its rejection is the refusal.
+      afterAdapterLoad: async () => {
+        throw new AdapterPluginError(
+          'ADAPTER_PLUGIN_INVALID',
+          "adapter 'fenced' policy imports a file its digest misses.",
+          'keep the policy beside the plugin module',
+        );
+      },
+    });
+    const argv = ['doctor', '--adapter', 'fenced'];
+    const human = await capture(() => refusing.main(argv));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      human.stderr,
+      "✗ shop-harness doctor: adapter 'fenced' policy imports a file its digest misses.\n  Next: keep the policy beside the plugin module\n",
+    );
+    const json = await capture(() => refusing.main([...argv, '--json']));
+    assert.deepEqual(json.result, { exitCode: 2, exit: 'now' });
+    const envelope = JSON.parse(json.stdout) as { error: Record<string, unknown> };
+    assert.deepEqual(envelope.error, {
+      code: 'ADAPTER_PLUGIN_INVALID',
+      message: "adapter 'fenced' policy imports a file its digest misses.",
+      userAction: 'keep the policy beside the plugin module',
+    });
+    const stream = await capture(() => refusing.main([...argv, '--json-stream']));
+    assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual(
+      streamEvents(stream.stdout).map(({ event, error, status, exitCode }) => ({
+        event,
+        error,
+        status,
+        exitCode,
+      })),
+      [
+        { event: 'error', error: envelope.error, status: undefined, exitCode: undefined },
+        { event: 'complete', error: undefined, status: 'fail', exitCode: 2 },
+      ],
+    );
+    const crashing = createHarnessCli({
+      ...pluginOptions(),
+      afterAdapterLoad: () => {
+        throw new Error('hook crashed');
+      },
+    });
+    const crash = await capture(() => crashing.main(argv));
+    assert.deepEqual(crash.result, { exitCode: 1, exit: 'now' });
+    assert.equal(crash.stderr, 'hook crashed\n');
+    assert.deepEqual(calls, []);
+  });
+
+  test("afterAdapterLoad's refusal ends every help path before it prints", async () => {
+    process.env.RECIPE_LIBRARY_PATH = `plugs=${pluginLibrary('fenced')}`;
+    const ran: string[] = [];
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, {
+        '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+      }),
+      positionals: [{ label: 'action' }],
+      allowPassthrough: true,
+    });
+    const options = pluginOptions();
+    const cli = createHarnessCli({
+      ...options,
+      commands: [...options.commands.filter((entry) => entry.name !== 'call'), call],
+      catalog: {} as NonNullable<HarnessCliOptions['catalog']>,
+      afterAdapterLoad: (id) => {
+        ran.push(id);
+        throw new AdapterPluginError('ADAPTER_PLUGIN_INVALID', 'policy is unfenced.', 'fence it');
+      },
+    });
+    for (const argv of [
+      ['call', 'x', '--help', '--adapter', 'fenced'],
+      ['call', 'x', '--adapter', 'fenced', '--', '--help'],
+      ['doctor', '--help', '--adapter', 'fenced'],
+    ]) {
+      const out = await capture(() => cli.main(argv));
+      assert.deepEqual(out.result, { exitCode: 2, exit: 'now' }, argv.join(' '));
+      assert.equal(out.stdout, '', argv.join(' '));
+      assert.equal(
+        out.stderr,
+        `✗ shop-harness ${argv[0]}: policy is unfenced.\n  Next: fence it\n`,
+        argv.join(' '),
+      );
+    }
+    assert.deepEqual(ran, ['fenced', 'fenced', 'fenced']);
+    assert.deepEqual(calls, []);
+  });
+
+  test("passes the host's explanation of a rejected choice through the grammar", async () => {
+    const cli = createHarnessCli({
+      ...pluginOptions(),
+      explainInvalidChoice: ({ command, option, value }) =>
+        value === 'kiosk'
+          ? {
+              code: 'SHOP_ADAPTER_LIBRARY_MISSING',
+              command,
+              message: `${option} ${value} needs the kiosk library.`,
+              userAction: 'add the kiosk library to RECIPE_LIBRARY_PATH',
+            }
+          : null,
+    });
+    const human = await capture(() => cli.main(['doctor', '--adapter', 'kiosk']));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      human.stderr,
+      '✗ shop-harness doctor: --adapter kiosk needs the kiosk library.\n  Next: add the kiosk library to RECIPE_LIBRARY_PATH\n',
+    );
+    const json = await capture(() => cli.main(['doctor', '--adapter', 'kiosk', '--json']));
+    assert.equal(
+      (JSON.parse(json.stdout) as { error: { code: string } }).error.code,
+      'SHOP_ADAPTER_LIBRARY_MISSING',
+    );
+    const typo = await capture(() => cli.main(['doctor', '--adapter', 'wbe', '--json']));
+    assert.equal(
+      (JSON.parse(typo.stdout) as { error: { code: string } }).error.code,
+      'CLI_INVALID_OPTION_VALUE',
+    );
     assert.deepEqual(calls, []);
   });
 
