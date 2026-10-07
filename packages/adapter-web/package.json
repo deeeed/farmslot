@@ -71,7 +71,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --project tsconfig.json && yarn build && tsc --project tsconfig.consumer.json",
+    "typecheck": "yarn workspace @farmslot/adapter-sdk build && tsc --noEmit --project tsconfig.json && yarn build && tsc --project tsconfig.consumer.json",
     "test": "node --test \"test/*.test.cjs\" \"test/*.test.mjs\"",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
