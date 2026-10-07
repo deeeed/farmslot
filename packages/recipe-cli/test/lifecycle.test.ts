@@ -358,6 +358,51 @@ describe('launch', () => {
     assert.equal(fs.existsSync(path.join(target, 'temp/recipe/runtime/sandbox.lock')), false);
   });
 
+  test('platform stages print on stderr while the --json document stays as it was', async () => {
+    const document = { schemaVersion: 1, command: 'launch', status: 'pass' };
+    useAdapters(
+      fakeAdapter('app', {
+        launch: (context) => {
+          const metro = context.stream.stage('metro', { index: 1, total: 2 });
+          metro.progress({
+            message: 'bundling',
+            percent: 61,
+            current: 4210,
+            total: 6900,
+            unit: 'modules',
+          });
+          metro.done();
+          // Left running: it ends with the command.
+          context.stream.stage('wallet', { index: 2, total: 2 });
+          console.log(JSON.stringify(document));
+          return Promise.resolve(0);
+        },
+      }),
+    );
+    const target = tempRoot();
+    const chunks: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) =>
+      chunks.push(String(chunk)) > 0) as typeof process.stderr.write;
+    let captured: { result: number; stdout: string; stderr: string };
+    try {
+      captured = await capture(() =>
+        handleLaunch(['--adapter', 'app', '--target', target, '--json']),
+      );
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.equal(captured.result, 0);
+    assert.equal(captured.stdout, JSON.stringify(document));
+    assert.deepEqual(chunks.join('').split('\n').filter(Boolean), [
+      '[1/2] metro: started, 0s',
+      '[1/2] metro: bundling 61% (4,210/6,900 modules), 0s',
+      '[1/2] metro: done, 0s',
+      '[2/2] wallet: started, 0s',
+      '[2/2] wallet: done, 0s',
+    ]);
+  });
+
   test('teaches when no adapter matches the checkout', async () => {
     useAdapters(fakeAdapter('web'));
     const target = tempRoot();

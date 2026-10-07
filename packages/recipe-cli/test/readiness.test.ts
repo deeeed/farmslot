@@ -117,6 +117,20 @@ async function capture<T>(
   }
 }
 
+// Stage lines go straight to stderr, not through console.error.
+async function captureStderr<T>(run: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+  const chunks: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) =>
+    chunks.push(String(chunk)) > 0) as typeof process.stderr.write;
+  try {
+    const result = await run();
+    return { result, lines: chunks.join('').split('\n').filter(Boolean) };
+  } finally {
+    process.stderr.write = write;
+  }
+}
+
 // Devices with a counted live probe: doctor and status are held to one each.
 function fakeDevices(probes: { count: number }): AdapterDevices {
   return {
@@ -530,6 +544,54 @@ describe('doctor', () => {
       `set up a wallet, then shop-harness doctor --fix --adapter shop --target ${shellQuote(target)} --json`,
     );
   });
+
+  test('--fix shows one stage per fix on stderr and leaves the --json envelope as it was', async () => {
+    shopHost();
+    useAdapters(
+      fakeAdapter('shop', {
+        readiness: {
+          fixes: [
+            { id: 'deps', apply: () => true },
+            {
+              id: 'ports',
+              apply: () => {
+                throw new Error('port 8081 is taken');
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const target = doctorTarget();
+    // An overlay installer that fails, so the overlay stage has one known outcome.
+    process.env.SHOP_HARNESS_INSTALL_BIN = '/usr/bin/false';
+    const { result, lines } = await captureStderr(() =>
+      capture(() =>
+        handleDoctor(parseArgs(['--adapter', 'shop', '--target', target, '--fix', '--json']), {
+          manifest: manifestOk,
+          fix: { repair: () => ({ fixed: ['wallet'], failed: [] }) },
+        }),
+      ),
+    );
+    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
+    assert.equal('stages' in envelope, false);
+    assert.deepEqual(envelope.fixed, ['deps', 'wallet']);
+    assert.deepEqual(
+      lines.map((line) => line.replace(/, \d+s$/u, '')),
+      [
+        '[1/5] runtime-context: started',
+        '[1/5] runtime-context: done',
+        '[2/5] deps: started',
+        '[2/5] deps: done, fixed',
+        '[3/5] ports: started',
+        '[3/5] ports: failed, port 8081 is taken',
+        '[4/5] overlay: started',
+        '[4/5] overlay: failed, runtime overlay install failed (exit 1)',
+        '[5/5] host repair: started',
+        '[5/5] host repair: done, fixed wallet',
+      ],
+    );
+  });
 });
 
 describe('status', () => {
@@ -646,6 +708,7 @@ describe('prepare', () => {
         '#!/usr/bin/env node',
         'const [step] = process.argv.slice(2);',
         "const results = JSON.parse(process.env.STEP_RESULTS || '{}');",
+        "if (step === 'launch' && process.env.STAGE_LINES) process.stderr.write('[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s\\n');",
         "if (step === 'status' && !results.status) console.log(JSON.stringify({ devices: [{ platform: process.env.DEVICE_PLATFORM || 'phone', selected: true }] }));",
         "else console.log(JSON.stringify({ step, args: process.argv.slice(3), ...(results[step] ? { error: { message: step + ' broke' } } : {}) }));",
         'process.exit(results[step] ?? 0);',
@@ -753,6 +816,51 @@ describe('prepare', () => {
     assert.equal(record.steps[0]?.reportPath, path.join('prepare', 'doctor.json'));
     assert.equal(record.ready, true);
     assert.ok(!fs.existsSync(path.join(artifacts, 'prepare', 'progress.json')));
+  });
+
+  test('shows each step as a stage on stderr, nests the launch stages, and keeps stdout one document', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    process.env.STAGE_LINES = '1';
+    useAdapters(
+      fakeAdapter('shop', {
+        readiness: { prepare: { devicePlatform: () => 'phone' } },
+      }),
+    );
+    const target = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    const { result, lines } = await captureStderr(() =>
+      capture(() =>
+        handlePrepare(
+          ['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts, '--json'],
+          { usage: 'u', steps: [fixtureStep] },
+        ),
+      ),
+    );
+    assert.equal(result.result, 0);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      JSON.parse(fs.readFileSync(path.join(artifacts, 'sandbox.json'), 'utf8')),
+    );
+    assert.deepEqual(
+      lines.map((line) => line.replace(/, \d+s$/u, '')),
+      [
+        '[1/5] doctor --fix: started',
+        '[1/5] doctor --fix: done',
+        '[2/5] status: started',
+        '[2/5] status: done',
+        '[3/5] launch --verify: started',
+        '[3/5] launch --verify › [2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s',
+        '[3/5] launch --verify: done',
+        '[4/5] seed: started',
+        '[4/5] seed: done',
+        '[5/5] verify: started',
+        '[5/5] verify: done',
+      ],
+    );
+    // The gateway's [n/m] parser reads every one of them.
+    for (const line of lines) assert.match(line, /\[(\d+)\/(\d+)\]\s*(.+)$/u);
   });
 
   test('records the device platform the host targets, as the protocol names it', async () => {

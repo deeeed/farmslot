@@ -173,9 +173,11 @@ describe('launchBrowser', () => {
     const dir = runtime('launch');
     const port = await freePort();
     const lockEvents = [];
+    const progress = [];
     const result = launchBrowser(
       options(dir, port, {
         homePage: 'home.html',
+        progress: (update) => progress.push(update),
         acquireRuntimeLock: (runtimeDir) => {
           lockEvents.push(`acquire ${runtimeDir}`);
           // Released only after the launch has recorded its browser.
@@ -189,6 +191,8 @@ describe('launchBrowser', () => {
     try {
       assert.equal(result.stopped, false);
       assert.deepEqual(lockEvents, [`acquire ${dir}`, 'release pid-file=true identity=true']);
+      // The caller's stage handle hears what the launch is waiting for.
+      assert.deepEqual(progress[0], { message: 'starting the browser' });
       assert.equal(fs.readFileSync(path.join(dir, 'logs/chrome.pid'), 'utf8'), `${result.pid}\n`);
       assert.deepEqual(cdpListenerPids(port), [result.pid]);
       const resolution = JSON.parse(

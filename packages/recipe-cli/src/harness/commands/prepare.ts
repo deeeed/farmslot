@@ -19,6 +19,7 @@ import { optionFlag, optionString, parseArgs, targetPath, usageError } from '../
 import { harnessExecutable, PREPARE_PROGRESS_ARTIFACT, recipeRuntimeDir } from '../paths.js';
 import { adapterReadiness } from '../readiness.js';
 import { EXIT } from '../shared.js';
+import { createStageReporter, type ReportedStage, STAGE_LINE } from '../stage-progress.js';
 
 import { formatDuration } from './status-watch.js';
 
@@ -59,6 +60,8 @@ export interface PrepareCommandOptions {
 
 const REPORT_DIR = 'prepare';
 const SKIPPED_AFTER_FAILURE = 'previous step failed';
+// A step's stage name says what it runs when that is more than its id.
+const STAGE_NAME: Record<string, string> = { doctor: 'doctor --fix', launch: 'launch --verify' };
 
 export interface StatusDevice {
   platform?: string;
@@ -168,6 +171,8 @@ interface StepRow {
   id: string;
   state: RowState;
   hint?: string;
+  // The running step's latest stage line, in place of its hint.
+  detail?: string;
   reason?: string;
   durationMs?: number;
   startedAt?: number;
@@ -182,7 +187,11 @@ function stepRowLine(row: StepRow, width: number): string {
       : '';
   // While a step is ahead of or under way, the parenthesis explains the wait;
   // once it is over, the same slot carries what it actually took.
-  const note = running ? row.hint : row.durationMs ? formatDuration(row.durationMs) : undefined;
+  const note = running
+    ? (row.detail ?? row.hint)
+    : row.durationMs
+      ? formatDuration(row.durationMs)
+      : undefined;
   const mark = out(STEP_STYLE[row.state], STEP_MARK[row.state]);
   return (
     `${mark} ${out(running ? 'bold' : 'dim', row.id.padEnd(width))}: ${out(STEP_STYLE[row.state], row.state)}` +
@@ -275,6 +284,11 @@ function createStepView(chain: readonly string[], hints: Record<string, string>)
       if (tty) repaint();
       else process.stdout.write(`${stepRowLine(row, width)}\n`);
     },
+    // Shown on the next tick of the live view.
+    detail(id: string, text: string): void {
+      const row = rows.get(id);
+      if (row) row.detail = text;
+    },
     // Idempotent: the caller ends the view where the final block belongs in the
     // output, and a `finally` ends it again on the paths that never got there.
     // The ticker holds the event loop awake, so this must run either way.
@@ -291,11 +305,13 @@ function createStepView(chain: readonly string[], hints: Record<string, string>)
 
 // Capture a step's streams the way spawnSync did — stdout for the report file,
 // stderr held back for the failure path — while leaving the event loop free so
-// the running line can tick during a step that takes minutes.
+// the running line can tick during a step that takes minutes. The child's own
+// stage lines go to onStageLine as they arrive instead of the held-back stderr.
 function spawnStep(
   executable: string,
   args: readonly string[],
   target: string,
+  onStageLine?: (line: string) => void,
 ): Promise<{ error?: Error; status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(executable, [...args], {
@@ -313,13 +329,22 @@ function spawnStep(
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk;
     });
+    let partial = '';
     child.stderr?.on('data', (chunk: string) => {
-      stderr.append(chunk);
+      const lines = `${partial}${chunk}`.split('\n');
+      partial = lines.pop() ?? '';
+      for (const line of lines) {
+        if (onStageLine && STAGE_LINE.test(line)) onStageLine(line);
+        else stderr.append(`${line}\n`);
+      }
     });
     child.on('error', (error: Error) =>
       resolve({ error, status: null, stdout, stderr: stderr.toString() }),
     );
-    child.on('close', (status) => resolve({ status, stdout, stderr: stderr.toString() }));
+    child.on('close', (status) => {
+      stderr.append(partial);
+      resolve({ status, stdout, stderr: stderr.toString() });
+    });
   });
 }
 
@@ -331,14 +356,22 @@ async function runStep(
   artifactsDir: string,
   id: string,
   args: readonly string[],
-  { json, onSpawn }: { json: boolean; onSpawn?: (startedAt: number) => void },
+  {
+    json,
+    onSpawn,
+    onStageLine,
+  }: {
+    json: boolean;
+    onSpawn?: (startedAt: number) => void;
+    onStageLine?: (line: string) => void;
+  },
 ): Promise<TimedStep> {
   const command = [executable, ...args].join(' ');
   // One timestamp, taken at the spawn: the elapsed a reader watches tick and the
   // durationMs the record keeps are then the same measurement, not two.
   const startedAt = Date.now();
   onSpawn?.(startedAt);
-  const result = await spawnStep(executable, args, target);
+  const result = await spawnStep(executable, args, target, onStageLine);
   const durationMs = Date.now() - startedAt;
   if (result.error) {
     return { id, command, status: 'fail', exitCode: 1, reason: result.error.message, durationMs };
@@ -512,6 +545,9 @@ async function handlePrepareLocked(
     ? undefined
     : createStepView(chain, stepHints(chain, lastRunDurations(recordPath), staticHints));
   view?.begin();
+  // Stage lines on stderr, unless the live view is repainting this terminal:
+  // there the running row carries the step's latest stage line instead.
+  const stages = json || !process.stdout.isTTY ? createStageReporter() : undefined;
 
   const steps: TimedStep[] = [];
   let activeStep: { id: string; startedAt: string } | undefined;
@@ -546,6 +582,7 @@ async function handlePrepareLocked(
     if (failed()) {
       return addStep(skippedStep(id, [executable, ...args].join(' '), SKIPPED_AFTER_FAILURE));
     }
+    let stage: ReportedStage | undefined;
     const step = await runStep(executable, target, artifactsDir, id, args, {
       json,
       onSpawn: (stepStartedAt) => {
@@ -553,8 +590,15 @@ async function handlePrepareLocked(
         activeStep = { id, startedAt: new Date(stepStartedAt).toISOString() };
         writeProgress();
         view?.start(id, stepStartedAt);
+        stage = stages?.stage(STAGE_NAME[id] ?? id, {
+          index: chain.indexOf(id) + 1,
+          total: chain.length,
+        });
       },
+      onStageLine: (line) => (stage ? stage.forward(line) : view?.detail(id, line)),
     });
+    if (step.status === 'pass') stage?.done();
+    else stage?.failed(step.reason);
     return addStep(step);
   };
 
@@ -612,6 +656,7 @@ async function handlePrepareLocked(
     await run('verify', ['verify', '--json', '--adapter', platform, ...targetArgs]);
   } finally {
     clearInterval(heartbeat);
+    stages?.close('failed', 'prepare stopped');
     view?.end();
   }
 

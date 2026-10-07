@@ -264,10 +264,46 @@ export interface HealBoundViolation {
   originalError?: string;
 }
 
+// What a running setup stage is doing right now. The host renders it as one
+// line ("bundling 61% (4,210/6,900 modules)", "waiting for unlock, page is
+// #onboarding/welcome") and says "no progress" when it stops changing.
+export interface StageProgress {
+  waitingFor?: string;
+  message?: string;
+  percent?: number;
+  current?: number;
+  total?: number;
+  // What `current`/`total` count ("modules", "attempts").
+  unit?: string;
+  // The page or screen the app is on.
+  screen?: string;
+}
+
+// One setup stage (`[2/5] metro`). Feedback only: it never fails the command.
+export interface StageHandle {
+  progress(progress: StageProgress): void;
+  done(detail?: string): void;
+  failed(detail?: string): void;
+}
+
+const NOOP_STAGE: StageHandle = {
+  progress: () => undefined,
+  done: () => undefined,
+  failed: () => undefined,
+};
+
+/** `CommandEventStream.stage` for a stream that reports no stages. */
+export function noopStage(): StageHandle {
+  return NOOP_STAGE;
+}
+
 // The --json-stream events a command and its platform emit while it runs.
 export interface CommandEventStream {
   readonly enabled: boolean;
   phase(phase: string, fields?: Record<string, unknown>): void;
+  // A setup stage: a line on stderr with its elapsed time, at least every 15 s
+  // while it runs, plus a `stage` event on --json-stream.
+  stage(name: string, position: { index: number; total: number }): StageHandle;
   mutation(mutation: Record<string, unknown>): void;
   recovery(code: string): void;
   error(error: Record<string, unknown>): void;
