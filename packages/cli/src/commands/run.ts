@@ -27,6 +27,7 @@ import {
   type RunPauseResult,
   type RunResumeResult,
   type RunSessionCommandResult,
+  runStepExecutionMs,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 
@@ -478,6 +479,29 @@ export function formatRunSessionLines(result: RunSessionCommandResult): string[]
   ];
 }
 
+function formatSpan(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, '0')}s`;
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+/** Human output for `run get`: per step, the time it queued, the time it ran and its last progress. */
+export function formatRunStepTimingLines(run: Run, nowMs = Date.now()): string[] {
+  return run.steps.flatMap((step) => {
+    const executionMs = runStepExecutionMs(run, step, nowMs);
+    const parts = [
+      ...(step.queuedMs ? [`queued ${formatSpan(step.queuedMs)}`] : []),
+      ...(executionMs !== undefined ? [`ran ${formatSpan(executionMs)}`] : []),
+      ...(step.lastProgressAt
+        ? [`last progress ${formatSpan(Math.max(0, nowMs - Date.parse(step.lastProgressAt)))} ago`]
+        : []),
+    ];
+    return parts.length > 0 ? [`${step.name}: ${parts.join(' · ')}`] : [];
+  });
+}
+
 export function registerRunCommand(program: Command): void {
   const run = program.command('run').description('Run lifecycle operations');
 
@@ -551,7 +575,7 @@ export function registerRunCommand(program: Command): void {
         const result = await withProgress(
           `Loading run ${runId.slice(0, 8)}`,
           () =>
-            client.call<{ run: Record<string, unknown>; recoveryHints?: string[] }>('run.get', {
+            client.call<{ run: Run; recoveryHints?: string[] }>('run.get', {
               runId,
             }),
           !emit.machine,
@@ -559,6 +583,7 @@ export function registerRunCommand(program: Command): void {
         if (emit.machine) emit.ok(result);
         else {
           output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+          for (const line of formatRunStepTimingLines(result.run)) output.write(`${line}\n`);
           for (const hint of result.recoveryHints ?? []) output.write(`${hint}\n`);
         }
       } catch (err) {

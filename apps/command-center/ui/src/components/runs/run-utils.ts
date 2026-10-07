@@ -9,6 +9,7 @@ import type {
   RunProjectAnalyticsSummary,
   RunSelfLearningEligibilityState,
   RunStatus,
+  RunStep,
   RunStepStatus,
   WorkerTerminalDisposition,
 } from '@farmslot/protocol';
@@ -21,6 +22,7 @@ import {
   isTerminalRunStatus as protocolIsTerminalRunStatus,
   modeForFlow,
   parseGitHubRef,
+  runStepExecutionMs,
 } from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
@@ -234,6 +236,20 @@ export function formatElapsed(startedAt?: string): string {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+/** Pipeline node time: `q 2m 10s · 5m 12s` when the step queued, else its duration or elapsed time. */
+export function stepNodeDurationLabel(run: Run, step: RunStep, nowMs = Date.now()): string {
+  if (!step.queuedMs) {
+    return step.durationMs
+      ? formatDuration(step.durationMs)
+      : step.startedAt
+        ? formatElapsed(step.startedAt)
+        : '';
+  }
+  const executionMs = runStepExecutionMs(run, step, nowMs);
+  const execution = executionMs === undefined ? '' : ` · ${formatDuration(executionMs) || '0s'}`;
+  return `q ${formatDuration(step.queuedMs)}${execution}`;
 }
 
 export function flowLabel(flow: FlowType): string {

@@ -10,7 +10,9 @@ import {
   PipelineSteps,
   type Run,
   type RunDecisionPayload,
+  runDispatchQueueWaitMs,
   type RunStatus,
+  type RunStep,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
@@ -687,6 +689,22 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
   }
 }
 
+/**
+ * Queue and progress timing a step (re-)entry starts from. Both reset with
+ * `startedAt`, like `durationMs`, so a re-entered step never reports waits from
+ * an attempt its duration no longer covers. The first step takes the
+ * dispatch-queue wait again: it happened before the run existed, on every entry.
+ */
+export function stepEntryTiming(
+  run: Pick<Run, 'queuedAt' | 'createdAt' | 'steps'>,
+  stepName: string,
+): Pick<RunStep, 'queuedMs' | 'lastProgressAt'> {
+  return {
+    queuedMs: run.steps[0]?.name === stepName ? runDispatchQueueWaitMs(run) : undefined,
+    lastProgressAt: undefined,
+  };
+}
+
 async function driveRun(runId: string, options: StartRunOptions): Promise<void> {
   const initialRun = getRun(runId);
   if (!initialRun) throw new Error(`Run not found: ${runId}`);
@@ -746,6 +764,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       outputs: resumedWorkerFinding ? { ...previousOutputs, awaitingOperator: false } : undefined,
       completedAt: undefined,
       durationMs: undefined,
+      ...stepEntryTiming(current, stepName),
     });
     updateRun(runId, { status });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });

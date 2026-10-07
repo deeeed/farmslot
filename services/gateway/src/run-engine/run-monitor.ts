@@ -119,6 +119,13 @@ export function structuredProgressMovedMinute(previous: string | undefined, next
   return !(minute(next) <= minute(previous));
 }
 
+/** The monitor step's last progress is the worker's structured progress. */
+export function mirrorMonitorStepProgress(run: Run, structuredProgressAt: string): void {
+  const step = run.steps.find((candidate) => candidate.name === PipelineSteps.MONITOR);
+  if (step?.status !== 'running' || step.lastProgressAt === structuredProgressAt) return;
+  updateRunStep(run.id, PipelineSteps.MONITOR, { lastProgressAt: structuredProgressAt });
+}
+
 export function initRunMonitor(broadcast: BroadcastFn): void {
   broadcastFn = broadcast;
 }
@@ -1618,6 +1625,7 @@ export async function monitorRun(
             budgetUsage: state.budgetUsage,
           },
         });
+        mirrorMonitorStepProgress(currentForPersist, structuredProgressAt);
         // The Runs list times worker progress from this; per-poll writes stay quiet.
         if (announceProgress) broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       }

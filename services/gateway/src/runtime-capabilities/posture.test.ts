@@ -73,6 +73,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     familyId: 'fam-a',
     slotId: SLOT,
     status: 'monitoring',
+    steps: [],
     updatedAt: '2026-08-11T00:00:00.000Z',
     ...overrides,
   } as unknown as Run;
@@ -2179,6 +2180,83 @@ test('posture status stops reporting a wait as soon as the lease stops waiting',
     true,
   );
   assert.equal((await reconciler.status('run-a')).state.resourceWait, undefined);
+});
+
+test('a claim wait is queue time on the step it held up, counted until the grant', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const T0 = Date.parse('2026-08-11T00:00:00.000Z');
+  let clock = T0;
+  const { reconciler, registry, runs } = await harness(t, {
+    capabilities: [recording],
+    now: () => new Date(clock),
+    run: makeRun({
+      steps: [
+        { name: 'prepare', status: 'running', startedAt: '2026-08-11T00:00:00.000Z' },
+        { name: 'dispatch', status: 'pending' },
+      ],
+    }),
+  });
+  const requirements = [
+    { capabilityId: 'recording', reason: 'validation', mode: 'state' as const },
+  ];
+  await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  clock = T0 + 10_000;
+  const blocked = await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(blocked.ok, false);
+  assert.equal(runs.get('run-a')?.steps[0].queuedMs, undefined, 'still waiting');
+
+  // A minute in line, then the holder releases and the grant completes the claim.
+  clock = T0 + 70_000;
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  clock = T0 + 75_000;
+  assert.equal((await prepareRunPostureForValidation('run-a', requirements, reconciler)).ok, true);
+  const [prepare, dispatch] = runs.get('run-a')!.steps;
+  assert.equal(prepare.queuedMs, 65_000, 'queued from the refusal until the grant was seen');
+  assert.equal(dispatch.queuedMs, undefined);
+});
+
+test('a claim wait that began before a step re-entry counts only from the re-entry', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const T0 = Date.parse('2026-08-11T00:00:00.000Z');
+  let clock = T0;
+  const { reconciler, registry, runs } = await harness(t, {
+    capabilities: [recording],
+    now: () => new Date(clock),
+    run: makeRun({
+      steps: [{ name: 'prepare', status: 'running', startedAt: '2026-08-11T00:00:00.000Z' }],
+    }),
+  });
+  const requirements = [
+    { capabilityId: 'recording', reason: 'validation', mode: 'state' as const },
+  ];
+  await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  // A restart re-enters prepare 40s into the wait; its duration restarts there.
+  runs.get('run-a')!.steps[0].startedAt = new Date(T0 + 40_000).toISOString();
+  clock = T0 + 100_000;
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(runs.get('run-a')!.steps[0].queuedMs, 60_000);
 });
 
 test('a reserved claim is completed before any other capability in the plan', async (t) => {

@@ -37,6 +37,7 @@ import {
   type Run,
   type RunResourcePostureState,
   type RunResourceWait,
+  type RunStep,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
@@ -393,6 +394,33 @@ export interface ResourcePostureRequest {
    * Throw from here to refuse. Engine-internal boundaries omit it.
    */
   assertAdmissible?: () => void;
+}
+
+/**
+ * The run's steps with a finished claim wait added to the queue time of the
+ * step it held up, or undefined when no queued wait just ended.
+ *
+ * The wait counts from `queued` until the claim is granted or the wait clears:
+ * a granted reservation is this run's own provider starting, which is work. It
+ * is clamped to the step's `startedAt` so it stays inside the step's duration
+ * when the step was re-entered while queued.
+ */
+function stepsWithEndedClaimWait(
+  run: Run,
+  next: RunResourceWait | undefined,
+  nowMs: number,
+): RunStep[] | undefined {
+  const previous = run.resourcePosture?.resourceWait;
+  if (previous?.phase !== 'queued') return undefined;
+  if (next?.phase === 'queued' && next.queuedLeaseId === previous.queuedLeaseId) return undefined;
+  const step = run.steps.find((candidate) => candidate.status === 'running');
+  if (!step?.startedAt) return undefined;
+  const sinceMs = Math.max(Date.parse(previous.since), Date.parse(step.startedAt));
+  if (!Number.isFinite(sinceMs)) return undefined;
+  const queuedMs = (step.queuedMs ?? 0) + Math.max(0, nowMs - sinceMs);
+  return run.steps.map((candidate) =>
+    candidate === step ? { ...candidate, queuedMs } : candidate,
+  );
 }
 
 export interface RunResourcePostureDeps {
@@ -1413,7 +1441,12 @@ export class RunResourcePostureReconciler {
       updatedAt: this.now().toISOString(),
     };
     if (!resourceWait) delete state.resourceWait;
-    const updated = this.deps.updateRun(context.run.id, { resourcePosture: state });
+    const current = this.deps.getRun(context.run.id) ?? context.run;
+    const steps = stepsWithEndedClaimWait(current, resourceWait, this.now().getTime());
+    const updated = this.deps.updateRun(context.run.id, {
+      resourcePosture: state,
+      ...(steps ? { steps } : {}),
+    });
     this.deps.onRunUpdated?.(updated);
     return state;
   }

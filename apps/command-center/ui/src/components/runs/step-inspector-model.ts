@@ -4,7 +4,7 @@ import type {
   RunStep,
   SelfReviewIssue,
 } from '@farmslot/protocol';
-import { parseGitHubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+import { parseGitHubPullUrl, parseGitHubRef, runStepExecutionMs } from '@farmslot/protocol';
 
 import { hasMeaningfulReviewFixDelta } from '../../utils/review-gate-display.js';
 import { buildHash } from '../../utils/url-state.js';
@@ -133,6 +133,25 @@ export function stepDurationLabel(step: RunStep, nowMs: number): string {
     return `elapsed ${formatDuration(Math.max(0, nowMs - new Date(step.startedAt).getTime()))}`;
   }
   return '';
+}
+
+/** Timing rows for queue time, execution time and last progress, each only when it says something. */
+export function stepQueueTimingRows(
+  run: Run | undefined,
+  step: RunStep,
+  nowMs: number,
+): Array<[label: string, value: string]> {
+  const rows: Array<[string, string]> = [];
+  if (step.queuedMs) {
+    rows.push(['Queued', formatDuration(step.queuedMs)]);
+    const executionMs = run ? runStepExecutionMs(run, step, nowMs) : undefined;
+    if (executionMs !== undefined) rows.push(['Executing', formatDuration(executionMs) || '0s']);
+  }
+  if (step.lastProgressAt) {
+    const agoMs = Math.max(0, nowMs - Date.parse(step.lastProgressAt));
+    rows.push(['Last progress', `${formatDuration(agoMs) || '0s'} ago`]);
+  }
+  return rows;
 }
 
 export function extractStepCostInfo(step: RunStep, run?: Run): StepCostInfo | null {
