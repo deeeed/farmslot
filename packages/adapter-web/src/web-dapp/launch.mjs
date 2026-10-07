@@ -445,7 +445,17 @@ export async function launchWebDappBrowser(
   // What the running browser enforces; a browser enforcing anything else is
   // never reused (its resolver rules are fixed at start).
   const enforcementFingerprint = createHash('sha256')
-    .update(JSON.stringify({ network, mainnetHosts, testnetHosts: venues.served }))
+    .update(
+      JSON.stringify({
+        network,
+        mainnetHosts,
+        testnetHosts: venues.served,
+        // Only when opted out, so a policy that keeps the check fingerprints as
+        // before; a browser whose wallet host skips the check is never reused for
+        // a launch that needs it.
+        ...(servedNotApplicable ? { servedCheck: 'not-applicable' } : {}),
+      }),
+    )
     .digest('hex')
     .slice(0, 16);
   const devServer =

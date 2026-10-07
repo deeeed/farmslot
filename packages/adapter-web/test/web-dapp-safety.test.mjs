@@ -855,11 +855,15 @@ describe('testnet enforced in the browser (round 3)', () => {
 
 describe('round 4: enforcement identity, venue endpoints, probes and attribution', () => {
   const quick = { timeouts: { browserStartMs: 15000, hostReadyMs: 30000 } };
-  const probeLaunch = async (mode, overrides = {}, s = null) => {
+  const probeLaunch = async (mode, overrides = {}, s = null, extraEnv = {}) => {
     const slotDir = s ?? (await slot());
     const args = await launchArgs(slotDir, overrides);
     const log = path.join(slotDir.root, 'stub-cdp.jsonl');
-    const launched = launchWebDappBrowser(args, launchEnv(slotDir, { mode, STUB_LOG: log }), quick);
+    const launched = launchWebDappBrowser(
+      args,
+      launchEnv(slotDir, { mode, STUB_LOG: log, ...extraEnv }),
+      quick,
+    );
     return { s: slotDir, args, log, launched };
   };
 
@@ -964,6 +968,37 @@ describe('round 4: enforcement identity, venue endpoints, probes and attribution
       [],
     );
     await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('never reuses a browser that skips the served check for a launch that needs it', async () => {
+    const s = await slot();
+    const cdpPort = await freePort();
+    const hosts = (extra) =>
+      writeFileSync(
+        path.join(s.root, 'venue-hosts.json'),
+        JSON.stringify({
+          blocked: ['api.hyperliquid.xyz', 'rpc.hyperliquid.xyz'],
+          served: [],
+          ...extra,
+        }),
+      );
+    hosts({ servedCheck: 'not-applicable' });
+    const first = await (await probeLaunch('ok', { 'cdp-port': cdpPort }, s)).launched;
+    trackPids(s.runtime);
+    assert.equal(first.networkEnforcement.served, 'not-applicable');
+    // The policy now finds no served hosts but no longer opts out: a fresh browser
+    // whose wallet host runs the check, which fails closed.
+    hosts({});
+    await assert.rejects(
+      (
+        await probeLaunch('ok', { 'cdp-port': cdpPort }, s, {
+          MM_HARNESS_SERVED_TIMEOUT_MS: '1500',
+        })
+      ).launched,
+      /wallet host exited before it was ready|wallet host ready/,
+    );
+    assert.equal(pidAlive(first.browserPid), false);
+    await stopWebDappBrowser(s.root, { cdpPort });
   });
 
   it('reuses the browser only while it enforces the same venue host list', async () => {
