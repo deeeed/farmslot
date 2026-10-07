@@ -6,6 +6,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - **BREAKING:** `redactCommandArgs` no longer treats `--arg` specially: `call` takes action inputs as bare `key=value` pairs only, and a bare pair gets the same assignment redaction (plus URL redaction) a `--arg` value got; an inline `--option=value` gets it too.
 - **BREAKING:** `call` takes its action inputs as `key=value` only (no `--arg k=v`; an inline `--flag=value` is always an option), and writes its artifacts by `run`'s rule: `--artifacts-dir`, else `<task>/artifacts/calls/<action>-<uuid>` inside a task (`RECIPE_TASK_DIR`/`FARMSLOT_TASK_DIR`, which must be inside the checkout), else `temp/recipe/calls/<action>-<uuid>`. `call <action> --help` and `actions --action` no longer mention `--arg`.
+- Fix `ensureAdapterLoaded` for a built-in adapter when a library entry doesn't parse: a malformed `RECIPE_LIBRARY_PATH` such as `=foo`, an empty entry such as `extra=` from an unset variable, or a bad `--library`. The built-in now runs instead of failing with `RECIPE_LIBRARY_PATH_INVALID`.
+  - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
+  - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
+  - A plugin id with a bad entry still refuses. `createHarnessCli` prints library refusals (path or manifest, a `RecipeResolutionError`) the way it prints other refusals: the code, message and next step (`--json` envelope, NDJSON under `--json-stream`), exit 2.
+- `spawnScriptStreaming` listens for parent signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) before it starts the leaf. A signal that arrived while the leaf was starting used to end the harness and leave the detached leaf running.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-10-06
 
