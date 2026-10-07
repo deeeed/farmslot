@@ -2732,3 +2732,23 @@ test('stack base survives a duplicate edge removal and a removed upstream frees 
   });
   assert.deepEqual(base(), ['wn_c'], 'a removed upstream no longer blocks a new base');
 });
+
+test('a stacked run that failed after publishing still has its PR retargeted', async (t) => {
+  const { graphId, runs, upstreamRun, downstreamRun, workGraph } =
+    await stackedPair('Stack failed downstream');
+  const moved: string[] = [];
+  workGraph.setStackRetargeterForTests(async (run) => {
+    moved.push(run.id);
+    return { base: 'main', result: 'retargeted' };
+  });
+  t.after(() => workGraph.setStackRetargeterForTests(null));
+  runs.updateRun(downstreamRun.id, { status: 'failed', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_down')?.status,
+    'failed',
+  );
+  runs.updateRun(upstreamRun.id, { prState: 'MERGED', mergedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  assert.deepEqual(moved, [downstreamRun.id], 'its open PR still sits on the merged branch');
+});

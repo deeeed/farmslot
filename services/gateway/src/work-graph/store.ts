@@ -1832,7 +1832,9 @@ function schedulerTickLocked(
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound).filter(
           (edge) => !isStackRebaseEdge(edge, stackUpstream),
         );
-        if (stackUpstream && canRequireCompletionUnlock(node)) {
+        // Any node status: a run that failed after publishing still owns an open
+        // stacked PR. nextStackStep checks the run, its stack and the merge.
+        if (stackUpstream) {
           const job =
             stackRetargetJob(snapshot, node, runs, operatorTargeted) ??
             (operatorTargeted ? stackObserveJob(snapshot, node, runs) : null);
