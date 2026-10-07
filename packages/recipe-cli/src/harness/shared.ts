@@ -6,7 +6,7 @@
 //   For node invocations (bin === process.execPath) the stem is derived from the
 //   script path in args[0], e.g. <envPrefix>_SCRIPT_BIN_OPEN_DEBUG_MJS.
 
-import { spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -273,45 +273,16 @@ export function spawnScriptStreaming(
   recordCommandStage(spawnOptions.stage ?? path.basename(isNodeScript ? args[0] : script));
   return new Promise<ScriptResult>((resolve, reject) => {
     const ownsProcessGroup = process.platform !== 'win32';
-    const child = spawn(invokeBin, spawnArgs, {
-      cwd,
-      env: spawnOptions.env ? { ...process.env, ...spawnOptions.env } : process.env,
-      stdio: [spawnOptions.stdin ?? 'ignore', 'pipe', 'pipe'],
-      detached: ownsProcessGroup,
-    });
-    let untrack: (() => void) | undefined;
-    try {
-      untrack = child.pid ? trackCheckoutChild(cwd, child.pid, ownsProcessGroup) : undefined;
-    } catch (error) {
-      child.once('error', reject);
-      child.once('close', () => reject(error));
-      try {
-        if (ownsProcessGroup && child.pid) process.kill(-child.pid, 'SIGKILL');
-        else child.kill('SIGKILL');
-      } catch (killError) {
-        if ((killError as NodeJS.ErrnoException).code !== 'ESRCH') reject(killError);
-      }
-      return;
-    }
-    const captured = new OperationOutputTail();
-    let settled = false;
-    let didTimeout = false;
-    let escalation: NodeJS.Timeout | undefined;
+    // Listen for parent signals before the spawn. Node runs a listener only after
+    // this synchronous section, when child is set; a signal that arrived with no
+    // listener yet would end this process and leave the detached tree running.
+    let child: ChildProcess;
     let forwardedParentSignal: NodeJS.Signals | undefined;
     let parentSignalFallback: NodeJS.Timeout | undefined;
     const parentSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
     const removeParentSignalHandlers = (): void => {
       for (const signal of parentSignals)
         process.removeListener(signal, parentSignalHandlers[signal]);
-    };
-    const finish = (result: ScriptResult): void => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (escalation) clearTimeout(escalation);
-      if (parentSignalFallback) clearTimeout(parentSignalFallback);
-      removeParentSignalHandlers();
-      resolve(result);
     };
     const signalChildTree = (signal: NodeJS.Signals): void => {
       try {
@@ -349,6 +320,40 @@ export function spawnScriptStreaming(
     if (ownsProcessGroup) {
       for (const signal of parentSignals) process.once(signal, parentSignalHandlers[signal]);
     }
+    child = spawn(invokeBin, spawnArgs, {
+      cwd,
+      env: spawnOptions.env ? { ...process.env, ...spawnOptions.env } : process.env,
+      stdio: [spawnOptions.stdin ?? 'ignore', 'pipe', 'pipe'],
+      detached: ownsProcessGroup,
+    });
+    let untrack: (() => void) | undefined;
+    try {
+      untrack = child.pid ? trackCheckoutChild(cwd, child.pid, ownsProcessGroup) : undefined;
+    } catch (error) {
+      removeParentSignalHandlers();
+      child.once('error', reject);
+      child.once('close', () => reject(error));
+      try {
+        if (ownsProcessGroup && child.pid) process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch (killError) {
+        if ((killError as NodeJS.ErrnoException).code !== 'ESRCH') reject(killError);
+      }
+      return;
+    }
+    const captured = new OperationOutputTail();
+    let settled = false;
+    let didTimeout = false;
+    let escalation: NodeJS.Timeout | undefined;
+    const finish = (result: ScriptResult): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
+      if (parentSignalFallback) clearTimeout(parentSignalFallback);
+      removeParentSignalHandlers();
+      resolve(result);
+    };
     const timeoutMs = spawnOptions.timeoutMs;
     const timer =
       Number.isFinite(timeoutMs) && Number(timeoutMs) > 0

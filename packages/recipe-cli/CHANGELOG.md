@@ -8,6 +8,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
   - Its conflict check reads each entry on its own: a malformed entry drops only itself, so a library that resolves and claims the built-in's id still refuses it with `ADAPTER_ID_CONFLICT`, even when a bad entry shares its value (`claims=<lib>:=foo`). `adapterChoices` lists the same entries.
   - An unnamed entry takes its resolved directory's name, as recipe-runner's resolver names it, so `--library .` (or `..`) overrides the `RECIPE_LIBRARY_PATH` entry of that name here too, flag before environment before configured.
   - A plugin id with a bad entry still refuses. `createHarnessCli` prints library refusals (path or manifest, a `RecipeResolutionError`) the way it prints other refusals: the code, message and next step (`--json` envelope, NDJSON under `--json-stream`), exit 2.
+- `spawnScriptStreaming` listens for parent signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) before it starts the leaf. A signal that arrived while the leaf was starting used to end the harness and leave the detached leaf running.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-10-06
 
