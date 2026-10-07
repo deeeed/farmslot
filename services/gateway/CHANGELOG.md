@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Every self-review document ends with a gateway-owned "Description and evidence check": the reviewer compares the final PR description and commit subjects with the diff against the PR's base, and requires a before/after pair labelled "flag off" and one labelled "flag on" when the change hides, gates or changes behaviour behind a feature flag or config switch. Findings are named `DESCRIPTION_CLAIM_NOT_IN_DIFF`, `DIFF_CHANGE_NOT_DESCRIBED` and `FLAG_STATE_EVIDENCE_MISSING`. A deterministic pre-check on the slot lists the claim and flag-evidence mismatches it can see for the reviewer to confirm or dismiss.
-- A passing self-review records what it saw on the slot: HEAD, the PR description, the evidence manifest and the evidence files. When any of them changed since (rework, squash, re-captured or relabelled evidence), publication approval is not satisfied and the evidence-refresh override does not apply; before the publication gate is presented, self-review runs again, once per change.
+- A passing self-review records what it was given on the slot when its document was written: HEAD, the PR description, the evidence manifests, the selected recipe run and the evidence media. When any of them changed since (rework, squash, re-captured or relabelled evidence), publication approval is not satisfied and the evidence-refresh override is not offered. Self-review runs again before the publication gate is presented, once per changed state, also across restarts; an approval chosen after a change it has not run for is held and the gate is presented again after the re-run.
 
 ## 0.20.3 - 2026-10-07
 

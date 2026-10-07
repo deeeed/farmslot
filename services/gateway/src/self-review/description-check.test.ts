@@ -220,3 +220,41 @@ test('the rendered self-review runs the pre-check on the slot checkout', async (
   assert.match(section, /- `FLAG_STATE_EVIDENCE_MISSING`: .*"flag off"/);
   assert.doesNotMatch(section, /Not run/);
 });
+
+test('a pre-check whose diff fails says Not run, never None found', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-description-check-nobase-'));
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'NO-BASE',
+    runner: 'claude',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    await rm(repo, { recursive: true, force: true });
+  });
+  await execFileAsync('git', ['init', '-q', repo]);
+  await writeFile(path.join(repo, 'README.md'), 'no origin, so no origin/main\n');
+  await git(repo, 'add', '.');
+  await git(repo, 'commit', '-q', '-m', 'feat: strip everything');
+
+  const rendered = await expandSelfReviewTemplate(
+    {
+      slotId: 'description-check-nobase',
+      projectName: 'farmslot-farm',
+      host: 'localhost',
+      machine: 'description-check',
+      remoteRepo: repo,
+      platform: 'cli',
+      session: 'description-check-nobase',
+      resourceVars: {},
+    } as never,
+    'temp/tasks/description-check',
+    run.id,
+    'static-code',
+  );
+  assert.match(rendered, /- Not run: could not read the diff against origin\/main\./);
+  assert.doesNotMatch(rendered, /None found/);
+});

@@ -63,11 +63,9 @@ async function runDescriptionPreCheck(
   try {
     // A failed fetch still leaves the remote-tracking ref the checkout has.
     await inRepo(`git fetch origin ${shellQuote(remoteBranchRefspec(baseBranch))}`);
-    // `head` below would hide a failing diff, so prove the range resolves first.
-    const range = await inRepo(`git merge-base ${shellQuote(base)} HEAD`);
-    if (range.exitCode !== 0) return { unavailable: `could not read the diff against ${base}` };
+    // Through a file, not a pipe: `head` would hide a failing diff.
     const diff = await inRepo(
-      `git diff ${shellQuote(`${base}...HEAD`)} | head -c ${PRE_CHECK_DIFF_BYTES}`,
+      `t=$(mktemp) && { git diff --no-ext-diff --no-textconv ${shellQuote(`${base}...HEAD`)} > "$t"; s=$?; head -c ${PRE_CHECK_DIFF_BYTES} "$t"; rm -f "$t"; exit $s; }`,
     );
     const log = await inRepo(`git log --format=%s ${shellQuote(`${base}..HEAD`)}`);
     if (diff.exitCode !== 0 || log.exitCode !== 0)

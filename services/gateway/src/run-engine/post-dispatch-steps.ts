@@ -43,7 +43,10 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
-import { readReviewedInputs, reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
+import {
+  markReviewedInputsRerun,
+  reviewedInputsAwaitingReview,
+} from '../self-review/reviewed-inputs.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
@@ -819,10 +822,9 @@ export async function holdSlotForPublicationGate(
 
 /**
  * F42: when the description, evidence or HEAD changed after the last passing
- * review, self-review runs again before the publication gate is presented. One
- * re-run per change: `lastRerun` is the state already re-reviewed, so a review
- * that does not pass leaves the gate showing review as unsatisfied instead of
- * looping. Returns the state now re-reviewed (or `lastRerun` unchanged).
+ * review, self-review runs again before the publication gate is presented, once
+ * per changed state: one that does not pass leaves review unsatisfied at the
+ * gate instead of looping. Returns whether it ran.
  */
 export async function rerunSelfReviewIfReviewedInputsChanged(
   runId: string,
@@ -830,16 +832,16 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
     PostDispatchStepContext,
     'executePublishGateReviewPlan' | 'getDiffStat' | 'prepareCompletionPackageForRun'
   >,
-  lastRerun: string | null,
-): Promise<string | null> {
+): Promise<boolean> {
   const latest = getRun(runId);
   const reviewSlotId = latest?.slotId;
-  if (!latest || !reviewSlotId || !(await reviewedInputsChanged(latest))) return lastRerun;
-  const changedInputs = await readReviewedInputs(latest);
-  if (!changedInputs || changedInputs === lastRerun) return lastRerun;
+  if (!latest || !reviewSlotId) return false;
+  const changedInputs = await reviewedInputsAwaitingReview(latest);
+  if (!changedInputs) return false;
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — description, evidence or HEAD changed since the last review; running self-review again`,
   );
+  await markReviewedInputsRerun(runId, changedInputs);
   const plan: ReviewLoopRequest[] = [{ order: 1, runner: 'same', validationDepth: 'static-code' }];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
@@ -852,7 +854,7 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
     reviewedPackage,
     stampFreshReviews: true,
   });
-  return changedInputs;
+  return true;
 }
 
 export async function executeHumanGateStep(
@@ -1135,15 +1137,8 @@ export async function executeHumanGateStep(
         stampFreshReviewsForPreparedPackage(runId, recoveredReviewIds, prepared.prPackage);
       }
     }
-    let lastAutoReviewedInputs: string | null = null;
     const presentReadyGate = async (): Promise<string> => {
-      if (publicationApprovalGate) {
-        lastAutoReviewedInputs = await rerunSelfReviewIfReviewedInputsChanged(
-          runId,
-          context,
-          lastAutoReviewedInputs,
-        );
-      }
+      if (publicationApprovalGate) await rerunSelfReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
     let gateAction = await presentReadyGate();

@@ -14,7 +14,12 @@ import { rerunSelfReviewIfReviewedInputsChanged } from '../run-engine/post-dispa
 import { deleteTestRunIfPresent, makeReadyGatePackage } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
-import { recordReviewedInputs, reviewedInputsChanged } from './reviewed-inputs.js';
+import {
+  noteReviewInputsAtLaunch,
+  recordReviewedInputs,
+  reviewedInputsAwaitingReview,
+  reviewedInputsChanged,
+} from './reviewed-inputs.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -80,11 +85,17 @@ async function slotWithTask(t: import('node:test').TestContext) {
   return { run, repo, artifacts };
 }
 
+/** A review launched on the slot as it is now, then passed. */
+async function reviewPasses(runId: string) {
+  await noteReviewInputsAtLaunch(runId);
+  await recordReviewedInputs(runId);
+}
+
 test('what a passing review judged changes with the description, evidence or HEAD', async (t) => {
   const { run, repo, artifacts } = await slotWithTask(t);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false, 'no record: no change');
 
-  await recordReviewedInputs(run.id);
+  await reviewPasses(run.id);
   assert.ok(getRun(run.id)!.engineState?.reviewedInputs?.fingerprint);
   const changed = () => reviewedInputsChanged(getRun(run.id)!);
   assert.equal(await changed(), false);
@@ -102,6 +113,14 @@ test('what a passing review judged changes with the description, evidence or HEA
   assert.equal(await changed(), true, 're-captured evidence');
   await writeFile(path.join(artifacts, 'on-after.png'), 'png-v1');
 
+  await mkdir(path.join(artifacts, 'recipe-runs/r1'), { recursive: true });
+  await writeFile(path.join(artifacts, 'latest-valid-recipe-run.json'), '{"runId":"r1"}');
+  assert.equal(await changed(), true, 'a newly selected recipe run');
+  await reviewPasses(run.id);
+  await writeFile(path.join(artifacts, 'recipe-runs/r1/evidence-manifest.json'), '{}');
+  assert.equal(await changed(), true, "a recipe run's own manifest");
+  await reviewPasses(run.id);
+
   await writeFile(
     path.join(artifacts, 'evidence-manifest.json'),
     JSON.stringify({
@@ -109,18 +128,29 @@ test('what a passing review judged changes with the description, evidence or HEA
     }),
   );
   assert.equal(await changed(), true, 'relabelled evidence');
-  await recordReviewedInputs(run.id);
+  await reviewPasses(run.id);
   assert.equal(await changed(), false);
 
   await git(repo, 'commit', '-q', '--allow-empty', '-m', 'squash');
   assert.equal(await changed(), true, 'a new HEAD, e.g. a squash');
 });
 
+test('a pass records what the review was given, not the slot as it is when it passes', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  await reviewPasses(run.id);
+  await noteReviewInputsAtLaunch(run.id);
+  // Edited while the review ran, or while a crashed gateway was down before
+  // recovery returned the retained pass.
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden behind a flag\n');
+  await recordReviewedInputs(run.id);
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+});
+
 test('the publication gate re-runs self-review once per change before it is presented', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
-  await recordReviewedInputs(run.id);
+  await reviewPasses(run.id);
   const plans: ReviewLoopRequest[][] = [];
-  let reviewPasses = true;
+  let passing = true;
   const context = {
     executePublishGateReviewPlan: async (
       _runId: string,
@@ -128,8 +158,9 @@ test('the publication gate re-runs self-review once per change before it is pres
       plan: ReviewLoopRequest[],
     ) => {
       plans.push(plan);
-      // A passing review records what it saw, as executeSelfReview does.
-      if (reviewPasses) await recordReviewedInputs(run.id);
+      // As executeSelfReview does: the document notes the inputs, a pass records them.
+      await noteReviewInputsAtLaunch(run.id);
+      if (passing) await recordReviewedInputs(run.id);
       return { reviewIds: [`review-${plans.length}`] };
     },
     getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
@@ -154,20 +185,28 @@ test('the publication gate re-runs self-review once per change before it is pres
       independentReviews: [],
     }),
   };
+  const awaiting = async () => (await reviewedInputsAwaitingReview(getRun(run.id)!)) !== null;
 
-  let rerun = await rerunSelfReviewIfReviewedInputsChanged(run.id, context, null);
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), false);
   assert.equal(plans.length, 0, 'nothing changed since the review');
 
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden behind a flag\n');
-  rerun = await rerunSelfReviewIfReviewedInputsChanged(run.id, context, rerun);
+  assert.equal(await awaiting(), true, 'an approval now is held');
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
   assert.deepEqual(plans, [[{ order: 1, runner: 'same', validationDepth: 'static-code' }]]);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false, 'its pass is the new record');
 
-  // A re-run that finds issues does not loop: the gate shows review unsatisfied.
-  reviewPasses = false;
+  // A re-run that finds issues runs once, also across a gateway restart: the
+  // gate shows review unsatisfied and an explicit override is no longer held.
+  passing = false;
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, flag on only\n');
-  rerun = await rerunSelfReviewIfReviewedInputsChanged(run.id, context, rerun);
-  await rerunSelfReviewIfReviewedInputsChanged(run.id, context, rerun);
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), false);
   assert.equal(plans.length, 2);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+  assert.equal(await awaiting(), false);
+
+  // A further change is a new state: reviewed again.
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, both states\n');
+  assert.equal(await awaiting(), true);
 });

@@ -55,7 +55,10 @@ import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-packa
 import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
-import { reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
+import {
+  reviewedInputsAwaitingReview,
+  reviewedInputsChanged,
+} from '../self-review/reviewed-inputs.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -1101,6 +1104,19 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // record, which a `failed` run refuses.
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
+  // F42: the description, evidence or HEAD changed while the gate was open and
+  // self-review has not run again for it. Hold instead of approving: the gate
+  // step re-runs self-review and presents the gate again.
+  if (
+    publicationApprovalGate &&
+    isPublishApprovalAction(actionId) &&
+    (await reviewedInputsAwaitingReview(getRun(runId)!))
+  ) {
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: description, evidence or HEAD changed since the last review`,
+    );
+    return 'hold';
+  }
   // The operator's posture choice for the wait they just ended.
   const postureChoice = gateChoiceFromSelectionData(selectionData);
   const postureOutcome = await reconcileRunPosture({
