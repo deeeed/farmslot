@@ -414,11 +414,20 @@ function stepsWithClaimWait(
   const previous = run.resourcePosture?.resourceWait;
   const wasQueued = previous?.phase === 'queued';
   const isQueued = next?.phase === 'queued';
-  if (wasQueued && isQueued && next.queuedLeaseId === previous.queuedLeaseId) return undefined;
   if (!wasQueued && !isQueued) return undefined;
   const step = run.steps.find((candidate) => candidate.status === 'running');
   const startedMs = step?.startedAt ? Date.parse(step.startedAt) : NaN;
   if (!step || !Number.isFinite(startedMs)) return undefined;
+  if (wasQueued && isQueued && next.queuedLeaseId === previous.queuedLeaseId) {
+    // The same wait goes on. A re-entry (a restart) cleared the step's open
+    // wait, so reopen it from the re-entry.
+    if (step.queuedSince) return undefined;
+    const sinceMs = Math.max(Date.parse(next.since), startedMs);
+    const queuedSince = new Date(Number.isFinite(sinceMs) ? sinceMs : nowMs).toISOString();
+    return run.steps.map((candidate) =>
+      candidate === step ? { ...step, queuedSince } : candidate,
+    );
+  }
   const updated: RunStep = { ...step };
   if (wasQueued) {
     const sinceMs = Math.max(Date.parse(previous.since), startedMs);

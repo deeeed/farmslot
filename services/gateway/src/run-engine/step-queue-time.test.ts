@@ -178,4 +178,18 @@ test('the monitor step mirrors structured worker progress', (t) => {
   );
   mirrorMonitorStepProgress(getRun(run.id)!, iso(T0 + 60_000));
   assert.equal(step(run.id, 'monitor').lastProgressAt, iso(T0 + 60_000));
+
+  // A busy worker writes at most once a minute.
+  mirrorMonitorStepProgress(getRun(run.id)!, iso(T0 + 90_000));
+  assert.equal(step(run.id, 'monitor').lastProgressAt, iso(T0 + 60_000));
+  mirrorMonitorStepProgress(getRun(run.id)!, iso(T0 + 125_000));
+  assert.equal(step(run.id, 'monitor').lastProgressAt, iso(T0 + 125_000));
+
+  // Re-entered in the same minute as the last event: the first real event is taken.
+  updateRunStep(run.id, 'monitor', {
+    startedAt: iso(T0 + 126_000),
+    ...stepEntryTiming(getRun(run.id)!, 'monitor'),
+  });
+  mirrorMonitorStepProgress(getRun(run.id)!, iso(T0 + 127_000));
+  assert.equal(step(run.id, 'monitor').lastProgressAt, iso(T0 + 127_000));
 });

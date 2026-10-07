@@ -2257,8 +2257,17 @@ test('a claim wait that began before a step re-entry counts only from the re-ent
     proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
   });
   await prepareRunPostureForValidation('run-a', requirements, reconciler);
-  // A restart re-enters prepare 40s into the wait; its duration restarts there.
+  // A restart re-enters prepare 40s into the wait; its duration restarts there
+  // and the re-entry clears the open wait.
   runs.get('run-a')!.steps[0].startedAt = new Date(T0 + 40_000).toISOString();
+  delete runs.get('run-a')!.steps[0].queuedSince;
+  clock = T0 + 45_000;
+  await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(
+    runs.get('run-a')!.steps[0].queuedSince,
+    new Date(T0 + 40_000).toISOString(),
+    'the same claim still waiting reopens from the re-entry',
+  );
   clock = T0 + 100_000;
   await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
   await prepareRunPostureForValidation('run-a', requirements, reconciler);
