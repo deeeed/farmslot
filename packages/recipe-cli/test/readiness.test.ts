@@ -301,7 +301,17 @@ describe('doctor', () => {
     const probes = { count: 0 };
     useAdapters(
       fakeAdapter('shop', {
-        readiness: { devices: async () => fakeDevices(probes), orphanDevServers: () => ['4242'] },
+        readiness: {
+          devices: async () => fakeDevices(probes),
+          orphanDevServers: () => ['4242'],
+          checks: () => [{ id: 'shop-static', status: 'pass', required: false, message: 'static' }],
+          liveChecks: async () => [
+            { id: 'shop-live', status: 'pass', required: false, message: 'live' },
+          ],
+        },
+        doctor: async () => [
+          { id: 'shop-doctor', status: 'pass', required: false, message: 'platform' },
+        ],
       }),
     );
     const target = doctorTarget();
@@ -343,7 +353,7 @@ describe('doctor', () => {
     assert.deepEqual((envelope.featureFlags as { overrideCount: number }).overrideCount, 1);
     assert.deepEqual(
       (envelope.checks as Array<{ id: string }>).map((check) => check.id),
-      ['manifest', 'runtime'],
+      ['manifest', 'shop-static', 'runtime', 'shop-live', 'shop-doctor'],
     );
     assert.equal(probes.count, 1);
   });
@@ -745,6 +755,35 @@ describe('prepare', () => {
     assert.ok(!fs.existsSync(path.join(artifacts, 'prepare', 'progress.json')));
   });
 
+  test('records the device platform the host targets, as the protocol names it', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    useAdapters(fakeAdapter('shop', { readiness: { prepare: {} } }));
+    const target = tempRoot();
+    const record = async (device: string): Promise<Record<string, unknown>> => {
+      const artifacts = path.join(root, device);
+      const argv = ['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts];
+      await capture(() =>
+        handlePrepare([...argv, '--mobile-platform', device, '--json'], {
+          usage: 'u',
+          deviceTarget: {
+            option: 'mobilePlatform',
+            flag: '--mobile-platform',
+            choices: ['ios', 'android', 'tablet'],
+          },
+        }),
+      );
+      return JSON.parse(fs.readFileSync(path.join(artifacts, 'sandbox.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >;
+    };
+    assert.equal((await record('ios')).mobilePlatform, 'ios');
+    // The protocol's field is ios or android only.
+    assert.equal('mobilePlatform' in (await record('tablet')), false);
+  });
+
   test('a headless platform skips launch and the host steps; the first failure skips the rest', async () => {
     shopHost();
     const root = tempRoot();
@@ -899,6 +938,43 @@ describe('checklist', () => {
     calls.length = 0;
     await capture(() => handleChecklist(['mark', task, '2'], { stepGates: gates }));
     assert.deepEqual(calls, []);
+  });
+
+  test("a sub-unit's completion waits for its parent step's gate, and complete runs the host hook first", async () => {
+    shopHost();
+    const task = taskWith('# Task\n\n- [ ] 1. Prove it with shop-harness check diff.\n');
+    fs.mkdirSync(path.join(task, 'subtasks'));
+    fs.writeFileSync(
+      path.join(task, 'subtasks', 'index.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        units: [{ id: 'u1', parent: { checklist: 'CHECKLIST.md', stepNumber: 1 } }],
+      }),
+    );
+    const calls: string[] = [];
+    const gates = [
+      {
+        label: /check diff/u,
+        ready: (_dir: string, step: string) => {
+          calls.push(step);
+          return false;
+        },
+      },
+    ];
+    const sub = await capture(() =>
+      handleChecklist(['mark', task, 'sub', 'u1', 'complete'], { stepGates: gates }),
+    );
+    assert.equal(sub.result, 1);
+    assert.deepEqual(calls, ['1']);
+
+    const completed: string[] = [];
+    await capture(() =>
+      handleChecklist(['mark', task, 'complete'], {
+        stepGates: gates,
+        beforeComplete: (dir) => completed.push(dir),
+      }),
+    );
+    assert.deepEqual(completed, [path.resolve(task)]);
   });
 
   test('a terminal verdict stays terminal, and closeout exists only when the host stages it', async () => {

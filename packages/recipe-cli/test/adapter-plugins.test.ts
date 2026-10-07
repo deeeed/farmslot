@@ -223,6 +223,28 @@ describe('adapter plugins', () => {
     assert.deepEqual(composed.actions.manifestPaths?.(), ['/manifests/web.json']);
   });
 
+  test("a child's readiness members replace the parent's one by one", () => {
+    const liveChecks = async () => [
+      { id: 'web-live', status: 'pass' as const, required: true, message: 'live' },
+    ];
+    const parent = {
+      ...builtin('web'),
+      readiness: { liveChecks, readyIndicator: () => 'ready', statusRuntime: true },
+    } as PlatformAdapter;
+    const child = {
+      id: 'shop',
+      sdkVersion: ADAPTER_SDK_VERSION,
+      readiness: { readyIndicator: () => 'OK' },
+    } as unknown as PlatformAdapter;
+    const composed = composeAdapter(parent, child);
+    assert.equal(composed.readiness?.readyIndicator?.([]), 'OK');
+    assert.equal(composed.readiness?.liveChecks, liveChecks);
+    assert.equal(composed.readiness?.statusRuntime, true);
+    const bare = { id: 'bare', sdkVersion: ADAPTER_SDK_VERSION } as unknown as PlatformAdapter;
+    assert.equal(composeAdapter(parent, bare).readiness?.liveChecks, liveChecks);
+    assert.equal(composeAdapter(builtin('web'), bare).readiness, undefined);
+  });
+
   test('the host adopts a plugin before it registers', async () => {
     process.env.RECIPE_LIBRARY_PATH = `plug=${library('plug', { echo: { source: pluginSource('echo') } })}`;
     await ensureAdapterLoaded('echo', {

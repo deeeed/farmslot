@@ -625,6 +625,8 @@ async function handlePrepareLocked(
       executable: provenance.executablePath,
     },
     platform,
+    // The protocol's mobilePlatform is ios or android; another device target is
+    // not recorded.
     ...(devicePlatform && (devicePlatform === 'ios' || devicePlatform === 'android')
       ? { mobilePlatform: devicePlatform }
       : {}),
