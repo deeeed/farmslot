@@ -13,6 +13,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -43,6 +44,7 @@ import {
   terminate,
   webDappOnlyLaunchFlags,
 } from '../src/web-dapp/index.mjs';
+import { writePrivateFile } from '../src/web-dapp/launch.mjs';
 
 import { policy } from './fixtures/web-dapp-policy.mjs';
 
@@ -490,6 +492,33 @@ describe('dev server testnet diagnostic (advisory)', () => {
   });
 });
 
+describe('private file writes', () => {
+  it('removes the temporary file when the rename fails, and keeps the destination', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-private-file-'));
+    const destination = path.join(dir, 'wallet-fixture.json');
+    // A directory at the destination makes the rename fail after the write.
+    mkdirSync(destination);
+    assert.throws(() => writePrivateFile(destination, '{"key":"secret"}'));
+    assert.deepEqual(readdirSync(dir), ['wallet-fixture.json']);
+    assert.equal(statSync(destination).isDirectory(), true);
+  });
+
+  it('removes the temporary file when the write fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-private-file-'));
+    assert.throws(() => writePrivateFile(path.join(dir, 'missing', 'file.json'), 'secret'));
+    assert.deepEqual(readdirSync(dir), []);
+  });
+
+  it('writes owner-only and leaves no temporary file on success', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-private-file-'));
+    const destination = path.join(dir, 'state.json');
+    writePrivateFile(destination, 'ok');
+    assert.equal(readFileSync(destination, 'utf8'), 'ok');
+    assert.equal(statSync(destination).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(dir), ['state.json']);
+  });
+});
+
 describe('wallet host: first document, duplicates, frames and popups', () => {
   async function launchProbe(mode) {
     const s = await slot();
@@ -536,6 +565,25 @@ describe('wallet host: first document, duplicates, frames and popups', () => {
       ['eth_requestAccounts'],
     );
     assert.equal(statSync(path.join(s.runtime, 'wallet-requests.jsonl')).mode & 0o777, 0o600);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('gives the injected strict wallet the identity the signer module names', async () => {
+    const s = await slot();
+    const log = path.join(s.root, 'stub-cdp.jsonl');
+    const args = await launchArgs(s, { 'signer-module': TEST_SIGNER });
+    await launchWebDappBrowser(args, launchEnv(s, { mode: 'probe', STUB_LOG: log }), {
+      timeouts: { browserStartMs: 15000, hostReadyMs: 20000 },
+    });
+    trackPids(s.runtime);
+    const sources = stubLog(log)
+      .filter((entry) => entry.method === 'Page.addScriptToEvaluateOnNewDocument')
+      .map((entry) => entry.source);
+    assert.ok(sources.length > 0);
+    for (const source of sources) {
+      assert.match(source, /io\.example\.test-host-wallet/u);
+      assert.doesNotMatch(source, /io\.farmslot\.strict-wallet/u);
+    }
     await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
   });
 
@@ -1033,6 +1081,68 @@ describe('launch rollback', () => {
       launchWebDappBrowser(await launchArgs(s, { signer: 'extension' }), env, fast),
       /signer=extension needs an extension signer/,
     );
+  });
+
+  it('rejects a prepareProfile that returns nothing, with a clear message', async () => {
+    const s = await slot();
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-signer-'));
+    const file = path.join(dir, 'signer.mjs');
+    writeFileSync(
+      file,
+      'export const signers = { extension: { prepareProfile() {}, confirm() {} } };\n',
+    );
+    await assert.rejects(
+      launchWebDappBrowser(
+        await launchArgs(s, { signer: 'extension', 'signer-module': file }),
+        launchEnv(s),
+        fast,
+      ),
+      /prepareProfile must return \{ browserArgs, secrets, state \}/,
+    );
+  });
+
+  it('requires confirm from an extension signer', async () => {
+    const s = await slot();
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-signer-'));
+    const file = path.join(dir, 'signer.mjs');
+    writeFileSync(
+      file,
+      'export const signers = { extension: { prepareProfile() { return { browserArgs: [], secrets: [], state: {} }; } } };\n',
+    );
+    await assert.rejects(
+      launchWebDappBrowser(
+        await launchArgs(s, { signer: 'extension', 'signer-module': file }),
+        launchEnv(s),
+        fast,
+      ),
+      /extension signer must provide confirm/,
+    );
+  });
+
+  it('lets afterBrowserStart register key material, removed when the launch ends', async () => {
+    const s = await slot();
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-signer-'));
+    const file = path.join(dir, 'signer.mjs');
+    const late = path.join(dir, 'late-secret.json');
+    writeFileSync(
+      file,
+      `import { writeFileSync } from 'node:fs';
+export const signers = { extension: {
+  prepareProfile() { return { browserArgs: [], secrets: [], state: {}, afterBrowserStart({ trackSecret }) {
+    writeFileSync(trackSecret(${JSON.stringify(late)}), 'secret');
+    return {};
+  } }; },
+  confirm() { return { isWalletSurfaceUrl: () => false, observe() {} }; },
+} };
+`,
+    );
+    const args = await launchArgs(s, { signer: 'extension', 'signer-module': file });
+    await launchWebDappBrowser(args, launchEnv(s), {
+      timeouts: { browserStartMs: 15000, hostReadyMs: 30000 },
+    });
+    trackPids(s.runtime);
+    assert.equal(existsSync(late), false);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
   });
 
   it('records the signer state and gives the wallet host the signer arguments on a good launch', async () => {

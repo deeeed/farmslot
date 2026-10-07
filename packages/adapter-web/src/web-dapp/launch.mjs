@@ -73,7 +73,7 @@ import {
   webDappPolicy,
   webDappRuntimeDir,
 } from './lib/runtime.mjs';
-import { loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
+import { defaultSigner, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const macosFocus = createRequire(import.meta.url)('../macos-focus.cjs');
@@ -82,9 +82,8 @@ function usage() {
   return 'Usage: launch.mjs --target <checkout> --cdp-port <port> --app-port <port> [--signer extension|injected] [--signer-module <path>] [--account <name>] [--fresh-profile] [--headless | --headful] [--slow-mo <ms>] [--network testnet|mainnet --mainnet-confirmation REAL_FUNDS] [--start-chain <id>] [--json]';
 }
 
-export function parseLaunchArgs(argv) {
+export function parseLaunchArgs(argv, env = process.env) {
   const args = {
-    signer: 'extension',
     account: 'dev1',
     'fresh-profile': false,
     headless: false,
@@ -111,7 +110,7 @@ export function parseLaunchArgs(argv) {
   for (const key of ['target', 'cdp-port', 'app-port']) {
     if (!args[key]) throw Object.assign(new Error(`Missing --${key}\n${usage()}`), { exitCode: 2 });
   }
-  args.signer = resolveSigner(args.signer);
+  args.signer = resolveSigner(args.signer, defaultSigner(args['signer-module'], env));
   if (args.headless && args.headful)
     throw Object.assign(new Error(`--headless and --headful are mutually exclusive\n${usage()}`), {
       exitCode: 2,
@@ -372,10 +371,16 @@ function readStateFile(file) {
 }
 
 // Write through a fresh temporary file and an atomic rename, owner-only.
-function writePrivateFile(file, text) {
+export function writePrivateFile(file, text) {
+  // A failed write or rename must not leave key material in the temporary file.
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temporary, text, { mode: 0o600, flag: 'wx' });
-  renameSync(temporary, file);
+  try {
+    writeFileSync(temporary, text, { mode: 0o600, flag: 'wx' });
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
 }
 
 // The host is ready once the app's first document has loaded with its hooks,
@@ -383,26 +388,34 @@ function writePrivateFile(file, text) {
 export const LAUNCH_TIMEOUTS = Object.freeze({ browserStartMs: 90000, hostReadyMs: 180000 });
 
 // The venue policy comes from RECIPE_WEB_DAPP_POLICY (webDappPolicy), as for every web-dapp leaf.
-// `signers`: the signer hooks by mode (lib/signers.mjs); by default the module
-// --signer-module or RECIPE_WEB_DAPP_SIGNER_MODULE names.
+// The signer hooks (lib/signers.mjs) come from the module --signer-module or
+// RECIPE_WEB_DAPP_SIGNER_MODULE names, the same one the wallet host loads.
 /**
  * @param {Record<string, any>} args the parsed launch flags (see `parseLaunchArgs`)
  * @param {NodeJS.ProcessEnv} [env]
- * @param {{ timeouts?: { browserStartMs: number, hostReadyMs: number }, signers?: Record<string, any> }} [options]
+ * @param {{ timeouts?: { browserStartMs: number, hostReadyMs: number } }} [options]
  */
 export async function launchWebDappBrowser(
   args,
   env = process.env,
-  { timeouts = LAUNCH_TIMEOUTS, signers } = {},
+  { timeouts = LAUNCH_TIMEOUTS } = {},
 ) {
   const policy = webDappPolicy(env);
   const signerModule = args['signer-module'] ?? env[SIGNER_MODULE_ENV];
-  const signerHooks =
-    signers ??
-    (await loadSigners({ ...env, ...(signerModule ? { [SIGNER_MODULE_ENV]: signerModule } : {}) }));
+  const signerHooks = await loadSigners({
+    ...env,
+    ...(signerModule ? { [SIGNER_MODULE_ENV]: signerModule } : {}),
+  });
   if (args.signer === 'extension' && !signerHooks.extension?.prepareProfile) {
     throw new Error(
-      'signer=extension needs an extension signer: pass signers.extension, --signer-module <path> or RECIPE_WEB_DAPP_SIGNER_MODULE.',
+      'signer=extension needs an extension signer: pass --signer-module <path> or set RECIPE_WEB_DAPP_SIGNER_MODULE.',
+    );
+  }
+  // Without confirm the wallet host sees no wallet surface, and its startup
+  // sweep would close the extension's own side panel or popup tabs.
+  if (args.signer === 'extension' && !signerHooks.extension.confirm) {
+    throw new Error(
+      'the extension signer must provide confirm: without it the wallet host cannot tell the wallet surfaces from app tabs and would close them.',
     );
   }
   const target = path.resolve(args.target);
@@ -503,6 +516,10 @@ export async function launchWebDappBrowser(
   // never outlive this call; anything started here is stopped again when a
   // later step fails.
   const secrets = [];
+  const trackSecret = (file) => {
+    secrets.push(file);
+    return file;
+  };
   let started = false;
   const launchMethod = launchMethodFor(browser.bin);
   // Focus is checked for a visible browser started in the background.
@@ -525,11 +542,18 @@ export async function launchWebDappBrowser(
         freshProfile,
         log,
         writePrivateFile,
-        trackSecret: (file) => {
-          secrets.push(file);
-          return file;
-        },
+        trackSecret,
       });
+      if (
+        !extension ||
+        typeof extension !== 'object' ||
+        (extension.browserArgs !== undefined && !Array.isArray(extension.browserArgs)) ||
+        (extension.secrets !== undefined && !Array.isArray(extension.secrets))
+      ) {
+        throw new Error(
+          'signer module prepareProfile must return { browserArgs, secrets, state } (browserArgs and secrets arrays, state an object; afterBrowserStart optional).',
+        );
+      }
       secrets.push(...(extension.secrets ?? []));
       browserArgs.push(...(extension.browserArgs ?? []));
     }
@@ -599,6 +623,7 @@ export async function launchWebDappBrowser(
         withBrowserClient: (callback) => withBrowserClient(cdpPort, callback),
         openBackgroundWindow: (url) => openBackgroundWindow(cdpPort, url, windowBounds),
         log,
+        trackSecret,
       });
       extensionHostArgs = after?.hostArgs ?? [];
       extensionState = { ...extensionState, ...after?.state };

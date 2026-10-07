@@ -122,10 +122,10 @@ const binding = createWalletRequestBinding({
 
 ## Web-dapp adapter
 
-`@farmslot/adapter-web/web-dapp` (ESM) is the lifecycle of a web app under test whose dev server the slot owns. `createWebDappAdapter({ id, signers, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter`: launch, stop, runtime status, doctor checks, logs and the wallet request-log findings. It runs one slot browser per slot, and a wallet host attached to it over CDP that records the wallet requests (and, with `signer=injected`, answers them with the strict wallet from `dapp`).
+`@farmslot/adapter-web/web-dapp` (ESM) is the lifecycle of a web app under test whose dev server the slot owns. `createWebDappAdapter({ id, signerModule, cli, hooks })` returns an `@farmslot/adapter-sdk` `PlatformAdapter`: launch, stop, runtime status, doctor checks, logs and the wallet request-log findings. It runs one slot browser per slot, and a wallet host attached to it over CDP that records the wallet requests (and, with `signer=injected`, answers them with the strict wallet from `dapp`).
 
 - **Venue policy.** The app's venue (the hosts a testnet run blocks and serves, the typed data to refuse, the start page) comes from the adapter that `extends: 'web-dapp'`: its policy module goes to `RECIPE_WEB_DAPP_POLICY` through `bindWebDappPolicy(adapter)`. Bare web-dapp has no policy and refuses to launch. `fencePolicy` and `assertPolicyDigest` hold the module and what it imports to the files the plugin digest covers.
-- **Signers.** `signer=injected` needs nothing. `signer=extension` belongs to the host: a signer module exports `signers.extension` with `prepareProfile` (load the extension, seed the profile; its result may carry an `afterBrowserStart` step), `confirm` and `readinessChecks`; the leaf processes find it through `--signer-module` or `RECIPE_WEB_DAPP_SIGNER_MODULE`.
+- **Signers.** `signer=injected` needs nothing. `signer=extension` belongs to the host: a signer module exports `signers.extension` with `prepareProfile` (load the extension, seed the profile; returns `{ browserArgs, secrets, state }` and may carry an `afterBrowserStart` step; both steps get `trackSecret` for key-material files), `confirm` (required with `prepareProfile`: without it the wallet host would close the wallet's own windows) and `readinessChecks`. `signers.injected.identity` sets the EIP-6963 identity the injected strict wallet presents. The module path (`signerModule`, `--signer-module` or `RECIPE_WEB_DAPP_SIGNER_MODULE`) is the one source: readiness, launch, verify and the wallet host all load it, and `createWebDappAdapter` throws if given an in-process `signers` object. With no signer requested, the signer is `extension` when a module is configured and `injected` otherwise.
 - **Hooks.** The action set, console capture, and network and performance observation are the host's; pass them as `hooks`. `diagnostics`, `readiness` and `harness` merge over the generic members.
 - **Leaves.** `webDappLeafPath('launch' | 'wallet-host' | 'inject' | 'verify' | 'stop' | 'cleanup')` names the CLI scripts.
 
@@ -134,7 +134,7 @@ import { createWebDappAdapter } from '@farmslot/adapter-web/web-dapp';
 
 const adapter = createWebDappAdapter({
   id: 'web-dapp',
-  signerModule: '/path/to/signers.mjs', // exports { signers: { extension } }; omit for injected-only
+  signerModule: '/path/to/signers.mjs', // exports { signers: { extension, injected } }; omit for injected-only
   hooks: { actions },
 });
 ```

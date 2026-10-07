@@ -5,7 +5,7 @@
 // test wallet in @farmslot/adapter-web/dapp is generic.
 //
 // A signer module is an ESM file exporting `signers`, an object keyed by signer
-// mode (today only `extension`):
+// mode (`extension`, and `injected` for its identity):
 //
 //   export const signers = { extension: {
 //     // Before the browser starts: load the extension and seed the profile.
@@ -15,13 +15,15 @@
 //     //   state         recorded under `extension` in browser.json
 //     //   afterBrowserStart(ctx)  runs once the browser answers on CDP; ctx is
 //     //     { cdpPort, launchMethod, windowBounds, withBrowserClient,
-//     //       openBackgroundWindow(url), log }. May return { state, hostArgs }:
+//     //       openBackgroundWindow(url), log, trackSecret }. May return { state, hostArgs }:
 //     //     state merges into the recorded state, hostArgs go to the wallet host.
 //     // `trackSecret(file)` registers a key-material file at once, so it is removed
 //     // even when prepareProfile throws part-way; `secrets` may list more.
 //     async prepareProfile({ target, runtime, profile, account, fixture, env,
 //                            freshProfile, log, writePrivateFile, trackSecret }) {},
-//     // In the wallet host: judge the wallet's own confirmation surfaces. Returns
+//     // Required with prepareProfile: without it the wallet host would close the
+//     // wallet's own tabs. In the wallet host: judge the wallet's own confirmation
+//     // surfaces. Returns
 //     // { isWalletSurfaceUrl(url), observe(targetId, url) }; `args` are the wallet
 //     // host's flags (e.g. args['extension-id']). `focus`, when the host observes
 //     // focus, has observe(surface, productName) to record a window that took it.
@@ -31,18 +33,29 @@
 //     async readinessChecks({ target, env, required }) {},
 //   } };
 //
-// The module may also export `injected: { identity }`: the EIP-6963 identity
+// `signers.injected: { identity }` is the EIP-6963 identity
 // ({ info: { uuid, name, icon, rdns }, isMetaMask }) the injected strict wallet
 // presents, for an app that only connects to a known wallet. Without it the
-// strict wallet presents a generic identity.
+// strict wallet presents a generic identity. A host that only sets an identity
+// exports `signers = { injected: { identity } }`.
 //
-// A leaf process finds the module through RECIPE_WEB_DAPP_SIGNER_MODULE (or
-// --signer-module on launch and verify).
+// The module path is the one source of these hooks: every process (readiness,
+// launch, verify, the wallet host) loads it through RECIPE_WEB_DAPP_SIGNER_MODULE
+// or --signer-module on launch and verify, or `signerModule` of
+// createWebDappAdapter. With no signer requested, the signer is extension when
+// a module is configured and injected otherwise (`defaultSigner`).
 
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const SIGNER_MODULE_ENV = 'RECIPE_WEB_DAPP_SIGNER_MODULE';
+
+// The signer a run uses when none is requested: extension when a signer module
+// is configured (by path or RECIPE_WEB_DAPP_SIGNER_MODULE), else the injected
+// strict wallet, which needs none.
+export function defaultSigner(signerModule, env = process.env) {
+  return signerModule || env[SIGNER_MODULE_ENV] ? 'extension' : 'injected';
+}
 
 export async function loadSigners(env = process.env) {
   const file = env[SIGNER_MODULE_ENV];

@@ -144,6 +144,7 @@ function serveCdp(socket) {
       requestId: params.requestId ?? null,
       background: params.background ?? null,
       newWindow: params.newWindow ?? null,
+      source: method === 'Page.addScriptToEvaluateOnNewDocument' ? (params.source ?? null) : null,
     });
     if (mode === 'reject-preload' && method === 'Page.addScriptToEvaluateOnNewDocument') {
       send({

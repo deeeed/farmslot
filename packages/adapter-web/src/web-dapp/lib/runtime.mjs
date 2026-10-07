@@ -96,8 +96,8 @@ export async function readBrowserState(projectRoot) {
   return readJsonFile(webDappRuntimePath(projectRoot, 'browser.json'));
 }
 
-export function resolveSigner(raw) {
-  const signer = raw == null || raw === '' ? 'extension' : String(raw);
+export function resolveSigner(raw, fallback = 'extension') {
+  const signer = raw == null || raw === '' ? fallback : String(raw);
   if (!SIGNER_MODES.includes(signer)) {
     throw new Error(
       `signer must be one of ${SIGNER_MODES.join(' | ')}, got ${JSON.stringify(raw)}.`,

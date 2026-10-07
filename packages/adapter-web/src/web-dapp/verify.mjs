@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { webDappReadiness } from './lib/readiness.mjs';
 import { webDappPolicy } from './lib/runtime.mjs';
-import { loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
+import { defaultSigner, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 import { resolveBrowser } from './launch.mjs';
 
 const usage =
@@ -44,7 +44,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       value('--watcher-port') ?? process.env.TERMINAL_APP_PORT ?? process.env.WATCHER_PORT,
     ),
     cdpPort: num(value('--cdp-port') ?? process.env.RECIPE_CDP_PORT ?? process.env.CDP_PORT),
-    signer: value('--signer') ?? process.env.TERMINAL_SIGNER ?? 'extension',
+    signer: value('--signer') ?? process.env.TERMINAL_SIGNER ?? defaultSigner(signerModule),
     account: value('--account') ?? process.env.TERMINAL_ACCOUNT ?? 'dev1',
     probeBrowser: resolveBrowser,
   });

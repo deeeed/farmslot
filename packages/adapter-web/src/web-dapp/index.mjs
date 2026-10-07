@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { recipeRuntimePath, shellQuote } from './lib/paths.mjs';
 import { POLICY_ENV, webDappAdapterId, webDappPolicy } from './lib/policy.mjs';
 import { check, webDappReadiness } from './lib/readiness.mjs';
-import { loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
+import { defaultSigner, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 import { resolveBrowser } from './launch.mjs';
 
 export {
@@ -205,16 +205,19 @@ export function webDappCdpPort() {
   return portFromEnv('RECIPE_CDP_PORT', 'CDP_PORT');
 }
 
-// The running browser's signer, else the requested one, else extension.
-/** @param {string} target */
-function webDappSignerFor(target) {
+// The running browser's signer, else the requested one, else the default.
+/**
+ * @param {string} target
+ * @param {string} fallback
+ */
+function webDappSignerFor(target, fallback) {
   try {
     const state = JSON.parse(fs.readFileSync(webDappRuntimeFile(target, 'browser.json'), 'utf8'));
     if (typeof state.signer === 'string') return state.signer;
   } catch {
     // No running slot browser.
   }
-  return process.env.TERMINAL_SIGNER || 'extension';
+  return process.env.TERMINAL_SIGNER || fallback;
 }
 
 /**
@@ -282,10 +285,9 @@ const flag = (options, key) => options[key] === true;
 /**
  * @typedef {object} WebDappAdapterOptions
  * @property {string} [id] The adapter id; web-dapp by default.
- * @property {Record<string, any>} [signers] Signer hooks by mode, in this process
- *   (see lib/signers.mjs). Only `extension` exists today.
- * @property {string} [signerModule] Absolute path of the ESM module exporting the
- *   same `signers`, which the leaf processes load; read in-process too when `signers` is absent.
+ * @property {string} [signerModule] Absolute path of the ESM module exporting
+ *   `signers` (see lib/signers.mjs). The one source of the signer hooks: readiness
+ *   loads it in this process and launch, verify and the wallet host load it in theirs.
  * @property {string} [cli] The host's bin name, for `Next:` lines. farmslot-recipe by default.
  * @property {WebDappAdapterHooks} [hooks]
  *   Anything of the PlatformAdapter the host supplies or replaces. `actions` is
@@ -294,22 +296,19 @@ const flag = (options, key) => options[key] === true;
  */
 
 /**
- * @param {WebDappAdapterOptions} [options]
+ * @param {WebDappAdapterOptions} [factoryOptions]
  * @returns {import('@farmslot/adapter-sdk').PlatformAdapter}
  */
-export function createWebDappAdapter({
-  id = 'web-dapp',
-  signers,
-  signerModule,
-  cli = 'farmslot-recipe',
-  hooks = {},
-} = {}) {
+export function createWebDappAdapter(factoryOptions = {}) {
+  if ('signers' in factoryOptions) {
+    throw new Error(
+      'createWebDappAdapter no longer takes `signers`: pass `signerModule`, the path of the module exporting them, so readiness, launch, verify and the wallet host load the same hooks.',
+    );
+  }
+  const { id = 'web-dapp', signerModule, cli = 'farmslot-recipe', hooks = {} } = factoryOptions;
   const { actions, diagnostics, readiness, harness, ...rest } = hooks;
   const resolveSigners = async () =>
-    signers ??
-    (await loadSigners(
-      signerModule ? { ...process.env, [SIGNER_MODULE_ENV]: signerModule } : process.env,
-    ));
+    loadSigners(signerModule ? { ...process.env, [SIGNER_MODULE_ENV]: signerModule } : process.env);
   const venueHint = `pass --adapter <the adapter that extends ${id}>, e.g. --adapter terminal, with its recipe library on RECIPE_LIBRARY_PATH`;
 
   return {
@@ -340,7 +339,7 @@ export function createWebDappAdapter({
         target: path.resolve(target),
         appPort: webDappAppPort(),
         cdpPort: webDappCdpPort(),
-        signer: process.env.TERMINAL_SIGNER || 'extension',
+        signer: process.env.TERMINAL_SIGNER || defaultSigner(signerModule),
       });
       const blocking = report.checks.filter((item) => item.required && item.status === 'fail');
       const devServer = report.checks.find((item) => item.id === 'app-dev-server');
@@ -390,7 +389,7 @@ export function createWebDappAdapter({
     logSources(target) {
       return [
         { label: 'app-console', path: webDappRuntimeFile(target, WEB_DAPP_CONSOLE_FILES.app) },
-        ...(webDappSignerFor(target) === 'extension'
+        ...(webDappSignerFor(target, defaultSigner(signerModule)) === 'extension'
           ? [
               {
                 label: 'extension-console',
@@ -445,7 +444,7 @@ export function createWebDappAdapter({
         '--app-port',
         appPort,
         '--signer',
-        str(options, 'signer') ?? process.env.TERMINAL_SIGNER ?? 'extension',
+        str(options, 'signer') ?? process.env.TERMINAL_SIGNER ?? defaultSigner(signerModule),
         '--account',
         str(options, 'account') ?? process.env.TERMINAL_ACCOUNT ?? 'dev1',
         '--json',
@@ -559,7 +558,7 @@ export function createWebDappAdapter({
           target,
           appPort: webDappAppPort(),
           cdpPort: webDappCdpPort(),
-          signer: process.env.TERMINAL_SIGNER || 'extension',
+          signer: process.env.TERMINAL_SIGNER || defaultSigner(signerModule),
           account: process.env.TERMINAL_ACCOUNT || 'dev1',
           probeBrowser: resolveBrowser,
         });

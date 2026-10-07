@@ -18,13 +18,6 @@ export async function consumerCalls(target: string) {
     id: 'terminal',
     cli: 'mm-harness',
     signerModule: '/host/signers.mjs',
-    signers: {
-      extension: {
-        async readinessChecks({ required }: { required: boolean }) {
-          return [readinessCheck('extension', true, 'ready', { required })];
-        },
-      },
-    },
     hooks: {
       actions: {
         manifestPath: () => '/host/web-dapp.action-manifest.json',
@@ -45,9 +38,9 @@ export async function consumerCalls(target: string) {
   const state = await launchWebDappBrowser(
     { target, 'cdp-port': '9222', 'app-port': '3000', signer: 'injected', account: 'dev1' },
     process.env,
-    { signers },
   );
   const stopped = await stopWebDappBrowser(target, { cdpPort: 9222 });
   const report = await webDappReadiness({ target, signers, signer: 'injected' });
-  return { id, decision, sources, bound, leaf, file, state, stopped, report };
+  const extensionCheck = readinessCheck('extension', true, 'ready', { required: true });
+  return { id, decision, sources, bound, leaf, file, state, stopped, report, extensionCheck };
 }

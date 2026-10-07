@@ -13,6 +13,18 @@ const CONFIRMATION_ROUTE =
   /^\/(connect|confirm-transaction|confirmation|confirm|signature-request)(\/|$)/u;
 
 export const signers = {
+  // The identity the injected strict wallet presents (for tests that follow it to the page).
+  injected: {
+    identity: {
+      info: {
+        uuid: '7a1c3f20-0000-4000-8000-0000000000aa',
+        name: 'Test host wallet',
+        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
+        rdns: 'io.example.test-host-wallet',
+      },
+      isMetaMask: false,
+    },
+  },
   extension: {
     async prepareProfile({ runtime, account, env, trackSecret, writePrivateFile }) {
       const slotFixture = trackSecret(path.join(runtime, `wallet-fixture.${account}.json`));

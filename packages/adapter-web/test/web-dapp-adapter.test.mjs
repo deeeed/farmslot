@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   accountName,
@@ -33,6 +34,9 @@ const require = createRequire(import.meta.url);
 const { assertMatch, contains } = require('./fixtures/match.cjs');
 
 process.env.RECIPE_WEB_DAPP_POLICY = policy.module;
+const TEST_SIGNER_MODULE = fileURLToPath(
+  new URL('./fixtures/web-dapp-test-signer.mjs', import.meta.url),
+);
 
 describe('web-dapp adapter shape', () => {
   it('never detects a checkout: an app is a web-dapp through the adapter that extends it', () => {
@@ -41,6 +45,26 @@ describe('web-dapp adapter shape', () => {
     assert.equal(adapter.id, 'web-dapp');
     assert.equal(adapter.sdkVersion, 1);
     assert.equal(createWebDappAdapter({ id: 'venue' }).id, 'venue');
+  });
+
+  it('takes the signer module as the one source of the signer hooks', async () => {
+    assert.throws(
+      () => createWebDappAdapter({ signers: { extension: {} } }),
+      /pass `signerModule`/,
+    );
+    const target = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-signer-module-'));
+    const withModule = createWebDappAdapter({ signerModule: TEST_SIGNER_MODULE });
+    const checks = await withModule.readiness.liveChecks(target);
+    assertMatch(
+      checks.find((entry) => entry.id.endsWith('-test-signer')),
+      { status: 'pass', required: true },
+    );
+    // No module: the default signer is injected, which needs none.
+    const without = await createWebDappAdapter().readiness.liveChecks(target);
+    assert.equal(
+      without.some((entry) => /-(test-signer|extension-signer)$/u.test(entry.id)),
+      false,
+    );
   });
 
   it('takes the host actions as a hook and refuses to invent a manifest', () => {
@@ -118,6 +142,22 @@ describe('web-dapp launch helpers', () => {
       },
     );
     assert.throws(() => parseLaunchArgs(['--target', '/t']), /--cdp-port/);
+  });
+
+  it('defaults to the extension signer only when a signer module is configured', () => {
+    const base = ['--target', '/t', '--cdp-port', '9541', '--app-port', '9341'];
+    assert.equal(parseLaunchArgs(base, {}).signer, 'injected');
+    assert.equal(
+      parseLaunchArgs(base, { RECIPE_WEB_DAPP_SIGNER_MODULE: '/m.mjs' }).signer,
+      'extension',
+    );
+    assert.equal(parseLaunchArgs([...base, '--signer-module', '/m.mjs'], {}).signer, 'extension');
+    assert.equal(
+      parseLaunchArgs([...base, '--signer', 'injected'], {
+        RECIPE_WEB_DAPP_SIGNER_MODULE: '/m.mjs',
+      }).signer,
+      'injected',
+    );
   });
 
   it('accepts the signer module flag the leaves pass on', () => {
