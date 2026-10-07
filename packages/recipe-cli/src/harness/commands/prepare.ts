@@ -306,7 +306,7 @@ function createStepView(chain: readonly string[], hints: Record<string, string>)
 // Capture a step's streams the way spawnSync did — stdout for the report file,
 // stderr held back for the failure path — while leaving the event loop free so
 // the running line can tick during a step that takes minutes. The child's own
-// stage lines go to onStageLine as they arrive instead of the held-back stderr.
+// stage lines also go to onStageLine as they arrive.
 function spawnStep(
   executable: string,
   args: readonly string[],
@@ -335,7 +335,8 @@ function spawnStep(
       partial = lines.pop() ?? '';
       for (const line of lines) {
         if (onStageLine && STAGE_LINE.test(line)) onStageLine(line);
-        else stderr.append(`${line}\n`);
+        // Kept in the tail too: a child's last `failed` stage line may be the cause.
+        stderr.append(`${line}\n`);
       }
     });
     child.on('error', (error: Error) =>
@@ -545,9 +546,10 @@ async function handlePrepareLocked(
     ? undefined
     : createStepView(chain, stepHints(chain, lastRunDurations(recordPath), staticHints));
   view?.begin();
-  // Stage lines on stderr, unless the live view is repainting this terminal:
-  // there the running row carries the step's latest stage line instead.
-  const stages = json || !process.stdout.isTTY ? createStageReporter() : undefined;
+  // Stage lines on stderr, unless the live view repaints the same terminal
+  // stderr goes to: there the running row carries the step's latest stage line.
+  const stages =
+    json || !process.stdout.isTTY || !process.stderr.isTTY ? createStageReporter() : undefined;
 
   const steps: TimedStep[] = [];
   let activeStep: { id: string; startedAt: string } | undefined;
@@ -595,7 +597,10 @@ async function handlePrepareLocked(
           total: chain.length,
         });
       },
-      onStageLine: (line) => (stage ? stage.forward(line) : view?.detail(id, line)),
+      onStageLine: (line) => {
+        stage?.forward(line);
+        view?.detail(id, line);
+      },
     });
     if (step.status === 'pass') stage?.done();
     else stage?.failed(step.reason);

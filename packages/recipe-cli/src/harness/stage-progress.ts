@@ -9,9 +9,6 @@ import type { StageHandle, StageProgress } from '@farmslot/adapter-sdk';
 
 const HEARTBEAT_MS = 15_000;
 const STALL_NOTICE_MS = 60_000;
-// A child command's stage lines carry their own heartbeat, so the parent waits
-// a little past it before speaking for a quiet child.
-const FORWARD_GRACE_MS = 5_000;
 
 /** A line from a child harness command that is itself a stage line. */
 export const STAGE_LINE = /^\[\d+\/\d+\] /u;
@@ -152,7 +149,9 @@ export function createStageReporter(options: StageReporterOptions = {}): StageRe
           if (ended) return;
           write(`${prefix} › ${childLine}`);
           if (!childLine.includes('no progress for')) changedAt = Date.now();
-          schedule(heartbeatMs + FORWARD_GRACE_MS);
+          // A child line counts as this stage's line: the parent speaks only
+          // when the child has been quiet for a heartbeat.
+          schedule(heartbeatMs);
         },
       };
       open.add(handle);

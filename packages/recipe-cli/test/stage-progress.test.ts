@@ -169,15 +169,16 @@ describe('stage progress', () => {
     const stage = stages.stage('launch --verify', { index: 3, total: 5 });
     advance(10_000);
     stage.forward('[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s');
-    // The child speaks within the grace: the parent stays quiet.
-    advance(15_000);
+    // The child speaks within a heartbeat: the parent stays quiet.
+    advance(14_000);
     stage.forward('[2/5] metro: no progress for 1m00s, still bundling 61%, 2m42s');
-    advance(20_000);
+    // The child goes quiet: the parent speaks a heartbeat after its last line.
+    advance(15_000);
     assert.deepEqual(lines, [
       '[3/5] launch --verify: started, 0s',
       '[3/5] launch --verify › [2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s',
       '[3/5] launch --verify › [2/5] metro: no progress for 1m00s, still bundling 61%, 2m42s',
-      '[3/5] launch --verify: running, 45s',
+      '[3/5] launch --verify: running, 39s',
     ]);
     for (const line of lines) assert.match(line, /\[(\d+)\/(\d+)\]\s*(.+)$/u);
   });

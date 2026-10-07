@@ -592,6 +592,29 @@ describe('doctor', () => {
       ],
     );
   });
+
+  test('--fix ends a stage left open when a fix throws', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop', { readiness: { fixes: [] } }));
+    const target = doctorTarget();
+    process.env.SHOP_HARNESS_INSTALL_BIN = '/usr/bin/true';
+    const { lines } = await captureStderr(() =>
+      capture(() =>
+        handleDoctor(parseArgs(['--adapter', 'shop', '--target', target, '--fix', '--json']), {
+          manifest: manifestOk,
+          fix: {
+            repair: () => {
+              throw new Error('wallet sync crashed');
+            },
+          },
+        }),
+      ).catch(() => undefined),
+    );
+    assert.equal(
+      lines.at(-1)?.replace(/, \d+s$/u, ''),
+      '[3/3] host repair: failed, doctor --fix stopped',
+    );
+  });
 });
 
 describe('status', () => {
@@ -890,6 +913,28 @@ describe('prepare', () => {
     assert.equal((await record('ios')).mobilePlatform, 'ios');
     // The protocol's field is ios or android only.
     assert.equal('mobilePlatform' in (await record('tablet')), false);
+  });
+
+  test('a failing step keeps its own stage lines in the diagnostics it replays', async () => {
+    shopHost();
+    const root = tempRoot();
+    process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+    process.env.STAGE_LINES = '1';
+    process.env.STEP_RESULTS = JSON.stringify({ launch: 1 });
+    useAdapters(fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }));
+    const target = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    const { lines } = await captureStderr(() =>
+      capture(() =>
+        handlePrepare(['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts], {
+          usage: 'u',
+          steps: [fixtureStep],
+        }),
+      ),
+    );
+    const child = '[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s';
+    assert.ok(lines.includes(`[3/5] launch --verify › ${child}`), 'forwarded as it happened');
+    assert.ok(lines.includes(child), 'replayed with the failure');
   });
 
   test('a headless platform skips launch and the host steps; the first failure skips the rest', async () => {

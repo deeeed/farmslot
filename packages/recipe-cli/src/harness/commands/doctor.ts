@@ -739,47 +739,52 @@ async function runDoctorFix(
   const stage = (name: string) => stages.stage(name, { index: ++index, total });
   const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-  const contextStage = stage('runtime-context');
   try {
-    harnessAdapter(adapter).resolveSlotPorts(target);
-    const runtimeContext = fix?.ensureRuntimeContext?.(target, adapter);
-    if (runtimeContext?.created) fixed.push('runtime-context');
-    contextStage.done(runtimeContext?.created ? 'created' : undefined);
-  } catch (error) {
-    failed.push('runtime-context');
-    contextStage.failed(reason(error));
-  }
-
-  for (const repair of repairs) {
-    const repairStage = stage(repair.id);
+    const contextStage = stage('runtime-context');
     try {
-      const repaired = repair.apply(target);
-      if (repaired) fixed.push(repair.id);
-      repairStage.done(repaired ? 'fixed' : undefined);
+      harnessAdapter(adapter).resolveSlotPorts(target);
+      const runtimeContext = fix?.ensureRuntimeContext?.(target, adapter);
+      if (runtimeContext?.created) fixed.push('runtime-context');
+      contextStage.done(runtimeContext?.created ? 'created' : undefined);
     } catch (error) {
-      failed.push(repair.id);
-      repairStage.failed(reason(error));
+      failed.push('runtime-context');
+      contextStage.failed(reason(error));
     }
-  }
 
-  const overlayStage = stage('overlay');
-  const state = newHealState();
-  const ensured = await ensureOverlay(adapter, target, 'infra-only', state, json);
-  if (!ensured.ok) {
-    failed.push('overlay');
-    overlayStage.failed(ensured.error);
-  } else {
-    if (state.mutations.length > 0) fixed.push('overlay');
-    overlayStage.done(state.mutations.length > 0 ? 'installed' : undefined);
-  }
+    for (const repair of repairs) {
+      const repairStage = stage(repair.id);
+      try {
+        const repaired = repair.apply(target);
+        if (repaired) fixed.push(repair.id);
+        repairStage.done(repaired ? 'fixed' : undefined);
+      } catch (error) {
+        failed.push(repair.id);
+        repairStage.failed(reason(error));
+      }
+    }
 
-  const hostStage = fix?.repair ? stage('host repair') : undefined;
-  const host = fix?.repair?.(target, adapter, json);
-  if (host) {
-    fixed.push(...host.fixed);
-    failed.push(...host.failed);
-    if (host.failed.length > 0) hostStage?.failed(host.failed.join(', '));
-    else hostStage?.done(host.fixed.length > 0 ? `fixed ${host.fixed.join(', ')}` : undefined);
+    const overlayStage = stage('overlay');
+    const state = newHealState();
+    const ensured = await ensureOverlay(adapter, target, 'infra-only', state, json);
+    if (!ensured.ok) {
+      failed.push('overlay');
+      overlayStage.failed(ensured.error);
+    } else {
+      if (state.mutations.length > 0) fixed.push('overlay');
+      overlayStage.done(state.mutations.length > 0 ? 'installed' : undefined);
+    }
+
+    const hostStage = fix?.repair ? stage('host repair') : undefined;
+    const host = fix?.repair?.(target, adapter, json);
+    if (host) {
+      fixed.push(...host.fixed);
+      failed.push(...host.failed);
+      if (host.failed.length > 0) hostStage?.failed(host.failed.join(', '));
+      else hostStage?.done(host.fixed.length > 0 ? `fixed ${host.fixed.join(', ')}` : undefined);
+    }
+  } finally {
+    // A fix that threw leaves its stage open; end it with the command.
+    stages.close('failed', 'doctor --fix stopped');
   }
 
   return { fixed, failed };
