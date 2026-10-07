@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { recipeRuntimeDir, walletFixturePath } from './paths.mjs';
 import { POLICY_ENV, webDappAdapterId, webDappPolicy } from './policy.mjs';
+import { defaultSigner } from './signers.mjs';
 import { loadViemAccounts } from './viem.mjs';
 
 export { POLICY_ENV, webDappAdapterId, webDappPolicy };
@@ -96,7 +97,7 @@ export async function readBrowserState(projectRoot) {
   return readJsonFile(webDappRuntimePath(projectRoot, 'browser.json'));
 }
 
-export function resolveSigner(raw, fallback = 'extension') {
+export function resolveSigner(raw, fallback = defaultSigner()) {
   const signer = raw == null || raw === '' ? fallback : String(raw);
   if (!SIGNER_MODES.includes(signer)) {
     throw new Error(

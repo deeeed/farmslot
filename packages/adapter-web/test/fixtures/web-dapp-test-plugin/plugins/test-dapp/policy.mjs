@@ -60,7 +60,11 @@ export const policy = Object.freeze({
     needs: 'a package named @metamask/test-dapp-multichain',
   }),
   venueHosts() {
-    return { blocked: [...MAINNET_HOSTS], served: [...TESTNET_HOSTS] };
+    return {
+      blocked: [...MAINNET_HOSTS],
+      served: [...TESTNET_HOSTS],
+      servedCheck: 'not-applicable',
+    };
   },
   // Pages the app links to, never blocked and never proof of the served network.
   linkHosts: Object.freeze(['metamask.github.io']),

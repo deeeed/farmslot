@@ -302,7 +302,8 @@ export async function webDappReadiness({
   target,
   appPort,
   cdpPort,
-  signer = 'extension',
+  // As defaultSigner: extension only when the host gave an extension signer.
+  signer = signers?.extension ? 'extension' : 'injected',
   account = 'dev1',
   env = process.env,
   probeBrowser = undefined,

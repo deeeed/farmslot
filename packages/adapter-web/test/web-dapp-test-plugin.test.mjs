@@ -61,14 +61,15 @@ describe('web-dapp test plugin fixture', () => {
 
   it('blocks only mainnet endpoints, the Solana mainnet hosts included, and declares no served hosts', async () => {
     const { policy } = await adapter();
-    const { blocked, served } = policy.venueHosts(PLUGIN);
+    const { blocked, served, servedCheck } = policy.venueHosts(PLUGIN);
     assert.ok(blocked.length > 0);
     // The page fetches Solana blockhashes from these (src/helpers/solana-method-signatures.ts).
     for (const host of ['api.mainnet-beta.solana.com', 'api.helius-rpc.com'])
       assert.equal(blocked.includes(host), true, host);
     assert.equal(blocked.includes('api.devnet.solana.com'), false);
-    // Empty served: web-dapp skips the served-network check for this policy.
+    // Empty served, opted out explicitly: web-dapp skips the served-network check.
     assert.deepEqual(served, []);
+    assert.equal(servedCheck, 'not-applicable');
     for (const host of blocked) assert.doesNotMatch(host, TESTNET_OR_LOCAL, host);
     assert.equal(blocked.includes(policy.probe.host), true);
     assert.equal(

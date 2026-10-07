@@ -663,15 +663,27 @@ describe('testnet enforced in the browser (round 3)', () => {
   });
 
   // A policy that declares no served hosts: the app's page makes no venue requests.
-  const noServedLaunch = async (mode) => {
+  const noServedLaunch = async (mode, { optOut = true, servedTimeoutMs } = {}) => {
     const s = await slot();
     writeFileSync(
       path.join(s.root, 'venue-hosts.json'),
-      JSON.stringify({ blocked: ['api.hyperliquid.xyz', 'rpc.hyperliquid.xyz'], served: [] }),
+      JSON.stringify({
+        blocked: ['api.hyperliquid.xyz', 'rpc.hyperliquid.xyz'],
+        served: [],
+        ...(optOut ? { servedCheck: 'not-applicable' } : {}),
+      }),
     );
     const args = await launchArgs(s);
     const log = path.join(s.root, 'stub-cdp.jsonl');
-    const launched = launchWebDappBrowser(args, launchEnv(s, { mode, STUB_LOG: log }), quick);
+    const launched = launchWebDappBrowser(
+      args,
+      launchEnv(s, {
+        mode,
+        STUB_LOG: log,
+        ...(servedTimeoutMs ? { MM_HARNESS_SERVED_TIMEOUT_MS: servedTimeoutMs } : {}),
+      }),
+      quick,
+    );
     return { s, args, log, launched };
   };
 
@@ -702,6 +714,29 @@ describe('testnet enforced in the browser (round 3)', () => {
         .filter((entry) => entry.kind === 'blocked-mainnet' && !entry.probe)
         .map((entry) => entry.url),
       ['https://api.hyperliquid.xyz/exchange'],
+    );
+  });
+
+  it('keeps the served-network check, failing closed, when a policy finds no served hosts but does not opt out', async () => {
+    const { s, launched } = await noServedLaunch('ok', { optOut: false, servedTimeoutMs: '1500' });
+    await assert.rejects(launched, /wallet host exited before it was ready|wallet host ready/);
+    assert.match(messageOf(path.join(s.runtime, 'wallet-host.log')), /testnet venue endpoint/);
+  });
+
+  it('refuses a policy that lists served hosts and also opts out of the served check', async () => {
+    const s = await slot();
+    writeFileSync(
+      path.join(s.root, 'venue-hosts.json'),
+      JSON.stringify({
+        blocked: ['api.hyperliquid.xyz'],
+        served: ['api.hyperliquid-testnet.xyz'],
+        servedCheck: 'not-applicable',
+      }),
+    );
+    const args = await launchArgs(s);
+    await assert.rejects(
+      launchWebDappBrowser(args, launchEnv(s, { mode: 'ok' }), quick),
+      /lists served testnet hosts and servedCheck: 'not-applicable'; declare one or the other/,
     );
   });
 

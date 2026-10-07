@@ -109,7 +109,18 @@ describe('web-dapp runtime resolution', () => {
     assert.equal(appPort({ node: {} }, { TERMINAL_APP_PORT: '9341' }), 9341);
     assert.equal(appPort({ node: {} }, { WATCHER_PORT: '9342' }), 9342);
     assert.throws(() => appPort({ node: {} }, {}), /dev-server port/);
-    assert.equal(resolveSigner(undefined), 'extension');
+    // No signer given: extension only when a signer module is configured.
+    const { RECIPE_WEB_DAPP_SIGNER_MODULE: saved } = process.env;
+    try {
+      delete process.env.RECIPE_WEB_DAPP_SIGNER_MODULE;
+      assert.equal(resolveSigner(undefined), 'injected');
+      process.env.RECIPE_WEB_DAPP_SIGNER_MODULE = '/hosts/signer.mjs';
+      assert.equal(resolveSigner(undefined), 'extension');
+    } finally {
+      if (saved === undefined) delete process.env.RECIPE_WEB_DAPP_SIGNER_MODULE;
+      else process.env.RECIPE_WEB_DAPP_SIGNER_MODULE = saved;
+    }
+    assert.equal(resolveSigner('extension'), 'extension');
     assert.throws(() => resolveSigner('ledger'), /extension \| injected/);
     assert.equal(accountName({ node: { account: 'Trading' } }), 'Trading');
     assert.equal(

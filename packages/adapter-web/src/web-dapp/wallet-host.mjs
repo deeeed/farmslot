@@ -16,7 +16,7 @@
 //   on app pages after navigations and whenever the HUD state changes.
 //
 // Inputs (flags): --cdp-port <port> --runtime-dir <dir> --signer <extension|injected>
-//   --app-origin <url> [--extension-id <id>] [--signer-module <path>]
+//   --app-origin <url> [--served-check not-applicable] [--extension-id <id>] [--signer-module <path>]
 //   [--target <checkout> --account <name> --start-chain <id>] (injected mode only)
 //   [--observe-focus 1] (a visible browser launched in the background on macOS:
 //   the host records in focus.log if a wallet notification window brought it to
@@ -56,7 +56,7 @@ const { captureMacFrontmost, macFocusDisabled } = createRequire(import.meta.url)
 );
 
 function usage() {
-  return 'Usage: wallet-host.mjs --cdp-port <port> --runtime-dir <dir> --signer <extension|injected> --app-origin <url> [--network testnet|mainnet] [--mainnet-hosts <h1,h2>] [--testnet-hosts <h1,h2>] [--extension-id <id>] [--signer-module <path>] [--target <checkout> --account <name> --start-chain <id>] [--observe-focus 1] [--window x,y,w,h] [--start-path <path>] [--mm-harness-owner=<marker>]';
+  return 'Usage: wallet-host.mjs --cdp-port <port> --runtime-dir <dir> --signer <extension|injected> --app-origin <url> [--network testnet|mainnet] [--mainnet-hosts <h1,h2>] [--testnet-hosts <h1,h2>] [--served-check not-applicable] [--extension-id <id>] [--signer-module <path>] [--target <checkout> --account <name> --start-chain <id>] [--observe-focus 1] [--window x,y,w,h] [--start-path <path>] [--mm-harness-owner=<marker>]';
 }
 
 function parseArgs(argv) {
@@ -106,13 +106,11 @@ if (network === 'testnet' && mainnetHosts.length === 0)
 const testnetHosts = String(args['testnet-hosts'] ?? '')
   .split(',')
   .filter((host) => host && !LINK_HOSTS.has(host));
-// A policy that declares no served hosts (an app whose page makes no venue
-// requests of its own) has no served network to check: the served-network check
-// is not applicable, and the record says so. Mainnet blocking is unaffected.
-const servedApplicable =
-  String(args['testnet-hosts'] ?? '')
-    .split(',')
-    .filter(Boolean).length > 0;
+// The policy declared that the app's page makes no venue requests of its own
+// (launch passes --served-check not-applicable): there is no served network to
+// check, and the record says so. Without that declaration the check always runs,
+// and an empty --testnet-hosts fails it closed. Mainnet blocking is unaffected.
+const servedApplicable = args['served-check'] !== 'not-applicable';
 const PROBE_MARK = 'mm-harness-probe=1';
 // A testnet run never lets the typed data the policy refuses reach the signer.
 const refuseTypedData = network === 'testnet' ? policy.refuseTypedData : null;

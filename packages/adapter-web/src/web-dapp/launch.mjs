@@ -431,6 +431,17 @@ export async function launchWebDappBrowser(
   });
   const venues = network === 'testnet' ? policy.venueHosts(target) : { blocked: [], served: [] };
   const mainnetHosts = venues.blocked;
+  // The served-network check is skipped only when the policy says so for this
+  // checkout (venueHosts() returns servedCheck: 'not-applicable', for an app whose
+  // page makes no venue requests of its own). An empty served list without it
+  // keeps the check, which then fails closed: a policy that computes its served
+  // hosts can't drop the check by finding none.
+  const servedNotApplicable = network === 'testnet' && venues.servedCheck === 'not-applicable';
+  if (servedNotApplicable && venues.served.length > 0) {
+    throw new Error(
+      `the venue policy for ${target} lists served testnet hosts and servedCheck: 'not-applicable'; declare one or the other.`,
+    );
+  }
   // What the running browser enforces; a browser enforcing anything else is
   // never reused (its resolver rules are fixed at start).
   const enforcementFingerprint = createHash('sha256')
@@ -548,7 +559,9 @@ export async function launchWebDappBrowser(
         !extension ||
         typeof extension !== 'object' ||
         (extension.browserArgs !== undefined && !Array.isArray(extension.browserArgs)) ||
-        (extension.secrets !== undefined && !Array.isArray(extension.secrets))
+        (extension.secrets !== undefined && !Array.isArray(extension.secrets)) ||
+        (extension.state !== undefined &&
+          (extension.state === null || typeof extension.state !== 'object'))
       ) {
         throw new Error(
           'signer module prepareProfile must return { browserArgs, secrets, state } (browserArgs and secrets arrays, state an object; afterBrowserStart optional).',
@@ -658,6 +671,7 @@ export async function launchWebDappBrowser(
         mainnetHosts.join(','),
         '--testnet-hosts',
         venues.served.join(','),
+        ...(servedNotApplicable ? ['--served-check', 'not-applicable'] : []),
       );
     hostArgs.push(...extensionHostArgs);
     if (signerModule) hostArgs.push('--signer-module', signerModule);
@@ -699,12 +713,12 @@ export async function launchWebDappBrowser(
               mainnetHosts,
               testnetHosts: venues.served,
               fingerprint: enforcementFingerprint,
-              ...(venues.served.length === 0 ? { served: 'not-applicable' } : {}),
+              ...(servedNotApplicable ? { served: 'not-applicable' } : {}),
               layers: [
                 'host-resolver-rules',
                 'cdp-fetch-block',
                 'wallet-refusal',
-                ...(venues.served.length === 0 ? [] : ['served-network-check']),
+                ...(servedNotApplicable ? [] : ['served-network-check']),
               ],
             }
           : {
