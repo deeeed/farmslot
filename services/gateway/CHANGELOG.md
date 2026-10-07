@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Stacked runs (ADR-040 addendum): a `published` edge starts a dev or fix-bug node on top of another node's published PR. Prepare fetches that PR's branch from origin and branches from its head, the PR targets that branch, the contribution diff starts at the branch point, and TASK.md gets a `## Stack` section. When the upstream merges, a `rebase-onto` edge from it retargets the PR to the default branch and, once the run's family is idle, merges that branch into the PR head. Runs and nodes without a `published` edge are unchanged; TASK.md goldens for dev, fix-bug, review-pr and pr-complete pin that.
 
 ## 0.20.2 - 2026-10-06
 

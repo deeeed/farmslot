@@ -57,7 +57,13 @@ export const GRAPH_VERB_METHODS: Record<GraphVerb, string> = {
 };
 
 const FAILURE_POLICIES = ['halt', 'skip-dependents', 'isolate'] as const;
-const EDGE_CONDITIONS = ['family-done', 'merged', 'manual', 'reference-status'] as const;
+const EDGE_CONDITIONS = [
+  'family-done',
+  'merged',
+  'published',
+  'manual',
+  'reference-status',
+] as const;
 const UNLOCK_KINDS = ['enqueue', 'mark-ready', 'rebase-onto'] as const;
 const REFERENCE_KINDS = [
   'jira',
@@ -209,6 +215,7 @@ function parseCondition(
   if (kind === 'merged') {
     return opts.targetRef ? { kind: 'merged', targetRef: opts.targetRef } : { kind: 'merged' };
   }
+  if (kind === 'published') return { kind: 'published' };
   if (kind === 'manual') {
     const gateId = opts.gateId?.trim();
     if (!gateId) {

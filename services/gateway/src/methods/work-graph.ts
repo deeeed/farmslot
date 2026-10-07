@@ -55,5 +55,6 @@ export const workGraphPause = (params: WorkGraphPauseParams) =>
   pauseWorkGraph(params, currentSessionOriginator());
 export const workGraphGateResolve = (params: WorkGraphGateResolveParams) =>
   gateResolve(params, currentSessionOriginator());
+// The RPC is the operator's `farmslot graph tick`; run events tick internally.
 export const workGraphSchedulerTick = (params: WorkGraphSchedulerTickParams = {}) =>
-  schedulerTick(params);
+  schedulerTick({ ...params, operator: true });
