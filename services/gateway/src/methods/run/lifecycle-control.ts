@@ -12,6 +12,7 @@ import {
   type RunResumeParams,
   type RunResumeResult,
   type RunStatus,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
@@ -519,6 +520,9 @@ export interface RunResumeTransitionDependencies {
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
   /** Re-present a gate whose engine loop exited before the park was restored. */
   replayGate(runId: string, stepName: string): Promise<void>;
+  /** The later worker signal that lets a blocked run resume monitoring, or null. */
+  blockedRunResumableSignal?(run: Run): Promise<WorkerSignal | null>;
+  replayMonitor?(runId: string): Promise<void>;
 }
 
 /**
@@ -536,6 +540,14 @@ const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
     // replay-step imports the orchestrator, so keep this lazy.
     const { runReplayStep } = await import('./replay-step.js');
     await runReplayStep({ runId, stepName, triggeredBy: GATE_PARK_REPLAY_TRIGGER }, () => {});
+  },
+  blockedRunResumableSignal: async (run) => {
+    const { blockedRunResumableSignal } = await import('./replay-step.js');
+    return blockedRunResumableSignal(run);
+  },
+  replayMonitor: async (runId) => {
+    const { runReplayStep } = await import('./replay-step.js');
+    await runReplayStep({ runId, stepName: 'monitor', triggeredBy: 'operator' }, () => {});
   },
 };
 
@@ -667,6 +679,30 @@ export async function runResumeTransitionLocked(
         generation,
         stepName: 'monitor',
         status: current.status,
+        acknowledgedAt: new Date().toISOString(),
+      };
+    }
+    // A worker that marked blocked and then finished (a later attempt, or the
+    // same one without `./mark start`) left a signal the run never read:
+    // replay the monitor on it, through the normal artifact checks.
+    const resumable =
+      existing.status === 'blocked' && deps.blockedRunResumableSignal && deps.replayMonitor
+        ? await deps.blockedRunResumableSignal(existing)
+        : null;
+    if (resumable && deps.replayMonitor) {
+      const previousGeneration = existing.engineState?.generation ?? 0;
+      console.log(
+        `[run] resume of blocked run ${params.runId.slice(0, 8)}: worker attempt ${resumable.attemptId} reported ${resumable.status} after the block; replaying monitor`,
+      );
+      await deps.replayMonitor(existing.id);
+      const replayed = getRun(existing.id)!;
+      emit(Events.RUN_UPDATED, { run: replayed });
+      return {
+        run: replayed,
+        previousGeneration,
+        generation: replayed.engineState?.generation ?? previousGeneration,
+        stepName: 'monitor',
+        status: replayed.status,
         acknowledgedAt: new Date().toISOString(),
       };
     }

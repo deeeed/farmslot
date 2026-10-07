@@ -351,7 +351,10 @@ export function freshBlockedMonitorAttempt(
     previousSignal?.status !== 'blocked' ||
     !signal ||
     !signal.attemptId ||
-    signal.attemptId === previousSignal.attemptId ||
+    // The same attempt counts only when it finished: a worker that marked
+    // blocked and later completed without `./mark start` (ledger F44).
+    (signal.attemptId === previousSignal.attemptId &&
+      !['done', 'complete'].includes(signal.status)) ||
     !['ready', 'non_terminal'].includes(probe.code) ||
     !['running', 'done', 'complete'].includes(signal.status) ||
     !signalMatchesMonitorContext(signal, context)
@@ -363,6 +366,27 @@ export function freshBlockedMonitorAttempt(
   );
   if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
   return signal;
+}
+
+/** The agent context a blocked run's monitor replay reads SIGNAL.json for. */
+function blockedMonitorContext(run: Pick<Run, 'flowType' | 'agentContexts'>): AgentContext | null {
+  return (
+    run.agentContexts?.find((context) => context.role === primaryRoleForFlow(run.flowType)) ??
+    run.agentContexts?.[0] ??
+    null
+  );
+}
+
+/**
+ * The worker signal that lets a blocked run resume monitoring: a later attempt,
+ * or the blocked attempt finishing. `run resume` replays the monitor on it, and
+ * `run.probeWorkerSignal` reports it as `resumable` for sweeps. Null otherwise.
+ */
+export async function blockedRunResumableSignal(run: Run): Promise<WorkerSignal | null> {
+  if (run.status !== 'blocked') return null;
+  const context = blockedMonitorContext(run);
+  const probe = await probeWorkerSignalForRun(run.id, run.slotId, context);
+  return freshBlockedMonitorAttempt(run, probe, context);
 }
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
@@ -759,11 +783,7 @@ export async function runReplayStep(
     }
   }
   const probeBlockedMonitor = needsBlockedAttempt && replayStepName === PS.MONITOR;
-  const monitorContext = probeBlockedMonitor
-    ? (existing.agentContexts?.find(
-        (context) => context.role === primaryRoleForFlow(existing.flowType),
-      ) ?? existing.agentContexts?.[0])
-    : null;
+  const monitorContext = probeBlockedMonitor ? blockedMonitorContext(existing) : null;
   const probe = probeBlockedMonitor
     ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
     : null;

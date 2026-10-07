@@ -82,6 +82,66 @@ test('blocked native resume routes through its retained recovery decision', asyn
   assert.equal(resumed, true);
 });
 
+const refuseDeps = {
+  nudgeMonitor: async () => {
+    throw new Error('paused nudge must not run');
+  },
+  redrive: async () => {
+    throw new Error('paused redrive must not run');
+  },
+  replayGate: async () => {
+    throw new Error('gate replay must not run');
+  },
+};
+
+test('resuming a blocked run whose worker finished after the block replays the monitor', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-LATE' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked' });
+  const late = { status: 'complete', attemptId: 'a1', timestamp: '2026-10-07T10:05:00Z' } as const;
+  const replayed: string[] = [];
+  const ack = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    {},
+    {
+      ...refuseDeps,
+      blockedRunResumableSignal: async (candidate) => {
+        assert.equal(candidate.id, run.id);
+        return late;
+      },
+      replayMonitor: async (id) => {
+        replayed.push(id);
+        updateRun(id, { status: 'monitoring' });
+      },
+    },
+  );
+  assert.deepEqual(replayed, [run.id]);
+  assert.equal(ack.stepName, 'monitor');
+  assert.equal(ack.status, 'monitoring');
+});
+
+test('resuming a blocked run with no later worker signal is still refused', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-STILL' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked' });
+  await assert.rejects(
+    runResumeTransitionLocked(
+      { runId: run.id },
+      () => {},
+      {},
+      {
+        ...refuseDeps,
+        blockedRunResumableSignal: async () => null,
+        replayMonitor: async () => {
+          throw new Error('monitor replay must not run');
+        },
+      },
+    ),
+    /is not paused \(status=blocked\)/,
+  );
+});
+
 test('resume refusal names the pending decision, actions and executable resolution command', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-HINT' });
   t.after(() => cleanupRun(run.id));
