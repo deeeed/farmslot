@@ -8,6 +8,16 @@ import { promisify } from 'node:util';
 
 import { PANE_FIELD_SEPARATOR, PANE_FORMAT, parseTmuxPaneList, readPaneSignals } from './tmux.js';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+
 const execFileAsync = promisify(execFile);
 const sep = PANE_FIELD_SEPARATOR;
 
@@ -65,8 +75,12 @@ test('parseTmuxPaneList falls back to session window pane target when pane id is
 });
 
 test('parseTmuxPaneList parses real tmux list-panes output with the production format', async (t) => {
+  if (!tmuxSandbox) {
+    t.skip('needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)');
+    return;
+  }
   try {
-    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, '-V'], { timeout: 2000 });
   } catch (error) {
     // This test is a live contract check for machines with tmux installed. CI or
     // package-only environments without tmux still run the pure parser tests.
@@ -82,6 +96,8 @@ test('parseTmuxPaneList parses real tmux list-panes output with the production f
   const resolvedCwd = await realpath(cwd);
 
   await execFileAsync('tmux', [
+    '-S',
+    tmuxSandbox!,
     'new-session',
     '-d',
     '-s',
@@ -95,7 +111,7 @@ test('parseTmuxPaneList parses real tmux list-panes output with the production f
   try {
     const { stdout } = await execFileAsync(
       'tmux',
-      ['list-panes', '-t', session, '-F', PANE_FORMAT],
+      ['-S', tmuxSandbox!, 'list-panes', '-t', session, '-F', PANE_FORMAT],
       { timeout: 2000 },
     );
     assert.match(stdout, /<<<FARMSLOT_TMUX_FIELD>>>/);
@@ -109,7 +125,9 @@ test('parseTmuxPaneList parses real tmux list-panes output with the production f
     assert.equal(panes[0].command, 'bash');
     assert.equal(panes[0].target, panes[0].paneId);
   } finally {
-    await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 });
+    await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session], {
+      timeout: 2000,
+    });
   }
 });
 

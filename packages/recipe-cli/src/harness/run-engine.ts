@@ -23,6 +23,7 @@ import {
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
+import { color } from './cli-color.js';
 import {
   captureExecutionProvenance,
   executionProvenanceDrift,
@@ -836,6 +837,20 @@ export async function executeWithHealBounds<T extends RecipeRunResult>(
   };
 }
 
+/** Evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`). */
+export interface RunFallbackEvidence {
+  path: string;
+  label: string;
+  fallbackFrom: string;
+  fallbackReason?: string;
+}
+
+export function fallbackMarker(
+  fallback: Pick<RunFallbackEvidence, 'fallbackFrom' | 'fallbackReason'>,
+): string {
+  return `(fallback from ${fallback.fallbackFrom}${fallback.fallbackReason ? `: ${fallback.fallbackReason}` : ''})`;
+}
+
 export function emitHealViolation(
   json: boolean,
   command: 'run' | 'call',
@@ -843,6 +858,7 @@ export function emitHealViolation(
   violation: HealBoundViolation,
   state: HealState,
   adapter?: string,
+  fallbacks: RunFallbackEvidence[] = [],
 ): number {
   const userAction =
     (adapter ? harnessAdapter(adapter).run?.violationUserAction?.(violation) : undefined) ??
@@ -862,6 +878,7 @@ export function emitHealViolation(
           summaryPath: result.summaryPath,
           tracePath: result.tracePath,
           artifactManifestPath: result.artifactManifestPath,
+          ...(fallbacks.length > 0 ? { fallbacks } : {}),
           exitCode: violation.exitCode,
           error: {
             code: violation.code,
@@ -887,6 +904,11 @@ export function emitHealViolation(
           : '') +
         (userAction ? `\n  Next: ${userAction}` : ''),
     );
+    for (const fallback of fallbacks) {
+      console.error(
+        `  ${fallback.label}: ${fallback.path} ${color('warn', fallbackMarker(fallback), { stream: process.stderr })}`,
+      );
+    }
   }
   return violation.exitCode;
 }

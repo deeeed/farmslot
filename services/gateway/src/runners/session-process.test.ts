@@ -30,6 +30,19 @@ import {
 } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
 const execFile = promisify(execFileCb);
 
 test('runner descendant PID lookup preserves an indeterminate probe', async () => {
@@ -793,14 +806,22 @@ test('exact live binding verifier rejects a new same-runner session in the persi
     assert.match(result.reason, /new-session.*does not match persisted.*parked-session/);
 });
 
-test('pane process start is resolved from the live tmux pane', async () => {
+test('pane process start is resolved from the live tmux pane', needsTmuxSandbox, async () => {
   const session = `farmslot-pane-start-${process.pid}`;
   let created = false;
   try {
-    await execFile('tmux', ['new-session', '-d', '-s', session, 'sleep 30']);
+    await execFile('tmux', ['-S', tmuxSandbox!, 'new-session', '-d', '-s', session, 'sleep 30']);
     created = true;
     const paneId = (
-      await execFile('tmux', ['display-message', '-p', '-t', session, '#{pane_id}'])
+      await execFile('tmux', [
+        '-S',
+        tmuxSandbox!,
+        'display-message',
+        '-p',
+        '-t',
+        session,
+        '#{pane_id}',
+      ])
     ).stdout.trim();
     const startedAt = await readPaneProcessStartedAtMs(
       makeVars({ remoteRepo: process.cwd() }),
@@ -808,6 +829,6 @@ test('pane process start is resolved from the live tmux pane', async () => {
     );
     assert.ok(startedAt !== null && Math.abs(Date.now() - startedAt) < 60_000);
   } finally {
-    if (created) await execFile('tmux', ['kill-session', '-t', session]);
+    if (created) await execFile('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', session]);
   }
 });

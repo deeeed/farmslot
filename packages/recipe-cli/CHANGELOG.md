@@ -6,6 +6,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - **BREAKING:** remove `resolveRecipeParamValue` (needs the `@farmslot/recipe-runner` release that adds `lenient`; a recipe-cli cut must not pin recipe-runner 0.26.0). Static validation resolves parameters with `@farmslot/recipe-runner`'s `resolveRecipeValue(value, params, undefined, { lenient: true })`, which keeps the same semantics: only an exact reference to a parameter that exists resolves; anything else stays as written.
 - Add `countRecipeNodes(recipe)`: a recipe's node count, from a v1 node graph (a `call` node counts once) or the arrays older recipes kept (`nodes`, `steps`, `workflow.<phase>[]`); undefined when the document has none of these.
+- `run` lists evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`, with an optional `metadata.fallbackReason`): `fallbacks` (`path`, `label`, `fallbackFrom`, `fallbackReason`) in `--json` and in the `--json-stream` completion event, and a marked artifact line in human output, on a failed run too, so an evidence gate need not read artifact metadata.
 
 ## 0.9.0 - 2026-10-08
 
