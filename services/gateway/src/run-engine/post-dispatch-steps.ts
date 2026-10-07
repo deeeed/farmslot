@@ -854,6 +854,10 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
     reviewedPackage,
     stampFreshReviews: true,
   });
+  // A re-run that does not pass may still have changed the slot through its
+  // fix loops; that end state counts as re-run too, or the gate would hold again.
+  const endState = await reviewedInputsAwaitingReview(getRun(runId)!);
+  if (endState) await markReviewedInputsRerun(runId, endState);
   return true;
 }
 

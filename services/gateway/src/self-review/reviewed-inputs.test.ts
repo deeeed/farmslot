@@ -151,6 +151,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   await reviewPasses(run.id);
   const plans: ReviewLoopRequest[][] = [];
   let passing = true;
+  let fixLoopEdit: string | null = null;
   const context = {
     executePublishGateReviewPlan: async (
       _runId: string,
@@ -158,6 +159,7 @@ test('the publication gate re-runs self-review once per change before it is pres
       plan: ReviewLoopRequest[],
     ) => {
       plans.push(plan);
+      if (fixLoopEdit) await writeFile(path.join(artifacts, 'pr-description.md'), fixLoopEdit);
       // As executeSelfReview does: the document notes the inputs, a pass records them.
       await noteReviewInputsAtLaunch(run.id);
       if (passing) await recordReviewedInputs(run.id);
@@ -205,6 +207,14 @@ test('the publication gate re-runs self-review once per change before it is pres
   assert.equal(plans.length, 2);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
   assert.equal(await awaiting(), false);
+
+  // A failing re-run whose fix loop moved the slot does not hold again for its end state.
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, partly fixed\n');
+  fixLoopEdit = '## Hidden, fixed again\n';
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
+  assert.equal(plans.length, 3);
+  assert.equal(await awaiting(), false, 'the end state counts as re-run');
+  fixLoopEdit = null;
 
   // A further change is a new state: reviewed again.
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, both states\n');

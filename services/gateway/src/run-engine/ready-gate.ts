@@ -53,7 +53,7 @@ import {
 } from '../run-completion/orchestrator.js';
 import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-package.js';
 import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 import {
   reviewedInputsAwaitingReview,
@@ -75,6 +75,7 @@ import {
 } from './branch-freshness.js';
 import {
   latestResolvedHumanGateDecision,
+  markResolvedHumanGateApprovalHeld,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
@@ -1112,6 +1113,13 @@ export async function executeReadyGate(runId: string): Promise<string> {
     isPublishApprovalAction(actionId) &&
     (await reviewedInputsAwaitingReview(getRun(runId)!))
   ) {
+    if (decision) {
+      markResolvedHumanGateApprovalHeld(decision);
+      await persistRunNow(
+        updateRun(runId, { decisions: afterDecisionRun.decisions }),
+        'approval held',
+      );
+    }
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: description, evidence or HEAD changed since the last review`,
     );

@@ -137,7 +137,7 @@ export function buildDescriptionCheckSection(input: DescriptionCheckSectionInput
   return [
     '## Description and evidence check',
     '',
-    'Before your verdict, compare what the PR says with what it does:',
+    'Before your verdict, compare what the PR says with what it does. The description covers the whole PR, so use the full range below even when a continuation scope narrows the rest of this review:',
     '',
     '```bash',
     `cd ${input.repo}`,
