@@ -459,7 +459,10 @@ export async function contributionStack(
   let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
   for (let hops = 0; current && hops < 20; hops += 1) {
     if (current.stack) return current.stack;
-    current = current.parentRunId ? await getRunWithArchived(current.parentRunId) : undefined;
+    // An unreadable archive must not fail a diff capture: no stack is the old behaviour.
+    current = current.parentRunId
+      ? await getRunWithArchived(current.parentRunId).catch(() => undefined)
+      : undefined;
   }
   return undefined;
 }
