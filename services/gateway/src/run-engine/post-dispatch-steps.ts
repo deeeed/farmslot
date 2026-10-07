@@ -824,7 +824,7 @@ export async function holdSlotForPublicationGate(
  * F42: when the description, evidence or HEAD changed after the last passing
  * review, self-review runs again before the publication gate is presented, once
  * per changed state: one that does not pass leaves review unsatisfied at the
- * gate instead of looping. Returns whether it ran.
+ * gate instead of looping. Returns whether a review ran.
  */
 export async function rerunSelfReviewIfReviewedInputsChanged(
   runId: string,
@@ -841,7 +841,6 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — description, evidence or HEAD changed since the last review; running self-review again`,
   );
-  await markReviewedInputsRerun(runId, changedInputs);
   const plan: ReviewLoopRequest[] = [{ order: 1, runner: 'same', validationDepth: 'static-code' }];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
@@ -854,8 +853,11 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
     reviewedPackage,
     stampFreshReviews: true,
   });
-  // A re-run that does not pass may still have changed the slot through its
-  // fix loops; that end state counts as re-run too, or the gate would hold again.
+  // Marked only once a review attempt settled: a restart or a launch that ran
+  // nothing leaves the change pending, so the next presentation re-runs it. A
+  // re-run that does not pass may have changed the slot through its fix loops;
+  // that end state counts as re-run too, or the gate would hold again.
+  if (reviewPlanResult.reviewIds.length === 0) return false;
   const endState = await reviewedInputsAwaitingReview(getRun(runId)!);
   if (endState) await markReviewedInputsRerun(runId, endState);
   return true;

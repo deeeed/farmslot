@@ -152,6 +152,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   const plans: ReviewLoopRequest[][] = [];
   let passing = true;
   let fixLoopEdit: string | null = null;
+  let launch: 'ok' | 'nothing' | 'crash' = 'ok';
   const context = {
     executePublishGateReviewPlan: async (
       _runId: string,
@@ -159,6 +160,8 @@ test('the publication gate re-runs self-review once per change before it is pres
       plan: ReviewLoopRequest[],
     ) => {
       plans.push(plan);
+      if (launch === 'crash') throw new Error('gateway restarted mid-review');
+      if (launch === 'nothing') return { reviewIds: [] };
       if (fixLoopEdit) await writeFile(path.join(artifacts, 'pr-description.md'), fixLoopEdit);
       // As executeSelfReview does: the document notes the inputs, a pass records them.
       await noteReviewInputsAtLaunch(run.id);
@@ -215,6 +218,19 @@ test('the publication gate re-runs self-review once per change before it is pres
   assert.equal(plans.length, 3);
   assert.equal(await awaiting(), false, 'the end state counts as re-run');
   fixLoopEdit = null;
+
+  // An attempt interrupted before it settled, or one that launched nothing,
+  // leaves the change pending: the next presentation re-runs it.
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Interrupted\n');
+  launch = 'crash';
+  await assert.rejects(rerunSelfReviewIfReviewedInputsChanged(run.id, context));
+  assert.equal(await awaiting(), true, 'a crashed attempt is not a re-run');
+  launch = 'nothing';
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), false);
+  assert.equal(await awaiting(), true, 'a launch that ran nothing is not a re-run');
+  launch = 'ok';
+  assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
+  assert.equal(await awaiting(), false);
 
   // A further change is a new state: reviewed again.
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, both states\n');
