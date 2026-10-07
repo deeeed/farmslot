@@ -18,6 +18,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const KNOWN_REAL_TMUX_TESTS = new Set([
   '.agents/skills/tmux-model-driver/tests/send-and-verify.test.sh',
   '.agents/skills/tmux-model-driver/tests/send-shell-script.test.sh',
+  'scripts/quality/test-onboarding.sh',
   'packages/agent-runtime/src/native/review-terminal.test.ts',
   'packages/cli/src/onboarding/uninstall.test.ts',
   'services/gateway/src/agents/runtime-recovery.test.ts',
@@ -30,14 +31,16 @@ const KNOWN_REAL_TMUX_TESTS = new Set([
   'services/node/src/commands/tmux.test.ts',
 ]);
 
-const TEST_FILE = /\.test\.(?:[cm]?[jt]sx?|sh)$/u;
+// Test files, and shell test scripts named test-*.sh (test-onboarding.sh).
+// scripts/runner-validation/ is live validation against real slots, not a test.
+const TEST_FILE = /\.test\.(?:[cm]?[jt]sx?|sh)$|(?:^|\/)test-[^/]*\.sh$/u;
 
 /** Why a test file reaches a real tmux server, or null. */
 export function realTmuxUse(rel, source) {
   // The tmux binary as the command of a spawn/exec call: spawn('tmux', …),
   // execFileSync('tmux', …), execSync('tmux new-session …'), and so on.
   const spawned =
-    /\b(?:spawn|spawnSync|execFile|execFileSync|execFileAsync|exec|execSync|execa)\(\s*['"`]tmux\b/u.exec(
+    /\b(?:spawn|spawnSync|execFile|execFileSync|execFileAsync|exec|execSync|execa)\(\s*['"`](?:env\s+(?:-u\s+\w+\s+|-\S+\s+|\w+=\S*\s+)*)?(?:[^'"`\s]*\/)?tmux\b/u.exec(
       source,
     );
   if (spawned) return `spawns tmux: ${spawned[0]}`;
@@ -45,7 +48,10 @@ export function realTmuxUse(rel, source) {
   const killServer = /['"`]kill-server['"`]/u.exec(source);
   if (killServer) return `passes kill-server: ${killServer[0]}`;
   if (rel.endsWith('.sh')) {
-    const shell = /^\s*(?:command\s+|exec\s+)?tmux\s/mu.exec(source);
+    const shell =
+      /^\s*(?:command\s+|exec\s+|env\s+(?:-u\s+\w+\s+|-\S+\s+|\w+=\S*\s+)*)?(?:\S*\/)?tmux\s/mu.exec(
+        source,
+      );
     if (shell) return `runs tmux: ${shell[0].trim()}`;
   }
   return null;
@@ -83,7 +89,14 @@ test('the detector catches direct tmux calls and kill-server, and ignores mocked
   assert.match(realTmuxUse('a.test.ts', 'execSync(`tmux new-session -d -s x`)'), /spawns tmux/u);
   assert.match(realTmuxUse('a.test.ts', `await execFileAsync("tmux", args)`), /spawns tmux/u);
   assert.match(realTmuxUse('a.test.ts', `run(bin, ['-S', sock, 'kill-server'])`), /kill-server/u);
+  assert.match(
+    realTmuxUse('a.test.ts', `spawnSync('/opt/homebrew/bin/tmux', ['ls'])`),
+    /spawns tmux/u,
+  );
+  assert.match(realTmuxUse('a.test.ts', 'execSync(`env -u TMUX tmux ls`)'), /spawns tmux/u);
   assert.match(realTmuxUse('a.test.sh', 'tmux kill-session -t x\n'), /runs tmux/u);
+  assert.match(realTmuxUse('test-x.sh', '  /usr/bin/tmux ls\n'), /runs tmux/u);
+  assert.match(realTmuxUse('test-x.sh', 'env -u TMUX tmux ls\n'), /runs tmux/u);
   assert.equal(
     realTmuxUse(
       'a.test.ts',

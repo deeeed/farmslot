@@ -11,6 +11,8 @@ let sessions: Map<string, string[]>;
 let issued: string[];
 let hasSessionExit: number | null;
 let createFails: boolean;
+// Another caller creates the session (with its own window) just before ours.
+let racedBy: string | null;
 
 const ok = (stdout = '') => ({ exitCode: 0, stdout, stderr: '' });
 const tmuxArgs = (cmd: string) =>
@@ -46,6 +48,10 @@ mock.module('./exec.js', {
       if (createFails)
         return { exitCode: 1, stdout: 'no server running on /tmp/tmux-501/default', stderr: '' };
       const created = /^new-session -d -s '([^']+)' -n '([^']+)'/.exec(args);
+      if (created && racedBy) {
+        sessions.set(created[1]!, [racedBy]);
+        return { exitCode: 1, stdout: `duplicate session: ${created[1]}`, stderr: '' };
+      }
       if (created) {
         sessions.set(created[1]!, [created[2]!]);
         return ok();
@@ -67,6 +73,7 @@ beforeEach(() => {
   issued = [];
   hasSessionExit = null;
   createFails = false;
+  racedBy = null;
 });
 
 test('a slot session lost to a reboot is created with the window, in the slot checkout', async () => {
@@ -114,6 +121,16 @@ test('a session whose name only starts with the slot session does not count', as
 
   assert.deepEqual(sessions.get('mm-10'), ['other']);
   assert.deepEqual(sessions.get('mm-1'), ['self-review']);
+});
+
+test('losing the create race to another caller still adds this window to its session', async () => {
+  racedBy = 'dev';
+
+  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+
+  assert.equal(ensured.disposition, 'created');
+  assert.deepEqual(sessions.get('mm-1'), ['dev', 'self-review']);
+  assert.ok(issued.includes(`new-window -t '=mm-1' -n 'self-review' -d 2>&1`), issued.join('\n'));
 });
 
 test('a has-session probe that times out fails instead of creating a duplicate session', async () => {

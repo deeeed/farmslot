@@ -450,14 +450,21 @@ export async function ensureTmuxWindow(
     { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   throwIfTmuxQueryTimedOut(probe, `ensureTmuxWindow has-session ${session}`);
-  const created = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      probe.exitCode === 0
-        ? `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`
-        : `new-session -d -s ${shellQuote(session)} -n ${shellQuote(windowName)} -c ${shellQuote(vars.remoteRepo)} 2>&1`,
-    ),
+  const newWindow = tmuxShellSnippet(
+    `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
   );
+  let created = await execOnSlot(
+    vars,
+    probe.exitCode === 0
+      ? newWindow
+      : tmuxShellSnippet(
+          `new-session -d -s ${shellQuote(session)} -n ${shellQuote(windowName)} -c ${shellQuote(vars.remoteRepo)} 2>&1`,
+        ),
+  );
+  // The probe and the create are not atomic: another caller recreating its own
+  // window after the same reboot can create the session first. Add this window
+  // to the session it made.
+  if (probe.exitCode !== 0 && created.exitCode !== 0) created = await execOnSlot(vars, newWindow);
   const afterCreate = await listExactTmuxWindows(vars, session, windowName);
   if (afterCreate.length > 0) {
     return { disposition: created.exitCode === 0 ? 'created' : 'existing', windows: afterCreate };
