@@ -798,6 +798,30 @@ describe('recipe validation', () => {
     const output = plan.stdout.join('\n');
     assert.match(output, /⚠ recipe\.command_pipe_masks_exit workflow\.nodes\.unit\.cmd — /u);
     assert.match(output, /⚠ recipe\.test_command_exit_code_only workflow\.nodes\.unit — /u);
+
+    // The command a parameter supplies is checked after static resolution.
+    const parameterized = recipeFile(target, {
+      unit: { action: 'command', cmd: '{{params.cmd}}', intent: 'Run tests.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const resolved = await validateRunRecipeStatic(
+      engine,
+      parameterized,
+      'web',
+      { target },
+      {
+        cmd: 'yarn test | tail -5',
+      },
+    );
+    assert.deepEqual(
+      resolved.findings
+        .filter((finding) => finding.severity === 'warning')
+        .map((finding) => [finding.severity, finding.code]),
+      [
+        ['warning', 'recipe.command_pipe_masks_exit'],
+        ['warning', 'recipe.test_command_exit_code_only'],
+      ],
+    );
   });
 
   test('a bare action name is not a recipe: the hint is the call that runs it', async () => {

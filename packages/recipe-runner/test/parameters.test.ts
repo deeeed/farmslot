@@ -38,3 +38,20 @@ test('lenient resolution replaces only exact references to parameters that exist
     },
   );
 });
+
+test('lenient resolution keeps falsy parameter values', () => {
+  assert.deepEqual(
+    resolveRecipeValue(
+      {
+        zero: '{{params.zero}}',
+        off: '{{params.off}}',
+        empty: '{{params.empty}}',
+        nil: '{{params.nil}}',
+      },
+      { zero: 0, off: false, empty: '', nil: null },
+      undefined,
+      { lenient: true },
+    ),
+    { zero: 0, off: false, empty: '', nil: null },
+  );
+});
