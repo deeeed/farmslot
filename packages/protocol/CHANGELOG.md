@@ -11,6 +11,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - The acceptance contract's comments name both writers of `artifacts/acceptance-status.json` (`farmslot-agent ac` and recipe runs with a task dir). No type or behavior change.
 - `catalogDefaultRunMode` derives the omitted run mode from execution-template `defaults`: a flow with an interactive rule and a general rule defaults to autonomous, the same rule a default worker template with an interactive sibling follows.
 - Register the `artifactView` Command Center link parameter, which marks an artifact opened in the step inspector's own viewer.
+- `RunProbeWorkerSignalResult` gains `resumable` (set on a blocked run): the signal lets `run resume` continue it.
 
 ## 0.34.0 - 2026-10-02
 
