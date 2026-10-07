@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `web-dapp` refuses a headful launch while the macOS login session is locked (`SESSION_LOCKED`, with the unlock step), before starting, reusing or stopping a browser, as mm-harness does since its #363 (0.6.0 shipped `web-dapp` without it). `macosSessionLocked()` and `parseSessionLocked()` are exported.
 
 ## 0.6.0 - 2026-10-08
 

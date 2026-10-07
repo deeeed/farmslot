@@ -4,7 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Web adapter reference: document `web-dapp` (`createWebDappAdapter`, the venue policy, the extension signer module and the hooks a host passes).
+- Web adapter reference: document `web-dapp` (`createWebDappAdapter`, the venue policy, the extension signer module and the hooks a host passes), and its locked-session refusal (`SESSION_LOCKED`).
 - Adapter SDK reference: `CommandEventStream.stage(name, { index, total })`, the `StageHandle` a platform reports setup progress through (`StageProgress`), and `noopStage` for a stream without stages.
 - Adapter SDK reference: the optional `readiness` member (`AdapterReadiness`), what `doctor`, `status` and `prepare` ask a platform; `extends` merges it member by member.
 - Adapter SDK reference: `run`, `run --plan` and `call` refuse `--record-video` on an adapter without `recording` before recipe execution (`RECORDING_UNSUPPORTED`, exit 2); a run that still reaches the missing target fails with the same code, exit 4.

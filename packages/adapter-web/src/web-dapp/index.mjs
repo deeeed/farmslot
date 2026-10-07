@@ -101,6 +101,12 @@ export {
   webDappRuntimePath,
   writePrivateJson,
 } from './lib/runtime.mjs';
+export {
+  macosSessionLocked,
+  parseSessionLocked,
+  SESSION_LOCKED_MESSAGE,
+  SESSION_LOCKED_USER_ACTION,
+} from './lib/session-lock.mjs';
 
 const LEAVES = Object.freeze(['launch', 'wallet-host', 'inject', 'verify', 'stop', 'cleanup']);
 

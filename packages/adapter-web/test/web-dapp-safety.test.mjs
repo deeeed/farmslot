@@ -233,6 +233,53 @@ function processesMatching(pattern) {
 
 const messageOf = (file) => readFileSync(file, 'utf8');
 
+describe('web-dapp launcher on a locked session', () => {
+  it('refuses to start or reuse a headful browser before touching the slot', async () => {
+    const s = await slot();
+    const args = await launchArgs(s, { headless: false, headful: true });
+    await assert.rejects(
+      launchWebDappBrowser(args, launchEnv(s), { sessionLocked: () => true }),
+      /^Error: SESSION_LOCKED: The macOS login session is locked[\s\S]*\nNext: Unlock the Mac/u,
+    );
+    assert.equal(existsSync(path.join(s.runtime, 'browser.json')), false);
+    assert.equal(processesMatching(`--runtime-dir ${s.runtime}`), '');
+  });
+
+  it('lets a headful launch through when the session is unlocked or its state unknown', async () => {
+    for (const answer of [false, null]) {
+      const s = await slot();
+      const args = await launchArgs(s, { headless: false, headful: true });
+      let probes = 0;
+      const state = await launchWebDappBrowser(args, launchEnv(s), {
+        sessionLocked: () => {
+          probes += 1;
+          return answer;
+        },
+      });
+      trackPids(s.runtime);
+      assert.equal(probes, 1);
+      assert.equal(state.reused, false);
+      await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+    }
+  });
+
+  it('launches a headless browser without probing the session', async () => {
+    const s = await slot();
+    const args = await launchArgs(s);
+    let probed = false;
+    const state = await launchWebDappBrowser(args, launchEnv(s), {
+      sessionLocked: () => {
+        probed = true;
+        return true;
+      },
+    });
+    trackPids(s.runtime);
+    assert.equal(probed, false);
+    assert.equal(state.reused, false);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+});
+
 describe('leaf CLI launch', () => {
   it('parses the launcher summary whether it is compact or indented', () => {
     const summary = { status: 'pass', reused: false, cdpPort: 9541 };
