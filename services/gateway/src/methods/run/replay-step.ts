@@ -24,6 +24,7 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 
+import { selectAgentContext } from '../../agents/contexts.js';
 import {
   claimQueueItemForReplay,
   getQueueSnapshot,
@@ -368,25 +369,30 @@ export function freshBlockedMonitorAttempt(
   return signal;
 }
 
-/** The agent context a blocked run's monitor replay reads SIGNAL.json for. */
-function blockedMonitorContext(run: Pick<Run, 'flowType' | 'agentContexts'>): AgentContext | null {
-  return (
-    run.agentContexts?.find((context) => context.role === primaryRoleForFlow(run.flowType)) ??
-    run.agentContexts?.[0] ??
-    null
-  );
+/**
+ * The agent context whose SIGNAL.json a blocked run's monitor reads: the
+ * monitor's own selection, so resume never accepts a signal it won't consume.
+ */
+export function blockedMonitorContext(run: Run): AgentContext | null {
+  return selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+}
+
+export interface BlockedRunResumeCheck {
+  /** The later signal that lets the run resume monitoring, or null. */
+  signal: WorkerSignal | null;
+  /** What reading SIGNAL.json returned, for a refusal to name. */
+  probe: RunProbeWorkerSignalResult;
 }
 
 /**
- * The worker signal that lets a blocked run resume monitoring: a later attempt,
- * or the blocked attempt finishing. `run resume` replays the monitor on it, and
- * `run.probeWorkerSignal` reports it as `resumable` for sweeps. Null otherwise.
+ * Whether a blocked run can resume monitoring: a later attempt finished, or
+ * the blocked attempt itself did. `run resume` replays the monitor on it;
+ * `run.probeWorkerSignal` reports it as `resumable` for sweeps.
  */
-export async function blockedRunResumableSignal(run: Run): Promise<WorkerSignal | null> {
-  if (run.status !== 'blocked') return null;
+export async function blockedRunResumableSignal(run: Run): Promise<BlockedRunResumeCheck> {
   const context = blockedMonitorContext(run);
   const probe = await probeWorkerSignalForRun(run.id, run.slotId, context);
-  return freshBlockedMonitorAttempt(run, probe, context);
+  return { signal: freshBlockedMonitorAttempt(run, probe, context), probe };
 }
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {

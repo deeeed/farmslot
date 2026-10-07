@@ -82,6 +82,20 @@ test('blocked native resume routes through its retained recovery decision', asyn
   assert.equal(resumed, true);
 });
 
+// What runReplayStep leaves behind: the steps before the replayed one done,
+// the replayed one running.
+function replayedFrom(runId: string, stepName: string) {
+  const run = getRun(runId)!;
+  const at = run.steps.findIndex((step) => step.name === stepName);
+  return updateRun(runId, {
+    status: 'monitoring',
+    steps: run.steps.map((step, index) => ({
+      ...step,
+      status: index < at ? 'done' : index === at ? 'running' : 'pending',
+    })),
+  })!;
+}
+
 const refuseDeps = {
   nudgeMonitor: async () => {
     throw new Error('paused nudge must not run');
@@ -108,11 +122,11 @@ test('resuming a blocked run whose worker finished after the block replays the m
       ...refuseDeps,
       blockedRunResumableSignal: async (candidate) => {
         assert.equal(candidate.id, run.id);
-        return late;
+        return { signal: late, probe: { ok: true, code: 'ready', message: 'ready', signal: late } };
       },
       replayMonitor: async (id) => {
         replayed.push(id);
-        updateRun(id, { status: 'monitoring' });
+        return replayedFrom(id, 'monitor');
       },
     },
   );
@@ -121,7 +135,29 @@ test('resuming a blocked run whose worker finished after the block replays the m
   assert.equal(ack.status, 'monitoring');
 });
 
-test('resuming a blocked run with no later worker signal is still refused', async (t) => {
+test('a blocked-run resume reports the step the replay actually starts at', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-REROUTE' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked' });
+  const late = { status: 'done', attemptId: 'a2', timestamp: '2026-10-07T10:05:00Z' } as const;
+  const ack = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    {},
+    {
+      ...refuseDeps,
+      blockedRunResumableSignal: async () => ({
+        signal: late,
+        probe: { ok: true, code: 'ready', message: 'ready', signal: late },
+      }),
+      // An eval run's replay reinstalls its harness at prepare.
+      replayMonitor: async (id) => replayedFrom(id, 'prepare'),
+    },
+  );
+  assert.equal(ack.stepName, 'prepare');
+});
+
+test('resuming a blocked run with no later worker signal is refused, naming what SIGNAL.json said', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-STILL' });
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, { status: 'blocked' });
@@ -132,13 +168,20 @@ test('resuming a blocked run with no later worker signal is still refused', asyn
       {},
       {
         ...refuseDeps,
-        blockedRunResumableSignal: async () => null,
+        blockedRunResumableSignal: async () => ({
+          signal: null,
+          probe: {
+            ok: false,
+            code: 'missing_path',
+            message: 'Could not resolve SIGNAL.json path: ssh: connect to macpro timed out',
+          },
+        }),
         replayMonitor: async () => {
           throw new Error('monitor replay must not run');
         },
       },
     ),
-    /is not paused \(status=blocked\)/,
+    /is not paused \(status=blocked\)\. Worker signal: missing_path: Could not resolve SIGNAL.json path: ssh: connect to macpro timed out\./,
   );
 });
 

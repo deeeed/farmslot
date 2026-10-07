@@ -12,7 +12,6 @@ import {
   type RunResumeParams,
   type RunResumeResult,
   type RunStatus,
-  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
@@ -45,6 +44,8 @@ import {
 } from '../../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../../runs/store.js';
 import { schedulerTick } from '../../work-graph/store.js';
+
+import type { BlockedRunResumeCheck } from './replay-step.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -520,9 +521,10 @@ export interface RunResumeTransitionDependencies {
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
   /** Re-present a gate whose engine loop exited before the park was restored. */
   replayGate(runId: string, stepName: string): Promise<void>;
-  /** The later worker signal that lets a blocked run resume monitoring, or null. */
-  blockedRunResumableSignal?(run: Run): Promise<WorkerSignal | null>;
-  replayMonitor?(runId: string): Promise<void>;
+  /** Whether a blocked run's worker finished after the block (see replay-step). */
+  blockedRunResumableSignal?(run: Run): Promise<BlockedRunResumeCheck>;
+  /** Replay the monitor; returns the run as the replay left it. */
+  replayMonitor?(runId: string): Promise<Run>;
 }
 
 /**
@@ -547,7 +549,8 @@ const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
   },
   replayMonitor: async (runId) => {
     const { runReplayStep } = await import('./replay-step.js');
-    await runReplayStep({ runId, stepName: 'monitor', triggeredBy: 'operator' }, () => {});
+    return (await runReplayStep({ runId, stepName: 'monitor', triggeredBy: 'operator' }, () => {}))
+      .run;
   },
 };
 
@@ -685,29 +688,35 @@ export async function runResumeTransitionLocked(
     // A worker that marked blocked and then finished (a later attempt, or the
     // same one without `./mark start`) left a signal the run never read:
     // replay the monitor on it, through the normal artifact checks.
-    const resumable =
+    const check =
       existing.status === 'blocked' && deps.blockedRunResumableSignal && deps.replayMonitor
         ? await deps.blockedRunResumableSignal(existing)
         : null;
-    if (resumable && deps.replayMonitor) {
+    if (check?.signal && deps.replayMonitor) {
       const previousGeneration = existing.engineState?.generation ?? 0;
       console.log(
-        `[run] resume of blocked run ${params.runId.slice(0, 8)}: worker attempt ${resumable.attemptId} reported ${resumable.status} after the block; replaying monitor`,
+        `[run] resume of blocked run ${params.runId.slice(0, 8)}: worker attempt ${check.signal.attemptId} reported ${check.signal.status} after the block; replaying monitor`,
       );
-      await deps.replayMonitor(existing.id);
-      const replayed = getRun(existing.id)!;
+      const replayed = await deps.replayMonitor(existing.id);
       emit(Events.RUN_UPDATED, { run: replayed });
       return {
         run: replayed,
         previousGeneration,
         generation: replayed.engineState?.generation ?? previousGeneration,
-        stepName: 'monitor',
+        // The replay can start earlier than the monitor (an eval run reinstalls
+        // its harness at prepare): report the step it actually starts at.
+        stepName:
+          replayed.steps.find((step) => step.status === 'running' || step.status === 'pending')
+            ?.name ?? 'monitor',
         status: replayed.status,
         acknowledgedAt: new Date().toISOString(),
       };
     }
+    // Name what SIGNAL.json said, so an unreachable slot or a rejected artifact
+    // is not mistaken for a worker that never finished.
+    const signalNote = check ? ` Worker signal: ${check.probe.code}: ${check.probe.message}.` : '';
     throw new Error(
-      `Run ${params.runId} is not paused (status=${existing.status}). ${runRecoveryHints(existing).join(' ')}`.trim(),
+      `Run ${params.runId} is not paused (status=${existing.status}).${signalNote} ${runRecoveryHints(existing).join(' ')}`.trim(),
     );
   }
   if (!options.machineParkingRestore) assertNotMachineParkManaged(existing);
