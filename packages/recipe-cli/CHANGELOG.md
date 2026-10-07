@@ -4,12 +4,17 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-10-08
+
 - `prepare --json-stream` and `doctor --fix --json-stream`: stdout is NDJSON, a `stage` event per stage line (a step's own stages arrive under it with `child`, the child's line), then `complete`. `prepare` completes with `ready`, `recordPath` and each step's status and duration; `doctor --fix` with `fixed`, `failed`, `ready`, `nextActions` and the error when it fails. Anything else either command prints goes to stderr. `doctor --json-stream` without `--fix` is a usage error that points to `doctor --json`. `--json` output is unchanged.
 - **BREAKING:** `redactCommandArgs` no longer treats `--arg` specially: `call` takes action inputs as bare `key=value` pairs only, and a bare pair gets the same assignment redaction (plus URL redaction) a `--arg` value got; an inline `--option=value` gets it too.
 - **BREAKING:** `call` takes its action inputs as `key=value` only (`--arg`/`--arg=…` is refused: `--arg was removed; pass the input as key=value`, exit 2; an inline `--flag=value` is always an option, so `call`'s inline `--record-video=<mode>` is refused on an adapter that cannot record, like the bare flag), and writes its artifacts by `run`'s rule: `--artifacts-dir`, else `<task>/artifacts/calls/<action>-<uuid>` inside a task (`RECIPE_TASK_DIR`/`FARMSLOT_TASK_DIR`, which must be inside the checkout), else `temp/recipe/calls/<action>-<uuid>`. `call <action> --help` and `actions --action` no longer mention `--arg`.
 - **BREAKING:** remove `resolveRecipeParamValue` (needs the `@farmslot/recipe-runner` release that adds `lenient`; a recipe-cli cut must not pin recipe-runner 0.26.0). Static validation resolves parameters with `@farmslot/recipe-runner`'s `resolveRecipeValue(value, params, undefined, { lenient: true })`, which keeps the same semantics: only an exact reference to a parameter that exists resolves; anything else stays as written.
 - Add `countRecipeNodes(recipe)`: a recipe's node count, from a v1 node graph (a `call` node counts once) or the arrays older recipes kept (`nodes`, `steps`, `workflow.<phase>[]`); undefined when the document has none of these.
 - `run` lists evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`, with an optional `metadata.fallbackReason`): `fallbacks` (`path`, `label`, `fallbackFrom`, `fallbackReason`) in `--json` and in the `--json-stream` completion event, and a marked artifact line in human output, on a failed run too, so an evidence gate need not read artifact metadata.
+- Publish with adapter-sdk 0.7.0, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.27.0.
 
 ## 0.9.0 - 2026-10-08
 
