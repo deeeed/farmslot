@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.1 - 2026-10-08
+
+- Publish with protocol 0.34.0 and recipe-runner 0.27.0 so consumers share one recipe-runner copy. No code change.
+
 ## 0.19.0 - 2026-10-08
 
 - Add `metroBundleProgress(line)`: the percent and module counts of a Metro or Expo bundle progress line, ready for a stage's `progress`.
