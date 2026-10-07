@@ -15,7 +15,7 @@ import { color, stripAnsi } from '../cli-color.js';
 import { recordCommandStage } from '../command-journal.js';
 import { runnerProvenance, type RunnerProvenanceOptions } from '../doctor-report.js';
 import { harnessHost, hostEnvName } from '../host.js';
-import { JsonStreamWriter } from '../json-stream.js';
+import { failStream, JsonStreamWriter } from '../json-stream.js';
 import { optionFlag, optionString, parseArgs, targetPath, usageError } from '../parse-args.js';
 import { harnessExecutable, PREPARE_PROGRESS_ARTIFACT, recipeRuntimeDir } from '../paths.js';
 import { adapterReadiness } from '../readiness.js';
@@ -472,7 +472,13 @@ export async function handlePrepare(
   const stream = new JsonStreamWriter('prepare', optionFlag(options, 'jsonStream'));
   const restoreStdout = stream.isolateStdout();
   try {
-    return await handlePrepareUnlocked(argv, commandOptions, target, stream);
+    const exitCode = await handlePrepareUnlocked(argv, commandOptions, target, stream);
+    // A run that returned early (an ambiguous device target) still ends the stream.
+    stream.complete(exitCode === EXIT.ok ? 'pass' : 'fail', exitCode);
+    return exitCode;
+  } catch (error) {
+    failStream(stream, error, 'PREPARE_FAILED');
+    throw error;
   } finally {
     restoreStdout();
   }
@@ -658,14 +664,13 @@ async function handlePrepareLocked(
     if (devicePlatformFor && !devicePlatform && !failed()) {
       devicePlatform = devicePlatformFor(target, readDevices(artifactsDir));
       if (!devicePlatform) {
-        return ambiguousTarget(
-          json,
-          prepare.ambiguousTarget?.() ?? {
-            code: 'PREPARE_DEVICE_TARGET_AMBIGUOUS',
-            message: 'could not infer the device target from the connected devices',
-            userAction: `choose the device target, then rerun this command: ${usage}`,
-          },
-        );
+        const ambiguous = prepare.ambiguousTarget?.() ?? {
+          code: 'PREPARE_DEVICE_TARGET_AMBIGUOUS',
+          message: 'could not infer the device target from the connected devices',
+          userAction: `choose the device target, then rerun this command: ${usage}`,
+        };
+        stream.error(ambiguous);
+        return ambiguousTarget(json, ambiguous);
       }
     }
 

@@ -28,7 +28,7 @@ import {
 } from '../doctor-report.js';
 import { ensureOverlay, newHealState, recipeRunning } from '../heal-bounds.js';
 import { harnessHost, hostEnvName } from '../host.js';
-import { JsonStreamWriter } from '../json-stream.js';
+import { failStream, JsonStreamWriter } from '../json-stream.js';
 import { resolveRuntimeContextPath } from '../overlay.js';
 import {
   actionManifestPathOption,
@@ -133,9 +133,12 @@ export async function handleDoctor(
   const restoreStdout = stream.isolateStdout();
   try {
     const exitCode = await handleDoctorBody(parsed, commandOptions, stream);
-    // A usage refusal printed its envelope (to stderr); the stream still ends.
+    // A refusal sent its error event; the stream still ends.
     stream.complete(exitCode === EXIT.ok ? 'pass' : 'fail', exitCode);
     return exitCode;
+  } catch (error) {
+    failStream(stream, error, 'DOCTOR_FAILED');
+    throw error;
   } finally {
     restoreStdout();
   }
@@ -150,6 +153,11 @@ async function handleDoctorBody(
   const host = harnessHost().name;
   const target = targetPath(options);
   const json = optionFlag(options, 'json') || stream.enabled;
+  // Under --json-stream a refusal is an error event too: its envelope goes to stderr.
+  const refuse = (message: string, userAction: string): number => {
+    stream.error({ code: 'USAGE', message, userAction });
+    return usageOut(json, 'doctor', message, userAction);
+  };
   const printReady = optionFlag(options, 'printReady');
   // Farmslot health_check uses --print-ready alone; it implies the exit-coded live probe.
   const expectLive = optionFlag(options, 'expectLive') || printReady;
@@ -158,23 +166,19 @@ async function handleDoctorBody(
   const explicitAdapter = optionString(options, 'adapter') ?? adapterForPlatform(platformOption);
   const adapter = explicitAdapter ?? detectAdapter(target);
   if (!adapter) {
-    return usageOut(json, 'doctor', undetectedAdapterMessage(target), adapterDetectNext());
+    return refuse(undetectedAdapterMessage(target), adapterDetectNext());
   }
   assertAdapter(adapter);
   const surface = harnessAdapter(adapter);
   const readiness = adapterReadiness(surface);
   if (!fs.existsSync(target)) {
-    return usageOut(
-      json,
-      'doctor',
+    return refuse(
       `target does not exist: ${target}`,
       `pass --target <${harnessHost().product.toLowerCase()}-checkout> pointing to an existing checkout`,
     );
   }
   if (printReady && json) {
-    return usageOut(
-      json,
-      'doctor',
+    return refuse(
       '--print-ready owns stdout for Farmslot health_check; drop --json (use --expect-live --json for the doctor envelope)',
       `${host} doctor --print-ready --adapter <adapter> --target <path>`,
     );
@@ -192,11 +196,12 @@ async function handleDoctorBody(
     surface.resolveSlotPorts(target);
     const preview = commandOptions.previewDevice?.('doctor', adapter, options);
     if (preview && !preview.ok) {
-      return usageOut(json, 'doctor', preview.message, preview.userAction);
+      return refuse(preview.message, preview.userAction);
     }
     applyDoctorRuntimePorts(options);
     const lock = acquireCheckoutLock(target, 'doctor-fix');
     if ('message' in lock) {
+      stream.error({ code: 'SANDBOX_BUSY', message: lock.message });
       return checkoutBusyOut(json, 'doctor', lock.message, lock.path);
     }
     let fixed: string[];

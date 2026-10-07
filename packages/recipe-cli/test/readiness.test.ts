@@ -652,6 +652,32 @@ describe('doctor', () => {
     assert.equal(events.filter((event) => event.event === 'complete').length, 1);
   });
 
+  test('--fix --json-stream refusing a missing target sends the error, then complete', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop'));
+    const { result, events } = await captureStdout(() =>
+      captureStderr(() =>
+        handleDoctor(
+          parseArgs([
+            '--adapter',
+            'shop',
+            '--target',
+            path.join(tempRoot(), 'missing'),
+            '--fix',
+            '--json-stream',
+          ]),
+          { manifest: manifestOk },
+        ),
+      ),
+    );
+    assert.equal(result.result, 2);
+    assert.deepEqual(
+      events.map((event) => event.event),
+      ['error', 'complete'],
+    );
+    assert.match((events[0]!.error as { message: string }).message, /target does not exist/u);
+  });
+
   test('--json-stream without --fix is a usage error that names --json', async () => {
     shopHost();
     useAdapters(fakeAdapter('shop'));
@@ -1242,6 +1268,55 @@ describe('prepare', () => {
       exitCode: 1,
       error: { code: 'SHOP_TARGET', message: 'which one?', userAction: '1. phone\n2. tablet' },
     });
+
+    // --json-stream ends with the error and one complete on these paths too.
+    const streamed = await captureStdout(() =>
+      captureStderr(() =>
+        handlePrepare(
+          [
+            '--platform',
+            'shop',
+            '--target',
+            target,
+            '--artifacts-dir',
+            path.join(root, 'b'),
+            '--json-stream',
+          ],
+          options,
+        ),
+      ),
+    );
+    assert.equal(streamed.result.result, 1);
+    assert.deepEqual(
+      streamed.events
+        .filter((event) => event.event === 'error')
+        .map((event) => (event.error as { code: string }).code),
+      ['SHOP_TARGET'],
+    );
+    assert.deepEqual(
+      streamed.events.filter((event) => event.event === 'complete').map((event) => event.status),
+      ['fail'],
+    );
+    assert.equal(streamed.events.at(-1)!.event, 'complete');
+    let thrown: unknown;
+    const refused = await captureStdout(async () => {
+      try {
+        return await handlePrepare(
+          ['--platform', 'headless', '--target', target, '--clear-metro', '--json-stream'],
+          options,
+        );
+      } catch (error) {
+        thrown = error;
+        return -1;
+      }
+    });
+    assert.ok(thrown, 'the usage error still reaches the caller');
+    assert.deepEqual(
+      refused.events.map((event) => event.event),
+      ['error', 'complete'],
+    );
+    assert.equal((refused.events[0]!.error as { code: string }).code, 'USAGE');
+    assert.equal(refused.events[1]!.exitCode, 2);
   });
 });
 
