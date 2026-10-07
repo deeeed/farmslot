@@ -4,8 +4,12 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## Unreleased
 
-- `checkoutWorkspacePackages` returns no packages for a target without a root `package.json` (it threw `ENOENT`), as it already skips a workspace directory without one. A Core-based plugin's fixture target runs inherited live scripts again.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.1.2 - 2026-10-07
+
+- `checkoutWorkspacePackages` returns no packages for a target without a root `package.json` (it threw `ENOENT`), as it already skips a workspace directory without one. A Core-based plugin's fixture target runs inherited live scripts again.
+- Publish with adapter-sdk 0.6.0 and recipe-runner 0.26.0.
 
 ## 0.1.1 - 2026-10-06
 
