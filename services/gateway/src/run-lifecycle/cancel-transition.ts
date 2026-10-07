@@ -9,6 +9,7 @@ import { Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
+import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
@@ -115,8 +116,10 @@ function cancelEffects(collaborators: CancelCollaborators): {
               detail: 'backlog-settle failed; refusing to schedule against stale backlog state',
             };
           }
-          if (!run.workGraphId) return 'skipped';
-          await collaborators.tickWorkGraph(run.workGraphId);
+          // A follow-up without graph links ticks its stacked run's graph.
+          const graphId = scheduledGraphOf(run);
+          if (!graphId) return 'skipped';
+          await collaborators.tickWorkGraph(graphId);
           return 'ok';
         },
       },

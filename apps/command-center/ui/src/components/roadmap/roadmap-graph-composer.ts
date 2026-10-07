@@ -23,7 +23,13 @@ import {
   tagsFromInput,
 } from '../shared/planning-badges.js';
 
-const CONDITION_KINDS = ['family-done', 'merged', 'manual', 'reference-status'] as const;
+const CONDITION_KINDS = [
+  'family-done',
+  'merged',
+  'published',
+  'manual',
+  'reference-status',
+] as const;
 const REFERENCE_KINDS: WorkReferenceKind[] = [
   'jira',
   'github-pr',
@@ -237,6 +243,7 @@ export class RoadmapGraphComposer extends LitElement {
     if (this.edgeConditionKind === 'reference-status') {
       return { kind: 'reference-status', status: this.edgeReferenceStatus };
     }
+    if (this.edgeConditionKind === 'published') return { kind: 'published' };
     return { kind: 'family-done' };
   }
 

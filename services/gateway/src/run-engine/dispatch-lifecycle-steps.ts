@@ -31,6 +31,7 @@ import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
+import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector } from './sub-step-collector.js';
 
 interface StepIO {
@@ -194,6 +195,14 @@ export async function executePrepareStep(
   } = context;
   const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
+  // Normally resolved at write-task; repeated here for runs that brought their own task.
+  const stack = (await ensureRunStack(runId)).stack;
+  // A replay rebuilds from the recorded commit so the base cannot move under it.
+  // A branch name resolves only as a head on origin, never as a same-named tag.
+  const stackBaseRef =
+    stack && !stack.retargetedTo
+      ? (stack.resolvedSha ?? `refs/heads/${stack.baseBranch}`)
+      : undefined;
   // pr-complete and update-branch flows leave the merge to the worker so it
   // can resolve conflicts in-session. review-pr checks out the PR branch as
   // pushed; integration with main is informational (TASK.md) unless the
@@ -209,6 +218,7 @@ export async function executePrepareStep(
     app: current.app,
     ...(current.prepareProfile ? { prepareProfile: current.prepareProfile } : {}),
     ...(current.startRef ? { startRef: current.startRef.requestedRef } : {}),
+    ...(stackBaseRef ? { stackBase: stackBaseRef } : {}),
   };
 
   // skipPrepare is the pure binary "run no preparation at all" — the operator
@@ -386,6 +396,23 @@ export async function executePrepareStep(
           ? {
               startRef: {
                 requestedRef: current.startRef.resolvedSha ?? current.startRef.requestedRef,
+              },
+            }
+          : {}),
+        ...(stackBaseRef
+          ? {
+              stackBase: { requestedRef: stackBaseRef },
+              // Recorded before later prepare phases run, so a failed prepare
+              // still leaves the base a replay and the diff can use.
+              onStackBaseResolved: async (resolution) => {
+                const latest = getRun(runId);
+                if (!latest?.stack || latest.stack.resolvedSha) return;
+                await persistRunNow(
+                  updateRun(runId, {
+                    stack: { ...latest.stack, resolvedSha: resolution.resolvedSha },
+                  }),
+                  'stack base resolved',
+                );
               },
             }
           : {}),

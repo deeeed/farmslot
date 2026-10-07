@@ -35,6 +35,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
+import { getRunWithArchived } from '../runs/store.js';
 
 import { atomicWriteTextFile, parseDiffTooLargeBytes, withTimeout } from './diff-artifact-utils.js';
 
@@ -445,11 +446,42 @@ export function cappedRunSourceDiffCommand(
   return `bash -c ${shellQuote(script)}`;
 }
 
+/**
+ * The stack a run's contribution is measured against: its own, or for a
+ * follow-up (ci-fix, pr-complete) the stacked run it continues.
+ */
+export async function contributionStack(
+  run: Pick<Run, 'stack' | 'parentRunId'>,
+): Promise<Run['stack']> {
+  // Walk the follow-up's own lineage: a family can hold candidates stacked on
+  // different upstream commits. Archived ancestors still count: the follow-up
+  // can outlive the stacked run it continues in the live store.
+  let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
+  for (let hops = 0; current && hops < 20; hops += 1) {
+    if (current.stack) return current.stack;
+    // An unreadable archive must not fail a diff capture: no stack is the old behaviour.
+    current = current.parentRunId
+      ? await getRunWithArchived(current.parentRunId).catch(() => undefined)
+      : undefined;
+  }
+  return undefined;
+}
+
 export function contributionDiffBaseSpec(
-  run: Pick<Run, 'startRef'>,
+  run: Pick<Run, 'startRef' | 'stack'>,
   defaultBranch: string,
-): { baseRef: string; commitish: string } {
+): DiffBaseSpec {
   const requested = run.startRef?.requestedRef?.trim();
+  // A stacked run's own contribution starts where it branched from the upstream
+  // PR; settleStackedDiffBase moves it to the default branch once integrated.
+  if (!requested && run.stack?.resolvedSha) {
+    return {
+      baseRef: `stack:${run.stack.baseBranch}`,
+      commitish: run.stack.resolvedSha,
+      stackBranch: run.stack.baseBranch,
+      ...(run.stack.upstreamMergeSha ? { upstreamMergeSha: run.stack.upstreamMergeSha } : {}),
+    };
+  }
   if (!requested) {
     const remote = `origin/${defaultBranch}`;
     return { baseRef: remote, commitish: remote };
@@ -458,6 +490,108 @@ export function contributionDiffBaseSpec(
     baseRef: `startRef:${requested}`,
     commitish: run.startRef?.resolvedSha?.trim() || requested,
   };
+}
+
+type GitExec = (
+  command: string,
+) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>;
+
+export interface DiffBaseSpec {
+  baseRef: string;
+  /** The recorded base (provenance, replay start ref): always a commit origin can serve. */
+  commitish: string;
+  /** A local-only commit to diff from instead of merge-base(commitish, HEAD). */
+  diffFrom?: string;
+  /** Stacked runs: the upstream PR's merge commit on the default branch, once known. */
+  upstreamMergeSha?: string;
+  /** Stacked runs: the upstream PR's head branch on origin. */
+  stackBranch?: string;
+}
+
+/**
+ * The base a stacked contribution is measured from, by the checkout's history.
+ * While nothing from the default branch past the branch point is in HEAD, the
+ * branch point is the base. Once HEAD has merged default-branch commits (a
+ * squash of the upstream, unrelated work, or both), the base is a commit whose
+ * tree merges the branch point with what HEAD took from the default branch, so
+ * neither the upstream's files nor default-branch commits count as this run's.
+ */
+export async function settleStackedDiffBase(
+  exec: GitExec,
+  defaultBranch: string,
+  baseSpec: DiffBaseSpec,
+): Promise<DiffBaseSpec> {
+  if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
+  const remote = `origin/${defaultBranch}`;
+  let branchPoint = baseSpec.commitish;
+  const plain = { baseRef: remote, commitish: remote };
+  try {
+    // A failed fetch still leaves the remote-tracking ref holding what HEAD merged.
+    await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`);
+    const isAncestor = async (ancestor: string, of: string) =>
+      (await exec(`git merge-base --is-ancestor ${shellQuote(ancestor)} ${shellQuote(of)}`))
+        .exitCode === 0;
+    // The upstream may have moved on (a review fix, or a rebase and force-push)
+    // and the checkout taken its newer head: the branch point is the newest
+    // upstream-only commit HEAD contains.
+    if (baseSpec.stackBranch) {
+      const upstream = `origin/${baseSpec.stackBranch}`;
+      // A failed fetch (the branch deleted after its merge) keeps the
+      // remote-tracking ref, which still holds the head this checkout took.
+      await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
+      const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
+      const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
+      // Adopt it when it is upstream-only (the default branch lacks it) and
+      // not already behind the recorded point: an advance, or a force-pushed
+      // replacement HEAD rebased onto or merged.
+      if (
+        newer &&
+        newer !== branchPoint &&
+        !(await isAncestor(newer, branchPoint)) &&
+        !(await isAncestor(newer, remote))
+      ) {
+        branchPoint = newer;
+      }
+    }
+    // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
+    const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
+    if (stacked.exitCode !== 0) return plain;
+    // The checkout took the upstream in through the default branch: whatever the
+    // default branch did since (a revert included) is not this run's either.
+    if (baseSpec.upstreamMergeSha) {
+      const integrated = await exec(
+        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} HEAD`,
+      );
+      if (integrated.exitCode === 0) return plain;
+    }
+    const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
+    const taken = mergeBase.stdout.trim();
+    if (mergeBase.exitCode !== 0 || !taken) return { ...baseSpec, commitish: branchPoint };
+    const stillStacked = await exec(
+      `git merge-base --is-ancestor ${shellQuote(taken)} ${shellQuote(branchPoint)}`,
+    );
+    if (stillStacked.exitCode === 0) return { ...baseSpec, commitish: branchPoint };
+    const tree = await exec(
+      `git merge-tree --write-tree ${shellQuote(branchPoint)} ${shellQuote(taken)}`,
+    );
+    // Exit 1 is a conflict: the tree is still written, with markers only in the
+    // files both sides changed, which this run had to resolve anyway. Anything
+    // else is an error.
+    if (tree.exitCode !== 0 && tree.exitCode !== 1) return plain;
+    const commit = await exec(
+      `git -c user.name=farmslot -c user.email=farmslot@localhost commit-tree ${shellQuote(tree.stdout.trim().split('\n')[0]!)} -p ${shellQuote(branchPoint)} -p ${shellQuote(taken)} -m ${shellQuote('farmslot stacked diff base')}`,
+    );
+    if (commit.exitCode !== 0 || !commit.stdout.trim())
+      return { ...baseSpec, commitish: branchPoint };
+    return {
+      baseRef: `${baseSpec.baseRef}+${remote}`,
+      commitish: branchPoint,
+      diffFrom: commit.stdout.trim(),
+    };
+  } catch {
+    // Before any integration the branch point is right; keep it when git can't tell.
+    return baseSpec;
+  }
 }
 
 export async function captureWorktreeHeadSha(
@@ -477,7 +611,7 @@ export async function captureWorktreeHeadSha(
 }
 
 type CaptureRunDiffSnapshotOptions = {
-  baseSpec?: { baseRef: string; commitish: string };
+  baseSpec?: DiffBaseSpec;
   /** When true (default), diff from merge-base(base, HEAD); when false, diff from base..HEAD. */
   useMergeBase?: boolean;
   kind?: FamilyDiffKind;
@@ -522,7 +656,16 @@ export async function captureRunDiffSnapshot(
 
   const { defaultBranch, sourceFilter, configSource, configFallbackReason, configFallbackError } =
     await resolveDiffCaptureSettings(run.project);
-  const baseSpec = options.baseSpec ?? contributionDiffBaseSpec(run, defaultBranch);
+  const baseSpec =
+    options.baseSpec ??
+    (await settleStackedDiffBase(
+      (command) => execOnSlot(vars, command, { timeout: 15000 }),
+      defaultBranch,
+      contributionDiffBaseSpec(
+        { startRef: run.startRef, stack: await contributionStack(run) },
+        defaultBranch,
+      ),
+    ));
   const useMergeBase = options.useMergeBase ?? true;
   const diffArtifactPath = options.diffArtifactPath ?? 'artifacts/diff.txt';
   const sourcePathspecList = sourceCodeGitPathspecs(sourceFilter);
@@ -557,8 +700,8 @@ export async function captureRunDiffSnapshot(
     }
     const baseSha = baseRefResult.stdout.trim();
     const headSha = headRefResult.stdout.trim();
-    let trackedDiffBase = baseSha;
-    if (useMergeBase) {
+    let trackedDiffBase = baseSpec.diffFrom ?? baseSha;
+    if (useMergeBase && !baseSpec.diffFrom) {
       const mergeBaseResult = await execOnSlot(vars, `git merge-base ${shellQuote(baseSha)} HEAD`, {
         timeout: 10000,
       });

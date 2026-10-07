@@ -25,6 +25,7 @@ import {
   type ActionExecutionContext,
   createRecipeRunner,
   createStandardCoreAdapters,
+  type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
@@ -45,6 +46,7 @@ import {
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
   describeRunnableRecipe,
@@ -73,6 +75,7 @@ import {
   emitHealViolation,
   executeWithHealBounds,
   prepareHeal,
+  runRecipe,
   synthesizeOneNodeRecipe,
 } from '../src/harness/run-engine.js';
 
@@ -194,7 +197,11 @@ const classifier: ConsoleClassifier<{ entries: unknown[]; problems: string[] }> 
 
 type ShopEngine = RecipeEngine<{ bound: string }, { entries: unknown[]; problems: string[] }>;
 
-function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
+function shopEngine(
+  libraryRoot: string,
+  calls: Calls,
+  recording?: (adapter: string) => RecipeRecordingOptions,
+): ShopEngine {
   return {
     bundledLibrary: { name: 'shop', root: libraryRoot, actionNamespace: 'shop' },
     async resolveActionManifest(adapter, overridePath, sources) {
@@ -269,6 +276,7 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
         defaultSource: { kind: 'operator', trust: 'trusted', name: 'shop-harness' },
         logger: { info() {}, warn() {}, error() {} },
         hud: false,
+        ...(recording ? { recording: recording(adapter) } : {}),
         runner: { source: 'worktree', name: 'Shop test', git_ref: 'a'.repeat(40) },
       });
     },
@@ -1918,6 +1926,220 @@ describe('run', () => {
       (lastJson(notFound.stdout).error as { userAction: string }).userAction,
       'shop-harness run --list --adapter api --json',
     );
+  });
+});
+
+describe('--record-video', () => {
+  const unsupported = {
+    code: 'RECORDING_UNSUPPORTED',
+    message: '--record-video is not implemented for the api adapter.',
+    userAction:
+      "rerun without --record-video; for visual evidence use the adapter's own screenshot action where its manifest has one, or an adapter that records: web",
+  };
+  let asked: string[];
+  let recorded: string[];
+  let recordingEngine: ShopEngine;
+
+  // `web` records; `api` has no `recording`. The engine's runner resolves the
+  // target through the harness provider and records with a fake recorder.
+  beforeEach(() => {
+    asked = [];
+    recorded = [];
+    const registry = createAdapterRegistry();
+    registry.register(
+      shopAdapter('web', calls, { recording: { target: async () => ({ kind: 'pid', pid: 1 }) } }),
+    );
+    registry.register(shopAdapter('api', calls));
+    configureHarnessAdapters(registry);
+    recordingEngine = shopEngine(library, calls, (adapter) => ({
+      targetProvider: {
+        resolveRecordingTarget(context) {
+          asked.push(adapter);
+          return createRecordingTargetProvider(adapter).resolveRecordingTarget(context);
+        },
+      },
+      videoRecorder: {
+        name: 'fake-recorder',
+        async start({ outputPath }) {
+          recorded.push(adapter);
+          fs.writeFileSync(outputPath, 'video');
+          return { stop: async () => ({}) };
+        },
+      },
+    }));
+  });
+
+  test('run refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifactsRoot = tempRoot('recipe-cli-record-');
+    const run = (adapter: string, ...flags: string[]) => {
+      const artifacts = path.join(artifactsRoot, `${adapter}${flags.join('')}`);
+      return capture(() =>
+        handleRun(
+          [recipe, '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', artifacts],
+            flags,
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    };
+
+    const json = await run('api', '--record-video=full-run', '--json');
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await run('api', '--record');
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ run: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    // No runner, so no node ran and no recording target was asked for.
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
+    assert.deepEqual(fs.readdirSync(artifactsRoot), []);
+
+    const off = await run('api', '--record-video=off', '--json');
+    assert.equal(off.value, 0, off.stderr.join('\n'));
+    assert.deepEqual(asked, []);
+    const supported = await run('web', '--record-video=full-run', '--json');
+    assert.equal(supported.value, 0, supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
+  });
+
+  test('run --json-stream reports the refusal as an error event and a failed completion', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const streamed = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'api', '--target', target, '--record-video', '--json-stream'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(streamed.value, 2);
+    const events = streamed.stdout
+      .join('')
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(
+      events.map((event) => [event.event, event.phase ?? event.status]),
+      [
+        ['phase', 'resolve'],
+        ['error', undefined],
+        ['complete', 'fail'],
+      ],
+    );
+    assert.deepEqual(events[1]?.error, unsupported);
+    assert.equal(events[2]?.exitCode, 2);
+    assert.deepEqual(calls.runners, []);
+  });
+
+  test('run --plan refuses it like the run, and plans it on an adapter that records', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const plan = (adapter: string) =>
+      capture(() =>
+        handleRun(
+          [recipe, '--plan', '--adapter', adapter, '--target', target, '--record-video', '--json'],
+          { engine: recordingEngine },
+        ),
+      );
+    const refused = await plan('api');
+    assert.equal(refused.value, 2);
+    const envelope = lastJson(refused.stdout);
+    assert.equal(envelope.mode, 'plan');
+    assert.deepEqual(envelope.error, unsupported);
+    assert.equal(envelope.plan, undefined);
+    const planned = await plan('web');
+    assert.equal(planned.value, 0, planned.stderr.join('\n'));
+    assert.equal(lastJson(planned.stdout).status, 'pass');
+  });
+
+  test('a run that reaches the missing target fails as a bounded capability refusal, not app logic', async () => {
+    // Programmatic callers skip the run/call preflight: the runner asks the
+    // harness provider, which throws, and the heal bounds classify the failure.
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifacts = path.join(tempRoot('recipe-cli-record-'), 'artifacts');
+    const { result, violation } = await executeWithHealBounds(
+      () =>
+        runRecipe(recordingEngine, 'api', recipe, artifacts, target, undefined, {
+          recordVideo: 'full-run',
+        }),
+      target,
+      newHealState(),
+    );
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(asked, ['api']);
+    assert.deepEqual(recorded, []);
+    assert.deepEqual(violation, {
+      ...unsupported,
+      exitCode: 4,
+      originalError: unsupported.message,
+    });
+  });
+
+  test('call refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const json = await capture(() =>
+      handleCall(
+        ['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record-video', '--json'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await capture(() =>
+      handleCall(['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record'], {
+        engine: recordingEngine,
+      }),
+    );
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ call: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
+
+    const call = (adapter: string, flag: string) =>
+      capture(() =>
+        handleCall(
+          ['command', 'cmd=pwd', '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', path.join(tempRoot('recipe-cli-call-record-'), 'artifacts')],
+            [flag, '--json'],
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    // After the action, call reads every `key=value` token as an action input,
+    // `--record-video=off` included (a known parser gap): it fails validation as
+    // an unknown input, never as a recording refusal, and records nothing.
+    const off = await call('api', '--record-video=off');
+    assert.equal(off.value, 5);
+    const offEnvelope = lastJson(off.stdout);
+    assert.equal((offEnvelope.error as { code?: string }).code, 'RECIPE_VALIDATION_FAILED');
+    assert.deepEqual(offEnvelope.args, { cmd: 'pwd', '--record-video': 'off' });
+    assert.equal(
+      (offEnvelope.findings as Array<{ code: string }>)[0]?.code,
+      'recipe.unknown_param',
+    );
+    assert.deepEqual(asked, []);
+    const supported = await call('web', '--record-video');
+    assert.equal(supported.value, 0, supported.stdout.join('\n') + supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
   });
 });
 

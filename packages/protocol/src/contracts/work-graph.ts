@@ -124,6 +124,11 @@ export interface WorkNodeReference {
 export type EdgeCondition =
   | { kind: 'family-done'; outcome?: 'success' | 'terminal' }
   | { kind: 'merged'; targetRef?: string }
+  /**
+   * The upstream run has a PR whose head branch is pushed to origin. This is the
+   * stack edge: the downstream node branches from that head and targets it.
+   */
+  | { kind: 'published' }
   | { kind: 'manual'; gateId: string }
   | { kind: 'reference-status'; status?: WorkReferenceStatus };
 
