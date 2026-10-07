@@ -64,6 +64,7 @@ import { detectProfileFit, FARMSLOT_PROJECT } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
+import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector } from './sub-step-collector.js';
 import { detectFlowTypeMismatch, fetchPRData, fetchTicketData } from './ticket-data.js';
 
@@ -614,6 +615,9 @@ export async function executeWriteTaskStep(
     }
   }
 
+  // A stacked run's base is fixed before its task is written, so TASK.md and
+  // prepare see the same upstream PR.
+  await ensureRunStack(runId);
   // Metadata fetches and the repeat-review decision both update the canonical
   // run. Task generation must consume that resolved snapshot, not the stale
   // object captured before the operator chose the review scope.

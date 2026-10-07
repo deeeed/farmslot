@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run get` prints, per step, its queue time, run time and last progress after the run JSON (`find-slot: queued 2m10s · ran 3s`).
+- `farmslot graph add-edge --condition published` adds a stack edge: the target node starts on top of the source node's published PR.
 - `farmslot update` and the onboarding doctor build and check `packages/recipe-runner` (renamed from `recipe-harness`).
 - Resolve existing task paths against the caller's working directory and send absolute paths. Upgrade the CLI on every node before upgrading the gateway, which rejects new relative task paths. Existing stored runs remain readable.
 

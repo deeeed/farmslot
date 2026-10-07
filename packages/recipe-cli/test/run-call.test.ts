@@ -25,6 +25,7 @@ import {
   type ActionExecutionContext,
   createRecipeRunner,
   createStandardCoreAdapters,
+  type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
 
@@ -45,6 +46,7 @@ import {
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
   describeRunnableRecipe,
@@ -73,6 +75,7 @@ import {
   emitHealViolation,
   executeWithHealBounds,
   prepareHeal,
+  runRecipe,
   synthesizeOneNodeRecipe,
 } from '../src/harness/run-engine.js';
 
@@ -194,7 +197,11 @@ const classifier: ConsoleClassifier<{ entries: unknown[]; problems: string[] }> 
 
 type ShopEngine = RecipeEngine<{ bound: string }, { entries: unknown[]; problems: string[] }>;
 
-function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
+function shopEngine(
+  libraryRoot: string,
+  calls: Calls,
+  recording?: (adapter: string) => RecipeRecordingOptions,
+): ShopEngine {
   return {
     bundledLibrary: { name: 'shop', root: libraryRoot, actionNamespace: 'shop' },
     async resolveActionManifest(adapter, overridePath, sources) {
@@ -269,6 +276,7 @@ function shopEngine(libraryRoot: string, calls: Calls): ShopEngine {
         defaultSource: { kind: 'operator', trust: 'trusted', name: 'shop-harness' },
         logger: { info() {}, warn() {}, error() {} },
         hud: false,
+        ...(recording ? { recording: recording(adapter) } : {}),
         runner: { source: 'worktree', name: 'Shop test', git_ref: 'a'.repeat(40) },
       });
     },
@@ -304,7 +312,7 @@ function shopAdapter(
       label: `${id}-server`,
       describe: () => `${id} dev server`,
       stop: () => ({ kind: 'stopped', status: 0, summary: `stopped ${id}` }),
-      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'], portFlags: ['bundlerPort'] } : {}),
+      ...(id === 'web' ? { portEnv: ['SHOP_BUNDLER_PORT'] } : {}),
     },
     logSources: () => [],
     appLogSource: () => null,
@@ -1493,6 +1501,163 @@ describe('run', () => {
     );
   });
 
+  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
+    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
+    assert.equal(bound.length, 4);
+    assert.deepEqual([bound[0], bound[2]], ['', '']);
+    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
+    assert.equal(bound[3], bound[1]);
+  });
+
+  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+    const target = checkout();
+    const base = engine.trustedMutation!;
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'slow', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const unbound = {
+      ...runOptions,
+      engine: {
+        ...engine,
+        trustedMutation: {
+          load: base.load,
+          authorize: async (
+            ...args: Parameters<typeof base.authorize>
+          ): Promise<{ bound: string } | undefined> => {
+            await base.authorize(...args);
+            return undefined;
+          },
+        },
+      },
+    };
+    const run = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--funding-token',
+          'grant',
+          '--json',
+        ],
+        unbound,
+      ),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    // Two preflights (before and after the checkout lock), one runner each, none bound.
+    assert.deepEqual(calls.runners, [
+      { adapter: 'web', trustTaskActions: true },
+      { adapter: 'web', trustTaskActions: true },
+    ]);
+    assert.deepEqual(calls.mutationHooks, [
+      'load:web',
+      'authorize:web',
+      'load:web',
+      'authorize:web',
+    ]);
+  });
+
+  test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
+    const seen: Array<string | undefined> = [];
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...webAdapter(calls),
+      resolveSlotPorts() {
+        seen.push(process.env.RECIPE_RUNTIME_DIR);
+      },
+    });
+    configureHarnessAdapters(registry);
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const common = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const run = await capture(() =>
+      handleRun([recipe, ...common, '--runtime-dir', 'temp/recipe/runtime-9301'], runOptions),
+    );
+    assert.equal(run.value, 0, run.stderr.join('\n'));
+    assert.ok(fs.existsSync(path.join(target, 'temp/recipe/runtime-9301')));
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const call = await capture(() =>
+      handleCall(
+        ['shop.ping', 'mode=fast', ...common, '--runtime-dir', 'temp/recipe/runtime-9302'],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.equal(seen[0], 'temp/recipe/runtime-9301');
+    assert.ok(
+      seen
+        .slice(0, seen.indexOf('temp/recipe/runtime-9302'))
+        .every((dir) => dir === 'temp/recipe/runtime-9301'),
+    );
+    assert.equal(seen.at(-1), 'temp/recipe/runtime-9302');
+
+    // --plan sees the same runtime directory, whether the flag or the
+    // environment selects it.
+    delete process.env.RECIPE_RUNTIME_DIR;
+    const planOptions = {
+      ...runOptions,
+      plan: {
+        steps: () => [
+          {
+            step: 'fixture.file',
+            confidence: 'static' as const,
+            status: 'ok' as const,
+            detail: `fixture in ${process.env.RECIPE_RUNTIME_DIR ?? 'the default runtime dir'}`,
+          },
+        ],
+        launchDetail: 'would open the shop',
+      },
+    };
+    const fixtureDetail = (lines: string[]) =>
+      (lastJson(lines).plan as Array<{ step: string; detail: string }>).find(
+        (step) => step.step === 'fixture.file',
+      )?.detail;
+    const byFlag = await capture(() =>
+      handleRun(
+        [recipe, '--plan', ...common, '--runtime-dir', 'temp/recipe/runtime-9303'],
+        planOptions,
+      ),
+    );
+    delete process.env.RECIPE_RUNTIME_DIR;
+    process.env.RECIPE_RUNTIME_DIR = 'temp/recipe/runtime-9303';
+    const byEnv = await capture(() => handleRun([recipe, '--plan', ...common], planOptions));
+    assert.equal(fixtureDetail(byFlag.stdout), 'fixture in temp/recipe/runtime-9303');
+    assert.equal(fixtureDetail(byEnv.stdout), fixtureDetail(byFlag.stdout));
+  });
+
   test('a run with a task dir records its proof targets in the acceptance ledger', async () => {
     const target = checkout();
     const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'shop-1');
@@ -1922,6 +2087,220 @@ describe('run', () => {
   });
 });
 
+describe('--record-video', () => {
+  const unsupported = {
+    code: 'RECORDING_UNSUPPORTED',
+    message: '--record-video is not implemented for the api adapter.',
+    userAction:
+      "rerun without --record-video; for visual evidence use the adapter's own screenshot action where its manifest has one, or an adapter that records: web",
+  };
+  let asked: string[];
+  let recorded: string[];
+  let recordingEngine: ShopEngine;
+
+  // `web` records; `api` has no `recording`. The engine's runner resolves the
+  // target through the harness provider and records with a fake recorder.
+  beforeEach(() => {
+    asked = [];
+    recorded = [];
+    const registry = createAdapterRegistry();
+    registry.register(
+      shopAdapter('web', calls, { recording: { target: async () => ({ kind: 'pid', pid: 1 }) } }),
+    );
+    registry.register(shopAdapter('api', calls));
+    configureHarnessAdapters(registry);
+    recordingEngine = shopEngine(library, calls, (adapter) => ({
+      targetProvider: {
+        resolveRecordingTarget(context) {
+          asked.push(adapter);
+          return createRecordingTargetProvider(adapter).resolveRecordingTarget(context);
+        },
+      },
+      videoRecorder: {
+        name: 'fake-recorder',
+        async start({ outputPath }) {
+          recorded.push(adapter);
+          fs.writeFileSync(outputPath, 'video');
+          return { stop: async () => ({}) };
+        },
+      },
+    }));
+  });
+
+  test('run refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifactsRoot = tempRoot('recipe-cli-record-');
+    const run = (adapter: string, ...flags: string[]) => {
+      const artifacts = path.join(artifactsRoot, `${adapter}${flags.join('')}`);
+      return capture(() =>
+        handleRun(
+          [recipe, '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', artifacts],
+            flags,
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    };
+
+    const json = await run('api', '--record-video=full-run', '--json');
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await run('api', '--record');
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ run: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    // No runner, so no node ran and no recording target was asked for.
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
+    assert.deepEqual(fs.readdirSync(artifactsRoot), []);
+
+    const off = await run('api', '--record-video=off', '--json');
+    assert.equal(off.value, 0, off.stderr.join('\n'));
+    assert.deepEqual(asked, []);
+    const supported = await run('web', '--record-video=full-run', '--json');
+    assert.equal(supported.value, 0, supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
+  });
+
+  test('run --json-stream reports the refusal as an error event and a failed completion', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const streamed = await capture(() =>
+      handleRun(
+        [recipe, '--adapter', 'api', '--target', target, '--record-video', '--json-stream'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(streamed.value, 2);
+    const events = streamed.stdout
+      .join('')
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(
+      events.map((event) => [event.event, event.phase ?? event.status]),
+      [
+        ['phase', 'resolve'],
+        ['error', undefined],
+        ['complete', 'fail'],
+      ],
+    );
+    assert.deepEqual(events[1]?.error, unsupported);
+    assert.equal(events[2]?.exitCode, 2);
+    assert.deepEqual(calls.runners, []);
+  });
+
+  test('run --plan refuses it like the run, and plans it on an adapter that records', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const plan = (adapter: string) =>
+      capture(() =>
+        handleRun(
+          [recipe, '--plan', '--adapter', adapter, '--target', target, '--record-video', '--json'],
+          { engine: recordingEngine },
+        ),
+      );
+    const refused = await plan('api');
+    assert.equal(refused.value, 2);
+    const envelope = lastJson(refused.stdout);
+    assert.equal(envelope.mode, 'plan');
+    assert.deepEqual(envelope.error, unsupported);
+    assert.equal(envelope.plan, undefined);
+    const planned = await plan('web');
+    assert.equal(planned.value, 0, planned.stderr.join('\n'));
+    assert.equal(lastJson(planned.stdout).status, 'pass');
+  });
+
+  test('a run that reaches the missing target fails as a bounded capability refusal, not app logic', async () => {
+    // Programmatic callers skip the run/call preflight: the runner asks the
+    // harness provider, which throws, and the heal bounds classify the failure.
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const artifacts = path.join(tempRoot('recipe-cli-record-'), 'artifacts');
+    const { result, violation } = await executeWithHealBounds(
+      () =>
+        runRecipe(recordingEngine, 'api', recipe, artifacts, target, undefined, {
+          recordVideo: 'full-run',
+        }),
+      target,
+      newHealState(),
+    );
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(asked, ['api']);
+    assert.deepEqual(recorded, []);
+    assert.deepEqual(violation, {
+      ...unsupported,
+      exitCode: 4,
+      originalError: unsupported.message,
+    });
+  });
+
+  test('call refuses it before execution on an adapter that cannot record', async () => {
+    const target = checkout();
+    const json = await capture(() =>
+      handleCall(
+        ['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record-video', '--json'],
+        {
+          engine: recordingEngine,
+        },
+      ),
+    );
+    assert.equal(json.value, 2);
+    const envelope = lastJson(json.stdout);
+    assert.equal(envelope.exitCode, 2);
+    assert.deepEqual(envelope.error, unsupported);
+    const human = await capture(() =>
+      handleCall(['command', 'cmd=true', '--adapter', 'api', '--target', target, '--record'], {
+        engine: recordingEngine,
+      }),
+    );
+    assert.equal(human.value, 2);
+    assert.deepEqual(human.stderr, [
+      `✗ call: ${unsupported.message}`,
+      `  Next: ${unsupported.userAction}`,
+    ]);
+    assert.deepEqual(calls.runners, []);
+    assert.deepEqual(asked, []);
+
+    const call = (adapter: string, flag: string) =>
+      capture(() =>
+        handleCall(
+          ['command', 'cmd=pwd', '--adapter', adapter, '--target', target, '--heal', 'off'].concat(
+            ['--artifacts-dir', path.join(tempRoot('recipe-cli-call-record-'), 'artifacts')],
+            [flag, '--json'],
+          ),
+          { engine: recordingEngine },
+        ),
+      );
+    // After the action, call reads every `key=value` token as an action input,
+    // `--record-video=off` included (a known parser gap): it fails validation as
+    // an unknown input, never as a recording refusal, and records nothing.
+    const off = await call('api', '--record-video=off');
+    assert.equal(off.value, 5);
+    const offEnvelope = lastJson(off.stdout);
+    assert.equal((offEnvelope.error as { code?: string }).code, 'RECIPE_VALIDATION_FAILED');
+    assert.deepEqual(offEnvelope.args, { cmd: 'pwd', '--record-video': 'off' });
+    assert.equal(
+      (offEnvelope.findings as Array<{ code: string }>)[0]?.code,
+      'recipe.unknown_param',
+    );
+    assert.deepEqual(asked, []);
+    const supported = await call('web', '--record-video');
+    assert.equal(supported.value, 0, supported.stdout.join('\n') + supported.stderr.join('\n'));
+    assert.deepEqual(asked, ['web']);
+    assert.deepEqual(recorded, ['web']);
+  });
+});
+
 describe('refusal and failure envelopes', () => {
   function lockCheckout(prefix: string): string {
     const target = tempRoot(prefix);
@@ -2027,13 +2406,13 @@ describe('call', () => {
     const artifacts = tempRoot('recipe-cli-call-artifacts-');
     const call = await capture(() =>
       handleCall(
-        // The adapter's port flag takes a value, so `port=8099` is not an action input.
+        // --slot takes a value, so `lane=7` is not an action input.
         [
           'ping',
           'mode=fast',
           'password=hunter2',
-          '--bundler-port',
-          'port=8099',
+          '--slot',
+          'lane=7',
           '--adapter',
           'web',
           '--target',
@@ -2056,7 +2435,7 @@ describe('call', () => {
     assert.deepEqual(calls.runners.at(-1), { adapter: 'web', trustTaskActions: true });
   });
 
-  test('binds the trusted mutation the engine loads from the command line to the plan', async () => {
+  test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
     const target = checkout();
     const call = await capture(() =>
       handleCall(
@@ -2077,12 +2456,9 @@ describe('call', () => {
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
-    const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
-    assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['', '']);
-    assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
-    assert.equal(bound[3], bound[1]);
+    assert.equal(calls.runners.length, 2);
+    assert.ok(calls.runners.every((runner) => runner.trustedMutation === undefined));
+    assert.deepEqual(calls.mutationHooks, ['load:web', 'load:web']);
   });
 
   test("writes under the task's artifacts like run, each call in its own directory", async () => {
@@ -2207,21 +2583,19 @@ describe('call', () => {
     assert.match(failure.originalError, /^Command exited with \d+: --version\n/u);
   });
 
-  test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
+  test('binds a mutation that load returns for the adapter alone, as a fixture policy does', async () => {
     const target = checkout();
     const base = engine.trustedMutation!;
-    const unbound = {
+    const byAdapter = {
       ...callOptions,
       engine: {
         ...engine,
         trustedMutation: {
-          load: base.load,
-          authorize: async (
-            ...args: Parameters<typeof base.authorize>
-          ): Promise<{ bound: string } | undefined> => {
-            await base.authorize(...args);
-            return undefined;
+          load: async (input: Parameters<typeof base.load>[0]) => {
+            calls.mutationHooks.push(`load:${input.adapter}`);
+            return input.adapter === 'web' ? { bound: 'policy' } : undefined;
           },
+          authorize: base.authorize,
         },
       },
     };
@@ -2236,25 +2610,18 @@ describe('call', () => {
           target,
           '--heal',
           'off',
-          '--funding-token',
-          'grant',
           '--json',
         ],
-        unbound,
+        byAdapter,
       ),
     );
     assert.equal(call.value, 0, call.stderr.join('\n'));
-    // Two preflights (before and after the checkout lock), one runner each, none bound.
-    assert.deepEqual(calls.runners, [
-      { adapter: 'web', trustTaskActions: true },
-      { adapter: 'web', trustTaskActions: true },
-    ]);
-    assert.deepEqual(calls.mutationHooks, [
-      'load:web',
-      'authorize:web',
-      'load:web',
-      'authorize:web',
-    ]);
+    assert.deepEqual([...new Set(calls.mutationHooks)], ['load:web', 'authorize:web']);
+    assert.ok(
+      calls.runners.some((runner) =>
+        /^policy@sha256:[0-9a-f]{8}$/u.test(String(runner.trustedMutation)),
+      ),
+    );
   });
 
   test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
@@ -2312,9 +2679,10 @@ describe('call', () => {
         0,
         `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
       );
+      // A call's load gets no command line, so it loads nothing to authorize.
       assert.deepEqual(
         [...new Set(calls.mutationHooks)],
-        [`load:${adapter}`, `authorize:${adapter}`],
+        name.startsWith('call') ? [`load:${adapter}`] : [`load:${adapter}`, `authorize:${adapter}`],
         name,
       );
     }

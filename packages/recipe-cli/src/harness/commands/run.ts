@@ -24,6 +24,7 @@ import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
 import {
+  applyRuntimeDirOption,
   type CliOptions,
   isRecord,
   optionFlag,
@@ -36,6 +37,7 @@ import {
   usageError,
 } from '../parse-args.js';
 import { validateRunRecipeStatic } from '../recipe-validation.js';
+import { recordingUnsupported } from '../recording-target.js';
 import {
   type ConsoleAllowlist,
   formatRunDiagnosticsForHuman,
@@ -310,6 +312,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     return handleDescribeRecipe(targetRecipe, options, { catalog: engine });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
+  // The runtime directory names where the slot's context and the run's runtime
+  // state live, so it applies before the plan and before the slot resolves.
+  applyRuntimeDirOption(options);
   if (optionFlag(options, 'plan')) {
     return handleRunPlan(targetRecipe, params, options, stream, commandOptions);
   }
@@ -328,6 +333,18 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       return EXIT.usage;
     }
     return usageOut(jsonOutput, 'run', message, userAction);
+  }
+  const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
+  if (recording) {
+    return emitRunUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      targetRecipe,
+      recording.code,
+      recording.message,
+      recording.userAction,
+    );
   }
   writeInteractiveProgress(machine, `→ recipe run — validating ${targetRecipe} · ${adapter}`);
   harnessAdapter(adapter).resolveSlotPorts(target);
@@ -763,6 +780,18 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
   const { adapter, target } = resolveAdapter(options);
 
   stream.phase('resolve', { adapter, target, recipe: recipeArg });
+  const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
+  if (recording) {
+    return emitPlanUsageError(
+      jsonOutput,
+      stream,
+      adapter,
+      recipeArg,
+      recording.code,
+      recording.message,
+      recording.userAction,
+    );
+  }
   stream.phase('validate');
   const validated = await validateRunRecipeStatic(engine, recipeArg, adapter, options, params);
   if (validated.usageError) {

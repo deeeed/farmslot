@@ -5,10 +5,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `RunStep.queuedMs`, `RunStep.queuedSince` and `RunStep.lastProgressAt` (optional): time a step waited for a slot, a resource claim or the dispatch queue, when its current wait began (an open wait counts as queue time until it ends), and when it last made real progress. `Run.queuedAt` (optional): when the dispatch-queue item that created the run was queued. `RunResourceWait.heldStep` (optional): the run step a capability-claim wait holds up, fixed when the wait starts. `runStepQueuedMs` gives a step's queue time including an open wait on a running step, `closeStepWait` closes that wait into `queuedMs` when the step stops, `runStepExecutionMs` its execution time (duration or elapsed minus the waits inside it); `runDispatchQueueWaitMs` the wait before the run existed. Existing stored runs remain readable.
+- `RunEngineState.reviewedInputs` (optional): fingerprint of the slot HEAD, PR description and evidence files the last passing self-review was given, when it was recorded, and `rerunFor`, the changed state self-review already ran again for. `RunEngineState.reviewInputsAtLaunch` (optional): the same fingerprint taken when the latest review document was written. Existing stored runs remain readable.
+- Work-graph edge condition `published` and optional `Run.stack` (`RunStack`) for stacked runs: the upstream node, run, PR and head branch a run starts from, the commit it branched at, and the base its PR was moved to after the upstream merged. Existing stored runs and graphs remain readable.
 - `Run.statusChangedAt` (optional): when the run's status last changed, stamped by the gateway. Absent on older runs.
 - The acceptance contract's comments name both writers of `artifacts/acceptance-status.json` (`farmslot-agent ac` and recipe runs with a task dir). No type or behavior change.
 - `catalogDefaultRunMode` derives the omitted run mode from execution-template `defaults`: a flow with an interactive rule and a general rule defaults to autonomous, the same rule a default worker template with an interactive sibling follows.
 - Register the `artifactView` Command Center link parameter, which marks an artifact opened in the step inspector's own viewer.
+- `RunProbeWorkerSignalResult` gains `resumable` (set on a blocked run): the signal lets `run resume` continue it.
 
 ## 0.34.0 - 2026-10-02
 

@@ -48,6 +48,7 @@ export const STEPS = [
     'role template mark guard',
     ['node', '--test', 'scripts/quality/role-template-mark-guard.test.mjs'],
   ],
+  ['no real tmux in tests', ['node', '--test', 'scripts/quality/no-real-tmux-in-tests.test.mjs']],
   [
     'quality gate instrumentation tests',
     ['node', '--test', 'scripts/quality/run-quality.test.mjs'],
