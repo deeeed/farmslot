@@ -1787,6 +1787,16 @@ function schedulerTickLocked(
         const latestRun = node.latestRunId
           ? runs.find((candidate) => candidate.id === node.latestRunId)
           : undefined;
+        // A stacked node's open PR is kept off a merged base whatever state the
+        // node is in (failed, held after an operator cancel, waiting on a
+        // resource): nextStackStep checks the run, its stack and the merge.
+        const stackUpstream = stackUpstreamId(snapshot, node);
+        if (stackUpstream) {
+          const job =
+            stackRetargetJob(snapshot, node, runs, operatorTargeted) ??
+            (operatorTargeted ? stackObserveJob(snapshot, node, runs) : null);
+          if (job) retargets.push(job);
+        }
         if (isOperatorCancelledRun(latestRun)) {
           node.status = 'needs-attention';
           node.waitingOn = [
@@ -1828,18 +1838,9 @@ function schedulerTickLocked(
         // A `merged` rebase edge from the node this one stacks on retargets its
         // PR and does not hold the node; every other rebase edge keeps the
         // operator path.
-        const stackUpstream = stackUpstreamId(snapshot, node);
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound).filter(
           (edge) => !isStackRebaseEdge(edge, stackUpstream),
         );
-        // Any node status: a run that failed after publishing still owns an open
-        // stacked PR. nextStackStep checks the run, its stack and the merge.
-        if (stackUpstream) {
-          const job =
-            stackRetargetJob(snapshot, node, runs, operatorTargeted) ??
-            (operatorTargeted ? stackObserveJob(snapshot, node, runs) : null);
-          if (job) retargets.push(job);
-        }
         if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
           try {
             await executeNodeUnlock(snapshot, node, completionRebaseInbound, now, unlockOptions);
