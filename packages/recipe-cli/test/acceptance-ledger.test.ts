@@ -12,6 +12,17 @@ import {
   recordRecipeAcceptance,
 } from '../src/harness/acceptance-ledger.js';
 
+// Temp directories this file makes, removed when its tests end.
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 const require = createRequire(import.meta.url);
 const shared = require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as {
   setAcceptanceVerdict(taskDir: string, input: Record<string, unknown>): unknown;
@@ -31,7 +42,7 @@ function taskRun(options: {
   /** Write the trace as a bare array of entries, the other shape the protocol allows. */
   bareTrace?: boolean;
 }): { target: string; taskDir: string; result: { recipePath: string; tracePath: string } } {
-  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-acceptance-'));
+  const target = tempDir('recipe-cli-acceptance-');
   const taskDir = path.join(target, 'temp', 'tasks', 'feat', 'tat-1');
   const artifacts = path.join(taskDir, 'artifacts');
   fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });

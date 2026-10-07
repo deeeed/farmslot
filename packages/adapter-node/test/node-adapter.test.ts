@@ -18,6 +18,17 @@ import {
   yarnInstallCommand,
 } from '../src/index.js';
 
+// Temp directories this file makes, removed when its tests end.
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 const BASE: NodeAdapterConfig = {
   id: 'core',
   hints: {
@@ -38,7 +49,7 @@ const BASE: NodeAdapterConfig = {
 };
 
 function checkout(files: Record<string, string> = {}): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-surface-'));
+  const root = tempDir('adapter-node-surface-');
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);
@@ -207,7 +218,7 @@ test('run.dependencyBlock checks the host runtime deps when the run needs them',
 
 test('workspacePackages wire tsx live scripts unless the host set its own', async () => {
   const root = checkout({ 'packages/messenger/src/index.ts': '' });
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-node-surface-tmp-'));
+  const temp = tempDir('adapter-node-surface-tmp-');
   const adapter = createNodeAdapter({
     ...BASE,
     workspacePackages: { '@acme/messenger': 'packages/messenger' },

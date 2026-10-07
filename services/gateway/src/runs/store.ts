@@ -13,7 +13,6 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -50,6 +49,7 @@ import {
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
@@ -108,7 +108,7 @@ export function shouldUseIsolatedRunsDir(env: NodeJS.ProcessEnv, argv: readonly 
 function resolveRunsDir(): string {
   if (process.env.FARMSLOT_RUNS_DIR) return process.env.FARMSLOT_RUNS_DIR;
   if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
-    return path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`);
+    return isolatedTestPath('farmslot-test-runs');
   }
   return path.join(farmslotRoot, '.runs');
 }

@@ -1,11 +1,11 @@
 // eval-suite-cap-store.ts — Durable eval matrix concurrency caps
 
 import { readFile, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { isTerminalRunStatus, type QueueItem } from '@farmslot/protocol';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { getAllRuns } from '../runs/store.js';
 
@@ -26,7 +26,7 @@ function shouldUseIsolatedEvalCapStore(env: NodeJS.ProcessEnv, argv: readonly st
 function resolveEvalCapFile(): string {
   if (process.env.FARMSLOT_EVAL_SUITE_CAP_FILE) return process.env.FARMSLOT_EVAL_SUITE_CAP_FILE;
   if (shouldUseIsolatedEvalCapStore(process.env, process.argv)) {
-    return path.join(os.tmpdir(), `farmslot-test-eval-suite-caps-${process.pid}.json`);
+    return isolatedTestPath('farmslot-test-eval-suite-caps', '.json');
   }
   return path.join(farmslotRoot, '.eval-suite-caps.json');
 }

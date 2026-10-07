@@ -3,7 +3,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -56,6 +55,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import {
@@ -195,7 +195,7 @@ function shouldUseIsolatedBacklogFile(env: NodeJS.ProcessEnv, argv: readonly str
 function resolveBacklogFile(): string {
   if (process.env.FARMSLOT_BACKLOG_FILE) return process.env.FARMSLOT_BACKLOG_FILE;
   if (shouldUseIsolatedBacklogFile(process.env, process.argv)) {
-    return path.join(os.tmpdir(), `farmslot-test-backlog-${process.pid}.json`);
+    return isolatedTestPath('farmslot-test-backlog', '.json');
   }
   return path.join(farmslotRoot, '.backlog.json');
 }

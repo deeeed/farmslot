@@ -19,6 +19,7 @@ import {
   type RunStep,
 } from '@farmslot/protocol';
 
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
 
 import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
@@ -37,7 +38,7 @@ function analyticsDir(): string {
   if (process.env.FARMSLOT_ANALYTICS_DIR) {
     _analyticsDir = process.env.FARMSLOT_ANALYTICS_DIR;
   } else if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
-    _analyticsDir = path.join(os.tmpdir(), `farmslot-test-analytics-${process.pid}`);
+    _analyticsDir = isolatedTestPath('farmslot-test-analytics');
   } else {
     _analyticsDir = path.join(farmslotRoot, '.runs', 'analytics');
   }

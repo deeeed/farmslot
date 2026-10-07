@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -43,6 +42,7 @@ import {
   markBacklogItemNeedsAttention,
   markBacklogItemReady,
 } from '../backlog/store.js';
+import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
@@ -72,7 +72,7 @@ function shouldUseIsolatedGraphDir(env: NodeJS.ProcessEnv, argv: readonly string
 function resolveGraphDir(): string {
   if (process.env.FARMSLOT_WORK_GRAPH_DIR) return process.env.FARMSLOT_WORK_GRAPH_DIR;
   if (shouldUseIsolatedGraphDir(process.env, process.argv)) {
-    return path.join(os.tmpdir(), `farmslot-test-work-graphs-${process.pid}`);
+    return isolatedTestPath('farmslot-test-work-graphs');
   }
   return path.join(farmslotRoot, '.work-graphs');
 }

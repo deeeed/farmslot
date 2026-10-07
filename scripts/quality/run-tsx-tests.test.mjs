@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -21,6 +22,7 @@ import {
   classifyTest,
   discoverTests,
   finish,
+  knownLeakerNotice,
   parseArgs,
   partitionTests,
   resolveWorkers,
@@ -28,6 +30,7 @@ import {
   summaryLines,
   TEST_STATUS_ENV,
   testCommand,
+  tmpdirLeakFailure,
   verifyAssignment,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
@@ -856,6 +859,7 @@ test('records its tmux environment', async () => {
     TMUX_PANE: process.env.TMUX_PANE ?? null,
     TMUX_TMPDIR: process.env.TMUX_TMPDIR ?? null,
     FARMSLOT_TMUX_SANDBOX: process.env.FARMSLOT_TMUX_SANDBOX ?? null,
+    TMPDIR: process.env.TMPDIR ?? null,
   }));
   ${testBody}
 });
@@ -917,5 +921,141 @@ test(
       false,
       'the interrupted run removes its sandbox directory',
     );
+  },
+);
+
+test('a test file that leaves something in its TMPDIR fails, unless it is a known leaker', () => {
+  const known = new Set(['gateway/src/known.test.ts']);
+  assert.equal(tmpdirLeakFailure('gateway/src/clean.test.ts', [], known), null);
+  assert.match(
+    tmpdirLeakFailure('gateway/src/new.test.ts', ['probe-AbC123'], known),
+    /gateway\/src\/new\.test\.ts left 1 entry in its TMPDIR: probe-AbC123/,
+  );
+  assert.equal(tmpdirLeakFailure('gateway/src/known.test.ts', ['old-leak'], known), null);
+  // A listed file that left nothing does not fail (it may leak only where a
+  // tool is installed), but says the list can shrink.
+  assert.equal(tmpdirLeakFailure('gateway/src/known.test.ts', [], known), null);
+  assert.match(
+    knownLeakerNotice('gateway/src/known.test.ts', [], known),
+    /left nothing in its TMPDIR this run: if it no longer leaks anywhere, remove it from KNOWN_TMPDIR_LEAKERS/,
+  );
+  assert.equal(knownLeakerNotice('gateway/src/known.test.ts', ['old-leak'], known), null);
+  assert.equal(knownLeakerNotice('gateway/src/clean.test.ts', [], known), null);
+});
+
+test('a test file runs with a private TMPDIR; what it leaves fails it and never reaches the real one', (t) => {
+  const { fixture, args, env } = sandboxFixture(
+    `const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  mkdtempSync(join(tmpdir(), 'leak-probe-'));`,
+  );
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const realTmp = tmpdir();
+  const before = new Set(readdirSync(realTmp).filter((entry) => entry.startsWith('leak-probe-')));
+
+  const run = spawnSync(process.execPath, args, { encoding: 'utf8', env });
+
+  assert.notEqual(run.status, 0, 'a file that leaks fails the run');
+  assert.match(`${run.stdout}${run.stderr}`, /left 1 entry in its TMPDIR: leak-probe-/);
+  const after = readdirSync(realTmp).filter((entry) => entry.startsWith('leak-probe-'));
+  assert.deepEqual(
+    after.filter((entry) => !before.has(entry)),
+    [],
+    'nothing reached the real TMPDIR',
+  );
+});
+
+test(
+  'an interrupted run stops its test processes before removing their TMPDIR',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    // The test keeps recreating a path under its TMPDIR (recursively, so the run
+    // directory too) until it is stopped.
+    const { fixture, report, env, args } = sandboxFixture(
+      `const { mkdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const dir = join(process.env.TMPDIR, 'still-writing');
+  setInterval(() => mkdirSync(dir, { recursive: true }), 20);
+  await new Promise((resolve) => setTimeout(resolve, 10000));`,
+    );
+    t.after(() => rmSync(fixture, { recursive: true, force: true }));
+    const runner = spawn(process.execPath, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    runner.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    for (let i = 0; i < 300 && !existsSync(report); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(report), 'the fixture test never started');
+    const runRoot = path.dirname(path.dirname(JSON.parse(readFileSync(report, 'utf8')).TMPDIR));
+
+    const signalledAt = Date.now();
+    runner.kill('SIGTERM');
+    assert.equal(await closed, 'SIGTERM');
+    // The test process stops promptly: no wait-out of the deadline, no false timeout.
+    const shutdownMs = Date.now() - signalledAt;
+    assert.ok(shutdownMs < 3000, `shutdown took ${shutdownMs} ms`);
+    assert.doesNotMatch(stderr, /did not exit/);
+    // Long enough for a surviving test process to recreate the path.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const survived = existsSync(runRoot);
+    rmSync(runRoot, { recursive: true, force: true });
+    assert.equal(survived, false, 'a test process outlived the run and recreated its TMPDIR');
+  },
+);
+
+test(
+  'an interrupted run starts no further test file',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    t.after(() => rmSync(fixture, { recursive: true, force: true }));
+    const started = path.join(fixture, 'a-started');
+    const second = path.join(fixture, 'b-started');
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // One lane, a then b: a holds the run open until the runner is signalled.
+    writeFileSync(
+      path.join(fixture, 'src', 'a.test.ts'),
+      `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('a', async () => {
+  writeFileSync(${JSON.stringify(started)}, '');
+  await new Promise((resolve) => setTimeout(resolve, 10000));
+});
+`,
+    );
+    writeFileSync(
+      path.join(fixture, 'src', 'b.test.ts'),
+      `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
+`,
+    );
+    const runner = spawn(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '1', 'src'],
+      { stdio: 'ignore' },
+    );
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    for (let i = 0; i < 300 && !existsSync(started); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(started), 'the first test file never started');
+
+    runner.kill('SIGTERM');
+    assert.equal(await closed, 'SIGTERM');
+    // Long enough for a file the runner wrongly started to run.
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    assert.equal(existsSync(second), false, 'the interrupted run started another test file');
   },
 );
