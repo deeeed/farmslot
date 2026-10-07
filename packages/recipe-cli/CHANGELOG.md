@@ -4,7 +4,9 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add `afterAdapterLoad(adapterId)` to `createHarnessCli`. It runs once the adapter a command selects has loaded and its plugin record is set, before passthrough help, `call <action> --help` and dispatch, for a host check that needs the loaded plugin (mm-harness fences a web-dapp venue policy there). A refusal it throws (`AdapterPluginError`, `RecipeTrustError`, `RecipeResolutionError`) prints like a loader refusal, exit 2; any other error goes to the error mapper.
+- Add `explainInvalidChoice` to `validatePublicInvocation`'s options and to `createHarnessCli`. When an option value fails its choices, the host can return its own usage error (for an adapter that lives in a recipe library the operator hasn't added); null keeps `CLI_INVALID_OPTION_VALUE`, byte for byte. The argument type is exported as `InvalidChoice`.
+  - `CliUsageError.code` is now `CliUsageErrorCode | (string & {})`, so a host's own code type-checks. A consumer that switches exhaustively on the code with a `never` check needs a default branch; no known consumer does.
 
 ## 0.8.0 - 2026-10-07
 
