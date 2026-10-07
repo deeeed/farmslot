@@ -46,6 +46,7 @@ import {
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  countRecipeNodes,
   createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
@@ -62,7 +63,6 @@ import {
   type RecipeEngine,
   recipeRuntimePath,
   resolveLibrarySources,
-  resolveRecipeParamValue,
   type RunCommandOptions,
   runnableLibraryRecipes,
   runNetworkCaptureAction,
@@ -601,6 +601,29 @@ describe('engine door', () => {
     assert.match(first, /\/temp\/recipe\/calls\/shop\.ping-/u);
   });
 
+  test('counts a v1 node graph (a call node once) and the arrays older recipes kept', () => {
+    const v1 = {
+      workflow: {
+        entry: 'session',
+        nodes: {
+          session: { action: 'call', ref: 'shop.session', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    };
+    assert.equal(countRecipeNodes(v1), 2);
+    assert.equal(countRecipeNodes({ workflow: { entry: 'a', nodes: {} } }), 0);
+    assert.equal(
+      countRecipeNodes({ workflow: { setup: [{ id: 'a' }], main: [{ id: 'b' }, { id: 'c' }] } }),
+      3,
+    );
+    assert.equal(countRecipeNodes({ nodes: [1, 2] }), 2);
+    assert.equal(countRecipeNodes({ steps: [1] }), 1);
+    for (const shapeless of [{}, { workflow: { entry: 'a' } }, 'recipe', null]) {
+      assert.equal(countRecipeNodes(shapeless), undefined);
+    }
+  });
+
   test('a failed execution runs once and records no hidden recovery', async () => {
     const root = tempRoot('recipe-cli-heal-');
     const tracePath = path.join(root, 'trace.json');
@@ -728,20 +751,6 @@ describe('engine door', () => {
 });
 
 describe('recipe validation', () => {
-  test('resolves exact parameter templates only when the parameter exists', () => {
-    assert.deepEqual(
-      resolveRecipeParamValue(
-        {
-          a: '{{params.count}}',
-          b: ['{{params.nested.value}}', '{{params.missing}}'],
-          c: 'x {{params.count}}',
-        },
-        { count: 3, nested: { value: true } },
-      ),
-      { a: 3, b: [true, '{{params.missing}}'], c: 'x {{params.count}}' },
-    );
-  });
-
   test("runs the adapter's input checks on every node after parameters resolve", () => {
     const recipe = {
       workflow: {
@@ -761,6 +770,9 @@ describe('recipe validation', () => {
       },
     ]);
     assert.deepEqual(validateActionInputs(recipe, 'web', { count: 2 }), []);
+    // A missing parameter is not a resolution error here: the node keeps the
+    // reference, and the parameter check reports the missing value.
+    assert.deepEqual(validateActionInputs(recipe, 'web', {}), []);
     assert.deepEqual(validateActionInputs(recipe, 'unregistered', { count: 5 }), []);
     assert.deepEqual(validateActionInputs({ workflow: {} }, 'web'), []);
   });
@@ -809,6 +821,30 @@ describe('recipe validation', () => {
     const output = plan.stdout.join('\n');
     assert.match(output, /⚠ recipe\.command_pipe_masks_exit workflow\.nodes\.unit\.cmd — /u);
     assert.match(output, /⚠ recipe\.test_command_exit_code_only workflow\.nodes\.unit — /u);
+
+    // The command a parameter supplies is checked after static resolution.
+    const parameterized = recipeFile(target, {
+      unit: { action: 'command', cmd: '{{params.cmd}}', intent: 'Run tests.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const resolved = await validateRunRecipeStatic(
+      engine,
+      parameterized,
+      'web',
+      { target },
+      {
+        cmd: 'yarn test | tail -5',
+      },
+    );
+    assert.deepEqual(
+      resolved.findings
+        .filter((finding) => finding.severity === 'warning')
+        .map((finding) => [finding.severity, finding.code]),
+      [
+        ['warning', 'recipe.command_pipe_masks_exit'],
+        ['warning', 'recipe.test_command_exit_code_only'],
+      ],
+    );
   });
 
   test('a bare action name is not a recipe: the hint is the call that runs it', async () => {

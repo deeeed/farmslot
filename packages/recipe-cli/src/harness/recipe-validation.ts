@@ -20,6 +20,7 @@ import {
   type RecipeLibrarySource,
   RecipeResolutionError,
   resolveRecipeDependencies,
+  resolveRecipeValue,
   validateRecipeDependencyParams,
 } from '@farmslot/recipe-runner';
 
@@ -39,23 +40,10 @@ import {
 import { resolveLibrarySources, resolveRunRecipeArg } from './recipe-library.js';
 import { type ProofDocument, validateRuntimeProofPlan } from './runtime-proof.js';
 
-/** `value` with every exact `{{params.<path>}}` string replaced by the parameter it names, when present. */
-export function resolveRecipeParamValue(value: unknown, params: Record<string, unknown>): unknown {
-  if (typeof value === 'string') {
-    const exact = /^\{\{params\.([A-Za-z0-9_.-]+)\}\}$/u.exec(value);
-    if (!exact) return value;
-    let current: unknown = params;
-    for (const segment of exact[1]!.split('.')) {
-      if (!isRecord(current) || !Object.hasOwn(current, segment)) return value;
-      current = current[segment];
-    }
-    return current;
-  }
-  if (Array.isArray(value)) return value.map((entry) => resolveRecipeParamValue(entry, params));
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, resolveRecipeParamValue(entry, params)]),
-  );
+// Static validation sees parameters as the runner's lenient view: exact
+// references to parameters that exist, everything else as written.
+function resolveStaticParams(value: unknown, params: Record<string, unknown>): unknown {
+  return resolveRecipeValue(value, params, undefined, { lenient: true });
 }
 
 /** The adapter's `actions.inputFindings` on every workflow node, with parameters resolved. */
@@ -71,7 +59,7 @@ export function validateActionInputs(
   const actions = registry.has(adapter) ? registry.get(adapter).actions : undefined;
   const findings: RecipeValidationFinding[] = [];
   for (const [nodeId, rawNode] of Object.entries(nodes)) {
-    const node = params ? resolveRecipeParamValue(rawNode, params) : rawNode;
+    const node = params ? resolveStaticParams(rawNode, params) : rawNode;
     if (!isRecord(node)) continue;
     findings.push(...(actions?.inputFindings?.(nodeId, node) ?? []));
   }
@@ -144,14 +132,11 @@ export async function validateRecipeAdapterAware(
   const findings = [
     ...withManifest.findings,
     ...(withManifest.status === 'valid' && params
-      ? validateRecipeWithManifest(
-          resolveRecipeParamValue(recipe, params),
-          manifest,
-          validationOptions,
-        ).findings
+      ? validateRecipeWithManifest(resolveStaticParams(recipe, params), manifest, validationOptions)
+          .findings
       : []),
     ...validateActionInputs(recipe, adapter, params),
-    ...validateCommandNodes(params ? resolveRecipeParamValue(recipe, params) : recipe),
+    ...validateCommandNodes(params ? resolveStaticParams(recipe, params) : recipe),
   ];
   if (withManifest.status === 'valid' && isRecord(recipe) && libraryResolution) {
     try {
@@ -190,7 +175,7 @@ export async function validateRecipeAdapterAware(
         )
           return;
         for (const rawNode of Object.values(document.workflow.nodes)) {
-          const node = resolveRecipeParamValue(rawNode, parentParams);
+          const node = resolveStaticParams(rawNode, parentParams);
           if (!isRecord(node) || node.action !== 'call' || typeof node.ref !== 'string') continue;
           const dependency = dependencies.recipes.get(normalizeRecipeRef(node.ref));
           if (!dependency) continue;
@@ -201,7 +186,7 @@ export async function validateRecipeAdapterAware(
           );
           findings.push(
             ...validateRecipeWithManifest(
-              resolveRecipeParamValue(dependency.document, childParams),
+              resolveStaticParams(dependency.document, childParams),
               manifest,
               validationOptions,
             ).findings,

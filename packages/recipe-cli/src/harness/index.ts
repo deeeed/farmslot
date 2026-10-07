@@ -271,7 +271,6 @@ export {
   type RunnableRecipeDetail,
 } from './recipe-library.js';
 export {
-  resolveRecipeParamValue,
   type RunRecipeStaticValidation,
   validateActionInputs,
   validateCommandNodes,
@@ -305,6 +304,7 @@ export {
 } from './run-diagnostics.js';
 export {
   activateRecipeRuntimeEnvironment,
+  countRecipeNodes,
   preflightRecipe,
   type PreparedRecipeExecution,
   type RecipeEngine,
