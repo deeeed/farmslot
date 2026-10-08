@@ -169,6 +169,44 @@ test('recipe-library.json keys are optional and declared paths stay inside the l
   await assert.rejects(readRecipeLibraryManifest(root), /must be a semver range/u);
 });
 
+test("an adapter declaration's detect is data the host matches before loading the plugin", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-detect-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createLibrary(root, {});
+  await mkdir(path.join(root, 'plugins'), { recursive: true });
+  await writeFile(path.join(root, 'plugins', 'web.mjs'), 'export default {};\n');
+  const detect = {
+    remote: ['va-mmcx-terminal'],
+    files: ['src/features/perpetuals/', 'package.json'],
+    packageDependencies: ['next'],
+  };
+  await writeJsonFile(path.join(root, 'recipe-library.json'), {
+    adapters: { web: { module: './plugins/web.mjs', detect: { ...detect, ignored: true } } },
+  });
+  assert.deepEqual(await readRecipeLibraryManifest(root), {
+    adapters: { web: { module: './plugins/web.mjs', detect } },
+  });
+
+  for (const [bad, message] of [
+    ['remote', /adapters\.web\.detect must be an object/u],
+    [{ remote: 'va-mmcx-terminal' }, /adapters\.web\.detect\.remote must be/u],
+    [{ files: [''] }, /adapters\.web\.detect\.files must be/u],
+    [{ files: ['/etc/passwd'] }, /adapters\.web\.detect\.files must be/u],
+    [{ files: ['../outside'] }, /adapters\.web\.detect\.files must be/u],
+    [{ packageDependencies: [1] }, /adapters\.web\.detect\.packageDependencies must be/u],
+  ] as const) {
+    await writeJsonFile(path.join(root, 'recipe-library.json'), {
+      adapters: { web: { module: './plugins/web.mjs', detect: bad } },
+    });
+    await assert.rejects(readRecipeLibraryManifest(root), (error: unknown) => {
+      assert.ok(error instanceof RecipeResolutionError, JSON.stringify(bad));
+      assert.equal(error.code, 'RECIPE_LIBRARY_MANIFEST_INVALID');
+      assert.match(error.message, message);
+      return true;
+    });
+  }
+});
+
 test('library digests cover recipes, manifests and actions only', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-digest-'));
   t.after(() => rm(root, { recursive: true, force: true }));

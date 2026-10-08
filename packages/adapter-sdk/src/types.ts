@@ -73,8 +73,8 @@ export interface PlatformAdapter<
   // platform owns the rest and returns the exit code.
   launch(context: AdapterLaunchContext): Promise<number>;
   // How a host recognises this platform's checkout when --adapter is absent.
-  // Any adapter's remote match beats any adapter's file match; within a pass,
-  // registration order decides.
+  // Any adapter's remote match beats any adapter's file match, and an adapter
+  // beats one it extends; more than one left in a pass is ambiguous.
   detect?: AdapterDetect;
   // Positional platform targets this adapter accepts (`launch ios`), which also
   // select it when passed as --platform.

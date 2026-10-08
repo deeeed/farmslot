@@ -24,6 +24,7 @@ import {
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
+import { harnessContextField } from './context-state.js';
 import {
   captureExecutionProvenance,
   executionProvenanceDrift,
@@ -870,6 +871,7 @@ export function emitHealViolation(
         {
           schemaVersion: 1,
           command,
+          ...harnessContextField(),
           status: 'fail',
           recoverable: false,
           recovered: state.recovered,

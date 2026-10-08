@@ -10,6 +10,7 @@ import type { AdapterDoctorCheck } from '@farmslot/adapter-sdk';
 import { RECIPE_CLI_VERSION } from '../version.js';
 
 import { harnessAdapter } from './adapters.js';
+import { type HarnessContext, harnessContextField } from './context-state.js';
 import { harnessHost, hostEnvName } from './host.js';
 import { harnessExecutable } from './paths.js';
 import { adapterReadiness } from './readiness.js';
@@ -64,6 +65,8 @@ export interface DoctorReport {
   requiredChecks: RequiredDoctorChecks;
   adapter: string;
   target: string;
+  /** The invocation's resolved context, when createHarnessCli resolved one. */
+  context?: HarnessContext;
   runner: RunnerProvenance;
   manifestValidation: unknown;
   [field: string]: unknown;
@@ -94,6 +97,7 @@ const RESERVED_REPORT_KEYS = new Set([
   'requiredChecks',
   'adapter',
   'target',
+  'context',
   'runner',
   'manifestValidation',
   'ready',
@@ -162,6 +166,7 @@ export function createDoctorReport(
     requiredChecks,
     adapter,
     target,
+    ...harnessContextField(),
     runner: runnerProvenance(actionManifestPath, options.provenance),
     ...(options.fields
       ? hostReportFields(options.fields(target, adapter, environment))

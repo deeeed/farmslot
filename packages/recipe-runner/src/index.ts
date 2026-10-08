@@ -70,6 +70,7 @@ export {
   RECIPE_LIBRARY_DIRECTORIES,
   RECIPE_LIBRARY_MANIFEST_FILE,
   type RecipeLibraryAdapterDeclaration,
+  type RecipeLibraryAdapterDetect,
   type RecipeLibraryManifest,
   type RecipeLibraryRequirement,
   type RecipePackageVersions,

@@ -9,10 +9,11 @@ import type { AdapterPrepare, PlatformAdapter } from '@farmslot/adapter-sdk';
 import { READINESS_RECORD, type ReadinessRecord, type ReadinessStep } from '@farmslot/protocol';
 import { OperationOutputTail } from '@farmslot/recipe-runner/runtime/operation';
 
-import { detectAdapter, harnessAdapter, harnessAdapters } from '../adapters.js';
+import { harnessAdapter, harnessAdapters } from '../adapters.js';
 import { acquireCheckoutLock, trackCheckoutChild } from '../checkout-lock.js';
 import { color, stripAnsi } from '../cli-color.js';
 import { recordCommandStage } from '../command-journal.js';
+import { contextAdapter } from '../context-state.js';
 import { runnerProvenance, type RunnerProvenanceOptions } from '../doctor-report.js';
 import { harnessHost, hostEnvName } from '../host.js';
 import { failStream, JsonStreamWriter } from '../json-stream.js';
@@ -453,7 +454,7 @@ function resolvePlatform(
   target: string,
   usage: string,
 ): { surface: PlatformAdapter; prepare: AdapterPrepare } {
-  const platform = requested ?? detectAdapter(target);
+  const platform = requested ?? contextAdapter(target);
   const surface =
     platform && harnessAdapters().has(platform) ? harnessAdapter(platform) : undefined;
   const prepare = surface ? adapterReadiness(surface).prepare : undefined;

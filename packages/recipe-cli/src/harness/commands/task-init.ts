@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
-import { detectAdapter } from '../adapters.js';
+import { contextAdapter } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { harnessExecutable } from '../paths.js';
 import { EXIT } from '../shared.js';
@@ -31,7 +31,7 @@ function hostDefaults(argv: readonly string[], options: TaskInitCommandOptions):
     defaults.push('--mark-command', `${harnessExecutable()} checklist mark`);
   }
   if (!hasOption(argv, '--platform')) {
-    const adapter = detectAdapter(process.cwd());
+    const adapter = contextAdapter(process.cwd());
     if (adapter) defaults.push('--platform', adapter);
   }
   return defaults;

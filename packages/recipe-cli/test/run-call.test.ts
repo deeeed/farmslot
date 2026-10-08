@@ -62,10 +62,12 @@ import {
   ProvenanceDriftError,
   type RecipeEngine,
   recipeRuntimePath,
+  resolveHarnessContext,
   resolveLibrarySources,
   type RunCommandOptions,
   runnableLibraryRecipes,
   runNetworkCaptureAction,
+  setHarnessContext,
   validateActionInputs,
   validateCommandNodes,
   validateRunRecipeStatic,
@@ -547,12 +549,38 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
   for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+function emptyPoolDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-no-pools-'));
+  pools.push(dir);
+  return dir;
+}
+const pools: string[] = [];
+afterEach(() => {
+  for (const dir of pools.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// What createHarnessCli does before a command runs: resolve the invocation's
+// context, which the commands read for an adapter no flag names.
+async function withResolvedContext<T>(
+  tokens: readonly string[],
+  invoke: () => Promise<T>,
+): Promise<T> {
+  // An empty pool directory: the machine's own pools never reach the tests.
+  setHarnessContext(await resolveHarnessContext({ tokens, slotPoolDir: emptyPoolDir() }));
+  try {
+    return await invoke();
+  } finally {
+    setHarnessContext(undefined);
+  }
+}
 
 describe('engine door', () => {
   test('a one-node call recipe keeps its inputs but owns its structure', () => {
@@ -2904,34 +2932,43 @@ describe('call', () => {
     );
   });
 
-  test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
-    const registry = createAdapterRegistry();
-    registry.register({ ...webAdapter(calls), targets: ['storefront'] });
-    registry.register(shopAdapter('api', calls));
-    configureHarnessAdapters(registry);
-    const target = checkout();
-    fs.writeFileSync(path.join(target, 'shop.json'), '{}');
-    const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
-    const ping = recipeFile(target, {
-      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
-      done: { action: 'end', status: 'pass' },
-    });
-    const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
-      echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
-      done: { action: 'end', status: 'pass' },
-    });
-    const cases = {
+  describe('passes the adapter the command resolved to the trusted mutation hooks', () => {
+    // Each command shape is its own test, so each stays inside the test-speed budget.
+    function fixture() {
+      const registry = createAdapterRegistry();
+      registry.register({ ...webAdapter(calls), targets: ['storefront'] });
+      registry.register(shopAdapter('api', calls));
+      configureHarnessAdapters(registry);
+      const target = checkout();
+      fs.writeFileSync(path.join(target, 'shop.json'), '{}');
+      const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
+      const ping = recipeFile(target, {
+        ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      });
+      const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
+        echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      });
+      return { funded, ping, echo };
+    }
+    type Fixture = ReturnType<typeof fixture>;
+    const cases: Record<string, [string, (f: Fixture) => Promise<number>]> = {
       'call --adapter web': [
         'web',
-        () => handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
+        ({ funded }) =>
+          handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
       ],
       'call, detected': [
         'web',
-        () => handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+        ({ funded }) =>
+          withResolvedContext(funded, () =>
+            handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+          ),
       ],
       'call --platform storefront': [
         'web',
-        () =>
+        ({ funded }) =>
           handleCall(
             ['shop.ping', 'mode=slow', '--platform', 'storefront', ...funded],
             callOptions,
@@ -2939,32 +2976,37 @@ describe('call', () => {
       ],
       'call --adapter api': [
         'api',
-        () => handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
+        ({ funded }) =>
+          handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
       ],
-      'run, detected': ['web', () => handleRun([ping, ...funded], runOptions)],
+      'run, detected': [
+        'web',
+        ({ funded, ping }) =>
+          withResolvedContext(funded, () => handleRun([ping, ...funded], runOptions)),
+      ],
       'run --platform storefront': [
         'web',
-        () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
+        ({ funded, ping }) => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
       ],
       'run --adapter api': [
         'api',
-        () => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
+        ({ funded, echo }) => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
       ],
-    } as const;
+    };
     for (const [name, [adapter, invoke]] of Object.entries(cases)) {
-      calls.mutationHooks.length = 0;
-      const result = await capture(invoke);
-      assert.equal(
-        result.value,
-        0,
-        `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
-      );
-      // A call's load gets no command line, so it loads nothing to authorize.
-      assert.deepEqual(
-        [...new Set(calls.mutationHooks)],
-        name.startsWith('call') ? [`load:${adapter}`] : [`load:${adapter}`, `authorize:${adapter}`],
-        name,
-      );
+      test(name, async () => {
+        const setup = fixture();
+        calls.mutationHooks.length = 0;
+        const result = await capture(() => invoke(setup));
+        assert.equal(result.value, 0, `${result.stderr.join('\n')}${result.stdout.join('\n')}`);
+        // A call's load gets no command line, so it loads nothing to authorize.
+        assert.deepEqual(
+          [...new Set(calls.mutationHooks)],
+          name.startsWith('call')
+            ? [`load:${adapter}`]
+            : [`load:${adapter}`, `authorize:${adapter}`],
+        );
+      });
     }
   });
 
@@ -3056,17 +3098,21 @@ describe('call', () => {
     const cwd = process.cwd();
     try {
       process.chdir(target);
-      const fallback = await capture(() => handleCall([], callOptions));
+      const fallback = await capture(() =>
+        withResolvedContext([], () => handleCall([], callOptions)),
+      );
       assert.equal(fallback.value, 2);
       assert.match(
         fallback.stderr.join('\n'),
         /Example: shop-harness call command --adapter web\n {2}See the vocabulary: shop-harness actions --adapter web/u,
       );
       const preferred = await capture(() =>
-        handleCall([], {
-          ...callOptions,
-          exampleAction: (names) => names.find((name) => name.startsWith('shop.')),
-        }),
+        withResolvedContext([], () =>
+          handleCall([], {
+            ...callOptions,
+            exampleAction: (names) => names.find((name) => name.startsWith('shop.')),
+          }),
+        ),
       );
       assert.match(
         preferred.stderr.join('\n'),
@@ -3126,5 +3172,41 @@ describe('call', () => {
       none.stdout.join(''),
       /No action matches "zzz" for the web adapter[\s\S]*shop-harness actions --adapter web/u,
     );
+  });
+});
+
+describe('the resolved context in discovery envelopes', () => {
+  test('actions, run --list, call --list and run --describe carry it', async () => {
+    const context = {
+      adapter: {
+        value: 'api',
+        source: 'detect' as const,
+        detail: 'files',
+        matched: ['files' as const],
+      },
+      target: { value: process.cwd(), source: 'default' as const, detail: 'cwd' as const },
+    };
+    setHarnessContext(context);
+    const branches = {
+      'actions --categories': () =>
+        handleActions(parseArgs(['--categories', '--adapter', 'web', '--json']), {
+          catalog: engine,
+        }),
+      actions: () => handleActions(parseArgs(['--adapter', 'web', '--json']), { catalog: engine }),
+      'actions --matrix': () =>
+        handleActions(parseArgs(['--matrix', '--json']), { catalog: engine }),
+      'actions --matrix refusal': () =>
+        handleActions(parseArgs(['--matrix', '--categories', '--json']), { catalog: engine }),
+      'run --list': () => handleRun(['--list', '--adapter', 'api', '--json'], runOptions),
+      'run --describe': () =>
+        handleRun(['hello', '--describe', '--adapter', 'api', '--json'], runOptions),
+      'run --describe, missing': () =>
+        handleRun(['nope', '--describe', '--adapter', 'api', '--json'], runOptions),
+      'call --list': () => handleCall(['--list', '--adapter', 'web', '--json'], callOptions),
+    };
+    for (const [name, invoke] of Object.entries(branches)) {
+      const result = await capture(invoke);
+      assert.deepEqual(lastJson(result.stdout).context, context, name);
+    }
   });
 });

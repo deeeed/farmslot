@@ -23,10 +23,14 @@ import {
   handleRecipeQuality,
   handleStatus,
   handleTaskInit,
+  type HarnessContext,
   harnessHost,
   parseArgs,
   requiredDoctorCheckSummary,
+  resolveHarnessContext,
   runnerInstallKind,
+  runStatusWatch,
+  setHarnessContext,
   shellQuote,
 } from '../src/harness/index.js';
 import { RECIPE_CLI_VERSION } from '../src/index.js';
@@ -193,12 +197,38 @@ beforeEach(() => {
   process.env.CAPTURE_HELPER_PATH = '/nonexistent/capture-helper';
 });
 afterEach(() => {
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
   for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+function emptyPoolDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-no-pools-'));
+  pools.push(dir);
+  return dir;
+}
+const pools: string[] = [];
+afterEach(() => {
+  for (const dir of pools.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// What createHarnessCli does before a command runs: resolve the invocation's
+// context, which the commands read for an adapter no flag names.
+async function withResolvedContext<T>(
+  tokens: readonly string[],
+  invoke: () => Promise<T>,
+): Promise<T> {
+  // An empty pool directory: the machine's own pools never reach the tests.
+  setHarnessContext(await resolveHarnessContext({ tokens, slotPoolDir: emptyPoolDir() }));
+  try {
+    return await invoke();
+  } finally {
+    setHarnessContext(undefined);
+  }
+}
 
 describe('the doctor report', () => {
   test('lists the manifest check, then the host checks, then the platform checks, and tallies the required ones', () => {
@@ -733,10 +763,12 @@ describe('status', () => {
     );
     const target = tempRoot();
     const { stdout } = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json']), {
-        checkoutView: () => ({ json: { bound: true }, text: '' }),
-        featureFlags: flagHost,
-      }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json']), {
+          checkoutView: () => ({ json: { bound: true }, text: '' }),
+          featureFlags: flagHost,
+        }),
+      ),
     );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
@@ -744,6 +776,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'view',
       'devices',
       'featureFlags',
@@ -765,7 +798,11 @@ describe('status', () => {
     useAdapters(adapter);
     const target = tempRoot();
     const { stdout } = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json', '--fast']), { featureFlags: flagHost }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json', '--fast']), {
+          featureFlags: flagHost,
+        }),
+      ),
     );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
@@ -773,6 +810,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'featureFlags',
       'next',
@@ -781,7 +819,9 @@ describe('status', () => {
     assert.equal(probes.count, 0);
 
     const live = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json']), { featureFlags: flagHost }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json']), { featureFlags: flagHost }),
+      ),
     );
     const liveEnvelope = JSON.parse(live.stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(liveEnvelope), [
@@ -789,6 +829,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'featureFlags',
       'portHints',
@@ -803,13 +844,18 @@ describe('status', () => {
       fakeAdapter('shop', { detect: { files: () => true }, readiness: { statusRuntime: true } }),
     );
     const target = tempRoot();
-    const { stdout } = await capture(() => handleStatus(parseArgs(['--target', target, '--json'])));
+    const { stdout } = await capture(() =>
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json'])),
+      ),
+    );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
       'schemaVersion',
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'runtime',
       'next',
@@ -821,6 +867,57 @@ describe('status', () => {
     );
     assert.equal(notDir.result, 2);
     assert.match(notDir.stdout, /--task is not a directory/u);
+  });
+
+  test('takes --adapter or --platform over detection, and reports the resolved context', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop', { detect: { files: () => true } }), fakeAdapter('cafe'));
+    const target = tempRoot();
+    for (const flag of [['--adapter', 'cafe'], ['--platform=cafe']]) {
+      const { stdout } = await capture(() =>
+        handleStatus(parseArgs(['--target', target, ...flag, '--json'])),
+      );
+      assert.equal((JSON.parse(stdout) as { adapter: string }).adapter, 'cafe');
+    }
+    const context: HarnessContext = {
+      adapter: { value: 'shop', source: 'detect', detail: 'files', matched: ['files'] },
+      target: { value: target, source: 'flag', detail: '--target' },
+    };
+    setHarnessContext(context);
+    try {
+      const { stdout } = await capture(() =>
+        handleStatus(parseArgs(['--target', target, '--json'])),
+      );
+      const envelope = JSON.parse(stdout) as Record<string, unknown>;
+      assert.deepEqual(envelope.context, context);
+      assert.deepEqual(Object.keys(envelope).slice(0, 5), [
+        'schemaVersion',
+        'command',
+        'adapter',
+        'target',
+        'context',
+      ]);
+      // The task view carries it too: --task --json, and each --watch --json line.
+      const task = tempRoot();
+      fs.writeFileSync(path.join(task, 'CHECKLIST.md'), '- [ ] 1. Step.\n');
+      fs.writeFileSync(path.join(task, 'SIGNAL.json'), JSON.stringify({ status: 'complete' }));
+      for (const watch of [false, true]) {
+        const written: string[] = [];
+        const exit = await runStatusWatch(
+          { target, taskDir: task, json: true, watch },
+          {
+            now: () => Date.now(),
+            wait: async () => {},
+            write: (text) => written.push(text),
+            isTty: false,
+          },
+        );
+        assert.equal(exit, 0);
+        assert.deepEqual((JSON.parse(written.join('')) as { context: unknown }).context, context);
+      }
+    } finally {
+      setHarnessContext(undefined);
+    }
   });
 });
 
@@ -1435,25 +1532,27 @@ describe('task init', () => {
     fs.writeFileSync(path.join(catalog, 'fix-bug', 'shop.md'), '# Fix\n\n- [ ] 1. Prove it.\n');
     const task = path.join(tempRoot(), 'task');
     const { result } = await capture(() =>
-      handleTaskInit(
-        [
-          'init',
-          task,
-          '--flow',
-          'fix-bug',
-          '--template',
-          'fix-bug/shop',
-          '--package-templates',
-          catalog,
-          '--package-id',
-          't',
-          '--title',
-          'x',
-          '--task-text',
-          'y',
-          '--json',
-        ],
-        { surface: 'skill' },
+      withResolvedContext([], () =>
+        handleTaskInit(
+          [
+            'init',
+            task,
+            '--flow',
+            'fix-bug',
+            '--template',
+            'fix-bug/shop',
+            '--package-templates',
+            catalog,
+            '--package-id',
+            't',
+            '--title',
+            'x',
+            '--task-text',
+            'y',
+            '--json',
+          ],
+          { surface: 'skill' },
+        ),
       ),
     );
     assert.equal(result, 0);

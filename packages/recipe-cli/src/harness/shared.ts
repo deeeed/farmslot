@@ -12,10 +12,11 @@ import { StringDecoder } from 'node:string_decoder';
 
 import { OperationOutputTail } from '@farmslot/recipe-runner/runtime/operation';
 
-import { adapterForPlatform, detectAdapter, harnessAdapters } from './adapters.js';
+import { adapterForPlatform, harnessAdapters } from './adapters.js';
 import { trackCheckoutChild } from './checkout-lock.js';
 import { colorHumanMessage } from './cli-color.js';
 import { recordCommandOutput, recordCommandStage } from './command-journal.js';
+import { contextAdapter, harnessContextField } from './context-state.js';
 import { harnessHost, hostEnvName } from './host.js';
 import { leafStartFailureMessage, resolveLeafInvoke, shellLeafMissing } from './leaf-invoke.js';
 
@@ -92,7 +93,7 @@ export function targetOf(options: Record<string, string | boolean>): string {
 }
 
 // Explicit --adapter/--platform (a platform target selects its adapter), else
-// an optional hint, else auto-detect from the target.
+// an optional hint, else the adapter the invocation's context resolved.
 export function resolveFlagsAdapter(
   options: Record<string, string | boolean>,
   target: string,
@@ -101,7 +102,7 @@ export function resolveFlagsAdapter(
   const explicit = str(options, 'adapter') ?? adapterForPlatform(str(options, 'platform'));
   if (explicit && harnessAdapters().has(explicit)) return explicit;
   if (hint) return hint;
-  return detectAdapter(target);
+  return contextAdapter(target);
 }
 
 export interface ScriptResult {
@@ -461,6 +462,7 @@ export function usageOut(
         {
           schemaVersion: 1,
           command,
+          ...harnessContextField(),
           status: 'fail',
           exitCode: EXIT.usage,
           error: { code: 'USAGE', message, userAction },

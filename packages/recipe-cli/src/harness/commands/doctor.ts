@@ -13,12 +13,12 @@ import {
   adapterDetectNext,
   adapterForPlatform,
   assertAdapter,
-  detectAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
 import { acquireCheckoutLock } from '../checkout-lock.js';
 import { color } from '../cli-color.js';
+import { contextAdapter } from '../context-state.js';
 import {
   createDoctorReport,
   type DoctorCheck,
@@ -164,7 +164,7 @@ async function handleDoctorBody(
   const allDevices = optionFlag(options, 'allDevices');
   const platformOption = optionString(options, 'platform');
   const explicitAdapter = optionString(options, 'adapter') ?? adapterForPlatform(platformOption);
-  const adapter = explicitAdapter ?? detectAdapter(target);
+  const adapter = explicitAdapter ?? contextAdapter(target);
   if (!adapter) {
     return refuse(undetectedAdapterMessage(target), adapterDetectNext());
   }

@@ -9,12 +9,13 @@ import type { AdapterRuntimeStatus } from '@farmslot/adapter-sdk';
 
 import {
   adapterDetectNext,
+  adapterForPlatform,
   assertAdapter,
-  detectAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
 import { color } from '../cli-color.js';
+import { contextAdapter, harnessContextField } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { optionFlag, optionString, type ParsedArgs, targetPath } from '../parse-args.js';
 import {
@@ -54,7 +55,10 @@ export async function handleStatus(
   }
   const fast = optionFlag(options, 'fast');
   const allDevices = optionFlag(options, 'allDevices');
-  const adapter = detectAdapter(target);
+  const adapter =
+    optionString(options, 'adapter') ??
+    adapterForPlatform(optionString(options, 'platform')) ??
+    contextAdapter(target);
   if (!adapter) {
     return usageOut(json, 'status', undetectedAdapterMessage(target), adapterDetectNext());
   }
@@ -107,6 +111,7 @@ export async function handleStatus(
             command: 'status',
             adapter,
             target,
+            ...harnessContextField(),
             ...viewField,
             devices: liveView.devicesWithLive,
             ...(liveFlags ? { featureFlags: liveFlags } : {}),
@@ -131,6 +136,7 @@ export async function handleStatus(
             command: 'status',
             adapter,
             target,
+            ...harnessContextField(),
             ...viewField,
             devices,
             ...(staticFeatureFlags ? { featureFlags: staticFeatureFlags } : {}),

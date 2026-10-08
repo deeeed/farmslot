@@ -31,6 +31,20 @@ export interface RecipeLibraryAdapterDeclaration {
   export?: string;
   /** Platform adapter id this adapter extends. */
   extends?: string;
+  /** How a host recognises this adapter's checkout before it loads the module. */
+  detect?: RecipeLibraryAdapterDetect;
+}
+
+/**
+ * A declared adapter's checkout predicates, as data. `remote` matches when
+ * remote.origin.url contains any entry; `files` and `packageDependencies` match
+ * together when every path exists (a trailing `/` requires a directory) and
+ * package.json lists every dependency.
+ */
+export interface RecipeLibraryAdapterDetect {
+  remote?: string[];
+  files?: string[];
+  packageDependencies?: string[];
 }
 
 /** `recipe-library.json`. Every key is optional; unknown keys are ignored for forward compatibility. */
@@ -130,10 +144,13 @@ export async function readRecipeLibraryManifest(
           throw invalid(`adapters.${id}.${key} must be a non-empty string.`);
       }
       await declaredLibraryFile(rootReal, root, entry.module, `adapters.${id}.module`, invalid);
+      const detect =
+        entry.detect === undefined ? undefined : adapterDetect(id, entry.detect, invalid);
       manifest.adapters[id] = {
         module: entry.module,
         ...(typeof entry.export === 'string' ? { export: entry.export } : {}),
         ...(typeof entry.extends === 'string' ? { extends: entry.extends } : {}),
+        ...(detect ? { detect } : {}),
       };
     }
   }
@@ -296,6 +313,37 @@ export async function listLibraryFiles(
     return nested.flat();
   };
   return (await visit(directory)).sort();
+}
+
+// A declaration's `detect`: string arrays, with `files` relative and inside the
+// checkout. Unknown keys are ignored like the manifest's own.
+function adapterDetect(
+  id: string,
+  value: unknown,
+  invalid: (detail: string) => Error,
+): RecipeLibraryAdapterDetect {
+  if (!isRecord(value)) throw invalid(`adapters.${id}.detect must be an object.`);
+  const detect: RecipeLibraryAdapterDetect = {};
+  for (const key of ['remote', 'files', 'packageDependencies'] as const) {
+    const entries = value[key];
+    if (entries === undefined) continue;
+    const valid =
+      Array.isArray(entries) &&
+      entries.every(
+        (entry) =>
+          typeof entry === 'string' &&
+          entry.trim() !== '' &&
+          (key !== 'files' || (!path.isAbsolute(entry) && !entry.split(/[\\/]/u).includes('..'))),
+      );
+    if (!valid)
+      throw invalid(
+        key === 'files'
+          ? `adapters.${id}.detect.files must be an array of checkout-relative paths.`
+          : `adapters.${id}.detect.${key} must be an array of non-empty strings.`,
+      );
+    detect[key] = [...(entries as string[])];
+  }
+  return detect;
 }
 
 /** The most files one adapter plugin's directory may hold; past it the plugin should be bundled. */

@@ -1,3 +1,4 @@
+export { adapterDetectFromSpec, type AdapterDetectSpec } from './detect.js';
 export { type AdapterRegistry, createAdapterRegistry, defineAdapter } from './registry.js';
 export {
   ADAPTER_SDK_VERSION,

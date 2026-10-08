@@ -301,6 +301,29 @@ export function optionValues(tokens: readonly string[], option: string): string[
   return values;
 }
 
+/**
+ * The positionals in `tokens` (the arguments after the command) as `contract`
+ * reads them: a value option's separate value is not one, and nothing after
+ * `--` is. Assumes the invocation already passed `validatePublicInvocation`.
+ */
+export function contractPositionals(
+  tokens: readonly string[],
+  contract: CommandContract,
+): string[] {
+  const positionals: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const argument = tokens[index] ?? '';
+    if (argument === '--') break;
+    if (!argument.startsWith('-') || argument === '-') {
+      positionals.push(argument);
+      continue;
+    }
+    if (argument.includes('=')) continue;
+    if (contract.options[argument]?.kind === 'value') index += 1;
+  }
+  return positionals;
+}
+
 /** Every public command name and alias, in table order. */
 export function publicCommandTokens(commands: readonly ContractedCommand[]): string[] {
   return commands.flatMap((command) => [command.name, ...(command.aliases ?? [])]);

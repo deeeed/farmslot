@@ -35,6 +35,7 @@ import {
 import { processIdentity, readOperations } from '@farmslot/recipe-runner/runtime/operation';
 
 import { readCommandJournal } from './command-journal.js';
+import { runtimeContextOwned } from './context.js';
 import { resolveRuntimeContextPath } from './overlay.js';
 import { PREPARE_PROGRESS_ARTIFACT, recipeRuntimeDir } from './paths.js';
 
@@ -597,8 +598,10 @@ function gitRef(target: string, mode: string): string | undefined {
 }
 
 function readIsolation(target: string): TaskViewIsolation | undefined {
-  const context = readJsonObject(resolveRuntimeContextPath(target));
-  if (!context) return undefined;
+  const file = resolveRuntimeContextPath(target);
+  const context = readJsonObject(file);
+  // Another checkout's context (an inherited RECIPE_RUNTIME_CONTEXT) describes nothing here.
+  if (!context || !runtimeContextOwned(target, file, context)) return undefined;
   return section({
     slotId: pickString(context, 'slotId'),
     platform: pickString(context, 'platform'),

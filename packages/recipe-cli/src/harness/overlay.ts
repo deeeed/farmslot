@@ -10,12 +10,12 @@ import type { AdapterHarnessVerify, PlatformAdapter } from '@farmslot/adapter-sd
 
 import {
   adapterDetectNext,
-  detectAdapter,
   harnessAdapter,
   harnessAdapters,
   undetectedAdapterMessage,
 } from './adapters.js';
 import { colorHumanMessage } from './cli-color.js';
+import { contextAdapter } from './context-state.js';
 import { harnessHost } from './host.js';
 import { missingShellLeafMessage, shellLeafMissing } from './leaf-invoke.js';
 import { recipeHarnessPath, recipeRuntimeDir } from './paths.js';
@@ -280,7 +280,7 @@ export async function handleHarness(
   const rawTarget = argValue(forward, '--target');
   const target = path.resolve(rawTarget ?? process.cwd());
 
-  const adapter = parsedAdapter ?? detectAdapter(target);
+  const adapter = parsedAdapter ?? contextAdapter(target);
   // isAdapter() narrows adapter to a registered id for all code below.
   if (!adapter || !isAdapter(adapter)) {
     if (quiet) {

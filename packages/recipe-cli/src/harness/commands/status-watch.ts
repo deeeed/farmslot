@@ -8,6 +8,7 @@ import path from 'node:path';
 import { isTerminalWorkerSignalStatus } from '@farmslot/protocol';
 
 import { color } from '../cli-color.js';
+import { harnessContextField } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { EXIT } from '../shared.js';
 import {
@@ -83,9 +84,10 @@ export async function runStatusWatch(
     const changes = changedLines(previous, view);
 
     if (options.json && !options.watch) {
-      deps.write(`${JSON.stringify(view, null, 2)}\n`);
+      deps.write(`${JSON.stringify({ ...view, ...harnessContextField() }, null, 2)}\n`);
     } else if (options.json) {
-      if (changes.length > 0) deps.write(`${JSON.stringify(view)}\n`);
+      if (changes.length > 0)
+        deps.write(`${JSON.stringify({ ...view, ...harnessContextField() })}\n`);
     } else if (options.watch && !deps.isTty) {
       for (const line of changes) deps.write(`${line}\n`);
     } else {

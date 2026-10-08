@@ -27,6 +27,7 @@ import {
   recordCommandEvidence,
   redactStructuredValue,
 } from '../command-journal.js';
+import { harnessContextField } from '../context-state.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { conciseFailureForHuman, recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost, invokedHostCommand } from '../host.js';
@@ -133,6 +134,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             status: 'fail',
             error: { code: 'CLI_MISSING_POSITIONAL', message, userAction },
             exitCode: EXIT.usage,
@@ -168,6 +170,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             status: 'fail',
             exitCode: EXIT.usage,
@@ -194,6 +197,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             error: { code: device.code, message: device.message, userAction: device.userAction },
           },
@@ -213,6 +217,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             status: 'fail',
             recoverable: false,
             error: { code: 'RECIPE_RUNNING', message: msg, userAction },
@@ -265,6 +270,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             {
               schemaVersion: 1,
               command: 'call',
+              ...harnessContextField(),
               adapter,
               action: shortName,
               error,
@@ -286,6 +292,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             action: shortName,
             error: { code: 'ACTION_UNKNOWN', message, userAction },
@@ -306,6 +313,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             action: shortName,
             error: {
@@ -337,6 +345,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             status: 'fail',
             exitCode: EXIT.usage,
@@ -370,6 +379,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           {
             schemaVersion: 1,
             command: 'call',
+            ...harnessContextField(),
             adapter,
             action: shortName,
             resolvedAction,
@@ -533,6 +543,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
                 {
                   schemaVersion: 1,
                   command: 'call',
+                  ...harnessContextField(),
                   adapter,
                   action: shortName,
                   resolvedAction,
@@ -582,6 +593,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
             {
               schemaVersion: 1,
               command: 'call',
+              ...harnessContextField(),
               adapter,
               action: shortName,
               resolvedAction,

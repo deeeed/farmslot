@@ -19,6 +19,7 @@ import {
 import { acquireCheckoutLock } from '../checkout-lock.js';
 import { color } from '../cli-color.js';
 import { recordCommandEvidence } from '../command-journal.js';
+import { harnessContextField } from '../context-state.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
 import { harnessHost } from '../host.js';
@@ -158,6 +159,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
             {
               schemaVersion: 1,
               command: 'run',
+              ...harnessContextField(),
               status: 'fail',
               error: failure,
               exitCode: error.exitCode,
@@ -227,6 +229,7 @@ export function reportTrustFailure(
         {
           schemaVersion: 1,
           command,
+          ...harnessContextField(),
           status: 'fail',
           error: failure,
           exitCode: EXIT.validation,
@@ -601,6 +604,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
             {
               schemaVersion: 1,
               command: 'run',
+              ...harnessContextField(),
               adapter,
               status: result.status,
               exitCode,
@@ -944,6 +948,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
   const payload: Record<string, unknown> = {
     schemaVersion: 1,
     command: 'run',
+    ...harnessContextField(),
     mode: 'plan',
     status,
     adapter,
@@ -1007,6 +1012,7 @@ function emitPlanUsageError(
         {
           schemaVersion: 1,
           command: 'run',
+          ...harnessContextField(),
           mode: 'plan',
           status: 'fail',
           adapter,
@@ -1062,6 +1068,7 @@ function emitRunUsageError(
         {
           schemaVersion: 1,
           command: 'run',
+          ...harnessContextField(),
           adapter,
           status: 'fail',
           exitCode: EXIT.usage,
@@ -1109,6 +1116,7 @@ function emitRunValidationError(
         {
           schemaVersion: 1,
           command: 'run',
+          ...harnessContextField(),
           adapter,
           status: 'fail',
           exitCode: EXIT.validation,

@@ -13,6 +13,7 @@ export {
   composeAdapter,
   type DeclaredAdapter,
   declaredAdapterIds,
+  declaredAdapters,
   ensureAdapterLoaded,
   type LoadedAdapterPlugin,
   loadedAdapterPlugins,
@@ -24,10 +25,14 @@ export {
   adapterForPlatform,
   assertAdapter,
   configureHarnessAdapters,
+  type DeclaredDetect,
   detectAdapter,
+  detectAdapterMatch,
+  type DetectEntry,
   harnessAdapter,
   harnessAdapters,
   isPlatformTarget,
+  pickDetected,
   undetectedAdapterMessage,
 } from './adapters.js';
 export {
@@ -67,6 +72,7 @@ export {
   type ContractedCommand,
   type ContractFailures,
   contractOptions,
+  contractPositionals,
   type ContractValidationOptions,
   type InvalidChoice,
   optionalValueOption,
@@ -137,6 +143,25 @@ export {
 } from './commands/status-watch.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
+export {
+  contextPorts,
+  formatHarnessContext,
+  resolveHarnessContext,
+  type ResolveHarnessContextOptions,
+  runtimeContextOwned,
+} from './context.js';
+export {
+  AdapterAmbiguousError,
+  type AdapterCandidate,
+  contextAdapter,
+  type ContextPortName,
+  type ContextSource,
+  type DetectMatch,
+  type HarnessContext,
+  harnessContext,
+  harnessContextField,
+  setHarnessContext,
+} from './context-state.js';
 export {
   createDoctorReport,
   type DoctorCheck,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,18 +19,24 @@ import {
   type CommandContract,
   configureHarnessAdapters,
   configureHarnessHost,
+  contextAdapter,
   type ContractedCommand,
   contractOptions,
   createHarnessCli,
+  detectAdapter,
+  formatHarnessContext,
   harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
+  harnessContext,
   harnessHost,
   optionalValueOption,
   optionValues,
   publicCommandTokens,
   type PublicHarnessCommand,
+  readCommandJournal,
   type RecipeCatalog,
+  setHarnessContext,
   usageError,
   validatePublicInvocation,
   valueOption,
@@ -245,13 +252,24 @@ beforeEach(() => {
   delete process.env.SHOP_HARNESS_RUN_MODE;
   delete process.env.RECIPE_RUNTIME_DIR;
   delete process.env.RECIPE_LIBRARY_PATH;
-  // No personal library from ~/.farmslot reaches the tests.
+  for (const name of [
+    'RECIPE_CDP_PORT',
+    'CDP_PORT',
+    'TERMINAL_APP_PORT',
+    'RECIPE_WATCHER_PORT',
+    'WATCHER_PORT',
+    'METRO_PORT',
+  ])
+    delete process.env[name];
+  // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
   process.env.FARMSLOT_HOME = tempRoot();
+  process.env.HOME = tempRoot();
   (globalThis as Record<string, unknown>).__pluginImports = [];
   process.chdir(tempRoot());
 });
 afterEach(() => {
   process.chdir(savedCwd);
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
@@ -773,6 +791,38 @@ describe('createHarnessCli', () => {
     assert.deepEqual(calls, []);
   });
 
+  test("renders the action of the checkout's detected adapter without --adapter", async () => {
+    const library = tempRoot();
+    fs.mkdirSync(path.join(library, 'recipes'));
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+    ) as Awaited<ReturnType<RecipeCatalog['resolveActionManifest']>>['manifest'];
+    const catalog: RecipeCatalog = {
+      bundledLibrary: { name: 'shop', root: library, actionNamespace: 'shop' },
+      resolveActionManifest: async () => ({ manifest, actionSources: new Map() }),
+      validateManifest: async () => undefined,
+      actionCapabilities: () => [],
+    };
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--adapter': valueOption(['web']) }),
+      positionals: [{ label: 'action' }],
+    });
+    const registry = createAdapterRegistry();
+    registry.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    const cli = createHarnessCli({
+      ...cliOptions({ catalog, adapters: registry }),
+      commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
+    });
+    const { result, stdout } = await capture(() => cli.main(['call', 'switch', '--help']));
+    assert.deepEqual(result, { exitCode: 0, exit: 'now' });
+    const value = stdout.search(/\n +value +string \(required\)/u);
+    const equals = stdout.search(/\n +equals +string \(required\)/u);
+    const generic = stdout.indexOf('shop-harness call [flags]\n\n  call help\n');
+    assert.ok(value > 0 && equals > 0, stdout);
+    assert.ok(generic > Math.max(value, equals), stdout);
+    assert.deepEqual(calls, []);
+  });
+
   test('configures the host and adapters it is given', async () => {
     const options = cliOptions();
     createHarnessCli(options);
@@ -1223,5 +1273,679 @@ export const adapter = {
     assert.deepEqual(result, { exitCode: 1, exit: 'now' });
     assert.equal(stdout, '');
     assert.equal(stderr, 'host adopt failed\n');
+  });
+});
+
+describe('invocation context', () => {
+  // A library whose plugins declare `detect`; each module records its import.
+  function detectingLibrary(plugins: Record<string, Record<string, string[]>>): string {
+    const root = fs.realpathSync(tempRoot());
+    fs.mkdirSync(path.join(root, 'plugins'));
+    const declared: Record<string, unknown> = {};
+    for (const [id, detect] of Object.entries(plugins)) {
+      fs.writeFileSync(
+        path.join(root, 'plugins', `${id}.mjs`),
+        `globalThis.__pluginImports.push('${id}');
+export const adapter = {
+  id: '${id}', sdkVersion: ${ADAPTER_SDK_VERSION}, headless: true, resolveSlotPorts() {},
+  async runtimeStatus() { return { decision: 'ready', reasons: [] }; },
+  devServer: { label: 'none', describe: () => 'none', stop: () => ({ kind: 'none' }) },
+  logSources: () => [], appLogSource: () => null,
+  hints: { launch: 'l', relaunch: 'l', runtimeProbeRecovery: () => 'd' },
+  actions: { manifestPath: () => '/m.json', semantic: [], cdpTarget: { transport: 'none', probePath: '/' } },
+  harness: { install: { entry: 'i', fallback: 'i' }, cleanup: { entry: 'c', fallback: 'c' }, verify: () => ({ error: 'none' }) },
+  runtimeContext: { forbiddenFields: [] },
+  async launch() { return 0; },
+};
+`,
+      );
+      declared[id] = { module: `./plugins/${id}.mjs`, export: 'adapter', detect };
+    }
+    fs.writeFileSync(
+      path.join(root, 'recipe-library.json'),
+      JSON.stringify({ adapters: declared }),
+    );
+    return root;
+  }
+  const imported = (): string[] =>
+    (globalThis as Record<string, unknown>).__pluginImports as string[];
+
+  // A checkout both plugins match: `terminal` by remote and files, `shop` by files.
+  function terminalCheckout(): string {
+    const checkout = fs.realpathSync(tempRoot());
+    fs.writeFileSync(path.join(checkout, 'package.json'), '{"dependencies":{"next":"15"}}');
+    execFileSync('git', ['-C', checkout, 'init', '-q'], { stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['-C', checkout, 'remote', 'add', 'origin', 'git@x:acme/va-mmcx-terminal'],
+      {
+        stdio: 'ignore',
+      },
+    );
+    return checkout;
+  }
+
+  function contextOptions(seen: (string | undefined)[]): HarnessCliOptions {
+    const status = command(
+      'status',
+      {
+        options: contractOptions(HELP, JSON_FLAG, TARGET, {
+          '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+          '--task': optionalValueOption(),
+          '--watch': booleanOption(),
+        }),
+      },
+      {
+        run: () => {
+          seen.push(contextAdapter(process.cwd()));
+          calls.push({ command: 'status', argv: [] });
+          return 0;
+        },
+      },
+    );
+    const base = cliOptions();
+    return {
+      ...base,
+      commands: [...base.commands.filter((entry) => entry.name !== 'status'), status],
+    };
+  }
+
+  test('loads, adopts and fences only the winning plugin, and the command acts on it', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { remote: ['va-mmcx-terminal'], packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const seen: (string | undefined)[] = [];
+    const adopted: string[] = [];
+    const fenced: string[] = [];
+    const cli = createHarnessCli({
+      ...contextOptions(seen),
+      adopt: (adapter) => {
+        adopted.push(adapter.id);
+        return adapter;
+      },
+      afterAdapterLoad: (id) => {
+        fenced.push(id);
+      },
+    });
+    const { result, stdout, stderr } = await capture(() => cli.main(['status']));
+    assert.deepEqual(result, { exitCode: 0, exit: 'code' });
+    // The losing candidate is never imported, adopted, registered or fenced.
+    assert.deepEqual(imported(), ['terminal']);
+    assert.deepEqual(adopted, ['terminal']);
+    assert.deepEqual(fenced, ['terminal']);
+    assert.equal(harnessAdapters().has('shop'), false);
+    assert.deepEqual(seen, ['terminal']);
+    assert.equal(stdout, '');
+    assert.equal(
+      stderr,
+      `context: adapter terminal (detected: remote+files), target ${checkout} (cwd), slot unknown (no pool dir)\n`,
+    );
+    assert.equal(harnessContext()?.adapter?.library, 'terms');
+
+    // --json keeps stderr clean; a typed --adapter needs no context line.
+    const json = await capture(() => cli.main(['status', '--json']));
+    assert.equal(json.stderr, '');
+    const flagged = await capture(() => cli.main(['status', '--adapter', 'web']));
+    assert.equal(flagged.stderr, '');
+    // The flag is the context too, so the command reads it.
+    assert.deepEqual(seen, ['terminal', 'terminal', 'web']);
+  });
+
+  test('stops an ambiguous checkout with exit 2 and the candidates, in every output form', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const cli = createHarnessCli(contextOptions([]));
+    const candidates = [
+      { adapter: 'terminal', matched: ['files'], library: 'terms' },
+      { adapter: 'shop', matched: ['files'], library: 'terms' },
+    ];
+    const message = `${checkout} matches more than one adapter: terminal (files), shop (files)`;
+    const human = await capture(() => cli.main(['status']));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      human.stderr,
+      `✗ shop-harness status: ${message}\n  Next: pass --adapter <terminal|shop>\n`,
+    );
+    const json = await capture(() => cli.main(['status', '--json']));
+    assert.deepEqual(json.result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual((JSON.parse(json.stdout) as { error: unknown }).error, {
+      code: 'ADAPTER_AMBIGUOUS',
+      message,
+      userAction: 'pass --adapter <terminal|shop>',
+      candidates,
+    });
+    const stream = await capture(() => cli.main(['status', '--json-stream']));
+    assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual(streamEvents(stream.stdout)[0]?.error, {
+      code: 'ADAPTER_AMBIGUOUS',
+      message,
+      userAction: 'pass --adapter <terminal|shop>',
+      candidates,
+    });
+    assert.deepEqual(imported(), []);
+    assert.deepEqual(calls, []);
+
+    // A flag settles it; help resolves leniently, so a tie never refuses it.
+    const flagged = await capture(() => cli.main(['status', '--adapter', 'shop']));
+    assert.deepEqual(flagged.result, { exitCode: 0, exit: 'code' });
+    assert.deepEqual(imported(), ['shop']);
+    const help = await capture(() => cli.main(['status', '--help']));
+    assert.equal(help.result.exitCode, 0);
+  });
+
+  test('status --task and --watch resolve the target and slot only, so an ambiguous checkout is fine', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const cli = createHarnessCli(contextOptions([]));
+    for (const argv of [
+      ['status', '--task', '--json'],
+      ['status', '--task=dir', '--json'],
+      ['status', '--watch'],
+    ]) {
+      const { result, stderr } = await capture(() => cli.main(argv));
+      assert.deepEqual(result, { exitCode: 0, exit: 'code' }, argv.join(' '));
+      assert.equal(stderr, '');
+      assert.deepEqual(harnessContext(), {
+        target: { value: checkout, source: 'default', detail: 'cwd' },
+        slot: { value: null, source: 'none', detail: 'no-pool-dir' },
+      });
+    }
+    assert.deepEqual(imported(), []);
+  });
+
+  test('a command that detects a target itself refuses an ambiguous one with the candidates', async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    fs.writeFileSync(path.join(checkout, 'shop.json'), '{}');
+    const registry = createAdapterRegistry();
+    registry.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    registry.register({ ...fakeAdapter('cafe'), detect: { files: () => true } });
+    const check = command(
+      'check',
+      { options: contractOptions(HELP, JSON_FLAG), positionals: [{ label: 'dir' }] },
+      { run: (argv) => (detectAdapter(argv[0] ?? '') ? 0 : 1) },
+    );
+    const cli = createHarnessCli({ ...cliOptions({ adapters: registry }), commands: [check] });
+    const candidates = [
+      { adapter: 'web', matched: ['files'] },
+      { adapter: 'cafe', matched: ['files'] },
+    ];
+    const json = await capture(() => cli.main(['check', checkout, '--json']));
+    assert.equal(json.result.exitCode, 2);
+    assert.deepEqual(
+      (JSON.parse(json.stdout) as { error: { candidates: unknown } }).error.candidates,
+      candidates,
+    );
+    const human = await capture(() => cli.main(['check', checkout]));
+    assert.equal(human.result.exitCode, 2);
+    assert.match(
+      human.stderr,
+      /matches more than one adapter: web \(files\), cafe \(files\)\n {2}Next: pass --adapter <web\|cafe>/u,
+    );
+  });
+
+  test("fills the slot's ports through the environment, never the argv the command gets", async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    const pools = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(pools, 'macwork.json'),
+      JSON.stringify({
+        machine: 'macwork',
+        host: 'localhost',
+        slots: [
+          {
+            id: 'macwork-mmt-1',
+            repo: checkout,
+            session: 'mmt-1',
+            resources: {
+              'dev-server': { port: 9341, metro_port: 9441 },
+              browser: { cdp_port: 9541 },
+            },
+          },
+        ],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = pools;
+    process.chdir(checkout);
+    const PORT_NAMES = [
+      'RECIPE_CDP_PORT',
+      'CDP_PORT',
+      'RECIPE_WATCHER_PORT',
+      'WATCHER_PORT',
+      'METRO_PORT',
+    ];
+    const received: { argv: string[]; env: Record<string, string | undefined> }[] = [];
+    const record = (argv: string[]) => {
+      received.push({
+        argv,
+        env: Object.fromEntries(PORT_NAMES.map((name) => [name, process.env[name]])),
+      });
+      return 0;
+    };
+    const portOptions = {
+      '--adapter': valueOption(),
+      '--cdp-port': valueOption(),
+      '--watcher-port': valueOption(),
+      '--port': valueOption(),
+    };
+    const doctor = command(
+      'doctor',
+      { options: contractOptions(HELP, JSON_FLAG, TARGET, portOptions), allowPassthrough: true },
+      { run: record },
+    );
+    const install = command(
+      'install',
+      { options: contractOptions(HELP, TARGET, portOptions), allowPassthrough: true },
+      { run: record },
+    );
+    const cli = createHarnessCli({
+      ...cliOptions({ host: { ...shopHost(), journaledCommands: ['doctor'] } }),
+      commands: [doctor, install],
+    });
+    const run = async (typed: string[]) => {
+      const { result } = await capture(() => cli.main(typed));
+      assert.equal(result.exitCode, 0, typed.join(' '));
+      return received.at(-1)!;
+    };
+    const filled = {
+      RECIPE_CDP_PORT: '9541',
+      CDP_PORT: '9541',
+      RECIPE_WATCHER_PORT: '9341',
+      WATCHER_PORT: '9341',
+      METRO_PORT: '9341',
+    };
+
+    // The argv is exactly what was typed; the slot ports arrive in the environment.
+    const plain = await run(['doctor', '--adapter', 'web', '--json']);
+    assert.deepEqual(plain, { argv: ['--adapter', 'web', '--json'], env: filled });
+    assert.deepEqual(harnessContext()?.ports, {
+      cdp: {
+        value: 9541,
+        source: 'slot',
+        filled: true,
+        via: 'env',
+        names: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+      },
+      watcher: {
+        value: 9341,
+        source: 'slot',
+        filled: true,
+        via: 'env',
+        names: ['RECIPE_WATCHER_PORT', 'WATCHER_PORT', 'METRO_PORT'],
+      },
+    });
+    assert.match(
+      formatHarnessContext(harnessContext()!),
+      /ports cdp 9541 \(slot\), watcher 9341 \(slot\)$/u,
+    );
+    // ...for this invocation only: afterwards every name is back as it was, unset ones absent.
+    assert.deepEqual(
+      PORT_NAMES.map((name) => name in process.env),
+      PORT_NAMES.map(() => false),
+    );
+    // A leaf's own help and a passthrough port reach it untouched.
+    assert.deepEqual((await run(['install', '--adapter', 'web', '--', '--help'])).argv, [
+      '--adapter',
+      'web',
+      '--',
+      '--help',
+    ]);
+    // A port spelled after `--` is the leaf's: that port is not filled at all.
+    assert.deepEqual(await run(['install', '--adapter', 'web', '--', '--watcher-port', '9400']), {
+      argv: ['--adapter', 'web', '--', '--watcher-port', '9400'],
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: undefined,
+        METRO_PORT: undefined,
+      },
+    });
+    // A typed spelling leaves that port to the command, the other one still fills.
+    assert.deepEqual(await run(['doctor', '--adapter', 'web', '--port', '9400']), {
+      argv: ['--adapter', 'web', '--port', '9400'],
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: undefined,
+        METRO_PORT: undefined,
+      },
+    });
+    await run(['doctor', '--adapter', 'web', '--watcher-port=9405', '--port=9406']);
+    assert.deepEqual(harnessContext()?.ports?.watcher, { source: 'flag' });
+    // The user's environment wins over the slot: kept, reported, not filled.
+    process.env.WATCHER_PORT = '9400';
+    assert.deepEqual(await run(['doctor', '--adapter', 'web']), {
+      argv: ['--adapter', 'web'],
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: '9400',
+        METRO_PORT: undefined,
+      },
+    });
+    assert.deepEqual(harnessContext()?.ports?.watcher, {
+      value: 9400,
+      source: 'env',
+      filled: false,
+    });
+    delete process.env.WATCHER_PORT;
+
+    // The journal keeps exactly what was typed (each case in its own checkout,
+    // so the newest journal is unambiguous).
+    for (const typed of [
+      ['--adapter', 'web', '--json'],
+      ['--adapter', 'web', '--cdp-port=1'],
+      ['--adapter', 'web', '--cdp-port', '2', '--cdp-port', '3'],
+      ['--adapter', 'web', '--', 'x'],
+    ]) {
+      const own = fs.realpathSync(tempRoot());
+      await run(['doctor', '--target', own, ...typed]);
+      assert.deepEqual(readCommandJournal(own).record?.args, ['--target', own, ...typed]);
+    }
+    // A child the command spawns (a leaf script) inherits the filled environment.
+    // (Last: a second createHarnessCli reconfigures the host this test journals with.)
+    const spawning = command(
+      'launch',
+      { options: contractOptions(HELP, TARGET, portOptions) },
+      {
+        run: () => {
+          const child = spawnSync(
+            process.execPath,
+            [
+              '-e',
+              `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(PORT_NAMES)}.map((n) => [n, process.env[n] ?? null]))))`,
+            ],
+            { encoding: 'utf8' },
+          );
+          childEnv.push(JSON.parse(child.stdout) as Record<string, string | null>);
+          return child.status ?? 1;
+        },
+      },
+    );
+    const childEnv: Record<string, string | null>[] = [];
+    const spawner = createHarnessCli({ ...cliOptions(), commands: [spawning] });
+    process.env.UNRELATED_SETTING = 'kept';
+    const before = { ...process.env };
+    const launched = await capture(() => spawner.main(['launch', '--adapter', 'web']));
+    assert.equal(launched.result.exitCode, 0);
+    assert.deepEqual(childEnv, [filled]);
+    assert.deepEqual({ ...process.env }, before);
+
+    // No slot here: nothing is filled.
+    process.chdir(tempRoot());
+    assert.deepEqual((await run(['doctor', '--adapter', 'web'])).env, {
+      RECIPE_CDP_PORT: undefined,
+      CDP_PORT: undefined,
+      RECIPE_WATCHER_PORT: undefined,
+      WATCHER_PORT: undefined,
+      METRO_PORT: undefined,
+    });
+  });
+
+  // Two checkouts, each its own slot in one pool: coredev-3 on 8093, coredev-4 on 8094.
+  function twoSlots(): { coreA: string; coreB: string } {
+    const coreA = fs.realpathSync(tempRoot());
+    const coreB = fs.realpathSync(tempRoot());
+    const pools = fs.realpathSync(tempRoot());
+    const slot = (id: string, repo: string, port: number) => ({
+      id,
+      repo,
+      session: id,
+      resources: { 'dev-server': { port } },
+    });
+    fs.writeFileSync(
+      path.join(pools, 'macwork.json'),
+      JSON.stringify({
+        machine: 'macwork',
+        host: 'localhost',
+        slots: [slot('coredev-3', coreA, 8093), slot('coredev-4', coreB, 8094)],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = pools;
+    return { coreA, coreB };
+  }
+  const portOptions = contractOptions(HELP, TARGET, {
+    '--adapter': valueOption(),
+    '--watcher-port': valueOption(),
+  });
+  const childWatcherPort = () =>
+    spawnSync(process.execPath, ['-e', 'process.stdout.write(process.env.WATCHER_PORT ?? "")'], {
+      encoding: 'utf8',
+    }).stdout;
+
+  test('an invocation started while another dispatches waits its turn and gets its own ports', async () => {
+    const { coreA, coreB } = twoSlots();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatched: string[] = [];
+    const seen: { target: string; own: string | undefined; child: string }[] = [];
+    const doctor = command(
+      'doctor',
+      { options: portOptions },
+      {
+        run: async (argv) => {
+          const target = argv[argv.indexOf('--target') + 1] ?? '';
+          dispatched.push(target);
+          if (target === coreA) {
+            enter();
+            await gate;
+          }
+          seen.push({ target, own: process.env.WATCHER_PORT, child: childWatcherPort() });
+          if (target === coreB) throw new Error('core-4 failed');
+          return 0;
+        },
+      },
+    );
+    const cli = createHarnessCli({ ...cliOptions(), commands: [doctor] });
+    const before = { ...process.env };
+    const { result } = await capture(async () => {
+      const first = cli.main(['doctor', '--adapter', 'web', '--target', coreA]);
+      await entered;
+      // The first is inside its dispatch; only now does the second start.
+      const second = cli.main(['doctor', '--adapter', 'web', '--target', coreB]);
+      // Give the second every chance to resolve and dispatch: without the queue it
+      // would, and its fill would replace the first's port.
+      for (let tries = 0; tries < 30 && !dispatched.includes(coreB); tries += 1)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.deepEqual(dispatched, [coreA]);
+      assert.equal(process.env.WATCHER_PORT, '8093');
+      release();
+      return Promise.all([first, second]);
+    });
+    assert.deepEqual(
+      result.map((entry) => entry.exitCode),
+      [0, 1],
+    );
+    assert.deepEqual(seen, [
+      { target: coreA, own: '8093', child: '8093' },
+      { target: coreB, own: '8094', child: '8094' },
+    ]);
+    assert.deepEqual({ ...process.env }, before);
+  });
+
+  test('a main() that rejects restores the environment and releases the queue', async () => {
+    const { coreA } = twoSlots();
+    // Commander refuses an alias equal to the command's name while main() builds
+    // the program, after the context filled the port environment.
+    const broken = createHarnessCli({
+      ...cliOptions(),
+      commands: [command('doctor', { options: portOptions }, { aliases: ['doctor'] })],
+    });
+    const before = { ...process.env };
+    await assert.rejects(
+      capture(() => broken.main(['doctor', '--adapter', 'web', '--target', coreA])),
+      /alias can't be the same as its name/u,
+    );
+    assert.deepEqual({ ...process.env }, before);
+    const seen: (string | undefined)[] = [];
+    const next = createHarnessCli({
+      ...cliOptions(),
+      commands: [
+        command(
+          'doctor',
+          { options: portOptions },
+          {
+            run: () => {
+              seen.push(process.env.WATCHER_PORT);
+              return 0;
+            },
+          },
+        ),
+      ],
+    });
+    const { result } = await capture(() =>
+      next.main(['doctor', '--adapter', 'web', '--target', coreA]),
+    );
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(seen, ['8093']);
+  });
+
+  test('main() called from inside a running command fails at once instead of waiting forever', async () => {
+    let nested: unknown;
+    const cli = createHarnessCli({
+      ...cliOptions(),
+      commands: [
+        command(
+          'outer',
+          { options: contractOptions(HELP) },
+          {
+            run: async () => {
+              try {
+                await cli.main(['inner']);
+              } catch (error) {
+                nested = error;
+              }
+              return 0;
+            },
+          },
+        ),
+        command('inner', { options: contractOptions(HELP) }),
+      ],
+    });
+    const { result } = await capture(() => cli.main(['outer']));
+    assert.equal(result.exitCode, 0);
+    assert.match(String(nested), /main\(\) was called from inside a running command/u);
+    // The queue is free again for the next invocation.
+    assert.equal((await capture(() => cli.main(['inner']))).result.exitCode, 0);
+  });
+
+  test('a hidden command (shell completion) gets the detected adapter; a tie never refuses it', async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    process.chdir(checkout);
+    const answered: (string | undefined)[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      context: 'adapter',
+      run: () => {
+        answered.push(contextAdapter(process.cwd()));
+        return 0;
+      },
+    };
+    const mobileLike = createAdapterRegistry();
+    mobileLike.register({ ...fakeAdapter('mobile'), detect: { files: () => true } });
+    const cli = createHarnessCli({ ...cliOptions({ adapters: mobileLike }), commands: [complete] });
+    const found = await capture(() => cli.main(['completion-candidates', 'call', '']));
+    assert.equal(found.result.exitCode, 0);
+    assert.equal(found.stderr, '');
+    assert.deepEqual(answered, ['mobile']);
+
+    const tied = createAdapterRegistry();
+    tied.register({ ...fakeAdapter('mobile'), detect: { files: () => true } });
+    tied.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    const quiet = createHarnessCli({ ...cliOptions({ adapters: tied }), commands: [complete] });
+    const ambiguous = await capture(() => quiet.main(['completion-candidates', 'call', '']));
+    assert.deepEqual([ambiguous.result.exitCode, ambiguous.stdout, ambiguous.stderr], [0, '', '']);
+    assert.equal(answered.at(-1), undefined);
+    assert.equal(harnessContext()?.target.value, checkout);
+  });
+
+  test('a command without context options detects nothing; a hidden one loads a plugin only when it opts in', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { remote: ['va-mmcx-terminal'] },
+    })}`;
+    const answered: (string | undefined)[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      context: 'adapter',
+      run: () => {
+        answered.push(contextAdapter(process.cwd()));
+        return 0;
+      },
+    };
+    const options = contextOptions([]);
+    const cli = createHarnessCli({ ...options, commands: [...options.commands, complete] });
+    await capture(() => cli.main(['update']));
+    assert.deepEqual(imported(), []);
+    assert.equal(harnessContext(), undefined);
+    // Without the opt-in a hidden command resolves its target and slot only.
+    const plain = await capture(() => cli.main(['runtime-probe']));
+    assert.equal(plain.stderr, '');
+    assert.deepEqual(imported(), []);
+    assert.equal(harnessContext()?.adapter, undefined);
+    assert.equal(harnessContext()?.target.value, checkout);
+    // With it, completion gets the detected plugin, loaded alone.
+    const completion = await capture(() => cli.main(['completion-candidates', 'call', '']));
+    assert.equal(completion.stderr, '');
+    assert.deepEqual(imported(), ['terminal']);
+    assert.deepEqual(answered, ['terminal']);
+  });
+
+  test('a tie under help or a hidden opt-in imports, adopts and fences nothing', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const adopted: string[] = [];
+    const fenced: string[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      context: 'adapter',
+      run: () => 0,
+    };
+    const options = contextOptions([]);
+    const cli = createHarnessCli({
+      ...options,
+      commands: [...options.commands, complete],
+      adopt: (adapter) => {
+        adopted.push(adapter.id);
+        return adapter;
+      },
+      afterAdapterLoad: (id) => {
+        fenced.push(id);
+      },
+    });
+    for (const argv of [
+      ['status', '--help'],
+      ['completion-candidates', 'call', ''],
+    ]) {
+      const { result, stderr } = await capture(() => cli.main(argv));
+      assert.equal(result.exitCode, 0, argv.join(' '));
+      assert.equal(stderr, '');
+      assert.equal(harnessContext()?.adapter, undefined);
+    }
+    assert.deepEqual([imported(), adopted, fenced], [[], [], []]);
   });
 });

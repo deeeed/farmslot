@@ -9,10 +9,11 @@ import {
   adapterForPlatform,
   adapterPortEnv,
   assertAdapter,
-  detectAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from './adapters.js';
+import { CliError } from './cli-error.js';
+import { contextAdapter } from './context-state.js';
 import { EXIT } from './shared.js';
 
 export type CliOptionValue = string | boolean | readonly string[];
@@ -24,19 +25,7 @@ export interface ParsedArgs {
   rawArgv: string[];
 }
 
-// Typed exit-code error: carries exitCode so both the global catch (the host bin)
-// and the host's delegate() wrapper classify the error correctly rather than always
-// returning 1.  Usage errors (bad args / unsupported flags) carry EXIT.usage (2);
-// validation errors carry EXIT.validation (5).  Never throw a plain new Error() for
-// user-facing bad-args cases — use usageError() so the exit code is preserved.
-export class CliError extends Error {
-  readonly exitCode: number;
-  constructor(message: string, exitCode: number) {
-    super(message);
-    this.name = 'CliError';
-    this.exitCode = exitCode;
-  }
-}
+export { CliError };
 
 export function usageError(message: string): CliError {
   return new CliError(message, EXIT.usage);
@@ -255,14 +244,15 @@ export function parsePort(value: string | undefined, errorMessage: string): numb
   return port;
 }
 
-// Shared adapter resolution: explicit --adapter/--platform, else auto-detect from
-// --target/cwd (the exact detect story doctor/verify/install use). Lets `call`,
-// `run --plan`, and `completion-candidates` work in a checkout without a flag.
+// Shared adapter resolution: explicit --adapter/--platform, else the adapter the
+// invocation's context resolved for --target/cwd (as doctor/verify/install
+// take it). Lets `call`, `run --plan`, and `completion-candidates` work in a
+// checkout without a flag.
 export function resolveAdapter(options: CliOptions): { adapter: string; target: string } {
   const target = targetPath(options);
   const explicit =
     optionString(options, 'adapter') ?? adapterForPlatform(optionString(options, 'platform'));
-  const adapter = explicit ?? detectAdapter(target);
+  const adapter = explicit ?? contextAdapter(target);
   if (!adapter) {
     throw usageError(`${undetectedAdapterMessage(target)}\n  Next: ${adapterDetectNext()}`);
   }
