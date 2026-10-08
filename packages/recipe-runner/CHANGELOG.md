@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The automatic HUD node (`run:hud`) is the runner's own: it no longer needs approval for an untrusted recipe source when its `app.hud` implementation is trusted, and it stays in the plan digest, so an approval covers one HUD policy. An approval made with another HUD or video setting is refused as `RECIPE_APPROVAL_MISMATCH`, which now says so. A recipe still cannot declare the node: `run:hud` is not a valid node id, and a recipe node's `automatic` field keeps the recipe's origin.
 
 ## 0.28.0 - 2026-10-09
 

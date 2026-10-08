@@ -1291,26 +1291,61 @@ test('automatic HUD implementation is included in trust preflight', async () => 
   }
 });
 
-test('untrusted recipes cannot trigger automatic HUD mutations before approval', async () => {
+// A runner with a trusted app.hud implementation, as a harness registers one,
+// counting HUD draws; `hud: false` is the `--hud hide` policy.
+function hudRunner(hud?: false): {
+  runner: ReturnType<typeof createRecipeRunner>;
+  draws: string[];
+} {
+  const draws: string[] = [];
+  const runner = createRecipeRunner({
+    actionManifest: withOfficialActions('app.hud'),
+    adapters: [
+      ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
+      {
+        action: 'app.hud',
+        source: trusted,
+        async execute(_node, context) {
+          draws.push(context.nodeId);
+          return { output: {} };
+        },
+      },
+    ],
+    ...(hud === false ? { hud } : {}),
+  });
+  return { runner, draws };
+}
+
+test('an untrusted source keeps the automatic HUD in its plan without approving it', async () => {
   const root = await tempRoot();
   try {
-    let hudExecutions = 0;
-    const runner = createRecipeRunner({
-      actionManifest: withOfficialActions('app.hud'),
-      adapters: [
-        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
-        {
-          action: 'app.hud',
-          source: trusted,
-          async execute() {
-            hudExecutions += 1;
-            return { output: {} };
-          },
-        },
-      ],
-    });
+    const { runner, draws } = hudRunner();
     const request = {
       recipeDocument: recipe({ action: 'end', status: 'pass' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    const plan = await runner.preflight(request);
+    const hudNode = plan.nodes.find((node) => node.nodeId === 'run:hud');
+    assert.equal(hudNode?.action, 'app.hud');
+    assert.equal(hudNode?.origin.trust, 'trusted');
+    assert.equal(draws.length, 0);
+
+    const result = await runner.run(request);
+    assert.equal(result.status, 'pass');
+    assert.ok(draws.length > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an approved untrusted plan binds the HUD and runs with it', async () => {
+  const root = await tempRoot();
+  try {
+    const { runner, draws } = hudRunner();
+    const request = {
+      recipeDocument: recipe({ action: 'command', cmd: 'touch approved.txt' }),
       artifactsDir: path.join(root, 'artifacts'),
       projectRoot: root,
       source: untrusted,
@@ -1319,15 +1354,171 @@ test('untrusted recipes cannot trigger automatic HUD mutations before approval',
     await assert.rejects(runner.preflight(request), (error: unknown) => {
       assert.ok(error instanceof RecipeTrustError);
       planDigest = error.failure.recipeDigest ?? '';
-      const hudNode = error.failure.blocked?.find((node) => node.nodeId === 'run:hud');
-      assert.deepEqual(hudNode?.capabilities, ['app-mutation']);
+      // Only the recipe's own node asks for approval, never the HUD.
+      assert.deepEqual(
+        error.failure.blocked?.map((node) => node.nodeId),
+        ['step'],
+      );
       return error.code === 'RECIPE_TRUST_REQUIRED';
     });
-    assert.equal(hudExecutions, 0);
+    assert.equal(draws.length, 0);
 
     const approved = await runner.run({ ...request, approval: { planDigest } });
     assert.equal(approved.status, 'pass');
-    assert.ok(hudExecutions > 0);
+    assert.ok(draws.length > 0);
+    assert.equal(await missing(path.join(root, 'approved.txt')), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('--hud hide leaves the HUD out of the plan, and an approval covers one HUD policy', async () => {
+  const root = await tempRoot();
+  try {
+    const shown = hudRunner();
+    const hidden = hudRunner(false);
+    const request = {
+      recipeDocument: recipe({ action: 'command', cmd: 'touch mismatch.txt' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    const digestOf = async (runner: ReturnType<typeof createRecipeRunner>): Promise<string> => {
+      let digest = '';
+      await assert.rejects(runner.preflight(request), (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        digest = error.failure.recipeDigest ?? '';
+        return true;
+      });
+      return digest;
+    };
+    const hiddenDigest = await digestOf(hidden.runner);
+    const shownDigest = await digestOf(shown.runner);
+    assert.notEqual(hiddenDigest, shownDigest);
+
+    await assert.rejects(
+      shown.runner.run({ ...request, approval: { planDigest: hiddenDigest } }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        assert.match(error.message, /--hud/u);
+        assert.match(error.userAction, new RegExp(`--approve-plan ${shownDigest}`, 'u'));
+        return error.code === 'RECIPE_APPROVAL_MISMATCH';
+      },
+    );
+    assert.equal(shown.draws.length, 0);
+    assert.equal(await missing(path.join(root, 'mismatch.txt')), true);
+
+    const result = await hidden.runner.run({ ...request, approval: { planDigest: hiddenDigest } });
+    assert.equal(result.status, 'pass');
+    assert.deepEqual(hidden.draws, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('with the HUD on, an untrusted approval still refuses any action outside its plan', async () => {
+  const root = await tempRoot();
+  try {
+    const { runner, draws } = hudRunner();
+    const base = {
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    let planDigest = '';
+    await assert.rejects(
+      runner.preflight({
+        ...base,
+        recipeDocument: recipe({ action: 'command', cmd: 'touch reviewed.txt' }),
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        planDigest = error.failure.recipeDigest ?? '';
+        return true;
+      },
+    );
+    await assert.rejects(
+      runner.run({
+        ...base,
+        recipeDocument: recipe({ action: 'command', cmd: 'touch other.txt' }),
+        approval: { planDigest },
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+    );
+    assert.equal(await missing(path.join(root, 'other.txt')), true);
+    assert.equal(draws.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a recipe cannot declare the automatic HUD node itself', async () => {
+  const root = await tempRoot();
+  try {
+    // A HUD schema that declares `automatic`, so only the trust check can refuse the claim.
+    const permissive = withOfficialActions('app.hud');
+    permissive.actions['app.hud'] = testAction('app.hud', {
+      schema: {
+        type: 'object',
+        properties: { automatic: { type: 'boolean' } },
+        additionalProperties: false,
+      },
+    });
+    const draws: string[] = [];
+    const runner = createRecipeRunner({
+      actionManifest: permissive,
+      adapters: [
+        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
+        {
+          action: 'app.hud',
+          source: trusted,
+          async execute(_node, context) {
+            draws.push(context.nodeId);
+            return { output: {} };
+          },
+        },
+      ],
+    });
+    const base = {
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+
+    // `automatic: true` in recipe JSON is ignored: the node keeps the recipe's origin.
+    await assert.rejects(
+      runner.run({
+        ...base,
+        recipeDocument: recipe({ action: 'app.hud', automatic: true }),
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        const claimed = error.failure.blocked?.find((node) => node.nodeId === 'step');
+        assert.equal(claimed?.action, 'app.hud');
+        assert.equal(claimed?.origin.trust, 'untrusted');
+        assert.equal(
+          error.failure.blocked?.some((node) => node.nodeId === 'run:hud'),
+          false,
+        );
+        return error.code === 'RECIPE_TRUST_REQUIRED';
+      },
+    );
+
+    // The harness id is not a valid recipe node id.
+    const claimedId = recipe({ action: 'end', status: 'pass' });
+    claimedId.workflow = {
+      entry: 'run:hud',
+      nodes: {
+        'run:hud': { action: 'app.hud', intent: 'Draw the harness HUD', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    };
+    await assert.rejects(
+      runner.run({ ...base, recipeDocument: claimedId }),
+      /Workflow node run:hud must be an object whose id contains only letters/u,
+    );
+    assert.deepEqual(draws, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
