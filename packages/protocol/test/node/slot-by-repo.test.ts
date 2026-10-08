@@ -4,7 +4,11 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { findSlotByRepo, isIgnoredPoolFile, slotPoolDir } from '../../src/node/slot-by-repo.js';
+import {
+  findSlotByRepo,
+  isIgnoredPoolFile,
+  resolveSlotPoolDir,
+} from '../../src/node/slot-by-repo.js';
 
 function tempDir(t: test.TestContext): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'protocol-slot-by-repo-')));
@@ -99,9 +103,26 @@ test('isIgnoredPoolFile admits the demo pool only when FARMSLOT_DEMO_POOL=1', ()
   assert.equal(isIgnoredPoolFile('farmslot-demo.json', { FARMSLOT_DEMO_POOL: '1' }), false);
 });
 
-test('slotPoolDir reads FARMSLOT_POOL_DIR, else FARMSLOT_ROOT/pool, else nothing', () => {
-  assert.equal(slotPoolDir({ FARMSLOT_POOL_DIR: '/p', FARMSLOT_ROOT: '/r' }), '/p');
-  assert.equal(slotPoolDir({ FARMSLOT_ROOT: '/r' }), '/r/pool');
-  assert.equal(slotPoolDir({ FARMSLOT_POOL_DIR: '  ', FARMSLOT_ROOT: '' }), undefined);
-  assert.equal(slotPoolDir({}), undefined);
+test('resolveSlotPoolDir: FARMSLOT_POOL_DIR, else FARMSLOT_ROOT/pool, else ~/farmslot-node/pool when present', (t) => {
+  const home = tempDir(t);
+  assert.deepEqual(
+    resolveSlotPoolDir({ FARMSLOT_POOL_DIR: '/p', FARMSLOT_ROOT: '/r', HOME: home }),
+    {
+      dir: '/p',
+      source: 'FARMSLOT_POOL_DIR',
+    },
+  );
+  assert.deepEqual(resolveSlotPoolDir({ FARMSLOT_ROOT: '/r', HOME: home }), {
+    dir: '/r/pool',
+    source: 'FARMSLOT_ROOT',
+  });
+  assert.equal(
+    resolveSlotPoolDir({ FARMSLOT_POOL_DIR: '  ', FARMSLOT_ROOT: '', HOME: home }),
+    undefined,
+  );
+  mkdirSync(join(home, 'farmslot-node', 'pool'), { recursive: true });
+  assert.deepEqual(resolveSlotPoolDir({ HOME: home }), {
+    dir: join(home, 'farmslot-node', 'pool'),
+    source: 'farmslot-node',
+  });
 });

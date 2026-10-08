@@ -205,13 +205,24 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+function emptyPoolDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-no-pools-'));
+  pools.push(dir);
+  return dir;
+}
+const pools: string[] = [];
+afterEach(() => {
+  for (const dir of pools.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // What createHarnessCli does before a command runs: resolve the invocation's
 // context, which the commands read for an adapter no flag names.
 async function withResolvedContext<T>(
   tokens: readonly string[],
   invoke: () => Promise<T>,
 ): Promise<T> {
-  setHarnessContext(await resolveHarnessContext({ tokens }));
+  // An empty pool directory: the machine's own pools never reach the tests.
+  setHarnessContext(await resolveHarnessContext({ tokens, slotPoolDir: emptyPoolDir() }));
   try {
     return await invoke();
   } finally {

@@ -121,7 +121,8 @@ export interface HarnessCliOptions {
   defaultAdapter?: string;
   /**
    * The pool directory slot-config reads to find the checkout's slot. Default:
-   * FARMSLOT_POOL_DIR, else $FARMSLOT_ROOT/pool; none skips the pool.
+   * FARMSLOT_POOL_DIR, else $FARMSLOT_ROOT/pool, else ~/farmslot-node/pool when
+   * it exists; none reports the slot as unknown (no pool dir).
    */
   slotPoolDir?(): string | undefined;
 }
@@ -325,19 +326,7 @@ async function loadSelectedAdapter(
       error instanceof RecipeResolutionError ||
       error instanceof AdapterAmbiguousError
     ) {
-      const failure = {
-        code: error.code,
-        message: error.message,
-        userAction: error.userAction,
-        ...(error instanceof AdapterAmbiguousError ? { candidates: error.candidates } : {}),
-      };
-      if (requested(argv, '--json-stream')) {
-        const stream = new JsonStreamWriter(command.name, true);
-        stream.error(failure);
-        stream.complete('fail', 2);
-        return 2;
-      }
-      return adapterSelectionFailureOut(requested(argv, '--json'), command.name, failure);
+      return refusalOut(command.name, argv, error);
     }
     return mapErrors(() => {
       throw error;
@@ -370,8 +359,39 @@ function exitOf(command: HarnessCommand): 'now' | 'code' {
   return command.exit ?? (command.hidden ? 'now' : 'code');
 }
 
+// A command that meets an ambiguous checkout itself (it detects a target of its
+// own) refuses like the front door: the candidates in every output form.
 function dispatch(command: HarnessCommand, argv: readonly string[]): Promise<number> {
-  return mapErrors(() => command.run(argv.slice(1)));
+  return mapErrors(async () => {
+    try {
+      return await command.run(argv.slice(1));
+    } catch (error) {
+      if (error instanceof AdapterAmbiguousError) return refusalOut(command.name, argv, error);
+      throw error;
+    }
+  });
+}
+
+// A refusal with a code and a next step: the --json-stream error event, the
+// --json envelope, or the human line; ADAPTER_AMBIGUOUS adds its candidates.
+function refusalOut(
+  command: string,
+  argv: readonly string[],
+  error: { code: string; message: string; userAction: string },
+): number {
+  const failure = {
+    code: error.code,
+    message: error.message,
+    userAction: error.userAction,
+    ...(error instanceof AdapterAmbiguousError ? { candidates: error.candidates } : {}),
+  };
+  if (requested(argv, '--json-stream')) {
+    const stream = new JsonStreamWriter(command, true);
+    stream.error(failure);
+    stream.complete('fail', 2);
+    return 2;
+  }
+  return adapterSelectionFailureOut(requested(argv, '--json'), command, failure);
 }
 
 // The one place a command's failure becomes an exit code: a CliError carries

@@ -26,10 +26,12 @@ export function adapterDetectFromSpec(spec: AdapterDetectSpec): AdapterDetect {
   const detect: AdapterDetect = {};
   if (remotes.length > 0) detect.remote = (url) => remotes.some((entry) => url.includes(entry));
   if (files.length > 0 || dependencies.length > 0) {
-    detect.files = (target) =>
-      files.every((file) => exists(target, file)) &&
-      (dependencies.length === 0 ||
-        dependencies.every((name) => packageDependencies(target).has(name)));
+    detect.files = (target) => {
+      if (!files.every((file) => exists(target, file))) return false;
+      if (dependencies.length === 0) return true;
+      const listed = packageDependencies(target);
+      return dependencies.every((name) => listed.has(name));
+    };
   }
   return detect;
 }

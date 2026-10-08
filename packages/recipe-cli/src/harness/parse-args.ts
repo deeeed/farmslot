@@ -12,6 +12,7 @@ import {
   harnessAdapter,
   undetectedAdapterMessage,
 } from './adapters.js';
+import { CliError } from './cli-error.js';
 import { contextAdapter } from './context-state.js';
 import { EXIT } from './shared.js';
 
@@ -24,19 +25,7 @@ export interface ParsedArgs {
   rawArgv: string[];
 }
 
-// Typed exit-code error: carries exitCode so both the global catch (the host bin)
-// and the host's delegate() wrapper classify the error correctly rather than always
-// returning 1.  Usage errors (bad args / unsupported flags) carry EXIT.usage (2);
-// validation errors carry EXIT.validation (5).  Never throw a plain new Error() for
-// user-facing bad-args cases — use usageError() so the exit code is preserved.
-export class CliError extends Error {
-  readonly exitCode: number;
-  constructor(message: string, exitCode: number) {
-    super(message);
-    this.name = 'CliError';
-    this.exitCode = exitCode;
-  }
-}
+export { CliError };
 
 export function usageError(message: string): CliError {
   return new CliError(message, EXIT.usage);

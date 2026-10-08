@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
@@ -36,15 +37,24 @@ export function isIgnoredPoolFile(file: string, env: NodeJS.ProcessEnv = process
   return false;
 }
 
+/** Where `resolveSlotPoolDir` found the pool directory. */
+export type SlotPoolDirSource = 'FARMSLOT_POOL_DIR' | 'FARMSLOT_ROOT' | 'farmslot-node';
+
 /**
- * The pool directory a process outside the Farmslot checkout can name:
- * FARMSLOT_POOL_DIR, else `$FARMSLOT_ROOT/pool`, else none.
+ * The pool directory a process outside the Farmslot checkout reads:
+ * FARMSLOT_POOL_DIR, else `$FARMSLOT_ROOT/pool`, else the node deploy
+ * directory's pool (`~/farmslot-node/pool`, where deploy-node.sh installs a
+ * node and slot-common.sh falls back) when it exists, else none.
  */
-export function slotPoolDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function resolveSlotPoolDir(
+  env: NodeJS.ProcessEnv = process.env,
+): { dir: string; source: SlotPoolDirSource } | undefined {
   const poolDir = env.FARMSLOT_POOL_DIR?.trim();
-  if (poolDir) return path.resolve(poolDir);
+  if (poolDir) return { dir: path.resolve(poolDir), source: 'FARMSLOT_POOL_DIR' };
   const root = env.FARMSLOT_ROOT?.trim();
-  return root ? path.join(path.resolve(root), 'pool') : undefined;
+  if (root) return { dir: path.join(path.resolve(root), 'pool'), source: 'FARMSLOT_ROOT' };
+  const nodePool = path.join(env.HOME?.trim() || homedir(), 'farmslot-node', 'pool');
+  return existsSync(nodePool) ? { dir: nodePool, source: 'farmslot-node' } : undefined;
 }
 
 /**

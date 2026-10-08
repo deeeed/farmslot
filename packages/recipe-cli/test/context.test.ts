@@ -133,8 +133,9 @@ beforeEach(() => {
     'FARMSLOT_ROOT',
   ])
     delete process.env[key];
-  // No personal library from ~/.farmslot reaches the tests.
+  // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
   process.env.FARMSLOT_HOME = tempRoot();
+  process.env.HOME = tempRoot();
   (globalThis as Record<string, unknown>).__pluginImports = [];
   setHarnessContext(undefined);
 });
@@ -251,6 +252,24 @@ describe('resolveHarnessContext', () => {
       (await resolveHarnessContext({ tokens: [], cwd: checkout })).slot?.value,
       'macwork-coredev-6',
     );
+    // With neither variable, the node deploy pool under the home directory.
+    delete process.env.FARMSLOT_ROOT;
+    const home = process.env.HOME ?? '';
+    write(
+      home,
+      'farmslot-node/pool/macwork.json',
+      JSON.stringify({ machine: 'macwork', host: 'localhost', slots: [slot] }),
+    );
+    const deployed = await resolveHarnessContext({ tokens: [], cwd: checkout });
+    assert.equal(deployed.slot?.value, 'macwork-coredev-6');
+    assert.equal(deployed.slot?.source, 'slot');
+    assert.equal(deployed.slot?.detail, 'slot-config (~/farmslot-node/pool)');
+    assert.match(
+      formatHarnessContext(deployed),
+      /slot macwork-coredev-6 \(slot-config \(~\/farmslot-node\/pool\)\)$/u,
+    );
+    fs.rmSync(path.join(home, 'farmslot-node'), { recursive: true });
+
     process.env.FARMSLOT_ROOT = path.join(checkout, 'missing');
     assert.deepEqual((await resolveHarnessContext({ tokens: [], cwd: checkout })).slot, {
       value: null,
@@ -286,6 +305,23 @@ describe('resolveHarnessContext', () => {
       adapter('shop', { extends: 'web', detect: { files: hasFile('web.json') } }),
     );
     assert.equal((await resolveHarnessContext({ tokens: [], cwd: plain })).adapter?.value, 'shop');
+  });
+
+  test('a pool directory that exists but does not read is a failure, not a missing pool', async (t) => {
+    if (process.getuid?.() === 0) return t.skip('root reads any directory');
+    const checkout = tempRoot();
+    useAdapters(adapter('web'));
+    const pools = poolDir([]);
+    fs.chmodSync(pools, 0o000);
+    try {
+      await assert.rejects(
+        resolveHarnessContext({ tokens: [], cwd: checkout, slotPoolDir: pools }),
+        { code: 'EACCES' },
+      );
+    } finally {
+      // Before afterEach removes it.
+      fs.chmodSync(pools, 0o755);
+    }
   });
 
   test('without --target, a subdirectory detects, binds and finds its slot at the Git top level', async () => {
@@ -328,6 +364,23 @@ describe('resolveHarnessContext', () => {
       formatHarnessContext(foreign),
       new RegExp(`binding ignored \\(belongs to ${extension}\\)$`, 'u'),
     );
+
+    // Claude's probe: a core-like target detects; the inherited binding never wins.
+    const core = tempRoot();
+    write(core, 'yarn.lock', '');
+    useAdapters(
+      adapter('web'),
+      adapter('app', { detect: { files: hasFile('app.json') } }),
+      adapter('core', { detect: { files: hasFile('yarn.lock') } }),
+    );
+    const probed = await resolveHarnessContext({ tokens: ['--target', core], cwd: extension });
+    assert.deepEqual(probed.adapter, {
+      value: 'core',
+      source: 'detect',
+      detail: 'files',
+      matched: ['files'],
+    });
+    assert.equal(probed.ignoredBinding?.repoRoot, extension);
 
     // Its own checkout, a subdirectory of it, and a symlink to it are bound.
     const own = await resolveHarnessContext({ tokens: ['--target', extension], cwd: mobile });

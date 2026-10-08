@@ -450,10 +450,10 @@ export function usageOut(
         {
           schemaVersion: 1,
           command,
+          ...harnessContextField(),
           status: 'fail',
           exitCode: EXIT.usage,
           error: { code: 'USAGE', message, userAction },
-          ...harnessContextField(),
         },
         null,
         2,

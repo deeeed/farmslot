@@ -23,6 +23,7 @@ import {
   type ContractedCommand,
   contractOptions,
   createHarnessCli,
+  detectAdapter,
   harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
@@ -249,8 +250,9 @@ beforeEach(() => {
   delete process.env.SHOP_HARNESS_RUN_MODE;
   delete process.env.RECIPE_RUNTIME_DIR;
   delete process.env.RECIPE_LIBRARY_PATH;
-  // No personal library from ~/.farmslot reaches the tests.
+  // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
   process.env.FARMSLOT_HOME = tempRoot();
+  process.env.HOME = tempRoot();
   (globalThis as Record<string, unknown>).__pluginImports = [];
   process.chdir(tempRoot());
 });
@@ -1378,10 +1380,12 @@ export const adapter = {
     });
     const stream = await capture(() => cli.main(['status', '--json-stream']));
     assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
-    assert.equal(
-      (streamEvents(stream.stdout)[0]?.error as { code: string }).code,
-      'ADAPTER_AMBIGUOUS',
-    );
+    assert.deepEqual(streamEvents(stream.stdout)[0]?.error, {
+      code: 'ADAPTER_AMBIGUOUS',
+      message,
+      userAction: 'pass --adapter <terminal|shop>',
+      candidates,
+    });
     assert.deepEqual(imported(), []);
     assert.deepEqual(calls, []);
 
@@ -1415,6 +1419,36 @@ export const adapter = {
       });
     }
     assert.deepEqual(imported(), []);
+  });
+
+  test('a command that detects a target itself refuses an ambiguous one with the candidates', async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    fs.writeFileSync(path.join(checkout, 'shop.json'), '{}');
+    const registry = createAdapterRegistry();
+    registry.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    registry.register({ ...fakeAdapter('cafe'), detect: { files: () => true } });
+    const check = command(
+      'check',
+      { options: contractOptions(HELP, JSON_FLAG), positionals: [{ label: 'dir' }] },
+      { run: (argv) => (detectAdapter(argv[0] ?? '') ? 0 : 1) },
+    );
+    const cli = createHarnessCli({ ...cliOptions({ adapters: registry }), commands: [check] });
+    const candidates = [
+      { adapter: 'web', matched: ['files'] },
+      { adapter: 'cafe', matched: ['files'] },
+    ];
+    const json = await capture(() => cli.main(['check', checkout, '--json']));
+    assert.equal(json.result.exitCode, 2);
+    assert.deepEqual(
+      (JSON.parse(json.stdout) as { error: { candidates: unknown } }).error.candidates,
+      candidates,
+    );
+    const human = await capture(() => cli.main(['check', checkout]));
+    assert.equal(human.result.exitCode, 2);
+    assert.match(
+      human.stderr,
+      /matches more than one adapter: web \(files\), cafe \(files\)\n {2}Next: pass --adapter <web\|cafe>/u,
+    );
   });
 
   test('a command without context options, or a hidden one, detects nothing', async () => {

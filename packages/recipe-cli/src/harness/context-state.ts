@@ -4,6 +4,8 @@
 // plugin loader.
 import path from 'node:path';
 
+import { CliError } from './cli-error.js';
+
 /** Where a context value came from, strongest first. */
 export type ContextSource = 'flag' | 'binding' | 'slot' | 'detect' | 'default';
 
@@ -35,7 +37,7 @@ export interface HarnessContext {
     | {
         value: string;
         source: 'slot' | 'binding';
-        detail: 'slot-config' | 'runtime-context';
+        detail: 'slot-config' | 'slot-config (~/farmslot-node/pool)' | 'runtime-context';
         session?: string;
         poolFile?: string;
         ports: Record<string, number>;
@@ -56,18 +58,17 @@ export interface AdapterCandidate {
   library?: string;
 }
 
-/** More than one adapter matched a checkout, with nothing to choose between them. */
-export class AdapterAmbiguousError extends Error {
+/** More than one adapter matched a checkout, with nothing to choose between them. Exit 2. */
+export class AdapterAmbiguousError extends CliError {
   readonly code = 'ADAPTER_AMBIGUOUS';
-  /** Usage: EXIT.usage. */
-  readonly exitCode = 2;
   readonly userAction: string;
   readonly candidates: AdapterCandidate[];
   constructor(target: string, candidates: AdapterCandidate[]) {
     const listed = candidates
       .map((candidate) => `${candidate.adapter} (${candidate.matched.join(', ')})`)
       .join(', ');
-    super(`${target} matches more than one adapter: ${listed}`);
+    // EXIT.usage; shared.ts imports this module, so the value is spelled here.
+    super(`${target} matches more than one adapter: ${listed}`, 2);
     this.name = 'AdapterAmbiguousError';
     this.candidates = candidates;
     this.userAction = `pass --adapter <${candidates.map((candidate) => candidate.adapter).join('|')}>`;

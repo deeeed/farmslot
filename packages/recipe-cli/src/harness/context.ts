@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { findSlotByRepo, slotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
+import { findSlotByRepo, resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 
 import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './adapter-plugins.js';
 import {
@@ -43,9 +43,10 @@ export interface ResolveHarnessContextOptions {
   /** The adapter a runtime context's or slot's `platform` names, when it is not an adapter id. */
   slotAdapter?(platform: string): string | undefined;
   /**
-   * The pool directory slot-config reads. Default: FARMSLOT_POOL_DIR, else
-   * $FARMSLOT_ROOT/pool. Without one, a checkout whose runtime context names no
-   * slot reports `slot: { value: null, source: 'none', detail: 'no-pool-dir' }`.
+   * The pool directory slot-config reads. Default (`resolveSlotPoolDir`):
+   * FARMSLOT_POOL_DIR, else $FARMSLOT_ROOT/pool, else ~/farmslot-node/pool when
+   * it exists. Without one, a checkout whose runtime context names no slot
+   * reports `slot: { value: null, source: 'none', detail: 'no-pool-dir' }`.
    */
   slotPoolDir?: string;
   /** The adapter when nothing else decides. */
@@ -84,8 +85,16 @@ export async function resolveHarnessContext(
   const root = targetFlag ? target.value : (gitTopLevel(target.value) ?? target.value);
   const binding = readBinding(root, optionValues(options.tokens, '--runtime-dir').at(-1));
   const runtime = binding.runtime;
-  const poolDir = options.slotPoolDir ?? slotPoolDir();
-  const pooled = poolDir ? await poolSlot(root, poolDir) : 'no-pool-dir';
+  const pool = options.slotPoolDir
+    ? { dir: options.slotPoolDir, source: 'option' as const }
+    : resolveSlotPoolDir();
+  const pooled = pool
+    ? await poolSlot(
+        root,
+        pool.dir,
+        pool.source === 'farmslot-node' ? 'slot-config (~/farmslot-node/pool)' : 'slot-config',
+      )
+    : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
   const slot: HarnessContext['slot'] =
     pooledSlot?.slot ??
@@ -262,20 +271,24 @@ function runtimeSlot(runtime: RuntimeContext | undefined): ContextSlot | undefin
 async function poolSlot(
   target: string,
   poolDir: string,
+  detail: ContextSlot['detail'],
 ): Promise<{ slot: ContextSlot; platform?: string } | 'no-pool-dir' | undefined> {
   let real: string;
   try {
     real = fs.realpathSync(target);
-  } catch {
-    // A missing checkout has no slot.
-    return undefined;
+  } catch (error) {
+    // A missing checkout has no slot; any other IO failure is real.
+    if (missing(error)) return undefined;
+    throw error;
   }
   let match;
   try {
     match = await findSlotByRepo(poolDir, real);
-  } catch {
-    // An unreadable pool directory is as good as none.
-    return 'no-pool-dir';
+  } catch (error) {
+    // A pool directory that does not exist is none; one that does not read
+    // (EACCES and the like) is a real failure.
+    if (missing(error)) return 'no-pool-dir';
+    throw error;
   }
   if (!match) return undefined;
   const ports: Record<string, number> = {};
@@ -289,11 +302,16 @@ async function poolSlot(
     slot: {
       value: match.slot.id,
       source: 'slot',
-      detail: 'slot-config',
+      detail,
       ...(match.slot.session ? { session: match.slot.session } : {}),
       poolFile: match.poolFile,
       ports,
     },
     ...(match.slot.platform ? { platform: match.slot.platform } : {}),
   };
+}
+
+function missing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
 }
