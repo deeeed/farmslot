@@ -455,8 +455,8 @@ describe('detectAdapter', () => {
     assert.equal(detectAdapter(checkout), 'web');
     const shop = { id: 'shop', library: 'lib', extends: 'web', detect: { files: ['shop.json'] } };
     assert.equal(detectAdapter(checkout, [shop]), 'shop');
-    // A declaration that claims a registered id is no candidate.
-    assert.equal(detectAdapter(checkout, [{ ...shop, id: 'app', extends: undefined }]), 'web');
+    // A loaded plugin is matched by its declaration, not its registered detect.
+    assert.equal(detectAdapter(checkout, [{ ...shop, id: 'app', extends: 'web' }]), 'app');
     assert.throws(
       () => detectAdapter(checkout, [{ ...shop, extends: undefined }]),
       AdapterAmbiguousError,

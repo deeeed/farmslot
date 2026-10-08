@@ -56,9 +56,10 @@ export interface DeclaredDetect {
 }
 
 /**
- * The registered adapters by their `detect`, then the declared plugins not
- * registered by their declaration's `detect` (a declaration that claims a
- * registered id is no candidate), ranked by `pickDetected`.
+ * The registered adapters by their `detect` and the declared plugins by their
+ * declaration's, ranked by `pickDetected`. A plugin is matched by its
+ * declaration whether or not it is loaded; the caller passes plugin
+ * declarations only (the resolver drops one that claims a built-in id).
  */
 export function detectAdapterMatch(
   target: string,
@@ -67,13 +68,15 @@ export function detectAdapterMatch(
   // An empty registry would detect nothing for every checkout; that is a host
   // wiring error, not an unknown checkout.
   assertAdaptersRegistered();
-  const entries: DetectEntry[] = registered().map((adapter) => ({
-    id: adapter.id,
-    ...(adapter.extends ? { extends: adapter.extends } : {}),
-    ...(adapter.detect ? { detect: adapter.detect } : {}),
-  }));
-  for (const declaration of declared) {
-    if (entries.some((entry) => entry.id === declaration.id)) continue;
+  const plugins = new Map(declared.map((declaration) => [declaration.id, declaration]));
+  const entries: DetectEntry[] = registered()
+    .filter((adapter) => !plugins.has(adapter.id))
+    .map((adapter) => ({
+      id: adapter.id,
+      ...(adapter.extends ? { extends: adapter.extends } : {}),
+      ...(adapter.detect ? { detect: adapter.detect } : {}),
+    }));
+  for (const declaration of plugins.values()) {
     entries.push({
       id: declaration.id,
       library: declaration.library,

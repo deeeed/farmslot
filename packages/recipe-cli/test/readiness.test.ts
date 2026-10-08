@@ -27,6 +27,7 @@ import {
   harnessHost,
   parseArgs,
   requiredDoctorCheckSummary,
+  resolveHarnessContext,
   runnerInstallKind,
   setHarnessContext,
   shellQuote,
@@ -195,12 +196,27 @@ beforeEach(() => {
   process.env.CAPTURE_HELPER_PATH = '/nonexistent/capture-helper';
 });
 afterEach(() => {
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
   for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+// What createHarnessCli does before a command runs: resolve the invocation's
+// context, which the commands read for an adapter no flag names.
+async function withResolvedContext<T>(
+  tokens: readonly string[],
+  invoke: () => Promise<T>,
+): Promise<T> {
+  setHarnessContext(await resolveHarnessContext({ tokens }));
+  try {
+    return await invoke();
+  } finally {
+    setHarnessContext(undefined);
+  }
+}
 
 describe('the doctor report', () => {
   test('lists the manifest check, then the host checks, then the platform checks, and tallies the required ones', () => {
@@ -735,10 +751,12 @@ describe('status', () => {
     );
     const target = tempRoot();
     const { stdout } = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json']), {
-        checkoutView: () => ({ json: { bound: true }, text: '' }),
-        featureFlags: flagHost,
-      }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json']), {
+          checkoutView: () => ({ json: { bound: true }, text: '' }),
+          featureFlags: flagHost,
+        }),
+      ),
     );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
@@ -746,6 +764,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'view',
       'devices',
       'featureFlags',
@@ -767,7 +786,11 @@ describe('status', () => {
     useAdapters(adapter);
     const target = tempRoot();
     const { stdout } = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json', '--fast']), { featureFlags: flagHost }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json', '--fast']), {
+          featureFlags: flagHost,
+        }),
+      ),
     );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
@@ -775,6 +798,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'featureFlags',
       'next',
@@ -783,7 +807,9 @@ describe('status', () => {
     assert.equal(probes.count, 0);
 
     const live = await capture(() =>
-      handleStatus(parseArgs(['--target', target, '--json']), { featureFlags: flagHost }),
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json']), { featureFlags: flagHost }),
+      ),
     );
     const liveEnvelope = JSON.parse(live.stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(liveEnvelope), [
@@ -791,6 +817,7 @@ describe('status', () => {
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'featureFlags',
       'portHints',
@@ -805,13 +832,18 @@ describe('status', () => {
       fakeAdapter('shop', { detect: { files: () => true }, readiness: { statusRuntime: true } }),
     );
     const target = tempRoot();
-    const { stdout } = await capture(() => handleStatus(parseArgs(['--target', target, '--json'])));
+    const { stdout } = await capture(() =>
+      withResolvedContext(['--target', target], () =>
+        handleStatus(parseArgs(['--target', target, '--json'])),
+      ),
+    );
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     assert.deepEqual(Object.keys(envelope), [
       'schemaVersion',
       'command',
       'adapter',
       'target',
+      'context',
       'devices',
       'runtime',
       'next',
@@ -1470,25 +1502,27 @@ describe('task init', () => {
     fs.writeFileSync(path.join(catalog, 'fix-bug', 'shop.md'), '# Fix\n\n- [ ] 1. Prove it.\n');
     const task = path.join(tempRoot(), 'task');
     const { result } = await capture(() =>
-      handleTaskInit(
-        [
-          'init',
-          task,
-          '--flow',
-          'fix-bug',
-          '--template',
-          'fix-bug/shop',
-          '--package-templates',
-          catalog,
-          '--package-id',
-          't',
-          '--title',
-          'x',
-          '--task-text',
-          'y',
-          '--json',
-        ],
-        { surface: 'skill' },
+      withResolvedContext([], () =>
+        handleTaskInit(
+          [
+            'init',
+            task,
+            '--flow',
+            'fix-bug',
+            '--template',
+            'fix-bug/shop',
+            '--package-templates',
+            catalog,
+            '--package-id',
+            't',
+            '--title',
+            'x',
+            '--task-text',
+            'y',
+            '--json',
+          ],
+          { surface: 'skill' },
+        ),
       ),
     );
     assert.equal(result, 0);

@@ -19,10 +19,10 @@ import {
   type CommandContract,
   configureHarnessAdapters,
   configureHarnessHost,
+  contextAdapter,
   type ContractedCommand,
   contractOptions,
   createHarnessCli,
-  detectAdapter,
   harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
@@ -1290,7 +1290,7 @@ export const adapter = {
       },
       {
         run: () => {
-          seen.push(detectAdapter(process.cwd()));
+          seen.push(contextAdapter(process.cwd()));
           calls.push({ command: 'status', argv: [] });
           return 0;
         },
@@ -1343,7 +1343,7 @@ export const adapter = {
     assert.equal(json.stderr, '');
     const flagged = await capture(() => cli.main(['status', '--adapter', 'web']));
     assert.equal(flagged.stderr, '');
-    // The flag is the context too, so detection answers with it.
+    // The flag is the context too, so the command reads it.
     assert.deepEqual(seen, ['terminal', 'terminal', 'web']);
   });
 

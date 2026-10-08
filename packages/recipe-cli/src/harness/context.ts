@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { findSlotByRepo, slotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 
-import { type AdapterLibraryOptions, declaredAdapters } from './adapter-plugins.js';
+import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './adapter-plugins.js';
 import {
   adapterForPlatform,
   type DeclaredDetect,
@@ -86,7 +86,12 @@ export async function resolveHarnessContext(
     flagAdapter(options.tokens) ??
     sourced(platformAdapter(runtime?.platform), 'binding', 'runtime-context') ??
     sourced(platformAdapter(pooledSlot?.platform), 'slot', 'slot-config') ??
-    detectedAdapter(root, declared) ??
+    detectedAdapter(
+      root,
+      // A declaration that claims a built-in id is no candidate; selecting it
+      // reports the conflict.
+      declared.filter((entry) => !registry.has(entry.id) || adapterPlugin(entry.id)),
+    ) ??
     sourced(options.defaultAdapter, 'default', 'default');
 
   return { ...(adapter ? { adapter } : {}), target, ...(slot ? { slot } : {}) };

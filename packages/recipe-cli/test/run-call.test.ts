@@ -62,10 +62,12 @@ import {
   ProvenanceDriftError,
   type RecipeEngine,
   recipeRuntimePath,
+  resolveHarnessContext,
   resolveLibrarySources,
   type RunCommandOptions,
   runnableLibraryRecipes,
   runNetworkCaptureAction,
+  setHarnessContext,
   validateActionInputs,
   validateCommandNodes,
   validateRunRecipeStatic,
@@ -547,12 +549,27 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
   for (const [key, value] of Object.entries(savedEnv)) process.env[key] = value;
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+// What createHarnessCli does before a command runs: resolve the invocation's
+// context, which the commands read for an adapter no flag names.
+async function withResolvedContext<T>(
+  tokens: readonly string[],
+  invoke: () => Promise<T>,
+): Promise<T> {
+  setHarnessContext(await resolveHarnessContext({ tokens }));
+  try {
+    return await invoke();
+  } finally {
+    setHarnessContext(undefined);
+  }
+}
 
 describe('engine door', () => {
   test('a one-node call recipe keeps its inputs but owns its structure', () => {
@@ -2927,7 +2944,10 @@ describe('call', () => {
       ],
       'call, detected': [
         'web',
-        () => handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+        () =>
+          withResolvedContext(funded, () =>
+            handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
+          ),
       ],
       'call --platform storefront': [
         'web',
@@ -2941,7 +2961,10 @@ describe('call', () => {
         'api',
         () => handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
       ],
-      'run, detected': ['web', () => handleRun([ping, ...funded], runOptions)],
+      'run, detected': [
+        'web',
+        () => withResolvedContext(funded, () => handleRun([ping, ...funded], runOptions)),
+      ],
       'run --platform storefront': [
         'web',
         () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
@@ -3056,17 +3079,21 @@ describe('call', () => {
     const cwd = process.cwd();
     try {
       process.chdir(target);
-      const fallback = await capture(() => handleCall([], callOptions));
+      const fallback = await capture(() =>
+        withResolvedContext([], () => handleCall([], callOptions)),
+      );
       assert.equal(fallback.value, 2);
       assert.match(
         fallback.stderr.join('\n'),
         /Example: shop-harness call command --adapter web\n {2}See the vocabulary: shop-harness actions --adapter web/u,
       );
       const preferred = await capture(() =>
-        handleCall([], {
-          ...callOptions,
-          exampleAction: (names) => names.find((name) => name.startsWith('shop.')),
-        }),
+        withResolvedContext([], () =>
+          handleCall([], {
+            ...callOptions,
+            exampleAction: (names) => names.find((name) => name.startsWith('shop.')),
+          }),
+        ),
       );
       assert.match(
         preferred.stderr.join('\n'),
