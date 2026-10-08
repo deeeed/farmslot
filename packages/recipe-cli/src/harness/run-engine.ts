@@ -329,11 +329,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const runnerOptions = {
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
     suppressLibraryResolutionLogs: runtimeOptions.suppressLibraryResolutionLogs,
-    autoHud: suppressAutoHud
-      ? false
-      : trust.source && trust.source.trust !== 'trusted'
-        ? false
-        : runtimeOptions.autoHud,
+    // Every source follows the run's HUD policy: the runner owns the HUD node
+    // and binds it in the plan an untrusted source's approval covers.
+    autoHud: suppressAutoHud ? false : runtimeOptions.autoHud,
     onActionEvent: runtimeOptions.onActionEvent,
     actionSources,
     // A direct engineer invocation is the explicit trust boundary for a

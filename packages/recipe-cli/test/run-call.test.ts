@@ -161,6 +161,8 @@ function manifestFor(adapter: string, team = false): RecipeActionManifestDocumen
 
 interface Calls {
   runners: Array<{ adapter: string; trustedMutation?: string; trustTaskActions: boolean }>;
+  // The HUD policy each runner was created with (undefined: the engine's default, on).
+  autoHud: Array<boolean | undefined>;
   // Each trustedMutation hook call, as `<hook>:<adapter it received>`.
   mutationHooks: string[];
   events: RecipeNodeEvent[];
@@ -172,6 +174,7 @@ interface Calls {
 function newCalls(): Calls {
   return {
     runners: [],
+    autoHud: [],
     mutationHooks: [],
     events: [],
     members: [],
@@ -254,6 +257,7 @@ function shopEngine(
         ...(options.trustedMutation ? { trustedMutation: options.trustedMutation.bound } : {}),
         trustTaskActions: options.trustTaskActions,
       });
+      calls.autoHud.push(options.autoHud);
       // Like a host runner, report each node to the run's observers.
       const adapters = [
         ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
@@ -1817,6 +1821,31 @@ describe('run', () => {
       'load:web',
       'authorize:web',
     ]);
+  });
+
+  test('an inherited untrusted source follows the HUD policy; a surface that opts out still wins', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    process.env.FARMSLOT_RECIPE_SOURCE_TRUST = 'untrusted';
+    process.env.FARMSLOT_RECIPE_SOURCE_KIND = 'task';
+    const policy = async (adapter: string, hud: string[]): Promise<Array<boolean | undefined>> => {
+      calls.autoHud = [];
+      const run = await capture(() =>
+        handleRun(
+          [recipe, '--adapter', adapter, '--target', target, '--heal', 'off', '--json', ...hud],
+          runOptions,
+        ),
+      );
+      assert.equal(run.value, 0, run.stderr.join('\n'));
+      return [...new Set(calls.autoHud)];
+    };
+    assert.deepEqual(await policy('api', []), [undefined]);
+    assert.deepEqual(await policy('api', ['--hud', 'hide']), [false]);
+
+    const registry = createAdapterRegistry();
+    registry.register(shopAdapter('api', calls, { run: { autoHud: () => false } }));
+    configureHarnessAdapters(registry);
+    assert.deepEqual(await policy('api', ['--hud', 'show']), [false]);
   });
 
   test('--runtime-dir selects the runtime directory before the slot resolves, for run and call', async () => {
