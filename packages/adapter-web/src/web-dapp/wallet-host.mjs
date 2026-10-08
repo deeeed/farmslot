@@ -636,8 +636,9 @@ if (network === 'testnet') {
   // resolver rule, WebSocket through the resolver rule).
   const { probe } = policy;
   const host = mainnetHosts.includes(probe.host) ? probe.host : mainnetHosts[0];
-  // The probe URLs are built here and spliced in as JSON strings, so a policy
-  // host or path cannot change the page expression.
+  // The probe URLs are built here and spliced in as JSON strings, so the
+  // policy's probe paths cannot change the page expression. The host is the
+  // policy's probe host only when --mainnet-hosts lists it.
   const httpUrl = JSON.stringify(`https://${host}${probe.httpPath}?${PROBE_MARK}`);
   const resolverUrl = JSON.stringify(
     `https://${host}:${RESOLVER_PROBE_PORT}${probe.httpPath}?${PROBE_MARK}`,
