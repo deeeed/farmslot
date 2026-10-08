@@ -257,6 +257,7 @@ beforeEach(() => {
     'TERMINAL_APP_PORT',
     'RECIPE_WATCHER_PORT',
     'WATCHER_PORT',
+    'METRO_PORT',
   ])
     delete process.env[name];
   // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
@@ -1492,7 +1493,7 @@ export const adapter = {
     );
   });
 
-  test("passes the slot's ports as the absent port flags, journaling only what was typed", async () => {
+  test("fills the slot's ports through the environment, never the argv the command gets", async () => {
     const checkout = fs.realpathSync(tempRoot());
     const pools = fs.realpathSync(tempRoot());
     fs.writeFileSync(
@@ -1515,106 +1516,127 @@ export const adapter = {
     );
     process.env.FARMSLOT_POOL_DIR = pools;
     process.chdir(checkout);
-    const received: string[][] = [];
+    const PORT_NAMES = [
+      'RECIPE_CDP_PORT',
+      'CDP_PORT',
+      'RECIPE_WATCHER_PORT',
+      'WATCHER_PORT',
+      'METRO_PORT',
+    ];
+    const received: { argv: string[]; env: Record<string, string | undefined> }[] = [];
+    const record = (argv: string[]) => {
+      received.push({
+        argv,
+        env: Object.fromEntries(PORT_NAMES.map((name) => [name, process.env[name]])),
+      });
+      return 0;
+    };
+    const portOptions = {
+      '--adapter': valueOption(),
+      '--cdp-port': valueOption(),
+      '--watcher-port': valueOption(),
+      '--port': valueOption(),
+    };
     const doctor = command(
       'doctor',
-      {
-        options: contractOptions(HELP, JSON_FLAG, TARGET, {
-          '--adapter': valueOption(),
-          '--cdp-port': valueOption(),
-          '--watcher-port': valueOption(),
-          '--port': valueOption(),
-        }),
-        allowPassthrough: true,
-      },
-      {
-        run: (argv) => {
-          received.push(argv);
-          return 0;
-        },
-      },
+      { options: contractOptions(HELP, JSON_FLAG, TARGET, portOptions), allowPassthrough: true },
+      { run: record },
+    );
+    const install = command(
+      'install',
+      { options: contractOptions(HELP, TARGET, portOptions), allowPassthrough: true },
+      { run: record },
     );
     const cli = createHarnessCli({
       ...cliOptions({ host: { ...shopHost(), journaledCommands: ['doctor'] } }),
-      commands: [doctor],
+      commands: [doctor, install],
     });
-    // The journal keeps exactly what was typed: never a filled port.
-    const journaled = async (typed: string[]) => {
-      await capture(() => cli.main(['doctor', ...typed]));
-      return readCommandJournal(checkout).record?.args;
+    const run = async (typed: string[]) => {
+      const { result } = await capture(() => cli.main(typed));
+      assert.equal(result.exitCode, 0, typed.join(' '));
+      return received.at(-1)!;
     };
+    const filled = {
+      RECIPE_CDP_PORT: '9541',
+      CDP_PORT: '9541',
+      RECIPE_WATCHER_PORT: '9341',
+      WATCHER_PORT: '9341',
+      METRO_PORT: '9341',
+    };
+
+    // The argv is exactly what was typed; the slot ports arrive in the environment.
+    const plain = await run(['doctor', '--adapter', 'web', '--json']);
+    assert.deepEqual(plain, { argv: ['--adapter', 'web', '--json'], env: filled });
+    assert.deepEqual(harnessContext()?.ports, {
+      cdp: { value: 9541, source: 'slot', filled: true, via: 'env' },
+      watcher: { value: 9341, source: 'slot', filled: true, via: 'env' },
+    });
+    // ...for this invocation only.
+    assert.deepEqual(
+      PORT_NAMES.map((name) => process.env[name]),
+      PORT_NAMES.map(() => undefined),
+    );
+    // A leaf's own help and a passthrough port reach it untouched; a passthrough
+    // flag outranks the environment in every adapter.
+    assert.deepEqual((await run(['install', '--adapter', 'web', '--', '--help'])).argv, [
+      '--adapter',
+      'web',
+      '--',
+      '--help',
+    ]);
+    assert.deepEqual(await run(['install', '--adapter', 'web', '--', '--watcher-port', '9400']), {
+      argv: ['--adapter', 'web', '--', '--watcher-port', '9400'],
+      env: filled,
+    });
+    // A typed spelling leaves that port to the command, the other one still fills.
+    assert.deepEqual(await run(['doctor', '--adapter', 'web', '--port', '9400']), {
+      argv: ['--adapter', 'web', '--port', '9400'],
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: undefined,
+        METRO_PORT: undefined,
+      },
+    });
+    await run(['doctor', '--adapter', 'web', '--watcher-port=9405', '--port=9406']);
+    assert.deepEqual(harnessContext()?.ports?.watcher, { source: 'flag' });
+    // The user's environment wins over the slot: kept, reported, not filled.
+    process.env.WATCHER_PORT = '9400';
+    assert.deepEqual(await run(['doctor', '--adapter', 'web']), {
+      argv: ['--adapter', 'web'],
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: '9400',
+        METRO_PORT: undefined,
+      },
+    });
+    assert.deepEqual(harnessContext()?.ports?.watcher, {
+      value: 9400,
+      source: 'env',
+      filled: false,
+    });
+    delete process.env.WATCHER_PORT;
+
+    // The journal keeps exactly what was typed.
     for (const typed of [
       ['--adapter', 'web', '--json'],
       ['--adapter', 'web', '--cdp-port=1'],
       ['--adapter', 'web', '--cdp-port', '2', '--cdp-port', '3'],
       ['--adapter', 'web', '--', 'x'],
     ]) {
-      assert.deepEqual(await journaled(typed), typed);
+      await run(['doctor', ...typed]);
+      assert.deepEqual(readCommandJournal(checkout).record?.args, typed);
     }
-    assert.deepEqual(received.at(-1), [
-      '--adapter',
-      'web',
-      '--cdp-port',
-      '9541',
-      '--watcher-port',
-      '9341',
-      '--',
-      'x',
-    ]);
-    assert.deepEqual(received.at(-2), [
-      '--adapter',
-      'web',
-      '--cdp-port',
-      '2',
-      '--cdp-port',
-      '3',
-      '--watcher-port',
-      '9341',
-    ]);
-    const inferred = await capture(() => cli.main(['doctor', '--adapter', 'web', '--json']));
-    assert.equal(inferred.result.exitCode, 0);
-    assert.deepEqual(received.at(-1), [
-      '--adapter',
-      'web',
-      '--json',
-      '--cdp-port',
-      '9541',
-      '--watcher-port',
-      '9341',
-    ]);
-    assert.deepEqual(harnessContext()?.ports, {
-      cdp: { value: 9541, source: 'slot' },
-      watcher: { value: 9341, source: 'slot' },
-    });
-    await capture(() => cli.main(['doctor', '--adapter', 'web', '--cdp-port', '1234', '--', 'x']));
-    assert.deepEqual(received.at(-1), [
-      '--adapter',
-      'web',
-      '--cdp-port',
-      '1234',
-      '--watcher-port',
-      '9341',
-      '--',
-      'x',
-    ]);
-    // The operator's WATCHER_PORT wins over the slot: not filled, reported as env.
-    process.env.WATCHER_PORT = '9400';
-    await capture(() => cli.main(['doctor', '--adapter', 'web']));
-    assert.deepEqual(received.at(-1), ['--adapter', 'web', '--cdp-port', '9541']);
-    assert.deepEqual(harnessContext()?.ports?.watcher, {
-      value: 9400,
-      source: 'env',
-      filled: false,
-    });
-    // doctor's --port alias is the watcher flag: never refilled.
-    await capture(() => cli.main(['doctor', '--adapter', 'web', '--port', '9500']));
-    assert.deepEqual(received.at(-1), ['--adapter', 'web', '--port', '9500', '--cdp-port', '9541']);
-    assert.deepEqual(harnessContext()?.ports?.watcher, { value: 9500, source: 'flag' });
-    delete process.env.WATCHER_PORT;
     // No slot here: nothing is filled.
     process.chdir(tempRoot());
-    await capture(() => cli.main(['doctor', '--adapter', 'web']));
-    assert.deepEqual(received.at(-1), ['--adapter', 'web']);
+    assert.deepEqual((await run(['doctor', '--adapter', 'web'])).env, {
+      RECIPE_CDP_PORT: undefined,
+      CDP_PORT: undefined,
+      RECIPE_WATCHER_PORT: undefined,
+      WATCHER_PORT: undefined,
+      METRO_PORT: undefined,
+    });
   });
 
   test('a hidden command (shell completion) gets the detected adapter; a tie never refuses it', async () => {

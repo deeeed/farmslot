@@ -16,6 +16,7 @@ import { findSlotByRepo, resolveSlotPoolDir } from '@farmslot/protocol/node/slot
 import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './adapter-plugins.js';
 import {
   adapterForPlatform,
+  adapterPortEnv,
   type DeclaredDetect,
   detectAdapterMatch,
   harnessAdapters,
@@ -24,7 +25,7 @@ import {
 import { optionValues } from './command-contract.js';
 import type { ContextPortName, HarnessContext } from './context-state.js';
 import { validateRelativeRecipePath } from './host.js';
-import { recipeRuntimeDir } from './paths.js';
+import { DEFAULT_RECIPE_RUNTIME_DIR, recipeRuntimeDir } from './paths.js';
 
 export interface ResolveHarnessContextOptions {
   /** The command's tokens, after the command name. */
@@ -84,7 +85,8 @@ export async function resolveHarnessContext(
   // Without --target, a subdirectory answers for its checkout: the binding, the
   // slot and detection read the Git top level.
   const root = targetFlag ? target.value : (gitTopLevel(target.value) ?? target.value);
-  const binding = readBinding(root, optionValues(options.tokens, '--runtime-dir').at(-1));
+  const runtimeDir = optionValues(options.tokens, '--runtime-dir').at(-1);
+  const binding = readBinding(root, runtimeDir);
   const runtime = binding.runtime;
   const pool = options.slotPoolDir
     ? { dir: options.slotPoolDir, source: 'option' as const }
@@ -102,10 +104,13 @@ export async function resolveHarnessContext(
   const owned = runtimeSlot(runtime);
   const slot: HarnessContext['slot'] =
     (pooledSlot
-      ? owned && owned.value !== pooledSlot.slot.value
-        ? // A --runtime-dir scratch runtime of the pooled checkout names its own
-          // slot: identity and ports describe that runtime, the pool's ports
-          // filling only what it lacks.
+      ? owned &&
+        owned.value !== pooledSlot.slot.value &&
+        runtimeDir !== undefined &&
+        path.normalize(runtimeDir) !== DEFAULT_RECIPE_RUNTIME_DIR
+        ? // An explicit --runtime-dir scratch runtime names its own slot:
+          // identity and ports describe that runtime, the pool's ports filling
+          // only what it lacks. The default context keeps the pool's identity.
           { ...owned, ports: { ...pooledSlot.slot.ports, ...owned.ports } }
         : {
             ...pooledSlot.slot,
@@ -140,22 +145,26 @@ export async function resolveHarnessContext(
 }
 
 // Each generic port option, and the slot ports that fill it, in order.
-// The fill's order per port: the option or one of its aliases as typed, then
-// the operator's environment (a port held there is left to the adapter, which
-// decides whether it beats the slot), then the owned runtime context's port (a
-// --runtime-dir scratch runtime names its own), then the pool's.
+// Per port: the option and its aliases (a typed one is the adapter's to read),
+// the environment names the adapters read (`read`: any one set means the user
+// chose; the fill never replaces it), and the names the fill sets, which are
+// the ones recipe-cli itself sets for a typed flag. The slot's ports: the owned
+// runtime context's first (a --runtime-dir scratch runtime names its own),
+// then the pool's.
 const PORT_OPTIONS: readonly {
   name: ContextPortName;
   option: string;
   aliases: readonly string[];
-  env: readonly string[];
+  read: readonly string[];
+  set: readonly string[];
   slot: readonly string[];
 }[] = [
   {
     name: 'cdp',
     option: '--cdp-port',
     aliases: [],
-    env: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+    read: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+    set: ['RECIPE_CDP_PORT', 'CDP_PORT'],
     slot: ['cdpPort', 'cdp_port'],
   },
   {
@@ -163,53 +172,72 @@ const PORT_OPTIONS: readonly {
     option: '--watcher-port',
     // `doctor`/`stop --port` and the retired `--metro-port` name the same port.
     aliases: ['--port', '--metro-port'],
-    env: ['TERMINAL_APP_PORT', 'RECIPE_WATCHER_PORT', 'WATCHER_PORT'],
+    read: ['TERMINAL_APP_PORT', 'RECIPE_WATCHER_PORT', 'WATCHER_PORT', 'METRO_PORT'],
+    set: ['RECIPE_WATCHER_PORT', 'WATCHER_PORT', 'METRO_PORT'],
     slot: ['devServerPort', 'watcherPort', 'metroPort', 'port'],
   },
 ];
 
 /**
- * The generic port options `options` (a command's grammar) takes, from the
- * option or a declared alias as typed, else the operator's environment (not
- * filled: left to the adapter), else the context's slot; and the flags to add
- * for the slot-filled ones. A typed port is never replaced; no slot fills
- * nothing.
+ * The generic ports `options` (a command's grammar) takes, and the
+ * environment that fills the ones the user left open. The command's argv is
+ * never touched: a slot port reaches the adapter through the environment it
+ * already reads, which every adapter ranks below a typed flag, an alias and a
+ * passthrough port. A port is filled only when no spelling of it was typed and
+ * none of its environment names holds a port; a registered adapter's own port
+ * names (`devServer.portEnv`) are read and set with the watcher port's.
  */
 export function contextPorts(
   context: HarnessContext,
   tokens: readonly string[],
   options: Readonly<Record<string, unknown>>,
   env: NodeJS.ProcessEnv = process.env,
-): { ports?: NonNullable<HarnessContext['ports']>; fill: string[] } {
+): { ports?: NonNullable<HarnessContext['ports']>; env: Record<string, string> } {
   const ports: NonNullable<HarnessContext['ports']> = {};
-  const fill: string[] = [];
+  const fill: Record<string, string> = {};
   const slotPorts = context.slot?.value ? context.slot.ports : {};
-  for (const { name, option, aliases, env: envNames, slot } of PORT_OPTIONS) {
+  for (const { name, option, aliases, read, set, slot } of PORT_OPTIONS) {
     if (!(option in options)) continue;
-    const given = [option, ...aliases]
+    const extra = name === 'watcher' ? adapterPortEnv() : [];
+    const typed = [option, ...aliases]
       .filter((spelling) => spelling in options)
       .flatMap((spelling) => optionValues(tokens, spelling));
-    if (given.length > 0) {
-      // A typed port always wins, so the slot never fills it; the command checks it.
-      const typed = Number(given.at(-1));
-      if (Number.isInteger(typed) && typed > 0) ports[name] = { value: typed, source: 'flag' };
+    if (typed.length > 0) {
+      // The handler picks among the spellings; report the value only when they agree.
+      const values = new Set(typed.map(Number));
+      const [value] = [...values];
+      ports[name] =
+        values.size === 1 && Number.isInteger(value) && value! > 0
+          ? { value: value!, source: 'flag' }
+          : { source: 'flag' };
       continue;
     }
-    const fromEnv = envNames
-      .map((key) => env[key])
-      .find((value) => value !== undefined && value !== '');
-    if (fromEnv !== undefined) {
-      const port = Number(fromEnv);
-      if (Number.isInteger(port) && port > 0)
-        ports[name] = { value: port, source: 'env', filled: false };
+    let invalidEnv: { name: string; value: string } | undefined;
+    const held = [...read, ...extra].find((key) => {
+      const raw = env[key];
+      if (raw === undefined || raw === '') return false;
+      const port = Number(raw);
+      if (Number.isInteger(port) && port > 0) return true;
+      // Not a port: it holds nothing, and the report shows what was there.
+      invalidEnv ??= { name: key, value: raw };
+      return false;
+    });
+    if (held !== undefined) {
+      ports[name] = { value: Number(env[held]), source: 'env', filled: false };
       continue;
     }
     const fromSlot = slot.map((key) => slotPorts[key]).find((port) => port !== undefined);
     if (fromSlot === undefined) continue;
-    ports[name] = { value: fromSlot, source: 'slot' };
-    fill.push(option, String(fromSlot));
+    for (const key of new Set([...set, ...extra])) fill[key] = String(fromSlot);
+    ports[name] = {
+      value: fromSlot,
+      source: 'slot',
+      filled: true,
+      via: 'env',
+      ...(invalidEnv ? { invalidEnv } : {}),
+    };
   }
-  return { ...(Object.keys(ports).length > 0 ? { ports } : {}), fill };
+  return { ...(Object.keys(ports).length > 0 ? { ports } : {}), env: fill };
 }
 
 /** The one human line: `context: adapter <id> (<source>), target <path> (<source>), slot <id> (<source>)`. */
@@ -231,7 +259,9 @@ export function formatHarnessContext(context: HarnessContext): string {
   else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
   const ports = Object.entries(context.ports ?? {}).map(
     ([name, port]) =>
-      `${name} ${port.value} (${port.source === 'env' ? 'env, not filled' : port.source})`,
+      `${name}${port.value === undefined ? '' : ` ${port.value}`} (${
+        port.source === 'env' ? 'env, not filled' : port.source
+      })`,
   );
   if (ports.length > 0) parts.push(`ports ${ports.join(', ')}`);
   if (context.ignoredBinding)

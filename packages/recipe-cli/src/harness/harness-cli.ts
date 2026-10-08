@@ -213,8 +213,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     // A library-declared adapter loads only when the command selects it or
     // its context resolves to it: never a losing detect candidate.
-    // The command runs with the slot ports its context fills (journaled as typed).
-    let commandArgv = argv;
+    let portEnv: Record<string, string> = {};
     if (command) {
       const loaded = await loadSelectedAdapter(
         command,
@@ -223,12 +222,26 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
         options,
       );
       if (loaded.refused !== undefined) return { exitCode: loaded.refused, exit: 'now' };
-      commandArgv = withOptions(argv, loaded.fill);
+      portEnv = loaded.env;
     }
 
+    // The command runs with exactly the argv typed; the slot ports it left open
+    // reach its adapter through the environment, for this invocation only.
+    const restoreEnv = withEnv(portEnv);
+    try {
+      return await dispatchCommand(command, argv);
+    } finally {
+      restoreEnv();
+    }
+  }
+
+  async function dispatchCommand(
+    command: HarnessCommand | undefined,
+    argv: readonly string[],
+  ): Promise<HarnessCliResult> {
     // Leaves own --help after `--`; commander would intercept it.
     if (command && hasPassthroughHelp(argv)) {
-      return { exitCode: await dispatch(command, commandArgv), exit: 'now' };
+      return { exitCode: await dispatch(command, argv), exit: 'now' };
     }
 
     // `call <action> --help` renders the action's field schema; commander would
@@ -264,10 +277,9 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
             .configureHelp({ formatHelp: () => `${entry.helpText}\n` });
       if (!entry.hidden && entry.aliases?.length) registered.aliases([...entry.aliases]);
       registered.argument('[args...]').action(async () => {
-        const run = entry === command ? commandArgv : argv;
         const exitCode = entry.hidden
-          ? await dispatch(entry, run)
-          : await withCommandJournal(entry.name, argv, () => dispatch(entry, run));
+          ? await dispatch(entry, argv)
+          : await withCommandJournal(entry.name, argv, () => dispatch(entry, argv));
         result = { exitCode, exit: exitOf(entry) };
       });
     }
@@ -302,9 +314,9 @@ async function loadSelectedAdapter(
   argv: readonly string[],
   load: Pick<AdapterLoadOptions, 'adopt' | 'configured' | 'env'>,
   options: HarnessCliOptions,
-): Promise<{ refused?: number; fill: string[] }> {
+): Promise<{ refused?: number; env: Record<string, string> }> {
   const tokens = argv.slice(1);
-  let fill: string[] = [];
+  let portEnv: Record<string, string> = {};
   const libraries = { ...load, libraries: optionValues(tokens, '--library') };
   try {
     let selected: string | undefined;
@@ -336,8 +348,8 @@ async function loadSelectedAdapter(
       const filled =
         mode === 'full' && !quiet && !command.hidden
           ? contextPorts(context, tokens, command.contract.options)
-          : { fill: [] };
-      fill = filled.fill;
+          : { env: {} };
+      portEnv = filled.env;
       setHarnessContext(filled.ports ? { ...context, ports: filled.ports } : context);
       // A hidden command without the adapter opt-in loads only what its flags select.
       selected =
@@ -356,7 +368,7 @@ async function loadSelectedAdapter(
     }
     if (contextLine && !requested(argv, '--json') && !requested(argv, '--json-stream'))
       process.stderr.write(`${contextLine}\n`);
-    return { fill };
+    return { env: portEnv };
   } catch (error) {
     // A refused plugin, the library reader's refusal of its source or its
     // path, or a checkout more than one adapter matches.
@@ -366,13 +378,13 @@ async function loadSelectedAdapter(
       error instanceof RecipeResolutionError ||
       error instanceof AdapterAmbiguousError
     ) {
-      return { refused: refusalOut(command.name, argv, error), fill: [] };
+      return { refused: refusalOut(command.name, argv, error), env: {} };
     }
     return {
       refused: await mapErrors(() => {
         throw error;
       }),
-      fill: [],
+      env: {},
     };
   }
 }
@@ -585,13 +597,16 @@ function targetFromArgv(argv: readonly string[]): string {
   return path.resolve(separate ?? inline ?? process.cwd());
 }
 
-// `argv` with `options` added before any `--` passthrough.
-function withOptions(argv: readonly string[], options: readonly string[]): readonly string[] {
-  if (options.length === 0) return argv;
-  const divider = argv.indexOf('--');
-  return divider === -1
-    ? [...argv, ...options]
-    : [...argv.slice(0, divider), ...options, ...argv.slice(divider)];
+// Set `values` in process.env; the returned function restores what was there.
+function withEnv(values: Readonly<Record<string, string>>): () => void {
+  const previous = Object.keys(values).map((key) => [key, process.env[key]] as const);
+  Object.assign(process.env, values);
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
 }
 
 function beforePassthrough(argv: readonly string[]): readonly string[] {

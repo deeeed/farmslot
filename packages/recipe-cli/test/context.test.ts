@@ -138,6 +138,7 @@ beforeEach(() => {
     'TERMINAL_APP_PORT',
     'RECIPE_WATCHER_PORT',
     'WATCHER_PORT',
+    'METRO_PORT',
   ])
     delete process.env[key];
   // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
@@ -636,6 +637,15 @@ describe('resolveHarnessContext', () => {
   });
 });
 
+// The environment a slot port fills: the names the adapters read for it.
+const watcherEnv = (port: number) => ({
+  RECIPE_WATCHER_PORT: String(port),
+  WATCHER_PORT: String(port),
+  METRO_PORT: String(port),
+});
+const cdpEnv = (port: number) => ({ RECIPE_CDP_PORT: String(port), CDP_PORT: String(port) });
+const viaEnv = (value: number) => ({ value, source: 'slot', filled: true, via: 'env' }) as const;
+
 describe('contextPorts', () => {
   const grammar = { '--cdp-port': {}, '--watcher-port': {}, '--json': {} };
   const slotted: HarnessContext = {
@@ -649,47 +659,35 @@ describe('contextPorts', () => {
     },
   };
 
-  test('slot ports fill the absent port options; a flag always wins', () => {
-    assert.deepEqual(contextPorts(slotted, ['--json'], grammar), {
-      ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 9341, source: 'slot' } },
-      fill: ['--cdp-port', '9541', '--watcher-port', '9341'],
+  test('slot ports fill the environment the adapters read, never the argv', () => {
+    assert.deepEqual(contextPorts(slotted, ['--json'], grammar, {}), {
+      ports: { cdp: viaEnv(9541), watcher: viaEnv(9341) },
+      env: { ...cdpEnv(9541), ...watcherEnv(9341) },
     });
-    assert.deepEqual(contextPorts(slotted, ['--cdp-port', '1234'], grammar), {
-      ports: { cdp: { value: 1234, source: 'flag' }, watcher: { value: 9341, source: 'slot' } },
-      fill: ['--watcher-port', '9341'],
+    assert.deepEqual(contextPorts(slotted, ['--cdp-port', '1234'], grammar, {}), {
+      ports: { cdp: { value: 1234, source: 'flag' }, watcher: viaEnv(9341) },
+      env: watcherEnv(9341),
     });
-    // A flag value the command will refuse is still never replaced.
-    assert.deepEqual(contextPorts(slotted, ['--cdp-port=x'], { '--cdp-port': {} }), { fill: [] });
-    // Runtime-context ports fill the same options.
-    const bound: HarnessContext = {
-      ...slotted,
-      slot: {
-        value: 'b-1',
-        source: 'binding',
-        detail: 'runtime-context',
-        ports: { cdpPort: 9222, watcherPort: 8080 },
-      },
-    };
-    assert.deepEqual(contextPorts(bound, [], grammar).fill, [
-      '--cdp-port',
-      '9222',
-      '--watcher-port',
-      '8080',
-    ]);
+    // A typed value the command will refuse is still the user's.
+    assert.deepEqual(contextPorts(slotted, ['--cdp-port=x'], { '--cdp-port': {} }, {}), {
+      ports: { cdp: { source: 'flag' } },
+      env: {},
+    });
   });
 
   test('no slot, an unknown slot, or a command without the option fills nothing', () => {
     const { slot: _slot, ...unslotted } = slotted;
-    assert.deepEqual(contextPorts(unslotted, [], grammar), { fill: [] });
+    assert.deepEqual(contextPorts(unslotted, [], grammar, {}), { env: {} });
     assert.deepEqual(
       contextPorts(
         { ...slotted, slot: { value: null, source: 'none', detail: 'no-pool-dir' } },
         [],
         grammar,
+        {},
       ),
-      { fill: [] },
+      { env: {} },
     );
-    assert.deepEqual(contextPorts(slotted, [], { '--json': {} }), { fill: [] });
+    assert.deepEqual(contextPorts(slotted, [], { '--json': {} }, {}), { env: {} });
   });
 
   test('a foreign binding fills no port', async () => {
@@ -707,16 +705,23 @@ describe('contextPorts', () => {
       'temp/recipe/runtime/agentic-runtime.json',
     );
     const context = await resolveHarnessContext({ tokens: ['--target', mobile], cwd: extension });
-    assert.deepEqual(contextPorts(context, ['--target', mobile], grammar), { fill: [] });
+    assert.deepEqual(contextPorts(context, ['--target', mobile], grammar, {}), { env: {} });
   });
 
   test('the human line names each port and its source', () => {
     assert.equal(
       formatHarnessContext({
         ...slotted,
-        ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 1234, source: 'flag' } },
+        ports: {
+          cdp: viaEnv(9541),
+          watcher: { value: 1234, source: 'flag' },
+        },
       }),
       'context: adapter terminal (detected: remote), target /w (cwd), slot macwork-mmt-1 (slot-config), ports cdp 9541 (slot), watcher 1234 (flag)',
+    );
+    assert.match(
+      formatHarnessContext({ ...slotted, ports: { watcher: { source: 'flag' } } }),
+      /ports watcher \(flag\)$/u,
     );
   });
 });
@@ -734,7 +739,7 @@ describe('port fill order', () => {
     ]);
   }
 
-  test('the owned runtime context fills before the pool, in devServer, watcher, metro order', async () => {
+  test('an explicit --runtime-dir runtime fills before the pool, in devServer, watcher, metro order', async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));
     const slotPoolDir = pooled(checkout);
@@ -755,11 +760,11 @@ describe('port fill order', () => {
     // Identity and ports describe the same runtime: the scratch one.
     assert.equal(scratch.slot?.value, 'scratch-1');
     assert.equal(scratch.slot?.source, 'binding');
-    assert.deepEqual(contextPorts(scratch, tokens, grammar), {
-      ports: { cdp: { value: 9222, source: 'slot' }, watcher: { value: 8081, source: 'slot' } },
-      fill: ['--cdp-port', '9222', '--watcher-port', '8081'],
+    assert.deepEqual(contextPorts(scratch, tokens, grammar, {}).env, {
+      ...cdpEnv(9222),
+      ...watcherEnv(8081),
     });
-    // Without devServerPort the watcher port is next, then metro.
+    // Without devServerPort the watcher port is next; the pool fills only the CDP port it lacks.
     write(
       checkout,
       'temp/recipe/runtime-8081/agentic-runtime.json',
@@ -771,41 +776,64 @@ describe('port fill order', () => {
       }),
     );
     const watcherOnly = await resolveHarnessContext({ tokens, slotPoolDir });
-    // The pool fills only what the scratch runtime lacks: its CDP port.
-    assert.deepEqual(contextPorts(watcherOnly, tokens, grammar).fill, [
-      '--cdp-port',
-      '9541',
-      '--watcher-port',
-      '8082',
-    ]);
+    assert.deepEqual(contextPorts(watcherOnly, tokens, grammar, {}).env, {
+      ...cdpEnv(9541),
+      ...watcherEnv(8082),
+    });
     // The pool alone fills its own ports, the dev-server port before metro's.
     const plain = await resolveHarnessContext({ tokens: ['--target', checkout], slotPoolDir });
     assert.equal(plain.slot?.value, 'macwork-mmdev-1');
-    assert.deepEqual(contextPorts(plain, ['--target', checkout], grammar).fill, [
-      '--cdp-port',
-      '9541',
-      '--watcher-port',
-      '8061',
-    ]);
+    assert.deepEqual(contextPorts(plain, ['--target', checkout], grammar, {}).env, {
+      ...cdpEnv(9541),
+      ...watcherEnv(8061),
+    });
   });
 
-  test('a typed alias is the flag: doctor --port is never refilled', async () => {
+  test("the default runtime context keeps the pool slot's identity and lends its ports", async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('core'));
+    runtimeContext(checkout, { repoRoot: checkout, slotId: 'local-core-x', devServerPort: 8096 });
+    const tokens = ['--target', checkout];
+    const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
+    assert.equal(context.slot?.value, 'macwork-mmdev-1');
+    assert.equal(context.slot?.source, 'slot');
+    assert.equal(context.slot?.value && context.slot.session, 'mmdev-1');
+    assert.deepEqual(contextPorts(context, tokens, grammar, {}).env, {
+      ...cdpEnv(9541),
+      ...watcherEnv(8096),
+    });
+    // Naming the default directory is not a scratch runtime either.
+    const named = await resolveHarnessContext({
+      tokens: [...tokens, '--runtime-dir', 'temp/recipe/runtime'],
+      slotPoolDir: pooled(checkout),
+    });
+    assert.equal(named.slot?.value, 'macwork-mmdev-1');
+  });
+
+  test("a typed spelling is the adapter's: --port, --watcher-port and both", async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));
-    const tokens = ['--target', checkout, '--port', '9400'];
-    const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
-    assert.deepEqual(contextPorts(context, tokens, grammar), {
-      ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 9400, source: 'flag' } },
-      fill: ['--cdp-port', '9541'],
+    const context = await resolveHarnessContext({
+      tokens: ['--target', checkout],
+      slotPoolDir: pooled(checkout),
     });
+    assert.deepEqual(contextPorts(context, ['--port', '9400'], grammar, {}), {
+      ports: { cdp: viaEnv(9541), watcher: { value: 9400, source: 'flag' } },
+      env: cdpEnv(9541),
+    });
+    // Two spellings that disagree: the handler picks, so no value is claimed.
+    assert.deepEqual(
+      contextPorts(context, ['--watcher-port=9405', '--port=9406'], grammar, {}).ports?.watcher,
+      { source: 'flag' },
+    );
     // An alias the grammar does not declare is not read.
-    assert.deepEqual(contextPorts(context, ['--target', checkout], { '--watcher-port': {} }).fill, [
-      '--watcher-port',
-      '8061',
-    ]);
+    assert.deepEqual(
+      contextPorts(context, ['--port', '9400'], { '--watcher-port': {} }, {}).env,
+      watcherEnv(8061),
+    );
   });
 
-  test("the operator's port environment is left to the adapter, never filled", async () => {
+  test("the user's port environment is left to the adapter, never filled", async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));
     runtimeContext(checkout, {
@@ -817,11 +845,8 @@ describe('port fill order', () => {
     const tokens = ['--target', checkout];
     const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
     assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '9400' }), {
-      ports: {
-        cdp: { value: 9222, source: 'slot' },
-        watcher: { value: 9400, source: 'env', filled: false },
-      },
-      fill: ['--cdp-port', '9222'],
+      ports: { cdp: viaEnv(9222), watcher: { value: 9400, source: 'env', filled: false } },
+      env: cdpEnv(9222),
     });
     // Each name counts, in the fill's order; a flag still wins.
     assert.deepEqual(
@@ -837,20 +862,23 @@ describe('port fill order', () => {
           cdp: { value: 9554, source: 'env', filled: false },
           watcher: { value: 3000, source: 'env', filled: false },
         },
-        fill: [],
+        env: {},
       },
     );
     assert.deepEqual(
-      contextPorts(context, [...tokens, '--watcher-port', '7000'], grammar, {
-        WATCHER_PORT: '9400',
-      }).ports?.watcher,
+      contextPorts(context, [...tokens, '--watcher-port', '7000'], grammar, { METRO_PORT: '9400' })
+        .ports?.watcher,
       { value: 7000, source: 'flag' },
     );
-    // An empty variable is unset.
-    assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '' }).ports?.watcher, {
-      value: 9300,
-      source: 'slot',
-    });
+    // An empty or non-port value holds nothing: the slot fills, and the report shows what was there.
+    assert.deepEqual(
+      contextPorts(context, tokens, grammar, { WATCHER_PORT: '' }).ports?.watcher,
+      viaEnv(9300),
+    );
+    assert.deepEqual(
+      contextPorts(context, tokens, grammar, { RECIPE_WATCHER_PORT: 'abc' }).ports?.watcher,
+      { ...viaEnv(9300), invalidEnv: { name: 'RECIPE_WATCHER_PORT', value: 'abc' } },
+    );
     assert.match(
       formatHarnessContext({
         ...context,
@@ -872,12 +900,10 @@ describe('port fill order', () => {
     const tokens = ['--target', checkout];
     const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
     assert.equal(context.ignoredBinding?.repoRoot, other);
-    assert.deepEqual(contextPorts(context, tokens, grammar).fill, [
-      '--cdp-port',
-      '9541',
-      '--watcher-port',
-      '8061',
-    ]);
+    assert.deepEqual(contextPorts(context, tokens, grammar, {}).env, {
+      ...cdpEnv(9541),
+      ...watcherEnv(8061),
+    });
   });
 });
 
