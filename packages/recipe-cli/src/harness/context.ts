@@ -21,7 +21,7 @@ import {
   isPlatformTarget,
 } from './adapters.js';
 import { optionValues } from './command-contract.js';
-import type { HarnessContext } from './context-state.js';
+import type { ContextPortName, HarnessContext } from './context-state.js';
 import { validateRelativeRecipePath } from './host.js';
 import { recipeRuntimeDir } from './paths.js';
 
@@ -123,6 +123,48 @@ export async function resolveHarnessContext(
   };
 }
 
+// Each generic port option, and the slot ports that fill it, in order.
+const PORT_OPTIONS: readonly { name: ContextPortName; option: string; slot: readonly string[] }[] =
+  [
+    { name: 'cdp', option: '--cdp-port', slot: ['cdp_port', 'cdpPort'] },
+    {
+      name: 'watcher',
+      option: '--watcher-port',
+      slot: ['port', 'watcherPort', 'devServerPort', 'metroPort'],
+    },
+  ];
+
+/**
+ * The generic port options `options` (a command's grammar) takes, from the
+ * flag when given, else from the context's slot; and the flags to add for the
+ * slot-filled ones. A flag always wins; no slot fills nothing.
+ */
+export function contextPorts(
+  context: HarnessContext,
+  tokens: readonly string[],
+  options: Readonly<Record<string, unknown>>,
+): { ports?: NonNullable<HarnessContext['ports']>; fill: string[] } {
+  const ports: NonNullable<HarnessContext['ports']> = {};
+  const fill: string[] = [];
+  const slotPorts = context.slot?.value ? context.slot.ports : {};
+  for (const { name, option, slot } of PORT_OPTIONS) {
+    if (!(option in options)) continue;
+    const given = optionValues(tokens, option);
+    if (given.length > 0) {
+      // A flag always wins, so the slot never fills it; the command checks it.
+      const flagged = Number(given.at(-1));
+      if (Number.isInteger(flagged) && flagged > 0)
+        ports[name] = { value: flagged, source: 'flag' };
+      continue;
+    }
+    const fromSlot = slot.map((key) => slotPorts[key]).find((port) => port !== undefined);
+    if (fromSlot === undefined) continue;
+    ports[name] = { value: fromSlot, source: 'slot' };
+    fill.push(option, String(fromSlot));
+  }
+  return { ...(Object.keys(ports).length > 0 ? { ports } : {}), fill };
+}
+
 /** The one human line: `context: adapter <id> (<source>), target <path> (<source>), slot <id> (<source>)`. */
 export function formatHarnessContext(context: HarnessContext): string {
   const adapter = context.adapter
@@ -135,6 +177,10 @@ export function formatHarnessContext(context: HarnessContext): string {
   const parts = [adapter, `target ${context.target.value} (${context.target.detail})`];
   if (context.slot?.value === null) parts.push('slot unknown (no pool dir)');
   else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
+  const ports = Object.entries(context.ports ?? {}).map(
+    ([name, port]) => `${name} ${port.value} (${port.source})`,
+  );
+  if (ports.length > 0) parts.push(`ports ${ports.join(', ')}`);
   if (context.ignoredBinding)
     parts.push(
       `binding ignored (belongs to ${context.ignoredBinding.repoRoot ?? 'an unnamed checkout'})`,

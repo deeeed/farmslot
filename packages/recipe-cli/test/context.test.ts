@@ -19,6 +19,7 @@ import {
   AdapterAmbiguousError,
   configureHarnessAdapters,
   contextAdapter,
+  contextPorts,
   contractPositionals,
   detectAdapter,
   formatHarnessContext,
@@ -574,6 +575,91 @@ describe('resolveHarnessContext', () => {
       'value',
     ]);
     assert.doesNotMatch(JSON.stringify(context), /approve|mainnet|fund/iu);
+  });
+});
+
+describe('contextPorts', () => {
+  const grammar = { '--cdp-port': {}, '--watcher-port': {}, '--json': {} };
+  const slotted: HarnessContext = {
+    adapter: { value: 'terminal', source: 'detect', detail: 'remote' },
+    target: { value: '/w', source: 'default', detail: 'cwd' },
+    slot: {
+      value: 'macwork-mmt-1',
+      source: 'slot',
+      detail: 'slot-config',
+      ports: { port: 9341, metro_port: 9441, cdp_port: 9541 },
+    },
+  };
+
+  test('slot ports fill the absent port options; a flag always wins', () => {
+    assert.deepEqual(contextPorts(slotted, ['--json'], grammar), {
+      ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 9341, source: 'slot' } },
+      fill: ['--cdp-port', '9541', '--watcher-port', '9341'],
+    });
+    assert.deepEqual(contextPorts(slotted, ['--cdp-port', '1234'], grammar), {
+      ports: { cdp: { value: 1234, source: 'flag' }, watcher: { value: 9341, source: 'slot' } },
+      fill: ['--watcher-port', '9341'],
+    });
+    // A flag value the command will refuse is still never replaced.
+    assert.deepEqual(contextPorts(slotted, ['--cdp-port=x'], { '--cdp-port': {} }), { fill: [] });
+    // Runtime-context ports fill the same options.
+    const bound: HarnessContext = {
+      ...slotted,
+      slot: {
+        value: 'b-1',
+        source: 'binding',
+        detail: 'runtime-context',
+        ports: { cdpPort: 9222, watcherPort: 8080 },
+      },
+    };
+    assert.deepEqual(contextPorts(bound, [], grammar).fill, [
+      '--cdp-port',
+      '9222',
+      '--watcher-port',
+      '8080',
+    ]);
+  });
+
+  test('no slot, an unknown slot, or a command without the option fills nothing', () => {
+    const { slot: _slot, ...unslotted } = slotted;
+    assert.deepEqual(contextPorts(unslotted, [], grammar), { fill: [] });
+    assert.deepEqual(
+      contextPorts(
+        { ...slotted, slot: { value: null, source: 'none', detail: 'no-pool-dir' } },
+        [],
+        grammar,
+      ),
+      { fill: [] },
+    );
+    assert.deepEqual(contextPorts(slotted, [], { '--json': {} }), { fill: [] });
+  });
+
+  test('a foreign binding fills no port', async () => {
+    const extension = tempRoot();
+    const mobile = tempRoot();
+    useAdapters(adapter('web'));
+    runtimeContext(extension, {
+      platform: 'web',
+      slotId: 'mmedev-1',
+      repoRoot: extension,
+      cdpPort: 9222,
+    });
+    process.env.RECIPE_RUNTIME_CONTEXT = path.join(
+      extension,
+      'temp/recipe/runtime/agentic-runtime.json',
+    );
+    const context = await resolveHarnessContext({ tokens: ['--target', mobile], cwd: extension });
+    assert.deepEqual(contextPorts(context, ['--target', mobile], grammar), { fill: [] });
+  });
+
+  test('the human line names each port and its source', () => {
+    assert.equal(
+      formatHarnessContext({
+        ...slotted,
+        ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 1234, source: 'flag' } },
+      }),
+      'context: adapter terminal (detected: remote), target /w (cwd), slot macwork-mmt-1 (slot-config), ports cdp 9541 (slot), watcher 1234 (flag)',
+    );
   });
 });
 

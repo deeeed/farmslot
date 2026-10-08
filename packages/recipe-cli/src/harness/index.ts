@@ -144,6 +144,7 @@ export {
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
 export {
+  contextPorts,
   formatHarnessContext,
   resolveHarnessContext,
   type ResolveHarnessContextOptions,
@@ -152,6 +153,7 @@ export {
   AdapterAmbiguousError,
   type AdapterCandidate,
   contextAdapter,
+  type ContextPortName,
   type ContextSource,
   type DetectMatch,
   type HarnessContext,

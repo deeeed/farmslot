@@ -32,8 +32,8 @@ import {
   validatePublicInvocation,
 } from './command-contract.js';
 import { withCommandJournal } from './command-journal.js';
-import { formatHarnessContext, resolveHarnessContext } from './context.js';
-import { AdapterAmbiguousError, setHarnessContext } from './context-state.js';
+import { contextPorts, formatHarnessContext, resolveHarnessContext } from './context.js';
+import { AdapterAmbiguousError, harnessContext, setHarnessContext } from './context-state.js';
 import { configureHarnessHost, type HarnessHostConfig, hostEnvName } from './host.js';
 import { JsonStreamWriter } from './json-stream.js';
 import { DEFAULT_RECIPE_RUNTIME_DIR } from './paths.js';
@@ -201,19 +201,22 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     // A library-declared adapter loads only when the command selects it or
     // its context resolves to it: never a losing detect candidate.
+    // The command runs with the slot ports its context fills (journaled as typed).
+    let commandArgv = argv;
     if (command) {
-      const refused = await loadSelectedAdapter(
+      const loaded = await loadSelectedAdapter(
         command,
         argv,
         { adopt: options.adopt, configured: options.configuredLibraries?.(), env: operatorEnv },
         options,
       );
-      if (refused !== undefined) return { exitCode: refused, exit: 'now' };
+      if (loaded.refused !== undefined) return { exitCode: loaded.refused, exit: 'now' };
+      commandArgv = withOptions(argv, loaded.fill);
     }
 
     // Leaves own --help after `--`; commander would intercept it.
     if (command && hasPassthroughHelp(argv)) {
-      return { exitCode: await dispatch(command, argv), exit: 'now' };
+      return { exitCode: await dispatch(command, commandArgv), exit: 'now' };
     }
 
     // `call <action> --help` renders the action's field schema; commander would
@@ -249,9 +252,10 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
             .configureHelp({ formatHelp: () => `${entry.helpText}\n` });
       if (!entry.hidden && entry.aliases?.length) registered.aliases([...entry.aliases]);
       registered.argument('[args...]').action(async () => {
+        const run = entry === command ? commandArgv : argv;
         const exitCode = entry.hidden
-          ? await dispatch(entry, argv)
-          : await withCommandJournal(entry.name, argv, () => dispatch(entry, argv));
+          ? await dispatch(entry, run)
+          : await withCommandJournal(entry.name, argv, () => dispatch(entry, run));
         result = { exitCode, exit: exitOf(entry) };
       });
     }
@@ -285,8 +289,9 @@ async function loadSelectedAdapter(
   argv: readonly string[],
   load: Pick<AdapterLoadOptions, 'adopt' | 'configured' | 'env'>,
   options: HarnessCliOptions,
-): Promise<number | undefined> {
+): Promise<{ refused?: number; fill: string[] }> {
   const tokens = argv.slice(1);
+  let fill: string[] = [];
   const libraries = { ...load, libraries: optionValues(tokens, '--library') };
   try {
     let selected: string | undefined;
@@ -303,20 +308,24 @@ async function loadSelectedAdapter(
         ...(slotPoolDir ? { slotPoolDir } : {}),
         ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
       });
-      setHarnessContext(context);
+      const filled =
+        mode === 'full' ? contextPorts(context, tokens, command.contract.options) : { fill: [] };
+      fill = filled.fill;
+      setHarnessContext(filled.ports ? { ...context, ports: filled.ports } : context);
       selected = context.adapter?.value;
       // People see what was inferred; a flag they typed needs no echo.
       if (context.adapter && context.adapter.source !== 'flag')
-        contextLine = formatHarnessContext(context);
+        contextLine = formatHarnessContext(harnessContext() ?? context);
     } else {
       selected = selectedAdapterId(tokens);
     }
-    if (selected === undefined) return undefined;
-    await ensureAdapterLoaded(selected, libraries);
-    await options.afterAdapterLoad?.(selected);
+    if (selected !== undefined) {
+      await ensureAdapterLoaded(selected, libraries);
+      await options.afterAdapterLoad?.(selected);
+    }
     if (contextLine && !requested(argv, '--json') && !requested(argv, '--json-stream'))
       process.stderr.write(`${contextLine}\n`);
-    return undefined;
+    return { fill };
   } catch (error) {
     // A refused plugin, the library reader's refusal of its source or its
     // path, or a checkout more than one adapter matches.
@@ -326,11 +335,14 @@ async function loadSelectedAdapter(
       error instanceof RecipeResolutionError ||
       error instanceof AdapterAmbiguousError
     ) {
-      return refusalOut(command.name, argv, error);
+      return { refused: refusalOut(command.name, argv, error), fill: [] };
     }
-    return mapErrors(() => {
-      throw error;
-    });
+    return {
+      refused: await mapErrors(() => {
+        throw error;
+      }),
+      fill: [],
+    };
   }
 }
 
@@ -538,6 +550,15 @@ function targetFromArgv(argv: readonly string[]): string {
     .find((argument) => argument.startsWith('--target='))
     ?.slice('--target='.length);
   return path.resolve(separate ?? inline ?? process.cwd());
+}
+
+// `argv` with `options` added before any `--` passthrough.
+function withOptions(argv: readonly string[], options: readonly string[]): readonly string[] {
+  if (options.length === 0) return argv;
+  const divider = argv.indexOf('--');
+  return divider === -1
+    ? [...argv, ...options]
+    : [...argv.slice(0, divider), ...options, ...argv.slice(divider)];
 }
 
 function beforePassthrough(argv: readonly string[]): readonly string[] {

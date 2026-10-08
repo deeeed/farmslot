@@ -1451,6 +1451,80 @@ export const adapter = {
     );
   });
 
+  test("passes the slot's ports as the absent port flags, journaling only what was typed", async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    const pools = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(pools, 'macwork.json'),
+      JSON.stringify({
+        machine: 'macwork',
+        host: 'localhost',
+        slots: [
+          {
+            id: 'macwork-mmt-1',
+            repo: checkout,
+            session: 'mmt-1',
+            resources: {
+              'dev-server': { port: 9341, metro_port: 9441 },
+              browser: { cdp_port: 9541 },
+            },
+          },
+        ],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = pools;
+    process.chdir(checkout);
+    const received: string[][] = [];
+    const doctor = command(
+      'doctor',
+      {
+        options: contractOptions(HELP, JSON_FLAG, TARGET, {
+          '--adapter': valueOption(),
+          '--cdp-port': valueOption(),
+          '--watcher-port': valueOption(),
+        }),
+        allowPassthrough: true,
+      },
+      {
+        run: (argv) => {
+          received.push(argv);
+          return 0;
+        },
+      },
+    );
+    const cli = createHarnessCli({ ...cliOptions(), commands: [doctor] });
+    const inferred = await capture(() => cli.main(['doctor', '--adapter', 'web', '--json']));
+    assert.equal(inferred.result.exitCode, 0);
+    assert.deepEqual(received.at(-1), [
+      '--adapter',
+      'web',
+      '--json',
+      '--cdp-port',
+      '9541',
+      '--watcher-port',
+      '9341',
+    ]);
+    assert.deepEqual(harnessContext()?.ports, {
+      cdp: { value: 9541, source: 'slot' },
+      watcher: { value: 9341, source: 'slot' },
+    });
+    await capture(() => cli.main(['doctor', '--adapter', 'web', '--cdp-port', '1234', '--', 'x']));
+    assert.deepEqual(received.at(-1), [
+      '--adapter',
+      'web',
+      '--cdp-port',
+      '1234',
+      '--watcher-port',
+      '9341',
+      '--',
+      'x',
+    ]);
+    // No slot here: nothing is filled.
+    process.chdir(tempRoot());
+    await capture(() => cli.main(['doctor', '--adapter', 'web']));
+    assert.deepEqual(received.at(-1), ['--adapter', 'web']);
+  });
+
   test('a command without context options, or a hidden one, detects nothing', async () => {
     const checkout = terminalCheckout();
     process.chdir(checkout);
