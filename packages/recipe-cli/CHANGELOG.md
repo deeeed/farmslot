@@ -20,6 +20,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - `detectAdapter(target, declared?)` is the unique match over the registered adapters and the given plugin declarations (matched by their declared `detect`), so two matches in one pass throw `AdapterAmbiguousError` instead of the first registered winning.
 - `handleStatus` takes `--adapter` and `--platform` before the context, like `doctor`. A host adds them to its `status` grammar.
 
+## 0.10.1 - 2026-10-09
+
+- Fix: a timed-out leaf no longer crashes the harness with `kill EPERM` when `spawnScriptStreaming` signals its process group again after SIGKILLing it. On macOS a group whose only members are killed processes not yet reaped answers `EPERM` instead of `ESRCH`; that `EPERM` now counts as the group being gone once the group has been SIGKILLed or the leaf has exited. Any other `EPERM` still throws.
+- Publish with adapter-sdk 0.7.2, agent-runtime 0.17.0, protocol 0.34.0 and recipe-runner 0.27.1.
+
 ## 0.10.0 - 2026-10-08
 
 - `prepare --json-stream` and `doctor --fix --json-stream`: stdout is NDJSON, a `stage` event per stage line (a step's own stages arrive under it with `child`, the child's line), then `complete`. `prepare` completes with `ready`, `recordPath` and each step's status and duration; `doctor --fix` with `fixed`, `failed`, `ready`, `nextActions` and the error when it fails. Anything else either command prints goes to stderr. `doctor --json-stream` without `--fix` is a usage error that points to `doctor --json`. `--json` output is unchanged.

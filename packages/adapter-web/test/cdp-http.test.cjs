@@ -110,6 +110,63 @@ describe('cdpHttp', () => {
   });
 });
 
+// A fresh launch-browser whose spawnSync records each call instead of running it.
+function withCapturedSpawns(run) {
+  const childProcess = require('node:child_process');
+  const realSpawnSync = childProcess.spawnSync;
+  const modulePath = require.resolve('../src/launch-browser.cjs');
+  const cached = require.cache[modulePath];
+  const calls = [];
+  childProcess.spawnSync = (file, args) => {
+    calls.push({ file, args });
+    return { status: 1, stdout: '' };
+  };
+  delete require.cache[modulePath];
+  try {
+    run(require(modulePath), calls);
+  } finally {
+    childProcess.spawnSync = realSpawnSync;
+    delete require.cache[modulePath];
+    if (cached) require.cache[modulePath] = cached;
+  }
+}
+
+describe('cdpHttp child process', () => {
+  it('runs one constant script and passes the port and path as argv', () => {
+    withCapturedSpawns((isolated, calls) => {
+      const requests = [
+        [9222, '/json/list'],
+        [65535, '/json/version'],
+        [1, '/json/close/ABC-123'],
+      ];
+      for (const [requestPort, pathname] of requests) isolated.cdpHttp(requestPort, pathname);
+      assert.equal(calls.length, requests.length);
+      const [script] = new Set(calls.map((call) => call.args[1]));
+      for (const [index, call] of calls.entries()) {
+        const [requestPort, pathname] = requests[index];
+        assert.equal(call.file, process.execPath);
+        assert.deepEqual(call.args, ['-e', script, String(requestPort), pathname]);
+        assert.equal(call.args[1].includes(pathname), false, 'the path is in the script source');
+      }
+      assert.equal(
+        new Set(calls.map((call) => call.args[1])).size,
+        1,
+        'the script varies with input',
+      );
+    });
+  });
+
+  it('spawns nothing for a rejected port or path', () => {
+    withCapturedSpawns((isolated, calls) => {
+      isolated.cdpHttp(0, '/json/list');
+      isolated.cdpHttp(65536, '/json/list');
+      isolated.cdpHttp(9222, `/json/list'); process.exit(7); ('`);
+      isolated.cdpHttp(9222, '/json/close/../version');
+      assert.deepEqual(calls, []);
+    });
+  });
+});
+
 describe('pruneExtraHomeTabs', () => {
   it('closes extra home tabs and skips, with a warning, a target id that is not a CDP id', () => {
     const sentinel = path.join(root, 'target-id-ran');

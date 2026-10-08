@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -62,8 +64,15 @@ const STUB_BROWSER = path.join(HERE, 'fixtures/web-dapp-stub-browser.mjs');
 const TEST_SIGNER = path.join(HERE, 'fixtures/web-dapp-test-signer.mjs');
 // The public Hardhat test mnemonic: no funds, no secret.
 const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
+// Helper processes exit once this test worker is gone: the after hook cannot
+// reap them when the worker dies first, and a listener left behind holds its
+// port for good. The worker's pid is fixed here, not read from the child's
+// ppid, which is already 1 when the worker dies before the child starts.
+const FOLLOW_WORKER = `setInterval(() => { try { process.kill(${process.pid}, 0); } catch { process.exit(0); } }, 500);`;
 const LISTEN =
   "require('http').createServer((q, r) => r.end('ok')).listen(Number(process.argv[1]), '127.0.0.1')";
+// LISTEN for a helper's own child, which needs its own watcher.
+const CHILD_LISTEN = JSON.stringify(`${FOLLOW_WORKER} ${LISTEN}`);
 const started = [];
 
 after(() => {
@@ -104,7 +113,7 @@ function sleepProcess() {
 // environment of platform binaries such as /bin/sleep from ps.
 function nodeProcess(code, argv = [], { env = {}, cwd } = {}) {
   return track(
-    spawn(process.execPath, ['-e', code, '--', ...argv.map(String)], {
+    spawn(process.execPath, ['-e', `${FOLLOW_WORKER} ${code}`, '--', ...argv.map(String)], {
       detached: true,
       stdio: 'ignore',
       cwd,
@@ -141,7 +150,7 @@ async function slot({ env = FORCED, listen = 'self' } = {}) {
   if (listen === 'self') devServer = nodeProcess(LISTEN, [appPort], { env, cwd: root });
   else if (listen === 'child')
     devServer = nodeProcess(
-      `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[1]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
+      `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[1]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
       [appPort],
       { env, cwd: root },
     );
@@ -185,6 +194,7 @@ function launchEnv(s, { mode = 'ok', browser = STUB_BROWSER, ...extra } = {}) {
     TERMINAL_CHROME_BIN: browser,
     STUB_MODE: mode,
     STUB_APP_ORIGIN: `http://localhost:${s.appPort}`,
+    STUB_WORKER_PID: String(process.pid),
     ...extra,
   };
   delete env.TERMINAL_HEADLESS;
@@ -432,7 +442,7 @@ describe('process ownership', () => {
 
   it('kills the whole process group, including children that ignore SIGTERM', async () => {
     const leader = nodeProcess(
-      "require('child_process').spawn('/bin/sh', ['-c', 'trap \"\" TERM; while :; do sleep 1; done'], { stdio: 'ignore' }); setInterval(() => {}, 1000)",
+      `require('child_process').spawn('/bin/sh', ['-c', 'trap "" TERM; while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done'], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
     );
     const group = () =>
       spawnSync('pgrep', ['-g', String(leader)], { encoding: 'utf8' }).stdout.trim();
@@ -461,7 +471,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
       const code =
         listen === 'self'
           ? `${LISTEN.replace('process.argv[1]', 'process.argv[3]')}`
-          : `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[3]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`;
+          : `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[3]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`;
       const server = nodeProcess(code, devArgv(appPort), { env: FORCED, cwd: root });
       writeFileSync(path.join(root, 'temp/farmslot/next-dev.pid'), `${server}\n`);
       await listening(appPort);
@@ -490,7 +500,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
     mkdirSync(path.join(parentRoot, 'temp/farmslot'), { recursive: true });
     const port1 = await freePort();
     const parent = nodeProcess(
-      `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[3]], { stdio: 'ignore', env: { ...process.env, NEXT_PUBLIC_HYPERLIQUID_FORCE_TESTNET: 'false' } }); setInterval(() => {}, 1000)`,
+      `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[3]], { stdio: 'ignore', env: { ...process.env, NEXT_PUBLIC_HYPERLIQUID_FORCE_TESTNET: 'false' } }); setInterval(() => {}, 1000)`,
       ['next', 'dev', port1],
       { env: FORCED, cwd: parentRoot },
     );
@@ -512,7 +522,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
         process.execPath,
         [
           '-e',
-          LISTEN.replace('process.argv[1]', 'process.argv[3]'),
+          `${FOLLOW_WORKER} ${LISTEN.replace('process.argv[1]', 'process.argv[3]')}`,
           '--',
           'next',
           'dev',
@@ -815,6 +825,46 @@ describe('testnet enforced in the browser (round 3)', () => {
     assert.ok(state.networkEnforcement.layers.includes('served-network-check'));
     const entry = requestLog(s.runtime).find((item) => item.kind === 'network-enforcement');
     assert.equal('served' in entry, false);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('probes a venue whose policy paths hold a quote: the exact URLs, blocked, no page SyntaxError', async (t) => {
+    const s = await slot();
+    // The files this test adds live in a directory it removes, whether or not the launch passes.
+    const own = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-quote-'));
+    t.after(() => rmSync(own, { recursive: true, force: true }));
+    // The test policy with probe paths a single-quoted page expression would break on. It
+    // imports a copy of the fixture beside it: the policy fence takes relative imports only.
+    copyFileSync(policy.module, path.join(own, 'base-policy.mjs'));
+    const quoted = path.join(own, 'quote-policy.mjs');
+    writeFileSync(
+      quoted,
+      `import { policy as base } from './base-policy.mjs';\n` +
+        `export const policy = { ...base, probe: { ...base.probe, httpPath: "/info'x", wsPath: "/ws'x" } };\n`,
+    );
+    const probeLog = path.join(own, 'probe-urls.jsonl');
+    const args = await launchArgs(s);
+    const launched = launchWebDappBrowser(
+      args,
+      launchEnv(s, { mode: 'ok', RECIPE_WEB_DAPP_POLICY: quoted, STUB_PROBE_LOG: probeLog }),
+      quick,
+    );
+    const state = await launched;
+    trackPids(s.runtime);
+    assert.equal(state.networkEnforcement.mode, 'enforced');
+    assert.ok(state.networkEnforcement.layers.includes('cdp-fetch-block'));
+    // The page requested the policy paths verbatim, quote included.
+    assert.deepEqual(
+      readFileSync(probeLog, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+      [
+        "https://api.hyperliquid.xyz/info'x?mm-harness-probe=1",
+        "https://api.hyperliquid.xyz:444/info'x?mm-harness-probe=1",
+        "wss://api.hyperliquid.xyz/ws'x?mm-harness-probe=1",
+      ],
+    );
     await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
   });
 

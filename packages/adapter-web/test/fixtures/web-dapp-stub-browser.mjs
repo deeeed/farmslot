@@ -7,8 +7,11 @@
 //                    | probe-cors | probe-other-blocker | no-resolver | icon | stale-commit
 //                    | notification | double-commit | detach-pending
 //   STUB_APP_ORIGIN  the app origin the host navigates the tab to
+//   STUB_PROBE_LOG   JSONL file of the URLs the launch probes request, as the
+//                    page would (read from the probe expression)
 //   STUB_LOG         JSONL file of CDP commands received (method, session,
 //                    contextId, whether a resolve carried an error)
+//   STUB_WORKER_PID  pid of the test worker; the stub exits once it is gone
 // probe: after the app document commits, the page logs and signs once from the
 // top frame, and an iframe and a blank popup try the same.
 // restored: a restored app tab exists, and the app tab is attached twice.
@@ -45,6 +48,21 @@ if (args.includes('--version')) {
 const port = Number(args.find((arg) => arg.startsWith('--remote-debugging-port='))?.split('=')[1]);
 const mode = process.env.STUB_MODE ?? 'ok';
 const appOrigin = process.env.STUB_APP_ORIGIN ?? 'http://localhost:1';
+
+// Detached like a real browser, so nothing reaps it when its test dies before
+// teardown: it exits once that test's worker (STUB_WORKER_PID) is gone, and on
+// its own after 10 minutes either way, instead of holding its port.
+setTimeout(() => process.exit(0), 10 * 60 * 1000).unref();
+const workerPid = Number(process.env.STUB_WORKER_PID);
+if (workerPid > 0) {
+  setInterval(() => {
+    try {
+      process.kill(workerPid, 0);
+    } catch {
+      process.exit(0);
+    }
+  }, 500).unref();
+}
 
 if (mode === 'silent') {
   setInterval(() => {}, 1000);
@@ -102,6 +120,16 @@ if (mode === 'silent') {
     });
   }
   server.listen(port, '127.0.0.1');
+}
+
+// Whether a page expression parses, as the page's engine would check it.
+function parses(expression) {
+  try {
+    new Function(expression);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function serveCdp(socket) {
@@ -209,22 +237,31 @@ function serveCdp(socket) {
       result = { result: { type: 'boolean', value: mode !== 'no-binding' } };
     } else if (
       method === 'Runtime.evaluate' &&
+      /mm-harness-probe=1/u.test(params.expression ?? '') &&
+      !parses(params.expression)
+    ) {
+      // As a page does, a probe expression that does not parse throws.
+      result = {
+        result: { type: 'object', subtype: 'error', description: 'SyntaxError' },
+        exceptionDetails: { text: 'Uncaught SyntaxError' },
+      };
+    } else if (
+      method === 'Runtime.evaluate' &&
       /mm-harness-probe=1/u.test(params.expression ?? '')
     ) {
       result = {
         result: { type: 'string', value: mode === 'probe-reaches' ? 'reached' : 'blocked' },
       };
-      if (
-        mode !== 'probe-reaches' &&
-        /fetch\('https:\/\/api\.hyperliquid\.xyz:444\//u.test(params.expression)
-      ) {
+      // The URL the page would request: the probe expression's JSON string argument.
+      const probeMatch = /(?:fetch|new WebSocket)\(("(?:[^"\\]|\\.)*")/u.exec(params.expression);
+      const url = probeMatch ? JSON.parse(probeMatch[1]) : null;
+      if (url && process.env.STUB_PROBE_LOG)
+        appendFileSync(process.env.STUB_PROBE_LOG, `${JSON.stringify(url)}\n`);
+      if (mode !== 'probe-reaches' && url && /^https:\/\/[^/]+:444\//u.test(url)) {
         // The resolver rule fails every port of the host.
         emit(
           'Network.requestWillBeSent',
-          {
-            requestId: 'PROBE-RESOLVER',
-            request: { url: 'https://api.hyperliquid.xyz:444/info?mm-harness-probe=1' },
-          },
+          { requestId: 'PROBE-RESOLVER', request: { url } },
           sessionId,
         );
         emit(
@@ -236,8 +273,7 @@ function serveCdp(socket) {
           },
           sessionId,
         );
-      } else if (mode !== 'probe-reaches' && /fetch\(/u.test(params.expression)) {
-        const url = 'https://api.hyperliquid.xyz/info?mm-harness-probe=1';
+      } else if (mode !== 'probe-reaches' && url && /^https:\/\//u.test(url)) {
         emit('Network.requestWillBeSent', { requestId: 'PROBE-HTTP', request: { url } }, sessionId);
         // As headful Chrome reports a request the host failed with
         // Fetch.failRequest (headless says net::ERR_BLOCKED_BY_CLIENT.Inspector).
@@ -267,12 +303,8 @@ function serveCdp(socket) {
           50,
         );
       }
-      if (mode !== 'probe-reaches' && /new WebSocket\(/u.test(params.expression)) {
-        emit(
-          'Network.webSocketCreated',
-          { requestId: 'PROBE-WS', url: 'wss://api.hyperliquid.xyz/ws?mm-harness-probe=1' },
-          sessionId,
-        );
+      if (mode !== 'probe-reaches' && url && /^wss:\/\//u.test(url)) {
+        emit('Network.webSocketCreated', { requestId: 'PROBE-WS', url }, sessionId);
         // Headful Chrome can report the failure with an empty message.
         emit('Network.webSocketFrameError', { requestId: 'PROBE-WS', errorMessage: '' }, sessionId);
       }
