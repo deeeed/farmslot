@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Fix: `launch-browser` no longer builds its `node -e` CDP request from the port, path or target id. They reach the child as argv, `cdpHttp` takes only an integer port from 1 to 65535 and the paths it uses (`/json/list`, `/json/version`, `/json/close/<id>`), and closing duplicate home tabs skips, with a warning, a target id from `/json/list` that is not a CDP id (letters, digits, `-`). Before, a hostile or substituted local CDP endpoint could run code in that child through a crafted target id. `cdpHttp` and `pruneExtraHomeTabs` are exported for tests. (PR_LINK)
+- Fix: `launch-browser` no longer builds its `node -e` CDP request from the port, path or target id. They reach the child as argv, `cdpHttp` takes only an integer port from 1 to 65535 and the paths it uses (`/json/list`, `/json/version`, `/json/close/<id>`), and closing duplicate home tabs skips, with a warning, a target id from `/json/list` that is not a CDP id (letters, digits, `-`). Before, a hostile or substituted local CDP endpoint could run code in that child through a crafted target id. `cdpHttp` and `pruneExtraHomeTabs` are exported for tests. ([#859](https://github.com/deeeed/farmslot/pull/859))
 
 ## 0.6.1 - 2026-10-08
 
