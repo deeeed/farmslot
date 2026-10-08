@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +24,7 @@ import {
   contractOptions,
   createHarnessCli,
   detectAdapter,
+  formatHarnessContext,
   harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
@@ -1568,13 +1569,29 @@ export const adapter = {
     const plain = await run(['doctor', '--adapter', 'web', '--json']);
     assert.deepEqual(plain, { argv: ['--adapter', 'web', '--json'], env: filled });
     assert.deepEqual(harnessContext()?.ports, {
-      cdp: { value: 9541, source: 'slot', filled: true, via: 'env' },
-      watcher: { value: 9341, source: 'slot', filled: true, via: 'env' },
+      cdp: {
+        value: 9541,
+        source: 'slot',
+        filled: true,
+        via: 'env',
+        names: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+      },
+      watcher: {
+        value: 9341,
+        source: 'slot',
+        filled: true,
+        via: 'env',
+        names: ['RECIPE_WATCHER_PORT', 'WATCHER_PORT', 'METRO_PORT'],
+      },
     });
-    // ...for this invocation only.
+    assert.match(
+      formatHarnessContext(harnessContext()!),
+      /ports cdp 9541 \(slot\), watcher 9341 \(slot\)$/u,
+    );
+    // ...for this invocation only: afterwards every name is back as it was, unset ones absent.
     assert.deepEqual(
-      PORT_NAMES.map((name) => process.env[name]),
-      PORT_NAMES.map(() => undefined),
+      PORT_NAMES.map((name) => name in process.env),
+      PORT_NAMES.map(() => false),
     );
     // A leaf's own help and a passthrough port reach it untouched; a passthrough
     // flag outranks the environment in every adapter.
@@ -1618,16 +1635,47 @@ export const adapter = {
     });
     delete process.env.WATCHER_PORT;
 
-    // The journal keeps exactly what was typed.
+    // The journal keeps exactly what was typed (each case in its own checkout,
+    // so the newest journal is unambiguous).
     for (const typed of [
       ['--adapter', 'web', '--json'],
       ['--adapter', 'web', '--cdp-port=1'],
       ['--adapter', 'web', '--cdp-port', '2', '--cdp-port', '3'],
       ['--adapter', 'web', '--', 'x'],
     ]) {
-      await run(['doctor', ...typed]);
-      assert.deepEqual(readCommandJournal(checkout).record?.args, typed);
+      const own = fs.realpathSync(tempRoot());
+      await run(['doctor', '--target', own, ...typed]);
+      assert.deepEqual(readCommandJournal(own).record?.args, ['--target', own, ...typed]);
     }
+    // A child the command spawns (a leaf script) inherits the filled environment.
+    // (Last: a second createHarnessCli reconfigures the host this test journals with.)
+    const spawning = command(
+      'launch',
+      { options: contractOptions(HELP, TARGET, portOptions) },
+      {
+        run: () => {
+          const child = spawnSync(
+            process.execPath,
+            [
+              '-e',
+              `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(PORT_NAMES)}.map((n) => [n, process.env[n] ?? null]))))`,
+            ],
+            { encoding: 'utf8' },
+          );
+          childEnv.push(JSON.parse(child.stdout) as Record<string, string | null>);
+          return child.status ?? 1;
+        },
+      },
+    );
+    const childEnv: Record<string, string | null>[] = [];
+    const spawner = createHarnessCli({ ...cliOptions(), commands: [spawning] });
+    process.env.UNRELATED_SETTING = 'kept';
+    const before = { ...process.env };
+    const launched = await capture(() => spawner.main(['launch', '--adapter', 'web']));
+    assert.equal(launched.result.exitCode, 0);
+    assert.deepEqual(childEnv, [filled]);
+    assert.deepEqual({ ...process.env }, before);
+
     // No slot here: nothing is filled.
     process.chdir(tempRoot());
     assert.deepEqual((await run(['doctor', '--adapter', 'web'])).env, {

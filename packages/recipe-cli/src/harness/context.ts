@@ -228,12 +228,14 @@ export function contextPorts(
     }
     const fromSlot = slot.map((key) => slotPorts[key]).find((port) => port !== undefined);
     if (fromSlot === undefined) continue;
-    for (const key of new Set([...set, ...extra])) fill[key] = String(fromSlot);
+    const names = [...new Set([...set, ...extra])];
+    for (const key of names) fill[key] = String(fromSlot);
     ports[name] = {
       value: fromSlot,
       source: 'slot',
       filled: true,
       via: 'env',
+      names,
       ...(invalidEnv ? { invalidEnv } : {}),
     };
   }

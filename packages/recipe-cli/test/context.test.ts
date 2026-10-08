@@ -644,7 +644,22 @@ const watcherEnv = (port: number) => ({
   METRO_PORT: String(port),
 });
 const cdpEnv = (port: number) => ({ RECIPE_CDP_PORT: String(port), CDP_PORT: String(port) });
-const viaEnv = (value: number) => ({ value, source: 'slot', filled: true, via: 'env' }) as const;
+const viaCdp = (value: number) =>
+  ({
+    value,
+    source: 'slot',
+    filled: true,
+    via: 'env',
+    names: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+  }) as const;
+const viaWatcher = (value: number) =>
+  ({
+    value,
+    source: 'slot',
+    filled: true,
+    via: 'env',
+    names: ['RECIPE_WATCHER_PORT', 'WATCHER_PORT', 'METRO_PORT'],
+  }) as const;
 
 describe('contextPorts', () => {
   const grammar = { '--cdp-port': {}, '--watcher-port': {}, '--json': {} };
@@ -661,11 +676,11 @@ describe('contextPorts', () => {
 
   test('slot ports fill the environment the adapters read, never the argv', () => {
     assert.deepEqual(contextPorts(slotted, ['--json'], grammar, {}), {
-      ports: { cdp: viaEnv(9541), watcher: viaEnv(9341) },
+      ports: { cdp: viaCdp(9541), watcher: viaWatcher(9341) },
       env: { ...cdpEnv(9541), ...watcherEnv(9341) },
     });
     assert.deepEqual(contextPorts(slotted, ['--cdp-port', '1234'], grammar, {}), {
-      ports: { cdp: { value: 1234, source: 'flag' }, watcher: viaEnv(9341) },
+      ports: { cdp: { value: 1234, source: 'flag' }, watcher: viaWatcher(9341) },
       env: watcherEnv(9341),
     });
     // A typed value the command will refuse is still the user's.
@@ -713,7 +728,7 @@ describe('contextPorts', () => {
       formatHarnessContext({
         ...slotted,
         ports: {
-          cdp: viaEnv(9541),
+          cdp: viaCdp(9541),
           watcher: { value: 1234, source: 'flag' },
         },
       }),
@@ -818,7 +833,7 @@ describe('port fill order', () => {
       slotPoolDir: pooled(checkout),
     });
     assert.deepEqual(contextPorts(context, ['--port', '9400'], grammar, {}), {
-      ports: { cdp: viaEnv(9541), watcher: { value: 9400, source: 'flag' } },
+      ports: { cdp: viaCdp(9541), watcher: { value: 9400, source: 'flag' } },
       env: cdpEnv(9541),
     });
     // Two spellings that disagree: the handler picks, so no value is claimed.
@@ -845,7 +860,7 @@ describe('port fill order', () => {
     const tokens = ['--target', checkout];
     const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
     assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '9400' }), {
-      ports: { cdp: viaEnv(9222), watcher: { value: 9400, source: 'env', filled: false } },
+      ports: { cdp: viaCdp(9222), watcher: { value: 9400, source: 'env', filled: false } },
       env: cdpEnv(9222),
     });
     // Each name counts, in the fill's order; a flag still wins.
@@ -873,11 +888,11 @@ describe('port fill order', () => {
     // An empty or non-port value holds nothing: the slot fills, and the report shows what was there.
     assert.deepEqual(
       contextPorts(context, tokens, grammar, { WATCHER_PORT: '' }).ports?.watcher,
-      viaEnv(9300),
+      viaWatcher(9300),
     );
     assert.deepEqual(
       contextPorts(context, tokens, grammar, { RECIPE_WATCHER_PORT: 'abc' }).ports?.watcher,
-      { ...viaEnv(9300), invalidEnv: { name: 'RECIPE_WATCHER_PORT', value: 'abc' } },
+      { ...viaWatcher(9300), invalidEnv: { name: 'RECIPE_WATCHER_PORT', value: 'abc' } },
     );
     assert.match(
       formatHarnessContext({

@@ -54,8 +54,8 @@ export interface HarnessContext {
    * The generic ports the command takes. 'flag': a spelling of the option was
    * typed (`value` when the spellings agree). 'env': the user's environment
    * holds it (`filled: false`, left to the adapter). 'slot': the slot's port,
-   * set in the environment the adapters read (`filled: true`, `via: 'env'`;
-   * `invalidEnv` names a non-port value it replaced). The command's argv is
+   * set in the environment the adapters read (`filled: true`, `via: 'env'`,
+   * `names` the variables set; `invalidEnv` names a non-port value it replaced). The command's argv is
    * never changed. Adapter-specific ports stay in `slot.ports`.
    */
   ports?: Partial<
@@ -66,6 +66,8 @@ export interface HarnessContext {
         source: 'flag' | 'env' | 'slot';
         filled?: boolean;
         via?: 'env';
+        /** The environment names a fill set. */
+        names?: readonly string[];
         invalidEnv?: { name: string; value: string };
       }
     >
