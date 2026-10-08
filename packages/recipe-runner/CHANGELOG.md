@@ -5,7 +5,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.28.0 - 2026-10-09
+
 - Add `detect` to a recipe-library.json `adapters` entry: `remote`, `files` and `packageDependencies`, each an array of strings (`RecipeLibraryAdapterDetect`). `readRecipeLibraryManifest` validates it (a `files` entry must be checkout-relative, without `..`) and keeps it in `RecipeLibraryAdapterDeclaration.detect`, so a host can recognise a plugin's checkout without importing the plugin.
+- Publish with protocol 0.35.0.
 
 ## 0.27.1 - 2026-10-09
 

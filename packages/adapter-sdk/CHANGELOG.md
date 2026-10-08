@@ -5,8 +5,12 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-10-09
+
 - Add `adapterDetectFromSpec(spec)` and `AdapterDetectSpec`: the `AdapterDetect` predicates a recipe library's `detect` declaration describes. `remote` matches when the origin URL contains any entry; `files` matches when every path exists (a trailing `/` requires a directory) and package.json lists every `packageDependencies` entry. A path (package.json included) counts only when its real path stays inside the checkout, so a symlink out of it matches nothing.
 - `PlatformAdapter.detect` documents the host rule recipe-cli now applies: any remote match beats any file match, an adapter beats one it extends, and more than one match left is ambiguous (it was registration order).
+- Publish with protocol 0.35.0 and recipe-runner 0.28.0.
 
 ## 0.7.2 - 2026-10-09
 
