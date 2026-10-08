@@ -433,18 +433,18 @@ test('app.lifecycle launches iOS simulator app directly when no deep link is pro
 
 // adb joins the words after `shell` into one command line for the device's
 // shell. Run that line through a POSIX sh where `am` and `monkey` print their
-// arguments, one per line, to see what the device would receive.
+// arguments NUL-terminated (so empty fields and newlines survive), to see the
+// exact argv the device would receive.
 function deviceShellArgs(adbArgs: string[]): string[] {
   const commandLine = adbArgs.slice(adbArgs.indexOf('shell') + 1).join(' ');
-  const printArgs = 'for arg in "$@"; do printf "%s\\n" "$arg"; done';
+  const printArgs = `for arg in "$@"; do printf '%s\\000' "$arg"; done`;
   const result = spawnSync(
     'sh',
     ['-c', `am() { ${printArgs}; }; monkey() { ${printArgs}; }; ${commandLine}; wait`],
-    {
-      encoding: 'utf8',
-    },
+    { encoding: 'utf8' },
   );
-  return result.stdout.split('\n').filter(Boolean);
+  assert.equal(result.status, 0, `device shell failed: ${result.stderr}`);
+  return result.stdout.split('\0').slice(0, -1);
 }
 
 function androidAdapter(target: { appId: string; launchUrl?: string }, calls: string[][]) {
@@ -498,12 +498,69 @@ test('app.lifecycle keeps a launch URL with ; from running a second device comma
   assert.equal(existsSync(sentinel), false, 'the launch URL ran a second command on the device');
 });
 
-test('app.lifecycle passes the app id to the device shell as one word', async () => {
-  const appId = "com.example.app; echo it's";
-  for (const command of ['terminate', 'foreground'] as const) {
+// Values the device shell would otherwise interpret: each must arrive verbatim.
+const awkwardValues: Record<string, string> = {
+  apostrophe: "it's",
+  backslash: 'back\\slash',
+  home: '$HOME',
+  subshell: '$(id)',
+  backticks: '`id`',
+  unicode: 'h\u00e9llo \u2713',
+  newline: 'line1\nline2',
+};
+
+test('app.lifecycle passes awkward launch URLs to the device shell verbatim', async () => {
+  for (const [name, value] of Object.entries(awkwardValues)) {
+    const launchUrl = `expo-example://x/?q=${value}`;
     const calls: string[][] = [];
-    await androidAdapter({ appId }, calls).execute({ command }, context());
-    const received = deviceShellArgs(calls.at(-1) ?? []);
-    assert.ok(received.includes(appId), `${command}: ${JSON.stringify(received)}`);
+    await androidAdapter({ appId: 'com.example.app', launchUrl }, calls).execute(
+      { command: 'launch' },
+      context(),
+    );
+    const start = calls.find((args) => args.includes('start'));
+    assert.ok(start, name);
+    assert.deepEqual(
+      deviceShellArgs(start),
+      ['start', '-a', 'android.intent.action.VIEW', '-d', launchUrl],
+      name,
+    );
   }
+});
+
+test('app.lifecycle passes awkward app ids to the device shell verbatim', async () => {
+  const appIds: Record<string, string> = {
+    // No quote: on an unquoted shell line this splits into a second command.
+    split: 'com.example.app; echo SECOND',
+    splitWithQuote: "com.example.app; echo it's",
+    ...Object.fromEntries(
+      Object.entries(awkwardValues).map(([name, value]) => [name, `com.example.${value}`]),
+    ),
+  };
+  for (const [name, appId] of Object.entries(appIds)) {
+    const terminate: string[][] = [];
+    await androidAdapter({ appId }, terminate).execute({ command: 'terminate' }, context());
+    assert.deepEqual(deviceShellArgs(terminate.at(-1) ?? []), ['force-stop', appId], name);
+    const foreground: string[][] = [];
+    await androidAdapter({ appId }, foreground).execute({ command: 'foreground' }, context());
+    assert.deepEqual(
+      deviceShellArgs(foreground.at(-1) ?? []),
+      ['-p', appId, '-c', 'android.intent.category.LAUNCHER', '1'],
+      name,
+    );
+  }
+});
+
+test('app.lifecycle launches through monkey for an empty launch URL', async () => {
+  const calls: string[][] = [];
+  await androidAdapter({ appId: 'com.example.app', launchUrl: '' }, calls).execute(
+    { command: 'launch' },
+    context(),
+  );
+  assert.deepEqual(deviceShellArgs(calls.at(-1) ?? []), [
+    '-p',
+    'com.example.app',
+    '-c',
+    'android.intent.category.LAUNCHER',
+    '1',
+  ]);
 });
