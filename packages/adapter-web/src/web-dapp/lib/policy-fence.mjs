@@ -10,9 +10,13 @@
 // The source scan only lists the files to digest; it can miss an import (an
 // aliased require, say, in a branch only a leaf takes). So a process that loads
 // the policy also fences its imports at run time, as the plugin loader does: a
-// resolve hook refuses any import from those files that resolves outside them,
-// while the process runs. It fences imports, not code: it is no sandbox for
-// code the plugin digest already covers.
+// resolve hook refuses any import resolved from those files that lands outside
+// them, while the process runs. It fences imports, not code: it is no sandbox
+// for code the plugin digest already covers. It goes by the importing file, as
+// the plugin loader does, so a require created for another path, Module
+// internals, or a CommonJS request Node answers from its cache without
+// resolving again pass it; and a process that loads two policies lets a file
+// both digests cover import the files of either.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';

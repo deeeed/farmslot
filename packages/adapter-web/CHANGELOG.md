@@ -5,7 +5,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Fix: every process that loads the `web-dapp` venue policy fences its imports at run time. A `module.registerHooks` resolve hook refuses (`ADAPTER_PLUGIN_INVALID`) any import from the policy's digested files that resolves outside them, at load or later while the process runs. Before, the host's source scan was the only check, so a leaf could load an outside file through an aliased `createRequire` (or another import the scan can't see) while the policy and plugin digests stayed unchanged. Loading the policy now needs Node.js 22.15 or later. It fences imports, not code.
+- Fix: every process that loads the `web-dapp` venue policy fences its imports at run time. A `module.registerHooks` resolve hook refuses (`ADAPTER_PLUGIN_INVALID`) any import resolved from one of the policy's digested files (static, dynamic, or a `require` created for it) that lands outside them, at load or later while the process runs. Before, the host's source scan was the only check, so a leaf could load an outside file through an aliased `createRequire` (or another import the scan can't see) while the policy and plugin digests stayed unchanged. Loading the policy now needs Node.js 22.15 or later (`engines` says so). It fences imports, not code.
 
 ## 0.6.2 - 2026-10-08
 
