@@ -25,7 +25,9 @@ export {
   adapterForPlatform,
   assertAdapter,
   configureHarnessAdapters,
+  type DeclaredDetect,
   detectAdapter,
+  detectAdapterMatch,
   type DetectEntry,
   harnessAdapter,
   harnessAdapters,
@@ -148,6 +150,7 @@ export {
 export {
   AdapterAmbiguousError,
   type AdapterCandidate,
+  contextAdapter,
   type ContextSource,
   type DetectMatch,
   type HarnessContext,

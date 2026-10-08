@@ -1,7 +1,8 @@
 // The context one invocation resolved (context.ts): which adapter, target and
 // slot a command acts on, and where each came from. Kept apart from the
-// resolver so the detection and output modules read it without importing the
+// resolver so the commands and output modules read it without importing the
 // plugin loader.
+import path from 'node:path';
 
 /** Where a context value came from, strongest first. */
 export type ContextSource = 'flag' | 'binding' | 'slot' | 'detect' | 'default';
@@ -25,14 +26,21 @@ export interface HarnessContext {
     library?: string;
   };
   target: { value: string; source: 'flag' | 'default'; detail: '--target' | 'cwd' };
-  slot?: {
-    value: string;
-    source: 'slot' | 'binding';
-    detail: 'slot-config' | 'runtime-context';
-    session?: string;
-    poolFile?: string;
-    ports: Record<string, number>;
-  };
+  /**
+   * The checkout's slot. `source: 'none'` (value null, detail 'no-pool-dir')
+   * when no pool directory is known and the runtime context names no slot, so
+   * the slot could not be looked up; absent when the pool maps no slot here.
+   */
+  slot?:
+    | {
+        value: string;
+        source: 'slot' | 'binding';
+        detail: 'slot-config' | 'runtime-context';
+        session?: string;
+        poolFile?: string;
+        ports: Record<string, number>;
+      }
+    | { value: null; source: 'none'; detail: 'no-pool-dir' };
 }
 
 /** One adapter whose detect predicates matched a checkout. */
@@ -70,6 +78,14 @@ export function setHarnessContext(context: HarnessContext | undefined): void {
 /** The context createHarnessCli resolved for this invocation, if any. */
 export function harnessContext(): HarnessContext | undefined {
   return current;
+}
+
+/**
+ * The adapter the resolved context names for `target`, or undefined when no
+ * context was resolved for it. Commands take it after their own flags.
+ */
+export function contextAdapter(target: string): string | undefined {
+  return current?.target.value === path.resolve(target) ? current.adapter?.value : undefined;
 }
 
 /** `{ context }` for a command's --json envelope, or nothing outside a resolved invocation. */

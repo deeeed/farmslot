@@ -6,17 +6,14 @@ import path from 'node:path';
 
 import {
   type AdapterDetect,
+  adapterDetectFromSpec,
+  type AdapterDetectSpec,
   type AdapterRegistry,
   createAdapterRegistry,
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
 
-import {
-  AdapterAmbiguousError,
-  type AdapterCandidate,
-  type DetectMatch,
-  harnessContext,
-} from './context-state.js';
+import { AdapterAmbiguousError, type AdapterCandidate, type DetectMatch } from './context-state.js';
 import { harnessHost } from './host.js';
 
 let registry: AdapterRegistry = createAdapterRegistry();
@@ -39,25 +36,52 @@ function registered(): PlatformAdapter[] {
 }
 
 /**
- * The adapter whose checkout `target` is, or undefined. The invocation's
- * resolved context answers for its own target; any other target runs the
- * registered adapters' predicates (`pickDetected`), so more than one match
- * throws AdapterAmbiguousError.
+ * The adapter whose checkout `target` is, or undefined: the unique match among
+ * the registered adapters and the `declared` plugins (`detectAdapterMatch`).
+ * More than one match throws AdapterAmbiguousError.
  */
-export function detectAdapter(target: string): string | undefined {
+export function detectAdapter(
+  target: string,
+  declared: readonly DeclaredDetect[] = [],
+): string | undefined {
+  return detectAdapterMatch(target, declared)?.adapter;
+}
+
+/** A plugin a library declares, with the `detect` it declares. */
+export interface DeclaredDetect {
+  id: string;
+  library: string;
+  extends?: string;
+  detect?: AdapterDetectSpec;
+}
+
+/**
+ * The registered adapters by their `detect`, then the declared plugins not
+ * registered by their declaration's `detect` (a declaration that claims a
+ * registered id is no candidate), ranked by `pickDetected`.
+ */
+export function detectAdapterMatch(
+  target: string,
+  declared: readonly DeclaredDetect[] = [],
+): AdapterCandidate | undefined {
   // An empty registry would detect nothing for every checkout; that is a host
   // wiring error, not an unknown checkout.
   assertAdaptersRegistered();
-  const context = harnessContext();
-  if (context && context.target.value === path.resolve(target)) return context.adapter?.value;
-  return pickDetected(
-    registered().map((adapter) => ({
-      id: adapter.id,
-      ...(adapter.extends ? { extends: adapter.extends } : {}),
-      ...(adapter.detect ? { detect: adapter.detect } : {}),
-    })),
-    target,
-  )?.adapter;
+  const entries: DetectEntry[] = registered().map((adapter) => ({
+    id: adapter.id,
+    ...(adapter.extends ? { extends: adapter.extends } : {}),
+    ...(adapter.detect ? { detect: adapter.detect } : {}),
+  }));
+  for (const declaration of declared) {
+    if (entries.some((entry) => entry.id === declaration.id)) continue;
+    entries.push({
+      id: declaration.id,
+      library: declaration.library,
+      ...(declaration.extends ? { extends: declaration.extends } : {}),
+      ...(declaration.detect ? { detect: adapterDetectFromSpec(declaration.detect) } : {}),
+    });
+  }
+  return pickDetected(entries, target);
 }
 
 /** An adapter detection can choose: its id, what it extends, and its predicates. */

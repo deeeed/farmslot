@@ -18,6 +18,7 @@ import {
 import {
   AdapterAmbiguousError,
   configureHarnessAdapters,
+  contextAdapter,
   detectAdapter,
   formatHarnessContext,
   type HarnessContext,
@@ -201,7 +202,7 @@ describe('resolveHarnessContext', () => {
     const unbound = await resolveHarnessContext({ tokens: [], cwd: checkout });
     assert.equal(unbound.adapter?.value, 'app');
     assert.equal(unbound.adapter?.source, 'detect');
-    assert.equal(unbound.slot, undefined);
+    assert.deepEqual(unbound.slot, { value: null, source: 'none', detail: 'no-pool-dir' });
   });
 
   test("slot: slot-config's match for the checkout, its own platform only", async () => {
@@ -250,7 +251,16 @@ describe('resolveHarnessContext', () => {
       'macwork-coredev-6',
     );
     process.env.FARMSLOT_ROOT = path.join(checkout, 'missing');
-    assert.equal((await resolveHarnessContext({ tokens: [], cwd: checkout })).slot, undefined);
+    assert.deepEqual((await resolveHarnessContext({ tokens: [], cwd: checkout })).slot, {
+      value: null,
+      source: 'none',
+      detail: 'no-pool-dir',
+    });
+    // A pool that maps no slot here: the checkout is not a slot.
+    assert.equal(
+      (await resolveHarnessContext({ tokens: [], cwd: tempRoot(), slotPoolDir: cliPools })).slot,
+      undefined,
+    );
   });
 
   test('detect: a remote match beats file matches, and a child beats the parent it extends', async () => {
@@ -275,6 +285,23 @@ describe('resolveHarnessContext', () => {
       adapter('shop', { extends: 'web', detect: { files: hasFile('web.json') } }),
     );
     assert.equal((await resolveHarnessContext({ tokens: [], cwd: plain })).adapter?.value, 'shop');
+  });
+
+  test('without --target, a subdirectory detects, binds and finds its slot at the Git top level', async () => {
+    const checkout = tempRoot();
+    write(checkout, 'web.json', '{}');
+    fs.mkdirSync(path.join(checkout, 'packages/deep'), { recursive: true });
+    gitOrigin(checkout, 'git@example.test:acme/plain.git');
+    useAdapters(adapter('web', { detect: { files: hasFile('web.json') } }), adapter('app'));
+    const pools = poolDir([{ id: 'w-1', repo: checkout, session: 'w' }]);
+    const deep = path.join(checkout, 'packages/deep');
+    const context = await resolveHarnessContext({ tokens: [], cwd: deep, slotPoolDir: pools });
+    assert.equal(context.adapter?.value, 'web');
+    assert.deepEqual(context.target, { value: deep, source: 'default', detail: 'cwd' });
+    assert.equal(context.slot?.value, 'w-1');
+    // An explicit --target is taken as given.
+    const flagged = await resolveHarnessContext({ tokens: ['--target', deep], cwd: checkout });
+    assert.equal(flagged.adapter, undefined);
   });
 
   test('ambiguous: more than one match stops with the candidates and what matched', async () => {
@@ -309,7 +336,8 @@ describe('resolveHarnessContext', () => {
     const empty = tempRoot();
     const none = await resolveHarnessContext({ tokens: [], cwd: empty });
     assert.equal(none.adapter, undefined);
-    assert.equal(none.slot, undefined);
+    // No pool directory and no runtime context: the slot could not be looked up.
+    assert.deepEqual(none.slot, { value: null, source: 'none', detail: 'no-pool-dir' });
     const fallback = await resolveHarnessContext({ tokens: [], cwd: empty, defaultAdapter: 'web' });
     assert.deepEqual(fallback.adapter, { value: 'web', source: 'default', detail: 'default' });
   });
@@ -407,22 +435,43 @@ describe('formatHarnessContext', () => {
       formatHarnessContext({ target: { value: '/w', source: 'default', detail: 'cwd' } }),
       'context: adapter none, target /w (cwd)',
     );
+    assert.equal(
+      formatHarnessContext({
+        adapter: { value: 'web', source: 'detect', detail: 'files' },
+        target: { value: '/w', source: 'default', detail: 'cwd' },
+        slot: { value: null, source: 'none', detail: 'no-pool-dir' },
+      }),
+      'context: adapter web (detected: files), target /w (cwd), slot unknown (no pool dir)',
+    );
   });
 });
 
 describe('detectAdapter', () => {
-  test('answers from the resolved context for its target, and detects any other', () => {
-    const elsewhere = tempRoot();
-    write(elsewhere, 'web.json', '{}');
+  test('is the unique match over the registered adapters and the declared plugins', () => {
+    const checkout = tempRoot();
+    write(checkout, 'web.json', '{}');
+    write(checkout, 'shop.json', '{}');
     useAdapters(adapter('web', { detect: { files: hasFile('web.json') } }), adapter('app'));
+    assert.equal(detectAdapter(checkout), 'web');
+    const shop = { id: 'shop', library: 'lib', extends: 'web', detect: { files: ['shop.json'] } };
+    assert.equal(detectAdapter(checkout, [shop]), 'shop');
+    // A declaration that claims a registered id is no candidate.
+    assert.equal(detectAdapter(checkout, [{ ...shop, id: 'app', extends: undefined }]), 'web');
+    assert.throws(
+      () => detectAdapter(checkout, [{ ...shop, extends: undefined }]),
+      AdapterAmbiguousError,
+    );
+  });
+
+  test('contextAdapter answers only for the resolved target', () => {
     setHarnessContext({
       adapter: { value: 'app', source: 'binding', detail: 'runtime-context' },
       target: { value: '/w/bound', source: 'default', detail: 'cwd' },
     });
-    assert.equal(detectAdapter('/w/bound/'), 'app');
-    assert.equal(detectAdapter(elsewhere), 'web');
-    setHarnessContext({ target: { value: '/w/none', source: 'default', detail: 'cwd' } });
-    assert.equal(detectAdapter('/w/none'), undefined);
+    assert.equal(contextAdapter('/w/bound/'), 'app');
+    assert.equal(contextAdapter('/w/other'), undefined);
+    setHarnessContext(undefined);
+    assert.equal(contextAdapter('/w/bound'), undefined);
   });
 
   test('pickDetected throws for a tie that extends does not settle', () => {

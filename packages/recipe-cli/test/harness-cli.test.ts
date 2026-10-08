@@ -1334,7 +1334,7 @@ export const adapter = {
     assert.equal(stdout, '');
     assert.equal(
       stderr,
-      `context: adapter terminal (detected: remote+files), target ${checkout} (cwd)\n`,
+      `context: adapter terminal (detected: remote+files), target ${checkout} (cwd), slot unknown (no pool dir)\n`,
     );
     assert.equal(harnessContext()?.adapter?.library, 'terms');
 

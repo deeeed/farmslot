@@ -6,24 +6,19 @@
 // default. Plugins are matched by their declaration's `detect`, never imported
 // to detect; the host loads only the winner. Approvals (--approve-plan, mainnet
 // and funding flags) are never part of the context: they stay explicit.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { adapterDetectFromSpec } from '@farmslot/adapter-sdk';
 import { findSlotByRepo, slotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 
-import {
-  type AdapterLibraryOptions,
-  adapterPlugin,
-  type DeclaredAdapter,
-  declaredAdapters,
-} from './adapter-plugins.js';
+import { type AdapterLibraryOptions, declaredAdapters } from './adapter-plugins.js';
 import {
   adapterForPlatform,
-  type DetectEntry,
+  type DeclaredDetect,
+  detectAdapterMatch,
   harnessAdapters,
   isPlatformTarget,
-  pickDetected,
 } from './adapters.js';
 import { optionValues } from './command-contract.js';
 import type { HarnessContext } from './context-state.js';
@@ -38,14 +33,18 @@ export interface ResolveHarnessContextOptions {
   load?: AdapterLibraryOptions;
   /** The adapter a runtime context's or slot's `platform` names, when it is not an adapter id. */
   slotAdapter?(platform: string): string | undefined;
-  /** The pool directory slot-config reads. Default: FARMSLOT_POOL_DIR, else $FARMSLOT_ROOT/pool. */
+  /**
+   * The pool directory slot-config reads. Default: FARMSLOT_POOL_DIR, else
+   * $FARMSLOT_ROOT/pool. Without one, a checkout whose runtime context names no
+   * slot reports `slot: { value: null, source: 'none', detail: 'no-pool-dir' }`.
+   */
   slotPoolDir?: string;
   /** The adapter when nothing else decides. */
   defaultAdapter?: string;
 }
 
 type ContextAdapter = NonNullable<HarnessContext['adapter']>;
-type ContextSlot = NonNullable<HarnessContext['slot']>;
+type ContextSlot = Extract<NonNullable<HarnessContext['slot']>, { value: string }>;
 
 /**
  * Resolve the invocation's context. Throws AdapterAmbiguousError when detection
@@ -71,15 +70,23 @@ export async function resolveHarnessContext(
       ? known(options.slotAdapter?.(platform) ?? adapterForPlatform(platform))
       : undefined;
 
-  const runtime = readRuntimeContext(target.value);
-  const pooled = await poolSlot(target.value, options.slotPoolDir ?? slotPoolDir());
-  const slot = pooled?.slot ?? runtimeSlot(runtime);
+  // Without --target, a subdirectory answers for its checkout: the binding, the
+  // slot and detection read the Git top level.
+  const root = targetFlag ? target.value : (gitTopLevel(target.value) ?? target.value);
+  const runtime = readRuntimeContext(root);
+  const poolDir = options.slotPoolDir ?? slotPoolDir();
+  const pooled = poolDir ? await poolSlot(root, poolDir) : 'no-pool-dir';
+  const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
+  const slot: HarnessContext['slot'] =
+    pooledSlot?.slot ??
+    runtimeSlot(runtime) ??
+    (pooled === 'no-pool-dir' ? { value: null, source: 'none', detail: 'no-pool-dir' } : undefined);
 
   const adapter: ContextAdapter | undefined =
     flagAdapter(options.tokens) ??
     sourced(platformAdapter(runtime?.platform), 'binding', 'runtime-context') ??
-    sourced(platformAdapter(pooled?.platform), 'slot', 'slot-config') ??
-    detectedAdapter(target.value, declared) ??
+    sourced(platformAdapter(pooledSlot?.platform), 'slot', 'slot-config') ??
+    detectedAdapter(root, declared) ??
     sourced(options.defaultAdapter, 'default', 'default');
 
   return { ...(adapter ? { adapter } : {}), target, ...(slot ? { slot } : {}) };
@@ -95,7 +102,8 @@ export function formatHarnessContext(context: HarnessContext): string {
       })`
     : 'adapter none';
   const parts = [adapter, `target ${context.target.value} (${context.target.detail})`];
-  if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
+  if (context.slot?.value === null) parts.push('slot unknown (no pool dir)');
+  else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
   return `context: ${parts.join(', ')}`;
 }
 
@@ -126,36 +134,12 @@ function flagAdapter(tokens: readonly string[]): ContextAdapter | undefined {
 }
 
 // Built-ins by their `detect`, plugins by their declaration's: a plugin is
-// never imported to detect it. A declaration that claims a built-in id is no
-// candidate (selecting it reports the conflict).
+// never imported to detect it.
 function detectedAdapter(
   target: string,
-  declared: readonly DeclaredAdapter[],
+  declared: readonly DeclaredDetect[],
 ): ContextAdapter | undefined {
-  const registry = harnessAdapters();
-  const entries: DetectEntry[] = [];
-  const seen = new Set<string>();
-  for (const id of registry.list()) {
-    if (adapterPlugin(id)) continue;
-    const adapter = registry.get(id);
-    seen.add(id);
-    entries.push({
-      id,
-      ...(adapter.extends ? { extends: adapter.extends } : {}),
-      ...(adapter.detect ? { detect: adapter.detect } : {}),
-    });
-  }
-  for (const declaration of declared) {
-    if (seen.has(declaration.id)) continue;
-    seen.add(declaration.id);
-    entries.push({
-      id: declaration.id,
-      library: declaration.library,
-      ...(declaration.extends ? { extends: declaration.extends } : {}),
-      ...(declaration.detect ? { detect: adapterDetectFromSpec(declaration.detect) } : {}),
-    });
-  }
-  const winner = pickDetected(entries, target);
+  const winner = detectAdapterMatch(target, declared);
   return winner
     ? {
         value: winner.adapter,
@@ -165,6 +149,20 @@ function detectedAdapter(
         ...(winner.library ? { library: winner.library } : {}),
       }
     : undefined;
+}
+
+// The Git work tree `dir` is in, or undefined outside one.
+function gitTopLevel(dir: string): string | undefined {
+  try {
+    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return top ? fs.realpathSync(top) : undefined;
+  } catch {
+    // Not inside a Git work tree, or no git: the directory answers for itself.
+    return undefined;
+  }
 }
 
 type RuntimeContext = Record<string, unknown>;
@@ -196,18 +194,24 @@ function runtimeSlot(runtime: RuntimeContext | undefined): ContextSlot | undefin
 }
 
 // The slot slot-config maps this checkout to, with its own platform (never the
-// pool's) for the adapter step. No pool directory, or none that reads: no slot.
+// pool's) for the adapter step; 'no-pool-dir' when the directory does not read.
 async function poolSlot(
   target: string,
-  poolDir: string | undefined,
-): Promise<{ slot: ContextSlot; platform?: string } | undefined> {
-  if (!poolDir) return undefined;
+  poolDir: string,
+): Promise<{ slot: ContextSlot; platform?: string } | 'no-pool-dir' | undefined> {
+  let real: string;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    // A missing checkout has no slot.
+    return undefined;
+  }
   let match;
   try {
-    match = await findSlotByRepo(poolDir, fs.realpathSync(target));
+    match = await findSlotByRepo(poolDir, real);
   } catch {
-    // A missing checkout or pool directory leaves the slot to the runtime context.
-    return undefined;
+    // An unreadable pool directory is as good as none.
+    return 'no-pool-dir';
   }
   if (!match) return undefined;
   const ports: Record<string, number> = {};

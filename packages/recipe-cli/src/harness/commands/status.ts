@@ -11,12 +11,11 @@ import {
   adapterDetectNext,
   adapterForPlatform,
   assertAdapter,
-  detectAdapter,
   harnessAdapter,
   undetectedAdapterMessage,
 } from '../adapters.js';
 import { color } from '../cli-color.js';
-import { harnessContextField } from '../context-state.js';
+import { contextAdapter, harnessContextField } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { optionFlag, optionString, type ParsedArgs, targetPath } from '../parse-args.js';
 import {
@@ -59,7 +58,7 @@ export async function handleStatus(
   const adapter =
     optionString(options, 'adapter') ??
     adapterForPlatform(optionString(options, 'platform')) ??
-    detectAdapter(target);
+    contextAdapter(target);
   if (!adapter) {
     return usageOut(json, 'status', undetectedAdapterMessage(target), adapterDetectNext());
   }
