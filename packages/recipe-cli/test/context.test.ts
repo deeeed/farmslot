@@ -133,6 +133,11 @@ beforeEach(() => {
     'RECIPE_RUNTIME_CONTEXT',
     'FARMSLOT_POOL_DIR',
     'FARMSLOT_ROOT',
+    'RECIPE_CDP_PORT',
+    'CDP_PORT',
+    'TERMINAL_APP_PORT',
+    'RECIPE_WATCHER_PORT',
+    'WATCHER_PORT',
   ])
     delete process.env[key];
   // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
@@ -751,6 +756,46 @@ describe('port fill order', () => {
       '--watcher-port',
       '8061',
     ]);
+  });
+
+  test("the operator's port environment wins over the owned context and the pool", async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('mobile'));
+    runtimeContext(checkout, {
+      repoRoot: checkout,
+      slotId: 'macwork-mm-1',
+      watcherPort: 9300,
+      cdpPort: 9222,
+    });
+    const tokens = ['--target', checkout];
+    const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
+    assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '9400' }), {
+      ports: { cdp: { value: 9222, source: 'slot' }, watcher: { value: 9400, source: 'env' } },
+      fill: ['--cdp-port', '9222'],
+    });
+    // Each name the adapters read counts, in their order; a flag still wins.
+    assert.deepEqual(
+      contextPorts(context, tokens, grammar, {
+        TERMINAL_APP_PORT: '3000',
+        WATCHER_PORT: '9400',
+        CDP_PORT: '9555',
+      }),
+      {
+        ports: { cdp: { value: 9555, source: 'env' }, watcher: { value: 3000, source: 'env' } },
+        fill: [],
+      },
+    );
+    assert.deepEqual(
+      contextPorts(context, [...tokens, '--watcher-port', '7000'], grammar, {
+        WATCHER_PORT: '9400',
+      }).ports?.watcher,
+      { value: 7000, source: 'flag' },
+    );
+    // An empty variable is unset.
+    assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '' }).ports?.watcher, {
+      value: 9300,
+      source: 'slot',
+    });
   });
 
   test('a foreign binding never fills a port, even beside a pool slot', async () => {

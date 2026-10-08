@@ -134,32 +134,45 @@ export async function resolveHarnessContext(
 }
 
 // Each generic port option, and the slot ports that fill it, in order.
-const PORT_OPTIONS: readonly { name: ContextPortName; option: string; slot: readonly string[] }[] =
-  [
-    // The owned runtime context's port first (a --runtime-dir scratch runtime
-    // names its own), then the pool's: the adapters' own order.
-    { name: 'cdp', option: '--cdp-port', slot: ['cdpPort', 'cdp_port'] },
-    {
-      name: 'watcher',
-      option: '--watcher-port',
-      slot: ['devServerPort', 'watcherPort', 'metroPort', 'port'],
-    },
-  ];
+// Per port: the flag, then the operator's environment (the names the adapters
+// read, in their order), then the owned runtime context's port (a --runtime-dir
+// scratch runtime names its own), then the pool's: the adapters' own order.
+const PORT_OPTIONS: readonly {
+  name: ContextPortName;
+  option: string;
+  env: readonly string[];
+  slot: readonly string[];
+}[] = [
+  {
+    name: 'cdp',
+    option: '--cdp-port',
+    env: ['RECIPE_CDP_PORT', 'CDP_PORT'],
+    slot: ['cdpPort', 'cdp_port'],
+  },
+  {
+    name: 'watcher',
+    option: '--watcher-port',
+    env: ['TERMINAL_APP_PORT', 'RECIPE_WATCHER_PORT', 'WATCHER_PORT'],
+    slot: ['devServerPort', 'watcherPort', 'metroPort', 'port'],
+  },
+];
 
 /**
  * The generic port options `options` (a command's grammar) takes, from the
- * flag when given, else from the context's slot; and the flags to add for the
- * slot-filled ones. A flag always wins; no slot fills nothing.
+ * flag when given, else the operator's environment, else the context's slot;
+ * and the flags to add for the slot-filled ones. A flag or an environment
+ * port is never replaced; no slot fills nothing.
  */
 export function contextPorts(
   context: HarnessContext,
   tokens: readonly string[],
   options: Readonly<Record<string, unknown>>,
+  env: NodeJS.ProcessEnv = process.env,
 ): { ports?: NonNullable<HarnessContext['ports']>; fill: string[] } {
   const ports: NonNullable<HarnessContext['ports']> = {};
   const fill: string[] = [];
   const slotPorts = context.slot?.value ? context.slot.ports : {};
-  for (const { name, option, slot } of PORT_OPTIONS) {
+  for (const { name, option, env: envNames, slot } of PORT_OPTIONS) {
     if (!(option in options)) continue;
     const given = optionValues(tokens, option);
     if (given.length > 0) {
@@ -167,6 +180,16 @@ export function contextPorts(
       const flagged = Number(given.at(-1));
       if (Number.isInteger(flagged) && flagged > 0)
         ports[name] = { value: flagged, source: 'flag' };
+      continue;
+    }
+    const fromEnv = envNames
+      .map((key) => env[key])
+      .find((value) => value !== undefined && value !== '');
+    if (fromEnv !== undefined) {
+      // The operator's (or the farm's) port wins over the slot file; the
+      // command reads it from the environment itself.
+      const port = Number(fromEnv);
+      if (Number.isInteger(port) && port > 0) ports[name] = { value: port, source: 'env' };
       continue;
     }
     const fromSlot = slot.map((key) => slotPorts[key]).find((port) => port !== undefined);

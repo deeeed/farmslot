@@ -251,6 +251,14 @@ beforeEach(() => {
   delete process.env.SHOP_HARNESS_RUN_MODE;
   delete process.env.RECIPE_RUNTIME_DIR;
   delete process.env.RECIPE_LIBRARY_PATH;
+  for (const name of [
+    'RECIPE_CDP_PORT',
+    'CDP_PORT',
+    'TERMINAL_APP_PORT',
+    'RECIPE_WATCHER_PORT',
+    'WATCHER_PORT',
+  ])
+    delete process.env[name];
   // No personal library from ~/.farmslot, and no ~/farmslot-node/pool, reaches the tests.
   process.env.FARMSLOT_HOME = tempRoot();
   process.env.HOME = tempRoot();
@@ -1588,6 +1596,12 @@ export const adapter = {
       '--',
       'x',
     ]);
+    // The operator's WATCHER_PORT wins over the slot: not filled, reported as env.
+    process.env.WATCHER_PORT = '9400';
+    await capture(() => cli.main(['doctor', '--adapter', 'web']));
+    assert.deepEqual(received.at(-1), ['--adapter', 'web', '--cdp-port', '9541']);
+    assert.deepEqual(harnessContext()?.ports?.watcher, { value: 9400, source: 'env' });
+    delete process.env.WATCHER_PORT;
     // No slot here: nothing is filled.
     process.chdir(tempRoot());
     await capture(() => cli.main(['doctor', '--adapter', 'web']));
