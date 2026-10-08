@@ -1692,7 +1692,8 @@ export const adapter = {
     });
   });
 
-  test('overlapping invocations run one at a time, each with its own ports, restored even after a throw', async () => {
+  // Two checkouts, each its own slot in one pool: coredev-3 on 8093, coredev-4 on 8094.
+  function twoSlots(): { coreA: string; coreB: string } {
     const coreA = fs.realpathSync(tempRoot());
     const coreB = fs.realpathSync(tempRoot());
     const pools = fs.realpathSync(tempRoot());
@@ -1711,32 +1712,41 @@ export const adapter = {
       }),
     );
     process.env.FARMSLOT_POOL_DIR = pools;
+    return { coreA, coreB };
+  }
+  const portOptions = contractOptions(HELP, TARGET, {
+    '--adapter': valueOption(),
+    '--watcher-port': valueOption(),
+  });
+  const childWatcherPort = () =>
+    spawnSync(process.execPath, ['-e', 'process.stdout.write(process.env.WATCHER_PORT ?? "")'], {
+      encoding: 'utf8',
+    }).stdout;
+
+  test('an invocation started while another dispatches waits its turn and gets its own ports', async () => {
+    const { coreA, coreB } = twoSlots();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const dispatched: string[] = [];
     const seen: { target: string; own: string | undefined; child: string }[] = [];
     const doctor = command(
       'doctor',
-      {
-        options: contractOptions(HELP, TARGET, {
-          '--adapter': valueOption(),
-          '--watcher-port': valueOption(),
-        }),
-      },
+      { options: portOptions },
       {
         run: async (argv) => {
           const target = argv[argv.indexOf('--target') + 1] ?? '';
-          // The first invocation holds until the second has been started.
-          if (target === coreA) await gate;
-          const child = spawnSync(
-            process.execPath,
-            ['-e', 'process.stdout.write(process.env.WATCHER_PORT ?? "")'],
-            {
-              encoding: 'utf8',
-            },
-          );
-          seen.push({ target, own: process.env.WATCHER_PORT, child: child.stdout });
+          dispatched.push(target);
+          if (target === coreA) {
+            enter();
+            await gate;
+          }
+          seen.push({ target, own: process.env.WATCHER_PORT, child: childWatcherPort() });
           if (target === coreB) throw new Error('core-4 failed');
           return 0;
         },
@@ -1744,17 +1754,20 @@ export const adapter = {
     );
     const cli = createHarnessCli({ ...cliOptions(), commands: [doctor] });
     const before = { ...process.env };
-    const first = capture(() =>
-      Promise.all([
-        cli.main(['doctor', '--adapter', 'web', '--target', coreA]),
-        cli.main(['doctor', '--adapter', 'web', '--target', coreB]),
-      ]),
-    );
-    await new Promise((resolve) => setImmediate(resolve));
-    // The second has not started its dispatch while the first holds.
-    assert.deepEqual(seen, []);
-    release();
-    const { result } = await first;
+    const { result } = await capture(async () => {
+      const first = cli.main(['doctor', '--adapter', 'web', '--target', coreA]);
+      await entered;
+      // The first is inside its dispatch; only now does the second start.
+      const second = cli.main(['doctor', '--adapter', 'web', '--target', coreB]);
+      // Give the second every chance to resolve and dispatch: without the queue it
+      // would, and its fill would replace the first's port.
+      for (let tries = 0; tries < 30 && !dispatched.includes(coreB); tries += 1)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.deepEqual(dispatched, [coreA]);
+      assert.equal(process.env.WATCHER_PORT, '8093');
+      release();
+      return Promise.all([first, second]);
+    });
     assert.deepEqual(
       result.map((entry) => entry.exitCode),
       [0, 1],
@@ -1764,6 +1777,72 @@ export const adapter = {
       { target: coreB, own: '8094', child: '8094' },
     ]);
     assert.deepEqual({ ...process.env }, before);
+  });
+
+  test('a main() that rejects restores the environment and releases the queue', async () => {
+    const { coreA } = twoSlots();
+    // Commander refuses an alias equal to the command's name while main() builds
+    // the program, after the context filled the port environment.
+    const broken = createHarnessCli({
+      ...cliOptions(),
+      commands: [command('doctor', { options: portOptions }, { aliases: ['doctor'] })],
+    });
+    const before = { ...process.env };
+    await assert.rejects(
+      capture(() => broken.main(['doctor', '--adapter', 'web', '--target', coreA])),
+      /alias can't be the same as its name/u,
+    );
+    assert.deepEqual({ ...process.env }, before);
+    const seen: (string | undefined)[] = [];
+    const next = createHarnessCli({
+      ...cliOptions(),
+      commands: [
+        command(
+          'doctor',
+          { options: portOptions },
+          {
+            run: () => {
+              seen.push(process.env.WATCHER_PORT);
+              return 0;
+            },
+          },
+        ),
+      ],
+    });
+    const { result } = await capture(() =>
+      next.main(['doctor', '--adapter', 'web', '--target', coreA]),
+    );
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(seen, ['8093']);
+  });
+
+  test('main() called from inside a running command fails at once instead of waiting forever', async () => {
+    let nested: unknown;
+    const cli = createHarnessCli({
+      ...cliOptions(),
+      commands: [
+        command(
+          'outer',
+          { options: contractOptions(HELP) },
+          {
+            run: async () => {
+              try {
+                await cli.main(['inner']);
+              } catch (error) {
+                nested = error;
+              }
+              return 0;
+            },
+          },
+        ),
+        command('inner', { options: contractOptions(HELP) }),
+      ],
+    });
+    const { result } = await capture(() => cli.main(['outer']));
+    assert.equal(result.exitCode, 0);
+    assert.match(String(nested), /main\(\) was called from inside a running command/u);
+    // The queue is free again for the next invocation.
+    assert.equal((await capture(() => cli.main(['inner']))).result.exitCode, 0);
   });
 
   test('a hidden command (shell completion) gets the detected adapter; a tie never refuses it', async () => {

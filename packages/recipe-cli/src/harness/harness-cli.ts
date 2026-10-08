@@ -2,6 +2,7 @@
 // the commander program, grouped and per-command help, the version line, the
 // strict public grammar, library hydration and dispatch; the host supplies its
 // identity, adapters, commands and help prose.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -606,9 +607,18 @@ function targetFromArgv(argv: readonly string[]): string {
 // The process-wide queue every createHarnessCli invocation runs in: the context
 // and the port environment are process state, set for one dispatch at a time.
 let invocationQueue: Promise<unknown> = Promise.resolve();
+// Marks the async work of the running invocation, so a main() it calls fails
+// at once instead of queueing behind itself forever.
+const runningInvocation = new AsyncLocalStorage<true>();
 
 function serializeInvocation<T>(invoke: () => Promise<T>): Promise<T> {
-  const turn = invocationQueue.then(invoke);
+  if (runningInvocation.getStore())
+    return Promise.reject(
+      new Error(
+        'createHarnessCli: main() was called from inside a running command, which would wait for itself; run the nested command as a child process instead',
+      ),
+    );
+  const turn = invocationQueue.then(() => runningInvocation.run(true, invoke));
   // A failed invocation still releases the queue for the next one.
   invocationQueue = turn.catch(() => undefined);
   return turn;
