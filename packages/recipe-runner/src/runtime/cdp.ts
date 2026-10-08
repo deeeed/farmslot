@@ -1516,6 +1516,15 @@ async function runCdpLifecycle(page: CdpWebPage, node: Record<string, unknown>):
   throw new Error(`Unsupported CDP lifecycle command: ${command}.`);
 }
 
+// Recipe text reaches the page: cap each HUD line like the web HUD (180 characters,
+// whitespace flattened, an ellipsis on the cut).
+const MAX_HUD_TEXT = 180;
+
+function hudLine(value: string): string {
+  const flat = value.replace(/\s+/gu, ' ').trim();
+  return flat.length > MAX_HUD_TEXT ? `${flat.slice(0, MAX_HUD_TEXT - 1)}…` : flat;
+}
+
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
@@ -1526,17 +1535,19 @@ async function renderCdpHud(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
     );
   }
-  const title = asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run';
+  const title = hudLine(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
   const status = asOptionalString(node.status, 'app.hud.status') ?? 'running';
   const nodeId = asOptionalString(node.node_id ?? node.nodeId, 'app.hud.node_id') ?? context.nodeId;
   const phase = asOptionalString(node.phase, 'app.hud.phase') ?? '';
   const flow = asOptionalString(node.flow, 'app.hud.flow') ?? '';
   const action =
     asOptionalString(node.action_name ?? node.recipe_action, 'app.hud.action_name') ?? '';
-  const text = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
+  const rawText = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
+  const text = hudLine(rawText);
   const rawDetail = asOptionalString(node.detail, 'app.hud.detail') ?? '';
-  const detail = rawDetail && rawDetail !== text && rawDetail !== flow ? rawDetail : '';
-  const error = asOptionalString(node.error, 'app.hud.error');
+  const detail = rawDetail && rawDetail !== rawText && rawDetail !== flow ? hudLine(rawDetail) : '';
+  const rawError = asOptionalString(node.error, 'app.hud.error');
+  const error = rawError === undefined ? undefined : hudLine(rawError);
   const display = isRecord(node.display) ? node.display : {};
   const layout = asOptionalString(display.layout, 'app.hud.display.layout') ?? 'bottom-bar';
   const position = asOptionalString(display.position, 'app.hud.display.position') ?? 'bottom';

@@ -1947,6 +1947,105 @@ test('ui.scroll keeps absolute and relative inputs apart', async () => {
   }
 });
 
+// Just enough DOM for the CDP HUD expression; records every tag created and
+// every innerHTML assignment.
+function fakeHudDom(): {
+  document: unknown;
+  hud(): HudElement;
+  created: string[];
+  innerHtml: string[];
+} {
+  const created: string[] = [];
+  const innerHtml: string[] = [];
+  const byId = new Map<string, HudElement>();
+  const element = (tag: string): HudElement => {
+    created.push(tag);
+    const node: HudElement = {
+      id: '',
+      textContent: '',
+      style: {},
+      children: [],
+      set innerHTML(value: string) {
+        innerHtml.push(value);
+        node.children = [];
+      },
+      append(...nodes: HudElement[]) {
+        node.children.push(...nodes);
+      },
+      appendChild(child: HudElement) {
+        node.children.push(child);
+        byId.set(child.id, child);
+      },
+      setAttribute() {},
+      remove() {},
+      getBoundingClientRect: () => ({ height: 30 }),
+    };
+    return node;
+  };
+  const document = {
+    getElementById: (id: string) => byId.get(id) ?? null,
+    createElement: element,
+    body: element('body'),
+    documentElement: { style: { setProperty() {}, removeProperty() {} } },
+  };
+  created.length = 0;
+  return { document, hud: () => byId.get('farmslot-recipe-hud')!, created, innerHtml };
+}
+
+interface HudElement {
+  id: string;
+  textContent: string;
+  style: Record<string, string>;
+  children: HudElement[];
+  innerHTML: string;
+  append(...nodes: HudElement[]): void;
+  appendChild(child: HudElement): void;
+  setAttribute(): void;
+  remove(): void;
+  getBoundingClientRect(): { height: number };
+}
+
+test('CDP app.hud caps recipe text at 180 characters and draws it as text', async () => {
+  const markup = `<img src=x onerror="alert(1)"> ${'a'.repeat(400)}`;
+  const capped = `${markup.slice(0, 179)}…`;
+  const expressions: string[] = [];
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      return callback({
+        async evaluate(expression: string) {
+          expressions.push(expression);
+          return { hud: true };
+        },
+      } as never);
+    },
+  });
+  const context = { nodeId: 'step' } as never;
+  const base = {
+    title: markup,
+    intent: markup,
+    status: 'running',
+    display: { showTitle: true, showDetail: true },
+    progress: { current: 2, total: 5 },
+  };
+  await transport.execute('app.hud', { ...base, error: markup }, context);
+  await transport.execute('app.hud', { ...base, detail: `${markup} detail` }, context);
+
+  const lines = expressions.map((expression) => {
+    const dom = fakeHudDom();
+    vm.runInNewContext(expression, { document: dom.document });
+    // Every node is a div and every recipe value went in as textContent.
+    assert.ok(dom.created.every((tag) => tag === 'div'));
+    assert.ok(dom.innerHtml.every((value) => value === ''));
+    const [badge, body] = dom.hud().children[0]!.children;
+    assert.equal(badge!.textContent, 'RUN 2/5');
+    return body!.children.map((line) => line.textContent);
+  });
+  assert.deepEqual(lines, [
+    [capped, capped, `error: ${capped}`],
+    [capped, capped, capped],
+  ]);
+});
+
 test('CDP ui.scroll maps offset_y to an absolute position and delta_y to relative movement', async () => {
   const calls: Array<Record<string, unknown>> = [];
   const transport = createCdpWebUiTransport({
