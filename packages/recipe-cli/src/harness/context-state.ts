@@ -29,9 +29,9 @@ export interface HarnessContext {
   };
   target: { value: string; source: 'flag' | 'default'; detail: '--target' | 'cwd' };
   /**
-   * The checkout's slot. `source: 'none'` (value null, detail 'no-pool-dir')
-   * when no pool directory is known and the runtime context names no slot, so
-   * the slot could not be looked up; absent when the pool maps no slot here.
+   * The checkout's slot. `source: 'none'` (value null) when the runtime context
+   * names no slot either: detail 'no-pool-dir' when no pool directory is known,
+   * 'not-in-pool' (with `poolDir`) when the pool maps no slot to the checkout.
    */
   slot?:
     | {
@@ -42,7 +42,8 @@ export interface HarnessContext {
         poolFile?: string;
         ports: Record<string, number>;
       }
-    | { value: null; source: 'none'; detail: 'no-pool-dir' };
+    | { value: null; source: 'none'; detail: 'no-pool-dir' }
+    | { value: null; source: 'none'; detail: 'not-in-pool'; poolDir: string };
   /**
    * A runtime context the checkout would have read (an inherited
    * RECIPE_RUNTIME_CONTEXT) whose repoRoot is another checkout: it binds no

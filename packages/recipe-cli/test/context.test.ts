@@ -278,10 +278,10 @@ describe('resolveHarnessContext', () => {
       source: 'none',
       detail: 'no-pool-dir',
     });
-    // A pool that maps no slot here: the checkout is not a slot.
-    assert.equal(
+    // A pool that maps no slot here says so, with the pool it read.
+    assert.deepEqual(
       (await resolveHarnessContext({ tokens: [], cwd: tempRoot(), slotPoolDir: cliPools })).slot,
-      undefined,
+      { value: null, source: 'none', detail: 'not-in-pool', poolDir: cliPools },
     );
   });
 
@@ -388,6 +388,8 @@ describe('resolveHarnessContext', () => {
     const own = await resolveHarnessContext({ tokens: ['--target', extension], cwd: mobile });
     assert.equal(own.adapter?.source, 'binding');
     assert.equal(own.slot?.value, 'mmedev-1');
+    // A subdirectory binds: its Git top level is the bound checkout.
+    gitOrigin(extension, 'git@example.test:acme/extension.git');
     fs.mkdirSync(path.join(extension, 'ui'));
     const inside = await resolveHarnessContext({
       tokens: ['--target', path.join(extension, 'ui')],
@@ -408,6 +410,56 @@ describe('resolveHarnessContext', () => {
     assert.match(
       formatHarnessContext(unnamed),
       /binding ignored \(belongs to an unnamed checkout\)$/u,
+    );
+  });
+
+  test('a clone nested inside the bound checkout inherits nothing; a subdirectory does', async () => {
+    const outer = tempRoot();
+    gitOrigin(outer, 'git@example.test:acme/outer.git');
+    const nested = path.join(outer, 'temp', 'clone');
+    fs.mkdirSync(path.join(nested, 'src'), { recursive: true });
+    gitOrigin(nested, 'git@example.test:acme/nested.git');
+    useAdapters(adapter('web'), adapter('app'));
+    runtimeContext(outer, { platform: 'web', slotId: 'outer-1', repoRoot: outer });
+    process.env.RECIPE_RUNTIME_CONTEXT = path.join(
+      outer,
+      'temp/recipe/runtime/agentic-runtime.json',
+    );
+
+    const clone = await resolveHarnessContext({ tokens: [], cwd: path.join(nested, 'src') });
+    assert.equal(clone.adapter, undefined);
+    assert.equal(clone.ignoredBinding?.repoRoot, outer);
+    const flagged = await resolveHarnessContext({ tokens: ['--target', nested], cwd: outer });
+    assert.equal(flagged.ignoredBinding?.repoRoot, outer);
+
+    fs.mkdirSync(path.join(outer, 'packages'));
+    const sub = await resolveHarnessContext({ tokens: [], cwd: path.join(outer, 'packages') });
+    assert.equal(sub.adapter?.source, 'binding');
+    assert.equal(sub.slot?.value, 'outer-1');
+  });
+
+  test('a checkout the node deploy pool lacks reports the miss and the pool', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('web'));
+    const home = process.env.HOME ?? '';
+    write(
+      home,
+      'farmslot-node/pool/macwork.json',
+      JSON.stringify({
+        machine: 'macwork',
+        host: 'localhost',
+        slots: [{ id: 'other-1', repo: tempRoot(), session: 'o' }],
+      }),
+    );
+    const context = await resolveHarnessContext({ tokens: [], cwd: checkout });
+    const poolDir = path.join(home, 'farmslot-node', 'pool');
+    assert.deepEqual(context.slot, { value: null, source: 'none', detail: 'not-in-pool', poolDir });
+    assert.equal(
+      formatHarnessContext({
+        ...context,
+        adapter: { value: 'web', source: 'flag', detail: '--adapter' },
+      }),
+      `context: adapter web (--adapter), target ${checkout} (cwd), slot unknown (not in ~/farmslot-node/pool)`,
     );
   });
 

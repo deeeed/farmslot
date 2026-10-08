@@ -8,6 +8,7 @@
 // and funding flags) are never part of the context: they stay explicit.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { findSlotByRepo, resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
@@ -99,7 +100,9 @@ export async function resolveHarnessContext(
   const slot: HarnessContext['slot'] =
     pooledSlot?.slot ??
     runtimeSlot(runtime) ??
-    (pooled === 'no-pool-dir' ? { value: null, source: 'none', detail: 'no-pool-dir' } : undefined);
+    (pool === undefined || pooled === 'no-pool-dir'
+      ? { value: null, source: 'none', detail: 'no-pool-dir' }
+      : { value: null, source: 'none', detail: 'not-in-pool', poolDir: pool.dir });
 
   const adapter: ContextAdapter | undefined =
     options.adapter === false
@@ -175,7 +178,12 @@ export function formatHarnessContext(context: HarnessContext): string {
       })`
     : 'adapter none';
   const parts = [adapter, `target ${context.target.value} (${context.target.detail})`];
-  if (context.slot?.value === null) parts.push('slot unknown (no pool dir)');
+  if (context.slot?.value === null)
+    parts.push(
+      context.slot.detail === 'not-in-pool'
+        ? `slot unknown (not in ${homeRelative(context.slot.poolDir)})`
+        : 'slot unknown (no pool dir)',
+    );
   else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
   const ports = Object.entries(context.ports ?? {}).map(
     ([name, port]) => `${name} ${port.value} (${port.source})`,
@@ -288,7 +296,7 @@ function readBinding(
 
 /**
  * Whether the runtime context read from `file` belongs to the checkout `root`:
- * its `repoRoot` is `root` or contains it (real paths), or, without
+ * its `repoRoot` is `root`'s Git top level (real paths), or, without
  * `repoRoot`, the file sits inside `root`. Anything else is another
  * checkout's (an inherited RECIPE_RUNTIME_CONTEXT) and describes nothing here.
  */
@@ -297,7 +305,26 @@ export function runtimeContextOwned(
   file: string,
   context: Readonly<Record<string, unknown>>,
 ): boolean {
-  return typeof context.repoRoot === 'string' ? within(context.repoRoot, root) : within(root, file);
+  // The checkout itself, not one nested in it: a clone under <checkout>/temp
+  // has its own top level and inherits nothing.
+  return typeof context.repoRoot === 'string'
+    ? samePath(context.repoRoot, gitTopLevel(root) ?? root)
+    : within(root, file);
+}
+
+function samePath(left: string, right: string): boolean {
+  try {
+    return fs.realpathSync(left) === fs.realpathSync(right);
+  } catch {
+    // A path that does not exist is nobody's checkout.
+    return false;
+  }
+}
+
+// `dir` with the home directory spelled `~`, for the human line.
+function homeRelative(dir: string): string {
+  const home = os.homedir();
+  return dir === home || dir.startsWith(`${home}${path.sep}`) ? `~${dir.slice(home.length)}` : dir;
 }
 
 // Whether `inner` is `outer` or inside it, comparing real paths.
