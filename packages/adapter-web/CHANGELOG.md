@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.4 - 2026-10-09
+
+- Publish with adapter-sdk 0.8.0 and recipe-runner 0.28.0 so consumers share one adapter-sdk and one recipe-runner copy. No code change.
+
 ## 0.6.3 - 2026-10-09
 
 - Fix: `launch-browser` stops waiting for its CDP listener once the browser it started has exited (`Chrome launched but did not expose an owned CDP listener on 127.0.0.1:<port>: the browser exited`), or once a process it did not launch holds the port (the same `Refusing to launch on CDP port <port>` refusal the pre-launch check gives, naming that pid). Either must hold for about a second, and a browser started through `open` counts as exited only once it has been seen, or after 5 s. The wait is now 30 s of wall-clock time; before, it was 300 polls: 30 s on an idle host, minutes on a loaded one. After the foreign refusal, once the browser this launch saw start is stopped, the launch markers are cleared, so a rerun on a free port is not refused as quarantined; if that browser was never seen, the markers stay and the refusal names the `rm` that clears them. An exit or a timeout keeps them, as before. A `ps` or `lsof` failure mid-wait now stops the browser before it is reported; if that stop fails too, one error names both failures and the pid to stop, and the markers are kept. Wait progress reports `seconds`, not `attempts`.

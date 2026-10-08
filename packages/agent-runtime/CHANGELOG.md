@@ -3,7 +3,11 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.17.1 - 2026-10-09
+
 - `scripts/acceptance-ledger.cjs` is also called by `@farmslot/recipe-cli` `run`, which records a recipe's proof targets with `setAcceptanceVerdict`; its header now names both callers. No behavior change.
+- Publish with protocol 0.35.0 so consumers share one protocol copy.
 
 ## 0.17.0 - 2026-10-04
 

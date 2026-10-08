@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.1 - 2026-10-09
+
+- Publish with agent-runtime 0.17.1 so consumers share one agent-runtime and one protocol copy. No code change.
+
 ## 0.6.0 - 2026-10-04
 
 - `import` of `@farmslot/skills/scripts/worker-terminal-contract.cjs` exposes its names: it re-exports `@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs` with a literal `require`, which ESM can follow, instead of a computed path with a repo-relative fallback.
