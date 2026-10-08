@@ -11,6 +11,7 @@
 //                    page would (read from the probe expression)
 //   STUB_LOG         JSONL file of CDP commands received (method, session,
 //                    contextId, whether a resolve carried an error)
+//   STUB_WORKER_PID  pid of the test worker; the stub exits once it is gone
 // probe: after the app document commits, the page logs and signs once from the
 // top frame, and an iframe and a blank popup try the same.
 // restored: a restored app tab exists, and the app tab is attached twice.
@@ -47,6 +48,21 @@ if (args.includes('--version')) {
 const port = Number(args.find((arg) => arg.startsWith('--remote-debugging-port='))?.split('=')[1]);
 const mode = process.env.STUB_MODE ?? 'ok';
 const appOrigin = process.env.STUB_APP_ORIGIN ?? 'http://localhost:1';
+
+// Detached like a real browser, so nothing reaps it when its test dies before
+// teardown: it exits once that test's worker (STUB_WORKER_PID) is gone, and on
+// its own after 10 minutes either way, instead of holding its port.
+setTimeout(() => process.exit(0), 10 * 60 * 1000).unref();
+const workerPid = Number(process.env.STUB_WORKER_PID);
+if (workerPid > 0) {
+  setInterval(() => {
+    try {
+      process.kill(workerPid, 0);
+    } catch {
+      process.exit(0);
+    }
+  }, 500).unref();
+}
 
 if (mode === 'silent') {
   setInterval(() => {}, 1000);

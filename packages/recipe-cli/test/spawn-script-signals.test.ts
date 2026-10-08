@@ -35,13 +35,14 @@ try {
 }
 `;
 
-// A leaf that ignores SIGTERM, so a timeout escalates to SIGKILL. Its group also
-// holds Z, a zombie whose parent M moved to its own group and does not reap it.
-// Once the leaf is SIGKILLed and reaped, Z is the group's only member: macOS
-// then answers kill(-group) with EPERM, not ESRCH, until Z is reaped. M closes
-// the leaf's output pipes so the driver can exit before M does.
-const ZOMBIE_LEAF = `
-$SIG{TERM} = 'IGNORE';
+// A leaf whose group also holds Z, a zombie whose parent M moved to its own
+// group and does not reap it. Once the leaf is gone, Z is the group's only
+// member: macOS then answers kill(-group) with EPERM, not ESRCH, until Z is
+// reaped. M closes the leaf's output pipes so the driver can exit before M
+// does. With TERM ignored, the timeout escalates to SIGKILL before the leaf
+// exits; without, the exit handler's SIGKILL is the group's first.
+const zombieLeaf = (ignoreTerm: boolean): string => `
+${ignoreTerm ? "$SIG{TERM} = 'IGNORE';" : ''}
 if (fork() == 0) {
   exit 0 if fork() == 0;
   setpgrp(0, 0);
@@ -151,47 +152,57 @@ describe('spawnScriptStreaming parent signals', () => {
     },
   );
 
-  test(
-    'a timed-out leaf whose group holds only an unreaped zombie ends without a throw',
-    { skip: process.platform === 'win32' },
-    async () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-zombie-'));
-      const target = path.join(root, 'target');
-      fs.mkdirSync(target);
-      const driver = path.join(root, 'driver.mjs');
-      const mPidFile = path.join(root, 'm.pid');
-      fs.writeFileSync(driver, TIMEOUT_DRIVER);
-      const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
-      const run = spawn(process.execPath, ['--import', 'tsx', driver], {
-        cwd: path.join(path.dirname(fileURLToPath(import.meta.url)), '..'),
-        env: { ...env, HARNESS: harness, TARGET: target, LEAF: ZOMBIE_LEAF, M_PID: mPidFile },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      run.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-      });
-      run.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-      const code = await new Promise<number | null | 'timeout'>((resolve) => {
-        const timer = setTimeout(() => resolve('timeout'), 10_000);
-        run.once('exit', (exitCode) => {
-          clearTimeout(timer);
-          resolve(exitCode);
+  for (const ignoreTerm of [true, false]) {
+    test(
+      `a timed-out leaf ${ignoreTerm ? 'that ignores' : 'that honours'} SIGTERM, leaving only an unreaped zombie in its group, ends without a throw`,
+      { skip: process.platform === 'win32' },
+      async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-cli-zombie-'));
+        const target = path.join(root, 'target');
+        fs.mkdirSync(target);
+        const driver = path.join(root, 'driver.mjs');
+        const mPidFile = path.join(root, 'm.pid');
+        fs.writeFileSync(driver, TIMEOUT_DRIVER);
+        const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+        const run = spawn(process.execPath, ['--import', 'tsx', driver], {
+          cwd: path.join(path.dirname(fileURLToPath(import.meta.url)), '..'),
+          env: {
+            ...env,
+            HARNESS: harness,
+            TARGET: target,
+            LEAF: zombieLeaf(ignoreTerm),
+            M_PID: mPidFile,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
-      });
-      // M (and the zombie it holds) outlive the leaf by design; stop them here.
-      const zombieParent = fs.existsSync(mPidFile) ? Number(fs.readFileSync(mPidFile, 'utf8')) : 0;
-      if (code === 'timeout') run.kill('SIGKILL');
-      if (zombieParent > 0 && alive(zombieParent)) process.kill(zombieParent, 'SIGKILL');
-      fs.rmSync(root, { recursive: true, force: true });
-      assert.ok(zombieParent > 0, `the leaf did not start its zombie parent: ${stderr}`);
-      assert.equal(code, 0, `the driver failed: ${stderr}`);
-      assert.deepEqual(JSON.parse(stdout), { timedOut: true, reaped: true });
-    },
-  );
+        let stdout = '';
+        let stderr = '';
+        run.stdout.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString();
+        });
+        run.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString();
+        });
+        const code = await new Promise<number | null | 'timeout'>((resolve) => {
+          const timer = setTimeout(() => resolve('timeout'), 10_000);
+          run.once('exit', (exitCode) => {
+            clearTimeout(timer);
+            resolve(exitCode);
+          });
+        });
+        // M (and the zombie it holds) outlive the leaf by design; stop them here.
+        const zombieParent = fs.existsSync(mPidFile)
+          ? Number(fs.readFileSync(mPidFile, 'utf8'))
+          : 0;
+        if (code === 'timeout') run.kill('SIGKILL');
+        if (zombieParent > 0 && alive(zombieParent)) process.kill(zombieParent, 'SIGKILL');
+        fs.rmSync(root, { recursive: true, force: true });
+        assert.ok(zombieParent > 0, `the leaf did not start its zombie parent: ${stderr}`);
+        assert.equal(code, 0, `the driver failed: ${stderr}`);
+        assert.deepEqual(JSON.parse(stdout), { timedOut: true, reaped: true });
+      },
+    );
+  }
 
   test('a spawn that throws leaves no parent-signal listener behind', async () => {
     const { acquireCheckoutLock, spawnScriptStreaming } = (await import(harness)) as {

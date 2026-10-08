@@ -9,7 +9,11 @@ const path = require('node:path');
 const { after, afterEach, before, describe, it } = require('node:test');
 
 const { cdpListenerPids } = require('../src/browser-cdp.cjs');
-const { runtimeIdentityPath, validationPortQuarantinePath } = require('../src/chrome-args.cjs');
+const {
+  hasDetachedLaunchUnproven,
+  runtimeIdentityPath,
+  validationPortQuarantinePath,
+} = require('../src/chrome-args.cjs');
 const { extensionIdFromExtensionDir } = require('../src/extension-id.cjs');
 const { homeTabsToClose, launchBrowser } = require('../src/launch-browser.cjs');
 const { profileProcessPids } = require('../src/validation-process-ownership.cjs');
@@ -256,9 +260,11 @@ describe('launchBrowser', () => {
     } finally {
       delete process.env.FAKE_CDP_MODE;
     }
-    // The full wait is 300 polls (30 s or more); an exit is confirmed within about a second.
+    // The full wait is 30 s; an exit is confirmed within about a second.
     assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
     assert.equal(fs.existsSync(path.join(dir, 'logs/chrome.pid')), false);
+    // Ownership was never proven, so the launch stays quarantined.
+    assert.equal(hasDetachedLaunchUnproven(path.join(dir, 'profile')), true);
   });
 
   it('refuses once a process it did not launch takes the port during the wait', async () => {
@@ -290,13 +296,40 @@ describe('launchBrowser', () => {
           error.message.includes(`pid ${foreign.pid}`),
       );
       assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
-      // The foreign listener is left alone; the browser this launch started is stopped.
+      // The foreign listener is left alone; the browser this launch started is
+      // stopped, and nothing stays quarantined, so a free port works next time.
       assert.deepEqual(cdpListenerPids(port), [foreign.pid]);
       assert.deepEqual(profileProcessPids(path.join(dir, 'profile')), []);
+      assert.equal(hasDetachedLaunchUnproven(path.join(dir, 'profile')), false);
+      assert.equal(fs.existsSync(validationPortQuarantinePath(port)), false);
     } finally {
       delete process.env.FAKE_CDP_MODE;
       foreign?.kill('SIGKILL');
     }
+  });
+
+  it('stops the browser it started when lsof fails during the wait', async () => {
+    const dir = runtime('lsof-fails');
+    const port = await freePort();
+    // An lsof that answers the pre-launch check, then fails.
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(
+      path.join(bin, 'lsof'),
+      `#!/bin/bash\n[ -e "${bin}/used" ] && exit 2\ntouch "${bin}/used"\nexec /usr/sbin/lsof "$@"\n`,
+      { mode: 0o755 },
+    );
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}:${savedPath}`;
+    process.env.FAKE_CDP_MODE = 'silent';
+    try {
+      assert.throws(() => launchBrowser(options(dir, port)), /lsof could not inspect CDP port/u);
+    } finally {
+      process.env.PATH = savedPath;
+      delete process.env.FAKE_CDP_MODE;
+    }
+    assert.deepEqual(profileProcessPids(path.join(dir, 'profile')), []);
+    assert.equal(hasDetachedLaunchUnproven(path.join(dir, 'profile')), true);
   });
 
   it('names the caller rerun command in failure hints, else a generic rerun', async () => {

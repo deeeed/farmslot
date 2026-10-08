@@ -193,6 +193,7 @@ function launchEnv(s, { mode = 'ok', browser = STUB_BROWSER, ...extra } = {}) {
     TERMINAL_CHROME_BIN: browser,
     STUB_MODE: mode,
     STUB_APP_ORIGIN: `http://localhost:${s.appPort}`,
+    STUB_WORKER_PID: String(process.pid),
     ...extra,
   };
   delete env.TERMINAL_HEADLESS;

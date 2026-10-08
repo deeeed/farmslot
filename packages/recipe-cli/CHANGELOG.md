@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Fix: a timed-out leaf no longer crashes the harness with `kill EPERM` when `spawnScriptStreaming` signals its process group again after SIGKILLing it. On macOS a group whose only members are killed processes not yet reaped answers `EPERM` instead of `ESRCH`; that `EPERM` now counts as the group being gone. An `EPERM` from a group not yet SIGKILLed still throws.
+- Fix: a timed-out leaf no longer crashes the harness with `kill EPERM` when `spawnScriptStreaming` signals its process group again after SIGKILLing it. On macOS a group whose only members are killed processes not yet reaped answers `EPERM` instead of `ESRCH`; that `EPERM` now counts as the group being gone once the group has been SIGKILLed or the leaf has exited. Any other `EPERM` still throws.
 
 ## 0.10.0 - 2026-10-08
 
