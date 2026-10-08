@@ -716,6 +716,59 @@ describe('contextPorts', () => {
   });
 });
 
+describe('port fill order', () => {
+  const grammar = { '--cdp-port': {}, '--watcher-port': {} };
+  function pooled(checkout: string): string {
+    return poolDir([
+      {
+        id: 'macwork-mmdev-1',
+        repo: checkout,
+        session: 'mmdev-1',
+        resources: { 'dev-server': { port: 8061, metro_port: 8061 } },
+      },
+    ]);
+  }
+
+  test('an owned --runtime-dir context fills before the pool; the pool fills what it lacks', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('mobile'));
+    const slotPoolDir = pooled(checkout);
+    write(
+      checkout,
+      'temp/recipe/runtime-8081/agentic-runtime.json',
+      JSON.stringify({ repoRoot: checkout, watcherPort: 8081, metroPort: 8081 }),
+    );
+    const tokens = ['--target', checkout, '--runtime-dir', 'temp/recipe/runtime-8081'];
+    const scratch = await resolveHarnessContext({ tokens, slotPoolDir });
+    assert.equal(scratch.slot?.value, 'macwork-mmdev-1');
+    assert.deepEqual(contextPorts(scratch, tokens, grammar), {
+      ports: { watcher: { value: 8081, source: 'slot' } },
+      fill: ['--watcher-port', '8081'],
+    });
+    // The pool alone fills its own port.
+    const plain = await resolveHarnessContext({ tokens: ['--target', checkout], slotPoolDir });
+    assert.deepEqual(contextPorts(plain, ['--target', checkout], grammar).fill, [
+      '--watcher-port',
+      '8061',
+    ]);
+  });
+
+  test('a foreign binding never fills a port, even beside a pool slot', async () => {
+    const checkout = tempRoot();
+    const other = tempRoot();
+    useAdapters(adapter('mobile'));
+    runtimeContext(other, { repoRoot: other, watcherPort: 9999, cdpPort: 9222 });
+    process.env.RECIPE_RUNTIME_CONTEXT = path.join(
+      other,
+      'temp/recipe/runtime/agentic-runtime.json',
+    );
+    const tokens = ['--target', checkout];
+    const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
+    assert.equal(context.ignoredBinding?.repoRoot, other);
+    assert.deepEqual(contextPorts(context, tokens, grammar).fill, ['--watcher-port', '8061']);
+  });
+});
+
 describe('formatHarnessContext', () => {
   test('one line naming each value and its source', () => {
     const context: HarnessContext = {

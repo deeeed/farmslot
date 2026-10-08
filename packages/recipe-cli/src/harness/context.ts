@@ -97,8 +97,15 @@ export async function resolveHarnessContext(
       )
     : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
+  // The pool's slot keeps the owned runtime context's ports beside its own
+  // (camelCase runtime keys, snake_case pool keys), so they can win the fill.
   const slot: HarnessContext['slot'] =
-    pooledSlot?.slot ??
+    (pooledSlot
+      ? {
+          ...pooledSlot.slot,
+          ports: { ...pooledSlot.slot.ports, ...runtimePorts(runtime) },
+        }
+      : undefined) ??
     runtimeSlot(runtime) ??
     (pool === undefined || pooled === 'no-pool-dir'
       ? { value: null, source: 'none', detail: 'no-pool-dir' }
@@ -129,11 +136,13 @@ export async function resolveHarnessContext(
 // Each generic port option, and the slot ports that fill it, in order.
 const PORT_OPTIONS: readonly { name: ContextPortName; option: string; slot: readonly string[] }[] =
   [
-    { name: 'cdp', option: '--cdp-port', slot: ['cdp_port', 'cdpPort'] },
+    // The owned runtime context's port first (a --runtime-dir scratch runtime
+    // names its own), then the pool's: the adapters' own order.
+    { name: 'cdp', option: '--cdp-port', slot: ['cdpPort', 'cdp_port'] },
     {
       name: 'watcher',
       option: '--watcher-port',
-      slot: ['port', 'watcherPort', 'devServerPort', 'metroPort'],
+      slot: ['devServerPort', 'watcherPort', 'metroPort', 'port'],
     },
   ];
 
@@ -346,12 +355,21 @@ const RUNTIME_PORTS = ['watcherPort', 'devServerPort', 'metroPort', 'cdpPort'] a
 
 function runtimeSlot(runtime: RuntimeContext | undefined): ContextSlot | undefined {
   if (typeof runtime?.slotId !== 'string' || !runtime.slotId) return undefined;
+  return {
+    value: runtime.slotId,
+    source: 'binding',
+    detail: 'runtime-context',
+    ports: runtimePorts(runtime),
+  };
+}
+
+function runtimePorts(runtime: RuntimeContext | undefined): Record<string, number> {
   const ports: Record<string, number> = {};
   for (const field of RUNTIME_PORTS) {
-    const port = Number(runtime[field]);
-    if (runtime[field] !== undefined && Number.isInteger(port) && port > 0) ports[field] = port;
+    const port = Number(runtime?.[field]);
+    if (runtime?.[field] !== undefined && Number.isInteger(port) && port > 0) ports[field] = port;
   }
-  return { value: runtime.slotId, source: 'binding', detail: 'runtime-context', ports };
+  return ports;
 }
 
 // The slot slot-config maps this checkout to, with its own platform (never the

@@ -33,6 +33,7 @@ import {
   optionValues,
   publicCommandTokens,
   type PublicHarnessCommand,
+  readCommandJournal,
   type RecipeCatalog,
   setHarnessContext,
   usageError,
@@ -1421,7 +1422,7 @@ export const adapter = {
     assert.deepEqual(imported(), []);
     assert.deepEqual(calls, []);
 
-    // A flag settles it; help never resolves, so it never refuses.
+    // A flag settles it; help resolves leniently, so a tie never refuses it.
     const flagged = await capture(() => cli.main(['status', '--adapter', 'shop']));
     assert.deepEqual(flagged.result, { exitCode: 0, exit: 'code' });
     assert.deepEqual(imported(), ['shop']);
@@ -1524,7 +1525,43 @@ export const adapter = {
         },
       },
     );
-    const cli = createHarnessCli({ ...cliOptions(), commands: [doctor] });
+    const cli = createHarnessCli({
+      ...cliOptions({ host: { ...shopHost(), journaledCommands: ['doctor'] } }),
+      commands: [doctor],
+    });
+    // The journal keeps exactly what was typed: never a filled port.
+    const journaled = async (typed: string[]) => {
+      await capture(() => cli.main(['doctor', ...typed]));
+      return readCommandJournal(checkout).record?.args;
+    };
+    for (const typed of [
+      ['--adapter', 'web', '--json'],
+      ['--adapter', 'web', '--cdp-port=1'],
+      ['--adapter', 'web', '--cdp-port', '2', '--cdp-port', '3'],
+      ['--adapter', 'web', '--', 'x'],
+    ]) {
+      assert.deepEqual(await journaled(typed), typed);
+    }
+    assert.deepEqual(received.at(-1), [
+      '--adapter',
+      'web',
+      '--cdp-port',
+      '9541',
+      '--watcher-port',
+      '9341',
+      '--',
+      'x',
+    ]);
+    assert.deepEqual(received.at(-2), [
+      '--adapter',
+      'web',
+      '--cdp-port',
+      '2',
+      '--cdp-port',
+      '3',
+      '--watcher-port',
+      '9341',
+    ]);
     const inferred = await capture(() => cli.main(['doctor', '--adapter', 'web', '--json']));
     assert.equal(inferred.result.exitCode, 0);
     assert.deepEqual(received.at(-1), [
@@ -1564,6 +1601,7 @@ export const adapter = {
     const complete: HarnessCommand = {
       name: 'completion-candidates',
       hidden: true,
+      context: 'adapter',
       run: () => {
         answered.push(contextAdapter(process.cwd()));
         return 0;
@@ -1587,19 +1625,76 @@ export const adapter = {
     assert.equal(harnessContext()?.target.value, checkout);
   });
 
-  test('a command without context options detects nothing; a hidden one loads only the winner', async () => {
+  test('a command without context options detects nothing; a hidden one loads a plugin only when it opts in', async () => {
     const checkout = terminalCheckout();
     process.chdir(checkout);
     process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
       terminal: { remote: ['va-mmcx-terminal'] },
     })}`;
-    const cli = createHarnessCli(contextOptions([]));
+    const answered: (string | undefined)[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      context: 'adapter',
+      run: () => {
+        answered.push(contextAdapter(process.cwd()));
+        return 0;
+      },
+    };
+    const options = contextOptions([]);
+    const cli = createHarnessCli({ ...options, commands: [...options.commands, complete] });
     await capture(() => cli.main(['update']));
     assert.deepEqual(imported(), []);
     assert.equal(harnessContext(), undefined);
-    const hidden = await capture(() => cli.main(['runtime-probe']));
-    assert.equal(hidden.stderr, '');
+    // Without the opt-in a hidden command resolves its target and slot only.
+    const plain = await capture(() => cli.main(['runtime-probe']));
+    assert.equal(plain.stderr, '');
+    assert.deepEqual(imported(), []);
+    assert.equal(harnessContext()?.adapter, undefined);
+    assert.equal(harnessContext()?.target.value, checkout);
+    // With it, completion gets the detected plugin, loaded alone.
+    const completion = await capture(() => cli.main(['completion-candidates', 'call', '']));
+    assert.equal(completion.stderr, '');
     assert.deepEqual(imported(), ['terminal']);
-    assert.equal(harnessContext()?.adapter?.value, 'terminal');
+    assert.deepEqual(answered, ['terminal']);
+  });
+
+  test('a tie under help or a hidden opt-in imports, adopts and fences nothing', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const adopted: string[] = [];
+    const fenced: string[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      context: 'adapter',
+      run: () => 0,
+    };
+    const options = contextOptions([]);
+    const cli = createHarnessCli({
+      ...options,
+      commands: [...options.commands, complete],
+      adopt: (adapter) => {
+        adopted.push(adapter.id);
+        return adapter;
+      },
+      afterAdapterLoad: (id) => {
+        fenced.push(id);
+      },
+    });
+    for (const argv of [
+      ['status', '--help'],
+      ['completion-candidates', 'call', ''],
+    ]) {
+      const { result, stderr } = await capture(() => cli.main(argv));
+      assert.equal(result.exitCode, 0, argv.join(' '));
+      assert.equal(stderr, '');
+      assert.equal(harnessContext()?.adapter, undefined);
+    }
+    assert.deepEqual([imported(), adopted, fenced], [[], [], []]);
   });
 });

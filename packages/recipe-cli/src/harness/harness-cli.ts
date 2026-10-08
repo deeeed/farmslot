@@ -71,6 +71,13 @@ export interface PublicHarnessCommand extends CommandBase {
 /** Real routing absent from the help, with its own private grammar. Default exit: `now`. */
 export interface HiddenHarnessCommand extends CommandBase {
   hidden: true;
+  /**
+   * 'adapter': resolve the context's adapter too (detected, loaded and fenced
+   * like a public command's; a tie gives none), for a command that answers per
+   * adapter, such as shell completion. Default: the target and slot only, and
+   * only a plugin the flags select loads.
+   */
+  context?: 'adapter';
 }
 
 export type HarnessCommand = PublicHarnessCommand | HiddenHarnessCommand;
@@ -286,9 +293,10 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
 // Loads the adapter the command acts on, if a library declares it: the
 // resolved context's for a public command that takes --adapter, --platform or
-// --target (unless it asks for help), else the one its flags select
-// (`selectedAdapterId`). A refused plugin or an ambiguous checkout prints its
-// code and next step; returns that exit.
+// --target and for a hidden command that opts in, else the one its flags
+// select (`selectedAdapterId`). Help and hidden commands resolve leniently: a
+// tie gives no adapter instead of a refusal. A refused plugin or an ambiguous
+// checkout prints its code and next step; returns that exit.
 async function loadSelectedAdapter(
   command: HarnessCommand,
   argv: readonly string[],
@@ -331,7 +339,11 @@ async function loadSelectedAdapter(
           : { fill: [] };
       fill = filled.fill;
       setHarnessContext(filled.ports ? { ...context, ports: filled.ports } : context);
-      selected = context.adapter?.value;
+      // A hidden command without the adapter opt-in loads only what its flags select.
+      selected =
+        command.hidden && command.context !== 'adapter'
+          ? selectedAdapterId(tokens)
+          : context.adapter?.value;
       // People see what was inferred; a flag they typed needs no echo.
       if (!quiet && context.adapter && context.adapter.source !== 'flag')
         contextLine = formatHarnessContext(harnessContext() ?? context);
@@ -365,15 +377,16 @@ async function loadSelectedAdapter(
   }
 }
 
-// A public command whose grammar takes the context options resolves a context,
-// and so does every hidden command (its own grammar may take them).
+// A public command whose grammar takes the context options resolves a context.
+// A hidden command resolves its target and slot, and its adapter too when it
+// opts in (`context: 'adapter'`).
 // `status --task`/`--watch` resolves its target and slot only: the task view
 // reads files, so no adapter is detected, refused as ambiguous or loaded.
 function contextMode(
   command: HarnessCommand,
   tokens: readonly string[],
 ): 'full' | 'target' | 'none' {
-  if (command.hidden) return 'full';
+  if (command.hidden) return command.context === 'adapter' ? 'full' : 'target';
   const options = command.contract.options;
   if (!['--adapter', '--platform', '--target'].some((option) => option in options)) return 'none';
   const taskView =
