@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -26,7 +27,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import {
   assertLaunchNetwork,
@@ -824,11 +825,13 @@ describe('testnet enforced in the browser (round 3)', () => {
     // The files this test adds live in a directory it removes, whether or not the launch passes.
     const own = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-quote-'));
     t.after(() => rmSync(own, { recursive: true, force: true }));
-    // The test policy with probe paths a single-quoted page expression would break on.
+    // The test policy with probe paths a single-quoted page expression would break on. It
+    // imports a copy of the fixture beside it: the policy fence takes relative imports only.
+    copyFileSync(policy.module, path.join(own, 'base-policy.mjs'));
     const quoted = path.join(own, 'quote-policy.mjs');
     writeFileSync(
       quoted,
-      `import { policy as base } from ${JSON.stringify(pathToFileURL(policy.module).href)};\n` +
+      `import { policy as base } from './base-policy.mjs';\n` +
         `export const policy = { ...base, probe: { ...base.probe, httpPath: "/info'x", wsPath: "/ws'x" } };\n`,
     );
     const probeLog = path.join(own, 'probe-urls.jsonl');
