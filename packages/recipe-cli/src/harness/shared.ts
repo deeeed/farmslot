@@ -284,13 +284,24 @@ export function spawnScriptStreaming(
       for (const signal of parentSignals)
         process.removeListener(signal, parentSignalHandlers[signal]);
     };
+    let groupKilled = false;
+    let leafExited = false;
     const signalChildTree = (signal: NodeJS.Signals): void => {
       try {
-        if (ownsProcessGroup && child.pid) process.kill(-child.pid, signal);
-        else child.kill(signal);
+        if (ownsProcessGroup && child.pid) {
+          process.kill(-child.pid, signal);
+          if (signal === 'SIGKILL') groupKilled = true;
+        } else child.kill(signal);
       } catch (error) {
-        // ESRCH: the owned child tree already exited.
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        const { code } = error as NodeJS.ErrnoException;
+        // ESRCH: the owned child tree already exited. EPERM once this group was
+        // SIGKILLed, or once the leaf has exited: macOS refuses to signal a
+        // group whose only members are zombies not yet reaped, so the group is
+        // gone. After the leaf exits it can also mean a descendant left in the
+        // group runs as another user; this process could not signal it either,
+        // and a throw here would crash from an exit handler. Any other EPERM
+        // still throws.
+        if (code !== 'ESRCH' && !(code === 'EPERM' && (groupKilled || leafExited))) throw error;
       }
     };
     const exitFromForwardedSignal = (): void => {
@@ -405,6 +416,7 @@ export function spawnScriptStreaming(
       finish({ status: 1, output: message, error });
     });
     child.on('exit', () => {
+      leafExited = true;
       if (forwardedParentSignal) {
         exitFromForwardedSignal();
         return;
