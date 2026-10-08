@@ -4,7 +4,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.27.1 - 2026-10-09
+
 - Fix: Android `app.lifecycle` single-quotes the target's app id and launch URL for the device shell. adb joins the words after `shell` into one command line the device parses, so a launch URL with `&` (an Expo dev-client link with more than one query parameter) was cut short and backgrounded there, and a `;` ran the rest as a second device command. Each now reaches `am`/`monkey` as one argument.
+- Publish with protocol 0.34.0.
 
 ## 0.27.0 - 2026-10-08
 

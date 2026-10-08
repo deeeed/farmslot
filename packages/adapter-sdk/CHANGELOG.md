@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.7.2 - 2026-10-09
+
+- Publish with protocol 0.34.0 and recipe-runner 0.27.1 so consumers share one recipe-runner copy. No code change.
+
 ## 0.7.1 - 2026-10-08
 
 - Publish with protocol 0.34.0 and recipe-runner 0.27.0 so consumers share one recipe-runner copy. No code change.
