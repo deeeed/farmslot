@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { GATEWAY_API_DOC } from './lib/release-only.mjs';
 import { loadWorkspacePackages, readJson } from './lib/workspace-utils.mjs';
 import { buildProposal, optionValue } from './curate-changelog.mjs';
 import {
@@ -16,6 +17,7 @@ import { resolveReleaseGroup } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const VALID_BUMPS = new Set(['patch', 'minor', 'major']);
+const PROTOCOL_VERSION_SOURCE = 'packages/protocol/src/version.ts';
 
 const RELEASE_NOTES_TARGETS = {
   'apps/command-center/ui': 'apps/command-center/ui/src/generated/release-notes.json',
@@ -92,6 +94,46 @@ export function resolveProtocolPackageVersion(packageVersion, bump, protocolVers
   return compareSemver(protocolVersion, requested) > 0 ? protocolVersion : requested;
 }
 
+/**
+ * The writes a protocol release makes beside the package: PROTOCOL_VERSION in
+ * the source, and the generated gateway API reference's version line, the one
+ * line of it the version moves (`yarn docs:gateway-api` writes the rest). Paths
+ * are repo-relative. Refuses a downgrade, and a reference without the line.
+ */
+export function planProtocolVersion({ versionSource, gatewayDoc, protocolVersion }) {
+  const currentProtocolVersion = protocolVersionFromSource(versionSource);
+  if (compareSemver(currentProtocolVersion, protocolVersion) > 0) {
+    throw new Error(
+      `Refusing to downgrade PROTOCOL_VERSION ${currentProtocolVersion} → ${protocolVersion}`,
+    );
+  }
+  const versionLine = /^Protocol version: `[^`]+`$/m;
+  if (!versionLine.test(gatewayDoc)) {
+    throw new Error(
+      `${GATEWAY_API_DOC} has no "Protocol version" line; run yarn docs:gateway-api, commit it, and cut again.`,
+    );
+  }
+  const writes = [];
+  const nextSource = versionSource.replace(
+    /export const PROTOCOL_VERSION = '[^']+';/,
+    `export const PROTOCOL_VERSION = '${protocolVersion}';`,
+  );
+  if (nextSource !== versionSource)
+    writes.push({
+      path: PROTOCOL_VERSION_SOURCE,
+      content: nextSource,
+      label: `PROTOCOL_VERSION → ${protocolVersion}`,
+    });
+  const nextDoc = gatewayDoc.replace(versionLine, `Protocol version: \`${protocolVersion}\``);
+  if (nextDoc !== gatewayDoc)
+    writes.push({
+      path: GATEWAY_API_DOC,
+      content: nextDoc,
+      label: `${GATEWAY_API_DOC} → protocol ${protocolVersion}`,
+    });
+  return writes;
+}
+
 export function proposalCutDisposition(changelogContent, include) {
   const pending = new Set(unreleasedMeaningfulBullets(changelogContent));
   const pendingCount = include.filter((bullet) => pending.has(bullet)).length;
@@ -126,10 +168,7 @@ function planCut(proposal) {
     }
     let nextVersion = bumpSemver(pkg.version, proposal.bump);
     if (dir === 'packages/protocol') {
-      const versionSource = readFileSync(
-        path.join(repoRoot, 'packages/protocol/src/version.ts'),
-        'utf8',
-      );
+      const versionSource = readFileSync(path.join(repoRoot, PROTOCOL_VERSION_SOURCE), 'utf8');
       nextVersion = resolveProtocolPackageVersion(
         pkg.version,
         proposal.bump,
@@ -169,25 +208,16 @@ function planCut(proposal) {
   if (proposal.workspaces['packages/protocol']) {
     const protocolVersion = versionByDir.get('packages/protocol');
     if (protocolVersion) {
-      const versionTs = path.join(repoRoot, 'packages/protocol/src/version.ts');
-      const content = readFileSync(versionTs, 'utf8');
-      const currentProtocolVersion = protocolVersionFromSource(content);
-      if (compareSemver(currentProtocolVersion, protocolVersion) > 0) {
-        throw new Error(
-          `Refusing to downgrade PROTOCOL_VERSION ${currentProtocolVersion} → ${protocolVersion}`,
-        );
+      const plan = planProtocolVersion({
+        versionSource: readFileSync(path.join(repoRoot, PROTOCOL_VERSION_SOURCE), 'utf8'),
+        gatewayDoc: readFileSync(path.join(repoRoot, GATEWAY_API_DOC), 'utf8'),
+        protocolVersion,
+      });
+      for (const write of plan) {
+        writes.push({ path: path.join(repoRoot, write.path), content: write.content });
+        console.log(`[plan] ${write.label}`);
       }
-      const versionPattern = /export const PROTOCOL_VERSION = '[^']+';/;
-      const next = content.replace(
-        versionPattern,
-        `export const PROTOCOL_VERSION = '${protocolVersion}';`,
-      );
-      if (next !== content) {
-        writes.push({ path: versionTs, content: next });
-        console.log(`[plan] PROTOCOL_VERSION → ${protocolVersion}`);
-      } else {
-        console.log(`[skip] PROTOCOL_VERSION already ${protocolVersion}`);
-      }
+      if (plan.length === 0) console.log(`[skip] PROTOCOL_VERSION already ${protocolVersion}`);
     }
   }
 

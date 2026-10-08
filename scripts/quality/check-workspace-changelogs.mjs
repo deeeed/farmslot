@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isReleaseOnlyFile } from '../release/lib/release-only.mjs';
 import { workspaceForFile } from '../release/lib/workspace-utils.mjs';
 import {
   extractSection,
@@ -160,17 +161,7 @@ function checkPrDiff() {
   const changedFiles = gitLines(['diff', '--name-only', `${mergeBase}...${headSha}`]);
   if (changedFiles.length === 0) return;
 
-  const releaseOnly = changedFiles.every(
-    (file) =>
-      file.startsWith('.release-cut/') ||
-      file.endsWith('/release-notes.json') ||
-      file.endsWith('/CHANGELOG.md') ||
-      file.endsWith('/package.json') ||
-      file === 'packages/protocol/src/version.ts' ||
-      file.startsWith('scripts/release/') ||
-      file.startsWith('.agents/skills/fs-release-cut/') ||
-      file === 'docs/operations/release-process.md',
-  );
+  const releaseOnly = changedFiles.every(isReleaseOnlyFile);
   const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..${headSha}`]);
   if (releaseOnly || commitSubjects.every((subject) => /^chore\(release\):/i.test(subject))) return;
 
