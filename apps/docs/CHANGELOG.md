@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Gateway API reference: the generated reference shows protocol 0.35.0.
 - Web adapter reference: every process that loads the `web-dapp` venue policy refuses imports resolved from the policy's digested files that land outside them (Node.js 22.15 or later).
 - Web adapter reference: document `web-dapp` (`createWebDappAdapter`, the venue policy, the extension signer module and the hooks a host passes), and its locked-session refusal (`SESSION_LOCKED`).
 - Adapter SDK reference: `CommandEventStream.stage(name, { index, total })`, the `StageHandle` a platform reports setup progress through (`StageProgress`), and `noopStage` for a stream without stages.
