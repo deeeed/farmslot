@@ -848,6 +848,35 @@ describe('port fill order', () => {
     );
   });
 
+  test("a port spelled after `--` is the leaf's: that port is not filled", async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('mobile'));
+    const context = await resolveHarnessContext({
+      tokens: ['--target', checkout],
+      slotPoolDir: pooled(checkout),
+    });
+    for (const passthrough of [
+      ['--watcher-port', '9400'],
+      ['--watcher-port=9400'],
+      ['--port', '9400'],
+      ['--metro-port=9400'],
+    ]) {
+      assert.deepEqual(contextPorts(context, ['--', ...passthrough], grammar, {}), {
+        ports: { cdp: viaCdp(9541), watcher: { value: 9400, source: 'flag' } },
+        env: cdpEnv(9541),
+      });
+    }
+    assert.deepEqual(
+      contextPorts(context, ['--', '--cdp-port', '9555'], grammar, {}).env,
+      watcherEnv(8061),
+    );
+    // Before `--` an undeclared alias is the grammar's business, after it the leaf's.
+    assert.deepEqual(
+      contextPorts(context, ['--', '--port', '9400'], { '--watcher-port': {} }, {}).env,
+      {},
+    );
+  });
+
   test("the user's port environment is left to the adapter, never filled", async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));

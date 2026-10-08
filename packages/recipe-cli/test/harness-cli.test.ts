@@ -1593,17 +1593,22 @@ export const adapter = {
       PORT_NAMES.map((name) => name in process.env),
       PORT_NAMES.map(() => false),
     );
-    // A leaf's own help and a passthrough port reach it untouched; a passthrough
-    // flag outranks the environment in every adapter.
+    // A leaf's own help and a passthrough port reach it untouched.
     assert.deepEqual((await run(['install', '--adapter', 'web', '--', '--help'])).argv, [
       '--adapter',
       'web',
       '--',
       '--help',
     ]);
+    // A port spelled after `--` is the leaf's: that port is not filled at all.
     assert.deepEqual(await run(['install', '--adapter', 'web', '--', '--watcher-port', '9400']), {
       argv: ['--adapter', 'web', '--', '--watcher-port', '9400'],
-      env: filled,
+      env: {
+        ...filled,
+        RECIPE_WATCHER_PORT: undefined,
+        WATCHER_PORT: undefined,
+        METRO_PORT: undefined,
+      },
     });
     // A typed spelling leaves that port to the command, the other one still fills.
     assert.deepEqual(await run(['doctor', '--adapter', 'web', '--port', '9400']), {
@@ -1685,6 +1690,80 @@ export const adapter = {
       WATCHER_PORT: undefined,
       METRO_PORT: undefined,
     });
+  });
+
+  test('overlapping invocations run one at a time, each with its own ports, restored even after a throw', async () => {
+    const coreA = fs.realpathSync(tempRoot());
+    const coreB = fs.realpathSync(tempRoot());
+    const pools = fs.realpathSync(tempRoot());
+    const slot = (id: string, repo: string, port: number) => ({
+      id,
+      repo,
+      session: id,
+      resources: { 'dev-server': { port } },
+    });
+    fs.writeFileSync(
+      path.join(pools, 'macwork.json'),
+      JSON.stringify({
+        machine: 'macwork',
+        host: 'localhost',
+        slots: [slot('coredev-3', coreA, 8093), slot('coredev-4', coreB, 8094)],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = pools;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: { target: string; own: string | undefined; child: string }[] = [];
+    const doctor = command(
+      'doctor',
+      {
+        options: contractOptions(HELP, TARGET, {
+          '--adapter': valueOption(),
+          '--watcher-port': valueOption(),
+        }),
+      },
+      {
+        run: async (argv) => {
+          const target = argv[argv.indexOf('--target') + 1] ?? '';
+          // The first invocation holds until the second has been started.
+          if (target === coreA) await gate;
+          const child = spawnSync(
+            process.execPath,
+            ['-e', 'process.stdout.write(process.env.WATCHER_PORT ?? "")'],
+            {
+              encoding: 'utf8',
+            },
+          );
+          seen.push({ target, own: process.env.WATCHER_PORT, child: child.stdout });
+          if (target === coreB) throw new Error('core-4 failed');
+          return 0;
+        },
+      },
+    );
+    const cli = createHarnessCli({ ...cliOptions(), commands: [doctor] });
+    const before = { ...process.env };
+    const first = capture(() =>
+      Promise.all([
+        cli.main(['doctor', '--adapter', 'web', '--target', coreA]),
+        cli.main(['doctor', '--adapter', 'web', '--target', coreB]),
+      ]),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    // The second has not started its dispatch while the first holds.
+    assert.deepEqual(seen, []);
+    release();
+    const { result } = await first;
+    assert.deepEqual(
+      result.map((entry) => entry.exitCode),
+      [0, 1],
+    );
+    assert.deepEqual(seen, [
+      { target: coreA, own: '8093', child: '8093' },
+      { target: coreB, own: '8094', child: '8094' },
+    ]);
+    assert.deepEqual({ ...process.env }, before);
   });
 
   test('a hidden command (shell completion) gets the detected adapter; a tie never refuses it', async () => {

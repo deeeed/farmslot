@@ -199,9 +199,13 @@ export function contextPorts(
   for (const { name, option, aliases, read, set, slot } of PORT_OPTIONS) {
     if (!(option in options)) continue;
     const extra = name === 'watcher' ? adapterPortEnv() : [];
-    const typed = [option, ...aliases]
-      .filter((spelling) => spelling in options)
-      .flatMap((spelling) => optionValues(tokens, spelling));
+    const typed = [
+      ...[option, ...aliases]
+        .filter((spelling) => spelling in options)
+        .flatMap((spelling) => optionValues(tokens, spelling)),
+      // A leaf's own port after `--` holds too: no fill competes with it.
+      ...passthroughValues(tokens, [option, ...aliases]),
+    ];
     if (typed.length > 0) {
       // The handler picks among the spellings; report the value only when they agree.
       const values = new Set(typed.map(Number));
@@ -240,6 +244,23 @@ export function contextPorts(
     };
   }
   return { ...(Object.keys(ports).length > 0 ? { ports } : {}), env: fill };
+}
+
+// The values `spellings` take after `--` (separate or `=value`), where the
+// command's grammar does not apply and a leaf reads its own arguments.
+function passthroughValues(tokens: readonly string[], spellings: readonly string[]): string[] {
+  const divider = tokens.indexOf('--');
+  if (divider === -1) return [];
+  const values: string[] = [];
+  const rest = tokens.slice(divider + 1);
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] ?? '';
+    for (const spelling of spellings) {
+      if (token === spelling) values.push(rest[index + 1] ?? '');
+      else if (token.startsWith(`${spelling}=`)) values.push(token.slice(spelling.length + 1));
+    }
+  }
+  return values;
 }
 
 /** The one human line: `context: adapter <id> (<source>), target <path> (<source>), slot <id> (<source>)`. */

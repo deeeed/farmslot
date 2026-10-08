@@ -171,7 +171,13 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
       : `${version}\n${RECIPE_CLI_PACKAGE} ${RECIPE_CLI_VERSION}`;
   const renderHelp = (): string => groupedHelp(options.help, publicCommands);
 
-  async function main(argv: readonly string[]): Promise<HarnessCliResult> {
+  // One invocation at a time per process: each sets the process-wide context
+  // and port environment for its dispatch, so an overlapping one must wait.
+  function main(argv: readonly string[]): Promise<HarnessCliResult> {
+    return serializeInvocation(() => runInvocation(argv));
+  }
+
+  async function runInvocation(argv: readonly string[]): Promise<HarnessCliResult> {
     // The libraries the operator started the command with: plugins load only
     // from these, never from the ones library hydration discovers.
     const operatorEnv = { ...process.env };
@@ -595,6 +601,17 @@ function targetFromArgv(argv: readonly string[]): string {
     .find((argument) => argument.startsWith('--target='))
     ?.slice('--target='.length);
   return path.resolve(separate ?? inline ?? process.cwd());
+}
+
+// The process-wide queue every createHarnessCli invocation runs in: the context
+// and the port environment are process state, set for one dispatch at a time.
+let invocationQueue: Promise<unknown> = Promise.resolve();
+
+function serializeInvocation<T>(invoke: () => Promise<T>): Promise<T> {
+  const turn = invocationQueue.then(invoke);
+  // A failed invocation still releases the queue for the next one.
+  invocationQueue = turn.catch(() => undefined);
+  return turn;
 }
 
 // Set `values` in process.env; the returned function restores what was there.
