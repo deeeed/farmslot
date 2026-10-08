@@ -6,11 +6,19 @@
 // paths or node built-ins. The digest of those files goes in
 // RECIPE_WEB_DAPP_POLICY_DIGEST, and a process that loads the policy with it
 // set refuses files that changed since.
+//
+// The source scan only lists the files to digest; it can miss an import (an
+// aliased require, say, in a branch only a leaf takes). So a process that loads
+// the policy also fences its imports at run time, as the plugin loader does: a
+// resolve hook refuses any import from those files that resolves outside them,
+// while the process runs. It fences imports, not code: it is no sandbox for
+// code the plugin digest already covers.
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import { isBuiltin } from 'node:module';
+import nodeModule, { isBuiltin } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const POLICY_DIGEST_ENV = 'RECIPE_WEB_DAPP_POLICY_DIGEST';
 
@@ -116,13 +124,60 @@ export function fencePolicy({ file, covered, scope }) {
   return digestFiles(policyClosure(file, allowed));
 }
 
-/** Refuse a policy whose files changed since mm-harness bound it (`digest`). */
+/**
+ * Refuse a policy whose files changed since mm-harness bound it (`digest`).
+ * Returns the real paths of the files it digested.
+ */
 export function assertPolicyDigest(file, digest) {
-  const now = digestFiles(policyClosure(file, () => {}));
-  if (now !== digest) {
+  const files = policyClosure(file, () => {});
+  if (digestFiles(files) !== digest) {
     throw new Error(
       `web-dapp venue policy ${file} or a file it imports changed since the host bound it.\n` +
         'Next: rerun the command, so it binds and checks the policy again.',
     );
+  }
+  return files;
+}
+
+// The real paths of the files of each policy this process loaded.
+const fenced = [];
+let hookInstalled = false;
+
+/**
+ * Before a process loads the policy at `file`: check its files against
+ * `digest` when the host bound one, and refuse, from then on, any import from
+ * those files that resolves outside them.
+ */
+export function fencePolicyImports(file, digest) {
+  if (typeof nodeModule.registerHooks !== 'function') {
+    throw new Error(
+      `web-dapp needs Node.js 22.15 or later (module.registerHooks fences the venue policy's imports); this is ${process.version}.`,
+    );
+  }
+  fenced.push(new Set(digest ? assertPolicyDigest(file, digest) : policyClosure(file, () => {})));
+  if (hookInstalled) return;
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const parent = realPath(context.parentURL);
+      const owners = parent === undefined ? [] : fenced.filter((files) => files.has(parent));
+      if (owners.length === 0 || isBuiltin(specifier)) return nextResolve(specifier, context);
+      const result = nextResolve(specifier, context);
+      const target = realPath(result.url);
+      if (target !== undefined && owners.some((files) => files.has(target))) return result;
+      throw new PolicyFenceError(
+        `web-dapp venue policy file ${parent} imports '${specifier}', which resolves to ${target ?? result.url}: outside the policy files the host digested.`,
+      );
+    },
+  });
+  hookInstalled = true;
+}
+
+// The real path behind a file: URL; undefined for another scheme or a missing file.
+function realPath(url) {
+  if (!url?.startsWith('file:')) return undefined;
+  try {
+    return fs.realpathSync(fileURLToPath(url));
+  } catch {
+    return undefined;
   }
 }
