@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { createAppLifecycleAdapter } from '../src/adapters/app-lifecycle.js';
@@ -95,7 +99,7 @@ test('app.lifecycle launches Android with an Expo deep link when provided', asyn
         '-a',
         'android.intent.action.VIEW',
         '-d',
-        'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063',
+        "'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063'",
       ],
     },
   ]);
@@ -188,7 +192,7 @@ test('app.lifecycle foregrounds Android without reopening its launch URL', async
         'shell',
         'monkey',
         '-p',
-        'com.example.app',
+        "'com.example.app'",
         '-c',
         'android.intent.category.LAUNCHER',
         '1',
@@ -359,7 +363,7 @@ test('app.lifecycle terminates Android through am force-stop', async () => {
   assert.deepEqual(calls, [
     {
       file: 'adb',
-      args: ['-s', 'serial-1', 'shell', 'am', 'force-stop', 'com.example.app'],
+      args: ['-s', 'serial-1', 'shell', 'am', 'force-stop', "'com.example.app'"],
     },
   ]);
   assert.equal((result.output as { command: string }).command, 'terminate');
@@ -392,7 +396,7 @@ test('app.lifecycle launches Android via monkey when no deep link is provided', 
         'shell',
         'monkey',
         '-p',
-        'com.example.app',
+        "'com.example.app'",
         '-c',
         'android.intent.category.LAUNCHER',
         '1',
@@ -425,4 +429,81 @@ test('app.lifecycle launches iOS simulator app directly when no deep link is pro
       args: ['simctl', 'launch', 'SIM-UDID', 'io.example.App'],
     },
   ]);
+});
+
+// adb joins the words after `shell` into one command line for the device's
+// shell. Run that line through a POSIX sh where `am` and `monkey` print their
+// arguments, one per line, to see what the device would receive.
+function deviceShellArgs(adbArgs: string[]): string[] {
+  const commandLine = adbArgs.slice(adbArgs.indexOf('shell') + 1).join(' ');
+  const printArgs = 'for arg in "$@"; do printf "%s\\n" "$arg"; done';
+  const result = spawnSync(
+    'sh',
+    ['-c', `am() { ${printArgs}; }; monkey() { ${printArgs}; }; ${commandLine}; wait`],
+    {
+      encoding: 'utf8',
+    },
+  );
+  return result.stdout.split('\n').filter(Boolean);
+}
+
+function androidAdapter(target: { appId: string; launchUrl?: string }, calls: string[][]) {
+  return createAppLifecycleAdapter({
+    targetProvider: {
+      resolveTarget() {
+        return { platform: 'android', deviceId: 'serial-1', ...target };
+      },
+    },
+    commandRunner: {
+      async execFile(_file, args) {
+        calls.push(args);
+        return {};
+      },
+    },
+  });
+}
+
+test('app.lifecycle passes an Expo launch URL with & to the device shell whole', async () => {
+  const launchUrl =
+    'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063&disableOnboarding=1';
+  const calls: string[][] = [];
+  await androidAdapter({ appId: 'com.example.app', launchUrl }, calls).execute(
+    { command: 'launch' },
+    context(),
+  );
+  const start = calls.find((args) => args.includes('start'));
+  assert.ok(start);
+  assert.deepEqual(deviceShellArgs(start), [
+    'start',
+    '-a',
+    'android.intent.action.VIEW',
+    '-d',
+    launchUrl,
+  ]);
+});
+
+test('app.lifecycle keeps a launch URL with ; from running a second device command', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'app-lifecycle-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const sentinel = path.join(dir, 'ran');
+  const launchUrl = `expo-example://x/?a=1; touch ${sentinel}`;
+  const calls: string[][] = [];
+  await androidAdapter({ appId: 'com.example.app', launchUrl }, calls).execute(
+    { command: 'launch' },
+    context(),
+  );
+  const start = calls.find((args) => args.includes('start'));
+  assert.ok(start);
+  assert.deepEqual(deviceShellArgs(start).slice(-2), ['-d', launchUrl]);
+  assert.equal(existsSync(sentinel), false, 'the launch URL ran a second command on the device');
+});
+
+test('app.lifecycle passes the app id to the device shell as one word', async () => {
+  const appId = "com.example.app; echo it's";
+  for (const command of ['terminate', 'foreground'] as const) {
+    const calls: string[][] = [];
+    await androidAdapter({ appId }, calls).execute({ command }, context());
+    const received = deviceShellArgs(calls.at(-1) ?? []);
+    assert.ok(received.includes(appId), `${command}: ${JSON.stringify(received)}`);
+  }
 });
