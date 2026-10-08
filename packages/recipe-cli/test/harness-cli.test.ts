@@ -780,6 +780,38 @@ describe('createHarnessCli', () => {
     assert.deepEqual(calls, []);
   });
 
+  test("renders the action of the checkout's detected adapter without --adapter", async () => {
+    const library = tempRoot();
+    fs.mkdirSync(path.join(library, 'recipes'));
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+    ) as Awaited<ReturnType<RecipeCatalog['resolveActionManifest']>>['manifest'];
+    const catalog: RecipeCatalog = {
+      bundledLibrary: { name: 'shop', root: library, actionNamespace: 'shop' },
+      resolveActionManifest: async () => ({ manifest, actionSources: new Map() }),
+      validateManifest: async () => undefined,
+      actionCapabilities: () => [],
+    };
+    const call = command('call', {
+      options: contractOptions(HELP, JSON_FLAG, TARGET, { '--adapter': valueOption(['web']) }),
+      positionals: [{ label: 'action' }],
+    });
+    const registry = createAdapterRegistry();
+    registry.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    const cli = createHarnessCli({
+      ...cliOptions({ catalog, adapters: registry }),
+      commands: [...shopCommands().filter((entry) => entry.name !== 'call'), call],
+    });
+    const { result, stdout } = await capture(() => cli.main(['call', 'switch', '--help']));
+    assert.deepEqual(result, { exitCode: 0, exit: 'now' });
+    const value = stdout.search(/\n +value +string \(required\)/u);
+    const equals = stdout.search(/\n +equals +string \(required\)/u);
+    const generic = stdout.indexOf('shop-harness call [flags]\n\n  call help\n');
+    assert.ok(value > 0 && equals > 0, stdout);
+    assert.ok(generic > Math.max(value, equals), stdout);
+    assert.deepEqual(calls, []);
+  });
+
   test('configures the host and adapters it is given', async () => {
     const options = cliOptions();
     createHarnessCli(options);
@@ -1525,7 +1557,37 @@ export const adapter = {
     assert.deepEqual(received.at(-1), ['--adapter', 'web']);
   });
 
-  test('a command without context options, or a hidden one, detects nothing', async () => {
+  test('a hidden command (shell completion) gets the detected adapter; a tie never refuses it', async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    process.chdir(checkout);
+    const answered: (string | undefined)[] = [];
+    const complete: HarnessCommand = {
+      name: 'completion-candidates',
+      hidden: true,
+      run: () => {
+        answered.push(contextAdapter(process.cwd()));
+        return 0;
+      },
+    };
+    const mobileLike = createAdapterRegistry();
+    mobileLike.register({ ...fakeAdapter('mobile'), detect: { files: () => true } });
+    const cli = createHarnessCli({ ...cliOptions({ adapters: mobileLike }), commands: [complete] });
+    const found = await capture(() => cli.main(['completion-candidates', 'call', '']));
+    assert.equal(found.result.exitCode, 0);
+    assert.equal(found.stderr, '');
+    assert.deepEqual(answered, ['mobile']);
+
+    const tied = createAdapterRegistry();
+    tied.register({ ...fakeAdapter('mobile'), detect: { files: () => true } });
+    tied.register({ ...fakeAdapter('web'), detect: { files: () => true } });
+    const quiet = createHarnessCli({ ...cliOptions({ adapters: tied }), commands: [complete] });
+    const ambiguous = await capture(() => quiet.main(['completion-candidates', 'call', '']));
+    assert.deepEqual([ambiguous.result.exitCode, ambiguous.stdout, ambiguous.stderr], [0, '', '']);
+    assert.equal(answered.at(-1), undefined);
+    assert.equal(harnessContext()?.target.value, checkout);
+  });
+
+  test('a command without context options detects nothing; a hidden one loads only the winner', async () => {
     const checkout = terminalCheckout();
     process.chdir(checkout);
     process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
@@ -1533,8 +1595,11 @@ export const adapter = {
     })}`;
     const cli = createHarnessCli(contextOptions([]));
     await capture(() => cli.main(['update']));
-    await capture(() => cli.main(['runtime-probe']));
     assert.deepEqual(imported(), []);
     assert.equal(harnessContext(), undefined);
+    const hidden = await capture(() => cli.main(['runtime-probe']));
+    assert.equal(hidden.stderr, '');
+    assert.deepEqual(imported(), ['terminal']);
+    assert.equal(harnessContext()?.adapter?.value, 'terminal');
   });
 });

@@ -148,6 +148,7 @@ export {
   formatHarnessContext,
   resolveHarnessContext,
   type ResolveHarnessContextOptions,
+  runtimeContextOwned,
 } from './context.js';
 export {
   AdapterAmbiguousError,

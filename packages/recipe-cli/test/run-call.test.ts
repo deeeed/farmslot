@@ -2932,37 +2932,43 @@ describe('call', () => {
     );
   });
 
-  test('passes the adapter the command resolved to the trusted mutation hooks', async () => {
-    const registry = createAdapterRegistry();
-    registry.register({ ...webAdapter(calls), targets: ['storefront'] });
-    registry.register(shopAdapter('api', calls));
-    configureHarnessAdapters(registry);
-    const target = checkout();
-    fs.writeFileSync(path.join(target, 'shop.json'), '{}');
-    const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
-    const ping = recipeFile(target, {
-      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
-      done: { action: 'end', status: 'pass' },
-    });
-    const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
-      echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
-      done: { action: 'end', status: 'pass' },
-    });
-    const cases = {
+  describe('passes the adapter the command resolved to the trusted mutation hooks', () => {
+    // Each command shape is its own test, so each stays inside the test-speed budget.
+    function fixture() {
+      const registry = createAdapterRegistry();
+      registry.register({ ...webAdapter(calls), targets: ['storefront'] });
+      registry.register(shopAdapter('api', calls));
+      configureHarnessAdapters(registry);
+      const target = checkout();
+      fs.writeFileSync(path.join(target, 'shop.json'), '{}');
+      const funded = ['--target', target, '--heal', 'off', '--funding-token', 'grant', '--json'];
+      const ping = recipeFile(target, {
+        ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      });
+      const echo = recipeFile(tempRoot('recipe-cli-api-recipe-'), {
+        echo: { action: 'command', cmd: 'pwd', intent: 'Print the checkout.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      });
+      return { funded, ping, echo };
+    }
+    type Fixture = ReturnType<typeof fixture>;
+    const cases: Record<string, [string, (f: Fixture) => Promise<number>]> = {
       'call --adapter web': [
         'web',
-        () => handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
+        ({ funded }) =>
+          handleCall(['shop.ping', 'mode=slow', '--adapter', 'web', ...funded], callOptions),
       ],
       'call, detected': [
         'web',
-        () =>
+        ({ funded }) =>
           withResolvedContext(funded, () =>
             handleCall(['shop.ping', 'mode=slow', ...funded], callOptions),
           ),
       ],
       'call --platform storefront': [
         'web',
-        () =>
+        ({ funded }) =>
           handleCall(
             ['shop.ping', 'mode=slow', '--platform', 'storefront', ...funded],
             callOptions,
@@ -2970,35 +2976,37 @@ describe('call', () => {
       ],
       'call --adapter api': [
         'api',
-        () => handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
+        ({ funded }) =>
+          handleCall(['command', 'cmd=pwd', '--adapter', 'api', ...funded], callOptions),
       ],
       'run, detected': [
         'web',
-        () => withResolvedContext(funded, () => handleRun([ping, ...funded], runOptions)),
+        ({ funded, ping }) =>
+          withResolvedContext(funded, () => handleRun([ping, ...funded], runOptions)),
       ],
       'run --platform storefront': [
         'web',
-        () => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
+        ({ funded, ping }) => handleRun([ping, '--platform', 'storefront', ...funded], runOptions),
       ],
       'run --adapter api': [
         'api',
-        () => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
+        ({ funded, echo }) => handleRun([echo, '--adapter', 'api', ...funded], runOptions),
       ],
-    } as const;
+    };
     for (const [name, [adapter, invoke]] of Object.entries(cases)) {
-      calls.mutationHooks.length = 0;
-      const result = await capture(invoke);
-      assert.equal(
-        result.value,
-        0,
-        `${name}: ${result.stderr.join('\n')}${result.stdout.join('\n')}`,
-      );
-      // A call's load gets no command line, so it loads nothing to authorize.
-      assert.deepEqual(
-        [...new Set(calls.mutationHooks)],
-        name.startsWith('call') ? [`load:${adapter}`] : [`load:${adapter}`, `authorize:${adapter}`],
-        name,
-      );
+      test(name, async () => {
+        const setup = fixture();
+        calls.mutationHooks.length = 0;
+        const result = await capture(() => invoke(setup));
+        assert.equal(result.value, 0, `${result.stderr.join('\n')}${result.stdout.join('\n')}`);
+        // A call's load gets no command line, so it loads nothing to authorize.
+        assert.deepEqual(
+          [...new Set(calls.mutationHooks)],
+          name.startsWith('call')
+            ? [`load:${adapter}`]
+            : [`load:${adapter}`, `authorize:${adapter}`],
+        );
+      });
     }
   });
 

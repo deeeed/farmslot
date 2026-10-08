@@ -281,8 +281,23 @@ function readBinding(
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
   const runtime = value as RuntimeContext;
   const repoRoot = typeof runtime.repoRoot === 'string' ? runtime.repoRoot : undefined;
-  const owns = repoRoot === undefined ? within(root, file) : within(repoRoot, root);
-  return owns ? { runtime } : { ignored: { path: file, repoRoot: repoRoot ?? null } };
+  return runtimeContextOwned(root, file, runtime)
+    ? { runtime }
+    : { ignored: { path: file, repoRoot: repoRoot ?? null } };
+}
+
+/**
+ * Whether the runtime context read from `file` belongs to the checkout `root`:
+ * its `repoRoot` is `root` or contains it (real paths), or, without
+ * `repoRoot`, the file sits inside `root`. Anything else is another
+ * checkout's (an inherited RECIPE_RUNTIME_CONTEXT) and describes nothing here.
+ */
+export function runtimeContextOwned(
+  root: string,
+  file: string,
+  context: Readonly<Record<string, unknown>>,
+): boolean {
+  return typeof context.repoRoot === 'string' ? within(context.repoRoot, root) : within(root, file);
 }
 
 // Whether `inner` is `outer` or inside it, comparing real paths.

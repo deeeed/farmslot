@@ -17,6 +17,7 @@ import {
 
 import {
   AdapterAmbiguousError,
+  collectTaskView,
   configureHarnessAdapters,
   contextAdapter,
   contextPorts,
@@ -366,7 +367,7 @@ describe('resolveHarnessContext', () => {
       new RegExp(`binding ignored \\(belongs to ${extension}\\)$`, 'u'),
     );
 
-    // Claude's probe: a core-like target detects; the inherited binding never wins.
+    // Probe: a core-like target detects; the inherited binding never wins.
     const core = tempRoot();
     write(core, 'yarn.lock', '');
     useAdapters(
@@ -711,6 +712,35 @@ describe('detectAdapter', () => {
       () => detectAdapter(checkout, [{ ...shop, extends: undefined }]),
       AdapterAmbiguousError,
     );
+  });
+
+  test('ignores a conflicting context for the same target', () => {
+    const checkout = tempRoot();
+    useAdapters(
+      adapter('web', { detect: { files: () => true } }),
+      adapter('app', { detect: { files: () => true } }),
+    );
+    setHarnessContext({
+      adapter: { value: 'app', source: 'binding', detail: 'runtime-context' },
+      target: { value: checkout, source: 'default', detail: 'cwd' },
+    });
+    assert.throws(() => detectAdapter(checkout), AdapterAmbiguousError);
+    useAdapters(adapter('web', { detect: { files: () => true } }), adapter('app'));
+    assert.equal(detectAdapter(checkout), 'web');
+    assert.equal(contextAdapter(checkout), 'app');
+  });
+
+  test('the task view shows only its own checkout runtime context', () => {
+    const extension = tempRoot();
+    const core = tempRoot();
+    runtimeContext(extension, { slotId: 'mmedev-1', cdpPort: 9222, repoRoot: extension });
+    process.env.RECIPE_RUNTIME_CONTEXT = path.join(
+      extension,
+      'temp/recipe/runtime/agentic-runtime.json',
+    );
+    assert.equal(collectTaskView(core, undefined, Date.now()).isolation, undefined);
+    const own = collectTaskView(extension, undefined, Date.now()).isolation;
+    assert.deepEqual([own?.slotId, own?.cdpPort], ['mmedev-1', 9222]);
   });
 
   test('contextAdapter answers only for the resolved target', () => {

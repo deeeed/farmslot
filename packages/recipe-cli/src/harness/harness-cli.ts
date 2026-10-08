@@ -33,7 +33,12 @@ import {
 } from './command-contract.js';
 import { withCommandJournal } from './command-journal.js';
 import { contextPorts, formatHarnessContext, resolveHarnessContext } from './context.js';
-import { AdapterAmbiguousError, harnessContext, setHarnessContext } from './context-state.js';
+import {
+  AdapterAmbiguousError,
+  type HarnessContext,
+  harnessContext,
+  setHarnessContext,
+} from './context-state.js';
 import { configureHarnessHost, type HarnessHostConfig, hostEnvName } from './host.js';
 import { JsonStreamWriter } from './json-stream.js';
 import { DEFAULT_RECIPE_RUNTIME_DIR } from './paths.js';
@@ -297,24 +302,38 @@ async function loadSelectedAdapter(
     let selected: string | undefined;
     let contextLine: string | undefined;
     const mode = contextMode(command, tokens);
-    if (mode !== 'none' && !command.hidden && !hasHelp(argv)) {
+    // Help and hidden commands (shell completion) resolve too, so they see the
+    // adapter a run would use; a tie never refuses them, and they print no
+    // context line and get no filled port.
+    const quiet = command.hidden || hasHelp(argv);
+    if (mode !== 'none') {
       const slotPoolDir = options.slotPoolDir?.();
-      const context = await resolveHarnessContext({
-        tokens,
-        positionals: contractPositionals(tokens, command.contract),
-        adapter: mode === 'full',
-        load: libraries,
-        ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
-        ...(slotPoolDir ? { slotPoolDir } : {}),
-        ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
-      });
+      const resolve = (adapter: boolean) =>
+        resolveHarnessContext({
+          tokens,
+          ...(command.hidden ? {} : { positionals: contractPositionals(tokens, command.contract) }),
+          adapter,
+          load: libraries,
+          ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
+          ...(slotPoolDir ? { slotPoolDir } : {}),
+          ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
+        });
+      let context: HarnessContext;
+      try {
+        context = await resolve(mode === 'full');
+      } catch (error) {
+        if (!quiet || !(error instanceof AdapterAmbiguousError)) throw error;
+        context = await resolve(false);
+      }
       const filled =
-        mode === 'full' ? contextPorts(context, tokens, command.contract.options) : { fill: [] };
+        mode === 'full' && !quiet && !command.hidden
+          ? contextPorts(context, tokens, command.contract.options)
+          : { fill: [] };
       fill = filled.fill;
       setHarnessContext(filled.ports ? { ...context, ports: filled.ports } : context);
       selected = context.adapter?.value;
       // People see what was inferred; a flag they typed needs no echo.
-      if (context.adapter && context.adapter.source !== 'flag')
+      if (!quiet && context.adapter && context.adapter.source !== 'flag')
         contextLine = formatHarnessContext(harnessContext() ?? context);
     } else {
       selected = selectedAdapterId(tokens);
@@ -346,14 +365,15 @@ async function loadSelectedAdapter(
   }
 }
 
-// A public command whose grammar takes the context options resolves a context.
+// A public command whose grammar takes the context options resolves a context,
+// and so does every hidden command (its own grammar may take them).
 // `status --task`/`--watch` resolves its target and slot only: the task view
 // reads files, so no adapter is detected, refused as ambiguous or loaded.
 function contextMode(
   command: HarnessCommand,
   tokens: readonly string[],
 ): 'full' | 'target' | 'none' {
-  if (command.hidden) return 'none';
+  if (command.hidden) return 'full';
   const options = command.contract.options;
   if (!['--adapter', '--platform', '--target'].some((option) => option in options)) return 'none';
   const taskView =
