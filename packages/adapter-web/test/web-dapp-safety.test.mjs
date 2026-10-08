@@ -16,6 +16,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -25,7 +26,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   assertLaunchNetwork,
@@ -815,6 +816,44 @@ describe('testnet enforced in the browser (round 3)', () => {
     assert.ok(state.networkEnforcement.layers.includes('served-network-check'));
     const entry = requestLog(s.runtime).find((item) => item.kind === 'network-enforcement');
     assert.equal('served' in entry, false);
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('probes a venue whose policy paths hold a quote: the exact URLs, blocked, no page SyntaxError', async (t) => {
+    const s = await slot();
+    // The files this test adds live in a directory it removes, whether or not the launch passes.
+    const own = mkdtempSync(path.join(os.tmpdir(), 'web-dapp-quote-'));
+    t.after(() => rmSync(own, { recursive: true, force: true }));
+    // The test policy with probe paths a single-quoted page expression would break on.
+    const quoted = path.join(own, 'quote-policy.mjs');
+    writeFileSync(
+      quoted,
+      `import { policy as base } from ${JSON.stringify(pathToFileURL(policy.module).href)};\n` +
+        `export const policy = { ...base, probe: { ...base.probe, httpPath: "/info'x", wsPath: "/ws'x" } };\n`,
+    );
+    const probeLog = path.join(own, 'probe-urls.jsonl');
+    const args = await launchArgs(s);
+    const launched = launchWebDappBrowser(
+      args,
+      launchEnv(s, { mode: 'ok', RECIPE_WEB_DAPP_POLICY: quoted, STUB_PROBE_LOG: probeLog }),
+      quick,
+    );
+    const state = await launched;
+    trackPids(s.runtime);
+    assert.equal(state.networkEnforcement.mode, 'enforced');
+    assert.ok(state.networkEnforcement.layers.includes('cdp-fetch-block'));
+    // The page requested the policy paths verbatim, quote included.
+    assert.deepEqual(
+      readFileSync(probeLog, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+      [
+        "https://api.hyperliquid.xyz/info'x?mm-harness-probe=1",
+        "https://api.hyperliquid.xyz:444/info'x?mm-harness-probe=1",
+        "wss://api.hyperliquid.xyz/ws'x?mm-harness-probe=1",
+      ],
+    );
     await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
   });
 
