@@ -113,7 +113,7 @@
     "agentic-engineering"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.15.0"
   },
   "files": [
     "README.md",

@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { assertPolicyDigest, POLICY_DIGEST_ENV } from './policy-fence.mjs';
+import { fencePolicyImports, POLICY_DIGEST_ENV } from './policy-fence.mjs';
 
 export const POLICY_ENV = 'RECIPE_WEB_DAPP_POLICY';
 // The policy contract this web-dapp reads; a policy declares the version it was written for.
@@ -90,8 +90,9 @@ export function webDappPolicy(env = process.env) {
   }
   const digest = env[POLICY_DIGEST_ENV];
   if (loaded?.file !== file || loaded.digest !== digest) {
-    // The digest mm-harness took when it bound the policy: refuse files that changed since.
-    if (digest) assertPolicyDigest(file, digest);
+    // The digest mm-harness took when it bound the policy: refuse files that changed since,
+    // and imports from them that leave them.
+    fencePolicyImports(file, digest);
     // The policy module uses node built-ins only and has no top-level await, so it loads synchronously.
     loaded = {
       file,

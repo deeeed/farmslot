@@ -189,4 +189,42 @@ describe('web-dapp venue policy fence', () => {
       'string',
     );
   });
+
+  it('refuses, in the process that loads it, an import the scan cannot see that leaves the digested files', async () => {
+    const root = library('');
+    const fixture = fs.readFileSync(FIXTURE_POLICY, 'utf8');
+    const aliased =
+      "import { createRequire } from 'node:module';\nconst load = createRequire(import.meta.url);\n";
+    write(path.join(root, 'outside.cjs'), "module.exports = { marker: 'outside' };\n");
+    // An aliased require passes the host's scan, then loads a file no digest covers.
+    const atLoad = write(
+      path.join(root, 'plugins/venue/policy.mjs'),
+      aliased +
+        fixture.replace(
+          "testnetVariable: 'NEXT_PUBLIC_HYPERLIQUID_FORCE_TESTNET'",
+          "testnetVariable: load('../../outside.cjs').marker",
+        ),
+    );
+    const digest = await fenced(root, atLoad);
+    assert.throws(
+      () => webDappPolicy({ [POLICY_ENV]: atLoad, [POLICY_DIGEST_ENV]: digest }),
+      /imports '\.\.\/\.\.\/outside\.cjs', which resolves to .*outside\.cjs: outside the policy files the host digested/u,
+    );
+    // Later, while the process runs, too: even a file in the plugin's directory,
+    // when the policy's digest doesn't cover it.
+    write(path.join(root, 'plugins/venue/late.cjs'), 'module.exports = 1;\n');
+    const later = write(
+      path.join(root, 'plugins/venue/later.mjs'),
+      aliased +
+        fixture.replace(
+          'export const policy = Object.freeze({',
+          "export const policy = Object.freeze({\n  late: () => load('./late.cjs'),",
+        ),
+    );
+    const policy = webDappPolicy({
+      [POLICY_ENV]: later,
+      [POLICY_DIGEST_ENV]: await fenced(root, later),
+    });
+    assert.throws(() => policy.late(), PolicyFenceError);
+  });
 });
