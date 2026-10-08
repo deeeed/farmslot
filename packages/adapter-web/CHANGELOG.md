@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `web-dapp`'s testnet launch probes build their mainnet URLs in node and pass them into the page as JSON strings, so a venue policy's probe `httpPath` or `wsPath` containing a quote reads as blocked or reached instead of failing the launch with a page `SyntaxError`.
 
 ## 0.6.2 - 2026-10-08
 

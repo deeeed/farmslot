@@ -104,6 +104,16 @@ if (mode === 'silent') {
   server.listen(port, '127.0.0.1');
 }
 
+// Whether a page expression parses, as the page's engine would check it.
+function parses(expression) {
+  try {
+    new Function(expression);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function serveCdp(socket) {
   const committed = new Map([
     ['APP', 'about:blank'],
@@ -209,6 +219,16 @@ function serveCdp(socket) {
       result = { result: { type: 'boolean', value: mode !== 'no-binding' } };
     } else if (
       method === 'Runtime.evaluate' &&
+      /mm-harness-probe=1/u.test(params.expression ?? '') &&
+      !parses(params.expression)
+    ) {
+      // As a page does, a probe expression that does not parse throws.
+      result = {
+        result: { type: 'object', subtype: 'error', description: 'SyntaxError' },
+        exceptionDetails: { text: 'Uncaught SyntaxError' },
+      };
+    } else if (
+      method === 'Runtime.evaluate' &&
       /mm-harness-probe=1/u.test(params.expression ?? '')
     ) {
       result = {
@@ -216,7 +236,7 @@ function serveCdp(socket) {
       };
       if (
         mode !== 'probe-reaches' &&
-        /fetch\('https:\/\/api\.hyperliquid\.xyz:444\//u.test(params.expression)
+        /fetch\(["']https:\/\/api\.hyperliquid\.xyz:444\//u.test(params.expression)
       ) {
         // The resolver rule fails every port of the host.
         emit(

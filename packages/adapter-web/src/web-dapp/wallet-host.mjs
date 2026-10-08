@@ -636,16 +636,23 @@ if (network === 'testnet') {
   // resolver rule, WebSocket through the resolver rule).
   const { probe } = policy;
   const host = mainnetHosts.includes(probe.host) ? probe.host : mainnetHosts[0];
+  // The probe URLs are built here and spliced in as JSON strings, so a policy
+  // host or path cannot change the page expression.
+  const httpUrl = JSON.stringify(`https://${host}${probe.httpPath}?${PROBE_MARK}`);
+  const resolverUrl = JSON.stringify(
+    `https://${host}:${RESOLVER_PROBE_PORT}${probe.httpPath}?${PROBE_MARK}`,
+  );
+  const wsUrl = JSON.stringify(`wss://${host}${probe.wsPath}?${PROBE_MARK}`);
   const httpProbe = await evaluate(
-    `fetch('https://${host}${probe.httpPath}?${PROBE_MARK}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: ${JSON.stringify(probe.httpBody)} }).then(() => 'reached', () => 'blocked')`,
+    `fetch(${httpUrl}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: ${JSON.stringify(probe.httpBody)} }).then(() => 'reached', () => 'blocked')`,
     20000,
   );
   const resolverProbe = await evaluate(
-    `fetch('https://${host}:${RESOLVER_PROBE_PORT}${probe.httpPath}?${PROBE_MARK}', { method: 'POST' }).then(() => 'reached', () => 'blocked')`,
+    `fetch(${resolverUrl}, { method: 'POST' }).then(() => 'reached', () => 'blocked')`,
     20000,
   );
   const wsProbe = await evaluate(
-    `new Promise((resolve) => { const socket = new WebSocket('wss://${host}${probe.wsPath}?${PROBE_MARK}'); const done = (value) => { try { socket.close(); } catch {} resolve(value); }; socket.onopen = () => done('reached'); socket.onerror = () => done('blocked'); setTimeout(() => done('timeout'), 10000); })`,
+    `new Promise((resolve) => { const socket = new WebSocket(${wsUrl}); const done = (value) => { try { socket.close(); } catch {} resolve(value); }; socket.onopen = () => done('reached'); socket.onerror = () => done('blocked'); setTimeout(() => done('timeout'), 10000); })`,
     20000,
   );
   if (httpProbe !== 'blocked' || resolverProbe !== 'blocked' || wsProbe !== 'blocked') {
