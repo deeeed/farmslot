@@ -643,25 +643,39 @@ function extensionPageUrl(extensionDir, page) {
   return id ? `chrome-extension://${id}/${page}` : '';
 }
 
+// The CDP HTTP paths the launcher reads: the target list, the version, or one
+// target to close. CDP target ids are hex or UUIDs.
+const CDP_HTTP_PATH = /^\/json\/(?:list|version|close\/[A-Za-z0-9-]+)$/u;
+const CDP_TARGET_ID = /^[A-Za-z0-9-]+$/u;
+// A child node keeps cdpHttp synchronous. The port and path reach it as argv,
+// never as script source, so a path cannot change what it runs.
+const CDP_HTTP_SCRIPT = `
+const http = require('http');
+const [port, pathname] = process.argv.slice(1);
+http.get({ host: '127.0.0.1', port: Number(port), path: pathname }, (res) => {
+  let body = '';
+  res.on('data', (chunk) => { body += chunk; });
+  res.on('end', () => {
+    process.stdout.write(body);
+    process.exitCode = res.statusCode === 200 ? 0 : 1;
+  });
+}).on('error', () => process.exit(1));
+`;
+
+/**
+ * GET a CDP HTTP path on 127.0.0.1. Returns the body, or null when the port or
+ * path is not one the launcher uses, or the request fails.
+ * @param {number} port
+ * @param {string} pathname `/json/list`, `/json/version` or `/json/close/<target id>`
+ * @returns {string | null}
+ */
 function cdpHttp(port, pathname) {
-  const result = spawnSync(
-    process.execPath,
-    [
-      '-e',
-      `
-    const http = require('http');
-    http.get('http://127.0.0.1:${Number(port)}${pathname}', (res) => {
-      let body = '';
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => {
-        process.stdout.write(body);
-        process.exitCode = res.statusCode === 200 ? 0 : 1;
-      });
-    }).on('error', () => process.exit(1));
-  `,
-    ],
-    { encoding: 'utf8', timeout: 4000 },
-  );
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (typeof pathname !== 'string' || !CDP_HTTP_PATH.test(pathname)) return null;
+  const result = spawnSync(process.execPath, ['-e', CDP_HTTP_SCRIPT, String(port), pathname], {
+    encoding: 'utf8',
+    timeout: 4000,
+  });
   if (result.status !== 0) return null;
   return result.stdout;
 }
@@ -710,6 +724,13 @@ function homeTabsToClose(targets, { extensionId, homePage, defaultTitle }) {
 // readiness converges home tabs again, so a pruning failure must not fail the
 // launch. Every failure is returned so the launch log says why a duplicate tab
 // survived instead of hiding it.
+/**
+ * Close the extra `homePage` tabs and stray blank tabs the browser on `port` has.
+ * @param {number} port CDP port on 127.0.0.1.
+ * @param {string} extensionDir The unpacked extension, for its id.
+ * @param {{ homePage?: string, defaultTitle?: string }} options
+ * @returns {string[]} What could not be done, one line each; empty when all went well.
+ */
 function pruneExtraHomeTabs(port, extensionDir, { homePage, defaultTitle }) {
   if (!homePage) return [];
   const extensionId = extensionIdFromExtensionDir(extensionDir);
@@ -725,10 +746,17 @@ function pruneExtraHomeTabs(port, extensionDir, { homePage, defaultTitle }) {
   if (!Array.isArray(targets)) return ['/json/list did not return a target list'];
   const problems = [];
   for (const target of homeTabsToClose(targets, { extensionId, homePage, defaultTitle })) {
-    if (cdpHttp(port, `/json/close/${target.id}`) === null)
+    // The id comes from the endpoint's own response: close only a CDP-shaped one.
+    if (!CDP_TARGET_ID.test(target.id)) {
+      problems.push(
+        `skipped target with an invalid id: ${JSON.stringify(target.id)} (${target.url})`,
+      );
+      continue;
+    }
+    if (cdpHttp(port, `/json/close/${encodeURIComponent(target.id)}`) === null)
       problems.push(`could not close ${target.url} (${target.id})`);
   }
   return problems;
 }
 
-module.exports = { launchBrowser, homeTabsToClose };
+module.exports = { launchBrowser, homeTabsToClose, cdpHttp, pruneExtraHomeTabs };
