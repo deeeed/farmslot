@@ -722,43 +722,90 @@ describe('contextPorts', () => {
 });
 
 describe('port fill order', () => {
-  const grammar = { '--cdp-port': {}, '--watcher-port': {} };
+  const grammar = { '--cdp-port': {}, '--watcher-port': {}, '--port': {} };
   function pooled(checkout: string): string {
     return poolDir([
       {
         id: 'macwork-mmdev-1',
         repo: checkout,
         session: 'mmdev-1',
-        resources: { 'dev-server': { port: 8061, metro_port: 8061 } },
+        resources: { 'dev-server': { port: 8061, metro_port: 8062 }, browser: { cdp_port: 9541 } },
       },
     ]);
   }
 
-  test('an owned --runtime-dir context fills before the pool; the pool fills what it lacks', async () => {
+  test('the owned runtime context fills before the pool, in devServer, watcher, metro order', async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));
     const slotPoolDir = pooled(checkout);
     write(
       checkout,
       'temp/recipe/runtime-8081/agentic-runtime.json',
-      JSON.stringify({ repoRoot: checkout, watcherPort: 8081, metroPort: 8081 }),
+      JSON.stringify({
+        repoRoot: checkout,
+        slotId: 'scratch-1',
+        devServerPort: 8081,
+        watcherPort: 8082,
+        metroPort: 8083,
+        cdpPort: 9222,
+      }),
     );
     const tokens = ['--target', checkout, '--runtime-dir', 'temp/recipe/runtime-8081'];
     const scratch = await resolveHarnessContext({ tokens, slotPoolDir });
-    assert.equal(scratch.slot?.value, 'macwork-mmdev-1');
+    // Identity and ports describe the same runtime: the scratch one.
+    assert.equal(scratch.slot?.value, 'scratch-1');
+    assert.equal(scratch.slot?.source, 'binding');
     assert.deepEqual(contextPorts(scratch, tokens, grammar), {
-      ports: { watcher: { value: 8081, source: 'slot' } },
-      fill: ['--watcher-port', '8081'],
+      ports: { cdp: { value: 9222, source: 'slot' }, watcher: { value: 8081, source: 'slot' } },
+      fill: ['--cdp-port', '9222', '--watcher-port', '8081'],
     });
-    // The pool alone fills its own port.
+    // Without devServerPort the watcher port is next, then metro.
+    write(
+      checkout,
+      'temp/recipe/runtime-8081/agentic-runtime.json',
+      JSON.stringify({
+        repoRoot: checkout,
+        slotId: 'scratch-1',
+        watcherPort: 8082,
+        metroPort: 8083,
+      }),
+    );
+    const watcherOnly = await resolveHarnessContext({ tokens, slotPoolDir });
+    // The pool fills only what the scratch runtime lacks: its CDP port.
+    assert.deepEqual(contextPorts(watcherOnly, tokens, grammar).fill, [
+      '--cdp-port',
+      '9541',
+      '--watcher-port',
+      '8082',
+    ]);
+    // The pool alone fills its own ports, the dev-server port before metro's.
     const plain = await resolveHarnessContext({ tokens: ['--target', checkout], slotPoolDir });
+    assert.equal(plain.slot?.value, 'macwork-mmdev-1');
     assert.deepEqual(contextPorts(plain, ['--target', checkout], grammar).fill, [
+      '--cdp-port',
+      '9541',
       '--watcher-port',
       '8061',
     ]);
   });
 
-  test("the operator's port environment wins over the owned context and the pool", async () => {
+  test('a typed alias is the flag: doctor --port is never refilled', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('mobile'));
+    const tokens = ['--target', checkout, '--port', '9400'];
+    const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
+    assert.deepEqual(contextPorts(context, tokens, grammar), {
+      ports: { cdp: { value: 9541, source: 'slot' }, watcher: { value: 9400, source: 'flag' } },
+      fill: ['--cdp-port', '9541'],
+    });
+    // An alias the grammar does not declare is not read.
+    assert.deepEqual(contextPorts(context, ['--target', checkout], { '--watcher-port': {} }).fill, [
+      '--watcher-port',
+      '8061',
+    ]);
+  });
+
+  test("the operator's port environment is left to the adapter, never filled", async () => {
     const checkout = tempRoot();
     useAdapters(adapter('mobile'));
     runtimeContext(checkout, {
@@ -770,18 +817,26 @@ describe('port fill order', () => {
     const tokens = ['--target', checkout];
     const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
     assert.deepEqual(contextPorts(context, tokens, grammar, { WATCHER_PORT: '9400' }), {
-      ports: { cdp: { value: 9222, source: 'slot' }, watcher: { value: 9400, source: 'env' } },
+      ports: {
+        cdp: { value: 9222, source: 'slot' },
+        watcher: { value: 9400, source: 'env', filled: false },
+      },
       fill: ['--cdp-port', '9222'],
     });
-    // Each name the adapters read counts, in their order; a flag still wins.
+    // Each name counts, in the fill's order; a flag still wins.
     assert.deepEqual(
       contextPorts(context, tokens, grammar, {
         TERMINAL_APP_PORT: '3000',
+        RECIPE_WATCHER_PORT: '3001',
         WATCHER_PORT: '9400',
+        RECIPE_CDP_PORT: '9554',
         CDP_PORT: '9555',
       }),
       {
-        ports: { cdp: { value: 9555, source: 'env' }, watcher: { value: 3000, source: 'env' } },
+        ports: {
+          cdp: { value: 9554, source: 'env', filled: false },
+          watcher: { value: 3000, source: 'env', filled: false },
+        },
         fill: [],
       },
     );
@@ -796,6 +851,13 @@ describe('port fill order', () => {
       value: 9300,
       source: 'slot',
     });
+    assert.match(
+      formatHarnessContext({
+        ...context,
+        ports: contextPorts(context, tokens, grammar, { WATCHER_PORT: '9400' }).ports ?? {},
+      }),
+      /ports cdp 9222 \(slot\), watcher 9400 \(env, not filled\)$/u,
+    );
   });
 
   test('a foreign binding never fills a port, even beside a pool slot', async () => {
@@ -810,7 +872,12 @@ describe('port fill order', () => {
     const tokens = ['--target', checkout];
     const context = await resolveHarnessContext({ tokens, slotPoolDir: pooled(checkout) });
     assert.equal(context.ignoredBinding?.repoRoot, other);
-    assert.deepEqual(contextPorts(context, tokens, grammar).fill, ['--watcher-port', '8061']);
+    assert.deepEqual(contextPorts(context, tokens, grammar).fill, [
+      '--cdp-port',
+      '9541',
+      '--watcher-port',
+      '8061',
+    ]);
   });
 });
 

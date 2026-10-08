@@ -99,14 +99,20 @@ export async function resolveHarnessContext(
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
   // The pool's slot keeps the owned runtime context's ports beside its own
   // (camelCase runtime keys, snake_case pool keys), so they can win the fill.
+  const owned = runtimeSlot(runtime);
   const slot: HarnessContext['slot'] =
     (pooledSlot
-      ? {
-          ...pooledSlot.slot,
-          ports: { ...pooledSlot.slot.ports, ...runtimePorts(runtime) },
-        }
+      ? owned && owned.value !== pooledSlot.slot.value
+        ? // A --runtime-dir scratch runtime of the pooled checkout names its own
+          // slot: identity and ports describe that runtime, the pool's ports
+          // filling only what it lacks.
+          { ...owned, ports: { ...pooledSlot.slot.ports, ...owned.ports } }
+        : {
+            ...pooledSlot.slot,
+            ports: { ...pooledSlot.slot.ports, ...runtimePorts(runtime) },
+          }
       : undefined) ??
-    runtimeSlot(runtime) ??
+    owned ??
     (pool === undefined || pooled === 'no-pool-dir'
       ? { value: null, source: 'none', detail: 'no-pool-dir' }
       : { value: null, source: 'none', detail: 'not-in-pool', poolDir: pool.dir });
@@ -134,24 +140,29 @@ export async function resolveHarnessContext(
 }
 
 // Each generic port option, and the slot ports that fill it, in order.
-// Per port: the flag, then the operator's environment (the names the adapters
-// read, in their order), then the owned runtime context's port (a --runtime-dir
-// scratch runtime names its own), then the pool's: the adapters' own order.
+// The fill's order per port: the option or one of its aliases as typed, then
+// the operator's environment (a port held there is left to the adapter, which
+// decides whether it beats the slot), then the owned runtime context's port (a
+// --runtime-dir scratch runtime names its own), then the pool's.
 const PORT_OPTIONS: readonly {
   name: ContextPortName;
   option: string;
+  aliases: readonly string[];
   env: readonly string[];
   slot: readonly string[];
 }[] = [
   {
     name: 'cdp',
     option: '--cdp-port',
+    aliases: [],
     env: ['RECIPE_CDP_PORT', 'CDP_PORT'],
     slot: ['cdpPort', 'cdp_port'],
   },
   {
     name: 'watcher',
     option: '--watcher-port',
+    // `doctor`/`stop --port` and the retired `--metro-port` name the same port.
+    aliases: ['--port', '--metro-port'],
     env: ['TERMINAL_APP_PORT', 'RECIPE_WATCHER_PORT', 'WATCHER_PORT'],
     slot: ['devServerPort', 'watcherPort', 'metroPort', 'port'],
   },
@@ -159,9 +170,10 @@ const PORT_OPTIONS: readonly {
 
 /**
  * The generic port options `options` (a command's grammar) takes, from the
- * flag when given, else the operator's environment, else the context's slot;
- * and the flags to add for the slot-filled ones. A flag or an environment
- * port is never replaced; no slot fills nothing.
+ * option or a declared alias as typed, else the operator's environment (not
+ * filled: left to the adapter), else the context's slot; and the flags to add
+ * for the slot-filled ones. A typed port is never replaced; no slot fills
+ * nothing.
  */
 export function contextPorts(
   context: HarnessContext,
@@ -172,24 +184,24 @@ export function contextPorts(
   const ports: NonNullable<HarnessContext['ports']> = {};
   const fill: string[] = [];
   const slotPorts = context.slot?.value ? context.slot.ports : {};
-  for (const { name, option, env: envNames, slot } of PORT_OPTIONS) {
+  for (const { name, option, aliases, env: envNames, slot } of PORT_OPTIONS) {
     if (!(option in options)) continue;
-    const given = optionValues(tokens, option);
+    const given = [option, ...aliases]
+      .filter((spelling) => spelling in options)
+      .flatMap((spelling) => optionValues(tokens, spelling));
     if (given.length > 0) {
-      // A flag always wins, so the slot never fills it; the command checks it.
-      const flagged = Number(given.at(-1));
-      if (Number.isInteger(flagged) && flagged > 0)
-        ports[name] = { value: flagged, source: 'flag' };
+      // A typed port always wins, so the slot never fills it; the command checks it.
+      const typed = Number(given.at(-1));
+      if (Number.isInteger(typed) && typed > 0) ports[name] = { value: typed, source: 'flag' };
       continue;
     }
     const fromEnv = envNames
       .map((key) => env[key])
       .find((value) => value !== undefined && value !== '');
     if (fromEnv !== undefined) {
-      // The operator's (or the farm's) port wins over the slot file; the
-      // command reads it from the environment itself.
       const port = Number(fromEnv);
-      if (Number.isInteger(port) && port > 0) ports[name] = { value: port, source: 'env' };
+      if (Number.isInteger(port) && port > 0)
+        ports[name] = { value: port, source: 'env', filled: false };
       continue;
     }
     const fromSlot = slot.map((key) => slotPorts[key]).find((port) => port !== undefined);
@@ -218,7 +230,8 @@ export function formatHarnessContext(context: HarnessContext): string {
     );
   else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
   const ports = Object.entries(context.ports ?? {}).map(
-    ([name, port]) => `${name} ${port.value} (${port.source})`,
+    ([name, port]) =>
+      `${name} ${port.value} (${port.source === 'env' ? 'env, not filled' : port.source})`,
   );
   if (ports.length > 0) parts.push(`ports ${ports.join(', ')}`);
   if (context.ignoredBinding)

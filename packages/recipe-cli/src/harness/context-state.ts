@@ -51,13 +51,16 @@ export interface HarnessContext {
    */
   ignoredBinding?: { path: string; repoRoot: string | null };
   /**
-   * The generic port options the command takes: the flag's value, else the
-   * operator's environment (RECIPE_CDP_PORT/CDP_PORT; TERMINAL_APP_PORT/
-   * RECIPE_WATCHER_PORT/WATCHER_PORT), else the slot's port (pool `cdp_port`/`port`, runtime context `cdpPort`/
+   * The generic port options the command takes: the option or a declared alias
+   * as typed (source 'flag'), else the operator's environment (RECIPE_CDP_PORT/
+   * CDP_PORT; TERMINAL_APP_PORT/RECIPE_WATCHER_PORT/WATCHER_PORT; source 'env',
+   * `filled: false`: left to the adapter), else the slot's port (pool `cdp_port`/`port`, runtime context `cdpPort`/
    * `watcherPort`). createHarnessCli passes a slot port to the command as that
    * flag. Adapter-specific ports stay in `slot.ports`.
    */
-  ports?: Partial<Record<ContextPortName, { value: number; source: 'flag' | 'env' | 'slot' }>>;
+  ports?: Partial<
+    Record<ContextPortName, { value: number; source: 'flag' | 'env' | 'slot'; filled?: false }>
+  >;
 }
 
 /** A generic port option a command may take: `--cdp-port`, `--watcher-port`. */

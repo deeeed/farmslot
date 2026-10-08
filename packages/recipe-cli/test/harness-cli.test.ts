@@ -1523,6 +1523,7 @@ export const adapter = {
           '--adapter': valueOption(),
           '--cdp-port': valueOption(),
           '--watcher-port': valueOption(),
+          '--port': valueOption(),
         }),
         allowPassthrough: true,
       },
@@ -1600,7 +1601,15 @@ export const adapter = {
     process.env.WATCHER_PORT = '9400';
     await capture(() => cli.main(['doctor', '--adapter', 'web']));
     assert.deepEqual(received.at(-1), ['--adapter', 'web', '--cdp-port', '9541']);
-    assert.deepEqual(harnessContext()?.ports?.watcher, { value: 9400, source: 'env' });
+    assert.deepEqual(harnessContext()?.ports?.watcher, {
+      value: 9400,
+      source: 'env',
+      filled: false,
+    });
+    // doctor's --port alias is the watcher flag: never refilled.
+    await capture(() => cli.main(['doctor', '--adapter', 'web', '--port', '9500']));
+    assert.deepEqual(received.at(-1), ['--adapter', 'web', '--port', '9500', '--cdp-port', '9541']);
+    assert.deepEqual(harnessContext()?.ports?.watcher, { value: 9500, source: 'flag' });
     delete process.env.WATCHER_PORT;
     // No slot here: nothing is filled.
     process.chdir(tempRoot());
