@@ -133,7 +133,7 @@ function git(root: string, ...args: string[]): void {
 }
 
 describe('adapter resolution', () => {
-  test('a remote match beats a file match, then registration order decides', () => {
+  test('a remote match beats a file match', () => {
     const checkout = tempRoot();
     fs.mkdirSync(path.join(checkout, 'web'));
     git(checkout, 'init', '-q');
@@ -152,20 +152,28 @@ describe('adapter resolution', () => {
     assert.equal(detectAdapter(tempRoot()), undefined);
   });
 
-  test('within a pass, the first registered match wins', () => {
+  test('within a pass, more than one match is ambiguous; an adapter beats one it extends', () => {
     const checkout = tempRoot();
     git(checkout, 'init', '-q');
     git(checkout, 'remote', 'add', 'origin', 'git@example.test:acme/shop.git');
     const any = { remote: () => true, files: () => true };
     useAdapters(fakeAdapter('first', { detect: any }), fakeAdapter('second', { detect: any }));
-    assert.equal(detectAdapter(checkout), 'first');
-    useAdapters(fakeAdapter('second', { detect: any }), fakeAdapter('first', { detect: any }));
-    assert.equal(detectAdapter(checkout), 'second');
+    assert.throws(
+      () => detectAdapter(checkout),
+      (error: Error & { code?: string; candidates?: unknown }) =>
+        error.code === 'ADAPTER_AMBIGUOUS' &&
+        JSON.stringify(error.candidates) ===
+          JSON.stringify([
+            { adapter: 'first', matched: ['remote', 'files'] },
+            { adapter: 'second', matched: ['remote', 'files'] },
+          ]),
+    );
 
     const files = { files: () => true };
-    useAdapters(fakeAdapter('first', { detect: files }), fakeAdapter('second', { detect: files }));
-    assert.equal(detectAdapter(tempRoot()), 'first');
-    useAdapters(fakeAdapter('second', { detect: files }), fakeAdapter('first', { detect: files }));
+    useAdapters(
+      fakeAdapter('first', { detect: files }),
+      fakeAdapter('second', { extends: 'first', detect: files }),
+    );
     assert.equal(detectAdapter(tempRoot()), 'second');
   });
 

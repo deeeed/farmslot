@@ -13,6 +13,7 @@ export {
   composeAdapter,
   type DeclaredAdapter,
   declaredAdapterIds,
+  declaredAdapters,
   ensureAdapterLoaded,
   type LoadedAdapterPlugin,
   loadedAdapterPlugins,
@@ -25,9 +26,11 @@ export {
   assertAdapter,
   configureHarnessAdapters,
   detectAdapter,
+  type DetectEntry,
   harnessAdapter,
   harnessAdapters,
   isPlatformTarget,
+  pickDetected,
   undetectedAdapterMessage,
 } from './adapters.js';
 export {
@@ -137,6 +140,21 @@ export {
 } from './commands/status-watch.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
+export {
+  formatHarnessContext,
+  resolveHarnessContext,
+  type ResolveHarnessContextOptions,
+} from './context.js';
+export {
+  AdapterAmbiguousError,
+  type AdapterCandidate,
+  type ContextSource,
+  type DetectMatch,
+  type HarnessContext,
+  harnessContext,
+  harnessContextField,
+  setHarnessContext,
+} from './context-state.js';
 export {
   createDoctorReport,
   type DoctorCheck,

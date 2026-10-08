@@ -23,10 +23,12 @@ import {
   handleRecipeQuality,
   handleStatus,
   handleTaskInit,
+  type HarnessContext,
   harnessHost,
   parseArgs,
   requiredDoctorCheckSummary,
   runnerInstallKind,
+  setHarnessContext,
   shellQuote,
 } from '../src/harness/index.js';
 import { RECIPE_CLI_VERSION } from '../src/index.js';
@@ -821,6 +823,39 @@ describe('status', () => {
     );
     assert.equal(notDir.result, 2);
     assert.match(notDir.stdout, /--task is not a directory/u);
+  });
+
+  test('takes --adapter or --platform over detection, and reports the resolved context', async () => {
+    shopHost();
+    useAdapters(fakeAdapter('shop', { detect: { files: () => true } }), fakeAdapter('cafe'));
+    const target = tempRoot();
+    for (const flag of [['--adapter', 'cafe'], ['--platform=cafe']]) {
+      const { stdout } = await capture(() =>
+        handleStatus(parseArgs(['--target', target, ...flag, '--json'])),
+      );
+      assert.equal((JSON.parse(stdout) as { adapter: string }).adapter, 'cafe');
+    }
+    const context: HarnessContext = {
+      adapter: { value: 'shop', source: 'detect', detail: 'files', matched: ['files'] },
+      target: { value: target, source: 'flag', detail: '--target' },
+    };
+    setHarnessContext(context);
+    try {
+      const { stdout } = await capture(() =>
+        handleStatus(parseArgs(['--target', target, '--json'])),
+      );
+      const envelope = JSON.parse(stdout) as Record<string, unknown>;
+      assert.deepEqual(envelope.context, context);
+      assert.deepEqual(Object.keys(envelope).slice(0, 5), [
+        'schemaVersion',
+        'command',
+        'adapter',
+        'target',
+        'context',
+      ]);
+    } finally {
+      setHarnessContext(undefined);
+    }
   });
 });
 

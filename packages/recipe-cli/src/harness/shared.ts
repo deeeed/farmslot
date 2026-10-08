@@ -16,6 +16,7 @@ import { adapterForPlatform, detectAdapter, harnessAdapters } from './adapters.j
 import { trackCheckoutChild } from './checkout-lock.js';
 import { colorHumanMessage } from './cli-color.js';
 import { recordCommandOutput, recordCommandStage } from './command-journal.js';
+import { harnessContextField } from './context-state.js';
 import { harnessHost, hostEnvName } from './host.js';
 import { leafStartFailureMessage, resolveLeafInvoke, shellLeafMissing } from './leaf-invoke.js';
 
@@ -452,6 +453,7 @@ export function usageOut(
           status: 'fail',
           exitCode: EXIT.usage,
           error: { code: 'USAGE', message, userAction },
+          ...harnessContextField(),
         },
         null,
         2,

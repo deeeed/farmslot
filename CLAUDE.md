@@ -226,6 +226,18 @@ yarn farmslot slot check <slot-id>   # (from apps/command-center)
 bash scripts/sync-fixtures.sh --slot <slot-id>
 ```
 
+## Test speed
+
+Each package's default suite (`yarn workspace <package> run test`) and CI must take 5 minutes or less. No runner checks the budget yet: `scripts/quality/run-tsx-tests.mjs` prints each workspace's slowest files after a run.
+
+Every new or changed test follows these rules:
+
+- **No fixed waits of 1 s or more.** Poll for the condition with a short ceiling instead of `sleep`/`setTimeout`.
+- **Slow tests leave the default suite.** A test that takes more than 5 s alone moves out of the package's default `test` script into one the default and CI suite don't run. Those are run by hand at release and in rollout acceptance; nothing runs them automatically yet.
+- **Every background process has a teardown.** A server, listener or helper a test starts is killed on every exit path, failure included (a `trap … EXIT`, `t.after`/`afterAll`, or a parent/worker watch).
+- **Never rebuild `dist/` under concurrent readers.** No test builds, packs or rewrites shared build output that other tests read while the suite runs.
+- **State the measured time** (`time`, or the runner's per-test duration) for every new or changed test in the PR.
+
 ## Architecture
 
 See [docs/README.md](docs/README.md) and [docs/adr/](docs/adr/) for the full design: slot lifecycle, local vs remote execution, project config layer.

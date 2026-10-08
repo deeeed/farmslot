@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,15 +22,18 @@ import {
   type ContractedCommand,
   contractOptions,
   createHarnessCli,
+  detectAdapter,
   harnessAdapters,
   type HarnessCliOptions,
   type HarnessCommand,
+  harnessContext,
   harnessHost,
   optionalValueOption,
   optionValues,
   publicCommandTokens,
   type PublicHarnessCommand,
   type RecipeCatalog,
+  setHarnessContext,
   usageError,
   validatePublicInvocation,
   valueOption,
@@ -252,6 +256,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   process.chdir(savedCwd);
+  setHarnessContext(undefined);
   configureHarnessHost(DEFAULT_HOST);
   configureHarnessAdapters(createAdapterRegistry());
   for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
@@ -1223,5 +1228,179 @@ export const adapter = {
     assert.deepEqual(result, { exitCode: 1, exit: 'now' });
     assert.equal(stdout, '');
     assert.equal(stderr, 'host adopt failed\n');
+  });
+});
+
+describe('invocation context', () => {
+  // A library whose plugins declare `detect`; each module records its import.
+  function detectingLibrary(plugins: Record<string, Record<string, string[]>>): string {
+    const root = fs.realpathSync(tempRoot());
+    fs.mkdirSync(path.join(root, 'plugins'));
+    const declared: Record<string, unknown> = {};
+    for (const [id, detect] of Object.entries(plugins)) {
+      fs.writeFileSync(
+        path.join(root, 'plugins', `${id}.mjs`),
+        `globalThis.__pluginImports.push('${id}');
+export const adapter = {
+  id: '${id}', sdkVersion: ${ADAPTER_SDK_VERSION}, headless: true, resolveSlotPorts() {},
+  async runtimeStatus() { return { decision: 'ready', reasons: [] }; },
+  devServer: { label: 'none', describe: () => 'none', stop: () => ({ kind: 'none' }) },
+  logSources: () => [], appLogSource: () => null,
+  hints: { launch: 'l', relaunch: 'l', runtimeProbeRecovery: () => 'd' },
+  actions: { manifestPath: () => '/m.json', semantic: [], cdpTarget: { transport: 'none', probePath: '/' } },
+  harness: { install: { entry: 'i', fallback: 'i' }, cleanup: { entry: 'c', fallback: 'c' }, verify: () => ({ error: 'none' }) },
+  runtimeContext: { forbiddenFields: [] },
+  async launch() { return 0; },
+};
+`,
+      );
+      declared[id] = { module: `./plugins/${id}.mjs`, export: 'adapter', detect };
+    }
+    fs.writeFileSync(
+      path.join(root, 'recipe-library.json'),
+      JSON.stringify({ adapters: declared }),
+    );
+    return root;
+  }
+  const imported = (): string[] =>
+    (globalThis as Record<string, unknown>).__pluginImports as string[];
+
+  // A checkout both plugins match: `terminal` by remote and files, `shop` by files.
+  function terminalCheckout(): string {
+    const checkout = fs.realpathSync(tempRoot());
+    fs.writeFileSync(path.join(checkout, 'package.json'), '{"dependencies":{"next":"15"}}');
+    execFileSync('git', ['-C', checkout, 'init', '-q'], { stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['-C', checkout, 'remote', 'add', 'origin', 'git@x:acme/va-mmcx-terminal'],
+      {
+        stdio: 'ignore',
+      },
+    );
+    return checkout;
+  }
+
+  function contextOptions(seen: (string | undefined)[]): HarnessCliOptions {
+    const status = command(
+      'status',
+      {
+        options: contractOptions(HELP, JSON_FLAG, TARGET, {
+          '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+        }),
+      },
+      {
+        run: () => {
+          seen.push(detectAdapter(process.cwd()));
+          calls.push({ command: 'status', argv: [] });
+          return 0;
+        },
+      },
+    );
+    const base = cliOptions();
+    return {
+      ...base,
+      commands: [...base.commands.filter((entry) => entry.name !== 'status'), status],
+    };
+  }
+
+  test('loads, adopts and fences only the winning plugin, and the command acts on it', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { remote: ['va-mmcx-terminal'], packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const seen: (string | undefined)[] = [];
+    const adopted: string[] = [];
+    const fenced: string[] = [];
+    const cli = createHarnessCli({
+      ...contextOptions(seen),
+      adopt: (adapter) => {
+        adopted.push(adapter.id);
+        return adapter;
+      },
+      afterAdapterLoad: (id) => {
+        fenced.push(id);
+      },
+    });
+    const { result, stdout, stderr } = await capture(() => cli.main(['status']));
+    assert.deepEqual(result, { exitCode: 0, exit: 'code' });
+    // The losing candidate is never imported, adopted, registered or fenced.
+    assert.deepEqual(imported(), ['terminal']);
+    assert.deepEqual(adopted, ['terminal']);
+    assert.deepEqual(fenced, ['terminal']);
+    assert.equal(harnessAdapters().has('shop'), false);
+    assert.deepEqual(seen, ['terminal']);
+    assert.equal(stdout, '');
+    assert.equal(
+      stderr,
+      `context: adapter terminal (detected: remote+files), target ${checkout} (cwd)\n`,
+    );
+    assert.equal(harnessContext()?.adapter?.library, 'terms');
+
+    // --json keeps stderr clean; a typed --adapter needs no context line.
+    const json = await capture(() => cli.main(['status', '--json']));
+    assert.equal(json.stderr, '');
+    const flagged = await capture(() => cli.main(['status', '--adapter', 'web']));
+    assert.equal(flagged.stderr, '');
+    // The flag is the context too, so detection answers with it.
+    assert.deepEqual(seen, ['terminal', 'terminal', 'web']);
+  });
+
+  test('stops an ambiguous checkout with exit 2 and the candidates, in every output form', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const cli = createHarnessCli(contextOptions([]));
+    const candidates = [
+      { adapter: 'terminal', matched: ['files'], library: 'terms' },
+      { adapter: 'shop', matched: ['files'], library: 'terms' },
+    ];
+    const message = `${checkout} matches more than one adapter: terminal (files), shop (files)`;
+    const human = await capture(() => cli.main(['status']));
+    assert.deepEqual(human.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      human.stderr,
+      `✗ shop-harness status: ${message}\n  Next: pass --adapter <terminal|shop>\n`,
+    );
+    const json = await capture(() => cli.main(['status', '--json']));
+    assert.deepEqual(json.result, { exitCode: 2, exit: 'now' });
+    assert.deepEqual((JSON.parse(json.stdout) as { error: unknown }).error, {
+      code: 'ADAPTER_AMBIGUOUS',
+      message,
+      userAction: 'pass --adapter <terminal|shop>',
+      candidates,
+    });
+    const stream = await capture(() => cli.main(['status', '--json-stream']));
+    assert.deepEqual(stream.result, { exitCode: 2, exit: 'now' });
+    assert.equal(
+      (streamEvents(stream.stdout)[0]?.error as { code: string }).code,
+      'ADAPTER_AMBIGUOUS',
+    );
+    assert.deepEqual(imported(), []);
+    assert.deepEqual(calls, []);
+
+    // A flag settles it; help never resolves, so it never refuses.
+    const flagged = await capture(() => cli.main(['status', '--adapter', 'shop']));
+    assert.deepEqual(flagged.result, { exitCode: 0, exit: 'code' });
+    assert.deepEqual(imported(), ['shop']);
+    const help = await capture(() => cli.main(['status', '--help']));
+    assert.equal(help.result.exitCode, 0);
+  });
+
+  test('a command without context options, or a hidden one, detects nothing', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { remote: ['va-mmcx-terminal'] },
+    })}`;
+    const cli = createHarnessCli(contextOptions([]));
+    await capture(() => cli.main(['update']));
+    await capture(() => cli.main(['runtime-probe']));
+    assert.deepEqual(imported(), []);
+    assert.equal(harnessContext(), undefined);
   });
 });

@@ -31,6 +31,8 @@ import {
   validatePublicInvocation,
 } from './command-contract.js';
 import { withCommandJournal } from './command-journal.js';
+import { formatHarnessContext, resolveHarnessContext } from './context.js';
+import { AdapterAmbiguousError, setHarnessContext } from './context-state.js';
 import { configureHarnessHost, type HarnessHostConfig, hostEnvName } from './host.js';
 import { JsonStreamWriter } from './json-stream.js';
 import { DEFAULT_RECIPE_RUNTIME_DIR } from './paths.js';
@@ -114,6 +116,13 @@ export interface HarnessCliOptions {
    * like the loader's and ends the command.
    */
   afterAdapterLoad?(adapterId: string): void | Promise<void>;
+  /** The adapter a command acts on when no flag, binding, slot or detect match decides. */
+  defaultAdapter?: string;
+  /**
+   * The pool directory slot-config reads to find the checkout's slot. Default:
+   * FARMSLOT_POOL_DIR, else $FARMSLOT_ROOT/pool; none skips the pool.
+   */
+  slotPoolDir?(): string | undefined;
 }
 
 export interface HarnessCliResult {
@@ -152,6 +161,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
     // The libraries the operator started the command with: plugins load only
     // from these, never from the ones library hydration discovers.
     const operatorEnv = { ...process.env };
+    setHarnessContext(undefined);
     const command = find(argv[0]);
     if (argv.length > 0 && command?.nudge !== false) options.beforeDispatch?.(argv);
     if (argv.length === 0) {
@@ -187,13 +197,14 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
 
     await options.libraries?.hydrate(targetFromArgv(argv));
 
-    // A library-declared adapter loads only when the command selects it.
+    // A library-declared adapter loads only when the command selects it or
+    // its context resolves to it: never a losing detect candidate.
     if (command) {
       const refused = await loadSelectedAdapter(
-        command.name,
+        command,
         argv,
         { adopt: options.adopt, configured: options.configuredLibraries?.(), env: operatorEnv },
-        options.afterAdapterLoad,
+        options,
       );
       if (refused !== undefined) return { exitCode: refused, exit: 'now' };
     }
@@ -262,41 +273,83 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
   };
 }
 
-// Loads the adapter the command selects (`selectedAdapterId`), if a library
-// declares it. A refused plugin prints its code and next step; returns that exit.
+// Loads the adapter the command acts on, if a library declares it: the
+// resolved context's for a public command that takes --adapter, --platform or
+// --target (unless it asks for help), else the one its flags select
+// (`selectedAdapterId`). A refused plugin or an ambiguous checkout prints its
+// code and next step; returns that exit.
 async function loadSelectedAdapter(
-  command: string,
+  command: HarnessCommand,
   argv: readonly string[],
   load: Pick<AdapterLoadOptions, 'adopt' | 'configured' | 'env'>,
-  afterAdapterLoad: HarnessCliOptions['afterAdapterLoad'],
+  options: HarnessCliOptions,
 ): Promise<number | undefined> {
   const tokens = argv.slice(1);
-  const selected = selectedAdapterId(tokens);
-  if (selected === undefined) return undefined;
+  const libraries = { ...load, libraries: optionValues(tokens, '--library') };
   try {
-    await ensureAdapterLoaded(selected, { ...load, libraries: optionValues(tokens, '--library') });
-    await afterAdapterLoad?.(selected);
+    let selected: string | undefined;
+    let contextLine: string | undefined;
+    if (takesContext(command) && !hasHelp(argv)) {
+      const slotPoolDir = options.slotPoolDir?.();
+      const context = await resolveHarnessContext({
+        tokens,
+        load: libraries,
+        ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
+        ...(slotPoolDir ? { slotPoolDir } : {}),
+        ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
+      });
+      setHarnessContext(context);
+      selected = context.adapter?.value;
+      // People see what was inferred; a flag they typed needs no echo.
+      if (context.adapter && context.adapter.source !== 'flag')
+        contextLine = formatHarnessContext(context);
+    } else {
+      selected = selectedAdapterId(tokens);
+    }
+    if (selected === undefined) return undefined;
+    await ensureAdapterLoaded(selected, libraries);
+    await options.afterAdapterLoad?.(selected);
+    if (contextLine && !requested(argv, '--json') && !requested(argv, '--json-stream'))
+      process.stderr.write(`${contextLine}\n`);
     return undefined;
   } catch (error) {
-    // A refused plugin, or the library reader's refusal of its source or its path.
+    // A refused plugin, the library reader's refusal of its source or its
+    // path, or a checkout more than one adapter matches.
     if (
       error instanceof AdapterPluginError ||
       error instanceof RecipeTrustError ||
-      error instanceof RecipeResolutionError
+      error instanceof RecipeResolutionError ||
+      error instanceof AdapterAmbiguousError
     ) {
-      const failure = { code: error.code, message: error.message, userAction: error.userAction };
+      const failure = {
+        code: error.code,
+        message: error.message,
+        userAction: error.userAction,
+        ...(error instanceof AdapterAmbiguousError ? { candidates: error.candidates } : {}),
+      };
       if (requested(argv, '--json-stream')) {
-        const stream = new JsonStreamWriter(command, true);
+        const stream = new JsonStreamWriter(command.name, true);
         stream.error(failure);
         stream.complete('fail', 2);
         return 2;
       }
-      return adapterSelectionFailureOut(requested(argv, '--json'), command, failure);
+      return adapterSelectionFailureOut(requested(argv, '--json'), command.name, failure);
     }
     return mapErrors(() => {
       throw error;
     });
   }
+}
+
+// A public command whose grammar takes the context options resolves a context.
+function takesContext(command: HarnessCommand): boolean {
+  if (command.hidden) return false;
+  const options = command.contract.options;
+  return ['--adapter', '--platform', '--target'].some((option) => option in options);
+}
+
+function hasHelp(argv: readonly string[]): boolean {
+  return beforePassthrough(argv).some((argument) => argument === '-h' || argument === '--help');
 }
 
 function exitOf(command: HarnessCommand): 'now' | 'code' {
@@ -388,7 +441,7 @@ function detectedSlotLine(out: HelpPaint, slotAdapter: HarnessHelp['slotAdapter'
   }
   if (ctx === null || typeof ctx !== 'object') return null;
   const platform = typeof ctx.platform === 'string' ? ctx.platform : undefined;
-  const adapter = (platform ? slotAdapter?.(platform) : undefined) ?? detectAdapter(process.cwd());
+  const adapter = (platform ? slotAdapter?.(platform) : undefined) ?? helpAdapter();
   const parts: string[] = [];
   if (ctx.slotId) parts.push(`slot ${out('ok', String(ctx.slotId))}`);
   if (ctx.simulator) parts.push(`device ${out('ok', String(ctx.simulator))}`);
@@ -400,6 +453,16 @@ function detectedSlotLine(out: HelpPaint, slotAdapter: HarnessHelp['slotAdapter'
   if (ctx.gitBranch) parts.push(`branch ${out('info', String(ctx.gitBranch))}`);
   if (parts.length === 0) return null;
   return `${out('label', 'SLOT')} — this checkout is a prepared slot: ${parts.join(' · ')}`;
+}
+
+// The checkout's adapter for the help's slot line; an ambiguous checkout names none.
+function helpAdapter(): string | undefined {
+  try {
+    return detectAdapter(process.cwd());
+  } catch (error) {
+    if (error instanceof AdapterAmbiguousError) return undefined;
+    throw error;
+  }
 }
 
 function writeUsageError(

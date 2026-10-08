@@ -2,7 +2,6 @@
 // TypeScript port of lib/slot-common.sh: resolve_slot, load_slot_vars, load_project_config, get_project_field
 
 import { readdir, readFile, realpath } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -33,6 +32,7 @@ import {
   type SlotActionDefinition,
   validateQaConfig,
 } from '@farmslot/protocol';
+import { findSlotByRepo, isIgnoredPoolFile } from '@farmslot/protocol/node/slot-by-repo';
 
 import { SlotConfigError } from './error.js';
 import { farmslotRoot } from './repo-root.js';
@@ -53,18 +53,8 @@ export function isMissingProjectConfigError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith(PROJECT_CONFIG_NOT_FOUND_PREFIX);
 }
 
-/**
- * Pool files every loader skips: non-JSON, the committed template, and the
- * repo's own demo pool (the self-integration example) unless FARMSLOT_DEMO_POOL=1
- * opts it in — a fresh install must not surface demo slots nobody asked for.
- */
-export function isIgnoredPoolFile(file: string): boolean {
-  if (!file.endsWith('.json')) return true;
-  if (/^agent-contexts-\d+\.json$/.test(file)) return true;
-  if (file === 'example.json') return true;
-  if (file === 'farmslot-demo.json') return process.env.FARMSLOT_DEMO_POOL !== '1';
-  return false;
-}
+// The pool-file filter every loader shares with the reverse lookup.
+export { isIgnoredPoolFile };
 
 // Browser/CDP resources are consumed by Node's standards-compliant fetch in the
 // recipe harness and downstream project recipe runners. The Fetch standard blocks these
@@ -617,49 +607,18 @@ export async function resolveSlotByRepo(targetDir: string): Promise<ResolvedSlot
       userAction: 'Pass an existing slot checkout directory, or resolve by id instead.',
     });
   }
-  let files: string[];
+  let found: ResolvedSlot | null;
   try {
-    files = await readdir(poolDir);
-  } catch {
+    found = await findSlotByRepo<RawPoolJson>(poolDir, resolvedTarget);
+  } catch (err) {
+    // The pool directory itself: a missing one is a configuration error.
+    if ((err as NodeJS.ErrnoException).syscall !== 'scandir') throw err;
     throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
       userAction:
         'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
     });
   }
-  const localHost = os.hostname().replace(/\.local$/, '');
-  const isLocalHost = (host: string) =>
-    host === 'localhost' || host === '127.0.0.1' || host.replace(/\.local$/, '') === localHost;
-  let fallback: ResolvedSlot | null = null;
-  for (const file of [...files].sort()) {
-    if (isIgnoredPoolFile(file)) continue;
-    let pool: RawPoolJson;
-    try {
-      pool = JSON.parse(await readFile(path.join(poolDir, file), 'utf-8'));
-    } catch {
-      // Invalid pool files are skipped, matching resolveSlot above.
-      continue;
-    }
-    for (const slot of pool.slots) {
-      const repo = slot.repo ?? '';
-      if (!repo) continue;
-      const expanded = repo.startsWith('~/') ? path.join(os.homedir(), repo.slice(2)) : repo;
-      if (!path.isAbsolute(expanded)) continue;
-      const real = await realpath(expanded).catch((err) => {
-        // A pool entry pointing at a missing checkout is a normal non-match.
-        if (
-          (err as NodeJS.ErrnoException).code === 'ENOENT' ||
-          (err as NodeJS.ErrnoException).code === 'ENOTDIR'
-        )
-          return null;
-        throw err;
-      });
-      if (real !== resolvedTarget) continue;
-      const resolved: ResolvedSlot = { pool, slot, poolFile: path.join(poolDir, file) };
-      if (isLocalHost(pool.host ?? '') || pool.machine === localHost) return resolved;
-      fallback = fallback ?? resolved;
-    }
-  }
-  if (fallback) return fallback;
+  if (found) return found;
   throw new SlotConfigError(
     'SLOT_NOT_FOUND',
     `No slot found with repo '${resolvedTarget}' in ${poolDir}/`,

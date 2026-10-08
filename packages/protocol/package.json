@@ -354,6 +354,11 @@
       "import": "./dist/node/farmslot-home.js",
       "default": "./dist/node/farmslot-home.js"
     },
+    "./node/slot-by-repo": {
+      "types": "./dist/node/slot-by-repo.d.ts",
+      "import": "./dist/node/slot-by-repo.js",
+      "default": "./dist/node/slot-by-repo.js"
+    },
     "./surfaces/view-links": {
       "types": "./dist/surfaces/view-links.d.ts",
       "import": "./dist/surfaces/view-links.js",

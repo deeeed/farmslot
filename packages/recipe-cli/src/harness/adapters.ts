@@ -2,13 +2,21 @@
 // and every generic command resolves platform behaviour through them. No
 // command compares adapter ids.
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 
 import {
+  type AdapterDetect,
   type AdapterRegistry,
   createAdapterRegistry,
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
 
+import {
+  AdapterAmbiguousError,
+  type AdapterCandidate,
+  type DetectMatch,
+  harnessContext,
+} from './context-state.js';
 import { harnessHost } from './host.js';
 
 let registry: AdapterRegistry = createAdapterRegistry();
@@ -31,29 +39,83 @@ function registered(): PlatformAdapter[] {
 }
 
 /**
- * The adapter whose checkout `target` is, or undefined. Any adapter's remote
- * match beats any adapter's file match; within a pass, registration order decides.
+ * The adapter whose checkout `target` is, or undefined. The invocation's
+ * resolved context answers for its own target; any other target runs the
+ * registered adapters' predicates (`pickDetected`), so more than one match
+ * throws AdapterAmbiguousError.
  */
 export function detectAdapter(target: string): string | undefined {
   // An empty registry would detect nothing for every checkout; that is a host
   // wiring error, not an unknown checkout.
   assertAdaptersRegistered();
-  let remote = '';
+  const context = harnessContext();
+  if (context && context.target.value === path.resolve(target)) return context.adapter?.value;
+  return pickDetected(
+    registered().map((adapter) => ({
+      id: adapter.id,
+      ...(adapter.extends ? { extends: adapter.extends } : {}),
+      ...(adapter.detect ? { detect: adapter.detect } : {}),
+    })),
+    target,
+  )?.adapter;
+}
+
+/** An adapter detection can choose: its id, what it extends, and its predicates. */
+export interface DetectEntry {
+  id: string;
+  extends?: string;
+  library?: string;
+  detect?: AdapterDetect;
+}
+
+/**
+ * The one entry whose predicates match `target`, or undefined. Any remote match
+ * beats any file match; within that pass an adapter beats one it extends.
+ * More than one left throws AdapterAmbiguousError listing them.
+ */
+export function pickDetected(
+  entries: readonly DetectEntry[],
+  target: string,
+): AdapterCandidate | undefined {
+  const remote = checkoutRemote(target);
+  const matches = entries.flatMap((entry) => {
+    const matched: DetectMatch[] = [];
+    if (remote && entry.detect?.remote?.(remote)) matched.push('remote');
+    if (entry.detect?.files?.(target)) matched.push('files');
+    return matched.length > 0 ? [{ entry, matched }] : [];
+  });
+  const byRemote = matches.filter((match) => match.matched.includes('remote'));
+  const pass = byRemote.length > 0 ? byRemote : matches;
+  const parents = new Map(entries.map((entry) => [entry.id, entry.extends]));
+  const ancestors = (id: string): Set<string> => {
+    const seen = new Set<string>();
+    for (let parent = parents.get(id); parent && !seen.has(parent); parent = parents.get(parent))
+      seen.add(parent);
+    return seen;
+  };
+  const left = pass.filter(
+    (match) => !pass.some((other) => ancestors(other.entry.id).has(match.entry.id)),
+  );
+  const candidates = left.map(({ entry, matched }) => ({
+    adapter: entry.id,
+    matched,
+    ...(entry.library ? { library: entry.library } : {}),
+  }));
+  if (candidates.length > 1) throw new AdapterAmbiguousError(path.resolve(target), candidates);
+  return candidates[0];
+}
+
+// The checkout's origin URL, or '' when it is not a Git checkout or has none.
+function checkoutRemote(target: string): string {
   try {
-    remote = execFileSync('git', ['-C', target, 'config', '--get', 'remote.origin.url'], {
+    return execFileSync('git', ['-C', target, 'config', '--get', 'remote.origin.url'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
     // Not a Git checkout, or no origin: only the file checks apply.
-    remote = '';
+    return '';
   }
-  const adapters = registered();
-  if (remote) {
-    const byRemote = adapters.find((adapter) => adapter.detect?.remote?.(remote));
-    if (byRemote) return byRemote.id;
-  }
-  return adapters.find((adapter) => adapter.detect?.files?.(target))?.id;
 }
 
 /** The adapter a `--platform` value or positional target names: its own id, or one of its `targets`. */

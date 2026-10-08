@@ -5,6 +5,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `createHarnessCli` resolves one context for every public command whose grammar takes `--adapter`, `--platform` or `--target` (status, doctor, launch, run, call and the rest), unless the command asks for help. The adapter comes from, in order: the flag (`--adapter`, `--platform`, or a leading platform target such as `launch ios`), the checkout's runtime context `platform` (binding), the slot slot-config maps the checkout to (its own `platform`, when that names an adapter), a unique detect match, then the new `defaultAdapter` option. The target is `--target`, else the cwd; the slot is slot-config's match (pool directory from the new `slotPoolDir` option, else FARMSLOT_POOL_DIR, else `$FARMSLOT_ROOT/pool`), else the runtime context's `slotId`. Approvals (`--approve-plan`, mainnet and funding flags) are never inferred.
+  - Detection matches the built-ins by their `detect` and the plugins the operator's libraries declare by their recipe-library.json `detect`, without importing any plugin. Only the winner is loaded, adopted and passed to `afterAdapterLoad`; a losing candidate is never imported or bound.
+  - Any remote match beats any file match, and an adapter beats one it extends. More than one match left stops the command with `ADAPTER_AMBIGUOUS`, exit 2, and the candidates (adapter, the predicates that matched, the declaring library) in the `--json` and `--json-stream` error (`candidates`) and in the human message. No match keeps the `USAGE` error and its message.
+  - When the adapter was not a flag, one line on stderr names each value and its source, e.g. `context: adapter terminal (detected: remote+files), target /work/terminal-1 (cwd), slot mmt-1 (slot-config)`; `--json` and `--json-stream` print none.
+  - `--json` envelopes from `status`, `doctor`, `run`, `call` and the shared usage error (`usageOut`) carry the resolved `context` (`adapter`, `target`, `slot`, each with `value`, `source` and `detail`). `launch`'s own envelope is the platform's and is unchanged.
+  - Exports `resolveHarnessContext`, `formatHarnessContext`, `harnessContext`, `harnessContextField`, `setHarnessContext`, `declaredAdapters`, `pickDetected`, `AdapterAmbiguousError` and the `HarnessContext`, `ContextSource`, `DetectMatch`, `AdapterCandidate`, `DetectEntry` and `ResolveHarnessContextOptions` types.
+- `detectAdapter(target)` answers with the resolved context's adapter for the context's target. For any other target it applies the same rule over the registered adapters, so two matches in one pass throw `AdapterAmbiguousError` instead of the first registered winning.
+- `handleStatus` takes `--adapter` and `--platform` before detection, like `doctor`. A host adds them to its `status` grammar.
 
 ## 0.10.0 - 2026-10-08
 

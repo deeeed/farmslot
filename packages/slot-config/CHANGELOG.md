@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- `resolveSlotByRepo` and `isIgnoredPoolFile` use `@farmslot/protocol/node/slot-by-repo`, the lookup recipe-cli's context resolver shares. Errors and results are unchanged.
+
 - Estimate GPT-6 Sol session cost using its published input and output token rates.
 
 - Share machine pool lookup with standalone review launchers so they can honor configured runner executables.

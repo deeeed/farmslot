@@ -35,6 +35,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { adapterForPlatform, harnessAdapters } from './adapters.js';
+import type { AdapterCandidate } from './context-state.js';
 import { harnessHost } from './host.js';
 import { CliError, isRecord } from './parse-args.js';
 import { canFencePluginImports, fencePluginImports } from './plugin-imports.js';
@@ -140,6 +141,16 @@ export function selectedAdapterId(tokens: readonly string[]): string | undefined
     lastOptionValue(tokens, '--adapter') ??
     adapterForPlatform(lastOptionValue(tokens, '--platform'))
   );
+}
+
+/**
+ * Every `adapters` entry the operator's libraries declare, read without
+ * importing anything: the libraries the loader trusts (`--library`, the
+ * operator's RECIPE_LIBRARY_PATH or else the personal library, then
+ * `configured`). A library whose manifest does not read declares nothing here.
+ */
+export function declaredAdapters(options: AdapterLibraryOptions = {}): Promise<DeclaredAdapter[]> {
+  return declarations(options, { lenient: true });
 }
 
 /** The plugin the loader registered under `id` in the host's registry, if any. */
@@ -544,13 +555,19 @@ function lastOptionValue(tokens: readonly string[], name: string): string | unde
 
 /**
  * Print a refused adapter selection: the `--json` envelope or the human line.
- * Takes any error with a `code` and `userAction` (the loader's, and the library
- * reader's RECIPE_SOURCE_INVALID); returns the exit code.
+ * Takes any error with a `code` and `userAction` (the loader's, the library
+ * reader's RECIPE_SOURCE_INVALID, and ADAPTER_AMBIGUOUS with its `candidates`);
+ * returns the exit code.
  */
 export function adapterSelectionFailureOut(
   json: boolean,
   command: string,
-  error: { code: string; message: string; userAction: string },
+  error: {
+    code: string;
+    message: string;
+    userAction: string;
+    candidates?: readonly AdapterCandidate[];
+  },
 ): number {
   if (json) {
     console.log(
@@ -560,7 +577,12 @@ export function adapterSelectionFailureOut(
           command,
           status: 'fail',
           exitCode: EXIT.usage,
-          error: { code: error.code, message: error.message, userAction: error.userAction },
+          error: {
+            code: error.code,
+            message: error.message,
+            userAction: error.userAction,
+            ...(error.candidates ? { candidates: error.candidates } : {}),
+          },
         },
         null,
         2,
