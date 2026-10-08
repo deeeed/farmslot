@@ -10,6 +10,7 @@ const { after, afterEach, before, describe, it } = require('node:test');
 
 const { cdpListenerPids } = require('../src/browser-cdp.cjs');
 const {
+  detachedLaunchUnprovenPath,
   hasDetachedLaunchUnproven,
   runtimeIdentityPath,
   validationPortQuarantinePath,
@@ -310,6 +311,58 @@ describe('launchBrowser', () => {
       foreign?.kill('SIGKILL');
     }
   });
+
+  it(
+    'names the quarantine to clear when a foreign process takes the port before its browser shows up',
+    { skip: process.platform !== 'darwin' && 'the open path is macOS only' },
+    async () => {
+      const dir = runtime('foreign-unseen');
+      const port = await freePort();
+      const profile = path.join(dir, 'profile');
+      // A .app executable starts through `open`; this `open` never starts it,
+      // so the browser is not seen within the first-sighting grace.
+      const app = path.join(dir, 'Fake.app/Contents/MacOS/chrome');
+      fs.mkdirSync(path.dirname(app), { recursive: true });
+      fs.copyFileSync(chromeBin, app);
+      fs.chmodSync(app, 0o755);
+      const bin = path.join(dir, 'bin');
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, 'open'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+      let foreign = null;
+      const startForeign = ({ message }) => {
+        if (message !== 'starting the browser' || foreign) return;
+        foreign = spawn(
+          process.execPath,
+          [
+            '-e',
+            `require('net').createServer().listen(${port}, '127.0.0.1');
+             setInterval(() => { try { process.kill(${process.pid}, 0); } catch { process.exit(0); } }, 200);
+             setTimeout(() => process.exit(0), 20000);`,
+          ],
+          { stdio: 'ignore' },
+        );
+      };
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${bin}:${savedPath}`;
+      try {
+        assert.throws(
+          () => launchBrowser(options(dir, port, { chromeBin: app, progress: startForeign })),
+          (error) =>
+            error.message.includes(`Refusing to launch on CDP port ${port}`) &&
+            error.message.includes(`pid ${foreign.pid}`) &&
+            error.message.includes(
+              `run: rm -- '${detachedLaunchUnprovenPath(profile)}' '${validationPortQuarantinePath(port)}', then pick a free --cdp-port`,
+            ),
+        );
+      } finally {
+        process.env.PATH = savedPath;
+        foreign?.kill('SIGKILL');
+      }
+      // The markers the hint names are the ones kept.
+      assert.equal(hasDetachedLaunchUnproven(profile), true);
+      assert.equal(fs.existsSync(validationPortQuarantinePath(port)), true);
+    },
+  );
 
   // PATH stubs for lsof (and, with failPs, ps): lsof answers the pre-launch
   // port check, then fails, which is the wait's first call; ps fails once lsof

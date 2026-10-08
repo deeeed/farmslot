@@ -33,6 +33,7 @@ const {
   clearDetachedLaunchUnproven,
   clearValidationPortQuarantine,
   createRuntimeIdentityNonce,
+  detachedLaunchUnprovenPath,
   hasDetachedLaunchUnproven,
   isolatedProfileArgs,
   markDetachedLaunchUnproven,
@@ -41,7 +42,9 @@ const {
   remoteDebuggingArgs,
   removeRuntimeIdentity,
   runtimeIdentityArgs,
+  shellQuote,
   validationLaunchQuarantineError,
+  validationPortQuarantinePath,
   writeRuntimeIdentity,
 } = require('./chrome-args.cjs');
 const { extensionIdFromExtensionDir } = require('./extension-id.cjs');
@@ -244,7 +247,20 @@ function runLaunch(opts, acquireLock) {
   // The wait ended without an owned listener: a foreign process took the port,
   // the browser exited, or it never listened in time.
   const ownedListenerMissing = (waited) => {
-    if (waited.foreignPids) return foreignPortError(cdpPort, waited.foreignPids);
+    if (waited.foreignPids && waited.seen) return foreignPortError(cdpPort, waited.foreignPids);
+    if (waited.foreignPids) {
+      // This launch's browser was never seen, so its markers stay (see
+      // awaitOwnedListener): a free port alone would be refused as quarantined.
+      const markers = [detachedLaunchUnprovenPath(profile)];
+      if (!activeValidationLease) markers.push(validationPortQuarantinePath(cdpPort));
+      return foreignPortError(
+        cdpPort,
+        waited.foreignPids,
+        `this launch's browser never showed up, so its launch state stays quarantined. ` +
+          `Confirm no browser uses ${profile}, run: rm -- ${markers.map(shellQuote).join(' ')}, ` +
+          `then pick a free --cdp-port, or stop that browser.`,
+      );
+    }
     const exited = waited.exited ? ': the browser exited' : '';
     return new Error(
       `Chrome launched but did not expose an owned CDP listener on 127.0.0.1:${cdpPort}${exited}. ` +
@@ -523,10 +539,10 @@ function macApplicationForExecutable(executable) {
   return null;
 }
 
-function foreignPortError(port, pids) {
+function foreignPortError(port, pids, next = 'pick a free --cdp-port, or stop that browser.') {
   return new Error(
     `Refusing to launch on CDP port ${port}: it is held by a browser this harness did not launch (pid ${pids.join(', ')}). ` +
-      `Next: pick a free --cdp-port, or stop that browser.`,
+      `Next: ${next}`,
   );
 }
 

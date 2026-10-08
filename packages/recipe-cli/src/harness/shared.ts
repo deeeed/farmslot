@@ -297,8 +297,10 @@ export function spawnScriptStreaming(
         // ESRCH: the owned child tree already exited. EPERM once this group was
         // SIGKILLed, or once the leaf has exited: macOS refuses to signal a
         // group whose only members are zombies not yet reaped, so the group is
-        // gone too, and any member left is out of reach (a throw here would
-        // crash from an exit handler). Any other EPERM still throws.
+        // gone. After the leaf exits it can also mean a descendant left in the
+        // group runs as another user; this process could not signal it either,
+        // and a throw here would crash from an exit handler. Any other EPERM
+        // still throws.
         if (code !== 'ESRCH' && !(code === 'EPERM' && (groupKilled || leafExited))) throw error;
       }
     };
