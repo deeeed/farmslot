@@ -263,8 +263,14 @@ function runLaunch(opts, acquireLock) {
     } catch (error) {
       try {
         stopProfileProcessesSync(profile, stopOptions);
-      } catch {
-        // The wait's own failure is the one to report; the markers stay.
+      } catch (stopError) {
+        const pids = stopOptions.extraPids ?? [];
+        const target = pids.length > 0 ? `pid ${pids.join(', ')}` : `the browser using ${profile}`;
+        throw new Error(
+          `Waiting for the CDP listener failed (${error.message}), and stopping the browser failed: ${stopError.message}. ` +
+            `The launch markers for port ${cdpPort} and ${profile} are kept. Next: stop ${target}, then ${rerun}`,
+          { cause: error },
+        );
       }
       throw error;
     }

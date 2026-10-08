@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
@@ -16,7 +16,10 @@ const {
 } = require('../src/chrome-args.cjs');
 const { extensionIdFromExtensionDir } = require('../src/extension-id.cjs');
 const { homeTabsToClose, launchBrowser } = require('../src/launch-browser.cjs');
-const { profileProcessPids } = require('../src/validation-process-ownership.cjs');
+const {
+  profileProcessPids,
+  stopProfileProcessesSync,
+} = require('../src/validation-process-ownership.cjs');
 
 const FAKE_BROWSER = path.join(__dirname, 'fixtures/fake-cdp-browser.cjs');
 
@@ -308,28 +311,74 @@ describe('launchBrowser', () => {
     }
   });
 
+  // PATH stubs for lsof (and, with failPs, ps): lsof answers the pre-launch
+  // port check, then fails, which is the wait's first call; ps fails once lsof
+  // has. Each lsof call is logged, so a test can prove the failure came mid-wait.
+  function stubFailingLsof(dir, { failPs = false } = {}) {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const which = (tool) =>
+      execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim();
+    const calls = path.join(bin, 'lsof-calls');
+    fs.writeFileSync(
+      path.join(bin, 'lsof'),
+      `#!/bin/bash\nif [ -e "${calls}" ]; then echo fail >> "${calls}"; exit 2; fi\necho ok >> "${calls}"\nexec "${which('lsof')}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    if (failPs) {
+      fs.writeFileSync(
+        path.join(bin, 'ps'),
+        `#!/bin/bash\ngrep -q fail "${calls}" 2>/dev/null && exit 2\nexec "${which('ps')}" "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}:${savedPath}`;
+    return {
+      calls: () => fs.readFileSync(calls, 'utf8').trim().split('\n'),
+      restore: () => {
+        process.env.PATH = savedPath;
+      },
+    };
+  }
+
   it('stops the browser it started when lsof fails during the wait', async () => {
     const dir = runtime('lsof-fails');
     const port = await freePort();
-    // An lsof that answers the pre-launch check, then fails.
-    const bin = path.join(dir, 'bin');
-    fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(
-      path.join(bin, 'lsof'),
-      `#!/bin/bash\n[ -e "${bin}/used" ] && exit 2\ntouch "${bin}/used"\nexec /usr/sbin/lsof "$@"\n`,
-      { mode: 0o755 },
-    );
-    const savedPath = process.env.PATH;
-    process.env.PATH = `${bin}:${savedPath}`;
+    const stub = stubFailingLsof(dir);
     process.env.FAKE_CDP_MODE = 'silent';
     try {
       assert.throws(() => launchBrowser(options(dir, port)), /lsof could not inspect CDP port/u);
     } finally {
-      process.env.PATH = savedPath;
+      stub.restore();
       delete process.env.FAKE_CDP_MODE;
     }
+    // The pre-launch check passed; the wait's own lsof call failed.
+    assert.deepEqual(stub.calls(), ['ok', 'fail']);
     assert.deepEqual(profileProcessPids(path.join(dir, 'profile')), []);
     assert.equal(hasDetachedLaunchUnproven(path.join(dir, 'profile')), true);
+  });
+
+  it('names both failures and the browser pid when it cannot stop the browser after a failed wait', async () => {
+    const dir = runtime('stop-fails');
+    const port = await freePort();
+    const profile = path.join(dir, 'profile');
+    const stub = stubFailingLsof(dir, { failPs: true });
+    process.env.FAKE_CDP_MODE = 'silent';
+    try {
+      assert.throws(
+        () => launchBrowser(options(dir, port)),
+        /Waiting for the CDP listener failed \(lsof could not inspect CDP port[\s\S]*\), and stopping the browser failed: [\s\S]*The launch markers for port \d+ and .* are kept\. Next: stop pid \d+, then rerun the launch$/u,
+      );
+    } finally {
+      stub.restore();
+      delete process.env.FAKE_CDP_MODE;
+      // The browser it could not stop is still running; stop it here.
+      stopProfileProcessesSync(profile);
+    }
+    assert.deepEqual(stub.calls(), ['ok', 'fail']);
+    assert.deepEqual(profileProcessPids(profile), []);
+    assert.equal(hasDetachedLaunchUnproven(profile), true);
   });
 
   it('names the caller rerun command in failure hints, else a generic rerun', async () => {
