@@ -72,6 +72,7 @@ export {
   type ContractedCommand,
   type ContractFailures,
   contractOptions,
+  contractPositionals,
   type ContractValidationOptions,
   type InvalidChoice,
   optionalValueOption,

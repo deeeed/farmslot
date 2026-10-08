@@ -29,6 +29,7 @@ import {
   requiredDoctorCheckSummary,
   resolveHarnessContext,
   runnerInstallKind,
+  runStatusWatch,
   setHarnessContext,
   shellQuote,
 } from '../src/harness/index.js';
@@ -885,6 +886,24 @@ describe('status', () => {
         'target',
         'context',
       ]);
+      // The task view carries it too: --task --json, and each --watch --json line.
+      const task = tempRoot();
+      fs.writeFileSync(path.join(task, 'CHECKLIST.md'), '- [ ] 1. Step.\n');
+      fs.writeFileSync(path.join(task, 'SIGNAL.json'), JSON.stringify({ status: 'complete' }));
+      for (const watch of [false, true]) {
+        const written: string[] = [];
+        const exit = await runStatusWatch(
+          { target, taskDir: task, json: true, watch },
+          {
+            now: () => Date.now(),
+            wait: async () => {},
+            write: (text) => written.push(text),
+            isTty: false,
+          },
+        );
+        assert.equal(exit, 0);
+        assert.deepEqual((JSON.parse(written.join('')) as { context: unknown }).context, context);
+      }
     } finally {
       setHarnessContext(undefined);
     }

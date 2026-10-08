@@ -19,6 +19,7 @@ import {
   AdapterAmbiguousError,
   configureHarnessAdapters,
   contextAdapter,
+  contractPositionals,
   detectAdapter,
   formatHarnessContext,
   type HarnessContext,
@@ -302,6 +303,116 @@ describe('resolveHarnessContext', () => {
     // An explicit --target is taken as given.
     const flagged = await resolveHarnessContext({ tokens: ['--target', deep], cwd: checkout });
     assert.equal(flagged.adapter, undefined);
+  });
+
+  test('a runtime context of another checkout binds nothing here and is reported', async () => {
+    const extension = tempRoot();
+    const mobile = tempRoot();
+    write(mobile, 'app.json', '{}');
+    useAdapters(adapter('web'), adapter('app', { detect: { files: hasFile('app.json') } }));
+    const inherited = path.join(extension, 'temp/recipe/runtime/agentic-runtime.json');
+    runtimeContext(extension, {
+      platform: 'web',
+      slotId: 'mmedev-1',
+      repoRoot: extension,
+      cdpPort: 9222,
+    });
+    process.env.RECIPE_RUNTIME_CONTEXT = inherited;
+
+    const foreign = await resolveHarnessContext({ tokens: ['--target', mobile], cwd: extension });
+    assert.equal(foreign.adapter?.value, 'app');
+    assert.equal(foreign.adapter?.source, 'detect');
+    assert.deepEqual(foreign.slot, { value: null, source: 'none', detail: 'no-pool-dir' });
+    assert.deepEqual(foreign.ignoredBinding, { path: inherited, repoRoot: extension });
+    assert.match(
+      formatHarnessContext(foreign),
+      new RegExp(`binding ignored \\(belongs to ${extension}\\)$`, 'u'),
+    );
+
+    // Its own checkout, a subdirectory of it, and a symlink to it are bound.
+    const own = await resolveHarnessContext({ tokens: ['--target', extension], cwd: mobile });
+    assert.equal(own.adapter?.source, 'binding');
+    assert.equal(own.slot?.value, 'mmedev-1');
+    fs.mkdirSync(path.join(extension, 'ui'));
+    const inside = await resolveHarnessContext({
+      tokens: ['--target', path.join(extension, 'ui')],
+      cwd: mobile,
+    });
+    assert.equal(inside.adapter?.source, 'binding');
+    const link = path.join(tempRoot(), 'linked-extension');
+    fs.symlinkSync(extension, link);
+    runtimeContext(extension, { platform: 'web', slotId: 'mmedev-1', repoRoot: link });
+    const viaLink = await resolveHarnessContext({ tokens: ['--target', extension], cwd: mobile });
+    assert.equal(viaLink.adapter?.source, 'binding');
+    assert.equal(viaLink.ignoredBinding, undefined);
+
+    // Without repoRoot, a context outside the target is foreign too.
+    runtimeContext(extension, { platform: 'web' });
+    const unnamed = await resolveHarnessContext({ tokens: ['--target', mobile], cwd: extension });
+    assert.deepEqual(unnamed.ignoredBinding, { path: inherited, repoRoot: null });
+    assert.match(
+      formatHarnessContext(unnamed),
+      /binding ignored \(belongs to an unnamed checkout\)$/u,
+    );
+  });
+
+  test('--runtime-dir is read before the binding, with or without a default context', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('web'), adapter('app'));
+    write(
+      checkout,
+      'alt/runtime/agentic-runtime.json',
+      JSON.stringify({ platform: 'app', slotId: 'alt-1', repoRoot: checkout }),
+    );
+    const tokens = ['--target', checkout, '--runtime-dir', 'alt/runtime'];
+    const alone = await resolveHarnessContext({ tokens });
+    assert.deepEqual(alone.adapter, { value: 'app', source: 'binding', detail: 'runtime-context' });
+    assert.equal(alone.slot?.value, 'alt-1');
+    runtimeContext(checkout, { platform: 'web', slotId: 'default-1', repoRoot: checkout });
+    const both = await resolveHarnessContext({
+      tokens: [...tokens.slice(0, 2), '--runtime-dir=alt/runtime'],
+    });
+    assert.equal(both.adapter?.value, 'app');
+    assert.equal(both.slot?.value, 'alt-1');
+    const fallback = await resolveHarnessContext({ tokens: tokens.slice(0, 2) });
+    assert.equal(fallback.adapter?.value, 'web');
+    // A runtime dir the command will refuse binds nothing.
+    const unsafe = await resolveHarnessContext({
+      tokens: [...tokens.slice(0, 2), '--runtime-dir', '../x'],
+    });
+    assert.equal(unsafe.adapter, undefined);
+  });
+
+  test('a platform target is a flag wherever the grammar puts it; adapter: false skips the adapter', async () => {
+    useAdapters(
+      adapter('app', { targets: ['ios', 'android'], detect: { files: () => true } }),
+      adapter('web', { detect: { files: () => true } }),
+    );
+    const cwd = tempRoot();
+    const before = await resolveHarnessContext({
+      tokens: ['android', '--json'],
+      positionals: ['android'],
+      cwd,
+    });
+    const after = await resolveHarnessContext({
+      tokens: ['--json', 'android'],
+      positionals: ['android'],
+      cwd,
+    });
+    assert.deepEqual(before.adapter, { value: 'app', source: 'flag', detail: 'positional' });
+    assert.deepEqual(after.adapter, before.adapter);
+    // The grammar reads an option's value as no positional.
+    const contract = {
+      options: { '--surface': { kind: 'value' as const }, '--json': { kind: 'boolean' as const } },
+    };
+    assert.deepEqual(contractPositionals(['--surface', 'ios', '--json'], contract), []);
+    assert.deepEqual(contractPositionals(['--json', 'android', '--', 'ios'], contract), [
+      'android',
+    ]);
+    // adapter: false resolves the target and slot only, so a tie is never reached.
+    const targetOnly = await resolveHarnessContext({ tokens: [], cwd, adapter: false });
+    assert.equal(targetOnly.adapter, undefined);
+    assert.deepEqual(targetOnly.slot, { value: null, source: 'none', detail: 'no-pool-dir' });
   });
 
   test('ambiguous: more than one match stops with the candidates and what matched', async () => {

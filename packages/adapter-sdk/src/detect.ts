@@ -15,7 +15,9 @@ export type AdapterDetectSpec = Readonly<RecipeLibraryAdapterDetect>;
  * The predicates a spec describes. `remote` matches when the origin URL contains
  * any entry. `files` matches when every path exists (a trailing `/` requires a
  * directory) and package.json lists every `packageDependencies` entry in
- * dependencies or devDependencies. A predicate with no entries is left out.
+ * dependencies or devDependencies. A path counts only when its real path stays
+ * inside the checkout, so a symlink out of it matches nothing. A predicate with
+ * no entries is left out.
  */
 export function adapterDetectFromSpec(spec: AdapterDetectSpec): AdapterDetect {
   const remotes = spec.remote ?? [];
@@ -32,22 +34,38 @@ export function adapterDetectFromSpec(spec: AdapterDetectSpec): AdapterDetect {
   return detect;
 }
 
-function exists(target: string, file: string): boolean {
+// The real path of `file` in the checkout, or undefined when it is missing or
+// resolves outside the checkout.
+function inCheckout(target: string, file: string): string | undefined {
   try {
-    const stat = fs.statSync(path.join(target, file));
-    return !file.endsWith('/') || stat.isDirectory();
+    const root = fs.realpathSync(target);
+    const real = fs.realpathSync(path.join(target, file));
+    const relative = path.relative(root, real);
+    const outside =
+      relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    return outside ? undefined : real;
   } catch {
     // Missing, or unreadable: the checkout does not have it.
+    return undefined;
+  }
+}
+
+function exists(target: string, file: string): boolean {
+  const real = inCheckout(target, file);
+  if (real === undefined) return false;
+  try {
+    return !file.endsWith('/') || fs.statSync(real).isDirectory();
+  } catch {
+    // Removed since: the checkout does not have it.
     return false;
   }
 }
 
 function packageDependencies(target: string): Set<string> {
+  const manifest = inCheckout(target, 'package.json');
+  if (manifest === undefined) return new Set();
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >;
+    const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8')) as Record<string, unknown>;
     const names = (value: unknown) =>
       value !== null && typeof value === 'object' ? Object.keys(value) : [];
     return new Set([...names(pkg.dependencies), ...names(pkg.devDependencies)]);

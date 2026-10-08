@@ -3155,3 +3155,39 @@ describe('call', () => {
     );
   });
 });
+
+describe('the resolved context in discovery envelopes', () => {
+  test('actions, run --list, call --list and run --describe carry it', async () => {
+    const context = {
+      adapter: {
+        value: 'api',
+        source: 'detect' as const,
+        detail: 'files',
+        matched: ['files' as const],
+      },
+      target: { value: process.cwd(), source: 'default' as const, detail: 'cwd' as const },
+    };
+    setHarnessContext(context);
+    const branches = {
+      'actions --categories': () =>
+        handleActions(parseArgs(['--categories', '--adapter', 'web', '--json']), {
+          catalog: engine,
+        }),
+      actions: () => handleActions(parseArgs(['--adapter', 'web', '--json']), { catalog: engine }),
+      'actions --matrix': () =>
+        handleActions(parseArgs(['--matrix', '--json']), { catalog: engine }),
+      'actions --matrix refusal': () =>
+        handleActions(parseArgs(['--matrix', '--categories', '--json']), { catalog: engine }),
+      'run --list': () => handleRun(['--list', '--adapter', 'api', '--json'], runOptions),
+      'run --describe': () =>
+        handleRun(['hello', '--describe', '--adapter', 'api', '--json'], runOptions),
+      'run --describe, missing': () =>
+        handleRun(['nope', '--describe', '--adapter', 'api', '--json'], runOptions),
+      'call --list': () => handleCall(['--list', '--adapter', 'web', '--json'], callOptions),
+    };
+    for (const [name, invoke] of Object.entries(branches)) {
+      const result = await capture(invoke);
+      assert.deepEqual(lastJson(result.stdout).context, context, name);
+    }
+  });
+});

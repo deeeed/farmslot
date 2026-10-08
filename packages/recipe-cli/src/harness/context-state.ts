@@ -41,6 +41,12 @@ export interface HarnessContext {
         ports: Record<string, number>;
       }
     | { value: null; source: 'none'; detail: 'no-pool-dir' };
+  /**
+   * A runtime context the checkout would have read (an inherited
+   * RECIPE_RUNTIME_CONTEXT) whose repoRoot is another checkout: it binds no
+   * adapter or slot here.
+   */
+  ignoredBinding?: { path: string; repoRoot: string | null };
 }
 
 /** One adapter whose detect predicates matched a checkout. */

@@ -29,6 +29,7 @@ import {
   resolveActionCapabilityMatrix,
 } from '../catalog.js';
 import { color } from '../cli-color.js';
+import { harnessContextField } from '../context-state.js';
 import { harnessHost, invokedHostCommand } from '../host.js';
 import {
   type CliOptions,
@@ -92,7 +93,11 @@ export async function handleActions(
   if (categoriesOnly) {
     if (json)
       console.log(
-        JSON.stringify({ schemaVersion: 1, command: 'actions', adapter, categories }, null, 2),
+        JSON.stringify(
+          { schemaVersion: 1, command: 'actions', ...harnessContextField(), adapter, categories },
+          null,
+          2,
+        ),
       );
     else for (const entry of categories) console.log(`${entry.name} (${entry.count})`);
     return EXIT.ok;
@@ -170,6 +175,7 @@ export async function handleActions(
         {
           schemaVersion: 1,
           command: 'actions',
+          ...harnessContextField(),
           adapter,
           ...(query ? { query } : {}),
           category,
@@ -240,6 +246,7 @@ function actionsError(
         {
           schemaVersion: 1,
           command: 'actions',
+          ...harnessContextField(),
           ...context,
           error: { code, message, ...details, userAction },
         },
@@ -335,6 +342,7 @@ async function handleActionMatrix(
         {
           schemaVersion: 1,
           command: 'actions',
+          ...harnessContextField(),
           view: 'matrix',
           adapters,
           ...(input.query ? { query: input.query } : {}),
@@ -551,7 +559,11 @@ export async function handleListExecutables(
     const recipes = select(available, (recipe) => recipeDomain(recipe.name));
     if (json) {
       console.log(
-        JSON.stringify({ schemaVersion: 1, command, action: 'list', adapter, recipes }, null, 2),
+        JSON.stringify(
+          { schemaVersion: 1, command, ...harnessContextField(), action: 'list', adapter, recipes },
+          null,
+          2,
+        ),
       );
       return EXIT.ok;
     }
@@ -620,7 +632,11 @@ export async function handleListExecutables(
 
   if (json) {
     console.log(
-      JSON.stringify({ schemaVersion: 1, command, action: 'list', adapter, actions }, null, 2),
+      JSON.stringify(
+        { schemaVersion: 1, command, ...harnessContextField(), action: 'list', adapter, actions },
+        null,
+        2,
+      ),
     );
     return EXIT.ok;
   }
@@ -692,6 +708,7 @@ export async function handleDescribeRecipe(
           {
             schemaVersion: 1,
             command: 'run',
+            ...harnessContextField(),
             action: 'describe',
             status: 'fail',
             error: { code, message, userAction },
@@ -721,6 +738,7 @@ export async function handleDescribeRecipe(
         {
           schemaVersion: 1,
           command: 'run',
+          ...harnessContextField(),
           action: 'describe',
           status: 'pass',
           recipe,

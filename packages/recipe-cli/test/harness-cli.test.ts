@@ -1286,6 +1286,8 @@ export const adapter = {
       {
         options: contractOptions(HELP, JSON_FLAG, TARGET, {
           '--adapter': valueOption((tokens) => adapterChoices(optionValues(tokens, '--library'))),
+          '--task': optionalValueOption(),
+          '--watch': booleanOption(),
         }),
       },
       {
@@ -1389,6 +1391,30 @@ export const adapter = {
     assert.deepEqual(imported(), ['shop']);
     const help = await capture(() => cli.main(['status', '--help']));
     assert.equal(help.result.exitCode, 0);
+  });
+
+  test('status --task and --watch resolve the target and slot only, so an ambiguous checkout is fine', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    process.env.RECIPE_LIBRARY_PATH = `terms=${detectingLibrary({
+      terminal: { packageDependencies: ['next'] },
+      shop: { packageDependencies: ['next'] },
+    })}`;
+    const cli = createHarnessCli(contextOptions([]));
+    for (const argv of [
+      ['status', '--task', '--json'],
+      ['status', '--task=dir', '--json'],
+      ['status', '--watch'],
+    ]) {
+      const { result, stderr } = await capture(() => cli.main(argv));
+      assert.deepEqual(result, { exitCode: 0, exit: 'code' }, argv.join(' '));
+      assert.equal(stderr, '');
+      assert.deepEqual(harnessContext(), {
+        target: { value: checkout, source: 'default', detail: 'cwd' },
+        slot: { value: null, source: 'none', detail: 'no-pool-dir' },
+      });
+    }
+    assert.deepEqual(imported(), []);
   });
 
   test('a command without context options, or a hidden one, detects nothing', async () => {

@@ -64,3 +64,16 @@ test('packageDependencies alone is a files predicate; an empty spec detects noth
   assert.deepEqual(adapterDetectFromSpec({}), {});
   assert.deepEqual(adapterDetectFromSpec({ remote: [], files: [] }), {});
 });
+
+test('a path that resolves outside the checkout matches nothing; an inner link does', (t) => {
+  const outside = checkout(t, { 'package.json': JSON.stringify({ dependencies: { next: '1' } }) }, [
+    'src/features/perpetuals',
+  ]);
+  const root = checkout(t, {}, ['real/features']);
+  fs.symlinkSync(path.join(outside, 'src'), path.join(root, 'src'));
+  fs.symlinkSync(path.join(outside, 'package.json'), path.join(root, 'package.json'));
+  fs.symlinkSync('real', path.join(root, 'inner'));
+  assert.equal(adapterDetectFromSpec({ files: ['src/features/perpetuals/'] }).files?.(root), false);
+  assert.equal(adapterDetectFromSpec({ packageDependencies: ['next'] }).files?.(root), false);
+  assert.equal(adapterDetectFromSpec({ files: ['inner/features/'] }).files?.(root), true);
+});

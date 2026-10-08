@@ -26,6 +26,7 @@ import { color } from './cli-color.js';
 import {
   type CliUsageError,
   type CommandContract,
+  contractPositionals,
   type ContractValidationOptions,
   optionValues,
   validatePublicInvocation,
@@ -289,10 +290,13 @@ async function loadSelectedAdapter(
   try {
     let selected: string | undefined;
     let contextLine: string | undefined;
-    if (takesContext(command) && !hasHelp(argv)) {
+    const mode = contextMode(command, tokens);
+    if (mode !== 'none' && !command.hidden && !hasHelp(argv)) {
       const slotPoolDir = options.slotPoolDir?.();
       const context = await resolveHarnessContext({
         tokens,
+        positionals: contractPositionals(tokens, command.contract),
+        adapter: mode === 'full',
         load: libraries,
         ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
         ...(slotPoolDir ? { slotPoolDir } : {}),
@@ -342,10 +346,20 @@ async function loadSelectedAdapter(
 }
 
 // A public command whose grammar takes the context options resolves a context.
-function takesContext(command: HarnessCommand): boolean {
-  if (command.hidden) return false;
+// `status --task`/`--watch` resolves its target and slot only: the task view
+// reads files, so no adapter is detected, refused as ambiguous or loaded.
+function contextMode(
+  command: HarnessCommand,
+  tokens: readonly string[],
+): 'full' | 'target' | 'none' {
+  if (command.hidden) return 'none';
   const options = command.contract.options;
-  return ['--adapter', '--platform', '--target'].some((option) => option in options);
+  if (!['--adapter', '--platform', '--target'].some((option) => option in options)) return 'none';
+  const taskView =
+    command.name === 'status' &&
+    (optionValues(tokens, '--task').length > 0 ||
+      beforePassthrough(tokens).some((token) => token === '--watch' || token === '--task'));
+  return taskView ? 'target' : 'full';
 }
 
 function hasHelp(argv: readonly string[]): boolean {

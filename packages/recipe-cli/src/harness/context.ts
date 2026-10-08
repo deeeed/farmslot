@@ -22,11 +22,20 @@ import {
 } from './adapters.js';
 import { optionValues } from './command-contract.js';
 import type { HarnessContext } from './context-state.js';
-import { resolveRuntimeContextPath } from './overlay.js';
+import { validateRelativeRecipePath } from './host.js';
+import { recipeRuntimeDir } from './paths.js';
 
 export interface ResolveHarnessContextOptions {
   /** The command's tokens, after the command name. */
   tokens: readonly string[];
+  /**
+   * The command's positionals as its grammar reads them (`contractPositionals`);
+   * the first may be a platform target (`launch --json ios`). Default: the
+   * first token, when it is not an option.
+   */
+  positionals?: readonly string[];
+  /** false: resolve the target and slot only, never an adapter. Default true. */
+  adapter?: boolean;
   /** Default: process.cwd(). */
   cwd?: string;
   /** The libraries whose declarations are candidates: the loader's trust set. */
@@ -73,7 +82,8 @@ export async function resolveHarnessContext(
   // Without --target, a subdirectory answers for its checkout: the binding, the
   // slot and detection read the Git top level.
   const root = targetFlag ? target.value : (gitTopLevel(target.value) ?? target.value);
-  const runtime = readRuntimeContext(root);
+  const binding = readBinding(root, optionValues(options.tokens, '--runtime-dir').at(-1));
+  const runtime = binding.runtime;
   const poolDir = options.slotPoolDir ?? slotPoolDir();
   const pooled = poolDir ? await poolSlot(root, poolDir) : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
@@ -83,18 +93,25 @@ export async function resolveHarnessContext(
     (pooled === 'no-pool-dir' ? { value: null, source: 'none', detail: 'no-pool-dir' } : undefined);
 
   const adapter: ContextAdapter | undefined =
-    flagAdapter(options.tokens) ??
-    sourced(platformAdapter(runtime?.platform), 'binding', 'runtime-context') ??
-    sourced(platformAdapter(pooledSlot?.platform), 'slot', 'slot-config') ??
-    detectedAdapter(
-      root,
-      // A declaration that claims a built-in id is no candidate; selecting it
-      // reports the conflict.
-      declared.filter((entry) => !registry.has(entry.id) || adapterPlugin(entry.id)),
-    ) ??
-    sourced(options.defaultAdapter, 'default', 'default');
+    options.adapter === false
+      ? undefined
+      : (flagAdapter(options.tokens, options.positionals) ??
+        sourced(platformAdapter(runtime?.platform), 'binding', 'runtime-context') ??
+        sourced(platformAdapter(pooledSlot?.platform), 'slot', 'slot-config') ??
+        detectedAdapter(
+          root,
+          // A declaration that claims a built-in id is no candidate; selecting
+          // it reports the conflict.
+          declared.filter((entry) => !registry.has(entry.id) || adapterPlugin(entry.id)),
+        ) ??
+        sourced(options.defaultAdapter, 'default', 'default'));
 
-  return { ...(adapter ? { adapter } : {}), target, ...(slot ? { slot } : {}) };
+  return {
+    ...(adapter ? { adapter } : {}),
+    target,
+    ...(slot ? { slot } : {}),
+    ...(binding.ignored ? { ignoredBinding: binding.ignored } : {}),
+  };
 }
 
 /** The one human line: `context: adapter <id> (<source>), target <path> (<source>), slot <id> (<source>)`. */
@@ -109,6 +126,10 @@ export function formatHarnessContext(context: HarnessContext): string {
   const parts = [adapter, `target ${context.target.value} (${context.target.detail})`];
   if (context.slot?.value === null) parts.push('slot unknown (no pool dir)');
   else if (context.slot) parts.push(`slot ${context.slot.value} (${context.slot.detail})`);
+  if (context.ignoredBinding)
+    parts.push(
+      `binding ignored (belongs to ${context.ignoredBinding.repoRoot ?? 'an unnamed checkout'})`,
+    );
   return `context: ${parts.join(', ')}`;
 }
 
@@ -120,9 +141,12 @@ function sourced(
   return value === undefined ? undefined : { value, source, detail };
 }
 
-// The last --adapter, else the adapter of the last --platform, else a leading
-// positional platform target (`launch ios`).
-function flagAdapter(tokens: readonly string[]): ContextAdapter | undefined {
+// The last --adapter, else the adapter of the last --platform, else a first
+// positional that is a platform target (`launch ios`, `launch --json ios`).
+function flagAdapter(
+  tokens: readonly string[],
+  positionals: readonly string[] | undefined,
+): ContextAdapter | undefined {
   const adapter = optionValues(tokens, '--adapter').at(-1);
   if (adapter !== undefined) return { value: adapter, source: 'flag', detail: '--adapter' };
   const platform = optionValues(tokens, '--platform').at(-1);
@@ -132,7 +156,7 @@ function flagAdapter(tokens: readonly string[]): ContextAdapter | undefined {
       source: 'flag',
       detail: '--platform',
     };
-  const first = tokens[0];
+  const first = positionals ? positionals[0] : tokens[0];
   if (first !== undefined && !first.startsWith('-') && isPlatformTarget(first))
     return { value: adapterForPlatform(first) ?? first, source: 'flag', detail: 'positional' };
   return undefined;
@@ -172,18 +196,53 @@ function gitTopLevel(dir: string): string | undefined {
 
 type RuntimeContext = Record<string, unknown>;
 
-// The runtime context a run's prepare wrote into the checkout, or undefined.
-function readRuntimeContext(target: string): RuntimeContext | undefined {
+// The runtime context a run's prepare wrote for this checkout, read where the
+// commands read it: RECIPE_RUNTIME_CONTEXT, else <root>/<runtime dir>, where an
+// explicit --runtime-dir counts before RECIPE_RUNTIME_DIR. A context whose
+// repoRoot is another checkout (an inherited RECIPE_RUNTIME_CONTEXT) binds
+// nothing and is reported; one without repoRoot binds only from inside `root`.
+function readBinding(
+  root: string,
+  runtimeDir: string | undefined,
+): { runtime?: RuntimeContext; ignored?: NonNullable<HarnessContext['ignoredBinding']> } {
+  let file: string;
   let value: unknown;
   try {
-    value = JSON.parse(fs.readFileSync(resolveRuntimeContextPath(target), 'utf8'));
+    file =
+      process.env.RECIPE_RUNTIME_CONTEXT ??
+      path.join(
+        root,
+        runtimeDir === undefined
+          ? recipeRuntimeDir()
+          : validateRelativeRecipePath('--runtime-dir', runtimeDir),
+        'agentic-runtime.json',
+      );
+    value = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
-    // No context, one mid-write, or an unreadable one: the checkout is unbound.
-    return undefined;
+    // No context, one mid-write, an unreadable one, or a runtime dir the
+    // command will refuse itself: the checkout is unbound.
+    return {};
   }
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as RuntimeContext)
-    : undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const runtime = value as RuntimeContext;
+  const repoRoot = typeof runtime.repoRoot === 'string' ? runtime.repoRoot : undefined;
+  const owns = repoRoot === undefined ? within(root, file) : within(repoRoot, root);
+  return owns ? { runtime } : { ignored: { path: file, repoRoot: repoRoot ?? null } };
+}
+
+// Whether `inner` is `outer` or inside it, comparing real paths.
+function within(outer: string, inner: string): boolean {
+  try {
+    const relative = path.relative(fs.realpathSync(outer), fs.realpathSync(inner));
+    return !(
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    );
+  } catch {
+    // A path that does not exist owns nothing.
+    return false;
+  }
 }
 
 const RUNTIME_PORTS = ['watcherPort', 'devServerPort', 'metroPort', 'cdpPort'] as const;
