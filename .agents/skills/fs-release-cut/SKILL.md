@@ -55,7 +55,7 @@ After the proposal looks right:
 yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --execute
 ```
 
-This bumps workspace versions, finalizes changelog sections, writes `release-notes.json`, and syncs `PROTOCOL_VERSION` when protocol is in the group.
+This bumps workspace versions, finalizes changelog sections, writes `release-notes.json`, and syncs `PROTOCOL_VERSION`, with the version line of the generated gateway API reference, when protocol is in the group.
 
 Commit separately:
 

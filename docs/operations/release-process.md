@@ -49,7 +49,7 @@ Effects:
 - Bumps `package.json` versions (patch by default; pass `--bump minor|major` to `--assist`)
 - Moves included bullets verbatim into `## X.Y.Z - YYYY-MM-DD`
 - Writes `release-notes.json` for UI surfaces
-- Syncs `PROTOCOL_VERSION` when `packages/protocol` is in the group
+- Syncs `PROTOCOL_VERSION` when `packages/protocol` is in the group, and the protocol version line of `apps/docs/docs/reference/gateway-api.generated.md` with it (the changelog guard counts that file as release-only)
 
 ### 3. Commit
 
