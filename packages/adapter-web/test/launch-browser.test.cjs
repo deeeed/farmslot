@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
@@ -11,6 +12,7 @@ const { cdpListenerPids } = require('../src/browser-cdp.cjs');
 const { runtimeIdentityPath, validationPortQuarantinePath } = require('../src/chrome-args.cjs');
 const { extensionIdFromExtensionDir } = require('../src/extension-id.cjs');
 const { homeTabsToClose, launchBrowser } = require('../src/launch-browser.cjs');
+const { profileProcessPids } = require('../src/validation-process-ownership.cjs');
 
 const FAKE_BROWSER = path.join(__dirname, 'fixtures/fake-cdp-browser.cjs');
 
@@ -238,6 +240,62 @@ describe('launchBrowser', () => {
       assert.equal(released, true);
     } finally {
       server.close();
+    }
+  });
+
+  it('stops waiting for the CDP listener once the launched browser has exited', async () => {
+    const dir = runtime('exited');
+    const port = await freePort();
+    process.env.FAKE_CDP_MODE = 'crash';
+    const started = Date.now();
+    try {
+      assert.throws(
+        () => launchBrowser(options(dir, port)),
+        /did not expose an owned CDP listener on 127\.0\.0\.1:\d+: the browser exited\. Next: inspect /u,
+      );
+    } finally {
+      delete process.env.FAKE_CDP_MODE;
+    }
+    // The full wait is 300 polls (30 s or more); an exit is confirmed within about a second.
+    assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
+    assert.equal(fs.existsSync(path.join(dir, 'logs/chrome.pid')), false);
+  });
+
+  it('refuses once a process it did not launch takes the port during the wait', async () => {
+    const dir = runtime('foreign-late');
+    const port = await freePort();
+    let foreign = null;
+    // A browser that never listens, and a foreign listener that binds the port
+    // after the pre-launch ownership check. It exits with this test process.
+    const startForeign = ({ message }) => {
+      if (message !== 'starting the browser' || foreign) return;
+      foreign = spawn(
+        process.execPath,
+        [
+          '-e',
+          `require('net').createServer().listen(${port}, '127.0.0.1');
+           setInterval(() => { try { process.kill(${process.pid}, 0); } catch { process.exit(0); } }, 200);
+           setTimeout(() => process.exit(0), 20000);`,
+        ],
+        { stdio: 'ignore' },
+      );
+    };
+    process.env.FAKE_CDP_MODE = 'silent';
+    const started = Date.now();
+    try {
+      assert.throws(
+        () => launchBrowser(options(dir, port, { progress: startForeign })),
+        (error) =>
+          error.message.includes(`Refusing to launch on CDP port ${port}`) &&
+          error.message.includes(`pid ${foreign.pid}`),
+      );
+      assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
+      // The foreign listener is left alone; the browser this launch started is stopped.
+      assert.deepEqual(cdpListenerPids(port), [foreign.pid]);
+      assert.deepEqual(profileProcessPids(path.join(dir, 'profile')), []);
+    } finally {
+      delete process.env.FAKE_CDP_MODE;
+      foreign?.kill('SIGKILL');
     }
   });
 

@@ -63,8 +63,15 @@ const STUB_BROWSER = path.join(HERE, 'fixtures/web-dapp-stub-browser.mjs');
 const TEST_SIGNER = path.join(HERE, 'fixtures/web-dapp-test-signer.mjs');
 // The public Hardhat test mnemonic: no funds, no secret.
 const TEST_MNEMONIC = 'test test test test test test test test test test test junk';
+// Helper processes exit once this test worker is gone: the after hook cannot
+// reap them when the worker dies first, and a listener left behind holds its
+// port for good. The worker's pid is fixed here, not read from the child's
+// ppid, which is already 1 when the worker dies before the child starts.
+const FOLLOW_WORKER = `setInterval(() => { try { process.kill(${process.pid}, 0); } catch { process.exit(0); } }, 500);`;
 const LISTEN =
   "require('http').createServer((q, r) => r.end('ok')).listen(Number(process.argv[1]), '127.0.0.1')";
+// LISTEN for a helper's own child, which needs its own watcher.
+const CHILD_LISTEN = JSON.stringify(`${FOLLOW_WORKER} ${LISTEN}`);
 const started = [];
 
 after(() => {
@@ -105,7 +112,7 @@ function sleepProcess() {
 // environment of platform binaries such as /bin/sleep from ps.
 function nodeProcess(code, argv = [], { env = {}, cwd } = {}) {
   return track(
-    spawn(process.execPath, ['-e', code, '--', ...argv.map(String)], {
+    spawn(process.execPath, ['-e', `${FOLLOW_WORKER} ${code}`, '--', ...argv.map(String)], {
       detached: true,
       stdio: 'ignore',
       cwd,
@@ -142,7 +149,7 @@ async function slot({ env = FORCED, listen = 'self' } = {}) {
   if (listen === 'self') devServer = nodeProcess(LISTEN, [appPort], { env, cwd: root });
   else if (listen === 'child')
     devServer = nodeProcess(
-      `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[1]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
+      `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[1]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
       [appPort],
       { env, cwd: root },
     );
@@ -433,7 +440,7 @@ describe('process ownership', () => {
 
   it('kills the whole process group, including children that ignore SIGTERM', async () => {
     const leader = nodeProcess(
-      "require('child_process').spawn('/bin/sh', ['-c', 'trap \"\" TERM; while :; do sleep 1; done'], { stdio: 'ignore' }); setInterval(() => {}, 1000)",
+      `require('child_process').spawn('/bin/sh', ['-c', 'trap "" TERM; while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done'], { stdio: 'ignore' }); setInterval(() => {}, 1000)`,
     );
     const group = () =>
       spawnSync('pgrep', ['-g', String(leader)], { encoding: 'utf8' }).stdout.trim();
@@ -462,7 +469,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
       const code =
         listen === 'self'
           ? `${LISTEN.replace('process.argv[1]', 'process.argv[3]')}`
-          : `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[3]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`;
+          : `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[3]], { stdio: 'ignore' }); setInterval(() => {}, 1000)`;
       const server = nodeProcess(code, devArgv(appPort), { env: FORCED, cwd: root });
       writeFileSync(path.join(root, 'temp/farmslot/next-dev.pid'), `${server}\n`);
       await listening(appPort);
@@ -491,7 +498,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
     mkdirSync(path.join(parentRoot, 'temp/farmslot'), { recursive: true });
     const port1 = await freePort();
     const parent = nodeProcess(
-      `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(LISTEN)}, process.argv[3]], { stdio: 'ignore', env: { ...process.env, NEXT_PUBLIC_HYPERLIQUID_FORCE_TESTNET: 'false' } }); setInterval(() => {}, 1000)`,
+      `require('child_process').spawn(process.execPath, ['-e', ${CHILD_LISTEN}, process.argv[3]], { stdio: 'ignore', env: { ...process.env, NEXT_PUBLIC_HYPERLIQUID_FORCE_TESTNET: 'false' } }); setInterval(() => {}, 1000)`,
       ['next', 'dev', port1],
       { env: FORCED, cwd: parentRoot },
     );
@@ -513,7 +520,7 @@ describe('dev server testnet diagnostic (advisory)', () => {
         process.execPath,
         [
           '-e',
-          LISTEN.replace('process.argv[1]', 'process.argv[3]'),
+          `${FOLLOW_WORKER} ${LISTEN.replace('process.argv[1]', 'process.argv[3]')}`,
           '--',
           'next',
           'dev',

@@ -284,13 +284,20 @@ export function spawnScriptStreaming(
       for (const signal of parentSignals)
         process.removeListener(signal, parentSignalHandlers[signal]);
     };
+    let groupKilled = false;
     const signalChildTree = (signal: NodeJS.Signals): void => {
       try {
-        if (ownsProcessGroup && child.pid) process.kill(-child.pid, signal);
-        else child.kill(signal);
+        if (ownsProcessGroup && child.pid) {
+          process.kill(-child.pid, signal);
+          if (signal === 'SIGKILL') groupKilled = true;
+        } else child.kill(signal);
       } catch (error) {
-        // ESRCH: the owned child tree already exited.
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        const { code } = error as NodeJS.ErrnoException;
+        // ESRCH: the owned child tree already exited. EPERM once this group was
+        // SIGKILLed: macOS refuses to signal a group whose only members are
+        // zombies not yet reaped, so the group is gone too. Any other EPERM is
+        // a real permission problem and still throws.
+        if (code !== 'ESRCH' && !(code === 'EPERM' && groupKilled)) throw error;
       }
     };
     const exitFromForwardedSignal = (): void => {

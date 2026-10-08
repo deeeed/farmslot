@@ -159,12 +159,7 @@ function runLaunch(opts, acquireLock) {
   // Chrome), so we refuse rather than kill it or attach to it.
   const listenerPids = cdpListenerPids(cdpPort);
   const foreignPids = listenerPids.filter((pid) => !ownedBrowser(pid));
-  if (foreignPids.length > 0) {
-    throw new Error(
-      `Refusing to launch on CDP port ${cdpPort}: it is held by a browser this harness did not launch (pid ${foreignPids.join(', ')}). ` +
-        `Next: pick a free --cdp-port, or stop that browser.`,
-    );
-  }
+  if (foreignPids.length > 0) throw foreignPortError(cdpPort, foreignPids);
   const ownedPids = new Set(listenerPids);
   for (const pid of profileProcessPids(profile)) ownedPids.add(pid);
   const previousPid = readPidFile(opts.chromePid);
@@ -246,11 +241,16 @@ function runLaunch(opts, acquireLock) {
     process.platform === 'darwin' ? macApplicationForExecutable(opts.chromeBin) : null;
   if (application) chromeArgs.push('--no-startup-window');
   else chromeArgs.push(loadsOverCdp ? 'about:blank' : initialUrl);
-  const ownedListenerMissing = () =>
-    new Error(
-      `Chrome launched but did not expose an owned CDP listener on 127.0.0.1:${cdpPort}. ` +
+  // The wait ended without an owned listener: a foreign process took the port,
+  // the browser exited, or it never listened in time.
+  const ownedListenerMissing = (waited) => {
+    if (waited.foreignPids) return foreignPortError(cdpPort, waited.foreignPids);
+    const exited = waited.exited ? ': the browser exited' : '';
+    return new Error(
+      `Chrome launched but did not expose an owned CDP listener on 127.0.0.1:${cdpPort}${exited}. ` +
         `Next: inspect ${opts.chromeLog}, then ${rerun}`,
     );
+  };
   const logFd = fs.openSync(opts.chromeLog, 'a');
   const previousFrontmost = captureMacFrontmost();
   let browserPid;
@@ -263,11 +263,12 @@ function runLaunch(opts, acquireLock) {
           env: sanitizedChildEnv(),
           stdio: ['ignore', logFd, logFd],
         });
-        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser, opts.progress);
-        if (browserPid === null) {
+        const waited = waitForOwnedCdpPid(cdpPort, ownedBrowser, profile, opts.progress);
+        if (waited.pid === undefined) {
           stopProfileProcessesSync(profile, { waitForAppearanceMs: 400 });
-          throw ownedListenerMissing();
+          throw ownedListenerMissing(waited);
         }
+        browserPid = waited.pid;
       } else {
         const child = spawn(opts.chromeBin, chromeArgs, {
           detached: true,
@@ -275,11 +276,12 @@ function runLaunch(opts, acquireLock) {
           stdio: ['ignore', logFd, logFd],
         });
         child.unref();
-        browserPid = waitForOwnedCdpPid(cdpPort, ownedBrowser, opts.progress);
-        if (browserPid === null) {
+        const waited = waitForOwnedCdpPid(cdpPort, ownedBrowser, profile, opts.progress);
+        if (waited.pid === undefined) {
           stopProfileProcessesSync(profile, { extraPids: child.pid ? [child.pid] : [] });
-          throw ownedListenerMissing();
+          throw ownedListenerMissing(waited);
         }
+        browserPid = waited.pid;
       }
       if (loadsOverCdp)
         cdpLoad = loadExtensionOverCdp(opts, browserPid, initialUrl, clearLaunchMarkers);
@@ -501,11 +503,32 @@ function macApplicationForExecutable(executable) {
   return null;
 }
 
-function waitForOwnedCdpPid(port, ownedBrowser, progress) {
+function foreignPortError(port, pids) {
+  return new Error(
+    `Refusing to launch on CDP port ${port}: it is held by a browser this harness did not launch (pid ${pids.join(', ')}). ` +
+      `Next: pick a free --cdp-port, or stop that browser.`,
+  );
+}
+
+// Polls for the launched browser's own CDP listener: `{ pid }` once it appears.
+// Stops early with `{ exited: true }` once no process holds the profile, or with
+// `{ foreignPids }` once only processes it did not launch hold the port (the
+// browser can no longer bind it). Either must hold for a second, so a slow
+// start or a brief ps/lsof gap is not taken for a failure. `{}` on timeout.
+function waitForOwnedCdpPid(port, ownedBrowser, profile, progress) {
   const attempts = 300;
+  const confirmMs = 1000;
+  let exitedSince = null;
+  let foreignSince = null;
   for (let i = 0; i < attempts; i += 1) {
-    const pid = cdpListenerPids(port).find(ownedBrowser);
-    if (pid !== undefined) return pid;
+    const listeners = cdpListenerPids(port);
+    const pid = listeners.find(ownedBrowser);
+    if (pid !== undefined) return { pid };
+    const now = Date.now();
+    exitedSince = profileProcessPids(profile).length > 0 ? null : (exitedSince ?? now);
+    if (exitedSince !== null && now - exitedSince >= confirmMs) return { exited: true };
+    foreignSince = listeners.length > 0 ? (foreignSince ?? now) : null;
+    if (foreignSince !== null && now - foreignSince >= confirmMs) return { foreignPids: listeners };
     // Every 50 attempts (about 5 s): enough to show the wait is moving.
     if (i > 0 && i % 50 === 0) {
       progress({
@@ -517,7 +540,7 @@ function waitForOwnedCdpPid(port, ownedBrowser, progress) {
     }
     spawnSync('sleep', ['0.1']);
   }
-  return null;
+  return {};
 }
 
 function assertIsolatedProfile(profile) {
