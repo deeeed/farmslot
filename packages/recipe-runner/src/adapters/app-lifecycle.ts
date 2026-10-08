@@ -168,17 +168,24 @@ function lifecyclePlatformCalls(
   throw new Error(`Unsupported app.lifecycle platform: ${String(target.platform)}`);
 }
 
+// adb joins the words after `shell` into one command line that the device's
+// shell parses, so a value from the target is single-quoted for that shell.
+function deviceShellWord(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 function androidLifecycleCalls(
   command: Exclude<AppLifecycleCommand, 'restart'>,
   target: AppLifecycleTarget,
 ): AppLifecycleCall[] {
   const adb = 'adb';
   const serialArgs = target.deviceId ? ['-s', target.deviceId] : [];
+  const appId = deviceShellWord(target.appId);
   if (command === 'background') {
     return [{ file: adb, args: [...serialArgs, 'shell', 'input', 'keyevent', 'HOME'] }];
   }
   if (command === 'terminate') {
-    return [{ file: adb, args: [...serialArgs, 'shell', 'am', 'force-stop', target.appId] }];
+    return [{ file: adb, args: [...serialArgs, 'shell', 'am', 'force-stop', appId] }];
   }
   if (command === 'foreground') {
     return [
@@ -189,7 +196,7 @@ function androidLifecycleCalls(
           'shell',
           'monkey',
           '-p',
-          target.appId,
+          appId,
           '-c',
           'android.intent.category.LAUNCHER',
           '1',
@@ -216,7 +223,7 @@ function androidLifecycleCalls(
         '-a',
         'android.intent.action.VIEW',
         '-d',
-        target.launchUrl,
+        deviceShellWord(target.launchUrl),
       ],
     });
     return calls;
@@ -229,7 +236,7 @@ function androidLifecycleCalls(
         'shell',
         'monkey',
         '-p',
-        target.appId,
+        appId,
         '-c',
         'android.intent.category.LAUNCHER',
         '1',
