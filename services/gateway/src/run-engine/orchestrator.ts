@@ -1504,7 +1504,7 @@ async function executeStep(runId: string, step: string, generation: number): Pro
       return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });
 
     case S.FIND_SLOT:
-      return executeFindSlotStep(runId, run, {
+      return executeFindSlotStep(runId, run, generation, {
         broadcastFn,
         buildDispatchPreviewParamsForRun,
         createEngineDecision,

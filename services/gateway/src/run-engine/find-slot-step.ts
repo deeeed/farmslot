@@ -20,7 +20,9 @@ import {
   getProjectField,
   loadProjectVars,
   readSlotRow,
+  resetSlotIf,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
 import {
@@ -221,9 +223,46 @@ async function claimSelectedSlot(
     }
   }
 
-  const claim = await claimSlotStatusIf(
+  await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
+  if (selectedExecutionTemplate && !run.executionTemplate) {
+    updateRun(runId, { executionTemplate: selectedExecutionTemplate });
+  }
+}
+
+/**
+ * The claim write itself, with its refusal named and a superseded attempt's
+ * claim undone. Exported with its state writers injectable so the cancel
+ * window can be driven with the write still pending.
+ */
+export async function commitSlotClaim(
+  slotId: string,
+  runId: string,
+  generation: number,
+  phase: 'preparing' | 'working',
+  agent: 'working' | undefined,
+  opts: { takeoverLiveOwner?: boolean; reserveOnly?: boolean } | undefined,
+  deps: {
+    claimSlotStatusIf?: typeof claimSlotStatusIf;
+    resetSlotIf?: typeof resetSlotIf;
+    updateSlotStatusIf?: typeof updateSlotStatusIf;
+    readRow?: typeof readSlotRow;
+    runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
+    listSlotRuns?: () => Promise<SlotHistoryRun[]>;
+  } = {},
+): Promise<void> {
+  const {
+    claimSlotStatusIf: claimIf = claimSlotStatusIf,
+    resetSlotIf: resetIf = resetSlotIf,
+    updateSlotStatusIf: updateIf = updateSlotStatusIf,
+    readRow = readSlotRow,
+    runLookup = getRun,
+    listSlotRuns = getAllRunsWithArchived,
+  } = deps;
+  const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
+  const claim = await claimIf(
     slotId,
-    (slot) => slotClaimAllowed(slot, runId, generation, getRun, Boolean(opts?.takeoverLiveOwner)),
+    (slot) =>
+      slotClaimAllowed(slot, runId, generation, runLookup, Boolean(opts?.takeoverLiveOwner)),
     // Ownership binds in the SAME claim write — EXCEPT for the nudge
     // takeover, which must leave current_run_id with the prior run:
     // nudgeDispatch's handoff re-reads the owner to terminalize it only
@@ -235,25 +274,43 @@ async function claimSelectedSlot(
       // Takeover reserves the handoff instead of rebinding ownership. An
       // ordinary claim consumes the claimant's own reservation (fresh reuse
       // fences with one before teardown); a foreign one was refused above.
-      ...(opts?.takeoverLiveOwner || opts?.reserveOnly
+      ...(reservation
         ? { handoff_run_id: runId }
         : { current_run_id: runId, handoff_run_id: null }),
       ...(agent ? { agent } : {}),
     },
   );
   if (!claim.claimed) {
-    if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
-    const row = await readSlotRow(slotId);
-    const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
+    if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
+    const row = await readRow(slotId);
+    const blocker = row ? slotClaimBlocker(row, runId, runLookup) : null;
     throw slotClaimRefusedError(
       slotId,
       blocker
-        ? await describeSlotClaimBlocker(slotId, blocker, getAllRunsWithArchived)
+        ? await describeSlotClaimBlocker(slotId, blocker, listSlotRuns)
         : 'slot changed hands during the claim',
     );
   }
-  if (selectedExecutionTemplate && !run.executionTemplate) {
-    updateRun(runId, { executionTemplate: selectedExecutionTemplate });
+  // The predicate passed, but a cancel, pause or replay can still land while
+  // the write is being renamed into place. That cleanup fenced the slot at the
+  // pre-claim epoch, so it can no longer clear this claim: undo it here,
+  // fenced on the epoch this claim wrote. A reservation only drops itself —
+  // the slot's own worker and owner were never this run's.
+  if (runSupersededSince(runLookup(runId), generation)) {
+    if (reservation) {
+      await updateIf(
+        slotId,
+        (slot) => slot.slot_epoch === claim.epoch && slot.handoff_run_id === runId,
+        { handoff_run_id: null },
+      );
+    } else {
+      await resetIf(
+        slotId,
+        (slot) => slot.slot_epoch === claim.epoch && slot.current_run_id === runId,
+        Boolean((await readRow(slotId))?.warm),
+      );
+    }
+    throw runChangedError(runId, slotId);
   }
 }
 
@@ -502,14 +559,16 @@ async function consumeRunPressureAdmissionRef(
   await persistRunNow(updated, 'pressure-admission-ref-consumption');
 }
 
+/**
+ * `generation` is the engine attempt running this step: a cancel, pause or
+ * replay that moves the run off it owns the run, and no claim may land for it.
+ */
 export async function executeFindSlotStep(
   runId: string,
   run: Run,
+  generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
-  // This attempt's generation: a cancel, pause or replay after this point owns
-  // the run, and no claim may land for it.
-  const generation = run.engineState?.generation ?? 0;
   if (canReconcileReviewQaRun(run)) {
     const project = await loadProjectConfig(run.project);
     const current = getRun(runId);

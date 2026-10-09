@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  commitSlotClaim,
   EXPLICIT_SLOT_RELEASE_WAIT_MS,
   previewWhenSlotClaimable,
   slotClaimAllowed,
@@ -283,4 +284,166 @@ test('the claim CAS keeps takeover semantics for a current run', () => {
     slotClaimAllowed({ ...liveOwned, handoff_run_id: 'other' }, 'new-run', 0, lookup, true),
     false,
   );
+});
+
+/**
+ * In-memory slot status with the claim write's rename held open: the CAS
+ * predicate runs, then the write waits on `release` before it lands, as
+ * claimSlotStatusIf does while atomicWriteStatus renames the file.
+ */
+function pendingWriteStatus(row: Record<string, unknown>) {
+  const rows = new Map([[String(row.slot), { ...row }]]);
+  let release!: () => void;
+  const written = new Promise<void>((resolve) => (release = resolve));
+  let predicatePassed!: () => void;
+  const predicateDone = new Promise<void>((resolve) => (predicatePassed = resolve));
+  const applyIf = (
+    slotId: string,
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+    fields: Record<string, unknown>,
+  ) => {
+    const slot = rows.get(slotId)!;
+    if (!predicate(slot)) return false;
+    Object.assign(slot, fields);
+    return true;
+  };
+  return {
+    rows,
+    release,
+    predicateDone,
+    deps: {
+      claimSlotStatusIf: async (
+        slotId: string,
+        predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+        fields: Record<string, unknown>,
+      ) => {
+        const slot = rows.get(slotId)!;
+        if (!predicate(slot)) return { claimed: false, epoch: null };
+        predicatePassed();
+        await written;
+        const epoch = (Number(slot.slot_epoch) || 0) + 1;
+        Object.assign(slot, fields, { slot_epoch: epoch });
+        return { claimed: true, epoch };
+      },
+      resetSlotIf: async (
+        slotId: string,
+        predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+        warm = false,
+      ) =>
+        applyIf(slotId, predicate, {
+          lifecycle: 'ready',
+          phase: null,
+          agent: 'idle',
+          warm,
+          current_run_id: null,
+          handoff_run_id: null,
+        }),
+      updateSlotStatusIf: async (
+        slotId: string,
+        predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+        fields: Record<string, unknown>,
+      ) => applyIf(slotId, predicate, fields),
+      readRow: async (slotId: string) => rows.get(slotId) ?? null,
+    },
+  };
+}
+
+test('a cancel that lands while the claim write is pending leaves the slot free', async () => {
+  const status = pendingWriteStatus({ ...readyRow, slot_epoch: 4, warm: true });
+  const runs: Record<string, Lookup> = { 'new-run': { status: 'slot-finding' } };
+  const claim = commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+    ...status.deps,
+    runLookup: (id) => runs[id],
+  });
+  await status.predicateDone;
+  runs['new-run'] = { status: 'cancelled' };
+  status.release();
+  await assert.rejects(claim, (error: Error & { code?: string }) => {
+    assert.equal(error.code, 'SLOT_CLAIM_REFUSED');
+    assert.match(error.message, /Run new-run changed while waiting for slot macpro-mm-pixel6/);
+    return true;
+  });
+  const row = status.rows.get(SLOT)!;
+  assert.equal(row.current_run_id, null, 'the cancelled run must not keep the slot');
+  assert.equal(row.lifecycle, 'ready');
+  assert.equal(row.slot_epoch, 5);
+  assert.equal(row.warm, true);
+  assert.equal(runs['new-run'].status, 'cancelled');
+});
+
+test('a takeover reservation superseded mid-write drops only itself', async () => {
+  const liveOwned = {
+    ...readyRow,
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    current_run_id: 'live',
+    slot_epoch: 7,
+  };
+  const status = pendingWriteStatus(liveOwned);
+  const runs: Record<string, Lookup> = {
+    'new-run': { status: 'slot-finding' },
+    live: { status: 'monitoring' },
+  };
+  const claim = commitSlotClaim(
+    SLOT,
+    'new-run',
+    0,
+    'working',
+    'working',
+    { takeoverLiveOwner: true },
+    { ...status.deps, runLookup: (id) => runs[id] },
+  );
+  await status.predicateDone;
+  runs['new-run'] = { status: 'paused' };
+  status.release();
+  await assert.rejects(claim, /Run new-run changed while waiting/);
+  const row = status.rows.get(SLOT)!;
+  assert.equal(row.handoff_run_id, null);
+  assert.equal(row.current_run_id, 'live', 'the live owner keeps its slot');
+});
+
+test('a claim the CAS refuses is named; one refused for a superseded run says so', async () => {
+  const runs: Record<string, Lookup> = {
+    'new-run': { status: 'slot-finding' },
+    live: { status: 'monitoring' },
+  };
+  const owned = pendingWriteStatus({
+    ...readyRow,
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'live',
+  });
+  await assert.rejects(
+    commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+      ...owned.deps,
+      runLookup: (id) => runs[id],
+    }),
+    /cannot be claimed: slot is claimed by live run live \(monitoring\)/,
+  );
+  const free = pendingWriteStatus({ ...readyRow });
+  runs['new-run'] = { status: 'cancelled' };
+  await assert.rejects(
+    commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+      ...free.deps,
+      runLookup: (id) => runs[id],
+    }),
+    /Run new-run changed while waiting for slot/,
+  );
+  assert.equal(free.rows.get(SLOT)!.current_run_id, null, 'nothing was written');
+});
+
+test('a claim for a current run binds the slot', async () => {
+  const status = pendingWriteStatus({ ...readyRow, slot_epoch: 2 });
+  const claim = commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+    ...status.deps,
+    runLookup: () => ({ status: 'slot-finding' }),
+  });
+  await status.predicateDone;
+  status.release();
+  await claim;
+  const row = status.rows.get(SLOT)!;
+  assert.equal(row.current_run_id, 'new-run');
+  assert.equal(row.phase, 'preparing');
+  assert.equal(row.slot_epoch, 3);
 });
