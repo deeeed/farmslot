@@ -81,7 +81,11 @@ test('an interrupted capture stream keeps the partial video and snapshots fall b
     nodeId: 'run',
     record: 'full_run',
   });
-  await assert.rejects(active.snapshot!(path.join(dir, 'lost.png')), /exited before the snapshot/u);
+  // Stop the helper on every exit path; stop() after it exited only reads its result.
+  t.after(() => active.stop().catch(() => undefined));
+  // The stream stops under this snapshot; it is taken outside the session instead.
+  const inFlight = await active.snapshot!(path.join(dir, 'in-flight.png'));
+  assert.equal(inFlight.fallbackFrom, 'record_session_snapshot');
   const fallback = await active.snapshot!(path.join(dir, 'after.png'));
   assert.equal(fallback.fallbackFrom, 'record_session_snapshot');
   assert.match(String(fallback.fallbackReason), /-3805/u);
@@ -108,6 +112,7 @@ test('exit 3 without the stream_interrupted event is still a failed recording', 
     nodeId: 'run',
     record: 'full_run',
   });
+  t.after(() => active.stop().catch(() => undefined));
   await assert.rejects(active.snapshot!(path.join(dir, 'lost.png')), /exited before the snapshot/u);
   await assert.rejects(active.snapshot!(path.join(dir, 'after.png')), /no longer active/u);
   await assert.rejects(active.stop(), /capture-helper record failed \(exit 3\)/u);

@@ -18,8 +18,8 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 import {
-  CAPTURE_INTERRUPTED,
-  captureInterruptedMessage,
+  captureInterruptedTraceEntry,
+  runCaptureInterruption,
 } from '../recording/capture-helper-interruption.js';
 import { writeRecordingTimeline } from '../recording/timeline.js';
 import { RECIPE_RUNNER_VERSION } from '../version.js';
@@ -477,10 +477,11 @@ class DefaultRecipeRunner implements RecipeRunner {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const videoArtifact = await this.#stopRunVideoRecording(
+          const { entry: videoArtifact, interruption } = await this.#stopRunVideoRecording(
             recordingToStop,
-            traceWriter.list(),
+            traceWriter,
             artifactWriter,
+            startedAt,
           );
           artifactWriter.register(videoArtifact);
           if (videoArtifact.timelinePath)
@@ -490,30 +491,10 @@ class DefaultRecipeRunner implements RecipeRunner {
               category: 'system',
               label: 'Recording frames and action markers',
             });
-          if (videoArtifact.interruption) {
+          if (interruption) {
             // The partial video stays registered as evidence; the run still fails, typed.
-            const message = captureInterruptedMessage(
-              videoArtifact.interruption,
-              videoArtifact.path,
-            );
-            captureInterruption = {
-              ...videoArtifact.interruption,
-              videoPath: videoArtifact.path,
-              message,
-            };
-            traceWriter.record({
-              nodeId: 'recipe-run:video',
-              action: 'record.video',
-              startedAt: startedAt.toISOString(),
-              endedAt: new Date().toISOString(),
-              durationMs: Date.now() - startedAt.getTime(),
-              ok: false,
-              cause_class: 'environment',
-              error: message,
-              error_code: CAPTURE_INTERRUPTED,
-              error_details: videoArtifact.interruption,
-            });
-            this.#logger.error(`record.video interrupted: ${message}`);
+            captureInterruption = interruption;
+            this.#logger.error(`record.video interrupted: ${interruption.message}`);
             status = 'fail';
           }
         } catch (error) {
@@ -776,10 +757,17 @@ class DefaultRecipeRunner implements RecipeRunner {
 
   async #stopRunVideoRecording(
     runRecording: RunVideoRecording,
-    trace: import('./types.js').TraceEntry[],
+    traceWriter: JsonTraceWriter,
     artifactWriter: JsonArtifactWriter,
-  ): Promise<RecipeArtifactManifestEntry> {
+    runStartedAt: Date,
+  ): Promise<{ entry: RecipeArtifactManifestEntry; interruption?: RecipeRunCaptureInterruption }> {
     const result = await runRecording.recording.stop();
+    const interruption = result.interruption
+      ? runCaptureInterruption(result.interruption, runRecording.entry.path)
+      : undefined;
+    // Record the failure before the timeline, which is bound to the final trace.
+    if (interruption) traceWriter.record(captureInterruptedTraceEntry(interruption, runStartedAt));
+    const trace = traceWriter.list();
     await assertVideoOutputReady(runRecording.outputPath);
     await copyFileWithinRoots(
       runRecording.stagingRoot,
@@ -823,7 +811,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     } else
       entry.timelineUnavailableReason =
         result.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.';
-    return entry;
+    return { entry, ...(interruption ? { interruption } : {}) };
   }
 
   #hudAction(): string | undefined {

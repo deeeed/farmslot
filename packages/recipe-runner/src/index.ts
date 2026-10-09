@@ -123,8 +123,11 @@ export {
 export {
   CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT,
   CAPTURE_INTERRUPTED,
-  captureInterruptedMessage,
+  type CaptureHelperInterruptionEvent,
+  keptCaptureInterruption,
   parseCaptureHelperInterruption,
+  recordCaptureInterruptionInPackage,
+  runCaptureInterruption,
 } from './recording/capture-helper-interruption.js';
 export { readCaptureHelperTiming } from './recording/capture-helper-timing.js';
 export type { CdpVideoRecorderOptions } from './recording/cdp-video-recorder.js';

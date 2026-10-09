@@ -14,7 +14,8 @@ import type {
 } from '../core/types.js';
 
 import {
-  CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT,
+  type CaptureHelperInterruptionEvent,
+  keptCaptureInterruption,
   parseCaptureHelperInterruption,
 } from './capture-helper-interruption.js';
 import { readCaptureHelperTiming } from './capture-helper-timing.js';
@@ -130,7 +131,8 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     if (request.maxSize != null) args.push('--max-size', String(request.maxSize));
 
     const startedAtUnixMs = Date.now();
-    const child = spawn(this.#captureHelperPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const helperPath = this.#captureHelperPath;
+    const child = spawn(helperPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const stderr: string[] = [];
     let ready = false;
     let eventBuffer = '';
@@ -144,7 +146,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     >();
     const usedSnapshotPaths = new Set<string>();
     let recordingId: string | undefined;
-    let interruption: ReturnType<typeof parseCaptureHelperInterruption>;
+    let interruption: CaptureHelperInterruptionEvent | undefined;
     child.stderr.setEncoding('utf-8');
     child.stderr.on('data', (chunk: string) => {
       stderr.push(chunk);
@@ -206,9 +208,16 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     // 'close' waits for stderr to drain, so a terminal stream_interrupted line is parsed first.
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       child.once('close', (code, signal) => {
-        for (const snapshot of snapshots.values()) {
+        const kept = keptCaptureInterruption(code, interruption);
+        for (const [outputPath, snapshot] of snapshots) {
           clearTimeout(snapshot.timer);
-          snapshot.reject(new Error('Recorder exited before the snapshot completed.'));
+          // The stream stopped under this snapshot: take it outside the session instead.
+          if (kept)
+            standaloneSnapshot(helperPath, request.target, outputPath, kept.cause).then(
+              snapshot.resolve,
+              snapshot.reject,
+            );
+          else snapshot.reject(new Error('Recorder exited before the snapshot completed.'));
         }
         snapshots.clear();
         resolve({ code, signal });
@@ -254,17 +263,18 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     }
     const getVersion = () => this.version;
     const stopTimeoutMs = this.#stopTimeoutMs;
-    const helperPath = this.#captureHelperPath;
     return {
       ...(sessionSnapshots
         ? {
             snapshot(outputPath: string): Promise<Record<string, unknown>> {
               if (/[\r\n]/.test(outputPath))
                 return Promise.reject(new Error('Snapshot path cannot contain a newline.'));
-              if (child.exitCode !== null || child.signalCode !== null)
-                return interruption
-                  ? standaloneSnapshot(helperPath, request.target, outputPath, interruption.cause)
+              if (child.exitCode !== null || child.signalCode !== null) {
+                const kept = keptCaptureInterruption(child.exitCode, interruption);
+                return kept
+                  ? standaloneSnapshot(helperPath, request.target, outputPath, kept.cause)
                   : Promise.reject(new Error('Recording is no longer active.'));
+              }
               if (usedSnapshotPaths.has(outputPath))
                 return Promise.reject(
                   new Error('This snapshot path was already used in this recording.'),
@@ -295,14 +305,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         });
         const expectedInterrupt = result.signal === 'SIGINT';
         // capture-helper finalized the frames it had before its stream stopped.
-        const kept =
-          result.code === CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT && interruption
-            ? {
-                frames: interruption.frames,
-                mediaTimeMs: interruption.mediaTimeMs,
-                cause: interruption.cause,
-              }
-            : undefined;
+        const kept = keptCaptureInterruption(result.code, interruption);
         const stoppedAtUnixMs = Date.now();
         if (result.code !== 0 && !expectedInterrupt && !kept) {
           throw new Error(

@@ -813,10 +813,16 @@ export async function prepareHeal(
 // Failure text to classify. A capture interruption is reported on its own (captureInterruptedViolation).
 function readRunFailureText(result: RecipeRunResult): string {
   try {
-    const trace = JSON.parse(fs.readFileSync(result.tracePath, 'utf8')) as {
-      entries?: Array<{ ok?: boolean; error?: unknown; error_code?: unknown }>;
-    };
-    const entries = Array.isArray(trace.entries) ? trace.entries : [];
+    type Entry = { ok?: boolean; error?: unknown; error_code?: unknown };
+    // A runner without provenance writes the entries as a bare array.
+    const trace = JSON.parse(fs.readFileSync(result.tracePath, 'utf8')) as
+      | Entry[]
+      | { entries?: Entry[] };
+    const entries = Array.isArray(trace)
+      ? trace
+      : Array.isArray(trace.entries)
+        ? trace.entries
+        : [];
     return entries
       .filter(
         (entry) =>

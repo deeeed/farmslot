@@ -703,23 +703,25 @@ describe('engine door', () => {
     const message =
       'CAPTURE_INTERRUPTED: the recording stream stopped after 2400 frames (80.0 s): com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted. The partial video is kept at videos/recipe-run.mp4.';
     const captureFailure = { ok: false, error: message, error_code: 'CAPTURE_INTERRUPTED' };
-    const run = (entries: unknown[]) => async () => {
-      fs.writeFileSync(tracePath, JSON.stringify({ entries }));
-      return {
-        status: 'fail',
-        tracePath,
-        summaryPath: '',
-        artifactManifestPath: '',
-        captureInterruption: {
-          frames: 2400,
-          mediaTimeMs: 79966.7,
-          cause:
-            'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
-          videoPath: 'videos/recipe-run.mp4',
-          message,
-        },
-      } as RecipeRunResult;
-    };
+    const run =
+      (entries: unknown[], bare = false) =>
+      async () => {
+        fs.writeFileSync(tracePath, JSON.stringify(bare ? entries : { entries }));
+        return {
+          status: 'fail',
+          tracePath,
+          summaryPath: '',
+          artifactManifestPath: '',
+          captureInterruption: {
+            frames: 2400,
+            mediaTimeMs: 79966.7,
+            cause:
+              'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+            videoPath: 'videos/recipe-run.mp4',
+            message,
+          },
+        } as RecipeRunResult;
+      };
     const lone = await executeWithHealBounds(run([captureFailure]), root, newHealState());
     assert.equal(lone.violation?.code, 'CAPTURE_INTERRUPTED');
     assert.equal(lone.violation?.exitCode, 4);
@@ -733,6 +735,13 @@ describe('engine door', () => {
     );
     assert.equal(withAppFailure.violation?.code, 'APP_LOGIC_FAILURE');
     assert.doesNotMatch(withAppFailure.violation?.originalError ?? '', /CAPTURE_INTERRUPTED/u);
+    // A trace written as a bare array (runner without provenance) is read the same way.
+    const bare = await executeWithHealBounds(
+      run([captureFailure, { ok: false, error: 'expected text "Limit" was not visible' }], true),
+      root,
+      newHealState(),
+    );
+    assert.equal(bare.violation?.code, 'APP_LOGIC_FAILURE');
   });
 
   test('keeps the pinned device over the slot default, applies the platform env, and restores every key', () => {

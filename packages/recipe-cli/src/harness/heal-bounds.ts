@@ -199,7 +199,7 @@ export function captureInterruptedViolation(
     exitCode: EXIT.bounded,
     message: interruption.message,
     userAction: `review the partial video at ${interruption.videoPath} (artifacts); rerun the recipe for a full recording`,
-    originalError: interruption.cause,
+    originalError: interruption.message,
   };
 }
 
