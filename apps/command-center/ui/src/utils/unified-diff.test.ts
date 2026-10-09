@@ -84,3 +84,35 @@ test('text before the first file is kept as the preamble', () => {
   assert.equal(split.files.length, 2);
   assert.deepEqual(splitUnifiedDiff('plain text, no diff').files, []);
 });
+
+test('combined diff --cc hunks are counted and end where their ranges do', () => {
+  const files = parseUnifiedDiff(
+    [
+      'diff --cc src/conflict.ts',
+      'index 1111111,2222222..0000000',
+      '--- a/src/conflict.ts',
+      '+++ b/src/conflict.ts',
+      '@@@ -1,3 -1,3 +1,7 @@@',
+      '  shared',
+      '++<<<<<<< ours',
+      ' +ours line',
+      '++=======',
+      '+ theirs line',
+      '++>>>>>>> theirs',
+      '  tail',
+      'diff --git a/src/other.ts b/src/other.ts',
+      '--- a/src/other.ts',
+      '+++ b/src/other.ts',
+      '@@ -1 +1 @@',
+      '-a',
+      '+b',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    files.map(({ path, additions, deletions }) => ({ path, additions, deletions })),
+    [
+      { path: 'src/conflict.ts', additions: 5, deletions: 0 },
+      { path: 'src/other.ts', additions: 1, deletions: 1 },
+    ],
+  );
+});

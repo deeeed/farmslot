@@ -15,7 +15,7 @@ import '../diff-viewer/diff-review.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { visibleDiffSelection } from '../../utils/diff-test-filter.js';
+import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 export interface NativeSessionApi {
@@ -236,24 +236,38 @@ export class NativeWorkspace extends LitElement {
     return this.testFilter.split(files);
   }
 
-  /** A newly hidden selected change hands the viewer to the first listed change. */
+  /**
+   * A newly hidden selected change hands the viewer to the first listed change;
+   * with nothing listed the selection goes, and so does any request in flight.
+   */
   private leaveHiddenFile() {
     if (this.tab !== 'changes' || !this.selected || !this.testFilter.hides(this.selected)) return;
-    const next = visibleDiffSelection(this.changeSplit().visible, this.selected);
-    if (next) {
-      void this.openFile(next, 'diff');
-    } else {
+    const handOff = diffSelectionHandOff(
+      this.changeSplit().visible,
+      this.selected,
+      Boolean(this.diff || this.source) || this.loading,
+    );
+    if (handOff.kind === 'select') {
+      void this.openFile(handOff.path, 'diff');
+    } else if (handOff.kind === 'clear') {
+      this.revision++;
       this.selected = '';
       this.source = undefined;
       this.diff = undefined;
+      this.loading = false;
     }
   }
 
-  /** Changes mode filters its list; a Files-mode diff carries the toggle itself. */
+  /**
+   * Changes mode filters its list; a Files-mode diff carries the toggle itself.
+   * A hidden test file's diff never renders, whichever way it arrived.
+   */
   private renderDiff(diff: NativeWorkspaceDiffResult) {
     const review = () =>
       html`<diff-review .filename=${diff.path} .diff=${diff.diff}></diff-review>`;
-    return this.tab === 'files' ? this.testFilter.renderFileDiff(diff.path, review) : review();
+    return this.tab === 'files' || this.testFilter.hides(diff.path)
+      ? this.testFilter.renderFileDiff(diff.path, review)
+      : review();
   }
 
   private switchTab(tab: 'files' | 'changes') {

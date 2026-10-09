@@ -1,6 +1,6 @@
-// Splits unified diff text (`git diff`, `git show`, `diff -u`) into per-file
-// entries. Hunk lengths are counted, so a removed line that starts with `--`
-// never reads as a new file header.
+// Splits unified diff text (`git diff`, `git show`, `diff -u`, combined
+// `diff --cc`) into per-file entries. Hunk lengths are counted, so a removed
+// line that starts with `--` never reads as a new file header.
 
 export interface DiffFileEntry {
   path: string;
@@ -17,7 +17,15 @@ export interface UnifiedDiffSplit {
 
 // git's default a/ b/ prefixes plus the diff.mnemonicPrefix ones (c/ w/ i/ o/).
 const GIT_HEADER = /^diff --git [abciow]\/(.*?) [abciow]\/(.*)$/;
-const HUNK_HEADER = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+// `@@ -a,b +c,d @@`, or `@@@ -a,b -c,d +e,f @@@` for a combined diff (one `-`
+// range and one prefix column per parent).
+const HUNK_HEADER = /^(@{2,}) ((?:-\d+(?:,\d+)? )+)\+\d+(?:,(\d+))? \1/;
+const COMBINED_HEADER = /^diff --(?:cc|combined) (.*)$/;
+
+/** Line count of a hunk range: `12,4` → 4, a bare `12` → 1. */
+function rangeLength(range: string | undefined): number {
+  return range === undefined ? 1 : Number(range);
+}
 
 /** Path from a `--- ` / `+++ ` header: prefix and `diff -u` timestamp dropped. */
 function headerPath(line: string): string {
@@ -37,7 +45,8 @@ export function splitUnifiedDiff(diffText: string): UnifiedDiffSplit {
   let additions = 0;
   let deletions = 0;
   let hasFileHeader = false;
-  let oldLeft = 0;
+  // Lines still to read in the current hunk, per parent and for the result.
+  let parentsLeft: number[] = [];
   let newLeft = 0;
 
   const flush = () => {
@@ -60,22 +69,32 @@ export function splitUnifiedDiff(diffText: string): UnifiedDiffSplit {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (oldLeft > 0 || newLeft > 0) {
+    if (newLeft > 0 || parentsLeft.some((left) => left > 0)) {
       body.push(line);
-      if (line.startsWith('+')) {
-        newLeft -= 1;
-        additions += 1;
-      } else if (line.startsWith('-')) {
-        oldLeft -= 1;
+      if (line.startsWith('\\')) continue;
+      // One column per parent. A removed line (`-` in some column) is only in
+      // the parents marked `-`; a result line is in every parent not marked `+`.
+      const columns = line.slice(0, parentsLeft.length);
+      const removed = columns.includes('-');
+      parentsLeft = parentsLeft.map((left, column) =>
+        (removed ? columns[column] === '-' : columns[column] !== '+') ? left - 1 : left,
+      );
+      if (removed) {
         deletions += 1;
-      } else if (!line.startsWith('\\')) {
-        oldLeft -= 1;
+      } else {
         newLeft -= 1;
+        if (columns.includes('+')) additions += 1;
       }
       continue;
     }
     if (line.startsWith('diff --git ')) {
       start(line.match(GIT_HEADER)?.[2] ?? line.replace(/^diff --git\s+/, ''));
+      body.push(line);
+      continue;
+    }
+    const combined = line.match(COMBINED_HEADER);
+    if (combined) {
+      start(combined[1]);
       body.push(line);
       continue;
     }
@@ -96,8 +115,8 @@ export function splitUnifiedDiff(diffText: string): UnifiedDiffSplit {
     }
     const hunk = line.match(HUNK_HEADER);
     if (hunk) {
-      oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
-      newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+      parentsLeft = [...hunk[2].matchAll(/-\d+(?:,(\d+))?/g)].map((range) => rangeLength(range[1]));
+      newLeft = rangeLength(hunk[3]);
     }
     body.push(line);
   }

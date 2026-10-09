@@ -113,7 +113,8 @@ export class DiffTestFilterController implements ReactiveController {
   /**
    * One file's diff outside a filtered list (an editor tab, a Files-mode
    * preview): the toggle when the file is a test, and a placeholder in place of
-   * the diff while tests are hidden.
+   * the diff while tests are hidden. Inline styles, like the controls: hosts
+   * with a shadow root (native-workspace, slot-workspace) can't see page CSS.
    */
   renderFileDiff(path: string, diff: () => unknown): TemplateResult {
     const controls = this.renderControls(
