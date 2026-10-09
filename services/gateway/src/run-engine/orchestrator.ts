@@ -118,6 +118,7 @@ import {
 } from './recovery.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
 import { executeReviewGate, setReviewGateBroadcast } from './review-gate.js';
+import { runSupersededSince } from './run-generation.js';
 import { refreshRunLinks } from './run-links.js';
 import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
@@ -848,12 +849,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // An operator may cancel while an asynchronous step is failing. The
       // operator-owned terminal state wins over the late exception.
       const interruptedRun = getRun(runId);
-      if (
-        !interruptedRun ||
-        interruptedRun.status === 'cancelled' ||
-        interruptedRun.status === 'paused' ||
-        getRunGeneration(runId) !== myGen
-      ) {
+      if (!interruptedRun || runSupersededSince(interruptedRun, myGen)) {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} threw after ${interruptedRun?.status ?? 'deletion'}; preserving operator state`,
         );

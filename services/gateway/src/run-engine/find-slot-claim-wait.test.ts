@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { EXPLICIT_SLOT_RELEASE_WAIT_MS, previewWhenSlotClaimable } from './find-slot-step.js';
+import {
+  EXPLICIT_SLOT_RELEASE_WAIT_MS,
+  previewWhenSlotClaimable,
+  slotClaimAllowed,
+} from './find-slot-step.js';
 
 const SLOT = 'macpro-mm-pixel6';
 const releasingSince = '2026-10-09T11:04:16.694Z';
@@ -18,7 +22,7 @@ const readyRow = { slot: SLOT, lifecycle: 'ready', phase: null, current_run_id: 
 
 type Lookup = Pick<Run, 'status' | 'engineState'>;
 type SlotRuns = NonNullable<
-  NonNullable<Parameters<typeof previewWhenSlotClaimable>[3]>['listSlotRuns']
+  NonNullable<Parameters<typeof previewWhenSlotClaimable>[4]>['listSlotRuns']
 >;
 
 /**
@@ -67,7 +71,7 @@ test('an explicit slot mid-release is previewed only after the release lands', a
     assert.equal(h.state.previews, 0, 'preview must not run while the release is pending');
     await sleep(ms);
   };
-  const result = await previewWhenSlotClaimable('new-run', SLOT, h.preview, h.deps);
+  const result = await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps);
   assert.equal(result, 'previewed');
   assert.equal(h.state.previews, 1);
   assert.equal(h.state.sleeps, 3);
@@ -78,7 +82,7 @@ test('an explicit slot mid-release is previewed only after the release lands', a
 test('a release that never lands fails after the bound, naming when it started', async () => {
   const h = harness([releasingRow]);
   await assert.rejects(
-    previewWhenSlotClaimable('new-run', SLOT, h.preview, h.deps),
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
     (error: Error & { code?: string }) => {
       assert.equal(error.code, 'SLOT_CLAIM_REFUSED');
       assert.match(error.message, /Slot macpro-mm-pixel6 cannot be claimed/);
@@ -104,7 +108,7 @@ for (const [change, mutate] of [
       h.table['new-run'] = mutate(h.table['new-run']) as Lookup;
     };
     await assert.rejects(
-      previewWhenSlotClaimable('new-run', SLOT, h.preview, h.deps),
+      previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
       /Run new-run changed while waiting for slot macpro-mm-pixel6/,
     );
     assert.equal(h.state.previews, 0);
@@ -120,7 +124,7 @@ test('a slot claimed by a live run fails at once, naming the run and its state',
     },
   );
   await assert.rejects(
-    previewWhenSlotClaimable('new-run', SLOT, h.preview, h.deps),
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
     /cannot be claimed: slot is claimed by live run live \(monitoring\)/,
   );
   assert.equal(h.state.sleeps, 0);
@@ -134,6 +138,7 @@ test('a rival that claims after the release lands is named, not reported as busy
   await assert.rejects(
     previewWhenSlotClaimable(
       'new-run',
+      0,
       SLOT,
       async () => {
         throw new Error('Slot macpro-mm-pixel6: Slot is busy (preparing)');
@@ -153,6 +158,7 @@ test('a preview failure with nothing holding the slot is passed through', async 
   await assert.rejects(
     previewWhenSlotClaimable(
       'new-run',
+      0,
       SLOT,
       async () => {
         throw new Error('Slot repo cannot prepare: single-branch clone');
@@ -211,7 +217,7 @@ test('an occupancy hold fails at once naming its reason, since when and the run 
     },
   ];
   await assert.rejects(
-    previewWhenSlotClaimable('new-run', 'macpro-mme-1', h.preview, h.deps),
+    previewWhenSlotClaimable('new-run', 0, 'macpro-mme-1', h.preview, h.deps),
     (error: Error) => {
       assert.match(
         error.message,
@@ -228,7 +234,7 @@ test('an occupancy hold fails at once naming its reason, since when and the run 
 
 test('a slot still pointing at a terminal run is previewed without waiting', async () => {
   const h = harness([{ ...readyRow, current_run_id: 'prior-run' }]);
-  assert.equal(await previewWhenSlotClaimable('new-run', SLOT, h.preview, h.deps), 'previewed');
+  assert.equal(await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps), 'previewed');
   assert.equal(h.state.sleeps, 0);
   assert.equal(h.state.waits, 0);
 });
@@ -236,8 +242,45 @@ test('a slot still pointing at a terminal run is previewed without waiting', asy
 test('a scored pick previews directly without reading the slot', async () => {
   const h = harness([releasingRow]);
   assert.equal(
-    await previewWhenSlotClaimable('new-run', undefined, h.preview, h.deps),
+    await previewWhenSlotClaimable('new-run', 0, undefined, h.preview, h.deps),
     'previewed',
   );
   assert.equal(h.state.reads, 0);
+});
+
+test('a cancel that lands after the preview still blocks the claim write', async () => {
+  // The step persists the pressure ref and queues the claim after the
+  // preview returns; the claim CAS must re-read the run, not trust the guard.
+  const h = harness([readyRow]);
+  assert.equal(await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps), 'previewed');
+  assert.equal(slotClaimAllowed(readyRow, 'new-run', 0, h.deps.runLookup, false), true);
+  for (const changed of [
+    { status: 'cancelled' },
+    { status: 'paused' },
+    { status: 'slot-finding', engineState: { generation: 1 } },
+  ] as Lookup[]) {
+    h.table['new-run'] = changed;
+    assert.equal(slotClaimAllowed(readyRow, 'new-run', 0, h.deps.runLookup, false), false);
+    assert.equal(slotClaimAllowed(readyRow, 'new-run', 0, h.deps.runLookup, true), false);
+  }
+  h.table['new-run'] = { status: 'slot-finding' };
+  assert.equal(
+    slotClaimAllowed(readyRow, 'new-run', 0, () => undefined, false),
+    false,
+  );
+});
+
+test('the claim CAS keeps takeover semantics for a current run', () => {
+  const lookup = (id: string) =>
+    ({ 'new-run': { status: 'slot-finding' }, live: { status: 'monitoring' } })[id as 'new-run'] as
+      | Lookup
+      | undefined;
+  const liveOwned = { ...readyRow, lifecycle: 'busy', phase: 'working', current_run_id: 'live' };
+  assert.equal(slotClaimAllowed(liveOwned, 'new-run', 0, lookup, false), false);
+  assert.equal(slotClaimAllowed(liveOwned, 'new-run', 0, lookup, true), true);
+  assert.equal(slotClaimAllowed(releasingRow, 'new-run', 0, lookup, true), false);
+  assert.equal(
+    slotClaimAllowed({ ...liveOwned, handoff_run_id: 'other' }, 'new-run', 0, lookup, true),
+    false,
+  );
 });
