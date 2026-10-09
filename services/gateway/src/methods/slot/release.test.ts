@@ -419,3 +419,64 @@ test('slotRelease still releases the new occupant of a slot a gate park freed', 
     },
   );
 });
+
+test('slotRelease refuses unmerged work before it fences the slot or stops the agent', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { poolDir } = await import('../../core/config.js');
+  const { readSlotField } = await import('../../core/index.js');
+  const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-release-unmerged-'));
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-c', 'core.hooksPath=.git/hooks', ...args], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+  };
+  git('init', '-q', '-b', 'main');
+  git(
+    '-c',
+    'user.email=t@example.com',
+    '-c',
+    'user.name=T',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'base',
+  );
+  git('checkout', '-q', '-b', 'PROJ-1-unmerged');
+  writeFileSync(path.join(root, 'fix.txt'), 'work in progress\n');
+  const slotId = `release-unmerged-${process.pid}`;
+  const poolFile = path.join(poolDir, `release-unmerged-fixture-${process.pid}.json`);
+  writeFileSync(
+    poolFile,
+    JSON.stringify({
+      machine: os.hostname(),
+      project: 'farmslot-farm',
+      platform: 'cli',
+      host: 'localhost',
+      ssh_user: os.userInfo().username,
+      slots: [{ id: slotId, repo: root, session: slotId }],
+    }),
+  );
+  t.after(() => {
+    rmSync(poolFile, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+  await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
+  const steps: string[] = [];
+
+  await assert.rejects(
+    () =>
+      slotRelease({ slotId }, (event, payload) => {
+        if (event === 'slot.release.step') steps.push((payload as { name: string }).name);
+      }),
+    /^Error: UNMERGED_WORK:PROJ-1-unmerged:dirty files/,
+  );
+  assert.deepEqual(steps, [], 'no teardown step ran: no posture reconcile, no agent kill');
+  assert.equal(await readSlotField(slotId, 'phase'), 'working', 'the slot was never fenced');
+  assert.equal(await readSlotField(slotId, 'agent'), 'working');
+});

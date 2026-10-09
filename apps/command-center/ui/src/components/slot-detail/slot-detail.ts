@@ -16,6 +16,7 @@ import '../workspace/slot-workspace.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 
 import { slotDetailStyles } from './slot-detail-styles.js';
@@ -190,10 +191,8 @@ export class SlotDetail extends LitElement {
     this._actionExitCode = null;
     this._actionRequestId = requestId;
 
-    // Slot operations (prepare, release, recycle) can take minutes on remote machines
-    const SLOT_TIMEOUT = 5 * 60_000;
     try {
-      await gateway.request(method, { ...params, requestId }, SLOT_TIMEOUT);
+      await gateway.request(method, { ...params, requestId }, SLOT_OPERATION_TIMEOUT_MS);
       // Some slot methods stream script.complete; others complete only via the
       // RPC response. Treat the response as the fallback completion signal so
       // the older slot-detail action panel does not spin forever.

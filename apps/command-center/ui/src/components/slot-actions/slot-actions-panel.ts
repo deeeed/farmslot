@@ -32,12 +32,11 @@ import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import { runSlotPrepare } from '../shared/slot-prepare-client.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-
-const SLOT_ACTION_TIMEOUT = 5 * 60_000;
 
 @customElement('slot-actions-panel')
 export class SlotActionsPanel extends LitElement {
@@ -231,7 +230,7 @@ export class SlotActionsPanel extends LitElement {
     method: string,
     params: Record<string, unknown>,
     actionId: string,
-    timeoutMs = SLOT_ACTION_TIMEOUT,
+    timeoutMs = SLOT_OPERATION_TIMEOUT_MS,
   ): Promise<T | null> {
     // Pre-allocate the requestId UI-side so the strict event matchers in
     // connectedCallback know the key BEFORE any script.output frames arrive.
@@ -373,7 +372,7 @@ export class SlotActionsPanel extends LitElement {
       const result = await gateway.request<SlotActionRunResult>(
         Methods.SLOT_ACTION_RUN,
         { slotId: this.slotId, actionId: action.id },
-        SLOT_ACTION_TIMEOUT,
+        SLOT_OPERATION_TIMEOUT_MS,
       );
       if (action.mode === 'copy' && result.command) {
         await this._copyText(result.command);

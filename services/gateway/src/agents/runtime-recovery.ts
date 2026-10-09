@@ -19,6 +19,7 @@ import {
 
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { readSlotField, SLOT_PHASE_RELEASING } from '../core/index.js';
 import {
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
@@ -29,6 +30,7 @@ import {
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
 import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
 import {
@@ -433,6 +435,7 @@ export async function restoreTmuxWorker(
   if (params.mode !== 'restore-window' && params.mode !== 'reload-session') {
     return reconcileTmuxRunAgentRuntime(run);
   }
+  assertRunNotArchiving(run.id);
   if (isTerminalRunStatus(run.status)) {
     throw new Error(`Run ${run.id} is terminal (${run.status}); restore a live run instead`);
   }
@@ -509,6 +512,11 @@ export async function restoreTmuxWorker(
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
       },
     )}`;
+    // The awaits above leave room for a release (an archive's included) to
+    // start on this slot; a reload then would relaunch the worker it kills.
+    if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING)
+      throw new Error(`Slot ${params.slotId} is being released; its worker cannot be reloaded`);
+    assertRunNotArchiving(run.id);
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched self-review pane; later cleanup owns their teardown.

@@ -1768,6 +1768,55 @@ test('orphan reconcile reclaims a releasing fence through the conditional reset'
   );
 });
 
+test('orphan reconcile reclaims a stale release fence a settled blocked run was left on', async () => {
+  // A restart mid-archive leaves the slot fenced `releasing` with the blocked
+  // run still named on it. The blocked run counts as active, which used to
+  // skip the slot before the stale-release reclaim, so it was stranded for good.
+  const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
+  const blocked = minimalActiveRun({
+    id: 'blocked-archive',
+    status: 'blocked',
+    steps: [{ name: 'monitor', status: 'done' }],
+  });
+  const settledBlocked = (status: Run['steps'][number]['status']) => ({
+    ...blocked,
+    steps: [{ name: 'monitor', status }],
+  });
+  const reclaimed: string[] = [];
+  const updates: Array<{ runId: string; fields: Partial<Run> }> = [];
+  const deps = (owner: Run, phase: string) =>
+    ({
+      listRuns: () => ({ runs: [owner] }),
+      loadFleetStatus: async () => ({
+        slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase }],
+      }),
+      isTerminalTeardownInFlight: () => false,
+      readSlotField: async (_slotId: string, field: string) =>
+        field === 'current_run_id' ? owner.id : stale,
+      getRun: () => owner,
+      updateRun: (runId: string, fields: Partial<Run>) => updates.push({ runId, fields }),
+      broadcast: () => {},
+      resetSlot: async (slotId: string) => reclaimed.push(`unguarded:${slotId}`),
+      resetSlotIf: async (slotId: string) => {
+        reclaimed.push(slotId);
+        return true;
+      },
+      updateSlotStatusIf: async () => true,
+    }) as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps(settledBlocked('running'), 'releasing'));
+  await reconcileOrphanedSlots(deps(blocked, 'pr-watch'));
+  assert.deepEqual(reclaimed, [], 'a live blocked run, or one merely holding its slot, keeps it');
+
+  await reconcileOrphanedSlots(deps(blocked, 'releasing'));
+  assert.deepEqual(reclaimed, ['macwork-ff-2']);
+  assert.deepEqual(
+    updates,
+    [{ runId: 'blocked-archive', fields: { slotId: null } }],
+    'the run is detached and keeps its blocked outcome',
+  );
+});
+
 test('orphan reconcile leaves a releasing fence that is still young', async () => {
   // Reclaiming a LIVE teardown is the worse of the two errors, so the bound
   // is generous and anything inside it keeps its protection.

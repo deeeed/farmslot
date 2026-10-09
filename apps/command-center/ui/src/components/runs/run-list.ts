@@ -32,7 +32,7 @@ import '../queue/dispatch-queue-panel.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { RUN_ARCHIVE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
   inventoryShowsDetail,
@@ -443,7 +443,7 @@ export class RunList extends RunListState {
           await gateway.request<RunArchiveResult>(
             Methods.RUN_ARCHIVE,
             { runId: id },
-            RUN_ARCHIVE_TIMEOUT_MS,
+            SLOT_OPERATION_TIMEOUT_MS,
           );
         } catch (err) {
           console.error(`[run-list] archive ${id} failed:`, err);

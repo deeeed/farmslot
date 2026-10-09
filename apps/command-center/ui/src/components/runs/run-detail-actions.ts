@@ -20,7 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { RUN_ARCHIVE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
@@ -73,7 +73,7 @@ export async function confirmRunLifecycleAction(
     await gateway.request<RunArchiveResult>(
       Methods.RUN_ARCHIVE,
       { runId: run.id },
-      RUN_ARCHIVE_TIMEOUT_MS,
+      SLOT_OPERATION_TIMEOUT_MS,
     );
     context.navigateToRuns();
     return;

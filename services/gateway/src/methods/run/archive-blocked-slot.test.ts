@@ -5,15 +5,21 @@ import test from 'node:test';
 
 import { PipelineSteps, type Run, type SlotReleaseParams } from '@farmslot/protocol';
 
+import { restoreTmuxWorker } from '../../agents/runtime-recovery.js';
 import { readSlotField, updateSlotStatus } from '../../core/index.js';
 import { statusFile } from '../../core/state.js';
-import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
+import {
+  beginRunArchive,
+  endRunArchive,
+  isRunArchiving,
+} from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
 import type { SlotReleasePreflight } from '../slot/release.js';
 import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
 import { type ArchiveSlotRelease, runArchive } from './admin.js';
+import { runAdopt } from './adopt.js';
 import { runReplayStep } from './replay-step.js';
 
 // The real-release case resolves the committed demo pool's slot.
@@ -29,11 +35,11 @@ async function cleanupRun(runId: string): Promise<void> {
 }
 
 /** What a fleet refresh writes for a blocked run's slot: held, owned by the run. */
-async function holdSlotFor(t: test.TestContext, runId: string): Promise<void> {
+async function holdSlotFor(t: test.TestContext, runId: string, phase = 'pr-watch'): Promise<void> {
   const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
   const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
-  const row = { slot: slotId, lifecycle: 'held', phase: 'pr-watch', current_run_id: runId };
+  const row = { slot: slotId, lifecycle: 'held', phase, current_run_id: runId };
   await writeFile(statusFile, JSON.stringify({ ...data, slots: [...others, row] }, null, 2) + '\n');
   t.after(async () => {
     if (priorStatus == null) await rm(statusFile, { force: true });
@@ -122,7 +128,7 @@ test('a slot release guard refusing refuses the archive with its reason', async 
 test('unpushed work on the slot refuses the archive before the release touches the worker', async (t) => {
   const run = blockedRun(t, 'archive-unpushed', [{ name: 'monitor', status: 'done' }]);
   await holdSlotFor(t, run.id);
-  const before = getRun(run.id)!;
+  const before = structuredClone(getRun(run.id)!);
   const { calls, slot } = recordingSlot({
     ...clean,
     unmergedWork: { branch: 'PROJ-1-fix', details: '2 unpushed commits' },
@@ -183,23 +189,85 @@ test('a resume admitted before the archive takes the run makes the archive back 
   assert.equal(isRunArchiving(run.id), false);
 });
 
-test('a replay arriving while the archive releases the slot is refused', async (t) => {
+test('nothing can put a worker back on a run while its archive releases the slot', async (t) => {
   const run = blockedRun(t, 'archive-replay', [{ name: 'monitor', status: 'done' }]);
+  updateRun(run.id, { taskFile: '/tmp/archive-replay/TASK.md' });
   await holdSlotFor(t, run.id);
   const { calls, slot } = recordingSlot();
   const release = slot.release;
-  let replayError: unknown;
+  const refusals: Record<string, unknown> = {};
+  const attempt = (name: string, action: () => Promise<unknown>) =>
+    action()
+      .then(() => assert.fail(`${name} must not start on a run being archived`))
+      .catch((error: unknown) => (refusals[name] = error));
   slot.release = async (params, emit) => {
-    await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, noopEmit)
-      .then(() => assert.fail('replay must not start on a run being archived'))
-      .catch((error: unknown) => (replayError = error));
+    // What the operator can click while the release copies artifacts.
+    await attempt('replay', () =>
+      runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, noopEmit),
+    );
+    await attempt('adopt', () => runAdopt({ runId: run.id, tmux: 'operator-shell' }, noopEmit));
+    await attempt('reload', () =>
+      restoreTmuxWorker({ slotId, runId: run.id, mode: 'reload-session' }),
+    );
     return release(params, emit);
   };
 
   await runArchive({ runId: run.id }, noopEmit, slot);
 
-  assert.match(String(replayError), /is being archived and cannot be replayed/);
+  for (const name of ['replay', 'adopt', 'reload'])
+    assert.match(String(refusals[name]), /is being archived and its slot released/, name);
   assert.equal(calls.releases.length, 1);
   assert.equal(getRun(run.id), undefined, 'the archive completed');
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a replay already past its generation bump aborts when the archive fences the run', async (t) => {
+  const created = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now() % 100_000}`,
+    slotId,
+  });
+  t.after(() => cleanupRun(created.id));
+  const run = updateRun(created.id, {
+    status: 'blocked',
+    error: 'worker blocked',
+    decisions: [],
+    steps: created.steps.map((step) =>
+      step.name === 'self-review'
+        ? { ...step, status: 'failed' }
+        : ['complete', 'human-gate', 'finalize', 'ci-watch'].includes(step.name)
+          ? { ...step, status: 'skipped' }
+          : { ...step, status: 'done' },
+    ),
+  });
+  await holdSlotFor(t, run.id);
+  const slotBefore = await readSlotField(slotId, 'current_run_id');
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'self-review' }, noopEmit, {
+      // The archive takes the run between the replay's bump and its slot work.
+      afterGenerationBump: async () => beginRunArchive(run.id),
+    }),
+    /is being archived and its slot released/,
+  );
+  endRunArchive(run.id);
+  assert.equal(getRun(run.id)?.status, 'blocked', 'the replay did not revive the run');
+  assert.equal(getRun(run.id)?.slotId, slotId);
+  assert.equal(await readSlotField(slotId, 'current_run_id'), slotBefore, 'slot left as it was');
+  assert.equal(await readSlotField(slotId, 'phase'), 'pr-watch');
+});
+
+test('a release a restart cut short is named instead of a retry loop', async (t) => {
+  const run = blockedRun(t, 'archive-interrupted', [{ name: 'monitor', status: 'done' }]);
+  // What survives a restart mid-release: the fence, the blocked owner, no teardown.
+  await holdSlotFor(t, run.id, 'releasing');
+
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit),
+    /slot demo-work-1 is still fenced by a release that did not finish/,
+  );
+  assert.ok(getRun(run.id));
   assert.equal(isRunArchiving(run.id), false);
 });

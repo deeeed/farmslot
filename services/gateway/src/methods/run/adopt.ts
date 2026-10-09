@@ -14,6 +14,7 @@ import {
   cancelRunEngine,
   startRunWithStepAcknowledgement,
 } from '../../run-engine/orchestrator.js';
+import { assertRunNotArchiving } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { observeAdoptableTmuxWorker } from '../../runners/adopt-tmux.js';
 import { cancelNativeRunWorkers } from '../../runners/native/worker.js';
@@ -43,6 +44,7 @@ export async function runAdopt(params: RunAdoptParams, emit: Emit): Promise<RunA
       !['blocked', 'paused'].includes(run.status)
     )
       throw new Error('Adoption requires a paused or blocked run with its task and owned slot');
+    assertRunNotArchiving(run.id);
     if (!params.tmux?.trim() || /[\r\n\t]/.test(params.tmux))
       throw new Error('Adoption requires one tmux session name');
     const slotId = run.slotId;

@@ -21,6 +21,7 @@ import { loadProjectVars, normalizeRawProjectAutoRecovery } from '../core/config
 import { classifyFailureText } from '../core/failure-patterns.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
 import { slotFixtureRefresh } from '../methods/slot.js';
+import { isRunArchivingRefusal } from '../run-lifecycle/archive-fence.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 import { writeAuditRecord } from './audit-writer.js';
@@ -654,7 +655,7 @@ async function maybeRecoverRun(run: Run, timestamp?: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     action.latencyMs = Date.now() - startedAt;
     if (!replayAccepted) clearAutoInProgress(run.id, action.id);
-    if (isForceCompleteReplayRefuse(run.id, message)) {
+    if (isForceCompleteReplayRefuse(run.id, message) || isRunArchivingRefusal(err)) {
       await writeSkippedAction(action, 'manual_in_progress', startedAt);
       return;
     }

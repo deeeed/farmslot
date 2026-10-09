@@ -53,7 +53,7 @@ import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
-import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
+import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -114,8 +114,7 @@ function assertReplayOwnsRun(
 ): void {
   const live = getRun(runId);
   if (!live) throw new Error(`Run not found: ${runId}`);
-  if (isRunArchiving(runId))
-    throw new Error(`Run ${runId} is being archived and cannot be replayed`);
+  assertRunNotArchiving(runId);
   if (live.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
   }
@@ -131,7 +130,7 @@ function isReplayOwnershipError(err: unknown): boolean {
   return (
     err instanceof Error &&
     (err.message.includes('was force-completed and cannot be replayed') ||
-      err.message.includes('is being archived and cannot be replayed'))
+      isRunArchivingRefusal(err))
   );
 }
 
@@ -658,9 +657,7 @@ export async function runReplayStep(
   if (existing.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
   }
-  if (isRunArchiving(params.runId)) {
-    throw new Error(`Run ${params.runId} is being archived and cannot be replayed`);
-  }
+  assertRunNotArchiving(params.runId);
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,

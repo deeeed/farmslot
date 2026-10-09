@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 
 import { Methods, type Run } from '@farmslot/protocol';
 
-import { RUN_ARCHIVE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 const requests: Array<{ method: string; params: unknown; timeout?: number }> = [];
 mock.module('../../gateway-client.js', {
@@ -33,7 +33,7 @@ test('archive waits as long as a slot release, since it may release the run slot
   });
 
   assert.deepEqual(requests, [
-    { method: Methods.RUN_ARCHIVE, params: { runId: 'run-1' }, timeout: RUN_ARCHIVE_TIMEOUT_MS },
+    { method: Methods.RUN_ARCHIVE, params: { runId: 'run-1' }, timeout: SLOT_OPERATION_TIMEOUT_MS },
   ]);
   assert.equal(navigated, true);
 });

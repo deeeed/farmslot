@@ -8,6 +8,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isGateParkInFlightOrFreed,
+  isSettledBlockedRun,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -1022,6 +1023,23 @@ function releasingFenceAgeMs(since: unknown, nowMs: number): number | null {
   return Math.max(0, nowMs - at);
 }
 
+/**
+ * The settled blocked run a restart-interrupted release left on a `releasing`
+ * slot (an archive, which releases the slot of a blocked run it keeps). The run
+ * counts as active, which hid the fence from the stale-release reclaim forever;
+ * nothing can advance a settled blocked run, so its fence is reclaimable.
+ */
+async function interruptedBlockedReleaseOwner(
+  deps: RunRecoveryCollaborators,
+  slotId: string,
+  active: Run[],
+): Promise<Run | undefined> {
+  const ownerId = await deps.readSlotField(slotId, 'current_run_id');
+  const owner = active.find((run) => run.id === ownerId);
+  if (!owner || owner.slotId !== slotId || !isSettledBlockedRun(owner)) return undefined;
+  return activeRunSlotIds(active, owner.id).has(slotId) ? undefined : owner;
+}
+
 export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
   // The shared occupancy predicate, not an inline status filter. A run whose
@@ -1033,7 +1051,12 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
   const activeSlotIds = activeRunSlotIds(active);
   const freshFleet = await deps.loadFleetStatus(true);
   for (const slot of freshFleet.slots) {
-    if (!['busy', 'held'].includes(slot.lifecycle) || activeSlotIds.has(slot.slot)) continue;
+    if (!['busy', 'held'].includes(slot.lifecycle)) continue;
+    const blockedOwner =
+      activeSlotIds.has(slot.slot) && slot.phase === SLOT_PHASE_RELEASING
+        ? await interruptedBlockedReleaseOwner(deps, slot.slot, active)
+        : undefined;
+    if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
     if (slot.lifecycle === 'held' && slot.phase === 'occupied') {
       console.log(`[run-engine] reconcile: ${slot.slot} remains held for workspace occupants`);
       continue;
@@ -1104,6 +1127,12 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
           ? `[run-engine] reconcile: ${slot.slot} fenced 'releasing' for ${Math.round(stalledFor / 1000)}s with no teardown running → reclaimed`
           : `[run-engine] reconcile: ${slot.slot} release fence moved while reclaiming; left alone`,
       );
+      if (reclaimed && blockedOwner) {
+        // Finish what the release would have: detach the run, keeping its
+        // blocked outcome, so a fleet refresh does not re-hold the slot for it.
+        deps.updateRun(blockedOwner.id, { slotId: null });
+        deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(blockedOwner.id) });
+      }
       continue;
     }
     // A closed output run retains ownership until explicit cleanup succeeds.
