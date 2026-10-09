@@ -12,7 +12,7 @@ mock.module('../fleet/node-rpc.js', {
       sent.push({ machine, cmd });
       return {
         exitCode: 0,
-        stdout: '      9 ./report.md\n 2048 ./goal/run/shot.png\n 2057 total\n',
+        stdout: '      9 ./report.md\n 2048 ./goal/run/shot.png\n 2057 total\nL ./link.md\nS 0\n',
         stderr: '',
       };
     },
@@ -39,18 +39,21 @@ test('scanPublishPackage on a remote slot sends the scan command in one node exe
     remoteRepo: '/r',
   } as unknown as Parameters<typeof scanPublishPackage>[0];
 
-  const entries = await scanPublishPackage(remote, '/r/temp/tasks/t/artifacts', [
-    'goal/run/shot.png',
-  ]);
+  const roots = { namedPaths: ['goal/run/shot.png'], snapshotRoot: 'recipe-runs/r1' };
+  const scan = await scanPublishPackage(remote, '/r/temp/tasks/t/artifacts', roots);
 
   assert.deepEqual(sent, [
     {
       machine: 'remote-worker',
-      cmd: buildPublishPackageScanCommand('/r/temp/tasks/t/artifacts', ['goal/run/shot.png']),
+      cmd: buildPublishPackageScanCommand('/r/temp/tasks/t/artifacts', roots),
     },
   ]);
-  assert.deepEqual(entries, [
-    { path: 'report.md', bytes: 9 },
-    { path: 'goal/run/shot.png', bytes: 2048 },
-  ]);
+  assert.deepEqual(scan, {
+    entries: [
+      { path: 'report.md', bytes: 9 },
+      { path: 'goal/run/shot.png', bytes: 2048 },
+    ],
+    links: ['link.md'],
+    truncated: false,
+  });
 });

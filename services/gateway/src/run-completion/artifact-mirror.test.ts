@@ -385,8 +385,21 @@ async function publishPackageFixture(t: test.TestContext, name: string) {
   return { taskDir, workerArtifacts, put, run };
 }
 
-test('refreshArtifactMirror collects manifest-named, step and small top-level files, not scratch trees', async (t) => {
-  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-scope');
+function captureWarnings(t: test.TestContext): string[] {
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message?: unknown, ...rest: unknown[]) => {
+    warnings.push([message, ...rest].map((part) => String(part)).join(' '));
+  };
+  t.after(() => {
+    console.warn = originalWarn;
+  });
+  return warnings;
+}
+
+test('refreshArtifactMirror collects named, step-dir and top-level text and media files, not scratch trees', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-scope');
+  const warnings = captureWarnings(t);
   await put(
     'evidence-manifest.json',
     JSON.stringify({
@@ -400,13 +413,18 @@ test('refreshArtifactMirror collects manifest-named, step and small top-level fi
   await put('pr-body.md', '# PR\n');
   await put('report.md', '# Report\n');
   await put('after.png', 'png');
-  await put('big.log', Buffer.alloc(1024 * 1024 + 1, 'a'));
+  await put('report.html', Buffer.alloc(13 * 1024 * 1024, 'a'));
   await put('dump.bin', 'binary');
+  await put('experiment-manifest.json', '{"worker":true}\n');
+  await put('recipe-run/report.md', '# Recipe run\n');
+  await put('recipe-run/after-step.png', 'png');
+  await put('recipe-run-baseline/summary.json', '{}\n');
   await put('recipe-library/recipes/flow.recipe.json', '{}\n');
   await put('recipe-library/node_modules/dep/index.js', 'module.exports = 1;\n');
   await put('recipe-library/vendor/.git/HEAD', 'ref: refs/heads/main\n');
   await put('recipe-harness/verify/result.json', '{}\n');
   await put('recipe-harness/source/node_modules/x/index.js', 'x\n');
+  await symlink(path.join(workerArtifacts, 'report.md'), path.join(workerArtifacts, 'linked.md'));
 
   await refreshArtifactMirror(run);
 
@@ -417,13 +435,84 @@ test('refreshArtifactMirror collects manifest-named, step and small top-level fi
   assert.equal(has('report.md'), true);
   assert.equal(has('evidence-manifest.json'), true);
   assert.equal(has('after.png'), true);
-  assert.equal(has('big.log'), false);
+  assert.equal(has('report.html'), true, 'a 13 MB report is kept');
   assert.equal(has('dump.bin'), false);
+  assert.equal(has('experiment-manifest.json'), false);
+  assert.equal(has('linked.md'), false);
+  assert.equal(has('recipe-run/report.md'), true);
+  assert.equal(has('recipe-run/after-step.png'), true);
+  assert.equal(has('recipe-run-baseline/summary.json'), true);
   assert.equal(has('recipe-library/recipes/flow.recipe.json'), true);
   assert.equal(has('recipe-library/node_modules'), false);
   assert.equal(has('recipe-library/vendor/.git'), false);
   assert.equal(has('recipe-harness/verify/result.json'), true);
   assert.equal(has('recipe-harness/source'), false);
+  assert.ok(
+    warnings.some(
+      (warning) =>
+        warning.includes('left out 1 top-level file(s) that are not text or media (dump.bin)') &&
+        warning.includes('1 symlink(s) (linked.md)'),
+    ),
+    warnings.join('\n'),
+  );
+});
+
+test('refreshArtifactMirror keeps subdirectory media the PR body cites without a manifest', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-cited');
+  await put(
+    'pr-body.md',
+    [
+      '## Evidence',
+      '![after](artifacts/proof/after-fix.png)',
+      'Recording: `.task/fix/abc/artifacts/videos/walkthrough.mp4`',
+      '![remote](https://example.com/artifacts/remote.png)',
+      '![escape](artifacts/../outside.png)',
+    ].join('\n'),
+  );
+  await put('proof/after-fix.png', 'png');
+  await put('proof/unrelated.png', 'png');
+  await put('videos/walkthrough.mp4', 'mp4');
+
+  await refreshArtifactMirror(run);
+
+  const has = (relativePath: string) => existsSync(path.join(taskDir, 'artifacts', relativePath));
+  assert.equal(has('proof/after-fix.png'), true);
+  assert.equal(has('videos/walkthrough.mp4'), true);
+  assert.equal(has('proof/unrelated.png'), false);
+});
+
+test('refreshArtifactMirror counts the promoted snapshot before clearing the mirror', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-snapshot');
+  await put('report.md', '# Report\n');
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: 'run-1', relativeArtifactRoot: 'recipe-runs/run-1' }),
+  );
+  await put('recipe-runs/run-1/summary.json', '{}\n');
+  await put('recipe-runs/run-1/videos/run.mp4', '');
+  // Sparse: the guard reads sizes from stat, so no data is written.
+  await truncate(path.join(workerArtifacts, 'recipe-runs/run-1/videos/run.mp4'), 700 * 1024 ** 2);
+  await put('recipe-runs/run-1/screenshots/raw.png', '');
+  await truncate(
+    path.join(workerArtifacts, 'recipe-runs/run-1/screenshots/raw.png'),
+    2 * 1024 ** 3,
+  );
+  await symlink('videos', path.join(workerArtifacts, 'recipe-runs/run-1/videos-again'));
+  await writeFile(path.join(taskDir, 'artifacts/previous.md'), 'previous mirror\n');
+
+  await assert.rejects(
+    () => refreshArtifactMirror(run),
+    (error: Error) => {
+      assert.match(error.message, /would mirror 5 file\(s\), 1\.4 GB /);
+      assert.match(
+        error.message,
+        /Largest directories: artifacts\/recipe-runs\/run-1\/ 1\.4 GB in 3 file\(s\); artifacts\/ \(top-level files\)/,
+      );
+      return true;
+    },
+  );
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/report.md')), false);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/previous.md')), true);
 });
 
 test('refreshArtifactMirror fails fast on an oversized package, listing the five largest directories', async (t) => {

@@ -29,6 +29,7 @@ import {
   slotListDir,
   type SlotLocality,
   slotReadFile,
+  slotRealpath,
   slotStat,
   slotWriteFiles,
 } from '../core/slot-io.js';
@@ -43,9 +44,12 @@ import {
   evidenceManifestArtifactPaths,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
+import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import { readEvidenceManifest } from './publication-artifacts.js';
 import {
   assertPublishPackageWithinCaps,
+  prBodyCitedArtifactPaths,
+  promotedSnapshotLinkEntries,
   scanPublishPackage,
   selectPublishPackageEntries,
 } from './publish-package-scope.js';
@@ -175,6 +179,25 @@ async function workerEvidenceManifestPaths(
   );
 }
 
+// Media paths (relative to artifacts/) the worker's PR body and prose cite as
+// local files. Publication uploads them and rewrites the links, and a body
+// still citing a local path fails FINALIZE, so they belong in the package
+// even without a manifest entry.
+async function workerPrBodyCitedPaths(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  workerArtifactsDir: string,
+): Promise<string[]> {
+  const cited = new Set<string>();
+  for (const name of [PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT]) {
+    const bodyPath = path.join(workerArtifactsDir, name);
+    if (!(await slotFileExists(vars, bodyPath))) continue;
+    for (const cite of prBodyCitedArtifactPaths(await slotReadFile(vars, bodyPath))) {
+      cited.add(cite);
+    }
+  }
+  return [...cited];
+}
+
 async function copyEvidenceManifestReferencedArtifacts(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
@@ -246,22 +269,53 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     }
   }
 
-  // Plan the publish package on the worker before touching the local mirror:
-  // an oversized package fails here, in one exec, with the previous mirror
-  // intact. Copy failures below also reject this refresh; a partially copied
-  // artifact mirror is not trustworthy. recipe-runs history is copied
-  // separately (promoted snapshot only).
+  // Plan the publish package, and the promoted snapshot copied after it, on
+  // the worker before touching the local mirror: an oversized mirror fails
+  // here, in one exec, with the previous mirror intact. Copy failures below
+  // also reject this refresh; a partially copied artifact mirror is not
+  // trustworthy. recipe-runs history is copied separately (promoted snapshot only).
   const workerArtifactsExist = await slotFileExists(vars, workerArtifactsDir);
   const manifestPaths = workerArtifactsExist
     ? await workerEvidenceManifestPaths(vars, workerArtifactsDir)
     : [];
-  const packaged = workerArtifactsExist
-    ? selectPublishPackageEntries(
-        await scanPublishPackage(vars, workerArtifactsDir, manifestPaths),
-        manifestPaths,
-      )
+  const citedPaths = workerArtifactsExist
+    ? await workerPrBodyCitedPaths(vars, workerArtifactsDir)
     : [];
-  assertPublishPackageWithinCaps(packaged, workerArtifactsDir);
+  const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
+  const scan = workerArtifactsExist
+    ? await scanPublishPackage(vars, workerArtifactsDir, {
+        namedPaths: [...manifestPaths, ...citedPaths],
+        snapshotRoot,
+      })
+    : { entries: [], links: [], truncated: false };
+  const inSnapshot = (entryPath: string) =>
+    snapshotRoot !== null && entryPath.startsWith(`${snapshotRoot}/`);
+  const packaged = selectPublishPackageEntries(
+    scan.entries.filter((entry) => !inSnapshot(entry.path)),
+    [...manifestPaths, ...citedPaths],
+  );
+  const snapshotEntries = snapshotRoot
+    ? [
+        ...scan.entries.filter((entry) => inSnapshot(entry.path)),
+        ...(await promotedSnapshotLinkEntries(scan, snapshotRoot, (relativePath) =>
+          slotRealpath(vars, path.join(workerArtifactsDir, relativePath)).catch(() => null),
+        )),
+      ]
+    : [];
+  assertPublishPackageWithinCaps([...packaged.entries, ...snapshotEntries], workerArtifactsDir, {
+    truncated: scan.truncated,
+  });
+  const skippedLinks = scan.links.filter(
+    (link) => !inSnapshot(link) && !manifestPaths.includes(link),
+  );
+  if (packaged.dropped.length > 0 || skippedLinks.length > 0) {
+    console.warn(
+      `[run-completion] publish package for run ${run.id.slice(0, 8)} left out ` +
+        `${packaged.dropped.length} top-level file(s) that are not text or media` +
+        `${packaged.dropped.length > 0 ? ` (${packaged.dropped.join(', ')})` : ''} and ` +
+        `${skippedLinks.length} symlink(s)${skippedLinks.length > 0 ? ` (${skippedLinks.join(', ')})` : ''}`,
+    );
+  }
   const clearLocalRecipeRuns = shouldClearLocalRecipeRunCache(workerPointerExists, promotedPointer);
   await clearWorkerOwnedArtifactMirror(localArtifactsDir, {
     preserveRecipeRuns: !clearLocalRecipeRuns,
@@ -269,7 +323,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
   const manifestNamed = new Set(manifestPaths);
   let copied = 0;
-  for (const entry of packaged) {
+  for (const entry of packaged.entries) {
     // Manifest-named files are copied (and checked) by the manifest step below.
     if (manifestNamed.has(entry.path)) continue;
     const localPath = path.join(localArtifactsDir, entry.path);
