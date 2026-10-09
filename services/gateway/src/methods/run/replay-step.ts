@@ -53,6 +53,7 @@ import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
+import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -447,9 +448,13 @@ const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies 
       context,
     );
   },
-  // `auto-recovery`, the only automatic trigger: it charges the monitor's
-  // automatic replay budget, and leaves auto-recovery enabled where an
-  // `operator` replay would mark it manual-in-progress for the rest of the run.
+  // `auto-recovery`, the only automatic trigger; an `operator` replay would
+  // mark auto-recovery manual-in-progress for the rest of the run. Budget: the
+  // replay is recorded as an automatic monitor attempt, so it counts toward
+  // the auto-recovery watcher's per-step limit. That limit does not gate this
+  // resume (the watcher's classifier is not consulted), so a resume still
+  // happens once the budget is spent, and each one can leave a later monitor
+  // failure unrepaired, skipped as `max_attempts_per_step`.
   replayMonitor: async (runId) =>
     (
       await runReplayStep({ runId, stepName: PS.MONITOR, triggeredBy: 'auto-recovery' }, () => {}, {
@@ -464,7 +469,8 @@ const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies 
  * takes, and SIGNAL.json is never written. Called on every running signal the
  * slot watcher sees; does nothing unless the run is still blocked, so a
  * repeat, a cancelled run or one already monitoring is left alone. A refused
- * replay is logged and recorded nowhere, so the worker's next signal retries.
+ * replay is logged and recorded nowhere, so the worker's next signal retries,
+ * as does a signal that arrives while the block's slot teardown is running.
  * Eval runs are skipped: their replay can restart at prepare under a live
  * worker. The resume is recorded on the dispatch step, which a monitor
  * restart does not reset.
@@ -479,6 +485,12 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     return run?.slotId &&
       !run.reviewWorkspaceTarget &&
       !run.engineState?.evalExperiment &&
+      // The block's terminal effects end with a slot cleanup that resets a slot
+      // its run still owns. A run is published blocked inside that teardown's
+      // bracket, so once none is in flight they have all finished and cannot
+      // reset the slot under the resumed worker; until then a later signal
+      // retries.
+      !isTerminalTeardownInFlight(run.slotId) &&
       blockedMonitorSignal(run)
       ? run
       : null;

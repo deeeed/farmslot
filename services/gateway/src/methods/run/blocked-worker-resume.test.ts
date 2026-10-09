@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { Events, type Run, type WorkerSignal } from '@farmslot/protocol';
 
+import { statusFile } from '../../core/state.js';
+import { cleanupSlotAfterRunFailure } from '../../run-engine/orchestrator.js';
 import { isWorkerSignalFreshForRun } from '../../run-engine/run-monitor.js';
+import {
+  beginTerminalTeardown,
+  endTerminalTeardown,
+} from '../../run-engine/terminal-teardown-registry.js';
+import { routeTerminalRunTransition } from '../../run-lifecycle/terminal-transition.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 
 import {
@@ -210,4 +218,83 @@ test('cancelled and eval runs are left alone, even when the worker kept going', 
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(evalRun.id, () => {}, deps), null);
   assert.deepEqual(replayed, []);
   assert.equal(getRun(evalRun.id)!.status, 'blocked');
+});
+
+test('a worker that resumes during the block teardown is picked up only after the slot cleanup', async (t) => {
+  const slotId = 'slot-terminal-overlap';
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-OVERLAP' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, { status: 'monitoring', slotId });
+  updateRunStep(run.id, 'dispatch', { status: 'done' });
+  updateRunStep(run.id, 'monitor', { status: 'done', outputs: { workerSignal: blocked } });
+  await writeFile(
+    statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: slotId,
+          current_run_id: run.id,
+          handoff_run_id: null,
+          slot_epoch: 1,
+          lifecycle: 'busy',
+          phase: 'working',
+        },
+      ],
+    }),
+  );
+  const order: string[] = [];
+  let release!: () => void;
+  const settleGate = new Promise<void>((resolve) => (release = resolve));
+  let entered!: () => void;
+  const settling = new Promise<void>((resolve) => (entered = resolve));
+  // What routeAndRecordTerminalTransition does: the whole transition, publish
+  // included, runs inside the slot's teardown bracket.
+  beginTerminalTeardown(slotId);
+  const terminal = routeTerminalRunTransition({
+    runId: run.id,
+    kind: 'block',
+    actor: 'engine',
+    patch: { status: 'blocked' },
+    collaborators: {
+      emit: () => {},
+      settleBacklog: async () => {
+        entered();
+        await settleGate;
+      },
+      tickWorkGraph: async () => {},
+      cleanupEvalHarness: async () => {},
+      cleanupSlot: async (blockedRun) => {
+        await cleanupSlotAfterRunFailure(slotId, blockedRun.id, 'monitor-terminal blocked');
+        order.push('slot-cleanup');
+      },
+    },
+  }).finally(() => endTerminalTeardown(slotId));
+  t.after(async () => {
+    release();
+    await terminal;
+  });
+  const { replayed, deps } = recordingDeps(runningAgain);
+  const replayMonitor = deps.replayMonitor;
+  deps.replayMonitor = async (id) => {
+    order.push('replay');
+    return replayMonitor(id);
+  };
+
+  await settling;
+  assert.equal(getRun(run.id)!.status, 'blocked');
+  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
+  assert.deepEqual(replayed, []);
+
+  release();
+  await terminal;
+  const slot = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.equal(slot.current_run_id, null, 'the block cleanup ran on the still-blocked run');
+  assert.equal(
+    (await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps))?.status,
+    'monitoring',
+  );
+  assert.deepEqual(order, ['slot-cleanup', 'replay']);
 });
