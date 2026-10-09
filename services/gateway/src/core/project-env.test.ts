@@ -151,9 +151,18 @@ test('remote machine shells target the gateway URL their node dials, never a cre
     unregisterByWs(ws);
   }
   assert.deepEqual(machineShellEnv(remote), {});
-  registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, 'ws://x; id');
+  for (const unsafe of ['ws://x; id', 'http://gw:7801', 'ws://user:secret@gw:7801']) {
+    registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, unsafe);
+    try {
+      assert.deepEqual(machineShellEnv(remote), {});
+    } finally {
+      unregisterByWs(ws);
+    }
+  }
+  // A URL that parses yet carries shell syntax is exported inert.
+  registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, "ws://gw/'$(id)");
   try {
-    assert.deepEqual(machineShellEnv(remote), {});
+    assert.equal(withMachineEnv('true', remote), "export GW_URL='ws://gw/'\\''$(id)' && true");
   } finally {
     unregisterByWs(ws);
   }

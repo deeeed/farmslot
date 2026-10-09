@@ -17,6 +17,19 @@ export interface ConnectedNode {
 
 const nodes = new Map<string, ConnectedNode>();
 
+/** Exported into every worker shell, so keep only a ws(s) URL with no embedded credentials. */
+function workerGatewayUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password
+      ? raw
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerNode(
   machine: string,
   pid: number,
@@ -37,8 +50,7 @@ export function registerNode(
     ws,
     nativeSessions,
     nativeAuthority,
-    // Exported verbatim into worker shells, so keep only a plain ws(s) URL.
-    gatewayUrl: gatewayUrl && /^wss?:\/\/\S+$/u.test(gatewayUrl) ? gatewayUrl : undefined,
+    gatewayUrl: workerGatewayUrl(gatewayUrl),
   });
 }
 
