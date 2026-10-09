@@ -89,6 +89,24 @@ export function acceptanceCriteriaView(
   return rows;
 }
 
+/**
+ * Where a run's acceptance panel data came from. Only `ledger` carries verdicts;
+ * `evidence-manifest` is the display fallback for a run that wrote no ledger.
+ */
+export type AcceptanceStatusSource = 'ledger' | 'evidence-manifest';
+
+/**
+ * A criterion that one or more `artifacts/evidence-manifest.json` entries list in
+ * `covers`, with the task-dir relative files those entries link. Shown only when
+ * the run has no ledger. It says evidence exists, never that the criterion is
+ * proven, so nothing may count it as a verdict.
+ */
+export interface AcceptanceEvidenceLink {
+  /** `AC-<N>`, a criterion the handoff registered. */
+  id: string;
+  evidence: string[];
+}
+
 export interface AcceptanceStatusSummary {
   proven: number;
   weak: number;

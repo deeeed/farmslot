@@ -170,6 +170,10 @@ async function attachAcceptanceStatus(
   if (read.criteria.length > 0) result.acceptanceCriteria = read.criteria;
   if (read.ledger) result.acceptanceStatus = read.ledger;
   if (read.error) result.acceptanceStatusError = read.error;
+  // Display-only: the manifest fallback rides in its own field so nothing that
+  // reads `acceptanceStatus` can mistake "evidence linked" for a verdict.
+  if (read.source) result.acceptanceSource = read.source;
+  if (read.evidenceLinks) result.acceptanceEvidenceLinks = read.evidenceLinks;
 }
 
 /**
