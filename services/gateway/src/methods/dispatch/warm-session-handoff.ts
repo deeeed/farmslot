@@ -27,6 +27,7 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
+import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
 import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
@@ -312,7 +313,7 @@ export async function warmSessionHandoffDispatch(
   } else {
     await execOnSlot(vars, `mkdir -p ${shellQuote(workerTaskAbs)}`);
     await execLocal(
-      `scp -q ${shellQuote(taskFilePath)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/TASK.md`)}`,
+      `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(taskFilePath)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/TASK.md`)}`,
     );
   }
   for (const sidecar of await copyPreparedTaskRootSidecars({

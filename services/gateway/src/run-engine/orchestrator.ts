@@ -36,7 +36,11 @@ import {
 } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
-import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
+import {
+  clearStalePrepareProcess,
+  prepareIdentityPath,
+  reapSlotPrepareScope,
+} from '../methods/slot.js';
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
@@ -1644,11 +1648,17 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const rd = `${vars.remoteRepo}/${runtimeDir}`;
   const port = vars.resourceVars.port;
 
-  // Reuse the same exact portable identity verifier as prepare replacement so
-  // stale or recycled identities cannot signal an unrelated process group.
+  // The shared prepare-scope reap verifies the recorded identity, so stale or
+  // recycled identities cannot signal an unrelated process group. Its failure
+  // must not skip the pidfile and port kills below; both are reported.
+  const reapError = await reapSlotPrepareScope(vars, {
+    identityPath: prepareIdentityPath(vars.remoteRepo, runtimeDir),
+  }).then(
+    () => null,
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
   const killCmd = [
     'set -u',
-    buildPrepareIdentityReapCommand(`${rd}/preflight.identity`),
     // Kill later process-specific identities when their pidfiles exist.
     `for pf in launcher.pid browser.pid chromium.pid webpack.pid; do`,
     `  pidfile="${rd}/$pf";`,
@@ -1666,9 +1676,13 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   ].join('\n');
 
   const result = await execOnSlot(vars, killCmd);
-  if (result.exitCode !== 0) {
+  const killError =
+    result.exitCode !== 0
+      ? result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`
+      : null;
+  if (reapError || killError) {
     throw new Error(
-      `slot cleanup failed for ${slotId}: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+      `slot cleanup failed for ${slotId}: ${[reapError, killError].filter(Boolean).join('; ')}`,
     );
   }
   console.log(`[run-engine] cleaned up slot processes for ${slotId}`);
