@@ -238,6 +238,8 @@ export interface RawProjectJson {
     }
   >;
   defaults?: Record<string, { runner: string; model: string; effort?: string }>;
+  /** Slot whose git identity and signing config prepare copies into every slot of the project. */
+  git_identity_slot?: string;
   /** Command Center diff views: which changed files count as tests. */
   diff_view?: {
     /** Extra test-file globs (gitignore-style; no slash = basename anywhere). */

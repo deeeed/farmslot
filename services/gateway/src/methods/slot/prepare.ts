@@ -66,6 +66,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
+import { syncGitIdentity } from './git-identity.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -591,6 +592,21 @@ async function slotPrepareInner(
       );
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
+
+    // Every slot pushes as the reference slot's identity and signing key, so
+    // branch rules requiring signed commits accept it. A sync failure does not
+    // stop prepare; `slot check` reports a slot that cannot sign.
+    const identitySlot = projectJson.git_identity_slot?.trim();
+    if (identitySlot && identitySlot !== params.slotId) {
+      try {
+        step('git-identity', await syncGitIdentity(vars, await loadSlotVars(identitySlot)));
+      } catch (err) {
+        step(
+          'git-identity',
+          `Git identity not synced from ${identitySlot}: ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   // A requested start ref must resolve to structured provenance on every branch

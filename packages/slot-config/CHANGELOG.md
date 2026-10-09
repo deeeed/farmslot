@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- `RawProjectJson.git_identity_slot` names the slot whose git identity and signing config prepare copies into every slot of the project.
+
 - `resolveSlotByRepo` and `isIgnoredPoolFile` use `@farmslot/protocol/node/slot-by-repo`, the lookup recipe-cli's context resolver shares. Its errors are unchanged. A pool file whose `slots` is missing or not an array is now skipped like an unparsable one; it used to throw a TypeError.
 
 - Estimate GPT-6 Sol session cost using its published input and output token rates.

@@ -1132,6 +1132,11 @@
       },
       "additionalProperties": false
     },
+    "git_identity_slot": {
+      "type": "string",
+      "description": "Slot whose git identity and signing config (user.name, user.email, user.signingkey, commit.gpgsign, gpg.format, gpg.program) prepare copies into each slot repo's local config, so every slot pushes as one GitHub identity signed with one key.",
+      "examples": ["macwork-mmt-1"]
+    },
     "defaults": {
       "type": "object",
       "description": "Default runner/model/effort settings per flow type. Overridden by: task file > CLI args > slot config > these defaults.",

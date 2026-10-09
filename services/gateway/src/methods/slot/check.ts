@@ -22,6 +22,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 
+import { checkCommitSigning } from './git-identity.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -81,12 +82,13 @@ export async function slotCheck(
     checks.push(repoStep);
     emitStep(emit, repoStep);
     if (repoStep.status === 'pass') {
-      const branchStep = await checkDefaultBranch(
-        slotVars,
-        getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
-      );
+      const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+      const branchStep = await checkDefaultBranch(slotVars, defaultBranch);
       checks.push(branchStep);
       emitStep(emit, branchStep);
+      const signingStep = await checkCommitSigning(slotVars, projectJson, defaultBranch);
+      checks.push(signingStep);
+      emitStep(emit, signingStep);
     }
 
     // ── 3. Fixtures ──
