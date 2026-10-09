@@ -7,9 +7,14 @@ import { PipelineSteps, type Run, type SlotReleaseParams } from '@farmslot/proto
 
 import { readSlotField, updateSlotStatus } from '../../core/index.js';
 import { statusFile } from '../../core/state.js';
-import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
+import type { SlotReleasePreflight } from '../slot/release.js';
+import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
-import { runArchive } from './admin.js';
+import { type ArchiveSlotRelease, runArchive } from './admin.js';
+import { runReplayStep } from './replay-step.js';
 
 // The real-release case resolves the committed demo pool's slot.
 process.env.FARMSLOT_DEMO_POOL = '1';
@@ -48,26 +53,46 @@ function blockedRun(t: test.TestContext, label: string, steps: Run['steps']): Ru
   return updateRun(run.id, { status: 'blocked', error: 'worker blocked', steps, decisions: [] });
 }
 
+const clean = { unmergedWork: null } as SlotReleasePreflight;
+
+/** Stubbed release that ends where the real one does: slot ready, runs detached. */
+function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
+  const calls = { preflight: 0, releases: [] as SlotReleaseParams[] };
+  const slot: ArchiveSlotRelease = {
+    preflight: async () => {
+      calls.preflight += 1;
+      return preflight;
+    },
+    release: async (params) => {
+      calls.releases.push(params);
+      await updateSlotStatus(params.slotId, { current_run_id: null, lifecycle: 'ready' });
+      detachRunsForReleasedSlot(params.slotId, noopEmit);
+      return { released: true };
+    },
+  };
+  return { calls, slot };
+}
+
 test('archiving a settled blocked run that holds its slot releases the slot first', async (t) => {
   const run = blockedRun(t, 'archive-release', [{ name: 'monitor', status: 'done' }]);
   await holdSlotFor(t, run.id);
-  const releases: SlotReleaseParams[] = [];
+  const { calls, slot } = recordingSlot();
 
-  const result = await runArchive({ runId: run.id }, noopEmit, async (params) => {
-    releases.push(params);
-    await updateSlotStatus(params.slotId, { current_run_id: null, lifecycle: 'ready' });
-    return { released: true };
-  });
+  const result = await runArchive({ runId: run.id }, noopEmit, slot);
 
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(releases, [{ slotId, expectedRunId: run.id }]);
+  assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id }]);
   assert.equal(await readSlotField(slotId, 'current_run_id'), null);
   assert.equal(getRun(run.id), undefined, 'the blocked run is archived');
+  const archived = await getRunWithArchived(run.id);
+  assert.equal(archived?.status, 'blocked', 'archiving keeps the blocked outcome');
+  assert.equal(archived?.slotId, null, 'the release detached the run from its slot');
+  assert.equal(isRunArchiving(run.id), false);
 });
 
 test('a slot release guard refusing refuses the archive with its reason', async (t) => {
   const run = blockedRun(t, 'archive-guard', [{ name: 'monitor', status: 'done' }]);
-  // A publication gate held on the same slot: the release's own guard refuses.
+  // A publication gate held on the same slot: the real preflight refuses.
   const gated = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -91,21 +116,90 @@ test('a slot release guard refusing refuses the archive with its reason', async 
   assert.equal(getRun(run.id)?.status, 'blocked', 'the run stays in the store, still blocked');
   assert.equal(getRun(run.id)?.slotId, slotId);
   assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'slot still held');
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('unpushed work on the slot refuses the archive before the release touches the worker', async (t) => {
+  const run = blockedRun(t, 'archive-unpushed', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  const before = getRun(run.id)!;
+  const { calls, slot } = recordingSlot({
+    ...clean,
+    unmergedWork: { branch: 'PROJ-1-fix', details: '2 unpushed commits' },
+  });
+
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit, slot),
+    /slot demo-work-1 has work on 'PROJ-1-fix' \(2 unpushed commits\) that releasing it would lose/,
+  );
+  assert.equal(calls.releases.length, 0, 'the release (and its worker kill) never ran');
+  assert.deepEqual(getRun(run.id), before, 'the run is unchanged');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id, 'slot still held');
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'held');
+  assert.equal(isRunArchiving(run.id), false);
 });
 
 test('archiving a live blocked run keeps refusing without touching its slot', async (t) => {
   const run = blockedRun(t, 'archive-live', [{ name: 'human-gate', status: 'running' }]);
   await holdSlotFor(t, run.id);
-  let releaseCalls = 0;
+  const { calls, slot } = recordingSlot();
 
-  await assert.rejects(
-    runArchive({ runId: run.id }, noopEmit, async () => {
-      releaseCalls += 1;
-      return { released: true };
-    }),
-    /Cannot archive active run/,
-  );
-  assert.equal(releaseCalls, 0);
+  await assert.rejects(runArchive({ runId: run.id }, noopEmit, slot), /Cannot archive active run/);
+  assert.equal(calls.preflight, 0);
+  assert.equal(calls.releases.length, 0);
   assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
   assert.ok(getRun(run.id));
+});
+
+test('a resume admitted before the archive takes the run makes the archive back off', async (t) => {
+  const run = blockedRun(t, 'archive-resumed', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  let finishResume!: () => void;
+  const resumeMayFinish = new Promise<void>((resolve) => (finishResume = resolve));
+  let resumeAdmitted!: () => void;
+  const admitted = new Promise<void>((resolve) => (resumeAdmitted = resolve));
+  // Stands in for Resume replaying the monitor under the run transition.
+  const resume = withRunTransition(run.id, async () => {
+    resumeAdmitted();
+    await resumeMayFinish;
+    updateRun(run.id, { status: 'monitoring', steps: [{ name: 'monitor', status: 'running' }] });
+  });
+  await admitted;
+  const { calls, slot } = recordingSlot();
+  slot.preflight = async () => {
+    // The archive passed its first checks; let the resume land before its lock.
+    finishResume();
+    return clean;
+  };
+
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit, slot),
+    /no longer a settled blocked run \(status=monitoring\)/,
+  );
+  await resume;
+  assert.equal(calls.releases.length, 0, 'the resumed worker was never torn down');
+  assert.equal(getRun(run.id)?.status, 'monitoring');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), run.id);
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a replay arriving while the archive releases the slot is refused', async (t) => {
+  const run = blockedRun(t, 'archive-replay', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  const { calls, slot } = recordingSlot();
+  const release = slot.release;
+  let replayError: unknown;
+  slot.release = async (params, emit) => {
+    await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, noopEmit)
+      .then(() => assert.fail('replay must not start on a run being archived'))
+      .catch((error: unknown) => (replayError = error));
+    return release(params, emit);
+  };
+
+  await runArchive({ runId: run.id }, noopEmit, slot);
+
+  assert.match(String(replayError), /is being archived and cannot be replayed/);
+  assert.equal(calls.releases.length, 1);
+  assert.equal(getRun(run.id), undefined, 'the archive completed');
+  assert.equal(isRunArchiving(run.id), false);
 });

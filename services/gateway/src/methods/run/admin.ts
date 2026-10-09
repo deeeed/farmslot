@@ -28,7 +28,15 @@ import {
 import { markBacklogRunReleased } from '../../backlog/store.js';
 import { readSlotField } from '../../core/index.js';
 import {
+  beginRunArchive,
+  endRunArchive,
+  isRunArchiving,
+} from '../../run-lifecycle/archive-fence.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import {
   archiveRun as storeArchiveRun,
+  assertRunArchivable,
+  blockedRunOwnsSlot,
   cleanupRuns as storeCleanup,
   deleteRun as storeDeleteRun,
   getRun,
@@ -37,7 +45,7 @@ import {
   updateRun,
 } from '../../runs/store.js';
 import { schedulerTick } from '../../work-graph/store.js';
-import { slotRelease } from '../slot/release.js';
+import { slotRelease, slotReleasePreflight } from '../slot/release.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -93,32 +101,83 @@ export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<Ru
   return { ok: true };
 }
 
+export interface ArchiveSlotRelease {
+  preflight: typeof slotReleasePreflight;
+  release: typeof slotRelease;
+}
+
+const ARCHIVE_SLOT_RELEASE: ArchiveSlotRelease = {
+  preflight: slotReleasePreflight,
+  release: slotRelease,
+};
+
 export async function runArchive(
   params: RunArchiveParams,
   emit: Emit,
-  releaseSlot: typeof slotRelease = slotRelease,
+  slot: ArchiveSlotRelease = ARCHIVE_SLOT_RELEASE,
 ): Promise<RunArchiveResult> {
   const run = getRun(params.runId);
   const archivedAsBlocked = run?.status === 'blocked';
-  // A fleet refresh re-holds a blocked run's slot, so a settled blocked run can
-  // still own it. Archive releases it through the ordinary slot release: its
-  // guards (unmerged work, gates) decide, and their refusal refuses the archive.
-  if (
-    run?.slotId &&
-    isSettledBlockedRun(run) &&
-    (await readSlotField(run.slotId, 'current_run_id')) === run.id
-  ) {
-    const { released } = await releaseSlot({ slotId: run.slotId, expectedRunId: run.id }, emit);
-    if (!released) {
-      throw new Error(`Cannot archive blocked run ${run.id}: slot ${run.slotId} was not released`);
+  let fenced = false;
+  try {
+    if (run && (await blockedRunOwnsSlot(run))) {
+      await releaseBlockedRunSlot(run, emit, slot);
+      fenced = true;
     }
+    const ok = await storeArchiveRun(params.runId);
+    if (!ok) throw new Error(`Run not found: ${params.runId}`);
+  } finally {
+    if (fenced) endRunArchive(params.runId);
   }
-  const ok = await storeArchiveRun(params.runId);
-  if (!ok) throw new Error(`Run not found: ${params.runId}`);
   // Archiving a blocked run closes it; it must not requeue the backlog item.
   await reconcileDeletedRun(params.runId, { keepNeedsAttention: archivedAsBlocked });
   emit(Events.RUN_DELETED, { runId: params.runId });
   return { ok: true };
+}
+
+/**
+ * A fleet refresh re-holds a blocked run's slot. Archive frees it through the
+ * ordinary slot release, whose guards decide, and runs every refusal it can
+ * before anything is torn down. Returns with the run fenced from replay.
+ */
+async function releaseBlockedRunSlot(
+  run: Run,
+  emit: Emit,
+  slot: ArchiveSlotRelease,
+): Promise<void> {
+  const slotId = run.slotId!;
+  assertRunArchivable(run);
+  const preflight = await slot.preflight({ slotId, expectedRunId: run.id });
+  if (preflight?.unmergedWork) {
+    const { branch, details } = preflight.unmergedWork;
+    throw new Error(
+      `Cannot archive blocked run ${run.id}: slot ${slotId} has work on '${branch}' (${details}) that releasing it would lose. Push it, or release the slot with Force Reset, then archive.`,
+    );
+  }
+  // Resume (operator or automatic) re-admits a blocked run under the run
+  // transition. Re-check there and fence: replay refuses a fenced run, and one
+  // already in flight aborts at its next ownership check. The release stays
+  // outside the lock because a native handoff inside it takes run locks.
+  await withRunTransition(run.id, async () => {
+    const current = getRun(run.id);
+    if (!current || !isSettledBlockedRun(current) || isRunArchiving(run.id)) {
+      throw new Error(
+        `Cannot archive run ${run.id}: it is no longer a settled blocked run (status=${current?.status ?? 'missing'}) or is already being archived`,
+      );
+    }
+    beginRunArchive(run.id);
+  });
+  try {
+    const { released } = await slot.release({ slotId, expectedRunId: run.id }, emit);
+    if (!released && (await readSlotField(slotId, 'current_run_id')) === run.id) {
+      throw new Error(
+        `Cannot archive blocked run ${run.id}: another release or a handoff is in progress on slot ${slotId}; retry`,
+      );
+    }
+  } catch (error) {
+    endRunArchive(run.id);
+    throw error;
+  }
 }
 
 export async function runBulkDelete(

@@ -53,6 +53,7 @@ import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
+import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -113,6 +114,8 @@ function assertReplayOwnsRun(
 ): void {
   const live = getRun(runId);
   if (!live) throw new Error(`Run not found: ${runId}`);
+  if (isRunArchiving(runId))
+    throw new Error(`Run ${runId} is being archived and cannot be replayed`);
   if (live.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
   }
@@ -124,8 +127,12 @@ function assertReplayOwnsRun(
   }
 }
 
-function isForceCompleteOwnershipError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('was force-completed and cannot be replayed');
+function isReplayOwnershipError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes('was force-completed and cannot be replayed') ||
+      err.message.includes('is being archived and cannot be replayed'))
+  );
 }
 
 const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
@@ -650,6 +657,9 @@ export async function runReplayStep(
     );
   if (existing.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
+  }
+  if (isRunArchiving(params.runId)) {
+    throw new Error(`Run ${params.runId} is being archived and cannot be replayed`);
   }
   if (existing.readOnly) {
     throw new Error(
@@ -1296,7 +1306,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
-        if (isForceCompleteOwnershipError(err)) throw err;
+        if (isReplayOwnershipError(err)) throw err;
         console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }
@@ -1353,7 +1363,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
-        if (isForceCompleteOwnershipError(err)) throw err;
+        if (isReplayOwnershipError(err)) throw err;
         console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
       }
     }

@@ -32,6 +32,7 @@ import '../queue/dispatch-queue-panel.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { RUN_ARCHIVE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
   inventoryShowsDetail,
@@ -431,16 +432,32 @@ export class RunList extends RunListState {
   private async archiveSelected() {
     if (this.selectedIds.size === 0 || this.actionInProgress) return;
     this.actionInProgress = true;
+    // One refused or slow archive must not strand the rest of the selection;
+    // the failures stay selected and are reported together.
+    const failed = new Map<string, string>();
     try {
       for (const id of this.selectedIds) {
         const run = this.runs.find((candidate) => candidate.id === id);
         if (!run || !isArchivableRun(run)) continue;
-        await gateway.request<RunArchiveResult>(Methods.RUN_ARCHIVE, { runId: id });
+        try {
+          await gateway.request<RunArchiveResult>(
+            Methods.RUN_ARCHIVE,
+            { runId: id },
+            RUN_ARCHIVE_TIMEOUT_MS,
+          );
+        } catch (err) {
+          console.error(`[run-list] archive ${id} failed:`, err);
+          failed.set(id, (err as Error).message);
+        }
       }
-      this.selectedIds = new Set();
-    } catch (err) {
-      console.error('[run-list] bulk archive failed:', err);
-      alert(`Bulk archive failed: ${(err as Error).message}`);
+      this.selectedIds = new Set(failed.keys());
+      if (failed.size > 0) {
+        alert(
+          `Bulk archive failed for ${failed.size} run(s):\n${[...failed]
+            .map(([id, message]) => `${id.slice(0, 8)}: ${message}`)
+            .join('\n')}`,
+        );
+      }
     } finally {
       this.actionInProgress = false;
     }
