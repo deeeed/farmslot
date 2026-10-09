@@ -823,6 +823,10 @@ async function bootstrapCodexHome({
   const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
   fs.chmodSync(configPath, 0o600);
+  // Cleared first: a failed credential bind below must not leave an old marker
+  // telling the launch this home is usable.
+  const providerAuthMarker = path.join(codexHomeDir, CODEX_HOME_PROVIDER_AUTH_MARKER);
+  fs.rmSync(providerAuthMarker, { force: true });
   const resolved = await resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel });
   const destAuth = path.join(codexHomeDir, 'auth.json');
   const requireSource =
@@ -837,12 +841,8 @@ async function bootstrapCodexHome({
   });
   // A provider routed without OpenAI auth (e.g. codex-lb) leaves no auth.json to
   // link, yet the isolated home is complete. Mark it so the launch still uses it.
-  const providerAuthMarker = path.join(codexHomeDir, CODEX_HOME_PROVIDER_AUTH_MARKER);
-  const providerId = routing ? rootTomlModelProvider(routing).providerId : null;
   if (routing && routedProviderNeedsNoOpenAiAuth(routing)) {
-    fs.writeFileSync(providerAuthMarker, `${providerId}\n`);
-  } else {
-    fs.rmSync(providerAuthMarker, { force: true });
+    fs.writeFileSync(providerAuthMarker, `${nextProviderId}\n`);
   }
   return { codexHomeDir, resolvedAuth: resolved };
 }

@@ -90,3 +90,40 @@ describe('codex launch picks the isolated home only when the install completed i
     assert.equal(chosen(repo), `${home}|--config`);
   });
 });
+
+describe('codex resume stays on the home that holds its session', () => {
+  it('resumes a global-home session on the global home, others on codex-home', (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'codex-home-resume-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const repo = path.join(root, 'repo');
+    const home = path.join(repo, '.agent', 'codex-home');
+    const fakeHome = path.join(root, 'home');
+    mkdirSync(path.join(fakeHome, '.codex', 'sessions', '2026', '10', '09'), { recursive: true });
+    mkdirSync(path.join(home, 'sessions', '2026', '10', '09'), { recursive: true });
+    writeFileSync(path.join(home, '.farmslot-provider-auth'), 'codex-lb\n');
+    const rollout = (dir: string, id: string) =>
+      writeFileSync(
+        path.join(dir, '2026', '10', '09', `rollout-2026-10-09T08-00-00-${id}.jsonl`),
+        '',
+      );
+    rollout(path.join(fakeHome, '.codex', 'sessions'), 'started-before-deploy');
+    rollout(path.join(home, 'sessions'), 'started-isolated');
+    const chosenFor = (resumeSessionId: string) =>
+      execFileSync(
+        '/bin/sh',
+        [
+          '-c',
+          `${buildCodexHomeSetup(repo, '.agent', { resumeSessionId })} && printf '%s' "\${CODEX_HOME:-global}"`,
+        ],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, HOME: fakeHome },
+        },
+      );
+
+    assert.equal(chosenFor('started-before-deploy'), 'global');
+    assert.equal(chosenFor('started-isolated'), home);
+    assert.equal(chosenFor('never-seen'), home);
+  });
+});

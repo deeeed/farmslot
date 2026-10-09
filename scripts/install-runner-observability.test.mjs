@@ -777,6 +777,44 @@ test('codex-home is marked usable without auth.json only while its provider need
   );
   installCodexHome(repo, fakeHome, 'install-test-provider-auth');
   assert.equal(fs.existsSync(marker), false);
+  // A reinstall whose credential bind fails leaves no marker behind either.
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, 'requires_openai_auth = false', ''].join(
+      '\n',
+    ),
+  );
+  installCodexHome(repo, fakeHome, 'install-test-provider-auth');
+  assert.equal(fs.existsSync(marker), true);
+  fs.writeFileSync(
+    path.join(fakeHome, 'provider-accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: {
+        'codex-gone': { provider: 'codex', authPath: path.join(fakeHome, 'gone', 'auth.json') },
+      },
+    }),
+  );
+  assert.throws(() =>
+    execFileSync(
+      process.execPath,
+      [
+        INSTALLER,
+        '--runner',
+        'codex',
+        '--repo',
+        repo,
+        '--runtime-dir',
+        '.agent',
+        '--slot-id',
+        'install-test-provider-auth',
+        '--account-label',
+        'codex-gone',
+      ],
+      { stdio: 'pipe', env: { ...process.env, HOME: fakeHome, FARMSLOT_HOME: fakeHome } },
+    ),
+  );
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test('codex-home config copies a custom provider table that matches model_provider', () => {

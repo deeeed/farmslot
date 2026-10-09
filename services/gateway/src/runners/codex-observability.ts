@@ -597,33 +597,6 @@ async function probeCodexSessionBinding(
   return parseCodexSessionBindingProbe(result.stdout.trim());
 }
 
-/**
- * Find the slot's Codex rollout natively (isolated or global sessions, cwd = slot
- * repo, written since observedNotBeforeMs). One match only; none or several → null.
- */
-async function probeCodexNativeBinding(
-  vars: SlotVars,
-  observedNotBeforeMs: number,
-  preferred?: { sessionId: string; sessionPath: string },
-) {
-  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
-  const result = await execOnSlot(
-    vars,
-    buildCodexNativeBindingProbeCommand({
-      repo: vars.remoteRepo,
-      isolatedSessionsRoot: path.posix.join(vars.remoteRepo, runtimeDir, 'codex-home', 'sessions'),
-      observedNotBeforeMs,
-      ...(preferred ? { preferred } : {}),
-    }),
-    { timeout: 10_000 },
-  );
-  if (result.exitCode !== 0) return null;
-  const probe = parseCodexNativeBindingProbe(result.stdout.trim());
-  return probe.status === 'matched'
-    ? { sessionId: probe.sessionId, sessionPath: probe.sessionPath, observedAt: probe.observedAt }
-    : null;
-}
-
 async function resolveCodexPaneBinding(vars: SlotVars, target: string) {
   const paneId = await resolveTmuxPaneId(vars, target);
   if (!paneId) return null;
@@ -711,7 +684,31 @@ export const codexSessionObservability: RunnerObservability = {
             sessionPath: paneState.transcript_path.trim(),
           }
         : undefined;
-    return probeCodexNativeBinding(vars, observedNotBeforeMs, preferred);
+    const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
+    const result = await execOnSlot(
+      vars,
+      buildCodexNativeBindingProbeCommand({
+        repo: vars.remoteRepo,
+        isolatedSessionsRoot: path.posix.join(
+          vars.remoteRepo,
+          runtimeDir,
+          'codex-home',
+          'sessions',
+        ),
+        observedNotBeforeMs,
+        ...(preferred ? { preferred } : {}),
+      }),
+      { timeout: 10_000 },
+    );
+    if (result.exitCode !== 0) return null;
+    const probe = parseCodexNativeBindingProbe(result.stdout.trim());
+    return probe.status === 'matched'
+      ? {
+          sessionId: probe.sessionId,
+          sessionPath: probe.sessionPath,
+          observedAt: probe.observedAt,
+        }
+      : null;
   },
   async getTurnState(vars, target, expectedTurnToken) {
     const binding = await resolveCodexPaneBinding(vars, target);
@@ -786,12 +783,7 @@ export const codexSessionObservability: RunnerObservability = {
   },
   async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired, promptText) {
     if (!promptText) return null;
-    // The pane binding comes from the SessionStart hook. When hooks never ran
-    // (Codex on the global home, or a hook failure), find the rollout natively:
-    // the exact prompt text since sinceMs still has to be in it.
-    const binding =
-      (await resolveCodexPaneBinding(vars, target)) ??
-      (await probeCodexNativeBinding(vars, sinceMs));
+    const binding = await resolveCodexPaneBinding(vars, target);
     const nativeReading = binding
       ? await readCodexPromptAcceptance(
           vars,
