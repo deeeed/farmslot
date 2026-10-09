@@ -239,6 +239,7 @@ async function attachAcceptanceStatus(
   // reads `acceptanceStatus` can mistake "evidence linked" for a verdict.
   if (read.source) result.acceptanceSource = read.source;
   if (read.evidenceLinks) result.acceptanceEvidenceLinks = read.evidenceLinks;
+  if (read.evidenceLinksError) result.acceptanceEvidenceLinksError = read.evidenceLinksError;
 }
 
 /**

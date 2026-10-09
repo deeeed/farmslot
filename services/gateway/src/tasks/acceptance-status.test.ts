@@ -315,6 +315,9 @@ test('no ledger and no usable manifest leave every criterion not assessed', asyn
     const broken = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
     assert.equal(broken.source, undefined);
     assert.equal(broken.error, undefined, 'a broken manifest is not a ledger read failure');
+    assert.equal(broken.evidenceLinks, undefined);
+    // Unreadable is not the same as "covers nothing": the reason travels apart.
+    assert.match(broken.evidenceLinksError ?? '', /^artifacts\/evidence-manifest\.json: /);
   } finally {
     rmSync(taskDir, { recursive: true, force: true });
   }
