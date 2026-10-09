@@ -65,7 +65,8 @@ export interface SlotCopyDirOptions {
    * A symlink whose real path stays inside the copied root is copied as its
    * target (a file's content, a directory walked in place). One that dangles,
    * escapes the root, or loops back onto an ancestor is skipped and reported
-   * here (and logged), instead of failing the copy.
+   * here (and logged), instead of failing the copy. Remote copies never see a
+   * dangling link: the node's fs.list omits it, so it is dropped unreported.
    */
   onSkippedLink?: (link: SlotCopyDirSkippedLink) => void;
   /** Progress phase for large remote files (default download). */
@@ -679,9 +680,9 @@ async function copyLocalRecursive(
           const info = await stat(resolved);
           return { realPath: resolved, isDirectory: info.isDirectory(), isFile: info.isFile() };
         })
-        .catch(() => null);
-      if (!target) {
-        skipLink(options, sourcePath, 'its target does not resolve');
+        .catch((error: NodeJS.ErrnoException) => error.code ?? String(error));
+      if (typeof target === 'string') {
+        skipLink(options, sourcePath, `its target does not resolve (${target})`);
         continue;
       }
       const reason = skippedLinkReason(ancestors, target);
@@ -832,6 +833,8 @@ export async function slotCopyDir(
       const sourcePath = path.join(sourceDir, entry.name);
       if (isExcludedRelativePath(remoteDir, sourcePath, excludedRelativePaths)) continue;
       if (entry.type === 'file') {
+        // Counted without a realpath call, so an escaping file link the copy
+        // walk skips still counts: progress then ends one file short.
         files += 1;
         if (typeof entry.size === 'number' && entry.size > 0) bytes += entry.size;
       } else if (entry.type === 'directory' || entry.type === 'dir') {

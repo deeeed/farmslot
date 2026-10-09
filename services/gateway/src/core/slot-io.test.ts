@@ -228,7 +228,7 @@ test('remote slot paths preserve .git segments relative to the filesystem root',
   assert.equal(observed?.relPath, path.join('repo', '.git', 'config'));
 });
 
-test('slotCopyDir skips local symlinks instead of copying them into artifacts', async (t) => {
+test('slotCopyDir skips escaping local symlinks instead of copying them into artifacts', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -600,7 +600,7 @@ test('slotCopyDir local path copies in-root links and skips escaping, dangling, 
   const reasons = skippedByPath(skipped, sourceDir);
   assert.deepEqual(Object.keys(reasons).sort(), ['alias/up', 'gone.mjs', 'leak.txt', 'shared/up']);
   assert.match(reasons['leak.txt']!, /resolves to .*outside\.txt, outside .*artifacts$/);
-  assert.equal(reasons['gone.mjs'], 'its target does not resolve');
+  assert.equal(reasons['gone.mjs'], 'its target does not resolve (ENOENT)');
   assert.match(reasons['alias/up']!, /loops back to .*artifacts$/);
 });
 
