@@ -2,6 +2,7 @@
 // Capability-based registry: RunnerDefinition exposes runner capabilities; launch-command.ts owns shell command construction.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { parse as parseLaunchShell } from 'shell-quote';
@@ -101,9 +102,17 @@ import {
  * Without this, machine-global package-manager installs (notably Homebrew's
  * `node`) can shadow the project-pinned Node version even when the slot
  * fixture injected the correct `.tool-versions` file.
+ *
+ * The snippet lives in scripts/lib/worker-env-prefix.sh so deploy-node.sh
+ * verifies a node's CLI under exactly the prefix workers launch with.
  */
-export const WORKER_ENV_PREFIX =
-  'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi';
+export const WORKER_ENV_PREFIX = readFileSync(
+  new URL('../../../../scripts/lib/worker-env-prefix.sh', import.meta.url),
+  'utf8',
+)
+  .split('\n')
+  .filter((line) => line.trim() && !line.startsWith('#'))
+  .join('\n');
 
 export type RetainedSessionHandoff =
   | 'resume-with-prompt'
