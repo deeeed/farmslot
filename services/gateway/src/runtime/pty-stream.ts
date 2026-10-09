@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import * as pty from 'node-pty';
 
+import { SSH_CONNECT_OPTIONS, SSH_INTERACTIVE_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 
 const execFileAsync = promisify(execFile);
@@ -126,12 +127,7 @@ async function runRemoteShell(sshTarget: string, script: string): Promise<void> 
   // execFile (async) instead of execFileSync to avoid blocking the gateway
   // event loop on every PTY attach/reinit (each subscribe round-trips at least
   // two SSH invocations to the slot).
-  await execFileAsync('ssh', [
-    '-o',
-    'ConnectTimeout=5',
-    sshTarget,
-    `zsh -lc ${shellQuote(script)}`,
-  ]);
+  await execFileAsync('ssh', [...SSH_CONNECT_OPTIONS, sshTarget, `zsh -lc ${shellQuote(script)}`]);
 }
 
 async function remoteSessionExists(sshTarget: string, session: string): Promise<boolean> {
@@ -344,7 +340,12 @@ function attachPty(
       ? `tmux select-pane -t ${shellQuote(selectTarget)} || tmux select-window -t ${shellQuote(selectTarget)}; `
       : '';
     const remoteScript = `${selectCommand}tmux attach-session -t ${shellQuote(attachSession)}`;
-    args = ['-t', '-o', 'ConnectTimeout=5', sshTarget, `zsh -lc ${shellQuote(remoteScript)}`];
+    args = [
+      '-t',
+      ...SSH_INTERACTIVE_CONNECT_OPTIONS,
+      sshTarget,
+      `zsh -lc ${shellQuote(remoteScript)}`,
+    ];
     log(
       'attach',
       key,

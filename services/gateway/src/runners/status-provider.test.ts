@@ -25,7 +25,7 @@ describe('RunnerStatusProvider subscription + bind surface', () => {
       command: 'pi auth check --provider anthropic --json --no-refresh',
       description: 'Pi readiness',
     });
-    assert.match(inspection.command, /ssh 'operator@remote.example'/);
+    assert.match(inspection.command, /^ssh -o ConnectTimeout=10 'operator@remote.example' /);
     assert.ok(inspection.command.includes('PI_CODING_AGENT_DIR'));
     assert.ok(!inspection.command.includes('PRIVATE-SENTINEL'));
     assert.ok(!inspection.command.includes('ANTHROPIC_API_KEY'));

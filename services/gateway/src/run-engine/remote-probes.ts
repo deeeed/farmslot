@@ -3,6 +3,7 @@
 import type { WorkerTransport } from '@farmslot/protocol';
 
 import { execFileArgv } from '../core/exec.js';
+import { SSH_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 
@@ -48,16 +49,7 @@ export async function probeRemotePath(
   }
   if (!stdout && sshTarget) {
     try {
-      const r = await execFileArgv([
-        'ssh',
-        '-n',
-        '-o',
-        'BatchMode=yes',
-        '-o',
-        'ConnectTimeout=5',
-        sshTarget,
-        cmd,
-      ]);
+      const r = await execFileArgv(['ssh', '-n', ...SSH_CONNECT_OPTIONS, sshTarget, cmd]);
       stdout = r.stdout || '';
     } catch (err) {
       return {
