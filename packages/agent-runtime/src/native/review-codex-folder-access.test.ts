@@ -9,6 +9,7 @@ const { answerCodexFolderAccess, classifyCodexLaunchScreen } =
       capture: () => string | null;
       sendEnter: () => void;
       folders: string[];
+      mayAnswer?: boolean;
       now?: () => number;
       sleep?: (ms: number) => Promise<void>;
     }) => Promise<'restricted' | null>;
@@ -75,7 +76,7 @@ const splash = `
 `;
 
 /** Replays panes in order (the last one repeats) on a fake clock, counting Enter presses. */
-function drive(panes: string[]) {
+function drive(panes: string[], mayAnswer = true) {
   let clock = 0;
   let index = 0;
   const sent: string[] = [];
@@ -85,6 +86,7 @@ function drive(panes: string[]) {
       sent.push('Enter');
     },
     folders: [folder],
+    mayAnswer,
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -142,4 +144,12 @@ test('a changed or unknown screen fails the launch instead of pressing Enter bli
   const stuck = drive([folderAccess]);
   await assert.rejects(stuck.result, /still shows Folder access after Open restricted/);
   assert.deepEqual(stuck.sent, ['Enter']);
+
+  // A resumed launch whose answer was already sent never sends a second one.
+  const resumed = drive([folderAccess], false);
+  await assert.rejects(resumed.result, /still shows Folder access after Open restricted/);
+  assert.deepEqual(resumed.sent, []);
+  const resumedClear = drive(['', ready], false);
+  assert.equal(await resumedClear.result, null);
+  assert.deepEqual(resumedClear.sent, []);
 });

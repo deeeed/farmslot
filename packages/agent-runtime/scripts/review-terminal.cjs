@@ -13,6 +13,37 @@ const check = (result) => {
   return result.stdout.trim();
 };
 const target = input.session;
+
+/**
+ * Answer Codex's Folder access screen for a launch record, persisting each stage
+ * in the marker (`watching` → `answered` before the key is sent → `done`) so a
+ * launch replayed after the helper died resumes the watch and never answers twice.
+ */
+async function codexHandshake(marker, record, folders) {
+  const persist = () => fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
+  try {
+    const answered = await answerCodexFolderAccess({
+      capture: () => {
+        const pane = tmux(['capture-pane', '-p', '-t', target]);
+        return pane.status === 0 ? pane.stdout : null;
+      },
+      sendEnter: () => {
+        record.codexHandshake = 'answered';
+        persist();
+        check(tmux(['send-keys', '-t', target, 'Enter']));
+      },
+      folders,
+      mayAnswer: record.codexHandshake === 'watching',
+    });
+    if (answered || record.codexHandshake === 'answered') record.folderAccess = 'restricted';
+    record.codexHandshake = 'done';
+    persist();
+  } catch (error) {
+    tmux(['kill-session', '-t', target]);
+    throw error;
+  }
+}
+
 async function main() {
   if (!['launch', 'inspect', 'stop'].includes(input.action))
     throw Error('Unknown review terminal action');
@@ -65,6 +96,8 @@ async function main() {
         'Review terminal receipt does not match the requested runner and model; request a new review',
       );
     if (has.status !== 0) throw Error('Review terminal exited; explicit retry required');
+    if (existing.codexHandshake && existing.codexHandshake !== 'done')
+      await codexHandshake(marker, existing, [input.cwd, fs.realpathSync(input.cwd)]);
     process.stdout.write(JSON.stringify(existing));
     return;
   }
@@ -119,6 +152,7 @@ async function main() {
     model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
+    ...(input.runner === 'codex' ? { codexHandshake: 'watching' } : {}),
   };
   const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ['FARMSLOT_NODE_TOKEN','FARMSLOT_GATEWAY_TOKEN','FARMSLOT_GATEWAY_PASSWORD','CLAUDECODE'])delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;
   fs.writeFileSync(commandFile, launch, { mode: 0o600 });
@@ -148,26 +182,7 @@ async function main() {
     check(tmux(['kill-session', '-t', target]));
     throw new Error('Review terminal launch was cancelled');
   }
-  let folderAccess = null;
-  if (input.runner === 'codex') {
-    try {
-      folderAccess = await answerCodexFolderAccess({
-        capture: () => {
-          const pane = tmux(['capture-pane', '-p', '-t', target]);
-          return pane.status === 0 ? pane.stdout : null;
-        },
-        sendEnter: () => check(tmux(['send-keys', '-t', target, 'Enter'])),
-        folders: [input.cwd, cwd],
-      });
-    } catch (error) {
-      tmux(['kill-session', '-t', target]);
-      throw error;
-    }
-  }
-  if (folderAccess) {
-    record.folderAccess = folderAccess;
-    fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
-  }
+  if (record.codexHandshake) await codexHandshake(marker, record, [input.cwd, cwd]);
   process.stdout.write(JSON.stringify(record));
 }
 main().catch((error) => {

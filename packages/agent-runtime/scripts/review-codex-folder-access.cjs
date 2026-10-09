@@ -56,22 +56,24 @@ const excerpt = (pane) =>
 
 /**
  * Watch a freshly launched Codex pane until it is working on the prompt, or idle
- * at its composer for IDLE_READY_MS. Returns 'restricted'
- * when it answered the Folder access screen, null otherwise. Throws on any other
- * prompt, or when the screen is still there after its one answer.
+ * at its composer for IDLE_READY_MS. Returns 'restricted' when it answered the
+ * Folder access screen, null otherwise. Throws on any other prompt, or when the
+ * screen is still there after its one answer. `mayAnswer: false` resumes a launch
+ * whose one answer was already sent, so Folder access is then only waited out.
  */
 async function answerCodexFolderAccess({
   capture,
   sendEnter,
   folders,
+  mayAnswer = true,
   timeoutMs = 15_000,
-  settleMs = 3_000,
+  settleMs = 2_000,
   pollMs = 250,
   now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   const deadline = now() + timeoutMs;
-  let answeredAt = null;
+  let answeredAt = mayAnswer ? null : now();
   let idleSince = null;
   while (now() < deadline) {
     await sleep(pollMs);
@@ -98,7 +100,7 @@ async function answerCodexFolderAccess({
       );
     }
   }
-  return answeredAt === null ? null : 'restricted';
+  return answeredAt === null || !mayAnswer ? null : 'restricted';
 }
 
 module.exports = { answerCodexFolderAccess, classifyCodexLaunchScreen };
