@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `hasMatchingRoute` and `matchesBridgeTarget` accept the manufacturer-prefixed name a physical Android device reports in its bridge snapshot ("Google Pixel 6a" for the pin "Pixel 6a"). They accepted only the Metro form ("Pixel 6a - 17 - API 37"), so wait-for-bridge never saw the Pixel 6a as ready and launch failed after its full timeout. The model must be whole trailing words ("Pixel 6" does not match "Google Pixel 6a"), the serial must not be an `emulator-` serial, and two manufacturer-prefixed matches on one Metro count as no match.
 
 ## 0.19.5 - 2026-10-09
 
