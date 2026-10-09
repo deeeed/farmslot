@@ -4,9 +4,9 @@ import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import {
   execOnSlot,
+  loadProjectVars,
   loadSlotVars,
   markSlotStatusIf,
-  readSlotField,
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -16,6 +16,7 @@ import {
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { tmuxShellSnippet } from '../core/tmux.js';
+import { buildPrepareIdentityReapCommand } from '../methods/slot/prepare-command.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -261,15 +262,54 @@ export async function releaseRunOwnedCapabilities(
     );
 }
 
+/**
+ * Stop the slot's recorded prepare scope: the preflight process group and its
+ * nohup'd `farmslot-prepare-scope` holder. Both outlive an aborted or kept-alive
+ * prepare window, and their cwd is the slot repository, so leaving them would
+ * hold the slot for a "workspace occupant" nobody owns. The identity verifier
+ * signals only a live group whose scope still matches, so this is a no-op when
+ * prepare never ran or was already reaped.
+ */
+async function stopSlotPrepareScope(slotId: string): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  let runtimeDir = '.agent';
+  try {
+    runtimeDir = (await loadProjectVars(vars.projectName)).runtimeDir;
+  } catch {
+    // Legacy project metadata: prepare used the default runtime dir too.
+  }
+  const reap = await execOnSlot(
+    vars,
+    buildPrepareIdentityReapCommand(`${vars.remoteRepo}/${runtimeDir}/preflight.identity`),
+    { cwd: '/' },
+  );
+  if (reap.exitCode !== 0)
+    throw new Error(
+      `Prepare scope cleanup failed: ${reap.stderr.trim() || `exit ${reap.exitCode}`}`,
+    );
+  const pgid = /killed verified preflight group \((\d+)\)/.exec(reap.stdout)?.[1];
+  if (!pgid) return;
+  // The wrapper's TERM trap drains for ~3s; the occupancy census that follows
+  // must not see it, so wait out the group and escalate a straggler.
+  await execOnSlot(
+    vars,
+    `n=0; while kill -0 -- -${pgid} 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done; kill -KILL -- -${pgid} 2>/dev/null; true`,
+    { cwd: '/', timeout: 15000 },
+  );
+}
+
 export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | null> {
   const blocker = await stopRunOwnedTmuxWorkers(run);
   if (!run.slotId) return blocker;
   await unwatchSlot(run.slotId, { expectedRunId: run.id });
-  if ((await readSlotField(run.slotId, 'current_run_id')) === run.id)
-    await archiveRunnerSessionsForSlotRelease({
-      vars: await loadSlotVars(run.slotId),
-      runId: run.id,
-    });
+  const slot = await readSlotRow(run.slotId);
+  if (slot?.current_run_id !== run.id) return blocker;
+  if (!slot.handoff_run_id || slot.handoff_run_id === run.id)
+    await stopSlotPrepareScope(run.slotId);
+  await archiveRunnerSessionsForSlotRelease({
+    vars: await loadSlotVars(run.slotId),
+    runId: run.id,
+  });
   return blocker;
 }
 
