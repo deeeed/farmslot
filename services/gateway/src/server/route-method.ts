@@ -561,6 +561,7 @@ import { authorizeGatewayMethod } from '../security/authorization.js';
 import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
 import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
+import { startWatchingActiveSlots } from '../tasks/watcher.js';
 
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
@@ -1230,6 +1231,13 @@ async function routeAuthorizedMethod(
           );
         });
       }
+      // Task watches on this node's slots: a node that registers after startup
+      // has none, and a reconnecting one lost those of its last connection.
+      startWatchingActiveSlots({ machine }).catch((err) => {
+        console.log(
+          `[server] failed to restart task watches for ${machine}: ${(err as Error).message}`,
+        );
+      });
       // Re-subscribe stashed screen sessions from previous connection
       resubscribeAgentScreenSessions(machine).catch((err) => {
         console.log(

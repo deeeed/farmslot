@@ -88,6 +88,7 @@ import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
+import { resumeBlockedRunWhoseWorkerContinued } from './methods/run/replay-step.js';
 import {
   getRuntimeCapabilityRegistry,
   initRuntimeCapabilities,
@@ -818,6 +819,14 @@ async function main(): Promise<void> {
           `[worker-signal] failed to apply running signal for ${slotId}: ${(error as Error).message}`,
         );
       });
+    // A blocked run whose worker kept going without `./mark start` resumes here.
+    if (ENABLE_ORCHESTRATION && runId && signal.status === 'running') {
+      void resumeBlockedRunWhoseWorkerContinued(runId, broadcastEvent).catch((error) => {
+        console.warn(
+          `[worker-signal] blocked run ${runId.slice(0, 8)} did not resume: ${(error as Error).message}`,
+        );
+      });
+    }
     broadcast({
       type: 'event',
       event: Events.WORKER_SIGNAL,
