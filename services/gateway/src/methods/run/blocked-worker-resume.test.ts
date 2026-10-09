@@ -47,14 +47,33 @@ const blockedSteps = [
   { name: 'monitor', status: 'done', outputs: { workerSignal: blocked } },
 ] as Run['steps'];
 
-function blockedRun(t: test.TestContext, ticket: string): Run {
+/** Replace one row of this test file's own fleet status file. */
+async function setSlotRow(row: Record<string, unknown>): Promise<void> {
+  const fleet = JSON.parse(await readFile(statusFile, 'utf8').catch(() => '{"slots":[]}'));
+  const slots = (fleet.slots as Record<string, unknown>[]).filter((s) => s.slot !== row.slot);
+  await writeFile(statusFile, JSON.stringify({ ...fleet, slots: [...slots, row] }));
+}
+
+/** What a fleet refresh writes for a blocked run's slot: held, owned by the run. */
+const heldBy = (slot: string, runId: string) => ({
+  slot,
+  current_run_id: runId,
+  handoff_run_id: null,
+  slot_epoch: 1,
+  lifecycle: 'held',
+  phase: 'pr-watch',
+});
+
+async function blockedRun(t: test.TestContext, ticket: string): Promise<Run> {
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: ticket });
   t.after(async () => {
     if (!getRun(run.id)) return;
     updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
     await deleteRun(run.id);
   });
-  updateRun(run.id, { status: 'blocked', slotId: 'slot-1' });
+  const slotId = `slot-${ticket}`;
+  await setSlotRow(heldBy(slotId, run.id));
+  updateRun(run.id, { status: 'blocked', slotId });
   updateRunStep(run.id, 'dispatch', { status: 'done', outputs: { acknowledgement: 'tmux' } });
   return updateRunStep(run.id, 'monitor', { status: 'done', outputs: { workerSignal: blocked } });
 }
@@ -127,7 +146,7 @@ test('the monitor checks accept the blocked attempt running again, with no SIGNA
 });
 
 test('a blocked run whose worker kept going on the same attempt replays the monitor and records it once', async (t) => {
-  const run = blockedRun(t, 'PROJ-RESUMED');
+  const run = await blockedRun(t, 'PROJ-RESUMED');
   const { replayed, deps } = recordingDeps(runningAgain);
   const emitted: string[] = [];
   const emit = (event: string) => emitted.push(event);
@@ -151,7 +170,7 @@ test('a blocked run whose worker kept going on the same attempt replays the moni
 });
 
 test('a worker that ran ./mark start after the block resumes the same way', async (t) => {
-  const run = blockedRun(t, 'PROJ-MARK-START');
+  const run = await blockedRun(t, 'PROJ-MARK-START');
   const { replayed, deps } = recordingDeps({ ...runningAgain, attemptId: 'a2', step: 'started' });
   assert.equal(
     (await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps))?.status,
@@ -162,7 +181,7 @@ test('a worker that ran ./mark start after the block resumes the same way', asyn
 });
 
 test('twenty simultaneous running notifications replay the monitor once', async (t) => {
-  const run = blockedRun(t, 'PROJ-BURST');
+  const run = await blockedRun(t, 'PROJ-BURST');
   const { replayed, deps } = recordingDeps(runningAgain);
   const results = await Promise.all(
     Array.from({ length: 20 }, () => resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps)),
@@ -173,7 +192,7 @@ test('twenty simultaneous running notifications replay the monitor once', async 
 });
 
 test('a refused replay records nothing, and the next running signal retries', async (t) => {
-  const run = blockedRun(t, 'PROJ-REFUSED');
+  const run = await blockedRun(t, 'PROJ-REFUSED');
   const { replayed, deps } = recordingDeps(runningAgain, 1);
 
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
@@ -189,7 +208,7 @@ test('a refused replay records nothing, and the next running signal retries', as
 });
 
 test('a blocked run with no worker activity after the block stays blocked', async (t) => {
-  const run = blockedRun(t, 'PROJ-QUIET');
+  const run = await blockedRun(t, 'PROJ-QUIET');
   const { replayed, deps } = recordingDeps({ ...runningAgain, timestamp: blocked.timestamp });
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
   assert.deepEqual(replayed, []);
@@ -197,16 +216,16 @@ test('a blocked run with no worker activity after the block stays blocked', asyn
 });
 
 test('a worker that finished after the block is left to run resume', async (t) => {
-  const run = blockedRun(t, 'PROJ-FINISHED');
+  const run = await blockedRun(t, 'PROJ-FINISHED');
   const { replayed, deps } = recordingDeps({ ...runningAgain, status: 'complete' });
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
   assert.deepEqual(replayed, []);
 });
 
 test('cancelled and eval runs are left alone, even when the worker kept going', async (t) => {
-  const cancelled = blockedRun(t, 'PROJ-CANCELLED');
+  const cancelled = await blockedRun(t, 'PROJ-CANCELLED');
   updateRun(cancelled.id, { status: 'cancelled' });
-  const evalRun = blockedRun(t, 'PROJ-EVAL');
+  const evalRun = await blockedRun(t, 'PROJ-EVAL');
   updateRun(evalRun.id, {
     engineState: {
       ...evalRun.engineState,
@@ -220,7 +239,7 @@ test('cancelled and eval runs are left alone, even when the worker kept going', 
   assert.equal(getRun(evalRun.id)!.status, 'blocked');
 });
 
-test('a worker that resumes during the block teardown is picked up only after the slot cleanup', async (t) => {
+test('a worker that resumes during the block teardown waits for the cleanup and for its slot to be re-bound', async (t) => {
   const slotId = 'slot-terminal-overlap';
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-OVERLAP' });
   t.after(async () => {
@@ -291,10 +310,26 @@ test('a worker that resumes during the block teardown is picked up only after th
   release();
   await terminal;
   const slot = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
-  assert.equal(slot.current_run_id, null, 'the block cleanup ran on the still-blocked run');
+  assert.equal(slot.current_run_id, null, 'the block cleanup released the slot');
+  // A released slot is not this run's workspace: the real ownership check refuses it.
+  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
+  assert.deepEqual(replayed, []);
+  assert.equal(getRun(run.id)!.status, 'blocked');
+
+  // A fleet refresh re-binds the slot to the blocked run; the next signal resumes it.
+  await setSlotRow(heldBy(slotId, run.id));
   assert.equal(
     (await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps))?.status,
     'monitoring',
   );
   assert.deepEqual(order, ['slot-cleanup', 'replay']);
+});
+
+test('a blocked run whose slot another run claimed stays blocked', async (t) => {
+  const run = await blockedRun(t, 'PROJ-CLAIMED');
+  await setSlotRow({ ...heldBy(run.slotId!, 'other-run'), lifecycle: 'busy', phase: 'working' });
+  const { replayed, deps } = recordingDeps(runningAgain);
+  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
+  assert.deepEqual(replayed, []);
+  assert.equal(getRun(run.id)!.status, 'blocked');
 });

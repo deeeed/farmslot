@@ -468,7 +468,8 @@ const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies 
  * the monitor is replayed on its running signal, the same path `run resume`
  * takes, and SIGNAL.json is never written. Called on every running signal the
  * slot watcher sees; does nothing unless the run is still blocked, so a
- * repeat, a cancelled run or one already monitoring is left alone. A refused
+ * repeat, a cancelled run or one already monitoring is left alone, and so is
+ * a run whose slot is not held by it (the block's cleanup released it). A refused
  * replay is logged and recorded nowhere, so the worker's next signal retries,
  * as does a signal that arrives while the block's slot teardown is running.
  * Eval runs are skipped: their replay can restart at prepare under a live
@@ -502,6 +503,17 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     if (!run || !signal?.attemptId || !waiting()) return null;
     const blockedAttemptId = blockedMonitorSignal(run)?.attemptId ?? null;
     const id = runId.slice(0, 8);
+    // The block's cleanup resets a slot its run owns, so a blocked run holds
+    // its slot again only once a fleet refresh re-binds it from the run store
+    // (and no other run claimed it first). Until then the workspace is not
+    // this run's to resume in.
+    const slot = await readSlotRow(run.slotId!);
+    if (!blockedMonitorOwnsSlot(slot, runId)) {
+      console.warn(
+        `[run] blocked run ${id}: worker attempt ${signal.attemptId} is running again at step ${signal.step ?? '?'}, but slot ${run.slotId} is not held by this run (owner ${String(slot?.current_run_id ?? 'none')}, ${String(slot?.lifecycle ?? 'missing')}); staying blocked`,
+      );
+      return null;
+    }
     let replayed: Run;
     try {
       replayed = await deps.replayMonitor(runId);
