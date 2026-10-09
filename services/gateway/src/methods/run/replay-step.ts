@@ -7,7 +7,6 @@ import {
   FLOW_STEPS,
   type FlowType,
   isInteractiveDevRun,
-  isSlotFreedByPark,
   isTerminalRunStatus,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
@@ -67,7 +66,7 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
-import { slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
+import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { slotOwnershipFieldsForRun } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
@@ -571,13 +570,9 @@ export async function resumeBlockedRunWhoseWorkerContinued(
 export async function rebindReleasedSlot(run: Run): Promise<string | null> {
   const slotId = run.slotId!;
   // A run created for this slot but not yet claiming it counts as its holder,
-  // as it does for dispatch (activeRunSlotIds).
+  // by the same rule dispatch uses.
   const rival = getAllRuns().find(
-    (other) =>
-      other.id !== run.id &&
-      other.slotId === slotId &&
-      !isTerminalRunStatus(other.status) &&
-      !isSlotFreedByPark(other),
+    (other) => other.slotId === slotId && isActiveSlotHolder(other, run.id),
   );
   if (rival) return `run ${rival.id}`;
   let holder: string | null = null;
