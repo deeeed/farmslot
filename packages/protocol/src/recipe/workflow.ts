@@ -10,6 +10,7 @@ import {
   type RecipeValidationResult,
   TERMINAL_STATUSES,
 } from './common.js';
+import { findUnsupportedRecipeTemplates, hasRecipeTemplate } from './template.js';
 
 const NODE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const VISUAL_REVIEW_CAPTURE_ACTIONS = new Set(['ui.capture_surface', 'ui.screenshot']);
@@ -90,8 +91,9 @@ export function normalizeRecipeRef(value: string): string {
   return value.trim();
 }
 
+// Any template text, parsable or not, makes a ref dynamic.
 export function isDynamicRecipeRef(value: string): boolean {
-  return /\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}/u.test(value);
+  return hasRecipeTemplate(value) || findUnsupportedRecipeTemplates(value).length > 0;
 }
 
 export function getRecipeActionParams(node: Record<string, unknown>): Record<string, unknown> {
@@ -405,6 +407,27 @@ function collectTargets(
   return targets;
 }
 
+// A `{{params.`/`{{outputs.` the runner cannot parse would otherwise reach the action as literal text.
+function validateTemplates(ctx: MutableValidationContext, value: unknown, path: string): void {
+  if (typeof value === 'string') {
+    for (const template of findUnsupportedRecipeTemplates(value)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.invalid_template',
+        path,
+        `${template} is not a supported template. Use {{params.<name>}} or {{outputs.<node>.<path>}}, with [n] for an array index.`,
+      );
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((entry, index) => validateTemplates(ctx, entry, `${path}[${index}]`));
+  } else if (isRecord(value)) {
+    for (const [field, entry] of Object.entries(value)) {
+      validateTemplates(ctx, entry, `${path}.${field}`);
+    }
+  }
+}
+
 function validateNodeShape(
   ctx: MutableValidationContext,
   nodeId: string,
@@ -448,6 +471,10 @@ function validateNodeShape(
   }
 
   validateNodeIntent(ctx, nodeId, node, path);
+  for (const [field, entry] of Object.entries(node)) {
+    // A templated call ref is reported once, as workflow.dynamic_call_ref.
+    if (action !== 'call' || field !== 'ref') validateTemplates(ctx, entry, `${path}.${field}`);
+  }
   validateProves(ctx, node, path);
   validateVisualReviewMetadata(ctx, node, path);
   const hasNext = hasOwn(node, 'next');

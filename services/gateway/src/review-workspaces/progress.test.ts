@@ -223,6 +223,44 @@ test('a recorded verdict alone publishes, without the child tag', async () => {
   assert.equal(h.emitted[1].payload.parentChecklist, undefined);
 });
 
+test('manifest evidence links alone publish, for a run with no ledger', async () => {
+  const h = harness();
+  nextProgress = () => projection({});
+  await h.publisher.publish();
+
+  h.advance();
+  nextProgress = () => ({
+    ...projection({}),
+    acceptanceSource: 'evidence-manifest',
+    acceptanceEvidenceLinks: [{ id: 'AC-1', evidence: ['artifacts/after.png'] }],
+  });
+  const published = await h.publisher.publish();
+  assert.deepEqual(published?.acceptanceEvidenceLinks, [
+    { id: 'AC-1', evidence: ['artifacts/after.png'] },
+  ]);
+  assert.equal(h.emitted.length, 2);
+});
+
+test('a manifest read error alone publishes, and so does its recovery', async () => {
+  const h = harness();
+  nextProgress = () => projection({});
+  await h.publisher.publish();
+
+  h.advance();
+  nextProgress = () => ({
+    ...projection({}),
+    acceptanceEvidenceLinksError: 'artifacts/evidence-manifest.json: Unexpected token',
+  });
+  const broken = await h.publisher.publish();
+  assert.match(broken?.acceptanceEvidenceLinksError ?? '', /evidence-manifest\.json/);
+  assert.equal(h.emitted.length, 2, 'the error is news on its own');
+
+  h.advance();
+  nextProgress = () => projection({});
+  await h.publisher.publish();
+  assert.equal(h.emitted.length, 3, 'so is the manifest becoming readable again');
+});
+
 test('a failed progress read publishes nothing and leaves the next read free to succeed', async () => {
   const h = harness();
   nextProgress = () => {

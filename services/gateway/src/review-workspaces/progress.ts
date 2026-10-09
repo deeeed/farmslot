@@ -54,12 +54,21 @@ function childSignature(progress: TaskProgressResult): string {
     .join('|');
 }
 
-/** Recorded verdicts and the read error, which a client shows in place of them. */
+/**
+ * Recorded verdicts and the read error, which a client shows in place of them,
+ * plus the manifest fallback a run with no ledger shows instead of verdicts.
+ */
 function ledgerSignature(progress: TaskProgressResult): string {
   const verdicts = (progress.acceptanceStatus?.criteria ?? [])
     .map((entry) => `${entry.id}:${entry.verdict}:${entry.updatedAt}`)
     .join(',');
-  return `${verdicts}#${progress.acceptanceStatusError ?? ''}`;
+  const links = (progress.acceptanceEvidenceLinks ?? [])
+    .map((link) => `${link.id}:${link.evidence.join(',')}`)
+    .join(';');
+  return (
+    `${verdicts}#${progress.acceptanceStatusError ?? ''}` +
+    `#${links}#${progress.acceptanceEvidenceLinksError ?? ''}`
+  );
 }
 
 /**

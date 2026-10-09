@@ -14,6 +14,7 @@ import {
 } from './common.js';
 import { digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 import { validateRecipeDocument } from './document.js';
+import { splitRecipeTemplates } from './template.js';
 import {
   getRecipeCallRefs,
   getRecipeWorkflowActionEntries,
@@ -800,7 +801,7 @@ function validateTraceConsistency(
 function traceIntentMatches(authored: string, retained: unknown): boolean {
   if (retained === authored) return true;
   if (typeof retained !== 'string') return false;
-  const segments = authored.split(/\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}/gu);
+  const segments = splitRecipeTemplates(authored);
   if (segments.length === 1 || !retained.startsWith(segments[0]!)) return false;
 
   let cursor = segments[0]!.length;

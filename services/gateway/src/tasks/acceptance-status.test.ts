@@ -315,6 +315,23 @@ test('no ledger and no usable manifest leave every criterion not assessed', asyn
     const broken = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
     assert.equal(broken.source, undefined);
     assert.equal(broken.error, undefined, 'a broken manifest is not a ledger read failure');
+    assert.equal(broken.evidenceLinks, undefined);
+    // Unreadable is not the same as "covers nothing": the reason travels apart.
+    assert.match(broken.evidenceLinksError ?? '', /^artifacts\/evidence-manifest\.json: /);
+  } finally {
+    rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+test('a malformed ledger reports its error and never falls back to the manifest', async () => {
+  const taskDir = taskDirWith('{ not json', FOUR_CRITERIA);
+  try {
+    writeManifest(taskDir, MANIFEST);
+    const read = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
+    assert.match(read.error ?? '', /invalid .*acceptance-status\.json/);
+    assert.equal(read.ledger, null);
+    assert.equal(read.source, undefined);
+    assert.equal(read.evidenceLinks, undefined);
   } finally {
     rmSync(taskDir, { recursive: true, force: true });
   }

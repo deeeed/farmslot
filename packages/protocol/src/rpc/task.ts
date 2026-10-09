@@ -46,4 +46,10 @@ export interface TaskProgressResult {
    * Evidence linked, not proven: no verdict, and no gate or check reads it.
    */
   acceptanceEvidenceLinks?: import('../contracts/index.js').AcceptanceEvidenceLink[];
+  /**
+   * Why the evidence manifest the fallback reads could not be read, so a client
+   * can tell an unreadable manifest from one that covers no criterion. Never a
+   * ledger error: `acceptanceStatusError` keeps that meaning.
+   */
+  acceptanceEvidenceLinksError?: string;
 }

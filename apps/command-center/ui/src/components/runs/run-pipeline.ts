@@ -82,6 +82,8 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceStatusError?: string | null;
   /** Manifest-linked criteria for a run with no ledger; shown as evidence linked. */
   @property({ attribute: false }) acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
+  /** Why the evidence manifest behind that fallback could not be read. */
+  @property({ attribute: false }) acceptanceEvidenceLinksError?: string | null;
   /** Turns a task-dir relative evidence path into a link the host can serve. */
   @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
   /** Opens a clicked acceptance evidence file in the host's viewer. */

@@ -478,7 +478,7 @@
             "ref": {
               "type": "string",
               "minLength": 1,
-              "not": { "pattern": "\\{\\{(?:params|outputs)\\.[A-Za-z0-9_.-]+\\}\\}" },
+              "not": { "pattern": "\\{\\{\\s*(?:params|outputs)\\." },
               "description": "Recipe id to compose."
             },
             "params": {

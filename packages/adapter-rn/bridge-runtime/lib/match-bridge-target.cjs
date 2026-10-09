@@ -11,6 +11,16 @@
 // the matcher would fall back to that ambient identity and confirm against the wrong
 // platform's target. Binding the platform up front closes that corner.
 
+// Metro names a physical device by its model ("Pixel 6a - 17 - API 37"), but the
+// in-app bridge snapshot can prefix the manufacturer ("Google Pixel 6a"). Accept that
+// form only for a physical device (not an emulator- serial) and only with the model as
+// whole trailing words, so "Pixel 6" never matches "Google Pixel 6a".
+function manufacturerNameMatches(deviceName, androidName, adbSerial) {
+  if (!adbSerial || adbSerial.startsWith('emulator-')) return false;
+  if (deviceName === androidName || deviceName.startsWith(`${androidName} -`)) return false;
+  return deviceName.endsWith(` ${androidName}`) || deviceName.includes(` ${androidName} -`);
+}
+
 function matchesBridgeTarget(target, env) {
   const e = env || process.env;
   if (!target || typeof target !== 'object') return false;
@@ -33,7 +43,8 @@ function matchesBridgeTarget(target, env) {
     if (target.platform !== 'android') return false;
     if (!androidName) return true;
     const deviceName = String(target.deviceName || '');
-    return deviceName === androidName || deviceName.startsWith(`${androidName} -`);
+    if (deviceName === androidName || deviceName.startsWith(`${androidName} -`)) return true;
+    return manufacturerNameMatches(deviceName, androidName, adbSerial);
   }
 
   // iOS simulator pin applies only when iOS is requested (or nothing constrains the
@@ -48,10 +59,28 @@ function matchesBridgeTarget(target, env) {
 
 // True when at least one answering target matches the request AND carries a route
 // (an in-app agentic bridge is live), not merely a registered debug target.
+// Two phones of the same model on one Metro both report "Google Pixel 6a"; the
+// snapshot cannot tell which one is pinned, so a manufacturer-form match counts only
+// when it is the sole one. The count includes entries that have not reported a
+// platform yet: the pinned phone may still be starting while the other one answers.
 function hasMatchingRoute(value, env) {
-  const targets = Array.isArray(value) ? value : [value];
-  return targets.some(
-    (t) => matchesBridgeTarget(t, env) && t && t.agenticPresent === true && Boolean(t.route),
+  const e = env || process.env;
+  const entries = (Array.isArray(value) ? value : [value]).filter(
+    (t) => t && typeof t === 'object',
+  );
+  const androidName = e.ANDROID_TARGET_DEVICE_NAME || e.ANDROID_DEVICE || '';
+  const adbSerial = e.ADB_SERIAL || e.ANDROID_SERIAL || '';
+  const manufacturerForm = (t) =>
+    Boolean(androidName) &&
+    (!t.platform || t.platform === 'android') &&
+    manufacturerNameMatches(String(t.deviceName || ''), androidName, adbSerial);
+  const ambiguous = entries.filter(manufacturerForm).length > 1;
+  return entries.some(
+    (t) =>
+      matchesBridgeTarget(t, e) &&
+      !(ambiguous && manufacturerForm(t)) &&
+      t.agenticPresent === true &&
+      Boolean(t.route),
   );
 }
 
@@ -86,4 +115,10 @@ function describeRequested(env) {
   return 'any platform';
 }
 
-module.exports = { matchesBridgeTarget, hasMatchingRoute, describeTargets, describeRequested };
+module.exports = {
+  matchesBridgeTarget,
+  manufacturerNameMatches,
+  hasMatchingRoute,
+  describeTargets,
+  describeRequested,
+};

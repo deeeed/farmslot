@@ -4,9 +4,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Recipe templates index arrays: `{{outputs.node.items[0].field}}` (or `.0.`); on an object both read key `0`. One grammar (`parseRecipeTemplate`, `replaceRecipeTemplates`, `findUnsupportedRecipeTemplates`) is shared by validation, trace intent matching and the recipe runner. Recipe validation reports a `{{params.` or `{{outputs.` it cannot parse as `workflow.invalid_template` instead of letting it reach an action as literal text; any such text in a `call` ref is `workflow.dynamic_call_ref`, and the published schemas reject it there.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `RunEngineState.reviewedInputs` no longer covers the PR description: editing it never makes self-review run again or holds approval. Fingerprints recorded with the description keep matching until HEAD or evidence changes, except that a description edit on such a record re-runs self-review once, after which the new fingerprint is recorded. Doc change only; the shape is unchanged.
 - `ReadyGatePayload.currentDescription` (optional): the title and body Farmslot will publish when they differ from the reviewed package, and after publication the ones it published, with `publishedAt`. Not part of the package hash. Existing stored gates remain readable.
+- `TaskProgressResult.acceptanceEvidenceLinksError` (optional): why the evidence manifest behind the acceptance fallback could not be read, so clients can tell an unreadable manifest from one that covers no criterion. Never a ledger error.
 
 ## 0.35.1 - 2026-10-09
 

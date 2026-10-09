@@ -141,8 +141,11 @@ export async function handoffListsAcceptanceCriteria(
   return (await readHandoffAcceptanceCriteria(ctx, taskDir)).length > 0;
 }
 
+/** Evidence manifest basename; the watcher re-emits acceptance when it changes. */
+export const EVIDENCE_MANIFEST_FILENAME = 'evidence-manifest.json';
+
 /** Task-dir relative path of the evidence manifest, the ledger-less fallback's source. */
-const EVIDENCE_MANIFEST_ARTIFACT = 'artifacts/evidence-manifest.json';
+const EVIDENCE_MANIFEST_ARTIFACT = `artifacts/${EVIDENCE_MANIFEST_FILENAME}`;
 
 /** `ac1`, `AC1`, `AC-1`, `ac-1`, `AC 1`, `ac_1`: how manifests spell a criterion. */
 const COVER_CRITERION_PATTERN = /^ac[\s_-]?([1-9][0-9]*)$/i;
@@ -203,23 +206,25 @@ export function acceptanceEvidenceLinksFromManifest(
 }
 
 /**
- * The fallback links for a task directory with no ledger. A missing or unreadable
- * manifest links nothing: the fallback only adds information, so a broken manifest
- * is warned about and the criteria stay not assessed.
+ * The fallback links for a task directory with no ledger. A missing manifest links
+ * nothing. An unreadable one links nothing too, but says why in `error`, so a client
+ * can tell "the manifest could not be read" from "the manifest covers nothing".
  */
 async function readAcceptanceEvidenceLinks(
   ctx: SlotLocality,
   taskDir: string,
   criteria: ReadonlyArray<AcceptanceCriterionRef>,
-): Promise<AcceptanceEvidenceLink[]> {
-  if (criteria.length === 0) return [];
+): Promise<{ links: AcceptanceEvidenceLink[]; error?: string }> {
+  if (criteria.length === 0) return { links: [] };
   const manifestPath = path.join(taskDir, EVIDENCE_MANIFEST_ARTIFACT);
   try {
-    if (!(await slotFileExists(ctx, manifestPath))) return [];
-    return acceptanceEvidenceLinksFromManifest(await slotReadFile(ctx, manifestPath), criteria);
+    if (!(await slotFileExists(ctx, manifestPath))) return { links: [] };
+    return {
+      links: acceptanceEvidenceLinksFromManifest(await slotReadFile(ctx, manifestPath), criteria),
+    };
   } catch (err) {
     console.warn(`[acceptance] ignoring ${manifestPath}: ${(err as Error).message}`);
-    return [];
+    return { links: [], error: `${EVIDENCE_MANIFEST_ARTIFACT}: ${(err as Error).message}` };
   }
 }
 
@@ -234,6 +239,8 @@ export interface AcceptanceStatusRead {
   source?: AcceptanceStatusSource;
   /** Manifest-linked criteria, only when there is no ledger. Never a verdict. */
   evidenceLinks?: AcceptanceEvidenceLink[];
+  /** Why the manifest the fallback reads could not be read; not a ledger error. */
+  evidenceLinksError?: string;
 }
 
 /**
@@ -263,9 +270,10 @@ export async function readAcceptanceStatusForDisplay(
     console.warn(`[acceptance] ${message}`);
     return { criteria, ledger: null, error: message };
   }
-  const evidenceLinks = await readAcceptanceEvidenceLinks(ctx, taskDir, criteria);
-  return evidenceLinks.length > 0
-    ? { criteria, ledger: null, source: 'evidence-manifest', evidenceLinks }
+  const fallback = await readAcceptanceEvidenceLinks(ctx, taskDir, criteria);
+  if (fallback.error) return { criteria, ledger: null, evidenceLinksError: fallback.error };
+  return fallback.links.length > 0
+    ? { criteria, ledger: null, source: 'evidence-manifest', evidenceLinks: fallback.links }
     : { criteria, ledger: null };
 }
 
