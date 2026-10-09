@@ -7,6 +7,7 @@ import {
   onWorkerSignal,
   resolveContextFilePath,
   shouldRebindWatch,
+  slotHasActiveWorkerTask,
   slotIdFromWatchKey,
   watchKey,
 } from './watcher.js';
@@ -145,4 +146,14 @@ test('bindWorkerSignalToWatch rejects mismatched worker role/context tags', () =
     ),
     null,
   );
+});
+
+test('a restart re-watches the slot of a blocked run, which a refresh shows as held/pr-watch', () => {
+  const blocked = new Set(['run-blocked']);
+  const held = { lifecycle: 'held', phase: 'pr-watch' } as const;
+  assert.equal(slotHasActiveWorkerTask({ ...held, currentRunId: 'run-blocked' }, blocked), true);
+  assert.equal(slotHasActiveWorkerTask({ ...held, currentRunId: 'run-paused' }, blocked), false);
+  assert.equal(slotHasActiveWorkerTask({ lifecycle: 'busy', phase: 'working' }, blocked), true);
+  assert.equal(slotHasActiveWorkerTask({ lifecycle: 'held', phase: 'ci-watch' }, blocked), true);
+  assert.equal(slotHasActiveWorkerTask({ lifecycle: 'ready', phase: null }, blocked), false);
 });
