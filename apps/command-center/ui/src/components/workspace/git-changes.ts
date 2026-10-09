@@ -1,22 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import {
-  classifyDiffFile,
-  compileTestFileMatcher,
-  DEFAULT_TEST_FILE_MATCHER,
-  type TestFileMatcher,
-} from '@farmslot/protocol';
+import { summarizeDiffKinds } from '@farmslot/protocol';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  readHideTestsPref,
-  splitDiffFilesByKind,
-  subscribeHideTestsPref,
-  writeHideTestsPref,
-} from '../../utils/diff-test-filter.js';
-import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 // Local types (protocol types not imported in isolated phase)
 type GitChangeStatus = 'M' | 'A' | 'D' | '?' | 'R';
@@ -172,19 +161,9 @@ export class GitChanges extends LitElement {
    * the committed rows. Null falls back to the built-in defaults.
    */
   @property({ attribute: false }) testPatterns: readonly string[] | null = null;
-  private _matcherCache: { patterns: readonly string[] | null; matcher: TestFileMatcher } | null =
-    null;
-
-  private _testMatcher(): TestFileMatcher {
-    if (!this.testPatterns) return DEFAULT_TEST_FILE_MATCHER;
-    if (this._matcherCache?.patterns !== this.testPatterns) {
-      this._matcherCache = {
-        patterns: this.testPatterns,
-        matcher: compileTestFileMatcher(this.testPatterns),
-      };
-    }
-    return this._matcherCache.matcher;
-  }
+  private readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this.testPatterns,
+  });
   @state() private _stagedOpen = true;
   @state() private _changesOpen = true;
   @state() private _untrackedOpen = true;
@@ -192,7 +171,6 @@ export class GitChanges extends LitElement {
   @state() private _confirmDiscard = '';
   @state() private _viewMode: FileListViewMode = 'tree';
   @state() private _collapsedTreePaths = new Set<string>();
-  @state() private _hideTests = readHideTestsPref();
 
   /** Per-path working-tree entries — rebuilt on demand, avoids O(rows x changes) filters. */
   private get _wtByPath(): Map<string, GitChange[]> {
@@ -546,31 +524,8 @@ export class GitChanges extends LitElement {
     );
   }
 
-  private _unsubscribeHideTests: (() => void) | null = null;
-
-  connectedCallback() {
-    super.connectedCallback();
-    this._hideTests = readHideTestsPref();
-    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
-      this._hideTests = hide;
-    });
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsubscribeHideTests?.();
-    this._unsubscribeHideTests = null;
-  }
-
-  private _toggleHideTests() {
-    writeHideTestsPref(!this._hideTests);
-  }
-
   private _committedSplit() {
-    return splitDiffFilesByKind(this.committedFiles, this._hideTests, {
-      keepPath: this.selectedPath,
-      matcher: this._testMatcher(),
-    });
+    return this._testFilter.split(this.committedFiles, this.selectedPath);
   }
 
   private _renderCommittedGroup(split: ReturnType<GitChanges['_committedSplit']>) {
@@ -841,8 +796,7 @@ export class GitChanges extends LitElement {
 
   /** Working-tree rows have no stamped kind or line counts; classify by path. */
   private _showsWorkingTreeChange(change: GitChange): boolean {
-    if (!this._hideTests || change.path === this.selectedPath) return true;
-    return classifyDiffFile(change.path, this._testMatcher()) !== 'test';
+    return change.path === this.selectedPath || !this._testFilter.hides(change.path);
   }
 
   /** Code/test summary over every listed file, each path counted once. */
@@ -854,9 +808,10 @@ export class GitChanges extends LitElement {
       seen.add(change.path);
       workingTreeOnly.push({ path: change.path, additions: 0, deletions: 0 });
     }
-    return splitDiffFilesByKind([...this.committedFiles, ...workingTreeOnly], false, {
-      matcher: this._testMatcher(),
-    }).summary;
+    return summarizeDiffKinds(
+      [...this.committedFiles, ...workingTreeOnly],
+      this._testFilter.matcher,
+    );
   }
 
   render() {
@@ -895,11 +850,7 @@ export class GitChanges extends LitElement {
               </button>`,
           )}
         </span>
-        ${renderDiffKindControls({
-          summary: this._kindSummary(),
-          hideTests: this._hideTests,
-          onToggle: () => this._toggleHideTests(),
-        })}
+        ${this._testFilter.renderControls(this._kindSummary())}
         <span class="file-count">${total} change${total !== 1 ? 's' : ''}</span>
       </div>
       <div class="file-list">

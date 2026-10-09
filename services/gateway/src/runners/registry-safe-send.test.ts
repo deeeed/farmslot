@@ -1916,3 +1916,92 @@ test('claude (hook-only) with high-confidence digest match reports already-deliv
     `already-delivered must not resend; order=${callOrder.join(',')}`,
   );
 });
+
+// TAT-4092 (run 35bc96ea, Codex 0.162): the first prompt was accepted and Codex
+// was working, but the pane had scrolled the prompt's head away and only named
+// files it read, so each retry typed the whole prompt into Codex's queue.
+const tat4092Message =
+  'Read temp/tasks/feat/tat-4092-1009-135016/TASK.md first: it holds the ticket, acceptance criteria, and the mark instructions, and points at the execution checklist to follow step by step. Use Node 22 for every node/npm/npx command (bash temp/farmslot/n22 <cmd>). After each checklist step, run temp/tasks/feat/tat-4092-1009-135016/mark N before continuing.';
+const tat4092IdlePane = [
+  '',
+  '› ',
+  '',
+  '  GPT-6.1-Sol high · ~/dev/metamask/va-mmcx-terminal-3',
+  '  ? for shortcuts',
+  '',
+].join('\n');
+// The snapshot pane with its queued duplicate removed: the state the first retry saw.
+const tat4092WorkingPane = [
+  '  (bash temp/farmslot/n22 <cmd>). After each checklist step, run temp/tasks/',
+  '  feat/tat-4092-1009-135016/mark N before continuing.',
+  '',
+  '',
+  '• I’ll read the task first, follow its checklist in order, and mark each',
+  '  completed step. I’ll use the Node 22 wrapper for all Node, npm, and npx',
+  '  commands, and apply the unslop skill to written updates.',
+  '',
+  '• Explored',
+  '  └ Read TASK.md, SKILL.md (unslop skill)',
+  '    + Show details',
+  '',
+  '• Working (6s • esc to interrupt)',
+  '',
+  '',
+  '› ',
+  '',
+  '',
+  '  GPT-6.1-Sol high · ~/dev/metamask/va-mmcx-terminal-3 · ⠼',
+  '  tab to queue message',
+  '',
+].join('\n');
+
+for (const acknowledged of [false, true]) {
+  test(`a Codex retry never resends once the runner works on the first prompt (ack ${acknowledged ? 'late' : 'missing'})`, async (t) => {
+    callOrder.length = 0;
+    paneCaptureCount = 0;
+    handoffProbeCalls = 0;
+    paneClearsAfterSubmit = false;
+    paneTextByCapture = null;
+    paneText = tat4092IdlePane;
+    paneTextAfterLiteralSend = tat4092WorkingPane;
+    acceptDigestHandoffAfterCall = acknowledged ? 6 : Number.POSITIVE_INFINITY;
+    promptAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+      exactPromptMatch: false,
+    };
+    t.after(() => {
+      acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+      handoffProbeCalls = 0;
+      paneTextAfterLiteralSend = null;
+      paneClearsAfterSubmit = true;
+      paneText = '❯\nctx:12%\n';
+    });
+
+    const delivery = sendRunnerPostLaunchPrompt(
+      vars,
+      target,
+      'codex',
+      tat4092Message,
+      'temp/tasks/feat/tat-4092-1009-135016/TASK.md',
+      '[test]',
+      {
+        readyTimeoutMs: 300,
+        stabilityPolls: 1,
+        pollIntervalMs: 1,
+        verifyWaitMs: 0,
+        maxAttempts: 3,
+        requirePromptDigest: true,
+      },
+    );
+    if (acknowledged) await delivery;
+    else await assert.rejects(delivery, /Prompt delivery failed|acknowledgement did not arrive/);
+    assert.equal(
+      callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+      1,
+      'the prompt is typed once; a working runner holds every retry',
+    );
+  });
+}

@@ -8,12 +8,7 @@ import type {
   ReviewSessionIntent,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
-import {
-  buildRunResolveDecisionParams,
-  compileTestFileMatcher,
-  DEFAULT_TEST_FILE_MATCHER,
-  Methods,
-} from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
@@ -21,12 +16,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
-import {
-  readHideTestsPref,
-  splitDiffFilesByKind,
-  subscribeHideTestsPref,
-  writeHideTestsPref,
-} from '../../utils/diff-test-filter.js';
+import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
@@ -34,6 +24,7 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import {
@@ -91,7 +82,6 @@ import {
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
-  readyVisibleDiffSelection,
   selectedReadyEvidenceKeysForSubmit,
   setAllReadyEvidenceIncluded,
   setReadyEvidenceIncluded,
@@ -121,6 +111,11 @@ index 1111111..2222222 100644
 `;
 
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
+  readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this._diffTestPatterns,
+    onChange: () => this._onHideTestsChanged(),
+  });
+
   get _payload(): ReadyGatePayload | undefined {
     return this.decision?.payload as ReadyGatePayload | undefined;
   }
@@ -163,8 +158,6 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._readViewStateFromHash();
     window.addEventListener('hashchange', this._boundHashChange);
     window.addEventListener('keydown', this._boundKeydown);
-    this._hideTests = readHideTestsPref();
-    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => this._onHideTestsChanged(hide));
     this._unsubConn = gateway.onConnectionChange((state) => {
       if (!this._initialized) return;
       if (this._usesMockData) return;
@@ -184,8 +177,6 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     window.removeEventListener('hashchange', this._boundHashChange);
     window.removeEventListener('keydown', this._boundKeydown);
     this._unsubConn?.();
-    this._unsubscribeHideTests?.();
-    this._unsubscribeHideTests = null;
     this._splitResizer.disconnect();
     this._confirmTimer.clear();
   }
@@ -500,10 +491,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      this._diffTestMatcher = result.testFilePatterns
-        ? compileTestFileMatcher(result.testFilePatterns)
-        : DEFAULT_TEST_FILE_MATCHER;
-      const selected = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
+      const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
       if (selected) {
         this._selectFile(selected);
       } else {
@@ -518,7 +506,6 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (this._payload?.prPackage) {
         this._diffFiles = [];
         this._diffTestPatterns = null;
-        this._diffTestMatcher = DEFAULT_TEST_FILE_MATCHER;
         this._selectedFile = '';
         this._fileDiff = '';
         this._diffError =
@@ -543,27 +530,26 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _diffSplit() {
-    return splitDiffFilesByKind(this._diffFiles, this._hideTests, {
-      matcher: this._diffTestMatcher,
-    });
+    return this._testFilter.split(this._diffFiles);
   }
 
   /**
    * A newly hidden test file hands the viewer to the first visible file; a
    * selection whose diff is not loaded (dropped while everything was hidden)
-   * is fetched again.
+   * is fetched again; nothing listed drops the selection.
    */
-  _onHideTestsChanged(hide: boolean): void {
-    this._hideTests = hide;
-    const next = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
-    if (!next) return;
-    if (next !== this._selectedFile || (!this._fileDiff && !this._fileDiffLoading)) {
-      void this._selectFile(next);
+  _onHideTestsChanged(): void {
+    const handOff = diffSelectionHandOff(
+      this._diffSplit().visible,
+      this._selectedFile,
+      Boolean(this._fileDiff) || this._fileDiffLoading,
+    );
+    if (handOff.kind === 'select') {
+      void this._selectFile(handOff.path);
+    } else if (handOff.kind === 'clear') {
+      this._selectedFile = '';
+      this._fileDiff = '';
     }
-  }
-
-  _toggleHideTests(): void {
-    writeHideTestsPref(!this._hideTests);
   }
 
   async _selectFile(filePath: string) {

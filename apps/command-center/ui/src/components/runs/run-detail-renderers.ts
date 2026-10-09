@@ -2,6 +2,7 @@ import { html, nothing } from 'lit';
 
 import type {
   AcceptanceCriterionRef,
+  AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
   CiCheckUpdatedPayload,
   DevInteractiveCompletionAction,
@@ -82,6 +83,8 @@ export interface RunDetailViewContext {
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
   /** Why the ledger could not be read, when it could not. */
   acceptanceStatusError: string | null;
+  /** Manifest-linked criteria when the run has no ledger; never a verdict. */
+  acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
   selectedStep: Run['steps'][number] | null;
@@ -1144,6 +1147,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}
         .acceptanceStatusError=${ctx.acceptanceStatusError}
+        .acceptanceEvidenceLinks=${ctx.acceptanceEvidenceLinks}
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}

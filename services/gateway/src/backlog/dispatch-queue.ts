@@ -989,6 +989,7 @@ export function buildQueuePreviewParams(item: QueueItem) {
       : undefined;
   return {
     slotId: item.slotId,
+    ...(item.skipPrepare ? { skipPrepare: true } : {}),
     ...(item.reviewWorkspaceTarget !== undefined
       ? { reviewWorkspaceTarget: item.reviewWorkspaceTarget }
       : {}),

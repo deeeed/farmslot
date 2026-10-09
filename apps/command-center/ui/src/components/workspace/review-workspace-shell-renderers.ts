@@ -3,6 +3,8 @@ import { html, nothing } from 'lit';
 import type { GitBranchDiffFile, ReviewLineComment } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
+import type { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReviewWorkspaceTab } from './workspace-url-state.js';
@@ -244,6 +246,38 @@ export function renderReviewTopBar(input: {
         ${input.pendingConfirm === 'dismiss' ? 'Confirm Dismiss?' : 'Dismiss'}
       </button>
     </div>
+  `;
+}
+
+export function renderReviewDiffFiles(input: {
+  files: GitBranchDiffFile[];
+  testFilter: DiffTestFilterController;
+  selectedFile: string;
+  /** A selected finding keeps its code open even when its file is hidden. */
+  findingOpen: boolean;
+  commentCounts: Map<string, number>;
+  recovering: boolean;
+  selectFile: (path: string) => void;
+  renderCodePanel: () => unknown;
+}) {
+  const split = input.testFilter.split(input.files);
+  return html`
+    <div class="rw-file-tabs">
+      <span class="rw-file-count">${formatDiffFileCount(split)} files</span>
+      ${input.testFilter.renderControls(split.summary)}
+      ${split.visible.map((file) =>
+        renderReviewFileTab({
+          file,
+          selectedFile: input.selectedFile,
+          commentCount: input.commentCounts.get(file.path) ?? 0,
+          recovering: input.recovering,
+          selectFile: input.selectFile,
+        }),
+      )}
+    </div>
+    ${split.visible.length === 0 && !input.findingOpen
+      ? html`<div class="rw-diff-empty">Only test files changed — show tests to review them</div>`
+      : input.renderCodePanel()}
   `;
 }
 

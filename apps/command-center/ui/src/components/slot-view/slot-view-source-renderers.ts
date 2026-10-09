@@ -258,10 +258,16 @@ export function renderEditor(view: SlotView) {
   if (tab.type === 'diff') {
     const diff = view._diffs.get(view._activeFile) ?? '';
     if (!diff) return html`<div class="sv-empty-editor">No diff available</div>`;
-    return html`<diff-review
-      .diff=${diff}
-      .filename=${basename(realPath(view._activeFile))}
-    ></diff-review>`;
+    return html`<div class="sv-diff-pane">
+      ${view._testFilter.renderFileDiff(
+        realPath(view._activeFile),
+        () =>
+          html`<diff-review
+            .diff=${diff}
+            .filename=${basename(realPath(view._activeFile))}
+          ></diff-review>`,
+      )}
+    </div>`;
   }
 
   // Image files — render via gateway HTTP endpoint (proxied through Vite)

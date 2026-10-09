@@ -51,6 +51,55 @@ test('read-only Codex review records untrusted workspace policy in launch argume
   });
   assert.ok(command?.includes('projects={"/tmp/review.source"={trust_level="untrusted"}}'));
   assert.ok(!command?.includes('trust_level="trusted"'));
+  assert.ok(!command?.includes('check_for_update_on_startup'));
+  assert.ok(!command?.includes('features.hooks'));
+});
+
+test('a Codex review launch can skip the startup update check and turn hooks off', () => {
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'codex',
+    repo: '/tmp/review.source',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'gpt-6-astra',
+    workspaceTrust: 'untrusted',
+    skipUpdateCheck: true,
+    disableHooks: true,
+  });
+  assert.ok(command?.includes("--config 'check_for_update_on_startup=false'"));
+  assert.ok(command?.includes("--config 'features.hooks=false'"));
+});
+
+test('a Codex review launch allowlists its tool shell environment and refuses secrets', () => {
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'codex',
+    repo: '/tmp/review.source',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'gpt-6-astra',
+    workspaceTrust: 'untrusted',
+    shellEnvironmentNames: [
+      'PERPS_LIBRARY',
+      'FARMSLOT_SIGNAL_ATTEMPT_ID',
+      'CODEX_LB_API_KEY',
+      'GH_TOKEN',
+      'CODEX_*',
+    ],
+  });
+  const policy = command?.match(/--config '(shell_environment_policy=[^']*)'/)?.[1] ?? '';
+  // Arrays are spelled out so Codex's merge replaces any node include_only/exclude.
+  assert.match(policy, /^shell_environment_policy=\{inherit="all",exclude=\[\],include_only=\[/);
+  for (const name of [
+    'PATH',
+    'HOME',
+    'TMPDIR',
+    'PERPS_LIBRARY',
+    'FARMSLOT_SIGNAL_ATTEMPT_ID',
+    'ZDOTDIR',
+  ])
+    assert.ok(policy.includes(`"${name}"`), name);
+  assert.ok(!policy.includes('CODEX_LB_API_KEY'));
+  assert.ok(!policy.includes('GH_TOKEN'));
+  assert.ok(!policy.includes('*'), 'a glob would admit names nobody listed');
+  assert.ok(policy.endsWith(',set={ZDOTDIR="/var/empty"}}'));
 });
 
 test('a missing task mark does not time out or manufacture startup acknowledgment', () => {

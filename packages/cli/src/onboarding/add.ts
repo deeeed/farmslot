@@ -24,6 +24,8 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
+
 import {
   decideAddAction,
   expandPackVars,
@@ -357,7 +359,26 @@ export function registerProject(
   };
 }
 
-function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress): void {
+/** Prepare checks out the default branch; refuse a clone that cannot (e.g. --single-branch). */
+function assertDefaultBranchCheckable(repoPath: string, defaultBranch: string): void {
+  const result = spawnSync('sh', ['-c', defaultBranchProbeCommand(repoPath, defaultBranch)], {
+    encoding: 'utf-8',
+  });
+  const probe = readDefaultBranchProbe(
+    { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? 1 },
+    defaultBranch,
+  );
+  // Onboarding must prove the repo can prepare, so an unreadable repo refuses too.
+  if (!probe.readable) throw new AddError(`cannot read slot repo ${repoPath}: ${probe.error}`);
+  if (probe.blocker) throw new AddError(`slot repo ${repoPath}: ${probe.blocker}`);
+}
+
+function cloneSlotRepo(
+  repoUrl: string,
+  repoPath: string,
+  defaultBranch: string,
+  progress: AddProgress,
+): void {
   const stdio = childStdio(progress);
   if (!isAbsolute(repoUrl) && !isGitUrl(repoUrl) && !repoUrl.startsWith('file://')) {
     throw new AddError(
@@ -375,10 +396,12 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
         `slot repo ${repoPath} tracks ${origin || '(no origin remote)'}, but the pack declares ${repoUrl} — move or remove the old clone, then re-run project add`,
       );
     }
+    assertDefaultBranchCheckable(repoPath, defaultBranch);
     progress.info(`repo exists: ${repoPath}`);
     return;
   }
   run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/', stdio });
+  assertDefaultBranchCheckable(repoPath, defaultBranch);
   progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
 }
 
@@ -670,8 +693,11 @@ export function projectAdd(
         // Honor an operator-repointed slot repo; default for new slots.
         const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
 
+        // An unchanged pack is verified too: a slot repo narrowed after it was added
+        // still cannot prepare.
+        if (!mutate) assertDefaultBranchCheckable(repoPath, registered.defaultBranch);
         if (mutate) {
-          cloneSlotRepo(registered.repoUrl, repoPath, progress);
+          cloneSlotRepo(registered.repoUrl, repoPath, registered.defaultBranch, progress);
 
           const added = registerSlot(pool, {
             id: slotId,

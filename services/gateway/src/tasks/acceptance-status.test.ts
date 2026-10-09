@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import type { AcceptanceStatusLedger } from '@farmslot/protocol';
 
@@ -11,6 +13,8 @@ import type { SlotLocality } from '../core/slot-io.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
+  acceptanceEvidenceLinksFromManifest,
+  acceptanceIdFromCover,
   AcceptanceReadError,
   acceptanceStatusPathFor,
   handoffCriteriaFromText,
@@ -203,4 +207,149 @@ test('coverage markdown counts the registered criteria, not the recorded rows', 
   ]);
   assert.match(rendered ?? '', /Overall recipe coverage: 1\/2 ACs PROVEN/);
   assert.match(rendered ?? '', /NO VERDICT/);
+});
+
+const FOUR_CRITERIA = JSON.stringify({
+  task: { acceptanceCriteria: ['first', 'second', 'third', 'fourth'] },
+});
+
+/** Shapes real MetaMask manifests use: `ac1` / `AC3` covers, artifacts-relative files. */
+const MANIFEST = JSON.stringify({
+  version: 1,
+  before_after_pairs: [
+    {
+      label: 'Sheet visible',
+      covers: ['ac1', 'ac-tp8', 'AC9'],
+      before: 'before-sheet.png',
+      after: 'run-2/screenshots/after-sheet.png',
+    },
+  ],
+  standalone: [
+    { label: 'Trace', covers: ['AC 3', 'AC8b', 'flag-off'], file: 'trace/state.json' },
+    { label: 'Same shot', covers: ['AC-1'], file: 'artifacts/before-sheet.png' },
+  ],
+  videos: { before: 'before.mp4', after: 'after.mp4' },
+});
+
+function writeManifest(taskDir: string, body: string): void {
+  writeFileSync(path.join(taskDir, 'artifacts', 'evidence-manifest.json'), body);
+}
+
+test('covers ids match a criterion only when they name one whole', () => {
+  for (const cover of ['ac1', 'AC1', 'AC-1', 'ac-1', 'AC 1', 'ac_1', ' AC1 ']) {
+    assert.equal(acceptanceIdFromCover(cover), 'AC-1', cover);
+  }
+  assert.equal(acceptanceIdFromCover('ac12'), 'AC-12');
+  for (const cover of [
+    'ac-tp8',
+    'AC8b',
+    'AC7-current',
+    'assert-ac1-exit',
+    'flag-off',
+    'AC0',
+    'C1',
+  ]) {
+    assert.equal(acceptanceIdFromCover(cover), null, cover);
+  }
+});
+
+test('the manifest links registered criteria to their files and invents none', () => {
+  const criteria = ['AC-1', 'AC-2', 'AC-3', 'AC-4'].map((id) => ({ id, text: id }));
+  assert.deepEqual(acceptanceEvidenceLinksFromManifest(MANIFEST, criteria), [
+    {
+      id: 'AC-1',
+      evidence: ['artifacts/before-sheet.png', 'artifacts/run-2/screenshots/after-sheet.png'],
+    },
+    { id: 'AC-3', evidence: ['artifacts/trace/state.json'] },
+  ]);
+  // AC-9 is covered but not registered; it stays out rather than becoming a row.
+  assert.deepEqual(acceptanceEvidenceLinksFromManifest(MANIFEST, criteria.slice(0, 2)), [
+    {
+      id: 'AC-1',
+      evidence: ['artifacts/before-sheet.png', 'artifacts/run-2/screenshots/after-sheet.png'],
+    },
+  ]);
+});
+
+test('with no ledger the display read falls back to the evidence manifest', async () => {
+  const taskDir = taskDirWith(null, FOUR_CRITERIA);
+  try {
+    writeManifest(taskDir, MANIFEST);
+    const read = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
+    assert.equal(read.ledger, null, 'the fallback is never a ledger');
+    assert.equal(read.source, 'evidence-manifest');
+    assert.deepEqual(
+      read.evidenceLinks?.map((link) => link.id),
+      ['AC-1', 'AC-3'],
+    );
+    assert.equal(read.criteria.length, 4, 'AC-2 and AC-4 stay as not assessed rows');
+  } finally {
+    rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+test('a ledger, when present, is the only source', async () => {
+  const taskDir = taskDirWith(JSON.stringify(LEDGER), FOUR_CRITERIA);
+  try {
+    writeManifest(taskDir, MANIFEST);
+    const read = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
+    assert.deepEqual(read.ledger, LEDGER);
+    assert.equal(read.source, 'ledger');
+    assert.equal(read.evidenceLinks, undefined);
+  } finally {
+    rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+test('no ledger and no usable manifest leave every criterion not assessed', async () => {
+  const taskDir = taskDirWith(null, FOUR_CRITERIA);
+  try {
+    assert.deepEqual(await readAcceptanceStatusForDisplay(LOCAL, taskDir), {
+      criteria: ['first', 'second', 'third', 'fourth'].map((text, index) => ({
+        id: `AC-${index + 1}`,
+        text,
+      })),
+      ledger: null,
+    });
+    writeManifest(taskDir, '{ not json');
+    const broken = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
+    assert.equal(broken.source, undefined);
+    assert.equal(broken.error, undefined, 'a broken manifest is not a ledger read failure');
+  } finally {
+    rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+test('manifest coverage of every criterion never satisfies the terminal acceptance gate', () => {
+  // The fallback is display-only: the checker `mark complete` runs under
+  // `acceptance.require` reads the ledger file alone, so a manifest that covers
+  // every criterion still leaves the run unproven.
+  const taskDir = taskDirWith(null, FOUR_CRITERIA);
+  try {
+    writeManifest(
+      taskDir,
+      JSON.stringify({
+        standalone: [{ label: 'All', covers: ['ac1', 'ac2', 'ac3', 'ac4'], file: 'all.png' }],
+      }),
+    );
+    writeFileSync(path.join(taskDir, 'artifacts', 'all.png'), 'png');
+    const checker = fileURLToPath(
+      new URL(
+        '../../../../packages/agent-runtime/scripts/check-task-artifact-contract.mjs',
+        import.meta.url,
+      ),
+    );
+    const result = spawnSync(process.execPath, [checker, taskDir, '--require-acceptance-status'], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(
+      result.stderr,
+      /acceptance-status\.json is missing but inputs\/handoff\.json lists 4/,
+    );
+    // The gate and PR-body paths read the same file: no ledger, no coverage.
+    assert.equal(acceptanceCoverageMarkdown(ledgerFromArtifactText(null)), null);
+  } finally {
+    rmSync(taskDir, { recursive: true, force: true });
+  }
 });

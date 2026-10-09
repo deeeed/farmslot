@@ -20,6 +20,10 @@ import {
   filterRunsByExactTicket,
   filterRunsForComparisonPicker,
 } from './dispatch-wizard-helpers.js';
+import {
+  buildDispatchCandidatesParams,
+  type DispatchCandidatesDraft,
+} from './dispatch-wizard-payload.js';
 
 export async function requestProjectConfigs(): Promise<ProjectConfig[]> {
   const res = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
@@ -66,22 +70,8 @@ export async function requestExecutionTemplatePreview(
   });
 }
 
-export interface DispatchWizardCandidatesRequest {
-  project?: string;
-  flowType: FlowType | undefined;
-  machines: readonly string[];
-  targetBranch: string | undefined;
-  ticketOrPr: string | undefined;
-  app: string | undefined;
-  prepareProfile: string | undefined;
-  comparison:
-    | {
-        familyId: string;
-        variant: string;
-      }
-    | undefined;
+export interface DispatchWizardCandidatesRequest extends DispatchCandidatesDraft {
   candidatesEverLoaded: boolean;
-  forceRefresh?: boolean;
   mockMode: boolean;
   mockCandidates: DispatchCandidatesResult['candidates'] | null;
 }
@@ -94,29 +84,7 @@ export async function requestDispatchWizardCandidates(
   }
   return gateway.request<DispatchCandidatesResult>(
     Methods.DISPATCH_CANDIDATES,
-    {
-      ...(input.project ? { project: input.project } : {}),
-      flowType: input.flowType,
-      machines: input.machines.length > 0 ? [...input.machines] : undefined,
-      targetBranch: input.targetBranch,
-      // Forward PR / lane context so the gateway can populate `nudgeEligible` + `nudgeMeta`
-      // on busy slots already loaded on this PR's branch. Without ticketOrPr the server
-      // can't run the branch/PR-number match in collectBranchAffinityNudgeCandidates and
-      // the wizard sees free-slot rows only — no REUSE WORKER affordance.
-      ticketOrPr: input.ticketOrPr,
-      // Forward app/profile so candidate rows reflect companion-resource eligibility —
-      // otherwise a resource-ineligible busy slot advertises reuse that FIND_SLOT rejects.
-      app: input.app,
-      prepareProfile: input.prepareProfile,
-      ...(input.forceRefresh ? { forceRefresh: true } : {}),
-      ...(input.comparison
-        ? {
-            lane: 'comparison' as const,
-            familyId: input.comparison.familyId,
-            variant: input.comparison.variant,
-          }
-        : {}),
-    },
+    buildDispatchCandidatesParams(input),
     input.candidatesEverLoaded && !input.forceRefresh ? undefined : 60_000,
   );
 }
@@ -139,6 +107,7 @@ export async function requestDispatchProfileFit(input: {
   prepareProfile?: string;
   app?: string;
   freshReuse?: boolean;
+  skipPrepare?: boolean;
 }): Promise<ProfileFitSuggestion | null> {
   const res = await gateway.request<DispatchPreviewResult>(Methods.DISPATCH_PREVIEW, {
     project: input.project,
@@ -151,6 +120,7 @@ export async function requestDispatchProfileFit(input: {
     prepareProfile: input.prepareProfile || undefined,
     app: input.app || undefined,
     freshReuse: input.freshReuse,
+    ...(input.skipPrepare ? { skipPrepare: true } : {}),
   });
   return res.preview.profileFit ?? null;
 }
