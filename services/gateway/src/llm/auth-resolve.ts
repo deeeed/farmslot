@@ -9,6 +9,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
+
 import { refreshIfExpiringSoon } from './auth-refresh.js';
 import {
   type AuthProfileCredential,
@@ -165,7 +167,7 @@ export async function importRemoteOpenClaw(
 
   try {
     const result = await execLocal(
-      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${sshUser}@${host} 'cat ${remotePath}'`,
+      `ssh ${SSH_CONNECT_SHELL_OPTIONS} -o StrictHostKeyChecking=accept-new ${sshUser}@${host} 'cat ${remotePath}'`,
       { timeout: 10000 },
     );
 

@@ -35,7 +35,14 @@ export async function runScenario({
     JSON.parse(
       execFileSync(
         'ssh',
-        ['-o', 'BatchMode=yes', 'macpro.local', `node -e ${shSingleQuote(script)}`],
+        [
+          '-o',
+          'ConnectTimeout=10',
+          '-o',
+          'BatchMode=yes',
+          'macpro.local',
+          `node -e ${shSingleQuote(script)}`,
+        ],
         { encoding: 'utf8', timeout: 30000 },
       ),
     );

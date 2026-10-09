@@ -216,8 +216,11 @@ if [[ "$MACHINE" == "$LOCAL_HOSTNAME" ]]; then
   run() { eval "$@"; }
   RSYNC_PREFIX=""
 else
-  run() { ssh "$MACHINE.local" "$@"; }
+  # ConnectTimeout: without it macOS ssh can fail outright on a host name whose
+  # first address is a link-local IPv6 one instead of trying the next (F56).
+  run() { ssh -o ConnectTimeout=10 "$MACHINE.local" "$@"; }
   RSYNC_PREFIX="$MACHINE.local:"
+  export RSYNC_RSH="ssh -o ConnectTimeout=10"
 fi
 
 if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true ]]; then

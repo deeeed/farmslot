@@ -24,6 +24,13 @@ test('gateway-owned artifact predicates cover package and review artifacts consi
     true,
   );
   assert.equal(isGatewayOwnedArtifactPath('artifacts/screenshots/after.png'), false);
+  // Only the numbered review directories are the gateway's.
+  assert.equal(isGatewayOwnedArtifactMirrorEntry('self-review-fix-20261009'), false);
+  assert.equal(isGatewayOwnedArtifactMirrorEntry('review-loop-'), false);
+  assert.equal(
+    isGatewayOwnedArtifactPath('artifacts/self-review-fix-20261009/after-flag-off/trace.json'),
+    false,
+  );
 });
 test('review artifact copy keeps generated screenshots while publication copy excludes raw spools', () => {
   assert.equal((WORKER_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes('screenshots'), true);
