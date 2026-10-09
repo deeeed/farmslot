@@ -162,8 +162,12 @@ export function buildRecipeExecutionPlan({
 
   visitRecipe(recipe, params, source, undefined, '');
 
+  // The automatic HUD is the runner's own node: its options come from the run's HUD policy and a
+  // recipe cannot declare it (`run:hud` is not a valid node id), so it carries the runner's origin
+  // and needs no approval of its own. It stays in the digest: an approval covers one HUD policy.
+  // Its implementation's origin still applies, so an untrusted HUD adapter stays restricted.
   if (hud !== false && hud?.enabled !== false && adapters.has('app.hud')) {
-    addNode('run:hud', { action: 'app.hud', automatic: true, options: hud ?? {} }, source);
+    addNode('run:hud', { action: 'app.hud', automatic: true, options: hud ?? {} }, bundledSource);
   }
 
   if (recordVideo && recordVideo !== 'off') {
@@ -239,7 +243,8 @@ export function enforceRecipeExecutionPlan(
   if (request.approval) {
     throw new RecipeTrustError({
       code: 'RECIPE_APPROVAL_MISMATCH',
-      message: 'Recipe approval does not match the resolved execution plan.',
+      message:
+        "Recipe approval does not match the resolved execution plan. The plan includes the run's HUD and video settings, so an approval made with another --hud or --record-video setting does not cover this run.",
       userAction: approvalUserAction(plan.digest),
       reason: 'approval-mismatch',
       recipeDigest: plan.digest,

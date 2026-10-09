@@ -1516,6 +1516,17 @@ async function runCdpLifecycle(page: CdpWebPage, node: Record<string, unknown>):
   throw new Error(`Unsupported CDP lifecycle command: ${command}.`);
 }
 
+// Recipe text reaches the page: cap each HUD line like the web HUD (180 characters,
+// whitespace flattened, an ellipsis on the cut), counting code points so the cut
+// never splits a surrogate pair.
+const MAX_HUD_TEXT = 180;
+
+function hudLine(value: string): string {
+  const flat = value.replace(/\s+/gu, ' ').trim();
+  const chars = Array.from(flat);
+  return chars.length > MAX_HUD_TEXT ? `${chars.slice(0, MAX_HUD_TEXT - 1).join('')}…` : flat;
+}
+
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
@@ -1526,17 +1537,19 @@ async function renderCdpHud(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
     );
   }
-  const title = asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run';
+  const title = hudLine(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
   const status = asOptionalString(node.status, 'app.hud.status') ?? 'running';
   const nodeId = asOptionalString(node.node_id ?? node.nodeId, 'app.hud.node_id') ?? context.nodeId;
   const phase = asOptionalString(node.phase, 'app.hud.phase') ?? '';
   const flow = asOptionalString(node.flow, 'app.hud.flow') ?? '';
   const action =
     asOptionalString(node.action_name ?? node.recipe_action, 'app.hud.action_name') ?? '';
-  const text = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
+  const rawText = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
+  const text = hudLine(rawText);
   const rawDetail = asOptionalString(node.detail, 'app.hud.detail') ?? '';
-  const detail = rawDetail && rawDetail !== text && rawDetail !== flow ? rawDetail : '';
-  const error = asOptionalString(node.error, 'app.hud.error');
+  const detail = rawDetail && rawDetail !== rawText && rawDetail !== flow ? hudLine(rawDetail) : '';
+  const rawError = asOptionalString(node.error, 'app.hud.error');
+  const error = rawError === undefined ? undefined : hudLine(rawError);
   const display = isRecord(node.display) ? node.display : {};
   const layout = asOptionalString(display.layout, 'app.hud.display.layout') ?? 'bottom-bar';
   const position = asOptionalString(display.position, 'app.hud.display.position') ?? 'bottom';
@@ -1552,29 +1565,34 @@ async function renderCdpHud(
     `(() => {
       const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines })};
       const id = 'farmslot-recipe-hud';
-      let el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement('div');
-        el.id = id;
-        Object.assign(el.style, {
-          position: 'fixed',
-          zIndex: '2147483647',
-          left: '8px',
-          right: '8px',
-          bottom: '8px',
-          minHeight: '30px',
-          padding: '5px 8px',
-          borderRadius: '8px',
-          background: 'rgba(8, 10, 14, 0.66)',
-          color: 'white',
-          font: '10px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          pointerEvents: 'none',
-          boxShadow: '0 6px 22px rgba(0,0,0,0.30)',
-          border: '1px solid rgba(255,255,255,0.14)',
-          backdropFilter: 'blur(4px)',
-        });
-        document.body.appendChild(el);
-      }
+      // The recipe text lives in a closed shadow root, so the page's text and
+      // selector queries (ui.wait_for, text-target presses) never see it and a
+      // node's own intent cannot satisfy its check. A closed root cannot be
+      // reopened, so each update replaces the host; its id stays for the
+      // occlusion check and for callers that clear the HUD.
+      document.getElementById(id)?.remove();
+      const el = document.createElement('div');
+      el.id = id;
+      el.setAttribute('aria-hidden', 'true');
+      Object.assign(el.style, {
+        position: 'fixed',
+        zIndex: '2147483647',
+        left: '8px',
+        right: '8px',
+        bottom: '8px',
+        minHeight: '30px',
+        padding: '5px 8px',
+        borderRadius: '8px',
+        background: 'rgba(8, 10, 14, 0.66)',
+        color: 'white',
+        font: '10px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        pointerEvents: 'none',
+        boxShadow: '0 6px 22px rgba(0,0,0,0.30)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        backdropFilter: 'blur(4px)',
+      });
+      document.body.appendChild(el);
+      const root = el.attachShadow({ mode: 'closed' });
       const isCard = payload.layout === 'card';
       const isDocked = payload.layout === 'docked-bottom';
       Object.assign(el.style, {
@@ -1603,7 +1621,6 @@ async function renderCdpHud(
       const progressText = Number.isFinite(payload.current) && Number.isFinite(payload.total)
         ? payload.current + '/' + payload.total
         : '';
-      el.innerHTML = '';
       const row = document.createElement('div');
       Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start' });
       const badge = document.createElement('div');
@@ -1647,7 +1664,7 @@ async function renderCdpHud(
       if (line2.textContent) body.append(line2);
       if (payload.showDebug) body.append(line3);
       row.append(badge, body);
-      el.append(row);
+      root.append(row);
       if (payload.error) {
         line2.style.color = '#ffb3b3';
       }

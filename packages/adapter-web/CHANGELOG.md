@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- A test now pins the web HUD limits that untrusted recipe sources rely on, now that `run` shows the HUD for them: recipe text capped at 180 characters and drawn as text in the closed shadow root, beside the RUN badge and the `step n/m` label. No behavior change.
 
 ## 0.6.4 - 2026-10-09
 

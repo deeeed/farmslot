@@ -1947,6 +1947,307 @@ test('ui.scroll keeps absolute and relative inputs apart', async () => {
   }
 });
 
+// Just enough DOM to run the CDP page expressions, with a browser's shadow-root
+// rules: a closed root is reachable only through the reference attachShadow
+// returns, and the tree walker, getElementById, querySelectorAll and innerText
+// stay in the light tree. `forceOpenShadow` makes every root open, to show the
+// closed mode is what keeps HUD text out of the page queries.
+type FakeParentNode = FakeParent;
+
+class FakeText {
+  readonly nodeType = 3;
+  parentNode: FakeParentNode | null = null;
+  constructor(public nodeValue: string) {}
+  get parentElement(): FakeElement | null {
+    return this.parentNode instanceof FakeElement ? this.parentNode : null;
+  }
+}
+
+type FakeChild = FakeText | FakeElement;
+
+class FakeParent {
+  parentNode: FakeParentNode | null = null;
+  childNodes: FakeChild[] = [];
+  append(...nodes: Array<FakeChild | string>): void {
+    for (const entry of nodes) {
+      const node = typeof entry === 'string' ? new FakeText(entry) : entry;
+      if (node instanceof FakeElement) node.remove();
+      node.parentNode = this;
+      this.childNodes.push(node);
+    }
+  }
+  appendChild(node: FakeChild): FakeChild {
+    this.append(node);
+    return node;
+  }
+  get children(): FakeElement[] {
+    return this.childNodes.filter((node): node is FakeElement => node instanceof FakeElement);
+  }
+  // Light-tree descendants only, as in a browser.
+  descendants(): FakeElement[] {
+    return this.children.flatMap((child) => [child, ...child.descendants()]);
+  }
+  querySelectorAll(selector: string): FakeElement[] {
+    return this.descendants().filter((element) => element.matches(selector));
+  }
+  get textContent(): string {
+    return this.childNodes
+      .map((node) => (node instanceof FakeText ? node.nodeValue : node.textContent))
+      .join('');
+  }
+  set textContent(value: string) {
+    this.childNodes = [];
+    if (value) this.append(value);
+  }
+}
+
+class FakeShadowRoot extends FakeParent {
+  readonly nodeType = 11;
+  constructor(public host: FakeElement) {
+    super();
+  }
+}
+
+const RECT = { x: 0, y: 0, left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 };
+
+class FakeElement extends FakeParent {
+  readonly nodeType = 1;
+  readonly tagName: string;
+  id = '';
+  disabled = false;
+  shadowRoot: FakeShadowRoot | null = null;
+  readonly style: Record<string, unknown> = {
+    setProperty() {},
+    removeProperty() {},
+  };
+  readonly #attributes = new Map<string, string>();
+  constructor(
+    readonly owner: FakeDocument,
+    tag: string,
+  ) {
+    super();
+    this.tagName = tag.toUpperCase();
+  }
+  get parentElement(): FakeElement | null {
+    return this.parentNode instanceof FakeElement ? this.parentNode : null;
+  }
+  get innerText(): string {
+    return this.textContent;
+  }
+  set innerHTML(value: string) {
+    assert.equal(value, '', 'the HUD sets innerHTML only to clear it');
+    this.childNodes = [];
+  }
+  setAttribute(name: string, value: string): void {
+    this.#attributes.set(name, String(value));
+  }
+  getAttribute(name: string): string | null {
+    return this.#attributes.get(name) ?? null;
+  }
+  matches(selector: string): boolean {
+    return selector.split(',').some((part) => {
+      const simple = part.trim();
+      if (simple === '*') return true;
+      if (simple.startsWith('#')) return this.id === simple.slice(1);
+      const attribute = /^\[([\w-]+)(?:="?([^"\]]*)"?)?\]$/u.exec(simple);
+      if (attribute) {
+        const value = this.getAttribute(attribute[1]!);
+        return value !== null && (attribute[2] === undefined || value === attribute[2]);
+      }
+      return this.tagName === simple.toUpperCase();
+    });
+  }
+  remove(): void {
+    if (!this.parentNode) return;
+    this.parentNode.childNodes = this.parentNode.childNodes.filter((node) => node !== this);
+    this.parentNode = null;
+  }
+  attachShadow({ mode }: { mode: 'open' | 'closed' }): FakeShadowRoot {
+    const root = new FakeShadowRoot(this);
+    this.owner.shadowRoots.set(this, root);
+    if (mode === 'open' || this.owner.forceOpenShadow) this.shadowRoot = root;
+    return root;
+  }
+  getRootNode(): FakeParent {
+    return this.parentNode instanceof FakeElement
+      ? this.parentNode.getRootNode()
+      : (this.parentNode ?? this);
+  }
+  getClientRects(): unknown[] {
+    return [RECT];
+  }
+  getBoundingClientRect(): typeof RECT {
+    return RECT;
+  }
+  scrollIntoView(): void {}
+  focus(): void {}
+}
+
+class FakeDocument extends FakeParent {
+  readonly nodeType = 9;
+  forceOpenShadow = false;
+  // Every root attached, closed ones included, for the test to inspect.
+  readonly shadowRoots = new Map<FakeElement, FakeShadowRoot>();
+  readonly documentElement: FakeElement;
+  readonly body: FakeElement;
+  constructor() {
+    super();
+    this.documentElement = new FakeElement(this, 'html');
+    this.body = new FakeElement(this, 'body');
+    this.append(this.documentElement);
+    this.documentElement.append(this.body);
+  }
+  createElement(tag: string): FakeElement {
+    return new FakeElement(this, tag);
+  }
+  getElementById(id: string): FakeElement | null {
+    return this.descendants().find((element) => element.id === id) ?? null;
+  }
+  createTreeWalker(root: FakeParent): { nextNode(): FakeText | null } {
+    const texts: FakeText[] = [];
+    const visit = (parent: FakeParent): void => {
+      for (const node of parent.childNodes) {
+        if (node instanceof FakeText) texts.push(node);
+        else visit(node);
+      }
+    };
+    visit(root);
+    let index = 0;
+    return { nextNode: () => texts[index++] ?? null };
+  }
+  elementFromPoint(): FakeElement {
+    return this.body;
+  }
+}
+
+function element(document: FakeDocument, tag: string, text = ''): FakeElement {
+  const node = document.createElement(tag);
+  node.textContent = text;
+  return node;
+}
+
+// A CDP page over the fake DOM: Runtime.evaluate runs the expression in it, and
+// mouse events are recorded.
+function fakeDomPage(document: FakeDocument): { page: CdpWebPage; mouse: string[] } {
+  const mouse: string[] = [];
+  const context = vm.createContext({
+    document,
+    window: { innerWidth: 1_000, innerHeight: 1_000 },
+    innerWidth: 1_000,
+    innerHeight: 1_000,
+    setTimeout,
+    getComputedStyle: () => ({
+      display: 'block',
+      visibility: 'visible',
+      opacity: '1',
+      overflow: 'visible',
+      overflowX: 'visible',
+      overflowY: 'visible',
+    }),
+  });
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'frame' } } };
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+      if (method === 'Input.dispatchMouseEvent') {
+        mouse.push(String(params.type));
+        return {};
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      try {
+        const value: unknown = await vm.runInContext(String(params.expression), context);
+        return {
+          result: { value: value === undefined ? undefined : JSON.parse(JSON.stringify(value)) },
+        };
+      } catch (error) {
+        return { exceptionDetails: { exception: { description: (error as Error).message } } };
+      }
+    },
+  } as never);
+  return { page, mouse };
+}
+
+function hudTransport(page: CdpWebPage): ReturnType<typeof createCdpWebUiTransport> {
+  return createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      return callback(page);
+    },
+  });
+}
+
+test('CDP app.hud caps recipe text at 180 code points and draws it as text in a closed shadow root', async () => {
+  const document = new FakeDocument();
+  const { page } = fakeDomPage(document);
+  const transport = hudTransport(page);
+  const markup = `<img src=x onerror="alert(1)"> ${'a'.repeat(400)}`;
+  const capped = `${markup.slice(0, 179)}…`;
+  // An emoji straddles the cut: it is kept whole or dropped, never split.
+  const emoji = `${'b'.repeat(178)}😀😀${'c'.repeat(10)}`;
+  const context = { nodeId: 'step' } as never;
+  const base = {
+    title: emoji,
+    intent: markup,
+    status: 'running',
+    display: { showTitle: true, showDetail: true },
+    progress: { current: 2, total: 5 },
+  };
+
+  const drawn = async (node: Record<string, unknown>): Promise<string[]> => {
+    await transport.execute('app.hud', node, context);
+    const hosts = document.body.children.filter((child) => child.id === 'farmslot-recipe-hud');
+    assert.equal(hosts.length, 1);
+    const host = hosts[0]!;
+    assert.equal(host.getAttribute('aria-hidden'), 'true');
+    assert.equal(host.shadowRoot, null);
+    assert.equal(host.childNodes.length, 0);
+    const root = document.shadowRoots.get(host)!;
+    // Every node is a div, and every recipe value is a text node.
+    assert.ok(root.descendants().every((node) => node.tagName === 'DIV'));
+    const [badge, body] = root.children[0]!.children;
+    assert.equal(badge!.textContent, 'RUN 2/5');
+    return body!.children.map((line) => line.textContent);
+  };
+
+  assert.deepEqual(await drawn({ ...base, error: markup }), [
+    `${'b'.repeat(178)}😀…`,
+    capped,
+    `error: ${capped}`,
+  ]);
+  assert.deepEqual(await drawn({ ...base, detail: `${markup} detail` }), [
+    `${'b'.repeat(178)}😀…`,
+    capped,
+    capped,
+  ]);
+});
+
+test('CDP ui.wait_for text and text-target presses never match the HUD text', async () => {
+  const document = new FakeDocument();
+  // A focus-managed app root: a text-target press reads its whole innerText.
+  document.body.setAttribute('tabindex', '-1');
+  document.body.append(element(document, 'div', 'Unlock'), element(document, 'button', 'Unlock'));
+  const { page, mouse } = fakeDomPage(document);
+  const transport = hudTransport(page);
+  const hud = {
+    intent: 'Confirm the Buy entry is visibly ready on wallet home',
+    status: 'running',
+    progress: { current: 1, total: 3 },
+  };
+  await transport.execute('app.hud', hud, { nodeId: 'wait-home' } as never);
+
+  await assert.rejects(page.waitFor({ text: 'Buy', timeoutMs: 150 }), /ui\.wait_for timed out/u);
+  assert.deepEqual(await page.waitFor({ text: 'Buy', expected: 'absent', timeoutMs: 150 }), {
+    matched: true,
+  });
+  assert.deepEqual(await page.waitFor({ text: 'Unlock', timeoutMs: 150 }), { matched: true });
+  await assert.rejects(page.clickText('Buy'), /Text target not found: Buy/u);
+  assert.deepEqual(mouse, []);
+
+  // The same HUD in an open root would satisfy the wait: the closed root is the fix.
+  document.forceOpenShadow = true;
+  await transport.execute('app.hud', hud, { nodeId: 'wait-home' } as never);
+  assert.deepEqual(await page.waitFor({ text: 'Buy', timeoutMs: 150 }), { matched: true });
+});
+
 test('CDP ui.scroll maps offset_y to an absolute position and delta_y to relative movement', async () => {
   const calls: Array<Record<string, unknown>> = [];
   const transport = createCdpWebUiTransport({
