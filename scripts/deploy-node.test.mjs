@@ -765,6 +765,22 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
   const archive = path.join(base, 'cli.tar');
   execFileSync('tar', ['-cf', archive, '-C', source, '.']);
 
+  // Each contender runs in its own process group; whatever happens, kill any
+  // group still running and wait for it before the test ends.
+  const children = [];
+  t.after(async () => {
+    for (const child of children) {
+      if (child.exitCode !== null || child.signalCode !== null) continue;
+      const closed = new Promise((resolve) => child.once('close', resolve));
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+      await closed;
+    }
+  });
+
   for (let iteration = 0; iteration < 3; iteration += 1) {
     const home = path.join(base, `home-${iteration}`);
     const root = path.join(home, '.local/share/farmslot-cli');
@@ -772,10 +788,14 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
     fs.writeFileSync(path.join(root, '.lock/pid'), `${spawnSync('true').pid}\n`);
     const runs = ['1', '2', '3'].map((digit) => {
       const sha = `${digit}${iteration}`.padEnd(40, '0');
+      const input = fs.openSync(archive, 'r');
       const child = spawn('bash', ['-c', refresh, '_', root, sha, 'f'.repeat(64), bin, '30'], {
         env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },
-        stdio: [fs.openSync(archive, 'r'), 'pipe', 'pipe'],
+        stdio: [input, 'pipe', 'pipe'],
+        detached: true,
       });
+      fs.closeSync(input);
+      children.push(child);
       let output = '';
       child.stdout.on('data', (chunk) => (output += chunk));
       child.stderr.on('data', (chunk) => (output += chunk));
@@ -805,15 +825,10 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
 test('deploy-node stops the hung CLI when the bash -lc verify times out', async (t) => {
   const fixture = cliFixture(t, { tmuxServer: false });
   fixture.write('home/cli-hangs', '');
-  assert.throws(
-    () => fixture.deploy({ env: { CLI_VERIFY_TIMEOUT_SECONDS: '1' } }),
-    (error) => {
-      assert.match(String(error.stderr), /the worker-shell verify did not finish within 1 s/);
-      return true;
-    },
-  );
-  const pid = Number(fs.readFileSync(path.join(fixture.home, 'cli-hang.pid'), 'utf8'));
+  const pidFile = path.join(fixture.home, 'cli-hang.pid');
+  let pid = 0;
   const alive = () => {
+    if (!pid) return false;
     try {
       process.kill(pid, 0);
       return true;
@@ -821,7 +836,31 @@ test('deploy-node stops the hung CLI when the bash -lc verify times out', async 
       return false;
     }
   };
-  for (let waited = 0; alive() && waited < 2000; waited += 50)
-    await new Promise((resolve) => setTimeout(resolve, 50));
+  const waitForExit = async (ms) => {
+    for (let waited = 0; alive() && waited < ms; waited += 50)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+  };
+  // The test owns the fake CLI it starts: should the deploy's cleanup regress,
+  // stop it here (TERM, then KILL) rather than leave it running past the runner.
+  t.after(async () => {
+    if (!alive()) return;
+    process.kill(pid, 'SIGTERM');
+    await waitForExit(500);
+    if (alive()) process.kill(pid, 'SIGKILL');
+  });
+  try {
+    assert.throws(
+      () => fixture.deploy({ env: { CLI_VERIFY_TIMEOUT_SECONDS: '1' } }),
+      (error) => {
+        assert.match(String(error.stderr), /the worker-shell verify did not finish within 1 s/);
+        return true;
+      },
+    );
+  } finally {
+    // Read before any after hook removes the fixture.
+    if (fs.existsSync(pidFile)) pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  }
+  assert.ok(pid > 0, 'the fake CLI started and recorded its pid');
+  await waitForExit(2000);
   assert.equal(alive(), false, `the probe's CLI (pid ${pid}) outlived the deploy`);
 });
