@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeEach, mock, test } from 'node:test';
+import { after, before, beforeEach, mock, test } from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 
@@ -48,8 +50,16 @@ beforeEach(() => {
   onLaunch = null;
 });
 
+// One scratch dir for the gateway-side prepare logs, removed afterwards: the
+// test runner fails files that leave entries in TMPDIR.
+let logDir: string;
+before(async () => {
+  logDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-prepare-abort-'));
+});
+after(() => rmSync(logDir, { recursive: true, force: true }));
+
 async function logPath(): Promise<string> {
-  return path.join(await mkdtemp(path.join(os.tmpdir(), 'farmslot-prepare-abort-')), 'p.log');
+  return path.join(logDir, `${randomUUID()}.log`);
 }
 
 test('a cancel during preflight setup never launches the wrapper', async () => {

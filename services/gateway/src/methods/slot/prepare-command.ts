@@ -302,9 +302,9 @@ export function buildPrepareIdentityReapCommand(
     : [];
   const awaitExit = opts.awaitExit
     ? [
-        '    n=0; while kill -0 -- "-$pgid" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
-        '    if kill -0 -- "-$pgid" 2>/dev/null; then kill -KILL -- "-$pgid" 2>/dev/null; sleep 0.2; fi',
-        '    if kill -0 -- "-$pgid" 2>/dev/null; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
+        '    n=0; while kill -0 -"$pgid" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        '    if kill -0 -"$pgid" 2>/dev/null; then kill -KILL -"$pgid" 2>/dev/null; sleep 0.2; fi',
+        '    if kill -0 -"$pgid" 2>/dev/null; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
       ]
     : [];
   return [
@@ -331,7 +331,8 @@ export function buildPrepareIdentityReapCommand(
     `    fi`,
     `    if $marker_ok && $scope_ok; then matched=true; fi`,
     `  fi`,
-    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then`,
+    // No `--` before the group: dash rejects `kill -- -PGID` as an illegal number.
+    `  if $matched && kill -TERM -"$pgid" 2>/dev/null; then`,
     `    echo "killed verified preflight group ($pgid)"`,
     ...awaitExit,
     `  fi`,

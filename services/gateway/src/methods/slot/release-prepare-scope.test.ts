@@ -146,8 +146,19 @@ test('a prepare that never stops keeps the slot held and fails the release', asy
   });
 
   await assert.rejects(
-    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit, { prepareStopTimeoutMs: 20 }),
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit, {
+      prepareStopTimeoutMs: 60,
+      prepareStopHeartbeatMs: 10,
+    }),
     /Slot macpro-mm-1 stays held: In-flight prepare did not stop within/,
+  );
+  assert.ok(
+    emitted.some(
+      (entry) =>
+        entry.event === 'slot.release.step' &&
+        String(entry.payload.detail).startsWith('Waiting for in-flight prepare to stop'),
+    ),
+    'the wait reports progress so a CLI idle timeout does not end it first',
   );
 
   assert.equal(slotRow.lifecycle, 'held');

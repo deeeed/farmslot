@@ -101,6 +101,8 @@ const inflightReleases = new Map<
  * git command stalled on a dropped network never observes the abort; past
  * this the slot is held with the reason instead of the release hanging. */
 export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
+/** Progress while waiting, so a CLI idle timeout does not end the release first. */
+const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
 function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
   // Only semantically identical requests may share one teardown; a request
@@ -123,7 +125,11 @@ export async function slotRelease(
   emit: EventEmitter,
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
-  options?: { restartRunId?: string; prepareStopTimeoutMs?: number },
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
 ): Promise<{ released: boolean }> {
   if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
@@ -161,7 +167,11 @@ export async function slotRelease(
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
-  options?: { restartRunId?: string; prepareStopTimeoutMs?: number },
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
 ): Promise<{ released: boolean }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS below, after the non-destructive preflight). A slot
@@ -381,12 +391,22 @@ async function slotReleaseImpl(
       step('prepare', 'Stopping in-flight prepare...');
       inflightPrepare.abort();
       const stopMs = options?.prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
+      const waitStart = Date.now();
+      const heartbeat = setInterval(
+        () =>
+          step(
+            'prepare',
+            `Waiting for in-flight prepare to stop… ${Math.round((Date.now() - waitStart) / 1000)}s`,
+          ),
+        options?.prepareStopHeartbeatMs ?? RELEASE_PREPARE_STOP_HEARTBEAT_MS,
+      );
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stopped = await Promise.race([
         inflightPrepare.settled.then(() => true),
         new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), stopMs))),
       ]);
       clearTimeout(timer);
+      clearInterval(heartbeat);
       if (!stopped)
         holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
     }

@@ -140,7 +140,7 @@ test('cancel during or after prepare stops the run prepare-scope holder', async 
   assert.equal(reaps().length, 1, 'release must reap the recorded prepare scope');
   assert.equal(holderAlive, false);
   assert.match(reaps()[0]!, new RegExp(`!= '${SCOPE}'`), 'the reap is fenced to the read scope');
-  assert.match(reaps()[0]!, /kill -KILL -- "-\$pgid"/, 'the reap waits out and escalates');
+  assert.match(reaps()[0]!, /kill -KILL -"\$pgid"/, 'the reap waits out and escalates');
   assert.equal(archived, 1);
 });
 
