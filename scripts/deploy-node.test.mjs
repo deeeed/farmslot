@@ -689,7 +689,8 @@ test('deploy-node warns and succeeds when nothing listens on the gateway port', 
   assert.match(
     output,
     new RegExp(
-      `\\[deploy\\] WARNING: prod gateway unreachable at ws://127\\.0\\.0\\.1:${port}; CLI installed and verified`,
+      `\\[deploy\\] WARNING: prod gateway unreachable at ws://127\\.0\\.0\\.1:${port}; CLI installed and verified; rerun the deploy to verify when it is up$`,
+      'm',
     ),
   );
   assert.doesNotMatch(output, /cannot use the deployed farmslot CLI/);

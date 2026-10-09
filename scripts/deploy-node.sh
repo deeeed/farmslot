@@ -956,17 +956,18 @@ echo "  farmslot $version"
 if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
   # Nothing listening on the gateway's port (the instance's gateway is down) is
   # not a CLI fault: the checks above passed, so warn and let the deploy finish.
-  # Node runs the CLI, so it is on this PATH; exit 2 means no TCP connection.
+  # Node runs the CLI, so it is on this PATH; GW_URL always carries the port
+  # (NODE_GATEWAY_URL); exit 2 means no TCP connection.
   node -e '
     const url = new URL(process.argv[1]);
-    const port = Number(url.port || (url.protocol === "wss:" ? 443 : 80));
-    const socket = require("node:net").connect({ host: url.hostname, port });
+    const socket = require("node:net").connect({ host: url.hostname, port: Number(url.port) });
     const unreachable = () => process.exit(2);
     socket.setTimeout(5000, unreachable);
     socket.on("error", unreachable);
     socket.on("connect", () => process.exit(0));
   ' "$GW_URL" < /dev/null
-  if [ "$?" = 2 ]; then
+  connect_status=$?
+  if [ "$connect_status" = 2 ]; then
     echo "[deploy] WARNING: $instance gateway unreachable at $GW_URL; CLI installed and verified; rerun the deploy to verify when it is up"
     exit 0
   fi
