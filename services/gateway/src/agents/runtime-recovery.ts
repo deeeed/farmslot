@@ -19,6 +19,7 @@ import {
 
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { readSlotRow, SLOT_PHASE_RELEASING } from '../core/index.js';
 import {
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
@@ -29,6 +30,7 @@ import {
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
 import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
 import {
@@ -416,6 +418,33 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
   return { slotId: run.slotId, runId: run.id, restored: false, contexts: results };
 }
 
+/**
+ * Checked right before a reload relaunches a conversation. The awaits before it
+ * (remote setup) leave room for a release to start, or for the run's archive to
+ * finish and dispatch to hand the slot to another run, whose role window the
+ * respawn would take over.
+ */
+export async function assertReloadStillOwnsSlot(
+  runId: string,
+  slotId: string,
+  entrySlotEpoch: unknown,
+): Promise<void> {
+  const slot = await readSlotRow(slotId);
+  const run = getRun(runId);
+  if (
+    !run ||
+    isTerminalRunStatus(run.status) ||
+    run.slotId !== slotId ||
+    slot?.current_run_id !== runId ||
+    slot.slot_epoch !== entrySlotEpoch ||
+    slot.phase === SLOT_PHASE_RELEASING
+  )
+    throw new Error(
+      `Slot ${slotId} no longer belongs to run ${runId}; its session was not reloaded`,
+    );
+  assertRunNotArchiving(runId);
+}
+
 export async function restoreTmuxWorker(
   params: TmuxWorkerRestoreParams,
 ): Promise<TmuxWorkerRestoreResult> {
@@ -433,6 +462,7 @@ export async function restoreTmuxWorker(
   if (params.mode !== 'restore-window' && params.mode !== 'reload-session') {
     return reconcileTmuxRunAgentRuntime(run);
   }
+  assertRunNotArchiving(run.id);
   if (isTerminalRunStatus(run.status)) {
     throw new Error(`Run ${run.id} is terminal (${run.status}); restore a live run instead`);
   }
@@ -455,6 +485,7 @@ export async function restoreTmuxWorker(
   const binding = await sessionBindingForContext(vars, run, selected, ref.paneId);
   const runner = normalizeRunner(selected.runner ?? run.metrics.runner);
   if (params.mode === 'reload-session') {
+    const entrySlotEpoch = (await readSlotRow(params.slotId))?.slot_epoch;
     const existing = await inspectContextRuntime(run, selected);
     if (existing.runnerAlive) {
       const liveTarget = existing.target ?? ref;
@@ -509,10 +540,14 @@ export async function restoreTmuxWorker(
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
       },
     )}`;
+    await assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch);
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched self-review pane; later cleanup owns their teardown.
       preserveWindowAfterExit: true,
+      // A blind resend after a lost reply would skip the ownership check above
+      // and could kill the worker of a run that took the slot meanwhile.
+      noRetry: true,
     });
     await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
     const livePane = await waitForRunnerAliveInTarget(vars, ref.session, nextTarget.target, runner);

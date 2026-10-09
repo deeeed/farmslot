@@ -331,7 +331,7 @@ export async function respawnTmuxWindowWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   command: string,
-  options?: { preserveWindowAfterExit?: boolean },
+  options?: { preserveWindowAfterExit?: boolean; noRetry?: boolean },
 ): Promise<void> {
   const launchCommand = buildTmuxRespawnLaunchCommand(
     command,
@@ -344,6 +344,7 @@ export async function respawnTmuxWindowWithCommand(
       `respawn-window -k -t ${shellQuote(target)} -c ${shellQuote(vars.remoteRepo)} ` +
         shellQuote(launchCommand),
     ),
+    { noRetry: options?.noRetry },
   );
   if (respawned.exitCode !== 0) {
     throw new Error(

@@ -164,22 +164,37 @@ export async function slotRelease(
   return teardown;
 }
 
-async function slotReleaseImpl(
+export interface SlotUnmergedWork {
+  branch: string;
+  details: string;
+}
+
+export interface SlotReleasePreflight {
+  vars: SlotVars;
+  boundOwner: string | null;
+  projectVars: ProjectVars | undefined;
+  projectJson: RawProjectJson;
+  defaultBranch: string;
+  /** Work a full release would discard; null under keepWork/forceReset. */
+  unmergedWork: SlotUnmergedWork | null;
+}
+
+/**
+ * The release's read-only guards, run before any teardown side effect. Returns
+ * null when the release is a no-op (slot mid-release, or held by a run other
+ * than `expectedRunId`) and throws when a guard refuses. Unmerged work is
+ * returned, not thrown, so each caller words the refusal for its own action.
+ */
+export async function slotReleasePreflight(
   params: SlotReleaseParams,
-  emit: EventEmitter,
-  options?: {
-    restartRunId?: string;
-    prepareStopTimeoutMs?: number;
-    prepareStopHeartbeatMs?: number;
-  },
-): Promise<{ released: boolean }> {
+): Promise<SlotReleasePreflight | null> {
   // Cheap early checks (authoritative validation happens atomically at the
-  // releasing-marker CAS below, after the non-destructive preflight). A slot
+  // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
   // already mid-release belongs to that teardown — a bound release joining at
   // the same epoch would run a second destructive pass.
   if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING) {
     console.log(`[release] slot ${params.slotId} is already mid-release; leaving it untouched`);
-    return { released: false };
+    return null;
   }
   const boundOwner =
     ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
@@ -187,7 +202,7 @@ async function slotReleaseImpl(
     console.log(
       `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
     );
-    return { released: false };
+    return null;
   }
   const vars = await loadSlotVars(params.slotId);
   const forceReset = params.forceReset ?? false;
@@ -232,6 +247,64 @@ async function slotReleaseImpl(
   }
 
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const unmergedWork =
+    params.keepWork || forceReset
+      ? null
+      : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
+  return { vars, boundOwner, projectVars, projectJson, defaultBranch, unmergedWork };
+}
+
+async function findReleaseUnmergedWork(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars: ProjectVars | undefined,
+  defaultBranch: string,
+): Promise<SlotUnmergedWork | null> {
+  const currentBranch = (
+    await execOnSlot(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+    )
+  ).stdout.trim();
+  const linkedWorktree = await detectLinkedWorktree(vars);
+  const trackingBranch = resolveSlotTrackingBranchFromProject(
+    projectJson,
+    vars,
+    projectVars,
+    linkedWorktree,
+  );
+  if (
+    !currentBranch ||
+    isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
+  )
+    return null;
+  const details = await findUnmergedSlotWork(vars, currentBranch);
+  return details ? { branch: currentBranch, details } : null;
+}
+
+function unmergedWorkError(work: SlotUnmergedWork): Error {
+  return new Error(
+    `UNMERGED_WORK:${work.branch}:${work.details}:Slot has work on '${work.branch}' (${work.details}) that would be lost. Use Force Reset to discard.`,
+  );
+}
+
+async function slotReleaseImpl(
+  params: SlotReleaseParams,
+  emit: EventEmitter,
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
+): Promise<{ released: boolean }> {
+  const preflight = await slotReleasePreflight(params);
+  if (!preflight) return { released: false };
+  // Refused before the kill below, so a refusal leaves the worker running. Step 2
+  // checks again after the kill for work the worker wrote in between.
+  if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
+  const { vars, boundOwner, projectVars, projectJson, defaultBranch } = preflight;
+  const forceReset = params.forceReset ?? false;
+  const preserveAgents = params.preserveAgents ?? false;
   const keepWarm = params.keepWarm ?? false;
   const keepWork = params.keepWork ?? false;
   const skipArtifacts = params.skipArtifacts ?? false;
@@ -262,6 +335,9 @@ async function slotReleaseImpl(
   // never be silently replaced by a rival claim's — the predicate re-reads
   // the CURRENT owner inside the write chain, and when expectedRunId is set
   // the teardown is refused unless that exact run still holds the claim.
+  // The owner the releasing fence actually lands on: an unbound release takes
+  // whoever holds the slot then, which may be a claim made after the preflight.
+  let releasedOwner: string | null = null;
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
@@ -274,6 +350,7 @@ async function slotReleaseImpl(
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
+      releasedOwner = owner;
       if (params.expectedRunId) return owner === params.expectedRunId;
       // Unbound (operator) release: releases whoever currently holds the slot.
       return true;
@@ -477,30 +554,15 @@ async function slotReleaseImpl(
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   if (!keepWork && !forceReset) {
-    const currentBranch = (
-      await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
-      )
-    ).stdout.trim();
-    const linkedWorktree = await detectLinkedWorktree(vars);
-    const trackingBranch = resolveSlotTrackingBranchFromProject(
-      projectJson,
+    const unmergedWork = await findReleaseUnmergedWork(
       vars,
+      projectJson,
       projectVars,
-      linkedWorktree,
+      defaultBranch,
     );
-    if (
-      currentBranch &&
-      !isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
-    ) {
-      const details = await findUnmergedSlotWork(vars, currentBranch);
-      if (details) {
-        await markSlotBusy(params.slotId, 'working');
-        throw new Error(
-          `UNMERGED_WORK:${currentBranch}:${details}:Slot has work on '${currentBranch}' (${details}) that would be lost. Use Force Reset to discard.`,
-        );
-      }
+    if (unmergedWork) {
+      await markSlotBusy(params.slotId, 'working');
+      throw unmergedWorkError(unmergedWork);
     }
   }
 
@@ -699,7 +761,7 @@ async function slotReleaseImpl(
     if (!(await resetSlotIf(params.slotId, epochStillOurs))) return abortReset();
   }
   if (detachRuns) {
-    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit);
+    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit, releasedOwner);
     if (detachedRunIds.length > 0) {
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }

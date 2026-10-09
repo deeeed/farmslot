@@ -231,6 +231,8 @@ export interface NodeExecOpts {
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
   maxBuffer?: number;
+  /** Fail instead of resending after a lost reply: the command may already have run. */
+  noRetry?: boolean;
 }
 
 /**
@@ -281,7 +283,11 @@ async function nodeExecRequest(
       )) as ExecResult;
     } catch (err) {
       const msg = (err as Error).message;
-      if (attempt === 0 && (msg.includes('not open') || err instanceof NodeRpcTimeoutError)) {
+      if (
+        attempt === 0 &&
+        !opts?.noRetry &&
+        (msg.includes('not open') || err instanceof NodeRpcTimeoutError)
+      ) {
         console.log(`[node-rpc] exec retry for ${machine}: ${msg}`);
         await new Promise((r) => setTimeout(r, 3000)); // wait for reconnect
         continue;
