@@ -49,7 +49,7 @@ import { type AppState, getState, isHydrating, subscribe } from '../../state.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import {
   type AcceptanceEvidenceOpen,
-  runAcceptanceEvidenceRows,
+  runAcceptanceCriterionEvidence,
 } from '../progress-tracker/acceptance-panel.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -924,11 +924,7 @@ export class RunDetail extends RunDetailState {
       return;
     // Re-applied when the run, worker progress or acceptance data updates, so a
     // link that arrives before they load still opens; until then, say so.
-    const acceptanceRows = runAcceptanceEvidenceRows(this).map(({ view, evidence }) => ({
-      id: view.id,
-      text: view.text,
-      evidence,
-    }));
+    const acceptanceRows = runAcceptanceCriterionEvidence(this);
     if (artifactAc && !acceptanceRows.some((row) => row.id === artifactAc)) {
       this._requestAcceptanceData();
     }

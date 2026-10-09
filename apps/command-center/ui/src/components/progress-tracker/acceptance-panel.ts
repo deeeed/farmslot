@@ -286,6 +286,17 @@ export function runAcceptanceEvidenceRows(data: RunAcceptanceData): AcceptanceEv
   return inputs ? acceptanceEvidenceRows(inputs.ledger, inputs.criteria, inputs.evidenceLinks) : [];
 }
 
+/** Each shown criterion with its evidence files: what an acceptance evidence link resolves against. */
+export function runAcceptanceCriterionEvidence(
+  data: RunAcceptanceData,
+): Array<AcceptanceCriterionRef & { evidence: string[] }> {
+  return runAcceptanceEvidenceRows(data).map(({ view, evidence }) => ({
+    id: view.id,
+    text: view.text,
+    evidence,
+  }));
+}
+
 function renderRow(
   { view, link, evidence }: AcceptanceEvidenceRow,
   evidenceHref?: (evidencePath: string) => string,

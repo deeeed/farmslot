@@ -18,7 +18,13 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
+import {
+  getOrchestratorTaskRoot,
+  loadSlotVars,
+  normalizeSlotTaskRel,
+  resolveTaskPaths,
+  resolveTaskRelDir,
+} from '../core/config.js';
 import {
   ORCHESTRATOR_LOCALITY,
   slotFileExists,
@@ -27,10 +33,12 @@ import {
 } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
+import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { attachOperations } from '../tasks/operations.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
+import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 import {
   attachSubtaskToStep,
   buildSubtaskEntry,
@@ -89,13 +97,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     const flowType =
       (params.runId ? getRun(params.runId)?.flowType : undefined) ??
       taskFlowTypeFromPath(params.taskFile);
-    const schema = generateTaskSchema(markdown, flowType);
-    if (schema.phases.length > 0) {
-      result.structured = joinSchemaWithMarkdown(schema, markdown);
-      await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
-    }
-    if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
-    await attachAcceptanceStatus(vars, effectiveMdPath, result);
+    await progressFromChecklist(vars, effectiveMdPath, flowType, markdown, result);
     return result;
   }
 
@@ -158,28 +160,56 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
 }
 
 /**
+ * Parse a checklist into steps and attach what sits beside it in the task
+ * directory: child units, operation logs and the acceptance data. With no
+ * markdown, only the acceptance data is attached.
+ */
+async function progressFromChecklist(
+  io: SlotLocality,
+  mdPath: string,
+  flowType: string,
+  markdown: string | null,
+  result: TaskProgressResult,
+): Promise<void> {
+  if (markdown !== null) {
+    const schema = generateTaskSchema(markdown, flowType);
+    if (schema.phases.length > 0) {
+      result.structured = joinSchemaWithMarkdown(schema, markdown);
+      await attachSubtaskProgress(io, mdPath, flowType, result.structured);
+      await attachOperations(io, mdPath, result.structured);
+    }
+  }
+  await attachAcceptanceStatus(io, mdPath, result);
+}
+
+/**
  * Progress for a run whose slot no longer holds its task (released after the run
  * finished), read from the run's recorded task directory on the gateway: the copy
- * run artifacts are served from. Same parse, operations and acceptance read as a
- * live slot. Null when the run has no recorded copy.
+ * run artifacts are served from. Null when the run has no recorded copy under its
+ * project's task root.
+ *
+ * That copy's checklist is the dispatch template. The worker's checked copy lands
+ * beside it as `<checklist>.worker` at completion; without that mirror only the
+ * acceptance data is reported, never the template's unchecked steps.
  */
 async function recordedRunProgress(
   slotId: string,
   runId: string,
 ): Promise<TaskProgressResult | null> {
   const run = getRun(runId);
-  if (!run?.taskFile || !(await slotFileExists(ORCHESTRATOR_LOCALITY, run.taskFile))) return null;
+  if (!run?.taskFile) return null;
+  const projectVars = await loadProjectVarsOrNull(run.project, 'recorded task progress', run.id);
+  const taskRoot = getOrchestratorTaskRoot(run.project, projectVars?.projectJson ?? null);
+  if (resolveTaskRelDir(run.taskFile, taskRoot) === null) return null;
   const io = ORCHESTRATOR_LOCALITY;
+  if (!(await slotFileExists(io, run.taskFile))) return null;
   const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, run.taskFile);
-  const markdown = await slotReadFile(io, effectiveMdPath);
-  const result: TaskProgressResult = { slotId, markdown };
-  const schema = generateTaskSchema(markdown, run.flowType);
-  if (schema.phases.length > 0) {
-    result.structured = joinSchemaWithMarkdown(schema, markdown);
-    await attachSubtaskProgress(io, effectiveMdPath, run.flowType, result.structured);
-    await attachOperations(io, effectiveMdPath, result.structured);
-  }
-  await attachAcceptanceStatus(io, effectiveMdPath, result);
+  const workerCopy = `${effectiveMdPath}${WORKER_MIRROR_SUFFIX}`;
+  const markdown = (await slotFileExists(io, workerCopy))
+    ? await slotReadFile(io, workerCopy)
+    : null;
+  const result: TaskProgressResult = { slotId, markdown: markdown ?? '' };
+  await progressFromChecklist(io, effectiveMdPath, run.flowType, markdown, result);
   return result;
 }
 

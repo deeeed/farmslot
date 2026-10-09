@@ -3,10 +3,7 @@ import test from 'node:test';
 
 import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
-import {
-  acceptanceEvidenceRows,
-  runAcceptanceEvidenceRows,
-} from '../progress-tracker/acceptance-panel.js';
+import { runAcceptanceCriterionEvidence } from '../progress-tracker/acceptance-panel.js';
 
 import {
   acceptanceEvidenceSelection,
@@ -41,14 +38,15 @@ const runArtifacts = [other, listed];
 const artifactUrl = (artifact: FamilyObservabilityArtifact) => `/a/${artifact.path}`;
 
 // AC-1's second file is a ledger path the run's artifact list does not carry.
-const rows = acceptanceEvidenceRows(
-  { schemaVersion: 1, criteria: [] },
-  [
+const rows = runAcceptanceCriterionEvidence({
+  acceptanceCriteria: [
     { id: 'AC-1', text: 'Every order type places an order' },
     { id: 'AC-2', text: 'Slippage shows before submit' },
   ],
-  [{ id: 'AC-1', evidence: [listed.path, 'artifacts/recipe-run/teardown-final-state.png'] }],
-).map(({ view, evidence }) => ({ id: view.id, text: view.text, evidence }));
+  acceptanceEvidenceLinks: [
+    { id: 'AC-1', evidence: [listed.path, 'artifacts/recipe-run/teardown-final-state.png'] },
+  ],
+});
 
 /** Open from the AC row, write the URL, then resolve that URL as a reload would. */
 function reload(index: number) {
@@ -178,11 +176,7 @@ test('a finished run reopens an AC link from the progress read of its recorded t
     resolveEvidenceLightboxLink({
       path: 'artifacts/recipe-run-attempt-1/teardown-final-state.png',
       criterionId: 'AC-1',
-      acceptanceRows: runAcceptanceEvidenceRows(progress).map(({ view, evidence }) => ({
-        id: view.id,
-        text: view.text,
-        evidence,
-      })),
+      acceptanceRows: runAcceptanceCriterionEvidence(progress),
       runId: 'run-1',
       familyId: 'family-1',
       runArtifacts,
