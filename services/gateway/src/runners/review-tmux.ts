@@ -197,8 +197,9 @@ export async function reviewTmuxOperation(
       effort: run.effort,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
-      // A cached newer Codex version would put its update modal in front of the
-      // review, which the launch then fails on as an unknown screen.
+      // A cached newer Codex version shows an "Update available" notice (a modal
+      // without a prompt, a history banner with one), which the launch handshake
+      // fails on as an unknown prompt.
       skipUpdateCheck: true,
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
