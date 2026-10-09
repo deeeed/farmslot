@@ -116,17 +116,17 @@ function codexReplayFixture(context: test.TestContext) {
   );
   const tmux = (...args: string[]) =>
     spawnSync('tmux', ['-S', tmuxSandbox!, ...args], { encoding: 'utf8' });
-  // Stands in for Codex: the Folder access screen for up to 1 s, recording an Enter
-  // if one arrives, then a working turn.
+  // Stands in for Codex: the Folder access screen until Enter or `window` seconds,
+  // recording an Enter if one arrives, then a working turn.
   const entered = path.join(directory, 'entered');
-  const startCodex = () =>
+  const startCodex = (window: number) =>
     assert.equal(
       tmux(
         'new-session',
         '-d',
         '-s',
         session,
-        `cat '${screen}'; if read -t 1 answer; then touch '${entered}'; fi; clear; echo '• Working (1s • esc to interrupt)'; sleep 300`,
+        `cat '${screen}'; if read -t ${window} answer; then touch '${entered}'; fi; clear; echo '• Working (1s • esc to interrupt)'; sleep 300`,
       ).status,
       0,
     );
@@ -140,7 +140,8 @@ function codexReplayFixture(context: test.TestContext) {
   });
   const replay = (claimed: boolean) => {
     if (claimed) writeFileSync(path.join(directory, '.terminal-folder-access-claim'), session);
-    startCodex();
+    // An Enter ends the wait at once; the claimed case needs a window to prove none came.
+    startCodex(claimed ? 1 : 10);
     assert.equal(
       tmux('set-option', '-t', session, '@farmslot-review-workspace', session).status,
       0,
