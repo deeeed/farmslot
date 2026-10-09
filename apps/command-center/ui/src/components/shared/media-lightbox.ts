@@ -19,7 +19,9 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
+import { type DiffFileEntry, parseUnifiedDiff } from '../../utils/unified-diff.js';
 
+import { DiffTestFilterController } from './diff-test-filter-controller.js';
 import {
   isVideoLightboxItem,
   mediaLightboxFileType,
@@ -46,6 +48,8 @@ export class MediaLightbox extends MediaLightboxState {
   private _logError = '';
   private _logUrl = '';
   private _logFollow = false;
+  private readonly _testFilter = new DiffTestFilterController(this);
+  private _diffFiles: { text: string; files: DiffFileEntry[] } | null = null;
   private _timelines = new Map<
     string,
     { data?: RecipeRecordingTimelineDocument; error?: string }
@@ -1255,10 +1259,16 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
     void this._mdCacheVersion;
     this._ensureTextPreview(item.url, 'diff');
     const entry = this._mdCache.get(item.url);
+    const text = entry?.status === 'ok' ? entry.data : '';
+    if (this._diffFiles?.text !== text) {
+      this._diffFiles = { text, files: parseUnifiedDiff(text) };
+    }
+    const split = this._testFilter.split(this._diffFiles.files);
     return html`
       <div class="ml-diff-shell">
         <div class="ml-toolbar ml-md-toolbar">
           <span class="ml-count">${item.path}</span>
+          ${this._testFilter.renderControls(split.summary)}
           <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open raw</a>
         </div>
         <div class="ml-diff-body">
@@ -1266,7 +1276,14 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
             ? html`<div class="ml-fallback">Loading…</div>`
             : entry.status === 'err'
               ? html`<div class="ml-fallback ml-broken">Failed to load: ${entry.error}</div>`
-              : html`<diff-review .diff=${entry.data} .filename=${item.path}></diff-review>`}
+              : split.hiddenCount === 0
+                ? html`<diff-review .diff=${text} .filename=${item.path}></diff-review>`
+                : split.visible.length > 0
+                  ? html`<diff-review
+                      .diff=${split.visible.map((file) => file.diff).join('\n')}
+                      .filename=${item.path}
+                    ></diff-review>`
+                  : html`<div class="ml-fallback">Only test files changed (hidden)</div>`}
         </div>
       </div>
     `;

@@ -1,18 +1,15 @@
 import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
-import {
-  DEFAULT_TEST_FILE_MATCHER,
-  type GitBranchDiffFile,
-  type PublicationTarget,
-  type RecipeRunArtifactGroup,
-  type ResourcePostureGateChoice,
-  type Run,
-  type RunDecision,
-  type TestFileMatcher,
+import type {
+  GitBranchDiffFile,
+  PublicationTarget,
+  RecipeRunArtifactGroup,
+  ResourcePostureGateChoice,
+  Run,
+  RunDecision,
 } from '@farmslot/protocol';
 
-import { readHideTestsPref } from '../../utils/diff-test-filter.js';
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 
@@ -129,12 +126,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
 
   // Diff state
   @state() _diffFiles: GitBranchDiffFile[] = [];
-  /** Effective test-file globs from the last branch diff, handed to the diff modal. */
+  /** Effective test-file globs from the last branch diff (Diff tab filter and diff modal). */
   @state() _diffTestPatterns: readonly string[] | null = null;
-  /** Classifier compiled from `_diffTestPatterns` for the Diff tab's test filter. */
-  _diffTestMatcher: TestFileMatcher = DEFAULT_TEST_FILE_MATCHER;
-  @state() _hideTests = readHideTestsPref();
-  _unsubscribeHideTests: (() => void) | null = null;
   @state() _diffLoading = false;
   @state() _selectedFile = '';
   @state() _fileDiff = '';

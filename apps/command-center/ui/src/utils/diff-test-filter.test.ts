@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  formatDiffFileCount,
   formatTestShare,
   readHideTestsPref,
   splitDiffFilesByKind,
   subscribeHideTestsPref,
+  visibleDiffSelection,
   writeHideTestsPref,
 } from './diff-test-filter.js';
 
@@ -72,4 +74,17 @@ test('hide-tests preference notifies subscribers once per change', () => {
   writeHideTestsPref(!initial);
   writeHideTestsPref(initial);
   assert.deepEqual(seen, [!initial, initial]);
+});
+
+test('formatDiffFileCount shows the total, or visible of total while files are hidden', () => {
+  assert.equal(formatDiffFileCount(splitDiffFilesByKind(files, false)), '3');
+  assert.equal(formatDiffFileCount(splitDiffFilesByKind(files, true)), '1 of 3');
+});
+
+test('visibleDiffSelection keeps a visible file and falls back to the first visible one', () => {
+  const visible = [{ path: 'src/gate.ts' }, { path: 'src/panel.ts' }];
+  assert.equal(visibleDiffSelection(visible, 'src/panel.ts'), 'src/panel.ts');
+  assert.equal(visibleDiffSelection(visible, 'src/gate.test.ts'), 'src/gate.ts');
+  assert.equal(visibleDiffSelection(visible, ''), 'src/gate.ts');
+  assert.equal(visibleDiffSelection([], 'src/gate.test.ts'), undefined);
 });

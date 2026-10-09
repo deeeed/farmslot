@@ -28,10 +28,12 @@ import './recipe-output-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { formatDiffFileCount, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createReviewWorkspaceRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import {
   committedReviewBranchDiffRequest,
@@ -84,6 +86,11 @@ function reviewRecommendation(
 
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
+  private readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this._diffTestPatterns,
+    onChange: () => this._onHideTestsChanged(),
+  });
+
   private readonly _onHashChange = () => {
     this._readTabFromHash();
     this._normalizeActiveTab();
@@ -342,10 +349,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      // Auto-select first file with comments, or first file
-      const firstCommented = result.files.find((f) => this._commentCountByFile.has(f.path));
-      const first = firstCommented ?? result.files[0];
-      if (first) this._selectFile(first.path);
+      // Auto-select the first listed file with comments, or the first listed file
+      const visible = this._testFilter.split(result.files).visible;
+      const first = visible.find((f) => this._commentCountByFile.has(f.path)) ?? visible[0];
+      if (first) {
+        this._selectFile(first.path);
+      } else {
+        // Nothing listed: drop a previous selection so showing tests loads this diff's file.
+        this._selectedFile = '';
+        this._fileDiff = '';
+      }
     } catch (err) {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[review-workspace] branch diff failed:', err);
@@ -394,6 +407,18 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       console.error('[review-workspace] checkout failed:', err);
     } finally {
       this._checkingOut = false;
+    }
+  }
+
+  /** A newly hidden selected file hands the viewer to the first listed file. */
+  private _onHideTestsChanged(): void {
+    const next = visibleDiffSelection(
+      this._testFilter.split(this._diffFiles).visible,
+      this._selectedFile,
+    );
+    if (!next) return;
+    if (next !== this._selectedFile || (!this._fileDiff && !this._fileDiffLoading)) {
+      void this._selectFile(next);
     }
   }
 
@@ -645,12 +670,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
               : this._diffLoading
                 ? html`<div class="rw-diff-loading">Loading diff...</div>`
                 : this._diffFiles.length > 0
-                  ? html`
-                      <div class="rw-file-tabs">
-                        ${this._diffFiles.map((f) => this._renderFileTab(f))}
-                      </div>
-                      ${this._renderCodePanel()}
-                    `
+                  ? this._renderDiffFiles()
                   : html`<div class="rw-diff-empty">
                       ${this._diffError
                         ? html`<div role="alert">
@@ -886,6 +906,20 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       post: () => this._handlePost(),
       dismiss: () => this._handleDismiss(),
     });
+  }
+
+  private _renderDiffFiles() {
+    const split = this._testFilter.split(this._diffFiles);
+    return html`
+      <div class="rw-file-tabs">
+        <span class="rw-file-count">${formatDiffFileCount(split)} files</span>
+        ${this._testFilter.renderControls(split.summary)}
+        ${split.visible.map((f) => this._renderFileTab(f))}
+      </div>
+      ${split.visible.length === 0 && !this._selectedFile
+        ? html`<div class="rw-diff-empty">Only test files changed — show tests to review them</div>`
+        : this._renderCodePanel()}
+    `;
   }
 
   private _renderFileTab(f: GitBranchDiffFile) {
