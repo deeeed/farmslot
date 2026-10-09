@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -42,7 +42,7 @@ function checkout(t: test.TestContext) {
       JSON.stringify({
         id: 'op-1',
         targetSha: 'd9e09b8f',
-        message: 'This update changes dependencies. Nothing was changed.',
+        message: 'Fixture update message.',
         updatedAt: new Date().toISOString(),
         ...operation,
       }),
@@ -78,4 +78,44 @@ test('a completed update is reported only while HEAD is its target', async (t) =
 
   c.write({ phase: 'complete', localSha: c.oldSha, targetSha: c.oldSha });
   assert.equal(await readCheckoutUpdate(c.root), undefined);
+});
+
+/** A pid that has already exited, as a crashed update worker's would be. */
+const deadPid = () => spawnSync('true').pid;
+const stale = () => new Date(Date.now() - 5 * 60_000).toISOString();
+
+test('a dead worker from before HEAD moved is no longer reported', async (t) => {
+  const c = checkout(t);
+  c.write({ phase: 'running', localSha: c.oldSha, pid: deadPid(), updatedAt: stale() });
+
+  assert.equal(await readCheckoutUpdate(c.root), undefined);
+});
+
+test('a dead worker is reported as stopped while HEAD is unchanged', async (t) => {
+  const c = checkout(t);
+  c.write({ phase: 'running', localSha: c.headSha, pid: deadPid(), updatedAt: stale() });
+
+  const operation = await readCheckoutUpdate(c.root);
+  assert.equal(operation?.phase, 'error');
+  assert.match(operation?.message ?? '', /update worker stopped/);
+});
+
+test('a finished record is kept when HEAD cannot be read', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'gateway-update-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // An unborn branch: the record path resolves, `rev-parse HEAD` fails.
+  git(root, 'init', '-q', '--initial-branch=main');
+  writeFileSync(
+    path.join(root, '.git/farmslot-checkout-update.json'),
+    JSON.stringify({
+      id: 'op-1',
+      phase: 'error',
+      localSha: 'abc1234',
+      targetSha: 'def5678',
+      message: 'Fixture update message.',
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+
+  assert.equal((await readCheckoutUpdate(root))?.phase, 'error');
 });

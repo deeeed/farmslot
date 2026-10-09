@@ -13,10 +13,7 @@ async function recordPath(root = farmslotRoot): Promise<string> {
   const { stdout } = await exec(
     'git',
     ['rev-parse', '--git-path', 'farmslot-checkout-update.json'],
-    {
-      cwd: root,
-      timeout: 8000,
-    },
+    { cwd: root, timeout: 8000 },
   );
   return resolve(root, stdout.trim());
 }
