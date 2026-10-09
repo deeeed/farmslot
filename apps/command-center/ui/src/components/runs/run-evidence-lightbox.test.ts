@@ -78,3 +78,14 @@ test('an artifact link that cannot open renders its reason', () => {
   assert.match(text, /evidence-artifact-unavailable/);
   assert.match(text, /Cannot open[\s\S]*artifacts\/operations\/gone\.log[\s\S]*not among/);
 });
+
+test('the lightbox names its scope: the run output, or the criterion whose evidence it steps through', () => {
+  assert.equal(litBinding(renderRunEvidence(run, ctx), 'scopeLabel='), 'Run output');
+  assert.equal(
+    litBinding(
+      renderRunEvidence(run, { ...ctx, evidenceLightboxScope: 'AC-1 evidence' }),
+      'scopeLabel=',
+    ),
+    'AC-1 evidence',
+  );
+});
