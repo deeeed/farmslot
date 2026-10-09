@@ -1,4 +1,7 @@
+import { getNode } from '../fleet/machine-registry.js';
+
 import type { RawProjectJson } from './config.js';
+import { isLocal } from './exec.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const UNRESOLVED_PLACEHOLDER_RE = /\{\{[^{}\n]+\}\}/;
@@ -103,11 +106,29 @@ export function buildMachineEnvPrefix(machineEnv: Record<string, string> | undef
     .join(' && ');
 }
 
+/**
+ * Pool `env` plus GW_URL for a remote node: the URL that node itself uses to
+ * reach this gateway, so `farmslot` run from a slot targets the dispatching
+ * gateway instead of the machine's operator profile (which may name a tunnel
+ * that only exists elsewhere). Pool values win. No credential is added.
+ */
+export function machineShellEnv(vars: {
+  machine?: string;
+  host?: string;
+  machineEnv?: Record<string, string>;
+}): Record<string, string> {
+  const gatewayUrl =
+    vars.machine && vars.host && !isLocal(vars.host, vars.machine)
+      ? getNode(vars.machine)?.gatewayUrl
+      : undefined;
+  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv };
+}
+
 /** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */
 export function withMachineEnv(
   command: string,
-  vars: { machineEnv?: Record<string, string> },
+  vars: { machine?: string; host?: string; machineEnv?: Record<string, string> },
 ): string {
-  const prefix = buildMachineEnvPrefix(vars.machineEnv);
+  const prefix = buildMachineEnvPrefix(machineShellEnv(vars));
   return prefix ? `${prefix} && ${command}` : command;
 }

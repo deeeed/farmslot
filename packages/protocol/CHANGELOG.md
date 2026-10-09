@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- New `@farmslot/protocol/node/loopback-host` subpath exporting `isLoopbackHost`, the single loopback-host check shared by the gateway's bind/auth checks and the CLI.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `VIEW_QUERY_PARAMETERS` accepts `artifactAc`: a run-detail artifact link that names the acceptance criterion whose evidence the lightbox was stepping through, so a reload or shared link reopens the same set.
 - `AcceptanceStatusSource` (`ledger` | `evidence-manifest`) and `AcceptanceEvidenceLink`; `TaskProgressResult.acceptanceSource` and `acceptanceEvidenceLinks` (optional) carry the run-detail fallback for a run with no acceptance ledger. Links are display-only and never a verdict.
