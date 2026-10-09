@@ -97,10 +97,28 @@ test('defaultBranchRepoBlocker names a fetch refspec that excludes the default b
     defaultBranchRepoBlocker({ fetchRefspecs: full, refs: ['refs/remotes/origin/main'] }, 'main'),
     null,
   );
-  assert.equal(
-    defaultBranchRepoBlocker({ fetchRefspecs: ['+refs/*:refs/*'], refs: local }, 'main'),
-    null,
-  );
+  // Explicit, short-source and multi-spec configs that map main to origin/main.
+  for (const fetchRefspecs of [
+    ['+refs/heads/main:refs/remotes/origin/main'],
+    ['main:refs/remotes/origin/main'],
+    ['+refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0', ...full],
+  ]) {
+    assert.equal(defaultBranchRepoBlocker({ fetchRefspecs, refs: local }, 'main'), null);
+  }
+  // Fetching main somewhere other than origin/main is not a fetch prepare can use:
+  // no `:dst` (FETCH_HEAD only), a mirror into refs/heads, or a glob source with a fixed dst.
+  for (const fetchRefspecs of [
+    ['+refs/heads/main'],
+    ['+refs/*:refs/*'],
+    ['+refs/heads/*:refs/remotes/upstream/*'],
+    ['+refs/heads/*:refs/remotes/origin/main'],
+  ]) {
+    assert.match(
+      defaultBranchRepoBlocker({ fetchRefspecs, refs: local }, 'main') ?? '',
+      /does not fetch default branch 'main' into refs\/remotes\/origin\/main/,
+      fetchRefspecs.join(','),
+    );
+  }
   const single = defaultBranchRepoBlocker(
     {
       fetchRefspecs: ['+refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0'],
@@ -129,7 +147,7 @@ test('defaultBranchRepoBlocker names a fetch refspec that excludes the default b
 
 test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
   const ok = (stdout: string) =>
-    readDefaultBranchProbe({ stdout, stderr: '', exitCode: 0 }, 'main');
+    readDefaultBranchProbe({ stdout: `${stdout}probe=done\n`, stderr: '', exitCode: 0 }, 'main');
   assert.deepEqual(
     ok(
       'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=0\nref=refs/heads/main\n',
@@ -143,7 +161,8 @@ test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
   );
   const unreadable = readDefaultBranchProbe(
     {
-      stdout: 'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=128\n',
+      stdout:
+        'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=128\nprobe=done\n',
       stderr: "fatal: could not open '.git/packed-refs' for reading: Permission denied\n",
       exitCode: 0,
     },
@@ -156,6 +175,18 @@ test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
   });
   assert.equal(ok('fetch-exit=3\nrefs-exit=0\n').readable, false);
   assert.equal(ok('').readable, false, 'a probe that printed no status has no verdict');
+  // Cut short after the ref status (a timeout): no end sentinel, so no verdict, never "missing".
+  assert.deepEqual(
+    readDefaultBranchProbe(
+      {
+        stdout: 'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=0\n',
+        stderr: '',
+        exitCode: 0,
+      },
+      'main',
+    ),
+    { readable: false, error: 'probe output ended early' },
+  );
   assert.equal(
     readDefaultBranchProbe({ stdout: '', stderr: 'ssh: connect refused', exitCode: 255 }, 'main')
       .readable,

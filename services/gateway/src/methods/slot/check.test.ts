@@ -311,6 +311,11 @@ test('checkDefaultBranch fails a single-branch clone and passes once main is fet
   assert.equal(missing.status, 'fail');
   assert.match(missing.detail, /no default branch 'develop'/);
 
+  // A refspec without a destination fetches main only into FETCH_HEAD: still blocked.
+  git(single, 'config', '--add', 'remote.origin.fetch', '+refs/heads/main');
+  assert.equal((await checkDefaultBranch(makeSlotVars(single), 'main')).status, 'fail');
+  assert.throws(() => git(single, 'checkout', '-q', 'main'), /pathspec 'main' did not match/);
+
   // The operator repair: widen the refspec; the slot passes and checkout works.
   git(
     single,

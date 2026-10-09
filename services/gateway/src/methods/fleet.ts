@@ -755,7 +755,11 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+  // Without the project config the default branch is unknown: probing `main`
+  // would flag a non-main project, so give no repo verdict.
+  const repoProbe = projectVars
+    ? probeSlotDefaultBranch(vars, getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH)
+    : Promise.resolve(null);
   const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree, repoBlocker] =
     await Promise.all([
       checkBranch(vars),
@@ -765,7 +769,7 @@ async function checkSingleSlot(
       checkCDP(vars, projectJson, projectVars),
       checkFixtures(vars, projectVars, projectJson),
       checkLinkedWorktree(vars),
-      checkDefaultBranch(vars, defaultBranch),
+      repoProbe,
     ]);
 
   const dispatchable =
@@ -804,7 +808,10 @@ async function checkSingleSlot(
 
 // ─── Individual check helpers ───
 
-async function checkDefaultBranch(vars: SlotVars, defaultBranch: string): Promise<string | null> {
+async function probeSlotDefaultBranch(
+  vars: SlotVars,
+  defaultBranch: string,
+): Promise<string | null> {
   try {
     const probe = await probeDefaultBranch(vars, defaultBranch, { timeout: SLOT_CHECK_TIMEOUT_MS });
     if (probe.readable) return probe.blocker;
