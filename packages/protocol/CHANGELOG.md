@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- New `@farmslot/protocol/node/loopback-host` subpath exporting `isLoopbackHost`, the single loopback-host check shared by the gateway's bind/auth checks and the CLI.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `AcceptanceStatusSource` (`ledger` | `evidence-manifest`) and `AcceptanceEvidenceLink`; `TaskProgressResult.acceptanceSource` and `acceptanceEvidenceLinks` (optional) carry the run-detail fallback for a run with no acceptance ledger. Links are display-only and never a verdict.
 - `defaultBranchRepoBlocker(state, defaultBranch)` names why a slot repo cannot check out the project's default branch: no origin fetch refspec stores it in `refs/remotes/origin/<branch>` (a `--single-branch` clone, or a refspec with no destination), or no local or `origin/` ref for it. `defaultBranchProbeCommand` and `readDefaultBranchProbe` are the one probe the gateway and CLI run for it; a failed git read or output cut short gives no verdict. `SlotStatus.repoBlocker` (optional) carries that reason from fleet refresh; `DispatchCandidatesParams.skipPrepare` and `DispatchPreviewParams.skipPrepare` (optional) let a dispatch that keeps the checkout still use that slot.

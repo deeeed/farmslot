@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 
 import type { GatewayAuthMode } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
 import { credentialFromEnv } from './gateway-client.js';
 
@@ -137,8 +138,7 @@ export function profileForUrl(
 
 function isLoopbackGatewayUrl(raw: string): boolean {
   try {
-    const host = new URL(raw).hostname;
-    return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(host);
+    return isLoopbackHost(new URL(raw).hostname);
   } catch {
     return false;
   }
