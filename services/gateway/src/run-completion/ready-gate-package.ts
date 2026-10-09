@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   type ArtifactRef,
   isPublishEvidenceArtifact,
+  type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
 } from '@farmslot/protocol';
@@ -154,6 +155,30 @@ export function computeReadyGateReviewSubjectHash(
       reviewSnapshot: payload.reviewSnapshot,
     }),
   );
+}
+
+/**
+ * The description the Ready gate shows instead of the package's own: the given
+ * title and body when they differ from the reviewed package's, or always once
+ * published. The package and its hash are untouched.
+ */
+export function readyGateCurrentDescription(
+  prPackage: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  description: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  publishedAt?: string,
+): ReadyGatePayload['currentDescription'] {
+  if (
+    !publishedAt &&
+    description.draftTitle === prPackage.draftTitle &&
+    description.draftBody === prPackage.draftBody
+  ) {
+    return undefined;
+  }
+  return {
+    title: description.draftTitle,
+    body: description.draftBody,
+    ...(publishedAt ? { publishedAt } : {}),
+  };
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   Events,
   PipelineSteps,
   type PublicationTarget,
+  type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
   type RunDecision,
@@ -25,6 +26,7 @@ import {
 import {
   assertLiveHeadMatchesPackage,
   packageChangedError,
+  readyGateCurrentDescription,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
@@ -72,6 +74,34 @@ const S = PipelineSteps;
 
 /** Flows whose rounds push to the farm's own PR and therefore re-request review. */
 const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug', 'update-branch']);
+
+/**
+ * Records on the Ready gate decision the title and body publication used, so
+ * the card shows what went out rather than the reviewed description.
+ */
+export function recordPublishedDescription(
+  runId: string,
+  decisionId: string | undefined,
+  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  publishedAt = new Date().toISOString(),
+): void {
+  const run = getRun(runId);
+  if (!run || !decisionId) return;
+  updateRun(runId, {
+    decisions: run.decisions.map((decision) => {
+      const payload = decision.payload as ReadyGatePayload | undefined;
+      if (decision.id !== decisionId || payload?.kind !== 'ready' || !payload.prPackage) {
+        return decision;
+      }
+      const currentDescription = readyGateCurrentDescription(
+        payload.prPackage,
+        published,
+        publishedAt,
+      );
+      return { ...decision, payload: { ...payload, currentDescription } };
+    }),
+  });
+}
 
 export async function executeFinalizeStep(
   runId: string,
@@ -340,6 +370,7 @@ export async function executeFinalizeStep(
       selectedEvidenceKeys,
       emit: emitWithBroadcast,
     });
+    recordPublishedDescription(runId, gateDecision?.id, approvedPackage);
     publicationStatus = published.publicationStatus;
     publicationTarget = selectedTarget;
     publishedPrNumber = published.prNumber;

@@ -6,6 +6,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `RunEngineState.reviewedInputs` no longer covers the PR description: editing it never makes self-review run again or holds approval. Fingerprints recorded with the description keep matching until HEAD or evidence changes. Doc change only; the shape is unchanged.
+- `ReadyGatePayload.currentDescription` (optional): the title and body Farmslot will publish when they differ from the reviewed package, and after publication the ones it published, with `publishedAt`. Not part of the package hash. Existing stored gates remain readable.
 
 ## 0.35.0 - 2026-10-09
 

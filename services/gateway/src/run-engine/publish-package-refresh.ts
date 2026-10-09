@@ -324,6 +324,8 @@ export async function refreshPublishPackage(params: {
       headSha: prPackage.headSha,
       artifactManifest: prPackage.evidenceManifest,
       prPackage,
+      // The refreshed package carries the current description itself.
+      currentDescription: undefined,
       reviewDepth,
       independentReviews,
       gatePolicy: prPackage.gatePolicy,

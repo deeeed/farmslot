@@ -813,6 +813,14 @@ export interface ReadyGatePayload {
   acceptanceStatusError?: string;
   inputSnapshot?: ReadyGateInputSnapshot;
   prPackage?: ReadyGatePrPackage;
+  /**
+   * The title and body Farmslot will publish, when a re-render at gate open or
+   * approval differs from the reviewed package's, and after publication the
+   * ones it published, with `publishedAt`. Shown in place of
+   * `prPackage.draftTitle`/`draftBody`; not part of the package hash, so
+   * approval identity stays the reviewed package. Absent on older gates.
+   */
+  currentDescription?: { title: string; body: string; publishedAt?: string };
   reviewDepth?: ReviewDepthPolicy;
   independentReviews?: IndependentReviewStatus[];
   reviewLaunchRejection?: PublicationReviewLaunchRejection;

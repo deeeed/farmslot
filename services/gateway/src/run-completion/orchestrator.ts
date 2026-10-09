@@ -404,6 +404,35 @@ export async function buildPreparedDraftPrBody(
 }
 
 /**
+ * The title and body a package would carry if it were prepared now: what
+ * approval publishes. Renders to a temporary file; writes nothing in the task.
+ */
+export async function renderCurrentDescription(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+  artifacts?: ArtifactRef[],
+): Promise<{ draftTitle: string; draftBody: string }> {
+  if (!current.taskFile) throw new Error('Approved package requires a task directory');
+  const report = await readWorkerReport(current);
+  // Same body the package was prepared with; a run without project config
+  // (fixtures, imported runs) keeps the default branch, as preparation does.
+  const baseBranch = await loadProjectVars(current.project)
+    .then((projectVars) => getProjectField(projectVars.projectJson, 'default_branch'))
+    .catch((error: Error) => {
+      if (!/not found/i.test(error.message)) throw error;
+      return null;
+    });
+  const draftBody = await buildPreparedDraftPrBody(
+    current,
+    report,
+    artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
+    baseBranch || DEFAULT_BRANCH,
+    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
+  );
+  return { draftTitle: buildDraftPrTitle(current), draftBody };
+}
+
+/**
  * Re-check a prepared package at approval and return the package to publish.
  * The title and body are re-rendered and the current ones are published: a
  * changed description is logged, never refused. Changed evidence or validation
@@ -422,25 +451,13 @@ export async function assertReadyGatePackageInputsCurrent(
     artifacts,
     currentEvidenceManifest,
   );
-  const report = await readWorkerReport(current);
   const validation = await readValidationSummary(current);
   const mismatches: string[] = [];
 
-  const draftTitle = buildDraftPrTitle(current);
-  // Same body the package was prepared with; a run without project config
-  // (fixtures, imported runs) keeps the default branch, as preparation does.
-  const baseBranch = await loadProjectVars(current.project)
-    .then((projectVars) => getProjectField(projectVars.projectJson, 'default_branch'))
-    .catch((error: Error) => {
-      if (!/not found/i.test(error.message)) throw error;
-      return null;
-    });
-  const currentDraftBody = await buildPreparedDraftPrBody(
+  const { draftTitle, draftBody: currentDraftBody } = await renderCurrentDescription(
     current,
-    report,
+    preparedPackage,
     artifacts,
-    baseBranch || DEFAULT_BRANCH,
-    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
   const descriptionChanges = [
     ...(draftTitle !== preparedPackage.draftTitle ? ['draft title'] : []),

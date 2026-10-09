@@ -4,12 +4,24 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { ExecResult } from '../core/exec.js';
+import type { ReadyGatePayload } from '@farmslot/protocol';
 
-import { assertReadyGatePackageInputsCurrent, buildPreparedDraftPrBody } from './orchestrator.js';
+import type { ExecResult } from '../core/exec.js';
+import { recordPublishedDescription } from '../run-engine/finalize-step.js';
+import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
+import { createRun, getRun, updateRun } from '../runs/store.js';
+
+import {
+  assertReadyGatePackageInputsCurrent,
+  buildPreparedDraftPrBody,
+  renderCurrentDescription,
+} from './orchestrator.js';
 import { __setPrBodyRenderDepsForTest } from './pr-body-render.js';
 import {
   assertLiveHeadMatchesPackage,
+  computeReadyGatePackageHash,
+  readyGateCurrentDescription,
+  verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
 import { makeRun } from './test-fixtures.js';
@@ -221,4 +233,64 @@ test('a missing evidence file and a moved HEAD still block with the refresh step
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('the gate shows, publishes and records the current render while approval keeps the reviewed package hash', async (t) => {
+  const { root, artifactsDir, run } = await makeTask();
+  t.after(async () => {
+    __setPrBodyRenderDepsForTest(null);
+    await rm(root, { recursive: true, force: true });
+  });
+  installRenderer(artifactsDir);
+  const withoutHash = packageWith('feat: implement PROJ-1', 'Reviewed body A.');
+  const reviewed = { ...withoutHash, packageHash: computeReadyGatePackageHash(withoutHash) };
+  const renderB = gatewayRender(PROSE).trim();
+
+  // Gate open: the decision shows render B, not the reviewed body A.
+  const shown = readyGateCurrentDescription(
+    reviewed,
+    await renderCurrentDescription(run, reviewed),
+  );
+  assert.deepEqual(shown, { title: 'feat: implement PROJ-1', body: renderB });
+
+  // Approval publishes B; the reviewed package and its hash are what was approved.
+  const published = await assertReadyGatePackageInputsCurrent(run, reviewed);
+  assert.equal(published.draftBody, renderB);
+  assert.equal(published.packageHash, reviewed.packageHash);
+  verifyReadyGatePackageHash(reviewed);
+
+  // After publication the gate decision records B.
+  const stored = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-1',
+    runner: 'claude',
+  });
+  t.after(async () => deleteTestRunIfPresent(stored.id));
+  const gatePayload = { kind: 'ready', prPackage: reviewed, currentDescription: shown };
+  updateRun(stored.id, {
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Ready',
+        description: 'Ready',
+        actions: [],
+        createdAt: '2026-10-09T00:00:00.000Z',
+        resolvedAt: '2026-10-09T00:01:00.000Z',
+        resolvedAction: 'approve-publish',
+        payload: gatePayload as unknown as ReadyGatePayload,
+      },
+    ],
+  });
+  recordPublishedDescription(stored.id, 'gate-1', published, '2026-10-09T00:02:00.000Z');
+  const recorded = getRun(stored.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.deepEqual(recorded.currentDescription, {
+    title: 'feat: implement PROJ-1',
+    body: renderB,
+    publishedAt: '2026-10-09T00:02:00.000Z',
+  });
+  assert.equal(recorded.prPackage?.packageHash, reviewed.packageHash);
+  assert.equal(recorded.prPackage?.draftBody, 'Reviewed body A.');
 });

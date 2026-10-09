@@ -76,6 +76,7 @@ import {
   excludeReadyEvidenceVideos,
   initialReadyEvidenceSelection,
   readyEvidenceSelectionKey,
+  readyPrDescription,
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
@@ -267,7 +268,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       (artifactPath) => this._artifactUrl(artifactPath, artifactByPath.get(artifactPath)),
     );
     return renderReadyWorkspaceMarkdown(
-      rewriteMarkdownArtifactUrls(payload.prPackage?.draftBody || '', resolveUrl),
+      rewriteMarkdownArtifactUrls(readyPrDescription(payload).body, resolveUrl),
     );
   }
 
