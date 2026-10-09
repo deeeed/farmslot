@@ -29,6 +29,7 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { CIWatchPokeController } from './ci-watch-actions.js';
 import { isRunWorking, locateStepArtifact } from './run-detail-model.js';
 import {
+  ARTIFACT_AC_PARAM,
   ARTIFACT_PARAM,
   ARTIFACT_RUN_PARAM,
   ARTIFACT_VIEW_PARAM,
@@ -709,6 +710,8 @@ export class StepInspector extends StepInspectorState {
     const qIdx = raw.indexOf('?');
     const base = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
     const params = new URLSearchParams(qIdx >= 0 ? raw.slice(qIdx + 1) : '');
+    // The step's own viewer never steps through an acceptance criterion's set.
+    params.delete(ARTIFACT_AC_PARAM);
     if (item) {
       if (this.run?.id) params.set(ARTIFACT_RUN_PARAM, this.run.id);
       params.set(ARTIFACT_PARAM, item.path);

@@ -97,6 +97,13 @@ export class SlotCopyDirEntryError extends Error {
   }
 }
 
+/** The gateway's own filesystem: orchestrator copies of task directories, caches. */
+export const ORCHESTRATOR_LOCALITY: SlotLocality = {
+  host: 'localhost',
+  machine: 'local',
+  sshTarget: '',
+};
+
 function local(ctx: SlotLocality): boolean {
   return isLocal(ctx.host, ctx.machine);
 }
