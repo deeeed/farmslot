@@ -34,6 +34,7 @@ import {
   resetSlotIf,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
   type SlotVars,
   updateSlotStatusIf,
@@ -74,6 +75,7 @@ import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
 import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
+import { reapSlotPrepareScope } from './prepare-command.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
@@ -361,6 +363,25 @@ async function slotReleaseImpl(
       await killAllAgentWindows(vars);
     }
     step('agent', 'Agent killed');
+    // A release during or after preflight would otherwise publish readiness
+    // while the prepare group and its holder keep running in the repository.
+    // This teardown holds the releasing fence, so the recorded scope is this
+    // slot's own. A group that survives keeps the slot held with the reason.
+    try {
+      const stopped = await reapSlotPrepareScope(vars);
+      step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      step('prepare', reason);
+      await guardedTeardownWrite({
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: reason,
+        [SLOT_RELEASING_SINCE]: null,
+      });
+      complete(1);
+      return { released: false };
+    }
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
     // without operator images sitting in its runtime dir.

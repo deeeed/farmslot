@@ -73,6 +73,7 @@ import {
   ensureSlotReachable,
   PREPARE_DEPS_TIMEOUT_MS,
   PREPARE_PREFLIGHT_TIMEOUT_MS,
+  prepareIdentityPath,
   prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
@@ -1315,7 +1316,7 @@ async function slotPrepareInner(
   }
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
-    const preflightIdentityPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.identity');
+    const preflightIdentityPath = prepareIdentityPath(vars.remoteRepo, runtimeDir);
     const preflightScope = randomUUID().replaceAll('-', '');
     const rawCleanupPatterns = getProjectFieldRaw(projectJson, 'cleanup_patterns');
     const cleanupPatterns = Array.isArray(rawCleanupPatterns)

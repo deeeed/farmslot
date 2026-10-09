@@ -1,7 +1,15 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { execLocal, execOnSlot, farmslotRoot, isLocal, type SlotVars } from '../../core/index.js';
+import {
+  execLocal,
+  execOnSlot,
+  farmslotRoot,
+  isLocal,
+  isMissingProjectConfigError,
+  loadProjectVars,
+  type SlotVars,
+} from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
@@ -278,9 +286,27 @@ export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart
   );
 }
 
-export function buildPrepareIdentityReapCommand(identityPath: string): string {
+export function buildPrepareIdentityReapCommand(
+  identityPath: string,
+  opts: { expectedScope?: string; awaitExit?: boolean } = {},
+): string {
+  // expectedScope fences the reap to one prepare: a different recorded scope
+  // (a successor's preflight) is neither signalled nor removed. awaitExit
+  // waits out the group, escalates to SIGKILL, and fails while it survives,
+  // keeping the identity so a retry can still find it.
+  const expected = opts.expectedScope
+    ? [`  if [ "$scope" != ${shellQuote(opts.expectedScope)} ]; then valid=false; foreign=true; fi`]
+    : [];
+  const awaitExit = opts.awaitExit
+    ? [
+        '    n=0; while kill -0 -- "-$pgid" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        '    if kill -0 -- "-$pgid" 2>/dev/null; then kill -KILL -- "-$pgid" 2>/dev/null; sleep 0.2; fi',
+        '    if kill -0 -- "-$pgid" 2>/dev/null; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
+      ]
+    : [];
   return [
     `identityfile=${shellQuote(identityPath)}`,
+    'foreign=false',
     `if [ -f "$identityfile" ]; then`,
     `  identity=$(cat "$identityfile" 2>/dev/null || true)`,
     `  tab=$(printf '\t')`,
@@ -289,6 +315,7 @@ export function buildPrepareIdentityReapCommand(identityPath: string): string {
     `  case "$rest" in *"$tab"*) sentinel=\${rest%%"$tab"*}; scope=\${rest#*"$tab"} ;; esac`,
     `  valid=false`,
     `  case "$pgid" in ''|*[!0-9]*) ;; *) case "$sentinel" in ''|*[!0-9]*) ;; *) case "$scope" in ''|*[!0-9a-f]*|*"$tab"*) ;; *) if [ "$pgid" -gt 1 ] && [ "$sentinel" -gt 1 ] && [ "\${#scope}" -eq 32 ]; then valid=true; fi ;; esac ;; esac ;; esac`,
+    ...expected,
     `  matched=false`,
     `  if $valid; then`,
     `    live_pgid=$(ps -o pgid= -p "$sentinel" 2>/dev/null | tr -d '[:space:]')`,
@@ -300,10 +327,74 @@ export function buildPrepareIdentityReapCommand(identityPath: string): string {
     `    fi`,
     `    if $marker_ok && $scope_ok; then matched=true; fi`,
     `  fi`,
-    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed verified preflight group ($pgid)"; fi`,
+    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then`,
+    `    echo "killed verified preflight group ($pgid)"`,
+    ...awaitExit,
+    `  fi`,
     `fi`,
-    `rm -f "$identityfile"`,
+    `$foreign || rm -f "$identityfile"`,
   ].join('\n');
+}
+
+export async function resolvePrepareRuntimeDir(projectName: string): Promise<string> {
+  try {
+    const projectVars = await loadProjectVars(projectName);
+    return projectVars.runtimeDir || '.agent';
+  } catch (error) {
+    if (isMissingProjectConfigError(error)) return '.agent';
+    throw error;
+  }
+}
+
+export function prepareIdentityPath(remoteRepo: string, runtimeDir: string): string {
+  return path.posix.join(remoteRepo, runtimeDir || '.agent', 'preflight.identity');
+}
+
+/**
+ * Stop a slot's recorded prepare scope: the preflight process group and its
+ * nohup'd `farmslot-prepare-scope` holder, which outlive an aborted or
+ * kept-alive prepare window in the slot repository. Signals only a live group
+ * whose scope still matches, so it is a no-op when nothing is recorded, waits
+ * for the group to exit, and throws while any of it survives.
+ *
+ * `stillOwned` fences a caller that holds no slot fence: the recorded scope is
+ * read first and reaped only when the caller still owns the slot afterwards,
+ * so a successor that claims the slot and records its own preflight is never
+ * signalled.
+ */
+export async function reapSlotPrepareScope(
+  vars: SlotVars,
+  opts: {
+    identityPath?: string;
+    expectedScope?: string;
+    stillOwned?: () => Promise<boolean>;
+  } = {},
+): Promise<boolean> {
+  const identityPath =
+    opts.identityPath ??
+    prepareIdentityPath(vars.remoteRepo, await resolvePrepareRuntimeDir(vars.projectName));
+  let expectedScope = opts.expectedScope;
+  if (opts.stillOwned) {
+    const read = await execOnSlot(vars, `cat ${shellQuote(identityPath)} 2>/dev/null; true`, {
+      cwd: '/',
+      timeout: 5_000,
+    });
+    if (read.exitCode !== 0)
+      throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
+    const recorded = read.stdout.trim().split('\t')[2];
+    if (!recorded || !(await opts.stillOwned())) return false;
+    expectedScope = recorded;
+  }
+  const result = await execOnSlot(
+    vars,
+    buildPrepareIdentityReapCommand(identityPath, { expectedScope, awaitExit: true }),
+    { cwd: '/', timeout: 15_000 },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Prepare scope cleanup failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+    );
+  return result.stdout.includes('killed verified preflight group');
 }
 
 export function buildPrepareWrappedCommand(
@@ -649,6 +740,12 @@ export async function runPrepareCommand(
     await killPrepareWindowsByName();
     return failSetup('tmux pipe-pane', pipeR);
   }
+  // A cancel that landed during setup must not launch the wrapper: its
+  // prepare-scope holder would start after the canceller's reap had run.
+  if (opts?.signal?.aborted) {
+    await killPrepareWindowsByName();
+    return { stdout: '', stderr: 'aborted', exitCode: 130 };
+  }
   // Now that pipe-pane is attached, respawn the pane with the real wrapped
   // command. The dormant placeholder loop is killed by `-k`; pipe-pane
   // subscription survives since it's bound to the pane, not the process.
@@ -777,6 +874,18 @@ export async function runPrepareCommand(
       await killWindow();
       tailAborted = true;
       await tailPromise.catch(() => undefined);
+      // Closing the window leaves the nohup'd holder (and anything else in the
+      // group that ignores SIGHUP) running in the slot repository.
+      if (opts.prepareScope && !useLocal) {
+        await reapSlotPrepareScope(vars, {
+          identityPath: opts.prepareScope.identityPath,
+          expectedScope: opts.prepareScope.token,
+        }).catch((error: unknown) =>
+          console.warn(
+            `[prepare] aborted prepare scope cleanup failed: ${preparePollErrorMessage(error)}`,
+          ),
+        );
+      }
       return { stdout: '', stderr: 'aborted', exitCode: 130 };
     }
     if (opts?.timeout && Date.now() - startTime > opts.timeout) {

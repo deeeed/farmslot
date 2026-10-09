@@ -4,7 +4,6 @@ import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import {
   execOnSlot,
-  loadProjectVars,
   loadSlotVars,
   markSlotStatusIf,
   readSlotRow,
@@ -16,7 +15,7 @@ import {
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { tmuxShellSnippet } from '../core/tmux.js';
-import { buildPrepareIdentityReapCommand } from '../methods/slot/prepare-command.js';
+import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -57,6 +56,16 @@ export async function fenceRunSlotCleanup(
   return { before, token };
 }
 
+/** A non-terminal run other than `run` that is bound to the same slot. */
+function findOtherActiveRunOnSlot(run: Run): Run | undefined {
+  return listRuns().runs.find(
+    (candidate) =>
+      candidate.id !== run.id &&
+      candidate.slotId === run.slotId &&
+      !isTerminalRunStatus(candidate.status),
+  );
+}
+
 /** Run transitions may never turn a shared workspace release into a global teardown. */
 export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   if (!run.slotId) return null;
@@ -76,12 +85,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     return error.message; // Foreign native ownership is a durable cleanup blocker.
   }
   if (owner !== run.id) return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
-  const other = listRuns().runs.find(
-    (candidate) =>
-      candidate.id !== run.id &&
-      candidate.slotId === run.slotId &&
-      !isTerminalRunStatus(candidate.status),
-  );
+  const other = findOtherActiveRunOnSlot(run);
   if (other) return `Another active run ${other.id} uses this slot`;
   const listed = await execOnSlot(
     vars,
@@ -262,63 +266,35 @@ export async function releaseRunOwnedCapabilities(
     );
 }
 
-/**
- * Stop the slot's recorded prepare scope: the preflight process group and its
- * nohup'd `farmslot-prepare-scope` holder. Both outlive an aborted or kept-alive
- * prepare window, and their cwd is the slot repository, so leaving them would
- * hold the slot for a "workspace occupant" nobody owns. The identity verifier
- * signals only a live group whose scope still matches, so this is a no-op when
- * prepare never ran or was already reaped.
- */
-async function stopSlotPrepareScope(slotId: string): Promise<void> {
-  const vars = await loadSlotVars(slotId);
-  let runtimeDir = '.agent';
-  try {
-    runtimeDir = (await loadProjectVars(vars.projectName)).runtimeDir;
-  } catch {
-    // Legacy project metadata: prepare used the default runtime dir too.
-  }
-  const reap = await execOnSlot(
-    vars,
-    buildPrepareIdentityReapCommand(`${vars.remoteRepo}/${runtimeDir}/preflight.identity`),
-    { cwd: '/' },
-  );
-  if (reap.exitCode !== 0)
-    throw new Error(
-      `Prepare scope cleanup failed: ${reap.stderr.trim() || `exit ${reap.exitCode}`}`,
-    );
-  const pgid = /killed verified preflight group \((\d+)\)/.exec(reap.stdout)?.[1];
-  if (!pgid) return;
-  // The wrapper's TERM trap drains for ~3s; the occupancy census that follows
-  // must not see it, so wait out the group and escalate a straggler.
-  await execOnSlot(
-    vars,
-    `n=0; while kill -0 -- -${pgid} 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done; kill -KILL -- -${pgid} 2>/dev/null; true`,
-    { cwd: '/', timeout: 15000 },
-  );
-}
-
 export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | null> {
   const blocker = await stopRunOwnedTmuxWorkers(run);
   if (!run.slotId) return blocker;
-  await unwatchSlot(run.slotId, { expectedRunId: run.id });
-  const slot = await readSlotRow(run.slotId);
+  const slotId = run.slotId;
+  await unwatchSlot(slotId, { expectedRunId: run.id });
+  const slot = await readSlotRow(slotId);
   if (slot?.current_run_id !== run.id) return blocker;
-  // The recorded prepare scope is the slot's latest preflight, which can belong
-  // to another active run sharing this slot; only reap when none does.
-  const sharedWithActiveRun = listRuns().runs.some(
-    (candidate) =>
-      candidate.id !== run.id &&
-      candidate.slotId === run.slotId &&
-      !isTerminalRunStatus(candidate.status),
-  );
-  if ((!slot.handoff_run_id || slot.handoff_run_id === run.id) && !sharedWithActiveRun)
-    await stopSlotPrepareScope(run.slotId);
-  await archiveRunnerSessionsForSlotRelease({
-    vars: await loadSlotVars(run.slotId),
-    runId: run.id,
-  });
-  return blocker;
+  const vars = await loadSlotVars(slotId);
+  // The slot's recorded prepare scope (preflight group plus its nohup'd
+  // holder) outlives an aborted or kept-alive prepare window in the slot
+  // repository; left alive, the occupancy census holds the slot for it. It can
+  // belong to another active run sharing the slot, so only reap when none
+  // does, and only while this run still owns the slot at the same epoch.
+  let prepareBlocker: string | null = null;
+  if ((!slot.handoff_run_id || slot.handoff_run_id === run.id) && !findOtherActiveRunOnSlot(run)) {
+    try {
+      await reapSlotPrepareScope(vars, {
+        stillOwned: async () => {
+          const row = await readSlotRow(slotId);
+          return row?.current_run_id === run.id && row.slot_epoch === slot.slot_epoch;
+        },
+      });
+    } catch (error) {
+      // Surfaced as a teardown blocker, so the slot is held with this reason.
+      prepareBlocker = error instanceof Error ? error.message : String(error);
+    }
+  }
+  await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
+  return [blocker, prepareBlocker].filter(Boolean).join('; ') || null;
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */
