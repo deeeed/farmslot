@@ -31,6 +31,8 @@ export interface ReviewTmuxOperationResult {
   startedAt?: string;
   stopped?: boolean;
   signalAttemptId?: string;
+  /** Set when the launch answered Codex's Folder access screen with Open restricted. */
+  folderAccess?: 'restricted';
 }
 
 /** Native prompt acceptance and task progress are independent startup evidence. */
@@ -283,5 +285,9 @@ export async function launchReviewTmux(
     ...(started.signalAttemptId ? { signalAttemptId: started.signalAttemptId } : {}),
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');
+  if (started.folderAccess === 'restricted') {
+    console.log(`[review-tmux] ${runId}: answered Codex Folder access with Open restricted`);
+    return { session, folderAccess: started.folderAccess };
+  }
   return { session };
 }
