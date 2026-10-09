@@ -147,7 +147,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       }
       let resolvedNode: unknown;
       try {
-        resolvedNode = resolveRecipeValue(rawNode, params, outputs);
+        resolvedNode = resolveRecipeValue(rawNode, params, outputs, { nodeId: namespacedNodeId });
       } catch (error) {
         recordSyntheticFailure(
           options.traceWriter,

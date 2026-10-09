@@ -126,7 +126,9 @@ export function buildRecipeExecutionPlan({
   ): void => {
     const activeGraph = extractWorkflowGraph(activeRecipe);
     for (const [nodeId, rawNode] of Object.entries(activeGraph.nodes)) {
-      const resolvedNode = resolveRecipeValue(rawNode, activeParams);
+      const resolvedNode = resolveRecipeValue(rawNode, activeParams, undefined, {
+        nodeId: `${prefix}${nodeId}`,
+      });
       if (!isRecord(resolvedNode)) {
         throw new RecipeResolutionError(
           'RECIPE_PARAMS_INVALID',

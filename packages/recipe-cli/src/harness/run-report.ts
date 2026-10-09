@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AdapterBrowser } from '@farmslot/adapter-sdk';
+import { parseRecipeTemplate } from '@farmslot/protocol';
 
 import { harnessAdapter } from './adapters.js';
 import { harnessHost } from './host.js';
@@ -124,9 +125,9 @@ export function indexProductProvenanceArtifact(
 // params, then the recipe's paramsSchema default; null when it stays unknown.
 function resolveTemplatedPort(value: unknown, params: unknown, recipe: unknown): string | null {
   let resolved: unknown = value;
-  const template = /^\{\{\s*params\.([\w-]+)\s*\}\}$/u.exec(String(value).trim());
-  if (template) {
-    const name = template[1];
+  const template = typeof value === 'string' ? parseRecipeTemplate(value.trim()) : undefined;
+  if (template?.source === 'params' && !template.path.includes('.')) {
+    const name = template.path;
     const schema =
       isRecord(recipe) && isRecord(recipe.paramsSchema) && isRecord(recipe.paramsSchema.properties)
         ? recipe.paramsSchema.properties[name]

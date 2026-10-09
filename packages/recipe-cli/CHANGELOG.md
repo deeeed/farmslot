@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- A node's `cdp_port` template is read with the recipe template grammar, so `{{ params.port }}` (which the runner does not resolve) is an unresolved port instead of the port's value.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.11.2 - 2026-10-09

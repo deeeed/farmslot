@@ -8,6 +8,7 @@ import {
   type RecipeValidationResult,
 } from './common.js';
 import { canonicalRecipeJson } from './digest.js';
+import { hasRecipeTemplate, parseRecipeTemplate } from './template.js';
 
 const PARAM_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array']);
 const REFERENCE_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/u;
@@ -563,11 +564,11 @@ function compileParamPattern(value: unknown): RegExp | null {
 }
 
 function isExactRecipeReference(value: unknown): value is string {
-  return typeof value === 'string' && /^\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}$/u.test(value);
+  return typeof value === 'string' && parseRecipeTemplate(value) !== undefined;
 }
 
 function isInterpolatedRecipeString(value: unknown): value is string {
-  return typeof value === 'string' && /\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}/u.test(value);
+  return typeof value === 'string' && hasRecipeTemplate(value);
 }
 
 function valueMatchesType(value: unknown, type: unknown): boolean {

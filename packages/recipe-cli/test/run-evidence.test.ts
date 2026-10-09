@@ -1271,19 +1271,29 @@ describe('run report', () => {
     assert.deepEqual(
       recipeCdpPorts({
         env: { RECIPE_CDP_PORT: '9222' },
-        params: { port: '9333' },
+        params: { port: '9333', spaced: '9555' },
         recipeDocument: {
           paramsSchema: { properties: { fallback: { default: '9444' } } },
           workflow: {
             nodes: {
               a: { cdp_port: '{{params.port}}' },
-              b: { cdp_port: '{{ params.fallback }}' },
+              b: { cdp_port: '{{params.fallback}}' },
               c: { cdp_port: '{{params.unknown}}' },
+              e: { cdp_port: ' {{params.spaced}} ' },
+              // Not a template the runner resolves, so it cannot name a port.
+              d: { cdp_port: '{{ params.port }}' },
             },
           },
         },
       }),
-      ['9222', '9333', '9444', 'unresolved {{params.unknown}}'],
+      [
+        '9222',
+        '9333',
+        '9444',
+        'unresolved {{params.unknown}}',
+        '9555',
+        'unresolved {{ params.port }}',
+      ],
     );
   });
 });

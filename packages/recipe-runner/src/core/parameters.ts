@@ -1,4 +1,11 @@
-import { applyRecipeParamDefaults, validateRecipeParams } from '@farmslot/protocol';
+import {
+  applyRecipeParamDefaults,
+  findUnsupportedRecipeTemplates,
+  parseRecipeTemplate,
+  type RecipeTemplateReference,
+  replaceRecipeTemplates,
+  validateRecipeParams,
+} from '@farmslot/protocol';
 
 import { isRecord } from './json.js';
 import { RecipeResolutionError } from './resolution-error.js';
@@ -25,7 +32,8 @@ export function resolveRecipeParams(
 
 /**
  * `value` with its `{{params.*}}`/`{{outputs.*}}` references resolved. Strict
- * (the default) interpolates every reference and throws on a missing one.
+ * (the default) interpolates every reference and throws on a missing one or on
+ * a template it cannot parse; `nodeId` names the node in those errors.
  * `lenient` is the static view before a run: only an exact reference to a
  * parameter that exists resolves; anything else stays as written.
  */
@@ -33,24 +41,31 @@ export function resolveRecipeValue(
   value: unknown,
   params: Record<string, unknown>,
   outputs?: ReadonlyMap<string, unknown>,
-  options: { lenient?: boolean } = {},
+  options: { lenient?: boolean; nodeId?: string } = {},
 ): unknown {
   if (typeof value === 'string') {
-    const exact = /^\{\{(params|outputs)\.([A-Za-z0-9_.-]+)\}\}$/u.exec(value);
+    const exact = parseRecipeTemplate(value);
     if (options.lenient) {
-      const found = exact?.[1] === 'params' ? nestedValue(params, exact[2]!) : undefined;
-      return found ? found.value : value;
+      const found = exact?.source === 'params' ? nestedValue(params, exact.path) : undefined;
+      return found && 'value' in found ? found.value : value;
+    }
+    const where = options.nodeId ? ` in node ${options.nodeId}` : '';
+    const [unsupported] = findUnsupportedRecipeTemplates(value);
+    if (unsupported !== undefined) {
+      throw new RecipeResolutionError(
+        'RECIPE_PARAMS_INVALID',
+        `Recipe value ${unsupported}${where} is not a supported template.`,
+        'use {{params.<name>}} or {{outputs.<node>.<path>}}, with [n] for an array index',
+      );
     }
     if (exact) {
-      if (exact[1] === 'outputs' && !outputs) return value;
-      return getRecipeReference(exact[1]!, exact[2]!, params, outputs);
+      if (exact.source === 'outputs' && !outputs) return value;
+      return getRecipeReference(exact, value, params, outputs, where);
     }
-    return value.replace(
-      /\{\{(params|outputs)\.([A-Za-z0-9_.-]+)\}\}/gu,
-      (_match, source: string, key: string) =>
-        source === 'outputs' && !outputs
-          ? _match
-          : String(getRecipeReference(source, key, params, outputs)),
+    return replaceRecipeTemplates(value, (reference, template) =>
+      reference.source === 'outputs' && !outputs
+        ? template
+        : String(getRecipeReference(reference, template, params, outputs, where)),
     );
   }
   if (Array.isArray(value)) {
@@ -65,45 +80,76 @@ export function resolveRecipeValue(
   );
 }
 
+// Errors quote the template as authored (`positions[1]`), not its normalized path.
 function getRecipeReference(
-  source: string,
-  path: string,
+  reference: RecipeTemplateReference,
+  template: string,
   params: Record<string, unknown>,
-  outputs?: ReadonlyMap<string, unknown>,
+  outputs: ReadonlyMap<string, unknown> | undefined,
+  where: string,
 ): unknown {
-  if (source === 'params') return getNestedValue(params, path, 'parameter');
-  if (!outputs) return `{{outputs.${path}}}`;
-  const [nodeId, ...segments] = path.split('.');
-  if (!nodeId || !outputs.has(nodeId)) {
+  if (reference.source === 'params') {
+    return getNestedValue(params, reference.path, 'parameter', template, where);
+  }
+  const [nodeId, ...segments] = reference.path.split('.');
+  if (!nodeId || !outputs?.has(nodeId)) {
     throw new RecipeResolutionError(
       'RECIPE_PARAMS_INVALID',
-      `Recipe output ${path} is not defined.`,
-      `run the producing node before referencing outputs.${path}`,
+      `Recipe output ${template}${where} is not defined.`,
+      `run node ${nodeId} before referencing ${template}`,
     );
   }
-  return getNestedValue(outputs.get(nodeId), segments.join('.'), 'output');
+  return getNestedValue(outputs.get(nodeId), segments.join('.'), 'output', template, where);
 }
 
-function getNestedValue(value: unknown, path: string, kind: 'parameter' | 'output'): unknown {
+function getNestedValue(
+  value: unknown,
+  path: string,
+  kind: 'parameter' | 'output',
+  template: string,
+  where: string,
+): unknown {
   const found = nestedValue(value, path);
-  if (!found) {
+  if ('value' in found) return found.value;
+  if (found.arrayLength === 0) {
     throw new RecipeResolutionError(
       'RECIPE_PARAMS_INVALID',
-      `Recipe ${kind} ${path} is not defined.`,
-      kind === 'parameter'
-        ? `declare ${path} in paramsSchema or provide it before running the recipe`
-        : `inspect the producing node output before referencing ${path}`,
+      `Recipe ${kind} ${template}${where}: index ${found.missing} is out of range for an empty array.`,
+      `the array is empty; check the ${kind} holds an entry before referencing it`,
     );
   }
-  return found.value;
+  if (found.arrayLength !== undefined) {
+    throw new RecipeResolutionError(
+      'RECIPE_PARAMS_INVALID',
+      `Recipe ${kind} ${template}${where}: index ${found.missing} is out of range for an array of ${found.arrayLength}.`,
+      `use an index below ${found.arrayLength}, or check the ${kind} holds the entry before referencing it`,
+    );
+  }
+  throw new RecipeResolutionError(
+    'RECIPE_PARAMS_INVALID',
+    `Recipe ${kind} ${template}${where} is not defined.`,
+    kind === 'parameter'
+      ? 'declare the parameter in paramsSchema or provide it before running the recipe'
+      : 'inspect the producing node output before referencing it',
+  );
 }
 
-// The value at a dotted path, or undefined when a segment is missing.
-function nestedValue(value: unknown, path: string): { value: unknown } | undefined {
+type NestedLookup = { value: unknown } | { missing: string; arrayLength?: number };
+
+// The value at a dotted path, or the segment where it stops. A numeric segment
+// indexes an array; on an object it reads that key.
+function nestedValue(value: unknown, path: string): NestedLookup {
   let current: unknown = value;
   if (!path) return { value: current };
   for (const segment of path.split('.')) {
-    if (!isRecord(current) || !Object.hasOwn(current, segment)) return undefined;
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9]\d*)$/u.test(segment)) return { missing: segment };
+      const index = Number(segment);
+      if (index >= current.length) return { missing: segment, arrayLength: current.length };
+      current = current[index];
+      continue;
+    }
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return { missing: segment };
     current = current[segment];
   }
   return { value: current };
