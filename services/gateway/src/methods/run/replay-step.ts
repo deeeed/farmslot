@@ -51,7 +51,6 @@ import {
 } from '../../run-engine/orchestrator.js';
 import {
   probeWorkerSignalForRun,
-  rotateWorkerSignalAttempt,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
@@ -88,6 +87,11 @@ export function rollbackReclaimedSlotReleaseOptions(
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /**
+   * A blocked monitor accepts the blocked attempt running again as live
+   * (resumeBlockedRunWhoseWorkerContinued), not only finished.
+   */
+  acceptRunningBlockedAttempt?: boolean;
 }
 
 function shouldInjectReplayClaimFailure(runId: string): boolean {
@@ -363,6 +367,7 @@ export function freshBlockedMonitorAttempt(
   run: Pick<Run, 'status' | 'steps'>,
   probe: RunProbeWorkerSignalResult,
   context?: Pick<AgentContext, 'id' | 'role'> | null,
+  options: Pick<RunReplayStepHooks, 'acceptRunningBlockedAttempt'> = {},
 ): WorkerSignal | null {
   const previousSignal = blockedMonitorSignal(run);
   const signal = probe.signal;
@@ -370,10 +375,12 @@ export function freshBlockedMonitorAttempt(
     !previousSignal ||
     !signal ||
     !signal.attemptId ||
-    // The same attempt counts only when it finished: a worker that marked
-    // blocked and later completed without `./mark start` (ledger F44).
+    // The same attempt counts when it finished: a worker that marked blocked
+    // and later completed without `./mark start` (ledger F44). The automatic
+    // resume also accepts it running again (TAT-4034).
     (signal.attemptId === previousSignal.attemptId &&
-      !['done', 'complete'].includes(signal.status)) ||
+      !['done', 'complete'].includes(signal.status) &&
+      !(options.acceptRunningBlockedAttempt && signal.status === 'running')) ||
     !['ready', 'non_terminal'].includes(probe.code) ||
     !['running', 'done', 'complete'].includes(signal.status) ||
     !signalMatchesMonitorContext(signal, context)
@@ -383,27 +390,19 @@ export function freshBlockedMonitorAttempt(
 }
 
 /**
- * The blocked attempt itself running again: the worker marked blocked, then
- * went on with `./mark N` without `./mark start` (TAT-4034), so its signal
- * still carries the blocked attempt id and the monitor refuses it.
+ * The worker of a blocked run working again after the block: a fresh
+ * `./mark start` attempt, or the blocked attempt itself marking a later step
+ * without one (TAT-4034). A finished worker is left to `run resume`.
  */
-export function blockedAttemptRunningAgain(
+export function blockedRunWorkerRunningAgain(
   run: Pick<Run, 'status' | 'steps'>,
   probe: RunProbeWorkerSignalResult,
   context?: Pick<AgentContext, 'id' | 'role'> | null,
 ): WorkerSignal | null {
-  const previousSignal = blockedMonitorSignal(run);
-  const signal = probe.signal;
-  if (
-    !previousSignal ||
-    !signal?.attemptId ||
-    signal.attemptId !== previousSignal.attemptId ||
-    probe.code !== 'non_terminal' ||
-    signal.status !== 'running' ||
-    !signalMatchesMonitorContext(signal, context)
-  )
-    return null;
-  return signalNewerThan(signal, previousSignal) ? signal : null;
+  const signal = freshBlockedMonitorAttempt(run, probe, context, {
+    acceptRunningBlockedAttempt: true,
+  });
+  return signal?.status === 'running' ? signal : null;
 }
 
 /**
@@ -433,37 +432,42 @@ export async function blockedRunResumableSignal(run: Run): Promise<BlockedRunRes
 }
 
 export interface BlockedWorkerContinuedDependencies {
-  /** The blocked attempt's own later running signal, or null. */
-  runningBlockedAttempt(run: Run): Promise<WorkerSignal | null>;
-  /** What `./mark start` does: give that signal a new attempt id; returns it. */
-  rotateAttempt(run: Run, signal: WorkerSignal): Promise<string>;
+  /** The blocked run's worker signal when it is running again, or null. */
+  runningWorkerSignal(run: Run): Promise<WorkerSignal | null>;
   /** Replay the monitor; returns the run as the replay left it. */
   replayMonitor(runId: string): Promise<Run>;
 }
 
 const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies = {
-  runningBlockedAttempt: async (run) => {
+  runningWorkerSignal: async (run) => {
     const context = blockedMonitorContext(run);
-    return blockedAttemptRunningAgain(
+    return blockedRunWorkerRunningAgain(
       run,
       await probeWorkerSignalForRun(run.id, run.slotId, context),
       context,
     );
   },
-  rotateAttempt: (run, signal) =>
-    rotateWorkerSignalAttempt(run, run.slotId!, blockedMonitorContext(run), signal.attemptId!),
+  // `auto-recovery`, the only automatic trigger: it charges the monitor's
+  // automatic replay budget, and leaves auto-recovery enabled where an
+  // `operator` replay would mark it manual-in-progress for the rest of the run.
   replayMonitor: async (runId) =>
-    (await runReplayStep({ runId, stepName: PS.MONITOR, triggeredBy: 'operator' }, () => {})).run,
+    (
+      await runReplayStep({ runId, stepName: PS.MONITOR, triggeredBy: 'auto-recovery' }, () => {}, {
+        acceptRunningBlockedAttempt: true,
+      })
+    ).run,
 };
 
 /**
- * A worker that marked blocked and then kept working on the same attempt is
- * picked up without an operator: the gateway rotates the attempt for it and
- * replays the monitor, the same path `run resume` takes once a worker runs
- * `./mark start`. Called on every running signal the slot watcher sees; does
- * nothing unless the run is still blocked on that attempt, so a repeat, a
- * cancelled run or one already monitoring is left alone. The resume is
- * recorded on the dispatch step, which a monitor restart does not reset.
+ * A blocked run whose worker is working again resumes without an operator:
+ * the monitor is replayed on its running signal, the same path `run resume`
+ * takes, and SIGNAL.json is never written. Called on every running signal the
+ * slot watcher sees; does nothing unless the run is still blocked, so a
+ * repeat, a cancelled run or one already monitoring is left alone. A refused
+ * replay is logged and recorded nowhere, so the worker's next signal retries.
+ * Eval runs are skipped: their replay can restart at prepare under a live
+ * worker. The resume is recorded on the dispatch step, which a monitor
+ * restart does not reset.
  */
 export async function resumeBlockedRunWhoseWorkerContinued(
   runId: string,
@@ -472,16 +476,30 @@ export async function resumeBlockedRunWhoseWorkerContinued(
 ): Promise<Run | null> {
   const waiting = (): Run | null => {
     const run = getRun(runId);
-    return run?.slotId && !run.reviewWorkspaceTarget && blockedMonitorSignal(run) ? run : null;
+    return run?.slotId &&
+      !run.reviewWorkspaceTarget &&
+      !run.engineState?.evalExperiment &&
+      blockedMonitorSignal(run)
+      ? run
+      : null;
   };
   if (!waiting()) return null;
   return withRunTransition(runId, async () => {
     const run = waiting();
-    const signal = run ? await deps.runningBlockedAttempt(run) : null;
+    const signal = run ? await deps.runningWorkerSignal(run) : null;
     if (!run || !signal?.attemptId || !waiting()) return null;
-    const attemptId = await deps.rotateAttempt(run, signal);
-    const replayed = await deps.replayMonitor(runId);
-    const dispatch = replayed.steps.find((step) => step.name === PS.DISPATCH);
+    const blockedAttemptId = blockedMonitorSignal(run)?.attemptId ?? null;
+    const id = runId.slice(0, 8);
+    let replayed: Run;
+    try {
+      replayed = await deps.replayMonitor(runId);
+    } catch (error) {
+      console.warn(
+        `[run] blocked run ${id}: worker attempt ${signal.attemptId} is running again at step ${signal.step ?? '?'}, but the monitor replay was refused: ${(error as Error).message}`,
+      );
+      return null;
+    }
+    const dispatch = getRun(runId)?.steps.find((step) => step.name === PS.DISPATCH);
     if (dispatch) {
       const prior = dispatch.outputs?.workerResumedAfterBlocked;
       updateRunStep(runId, PS.DISPATCH, {
@@ -490,8 +508,8 @@ export async function resumeBlockedRunWhoseWorkerContinued(
           workerResumedAfterBlocked: [
             ...(Array.isArray(prior) ? prior : []),
             {
-              fromAttemptId: signal.attemptId,
-              toAttemptId: attemptId,
+              blockedAttemptId,
+              attemptId: signal.attemptId,
               step: signal.step ?? null,
               at: new Date().toISOString(),
             },
@@ -500,7 +518,7 @@ export async function resumeBlockedRunWhoseWorkerContinued(
       });
     }
     console.log(
-      `[run] blocked run ${runId.slice(0, 8)}: worker resumed after blocked at step ${signal.step ?? '?'}; attempt ${signal.attemptId} -> ${attemptId}, monitor re-attached`,
+      `[run] blocked run ${id}: worker resumed after blocked at step ${signal.step ?? '?'} (attempt ${blockedAttemptId} -> ${signal.attemptId}); monitor re-attached`,
     );
     const current = getRun(runId) ?? replayed;
     emit(Events.RUN_UPDATED, { run: current });
@@ -906,7 +924,9 @@ export async function runReplayStep(
   const probe = probeBlockedMonitor
     ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
     : null;
-  const blockedAttempt = probe ? freshBlockedMonitorAttempt(existing, probe, monitorContext) : null;
+  const blockedAttempt = probe
+    ? freshBlockedMonitorAttempt(existing, probe, monitorContext, hooks)
+    : null;
   if (
     replayStepName !== PS.FIND_SLOT &&
     shouldRerouteEvalReplayToPrepare({
