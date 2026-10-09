@@ -25,6 +25,7 @@ import path from 'node:path';
 
 import {
   ARTIFACT_COPY_EXCLUDED_DIR_NAMES,
+  gatewayOwnedReviewDirFindPredicates,
   isGatewayOwnedArtifactMirrorEntry,
   WORKER_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
@@ -132,9 +133,7 @@ export function buildPublishPackageScanCommand(
   const detectionPrunes = [
     prunes,
     ...WORKER_ARTIFACT_COPY_EXCLUDES.map((name) => `-path ${shellQuote(`./${name}`)}`),
-    ...['review-loop-*', 'self-review-*', 'independent-review-*'].map(
-      (pattern) => `-path ${shellQuote(`./${pattern}`)}`,
-    ),
+    ...gatewayOwnedReviewDirFindPredicates(),
   ].join(' -o ');
   const list = `\\( -type f -exec wc -c {} + \\) -o \\( -type l -exec printf 'L %s\\n' {} + \\)`;
   const keep = '|| { rc=$?; [ "$scan_status" -ne 0 ] || scan_status=$rc; }';
@@ -142,18 +141,28 @@ export function buildPublishPackageScanCommand(
     'scan_status=0',
     `find . -mindepth 1 -maxdepth 1 ${list} ${keep}`,
     'set --',
-    `for p in ${scopeRoots.join(' ')}; do if [ -e "$p" ] || [ -L "$p" ]; then set -- "$@" "$p"; fi; done`,
-    // A package root is the directory of its marker. One newline-split loop
-    // reads the marker list; a failing find reports `E:<status>` through it.
+    // Roots: the step directories and named paths that exist (`R`), and the
+    // directory of each package marker (`M`); a failing marker find reports
+    // `E:<status>`. Sorted and reduced to the outermost roots, so a package
+    // met as a step directory and through both markers is walked once.
     'set -f',
     'scan_ifs=$IFS',
     "IFS='\n'",
-    `for m in $(find . -maxdepth ${PUBLISH_PACKAGE_MAX_DEPTH + 1} \\( ${detectionPrunes} \\) -prune -o -type f -path './*/*' \\( -name artifact-manifest.json -o -name summary.json \\) -print || echo "E:$?"); do`,
+    'for r in $({',
+    `  for p in ${scopeRoots.join(' ')}; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
+    `  find . -maxdepth ${PUBLISH_PACKAGE_MAX_DEPTH + 1} \\( ${detectionPrunes} \\) -prune -o -type f -path './*/*' \\( -name artifact-manifest.json -o -name summary.json \\) -exec printf 'M %s\\n' {} + || echo "E:$?"`,
+    '} | while IFS= read -r m; do',
     '  case $m in',
-    '    E:*) [ "$scan_status" -ne 0 ] || scan_status=${m#E:}; continue ;;',
-    '    */summary.json) [ -f "${m%/*}/trace.json" ] || continue ;;',
+    `    'R '*) printf '%s\\n' "\${m#??}" ;;`,
+    `    'M '*/summary.json) m=\${m#??}; [ ! -f "\${m%/*}/trace.json" ] || printf '%s\\n' "\${m%/*}" ;;`,
+    `    'M '*) m=\${m#??}; printf '%s\\n' "\${m%/*}" ;;`,
+    `    *) printf '%s\\n' "$m" ;;`,
     '  esac',
-    '  set -- "$@" "${m%/*}"',
+    `done | LC_ALL=C sort -u | awk '{ for (i = 1; i <= n; i++) if (index($0, kept[i] "/") == 1) next; kept[++n] = $0; print }'); do`,
+    '  case $r in',
+    '    E:*) [ "$scan_status" -ne 0 ] || scan_status=${r#E:} ;;',
+    '    *) set -- "$@" "$r" ;;',
+    '  esac',
     'done',
     'IFS=$scan_ifs',
     `if [ "$#" -gt 0 ]; then find "$@" \\( ${prunes} \\) -prune -o ${list} ${keep}; fi`,

@@ -536,6 +536,42 @@ test('refreshArtifactMirror keeps recipe packages whole by marker, within the de
   assert.equal(has('deep'), false, 'a marker past the depth bound is ignored');
 });
 
+test('refreshArtifactMirror keeps a worker package under a review-like name and any manifest-named file', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-worker-review');
+  const pkg = 'self-review-fix-20261009/after-flag-off';
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      standalone: [
+        { label: 'Flag off', file: `${pkg}/screenshots/flag-off.png` },
+        { label: 'Repro input', file: 'repro/before-broken-timeline.json' },
+        { label: 'Missing log', file: 'repro/missing.log' },
+      ],
+    }),
+  );
+  await put(`${pkg}/screenshots/flag-off.png`, 'png');
+  await put(`${pkg}/artifact-manifest.json`, '{"version":1,"artifacts":[]}\n');
+  await put(`${pkg}/summary.json`, '{}\n');
+  await put(`${pkg}/trace.json`, '[]\n');
+  await put('repro/before-broken-timeline.json', '{}\n');
+  await put('self-review-1/review.md', 'gateway review\n');
+
+  await refreshArtifactMirror(run);
+
+  const has = (relativePath: string) => existsSync(path.join(taskDir, 'artifacts', relativePath));
+  for (const file of [
+    'screenshots/flag-off.png',
+    'artifact-manifest.json',
+    'summary.json',
+    'trace.json',
+  ]) {
+    assert.equal(has(`${pkg}/${file}`), true, file);
+  }
+  assert.equal(has('repro/before-broken-timeline.json'), true);
+  assert.equal(has('self-review-1'), false, "a numbered review directory is the gateway's");
+});
+
 test('refreshArtifactMirror fails when a snapshot link cannot be resolved for a reason other than dangling', async (t) => {
   const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-realpath');
   await put('report.md', '# Report\n');

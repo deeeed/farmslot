@@ -158,7 +158,8 @@ async function clearWorkerOwnedArtifactMirror(
   );
 }
 
-// Paths (relative to artifacts/) named by the worker's evidence manifest, read
+// Paths (relative to artifacts/) named by the worker's evidence manifest, of
+// any type (the acceptance fallback links logs and JSON as evidence), read
 // before the mirror so the size guard counts them. An unreadable or invalid
 // manifest names nothing here; the manifest copy step reports it as before.
 async function workerEvidenceManifestPaths(
@@ -174,8 +175,8 @@ async function workerEvidenceManifestPaths(
     return [];
   }
   if (validateEvidenceManifest(parsed).length > 0) return [];
-  return evidenceManifestArtifactPaths(parsed as EvidenceManifest).map((artifactPath) =>
-    artifactPath.slice('artifacts/'.length),
+  return evidenceManifestArtifactPaths(parsed as EvidenceManifest, { mediaOnly: false }).map(
+    (artifactPath) => artifactPath.slice('artifacts/'.length),
   );
 }
 
@@ -208,16 +209,28 @@ async function copyEvidenceManifestReferencedArtifacts(
   manifest: EvidenceManifest | null | undefined,
   progress?: { runId?: string; slotId?: string },
 ): Promise<number> {
-  const manifestPaths = evidenceManifestArtifactPaths(manifest);
+  const mediaPaths = new Set(evidenceManifestArtifactPaths(manifest));
   let copied = 0;
-  for (const artifactPath of manifestPaths) {
-    if (isInternalRunArtifactPath(artifactPath)) {
-      throw new Error(`evidence-manifest references internal artifact: ${artifactPath}`);
-    }
+  for (const artifactPath of evidenceManifestArtifactPaths(manifest, { mediaOnly: false })) {
+    // Media is the PR evidence, so a bad media reference fails the mirror.
+    // Other named files (logs, JSON) are linked, not published, and were never
+    // checked; an internal or missing one is skipped with a warning.
+    const required = mediaPaths.has(artifactPath);
     const relativePath = artifactPath.slice('artifacts/'.length);
     const workerPath = path.join(workerArtifactsDir, relativePath);
-    if (!(await slotFileExists(vars, workerPath))) {
-      throw new Error(`evidence-manifest references missing artifact: ${artifactPath}`);
+    const problem = isInternalRunArtifactPath(artifactPath)
+      ? 'internal'
+      : (await slotFileExists(vars, workerPath))
+        ? null
+        : 'missing';
+    if (problem && required) {
+      throw new Error(`evidence-manifest references ${problem} artifact: ${artifactPath}`);
+    }
+    if (problem) {
+      console.warn(
+        `[run-completion] evidence-manifest names ${problem} file ${artifactPath}; not mirrored`,
+      );
+      continue;
     }
     const localPath = path.join(localArtifactsDir, relativePath);
     await mkdir(path.dirname(localPath), { recursive: true });

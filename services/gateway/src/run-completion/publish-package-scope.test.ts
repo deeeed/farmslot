@@ -24,32 +24,41 @@ test('buildPublishPackageScanCommand lists the scope in one worker-side command'
   const keep = '|| { rc=$?; [ "$scan_status" -ne 0 ] || scan_status=$rc; }';
   const prunes =
     "-name 'node_modules' -o -name '.git' -o -path './experiment-manifest.json' -o -path './packages/reference.result-package.json' -o -path './packages/candidate.result-package.json' -o -path './recipe-harness/source'";
-  assert.equal(
-    command,
-    [
-      `cd '/w/it'\\''s/artifacts' || exit 3`,
-      '{',
-      'scan_status=0',
-      `find . -mindepth 1 -maxdepth 1 ${list} ${keep}`,
-      'set --',
-      `for p in './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then set -- "$@" "$p"; fi; done`,
-      'set -f',
-      'scan_ifs=$IFS',
-      "IFS='\n'",
-      `for m in $(find . -maxdepth 4 \\( ${prunes} -o -path './harness-launch' -o -path './harness-relaunch' -o -path './harness-relaunch-node20' -o -path './runner-blockers' -o -path './runtime-launch' -o -path './runtime-relaunch' -o -path './operations' -o -path './operations-updated.json' -o -path './recipe-runs' -o -path './screenshots' -o -path './diff.txt' -o -path './diff-stat.json' -o -path './review-loop-*' -o -path './self-review-*' -o -path './independent-review-*' \\) -prune -o -type f -path './*/*' \\( -name artifact-manifest.json -o -name summary.json \\) -print || echo "E:$?"); do`,
-      '  case $m in',
-      '    E:*) [ "$scan_status" -ne 0 ] || scan_status=${m#E:}; continue ;;',
-      '    */summary.json) [ -f "${m%/*}/trace.json" ] || continue ;;',
-      '  esac',
-      '  set -- "$@" "${m%/*}"',
-      'done',
-      'IFS=$scan_ifs',
-      `if [ "$#" -gt 0 ]; then find "$@" \\( ${prunes} \\) -prune -o ${list} ${keep}; fi`,
-      `if [ -d './recipe-runs/r1' ]; then find './recipe-runs/r1' -path './recipe-runs/r1/screenshots' -prune -o ${list} ${keep}; fi`,
-      'echo "S $scan_status"',
-      '} | head -n 40000',
-    ].join('\n'),
+  const lines = command.split('\n');
+  assert.equal(lines[0], `cd '/w/it'\\''s/artifacts' || exit 3`);
+  assert.equal(lines.at(-1), '} | head -n 40000');
+  assert.ok(lines.includes(`find . -mindepth 1 -maxdepth 1 ${list} ${keep}`));
+  assert.ok(
+    lines.includes(
+      `  for p in './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
+    ),
   );
+  const markerFind = lines.find((line) => line.startsWith('  find . -maxdepth 4 '));
+  assert.ok(markerFind, command);
+  // Gateway review directories are the numbered ones only, from the shared policy.
+  assert.ok(
+    markerFind.includes(
+      String.raw`\( -path './self-review-[0-9]*' ! -path './self-review-*[!0-9]*' \)`,
+    ),
+  );
+  assert.ok(markerFind.includes(`-path './recipe-runs' -o -path './screenshots'`));
+  assert.ok(
+    markerFind.endsWith(
+      String.raw`-prune -o -type f -path './*/*' \( -name artifact-manifest.json -o -name summary.json \) -exec printf 'M %s\n' {} + || echo "E:$?"`,
+    ),
+  );
+  assert.ok(lines.some((line) => line.startsWith('done | LC_ALL=C sort -u | awk ')));
+  assert.ok(
+    lines.includes(
+      `if [ "$#" -gt 0 ]; then find "$@" \\( ${prunes} \\) -prune -o ${list} ${keep}; fi`,
+    ),
+  );
+  assert.ok(
+    lines.includes(
+      `if [ -d './recipe-runs/r1' ]; then find './recipe-runs/r1' -path './recipe-runs/r1/screenshots' -prune -o ${list} ${keep}; fi`,
+    ),
+  );
+  assert.equal(lines.at(-2), 'echo "S $scan_status"');
 });
 
 test('the scan command finds recipe packages by marker within the depth bound, prunes excluded trees and lists links', async (t) => {
@@ -82,9 +91,19 @@ test('the scan command finds recipe packages by marker within the depth bound, p
   await put('review-loop-1/run/artifact-manifest.json', '{}');
   // A top-level marker does not make artifacts/ itself a package.
   await put('artifact-manifest.json', '{}');
+  // A worker directory that only starts with a review prefix is the worker's.
+  await put('self-review-fix-20261009/after-flag-off/artifact-manifest.json', '{}');
+  await put('self-review-fix-20261009/after-flag-off/trace.json', '[]');
+  await put('self-review-2/run/artifact-manifest.json', '{}');
+  // A step directory that is also a package with both markers is listed once.
+  await put('recipe-run/summary.json', '{}');
+  await put('recipe-run/trace.json', '[]');
+  await put('recipe-run/artifact-manifest.json', '{}');
+  // A manifest may name any file type.
+  await put('repro/before.json', '{}');
 
   const command = buildPublishPackageScanCommand(root, {
-    namedPaths: ['goal/a b/shot.png', 'goal/missing.png'],
+    namedPaths: ['goal/a b/shot.png', 'goal/missing.png', 'repro/before.json'],
     snapshotRoot: 'recipe-runs/r1',
   });
   // A local slot runs it under bash; a remote darwin node under `zsh -f`,
@@ -92,7 +111,13 @@ test('the scan command finds recipe packages by marker within the depth bound, p
   const shells = [['bash', '--noprofile', '--norc', '-c']];
   if (existsSync('/bin/zsh')) shells.push(['/bin/zsh', '-f', '-c']);
   for (const [shell, ...flags] of shells) {
-    const scan = parsePublishPackageScan(execFileSync(shell, [...flags, command]).toString());
+    const stdout = execFileSync(shell, [...flags, command]).toString();
+    const scan = parsePublishPackageScan(stdout);
+    assert.equal(
+      stdout.split('\n').filter((line) => line.endsWith(' ./recipe-run/trace.json')).length,
+      1,
+      shell,
+    );
     assert.deepEqual(
       scan.entries.sort((a, b) => a.path.localeCompare(b.path)),
       [
@@ -103,8 +128,14 @@ test('the scan command finds recipe packages by marker within the depth bound, p
         { path: 'recipe-library/recipes/r.recipe.json', bytes: 2 },
         { path: 'recipe-run-1/artifact-manifest.json', bytes: 2 },
         { path: 'recipe-run-1/videos/run.mp4.timeline.json', bytes: 2 },
+        { path: 'recipe-run/artifact-manifest.json', bytes: 2 },
+        { path: 'recipe-run/summary.json', bytes: 2 },
+        { path: 'recipe-run/trace.json', bytes: 2 },
         { path: 'recipe-runs/r1/summary.json', bytes: 7 },
         { path: 'report.md', bytes: 5 },
+        { path: 'repro/before.json', bytes: 2 },
+        { path: 'self-review-fix-20261009/after-flag-off/artifact-manifest.json', bytes: 2 },
+        { path: 'self-review-fix-20261009/after-flag-off/trace.json', bytes: 2 },
       ],
       shell,
     );
