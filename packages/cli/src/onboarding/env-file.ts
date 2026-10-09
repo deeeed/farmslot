@@ -36,6 +36,13 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 /**
+ * Gateway secrets stay in their files. The CLI's credential discovery reads them there for
+ * loopback and default targets only; exporting them here would turn a file secret into an
+ * explicit env credential sent to any GW_URL, including a remote gateway it was never for.
+ */
+const FILE_ONLY_KEYS = new Set(['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD']);
+
+/**
  * Load `<checkoutRoot>/.env.ports` then `.env` into `env`, without overriding values already
  * present (shell wins). Absent files are skipped; a present-but-unreadable file throws so a
  * misconfigured checkout can't silently apply the wrong FARMSLOT_HOME / GW_URL.
@@ -55,7 +62,7 @@ export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = p
       throw new Error(`cannot read ${path}: ${err instanceof Error ? err.message : String(err)}`);
     }
     for (const [key, value] of Object.entries(parseEnvFile(text))) {
-      if (env[key] === undefined) env[key] = value;
+      if (env[key] === undefined && !FILE_ONLY_KEYS.has(key)) env[key] = value;
     }
   }
   if (env.GW_URL === undefined && env.GATEWAY_PORT && /^\d+$/.test(env.GATEWAY_PORT)) {
