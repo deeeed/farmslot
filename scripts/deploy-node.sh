@@ -757,19 +757,42 @@ entry="$snapshot/packages/cli/bin/farmslot.mjs"
 lock="$root/.lock"
 partial=""
 mkdir -p "$root"
+# A holder that is gone, or one that never wrote its pid a minute on, is stale.
+stale() {
+  if [ -n "$1" ]; then
+    ! kill -0 "$1" 2> /dev/null
+  else
+    [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]
+  fi
+}
 held=false
+reaping=false
+trap '[ "$reaping" != true ] || rmdir "$lock.reap" 2> /dev/null' EXIT
 for _ in $(seq 1 "$lock_wait"); do
   if mkdir "$lock" 2> /dev/null; then
     held=true
     break
   fi
   holder=$(cat "$lock/pid" 2> /dev/null || true)
-  # A holder that is gone, or one that never wrote its pid a minute on, is stale.
-  if { [ -n "$holder" ] && ! kill -0 "$holder" 2> /dev/null; } ||
-    { [ -z "$holder" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]; }; then
-    echo "  removing stale lock $lock${holder:+ (pid $holder is gone)}"
-    rm -rf "$lock"
-    continue
+  if stale "$holder"; then
+    # Reap under a second mutex, and only if the lock still belongs to the
+    # holder seen above: two waiters that saw the same dead holder must not
+    # both remove it, or the second removes the lock the first just took.
+    if mkdir "$lock.reap" 2> /dev/null; then
+      reaping=true
+      if [ "$(cat "$lock/pid" 2> /dev/null || true)" = "$holder" ] && stale "$holder"; then
+        echo "  removing stale lock $lock${holder:+ (pid $holder is gone)}"
+        rm -rf "$lock"
+      fi
+      rmdir "$lock.reap"
+      reaping=false
+      continue
+    fi
+    # A reaper killed mid-reap leaves its mutex behind; it is stale a minute on.
+    if [ -n "$(find "$lock.reap" -maxdepth 0 -mmin +1 2> /dev/null)" ]; then
+      rmdir "$lock.reap" 2> /dev/null || true
+      continue
+    fi
   fi
   sleep 1
 done
@@ -799,6 +822,7 @@ if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
   tar -xf - -C "$partial"
   if [ ! -f "$partial/yarn.lock" ]; then
     echo "[deploy] ERROR: the archive of $sha has no yarn.lock; refusing an unpinned CLI install" >&2
+    echo "  fix: commit yarn.lock at the repository root, then redeploy" >&2
     exit 1
   fi
   # Yarn 4 `workspaces focus` ignores immutable mode, so compare the lockfile it
@@ -883,11 +907,16 @@ session=""
 fallback_pid=""
 cleanup() {
   if [ -n "$session" ]; then "$TMUX_BIN" kill-session -t "=$session" 2> /dev/null || true; fi
-  if [ -n "$fallback_pid" ]; then kill "$fallback_pid" 2> /dev/null || true; fi
+  # The fallback runs as its own process group: stop the probe's CLI too.
+  if [ -n "$fallback_pid" ]; then
+    kill -TERM -- "-$fallback_pid" 2> /dev/null || true
+    wait "$fallback_pid" 2> /dev/null || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cat > "$work/probe.sh" << 'PROBE'
 entry=$1
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
@@ -928,8 +957,10 @@ if [ -n "$TMUX_BIN" ] && "$TMUX_BIN" list-sessions > /dev/null 2>&1; then
   fi
 else
   echo "  (no tmux server running; probing in bash -lc)"
+  set -m
   bash -c "$launch" &
   fallback_pid=$!
+  set +m
 fi
 for _ in $(seq 1 "$((timeout * 2))"); do
   [ -s "$work/status" ] && break

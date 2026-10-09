@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -346,7 +346,10 @@ fs.appendFileSync(path.join(home, 'cli-calls.jsonl'), JSON.stringify({
   farmslotHome: process.env.FARMSLOT_HOME ?? null,
   credentials: ['FARMSLOT_NODE_TOKEN', 'FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD'].filter((name) => process.env[name]),
 }) + '\\n');
-if (process.argv[2] === '--version') console.log('0.0.0-fixture');
+if (fs.existsSync(path.join(home, 'cli-hangs'))) {
+  fs.writeFileSync(path.join(home, 'cli-hang.pid'), String(process.pid));
+  setInterval(() => {}, 1000);
+} else if (process.argv[2] === '--version') console.log('0.0.0-fixture');
 else if (fs.existsSync(path.join(home, 'gateway-down'))) { console.error('gateway unreachable'); process.exit(1); }
 else console.log('{}');
 `;
@@ -385,7 +388,14 @@ esac
 `,
     true,
   );
-  for (const command of ['rsync', 'systemctl', 'sleep'])
+  // sleep returns at once; in a verify poll it first waits for a hung CLI to start.
+  write(
+    'bin/sleep',
+    '#!/bin/sh\n[ "$1" = 0.5 ] && [ -f "$HOME/cli-hangs" ] || exit 0\n' +
+      'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
+    true,
+  );
+  for (const command of ['rsync', 'systemctl'])
     write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
   // No bash login profile, as on macpro and mini: the worker prefix alone must
   // put the deployed CLI on PATH.
@@ -668,13 +678,15 @@ test('deploy-node keeps the yarn log and installs nothing when the CLI install f
 test('deploy-node takes over a stale CLI lock, clears its partial install and releases the lock', (t) => {
   const fixture = cliFixture(t);
   const lock = path.join(fixture.cliRoot, '.lock');
-  const gone = spawnSync('true').pid;
-  fixture.write(`home/.local/share/farmslot-cli/.lock/pid`, `${gone}\n`);
   fixture.write(`home/.local/share/farmslot-cli/${'d'.repeat(40)}.partial.killed/yarn.lock`, '');
+  // A holder killed before it wrote its pid: stale once a minute old.
+  fs.mkdirSync(lock);
+  const twoMinutesAgo = new Date(Date.now() - 120_000);
+  fs.utimesSync(lock, twoMinutesAgo, twoMinutesAgo);
 
   const output = fixture.deploy();
 
-  assert.match(output, new RegExp(`removing stale lock ${lock} \\(pid ${gone} is gone\\)`));
+  assert.match(output, new RegExp(`removing stale lock ${lock}\\n`));
   assert.match(output, /removed stale .*\.partial\.killed/);
   assert.deepEqual(fs.readdirSync(fixture.cliRoot), [fixture.sha]);
   assert.equal(fixture.calls().length, 2);
@@ -726,4 +738,90 @@ test('deploy-node gives up on a verify session that never finishes and kills onl
   const kills = fixture.tmuxKills();
   assert.equal(kills.length, 1);
   assert.match(kills[0], /^kill-session -t =farmslot-cli-verify-\d+$/);
+});
+
+// The node-side refresh script, run straight from deploy-node.sh: contenders
+// started together over a lock left by a dead holder must take it one at a
+// time. Each installs its own revision; the fake yarn brackets the install.
+test('node CLI refreshes started together over a stale lock never overlap', async (t) => {
+  const refresh = /CLI_REFRESH=\$\(cat << 'REFRESH'\n([\s\S]*?)\nREFRESH\n/.exec(
+    fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8'),
+  )[1];
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-lock-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const bin = path.join(base, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'yarn'),
+    '#!/bin/sh\nsha=$(basename "$PWD"); sha=${sha%%.partial.*}\n' +
+      'echo "start $sha" >> "$HOME/yarn.log"; /bin/sleep 0.05; echo "end $sha" >> "$HOME/yarn.log"\n',
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexec /bin/sleep 0.01\n', { mode: 0o755 });
+  const source = path.join(base, 'source');
+  fs.mkdirSync(path.join(source, 'packages/cli/bin'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'yarn.lock'), '# fixture lockfile\n');
+  fs.writeFileSync(path.join(source, 'packages/cli/bin/farmslot.mjs'), FAKE_CLI);
+  const archive = path.join(base, 'cli.tar');
+  execFileSync('tar', ['-cf', archive, '-C', source, '.']);
+
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    const home = path.join(base, `home-${iteration}`);
+    const root = path.join(home, '.local/share/farmslot-cli');
+    fs.mkdirSync(path.join(root, '.lock'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.lock/pid'), `${spawnSync('true').pid}\n`);
+    const runs = ['1', '2', '3'].map((digit) => {
+      const sha = `${digit}${iteration}`.padEnd(40, '0');
+      const child = spawn('bash', ['-c', refresh, '_', root, sha, 'f'.repeat(64), bin, '30'], {
+        env: { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home },
+        stdio: [fs.openSync(archive, 'r'), 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (chunk) => (output += chunk));
+      child.stderr.on('data', (chunk) => (output += chunk));
+      return new Promise((resolve) => child.on('close', (code) => resolve({ code, output })));
+    });
+    const results = await Promise.all(runs);
+    for (const { code, output } of results) assert.equal(code, 0, output);
+    const reaps = results.filter(({ output }) => output.includes('removing stale lock'));
+    assert.equal(reaps.length, 1, 'exactly one contender takes over the stale lock');
+    const installs = fs.readFileSync(path.join(home, 'yarn.log'), 'utf8').trim().split('\n');
+    assert.equal(installs.length, 6);
+    for (let index = 0; index < installs.length; index += 2) {
+      const [start, end] = installs.slice(index, index + 2);
+      assert.match(start, /^start /, installs.join('\n'));
+      assert.equal(end, start.replace('start', 'end'), installs.join('\n'));
+    }
+    const live = fs.readlinkSync(path.join(home, '.local/bin/farmslot'));
+    assert.ok(fs.existsSync(live), `the farmslot link dangles: ${live}`);
+    assert.deepEqual(
+      fs.readdirSync(root).filter((name) => name.startsWith('.lock')),
+      [],
+      'the lock and the reap mutex are released',
+    );
+  }
+});
+
+test('deploy-node stops the hung CLI when the bash -lc verify times out', async (t) => {
+  const fixture = cliFixture(t, { tmuxServer: false });
+  fixture.write('home/cli-hangs', '');
+  assert.throws(
+    () => fixture.deploy({ env: { CLI_VERIFY_TIMEOUT_SECONDS: '1' } }),
+    (error) => {
+      assert.match(String(error.stderr), /the worker-shell verify did not finish within 1 s/);
+      return true;
+    },
+  );
+  const pid = Number(fs.readFileSync(path.join(fixture.home, 'cli-hang.pid'), 'utf8'));
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (let waited = 0; alive() && waited < 2000; waited += 50)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alive(), false, `the probe's CLI (pid ${pid}) outlived the deploy`);
 });
