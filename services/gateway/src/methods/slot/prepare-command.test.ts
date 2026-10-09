@@ -236,7 +236,52 @@ test('buildPrepareWrappedCommand reaps the prior exact identity before replacing
   assert.match(reapCommand, /case "\$pgid" in ''\|\*\[!0-9\]\*/);
   assert.match(reapCommand, /case "\$sentinel" in ''\|\*\[!0-9\]\*/);
   assert.match(reapCommand, /grep -Fxq -- 'farmslot-prepare-scope'/);
-  assert.match(reapCommand, /rm -f "\$identityfile"$/);
+  assert.match(reapCommand, /rm -f "\$identityfile"; fi$/);
+});
+
+test('an identity a successor writes while the reaped group drains stays recorded', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-reap-successor-'));
+  const identityPath = path.join(root, 'preflight.identity');
+  const scope = 'd'.repeat(32);
+  const successor = `999999\t999998\t${'e'.repeat(32)}`;
+  // The group leader is the sentinel itself: its argv carries the marker and
+  // scope. Its TERM trap stands in for a successor prepare recording its own
+  // identity during the reap's drain wait.
+  const group = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      `trap 'printf "%s\\n" "$SUCCESSOR" > "$IDENTITY"; exit 0' TERM; while :; do sleep 0.05; done`,
+      'farmslot-prepare-scope',
+      scope,
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, SUCCESSOR: successor, IDENTITY: identityPath },
+    },
+  );
+  assert.ok(group.pid && group.pid > 1);
+  group.unref();
+  writeFileSync(identityPath, `${group.pid}\t${group.pid}\t${scope}\n`);
+  try {
+    const result = spawnSync(
+      '/bin/sh',
+      ['-c', buildPrepareIdentityReapCommand(identityPath, { awaitExit: true })],
+      { encoding: 'utf-8', timeout: 15_000 },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /killed verified preflight group/);
+    assert.equal(readFileSync(identityPath, 'utf-8').trim(), successor);
+  } finally {
+    try {
+      process.kill(-group.pid, 'SIGKILL');
+    } catch {
+      // Already reaped.
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('clearStalePrepareProcess returns false when there is no live tracked preflight', async () => {

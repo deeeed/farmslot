@@ -19,6 +19,9 @@ const PREPARE_POLL_WARNING_THROTTLE_MS = 30_000;
 const PREPARE_SENTINEL_POLL_TIMEOUT_MS = 10_000;
 const PREPARE_WINDOW_POLL_TIMEOUT_MS = 5_000;
 const PREPARE_SCOPE_SENTINEL_MARKER = 'farmslot-prepare-scope';
+/** The identity file holds `pgid\tsentinel pid\tscope` (written by the prepare wrapper). */
+const PREPARE_IDENTITY_SCOPE_FIELD = 2;
+const PREPARE_TAIL_POLL_INTERVAL_MS = 1500;
 export const PREPARE_DEPS_TIMEOUT_MS = 90 * 60_000;
 export const PREPARE_PREFLIGHT_TIMEOUT_MS = 15 * 60_000;
 
@@ -307,6 +310,7 @@ export function buildPrepareIdentityReapCommand(
   return [
     `identityfile=${shellQuote(identityPath)}`,
     'foreign=false',
+    'identity=""',
     `if [ -f "$identityfile" ]; then`,
     `  identity=$(cat "$identityfile" 2>/dev/null || true)`,
     `  tab=$(printf '\t')`,
@@ -332,7 +336,9 @@ export function buildPrepareIdentityReapCommand(
     ...awaitExit,
     `  fi`,
     `fi`,
-    `$foreign || rm -f "$identityfile"`,
+    // Remove only the identity this reap read: a successor's, written while
+    // the group drained, stays recorded for its own cleanup.
+    `if ! $foreign && [ "$(cat "$identityfile" 2>/dev/null || true)" = "$identity" ]; then rm -f "$identityfile"; fi`,
   ].join('\n');
 }
 
@@ -381,7 +387,7 @@ export async function reapSlotPrepareScope(
     });
     if (read.exitCode !== 0)
       throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
-    const recorded = read.stdout.trim().split('\t')[2];
+    const recorded = read.stdout.trim().split('\t')[PREPARE_IDENTITY_SCOPE_FIELD];
     if (!recorded || !(await opts.stillOwned())) return false;
     expectedScope = recorded;
   }
@@ -557,6 +563,7 @@ export async function runPrepareCommand(
     cwd?: string;
     timeout?: number;
     onOutput?: (stream: string, data: string) => void;
+    tailPollIntervalMs?: number;
     signal?: AbortSignal;
     windowLabel?: string;
     phase?: string;
@@ -828,7 +835,9 @@ export async function runPrepareCommand(
         // Best-effort observability; one warn per glitch is fine.
         console.warn('[prepare] tail-poll iteration failed', (err as Error).message);
       }
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) =>
+        setTimeout(r, opts?.tailPollIntervalMs ?? PREPARE_TAIL_POLL_INTERVAL_MS),
+      );
     }
   })();
 

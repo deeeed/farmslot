@@ -75,10 +75,10 @@ import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
 import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
-import { reapSlotPrepareScope } from './prepare-command.js';
+import { prepareIdentityPath, reapSlotPrepareScope } from './prepare-command.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
-import { applySelectedApp, type EventEmitter } from './shared.js';
+import { activePrepareAborts, applySelectedApp, type EventEmitter } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
@@ -365,22 +365,38 @@ async function slotReleaseImpl(
     step('agent', 'Agent killed');
     // A release during or after preflight would otherwise publish readiness
     // while the prepare group and its holder keep running in the repository.
-    // This teardown holds the releasing fence, so the recorded scope is this
-    // slot's own. A group that survives keeps the slot held with the reason.
+    // A prepare still in flight is stopped and joined first: it would launch
+    // its holder after the reap found nothing. This teardown holds the
+    // releasing fence, so the recorded scope is this slot's own. A group that
+    // survives keeps the slot held with the reason, and the release fails.
+    const inflightPrepare = activePrepareAborts.get(params.slotId);
+    if (inflightPrepare) {
+      step('prepare', 'Stopping in-flight prepare...');
+      inflightPrepare.abort();
+      await inflightPrepare.settled;
+    }
     try {
-      const stopped = await reapSlotPrepareScope(vars);
+      const stopped = await reapSlotPrepareScope(vars, {
+        identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
+      });
       step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       step('prepare', reason);
-      await guardedTeardownWrite({
+      const held = await guardedTeardownWrite({
         lifecycle: 'held',
         phase: 'occupied',
         held_reason: reason,
         [SLOT_RELEASING_SINCE]: null,
       });
+      if (!held) {
+        complete(0);
+        return { released: false };
+      }
       complete(1);
-      return { released: false };
+      // Thrown, not `released: false`: callers that print or log success on
+      // a settled release must report a slot left held.
+      throw new Error(`Slot ${params.slotId} stays held: ${reason}`);
     }
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
@@ -558,7 +574,10 @@ async function slotReleaseImpl(
     }
   }
 
-  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. Release flips
+  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. (The preflight
+  // group was already reaped in step 1, so a dev server the preflight hook
+  // backgrounded with `&` inside that group is gone; one started in its own
+  // process group is not.) Release flips
   // the slot back to ready but leaves the simulator / dev-server / browser
   // alive so the next run reuses warm infra and so a human-driven manual
   // build in the worktree isn't yanked out from under them.

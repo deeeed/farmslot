@@ -94,6 +94,7 @@ import {
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
+  activePrepareAborts,
   activePrepareSessions,
   activePrepareSlots,
   applySelectedApp,
@@ -169,6 +170,13 @@ export async function slotPrepare(
   }
   assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
+  const stop = new AbortController();
+  const prepareSignal = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+  let settle = () => {};
+  activePrepareAborts.set(params.slotId, {
+    abort: () => stop.abort(),
+    settled: new Promise<void>((resolve) => (settle = resolve)),
+  });
   const requestId = params.requestId ?? `prepare-${randomUUID()}`;
   const stream = createPrepareStream(emit, {
     slotId: params.slotId,
@@ -202,7 +210,7 @@ export async function slotPrepare(
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     await retireNativeWorkersForSlot(params.slotId, params.runId);
-    const result = await slotPrepareInner(params, stream, signal, opts);
+    const result = await slotPrepareInner(params, stream, prepareSignal, opts);
     if (!result.prepared) {
       stream.complete(1, `Slot ${params.slotId} is disabled`);
     } else {
@@ -218,6 +226,8 @@ export async function slotPrepare(
       if (sentinel) await releasePrepareSentinel(sentinel, prepareError);
     } finally {
       activePrepareSlots.delete(params.slotId);
+      activePrepareAborts.delete(params.slotId);
+      settle();
       // Belt-and-suspenders: stream.complete() already clears this, but guard
       // against any path that throws before complete() runs so the reattach
       // buffer can't go stale.

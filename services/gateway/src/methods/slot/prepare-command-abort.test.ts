@@ -76,6 +76,7 @@ test('a cancel after launch reaps this prepare scope once the window is killed',
     windowLabel: 'run12345',
     phase: 'preflight',
     prepareScope,
+    tailPollIntervalMs: 10,
   });
 
   assert.equal(result.exitCode, 130);
