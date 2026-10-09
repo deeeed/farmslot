@@ -326,3 +326,32 @@ test('candidate requests carry Skip Prepare so repo-blocked slots stay selectabl
     false,
   );
 });
+
+test('candidates, run.create and queue agree on the prepare profile under Skip Prepare', () => {
+  for (const skipPrepare of [true, false]) {
+    const draft: DispatchPayloadDraft = {
+      ...baseDraft,
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'DEV-1',
+      mode: 'autonomous',
+      devInteractiveProfile: 'lightweight',
+      skipPrepare,
+      prepareProfile: 'sandbox-companion',
+    };
+    const candidates = buildDispatchCandidatesParams({
+      flowType: draft.flowType,
+      machines: ['mini'],
+      targetBranch: undefined,
+      ticketOrPr: draft.ticketOrPr,
+      app: undefined,
+      prepareProfile: draft.prepareProfile,
+      comparison: undefined,
+      skipPrepare,
+    });
+    const expected = skipPrepare ? undefined : 'sandbox-companion';
+    assert.equal(candidates.prepareProfile, expected, `candidates skipPrepare=${skipPrepare}`);
+    assert.equal(buildRunCreateParams(draft).prepareProfile, expected);
+    assert.equal(buildDispatchQueueAddParams(draft).prepareProfile, expected);
+  }
+});

@@ -20,6 +20,18 @@ export type ComparisonRunParams = Pick<
   'lane' | 'familyId' | 'variant' | 'parentRunId'
 >;
 
+/**
+ * The prepare profile a dispatch actually runs with: none under Skip Prepare.
+ * Candidates, run.create and queue payloads all use it, so the slots offered
+ * are the slots the dispatch accepts.
+ */
+export function effectivePrepareProfile(input: {
+  skipPrepare?: boolean;
+  prepareProfile?: string;
+}): string | undefined {
+  return input.skipPrepare ? undefined : input.prepareProfile;
+}
+
 export interface DispatchPayloadDraft {
   transport?: 'tmux' | 'native';
   nativeProfile?: NativeProfileReference;
@@ -94,7 +106,7 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     domain: input.domain,
     executionTemplateId: input.executionTemplateId,
     skipPrepare: input.skipPrepare,
-    prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
+    prepareProfile: effectivePrepareProfile(input),
     nudgeReuse: input.nudgeReuse,
     freshReuse: input.freshReuse,
     mode: input.mode,
@@ -122,7 +134,7 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     project: input.project,
     ticketOrPr: input.ticketOrPr,
     app: input.app,
-    prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
+    prepareProfile: effectivePrepareProfile(input),
     taskTemplate: input.taskTemplate,
     domain: input.domain,
     executionTemplateId: input.executionTemplateId,
@@ -181,7 +193,7 @@ export function buildDispatchCandidatesParams(
     // Forward app/profile so candidate rows reflect companion-resource eligibility —
     // otherwise a resource-ineligible busy slot advertises reuse that FIND_SLOT rejects.
     app: input.app,
-    prepareProfile: input.prepareProfile,
+    prepareProfile: effectivePrepareProfile(input),
     ...(input.skipPrepare ? { skipPrepare: true } : {}),
     ...(input.forceRefresh ? { forceRefresh: true } : {}),
     ...(input.comparison

@@ -787,6 +787,7 @@ export class DispatchWizard extends DispatchWizardState {
         freshReuse:
           this._candidates.find((candidate) => candidate.slotId === this._slotOverride)
             ?.replaceableWarm === true || undefined,
+        skipPrepare: this._skipPrepare,
       });
       if (gen !== this._fetchGen || requestGen !== this._profileFitRequestGen) return;
       this._profileFitSuggestion = suggestion;
@@ -1925,15 +1926,14 @@ export class DispatchWizard extends DispatchWizardState {
       setEffort: (effort) => {
         this._effort = effort;
       },
-      setSkipPrepare: (skipPrepare) => {
-        if (skipPrepare === this._skipPrepare) return;
+      setPrepareOptions: ({ skipPrepare, prepareProfile }) => {
+        // Skip Prepare keeps the chosen profile for when it is turned off again.
+        const nextProfile = skipPrepare ? this._prepareProfile : prepareProfile;
+        if (skipPrepare === this._skipPrepare && nextProfile === this._prepareProfile) return;
         this._skipPrepare = skipPrepare;
-        // Slot eligibility depends on it: a repo that cannot prepare is fine to skip.
-        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
-      },
-      setPrepareProfile: (prepareProfile) => {
-        this._prepareProfile = prepareProfile;
+        this._prepareProfile = nextProfile;
         this._profileFitSuggestion = null;
+        // One reload with both values: slot eligibility depends on each.
         void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       applySuggestedPrepareProfile: (prepareProfile) => {

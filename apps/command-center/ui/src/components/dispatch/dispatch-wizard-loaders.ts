@@ -107,6 +107,7 @@ export async function requestDispatchProfileFit(input: {
   prepareProfile?: string;
   app?: string;
   freshReuse?: boolean;
+  skipPrepare?: boolean;
 }): Promise<ProfileFitSuggestion | null> {
   const res = await gateway.request<DispatchPreviewResult>(Methods.DISPATCH_PREVIEW, {
     project: input.project,
@@ -119,6 +120,7 @@ export async function requestDispatchProfileFit(input: {
     prepareProfile: input.prepareProfile || undefined,
     app: input.app || undefined,
     freshReuse: input.freshReuse,
+    ...(input.skipPrepare ? { skipPrepare: true } : {}),
   });
   return res.preview.profileFit ?? null;
 }
