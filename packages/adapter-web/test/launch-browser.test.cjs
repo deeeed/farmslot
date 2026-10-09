@@ -235,10 +235,14 @@ describe('launchBrowser', () => {
       assert.ok(
         argv.includes(`chrome-extension://${extensionIdFromExtensionDir(extensionDir)}/home.html`),
       );
+      fs.mkdirSync(path.join(workerDir, 'Database'), { recursive: true });
+      fs.writeFileSync(path.join(workerDir, 'Database/entry'), 'current build');
     } finally {
       launchBrowser(options(dir, port, { stopOnly: true }));
     }
     assert.deepEqual(cdpListenerPids(port), []);
+    // Releasing the profile (fixture prefill) keeps the registration.
+    assert.ok(fs.existsSync(path.join(workerDir, 'Database/entry')));
   });
 
   it('refuses a CDP port held by a process it did not launch, and releases the caller lock', async () => {
