@@ -375,21 +375,28 @@ test('a cancel that lands while the claim write is pending leaves the slot free'
   assert.equal(runs['new-run'].status, 'cancelled');
 });
 
-for (const [shape, claimPhase, agent] of [
-  ['a nudge into the live worker', 'working', 'working'],
-  ['a fresh-reuse fence that relabels the phase', 'preparing', undefined],
+const liveOwned = {
+  ...readyRow,
+  lifecycle: 'busy',
+  phase: 'working',
+  agent: 'working',
+  current_run_id: 'live',
+  handoff_run_id: null,
+  slot_epoch: 7,
+};
+
+for (const [shape, prior, claimPhase, agent] of [
+  ['a nudge into the live worker', liveOwned, 'working', 'working'],
+  ['a fresh-reuse fence that relabels the phase', liveOwned, 'preparing', undefined],
+  [
+    'a warm-session handoff over a ci-watch hold',
+    { ...liveOwned, lifecycle: 'held', phase: 'ci-watch', agent: 'idle' },
+    'working',
+    'working',
+  ],
 ] as const) {
   test(`a takeover superseded mid-write (${shape}) restores the live owner's row`, async () => {
-    const liveOwned = {
-      ...readyRow,
-      lifecycle: 'busy',
-      phase: 'working',
-      agent: 'working',
-      current_run_id: 'live',
-      handoff_run_id: null,
-      slot_epoch: 7,
-    };
-    const status = pendingWriteStatus({ ...liveOwned });
+    const status = pendingWriteStatus({ ...prior });
     const runs: Record<string, Lookup> = {
       'new-run': { status: 'slot-finding' },
       live: { status: 'monitoring' },
@@ -407,9 +414,35 @@ for (const [shape, claimPhase, agent] of [
     runs['new-run'] = { status: 'paused' };
     status.release();
     await assert.rejects(claim, /Run new-run changed while waiting/);
-    assert.deepEqual(status.rows.get(SLOT), { ...liveOwned, slot_epoch: 8 });
+    assert.deepEqual(status.rows.get(SLOT), { ...prior, slot_epoch: 8 });
   });
 }
+
+test('a takeover undo leaves the row alone once ownership moved under the reservation', async () => {
+  let after: Record<string, unknown> = {};
+  const status = pendingWriteStatus({ ...liveOwned }, (slot) => {
+    slot.current_run_id = 'successor';
+    after = { ...slot };
+  });
+  const runs: Record<string, Lookup> = {
+    'new-run': { status: 'slot-finding' },
+    live: { status: 'monitoring' },
+  };
+  const claim = commitSlotClaim(
+    SLOT,
+    'new-run',
+    0,
+    'preparing',
+    undefined,
+    { takeoverLiveOwner: true },
+    { ...status.deps, runLookup: (id) => runs[id] },
+  );
+  await status.predicateDone;
+  runs['new-run'] = { status: 'cancelled' };
+  status.release();
+  await assert.rejects(claim, /Run new-run changed while waiting/);
+  assert.deepEqual(status.rows.get(SLOT), after);
+});
 
 test('a claim the CAS refuses is named; one refused for a superseded run says so', async () => {
   const runs: Record<string, Lookup> = {

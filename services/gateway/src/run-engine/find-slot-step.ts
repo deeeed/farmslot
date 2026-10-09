@@ -276,12 +276,15 @@ export async function commitSlotClaim(
   };
   // What the claim overwrote, read inside the same serialized write.
   let overwritten: Record<string, unknown> = {};
+  // The owner a reservation was taken beside; the undo only restores beside it.
+  let ownerBefore: unknown = null;
   const claim = await claimIf(
     slotId,
     (slot) => {
       if (!slotClaimAllowed(slot, runId, generation, runLookup, Boolean(opts?.takeoverLiveOwner)))
         return false;
       overwritten = Object.fromEntries(Object.keys(fields).map((key) => [key, slot[key] ?? null]));
+      ownerBefore = slot.current_run_id ?? null;
       return true;
     },
     fields,
@@ -317,7 +320,8 @@ export async function commitSlotClaim(
           slot.slot_epoch === claim.epoch &&
           slot.handoff_run_id === runId &&
           slot.lifecycle === 'busy' &&
-          slot.phase === phase,
+          slot.phase === phase &&
+          (slot.current_run_id ?? null) === ownerBefore,
         { ...overwritten, handoff_run_id: null },
       );
     } else {
