@@ -1,5 +1,6 @@
 import type {
   DevInteractiveProfile,
+  DispatchCandidatesParams,
   DispatchQueueAddParams,
   FlowType,
   NativeProfileReference,
@@ -142,5 +143,53 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     ...input.comparison,
+  };
+}
+
+export interface DispatchCandidatesDraft {
+  project?: string;
+  flowType: FlowType | undefined;
+  machines: readonly string[];
+  targetBranch: string | undefined;
+  ticketOrPr: string | undefined;
+  app: string | undefined;
+  prepareProfile: string | undefined;
+  /** Skip Prepare keeps each slot's checkout, so a slot whose repo cannot prepare stays eligible. */
+  skipPrepare: boolean;
+  comparison:
+    | {
+        familyId: string;
+        variant: string;
+      }
+    | undefined;
+  forceRefresh?: boolean;
+}
+
+export function buildDispatchCandidatesParams(
+  input: DispatchCandidatesDraft,
+): DispatchCandidatesParams {
+  return {
+    ...(input.project ? { project: input.project } : {}),
+    flowType: input.flowType,
+    machines: input.machines.length > 0 ? [...input.machines] : undefined,
+    targetBranch: input.targetBranch,
+    // Forward PR / lane context so the gateway can populate `nudgeEligible` + `nudgeMeta`
+    // on busy slots already loaded on this PR's branch. Without ticketOrPr the server
+    // can't run the branch/PR-number match in collectBranchAffinityNudgeCandidates and
+    // the wizard sees free-slot rows only — no REUSE WORKER affordance.
+    ticketOrPr: input.ticketOrPr,
+    // Forward app/profile so candidate rows reflect companion-resource eligibility —
+    // otherwise a resource-ineligible busy slot advertises reuse that FIND_SLOT rejects.
+    app: input.app,
+    prepareProfile: input.prepareProfile,
+    ...(input.skipPrepare ? { skipPrepare: true } : {}),
+    ...(input.forceRefresh ? { forceRefresh: true } : {}),
+    ...(input.comparison
+      ? {
+          lane: 'comparison' as const,
+          familyId: input.comparison.familyId,
+          variant: input.comparison.variant,
+        }
+      : {}),
   };
 }

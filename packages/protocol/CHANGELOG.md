@@ -5,7 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- `defaultBranchRepoBlocker(state, defaultBranch)` names why a slot repo cannot check out the project's default branch: no origin fetch refspec stores it in `refs/remotes/origin/<branch>` (a `--single-branch` clone, or a refspec with no destination), or no local or `origin/` ref for it. `defaultBranchProbeCommand` and `readDefaultBranchProbe` are the one probe the gateway and CLI run for it; a failed git read or output cut short gives no verdict. `SlotStatus.repoBlocker` (optional) carries that reason from fleet refresh.
+- `defaultBranchRepoBlocker(state, defaultBranch)` names why a slot repo cannot check out the project's default branch: no origin fetch refspec stores it in `refs/remotes/origin/<branch>` (a `--single-branch` clone, or a refspec with no destination), or no local or `origin/` ref for it. `defaultBranchProbeCommand` and `readDefaultBranchProbe` are the one probe the gateway and CLI run for it; a failed git read or output cut short gives no verdict. `SlotStatus.repoBlocker` (optional) carries that reason from fleet refresh; `DispatchCandidatesParams.skipPrepare` and `DispatchPreviewParams.skipPrepare` (optional) let a dispatch that keeps the checkout still use that slot.
 
 ## 0.35.0 - 2026-10-09
 

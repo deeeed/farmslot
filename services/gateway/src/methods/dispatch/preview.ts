@@ -757,6 +757,7 @@ export function candidateIneligibilityReason(
     replaceableWarm?: boolean;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    skipPrepare?: boolean;
   },
 ): string | null {
   if (options.isNudgeRow) return null;
@@ -765,6 +766,7 @@ export function candidateIneligibilityReason(
     targetBranch: options.targetBranch,
     requiredPrepareProfile: options.requiredPrepareProfile,
     allowWorking: options.replaceableWarm,
+    skipPrepare: options.skipPrepare,
   });
 }
 
@@ -874,6 +876,7 @@ export async function dispatchCandidates(
         replaceableWarm,
         targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
+        skipPrepare: params.skipPrepare,
       });
       // A pressure rejection gates every dispatchable row, fresh AND nudge.
       // a nudge still delivers a new task to the loaded machine. The wizard
@@ -957,8 +960,6 @@ export async function dispatchPreview(
     overridePrincipalId?: string;
     /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
     includeProfileFit?: boolean;
-    /** The run keeps the slot's checkout (no prepare): slot repo blockers do not apply. */
-    skipPrepare?: boolean;
   } = {},
 ): Promise<DispatchPreviewResult> {
   if ('workflowExecution' in params)
@@ -1119,7 +1120,6 @@ export async function dispatchPreview(
       requiredPrepareProfile,
       pressureDecisions,
       replaceableWarmSlotIds,
-      skipPrepare: internalOptions.skipPrepare,
       // ADR-054: the same exception `dispatchCandidates` applies. Every
       // ranking path that has run context passes it, so a park-preserved slot
       // cannot be stale to one picker and idle to another.
@@ -1199,8 +1199,6 @@ export function resolveDispatchPreviewFromFleet(
     /** Slots whose detached HEAD a park record preserves. Passed in rather than
      * derived: this function is pure over the slots it is given. */
     parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
-    /** The dispatch keeps the slot's checkout (no prepare): repo blockers do not apply. */
-    skipPrepare?: boolean;
   },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
@@ -1243,7 +1241,7 @@ export function resolveDispatchPreviewFromFleet(
     const err = validateSlotForDispatch(found, slots, {
       targetBranch: params.targetBranch,
       requiredPrepareProfile,
-      skipPrepare: options?.skipPrepare,
+      skipPrepare: params.skipPrepare,
       allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
     });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
@@ -1263,7 +1261,7 @@ export function resolveDispatchPreviewFromFleet(
         !validateSlotForDispatch(affinitySlot, slots, {
           targetBranch: params.targetBranch,
           requiredPrepareProfile,
-          skipPrepare: options?.skipPrepare,
+          skipPrepare: params.skipPrepare,
         })
       ) {
         console.log(
@@ -1295,7 +1293,7 @@ export function resolveDispatchPreviewFromFleet(
       variant: params.variant,
       requiredPrepareProfile,
       projectConfigs,
-      skipPrepare: options?.skipPrepare,
+      skipPrepare: params.skipPrepare,
       pressureRejectedMachines,
       parkPreservedSlotIds: options?.parkPreservedSlotIds,
     });
@@ -1319,7 +1317,7 @@ export function resolveDispatchPreviewFromFleet(
             !validateSlotForDispatch(s, slots, {
               targetBranch: params.targetBranch,
               requiredPrepareProfile,
-              skipPrepare: options?.skipPrepare,
+              skipPrepare: params.skipPrepare,
             }),
         );
         if (
@@ -1340,7 +1338,7 @@ export function resolveDispatchPreviewFromFleet(
             : (validateSlotForDispatch(s, slots, {
                 targetBranch: params.targetBranch,
                 requiredPrepareProfile,
-                skipPrepare: options?.skipPrepare,
+                skipPrepare: params.skipPrepare,
               }) ?? 'unknown blocker');
         return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
       });

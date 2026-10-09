@@ -5,6 +5,7 @@ import test from 'node:test';
 import type { DispatchQueueAddParams, RunCreateParams } from '@farmslot/protocol';
 
 import {
+  buildDispatchCandidatesParams,
   buildDispatchQueueAddParams,
   buildRunCreateParams,
   type DispatchPayloadDraft,
@@ -306,4 +307,22 @@ test('Review workspace and QA profile payloads stay distinct for create and queu
     assert.equal(qa.reviewWorkspaceTarget, undefined);
     assert.equal(qa.reviewValidationDepth, undefined);
   }
+});
+
+test('candidate requests carry Skip Prepare so repo-blocked slots stay selectable', () => {
+  const draft = {
+    flowType: 'qa' as const,
+    machines: ['macpro'],
+    targetBranch: undefined,
+    ticketOrPr: 'MetaMask/metamask-mobile#1',
+    app: undefined,
+    prepareProfile: undefined,
+    comparison: undefined,
+    skipPrepare: true,
+  };
+  assert.equal(buildDispatchCandidatesParams(draft).skipPrepare, true);
+  assert.equal(
+    'skipPrepare' in buildDispatchCandidatesParams({ ...draft, skipPrepare: false }),
+    false,
+  );
 });

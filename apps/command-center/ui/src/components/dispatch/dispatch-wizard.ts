@@ -711,6 +711,7 @@ export class DispatchWizard extends DispatchWizardState {
         ticketOrPr: this._ticketId || undefined,
         app: this._app || undefined,
         prepareProfile: this._prepareProfile.trim() || undefined,
+        skipPrepare: this._skipPrepare,
         comparison:
           this._comparisonLane && this._comparisonFamilyId
             ? {
@@ -1925,7 +1926,10 @@ export class DispatchWizard extends DispatchWizardState {
         this._effort = effort;
       },
       setSkipPrepare: (skipPrepare) => {
+        if (skipPrepare === this._skipPrepare) return;
         this._skipPrepare = skipPrepare;
+        // Slot eligibility depends on it: a repo that cannot prepare is fine to skip.
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       setPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;

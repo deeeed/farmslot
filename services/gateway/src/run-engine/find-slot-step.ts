@@ -1068,13 +1068,13 @@ export async function executeFindSlotStep(
     {
       ...buildDispatchPreviewParamsForRun(run),
       ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+      ...(skipPrepare ? { skipPrepare } : {}),
     },
     // Delayed engine preview: the audit principal was resolved and persisted
     // at run.create; never re-derive it from ambient context here.
     {
       ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
       includeProfileFit: false,
-      skipPrepare,
     },
   );
   // Automatic selection already excluded pressure-rejected machines; a

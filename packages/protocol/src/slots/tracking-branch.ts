@@ -1,3 +1,4 @@
+import type { ExecResult } from '../contracts/common.js';
 import { DEFAULT_BRANCH } from '../contracts/runs.js';
 
 export interface SlotIdleResetResult {
@@ -115,13 +116,6 @@ export function defaultBranchProbeCommand(repo: string, defaultBranch: string): 
   ].join('; ');
 }
 
-/** What a default-branch probe ran to: `stdout`/`stderr` and the shell's exit code. */
-export interface DefaultBranchProbeOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
 /**
  * The probe's verdict. `readable: false` means a git read failed (unreadable
  * refs or config, not a repo, a broken transport): there is no verdict about
@@ -132,7 +126,7 @@ export type DefaultBranchProbe =
   | { readable: false; error: string };
 
 export function readDefaultBranchProbe(
-  output: DefaultBranchProbeOutput,
+  output: ExecResult,
   defaultBranch: string,
 ): DefaultBranchProbe {
   const state: DefaultBranchRepoState = { fetchRefspecs: [], refs: [] };
