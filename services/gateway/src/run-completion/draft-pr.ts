@@ -14,7 +14,7 @@ import {
   evidenceManifestArtifactPaths,
 } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
-import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBodyArtifact } from './pr-body-render.js';
+import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
 
@@ -196,17 +196,16 @@ export async function buildDraftPrBody(
   artifacts: ArtifactRef[],
 ): Promise<string> {
   // The pack's renderer (when declared) turns the authored prose plus the
-  // recipe and run artifacts into pr-body.md; that rendered body is published.
-  // Without a renderer the authored file is the body, as before. The freshness
-  // check re-renders and compares, so the renderer must be deterministic for
-  // unchanged inputs (the harness command is).
-  const render = await renderPrBodyArtifact(run);
+  // recipe and run artifacts into the body that is published; the render is
+  // used as returned, never read back from the mirror, where a refresh may
+  // have put the worker's own pr-body.md. Without a renderer the authored file
+  // is the body, as before. Approval re-renders the same way.
+  const render = await renderPrBody(run);
   if (!render.rendered) {
     console.log(`[run-completion] pr-body not rendered for run ${run.id}: ${render.reason}`);
   }
   const existing = render.rendered
-    ? ((await readTaskArtifactText(run, PR_BODY_ARTIFACT)) ??
-      (await readTaskArtifactText(run, PR_PROSE_ARTIFACT)))
+    ? render.body
     : ((await readTaskArtifactText(run, PR_PROSE_ARTIFACT)) ??
       (await readTaskArtifactText(run, PR_BODY_ARTIFACT)));
   if (existing?.trim()) {
