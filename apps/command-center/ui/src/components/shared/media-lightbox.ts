@@ -70,8 +70,17 @@ export class MediaLightbox extends MediaLightboxState {
   willUpdate(changed: Map<string, unknown>): void {
     super.willUpdate(changed);
     // An explicit open shows the file it was opened on: a kind filter left from
-    // the last visit would otherwise snap to another item and hide that file.
-    if (changed.has('open') && this.open) this._kindFilter = 'all';
+    // the last visit, or one that hides a file the host just selected (a link
+    // followed while open), would otherwise snap to another item. Browsing within
+    // the filter keeps it.
+    if (changed.has('open') && this.open) {
+      this._kindFilter = 'all';
+    } else if (
+      (changed.has('selectedIndex') || changed.has('items')) &&
+      !this._visibleIndices().includes(this.selectedIndex)
+    ) {
+      this._kindFilter = 'all';
+    }
   }
 
   updated(changed: Map<string, unknown>): void {

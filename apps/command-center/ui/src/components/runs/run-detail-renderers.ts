@@ -48,6 +48,7 @@ import {
   isActiveInteractiveDevRun,
   isInteractiveCompletionAwaitingOperator,
   reviewTerminalUnavailableReason,
+  RUN_OUTPUT_SCOPE,
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
@@ -368,7 +369,7 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       .items=${ctx.evidenceLightboxItems}
       .open=${ctx.evidenceLightboxOpen}
       .selectedIndex=${ctx.evidenceLightboxIndex}
-      scopeLabel=${ctx.evidenceLightboxScope ?? 'Run output'}
+      scopeLabel=${ctx.evidenceLightboxScope ?? RUN_OUTPUT_SCOPE}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}
       @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
     ></media-lightbox>`;

@@ -320,7 +320,8 @@ export function acceptanceEvidenceSelection(
 /**
  * What an `artifact=` link opens. With `artifactAc` and a criterion that still
  * lists the file, that criterion's evidence, so a reload or shared link reopens
- * the set it was written from; otherwise the run's own artifacts, or why not.
+ * the set it was written from; pending while that criterion has not loaded;
+ * otherwise the run's own artifacts, or why not.
  */
 export function resolveEvidenceLightboxLink(args: {
   path: string;
@@ -331,10 +332,18 @@ export function resolveEvidenceLightboxLink(args: {
   runArtifacts: readonly FamilyObservabilityArtifact[];
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
   progress: { loaded: boolean; runActive: boolean };
-}): EvidenceLightboxSelection | { unavailable: { path: string; reason: string } } {
+  /** The read that carries the acceptance data is still in flight. */
+  acceptancePending?: boolean;
+}):
+  | EvidenceLightboxSelection
+  | { unavailable: { path: string; reason: string } }
+  | { pending: true } {
   const row = args.criterionId
     ? args.acceptanceRows.find((candidate) => candidate.id === args.criterionId)
     : undefined;
+  // Until the criterion's rows arrive, falling back would flash the run output
+  // or a "cannot open" notice for a link that resolves a moment later.
+  if (args.criterionId && !row && args.acceptancePending) return { pending: true };
   const acIndex = row ? row.evidence.indexOf(args.path) : -1;
   if (row && acIndex >= 0) {
     return acceptanceEvidenceSelection({

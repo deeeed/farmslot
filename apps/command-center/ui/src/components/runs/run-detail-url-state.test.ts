@@ -44,6 +44,15 @@ test('an acceptance evidence link carries its criterion, and closing or a plain 
   );
   assert.equal(runDetailEvidenceArtifactHash('run-1', null, opened), '#run/run-1');
   assert.equal(runInventoryHashFromDetail(opened).includes('artifactAc'), false);
+  assert.equal(
+    runDetailStepHash(
+      'run-1',
+      'monitor',
+      '#run/run-1?step=setup&artifactView=step&artifact=TASK.md&artifactAc=AC-1',
+    ).includes('artifactAc'),
+    false,
+    'choosing another step drops the whole artifact set',
+  );
 });
 
 test('run detail recognizes its embedded runs-inventory route', () => {

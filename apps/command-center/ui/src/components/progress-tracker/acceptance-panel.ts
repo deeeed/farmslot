@@ -246,6 +246,46 @@ export function acceptanceEvidenceRows(
   });
 }
 
+/** A run's acceptance data as run detail holds it; null means none or not loaded. */
+export interface RunAcceptanceData {
+  acceptanceStatus?: AcceptanceStatusLedger | null;
+  acceptanceCriteria?: AcceptanceCriterionRef[] | null;
+  acceptanceStatusError?: string | null;
+  acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
+}
+
+export interface AcceptancePanelInputs {
+  ledger: AcceptanceStatusLedger;
+  criteria?: ReadonlyArray<AcceptanceCriterionRef>;
+  error?: string;
+  evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
+}
+
+/**
+ * The panel's ledger and inputs from a run's acceptance data, or null when the
+ * panel is hidden. The run page renders from this, and run detail resolves an
+ * acceptance evidence link from it, so both read the same rows.
+ */
+export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelInputs | null {
+  if (!data.acceptanceStatus && !data.acceptanceCriteria?.length && !data.acceptanceStatusError) {
+    return null;
+  }
+  return {
+    ledger: data.acceptanceStatus ?? { schemaVersion: 1, criteria: [] },
+    ...(data.acceptanceCriteria?.length ? { criteria: data.acceptanceCriteria } : {}),
+    ...(data.acceptanceStatusError ? { error: data.acceptanceStatusError } : {}),
+    ...(data.acceptanceEvidenceLinks?.length
+      ? { evidenceLinks: data.acceptanceEvidenceLinks }
+      : {}),
+  };
+}
+
+/** The rows the run page's panel shows, each with its evidence; empty when it is hidden. */
+export function runAcceptanceEvidenceRows(data: RunAcceptanceData): AcceptanceEvidenceRow[] {
+  const inputs = acceptancePanelInputs(data);
+  return inputs ? acceptanceEvidenceRows(inputs.ledger, inputs.criteria, inputs.evidenceLinks) : [];
+}
+
 function renderRow(
   { view, link, evidence }: AcceptanceEvidenceRow,
   evidenceHref?: (evidencePath: string) => string,

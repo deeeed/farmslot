@@ -7,6 +7,7 @@ import { acceptanceEvidenceRows } from '../progress-tracker/acceptance-panel.js'
 
 import {
   acceptanceEvidenceSelection,
+  type EvidenceLightboxSelection,
   resolveEvidenceLightboxLink,
   RUN_OUTPUT_SCOPE,
   runOutputEvidenceSelection,
@@ -15,6 +16,14 @@ import {
   artifactSelectionFromRunDetailHash,
   runDetailEvidenceArtifactHash,
 } from './run-detail-url-state.js';
+
+/** The link resolved to an open lightbox set; fails the test otherwise. */
+function selected(
+  result: ReturnType<typeof resolveEvidenceLightboxLink>,
+): EvidenceLightboxSelection {
+  assert.ok('items' in result, JSON.stringify(result));
+  return result;
+}
 
 const listed: FamilyObservabilityArtifact = {
   runId: 'run-1',
@@ -56,16 +65,18 @@ function reload(index: number) {
     opened.criterionId,
   );
   const { artifact, artifactAc } = artifactSelectionFromRunDetailHash(hash);
-  const restored = resolveEvidenceLightboxLink({
-    path: artifact ?? '',
-    criterionId: artifactAc,
-    acceptanceRows: rows,
-    runId: 'run-1',
-    familyId: 'family-1',
-    runArtifacts,
-    artifactUrl,
-    progress: { loaded: true, runActive: false },
-  });
+  const restored = selected(
+    resolveEvidenceLightboxLink({
+      path: artifact ?? '',
+      criterionId: artifactAc,
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
   return { opened, restored };
 }
 
@@ -75,26 +86,24 @@ test('an AC evidence link reopens the same criterion set at the same file after 
     assert.equal(opened.scope, 'AC-1 evidence');
     assert.deepEqual(restored, opened, `file ${index}`);
   }
+  // A ledger path outside the run artifact list still resolves.
   const outside = reload(1).restored;
-  assert.ok(
-    !('unavailable' in outside),
-    'a ledger path outside the run artifact list still resolves',
-  );
   assert.equal(outside.items[1]?.path, 'artifacts/recipe-run/teardown-final-state.png');
 });
 
 test('a plain artifact link and the Evidence tab open the run output, never a criterion scope', () => {
-  const plain = resolveEvidenceLightboxLink({
-    path: listed.path,
-    criterionId: null,
-    acceptanceRows: rows,
-    runId: 'run-1',
-    familyId: 'family-1',
-    runArtifacts,
-    artifactUrl,
-    progress: { loaded: true, runActive: false },
-  });
-  assert.ok(!('unavailable' in plain));
+  const plain = selected(
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: null,
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
   assert.equal(plain.scope, RUN_OUTPUT_SCOPE);
   assert.equal(plain.criterionId, null);
   assert.equal(plain.index, 1);
@@ -106,17 +115,18 @@ test('a plain artifact link and the Evidence tab open the run output, never a cr
 });
 
 test('a criterion that no longer lists the file falls back to the run artifacts', () => {
-  const stale = resolveEvidenceLightboxLink({
-    path: listed.path,
-    criterionId: 'AC-2',
-    acceptanceRows: rows,
-    runId: 'run-1',
-    familyId: 'family-1',
-    runArtifacts,
-    artifactUrl,
-    progress: { loaded: true, runActive: false },
-  });
-  assert.ok(!('unavailable' in stale));
+  const stale = selected(
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: 'AC-2',
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
   assert.equal(stale.scope, RUN_OUTPUT_SCOPE);
 
   const gone = resolveEvidenceLightboxLink({
@@ -130,4 +140,22 @@ test('a criterion that no longer lists the file falls back to the run artifacts'
     progress: { loaded: true, runActive: false },
   });
   assert.ok('unavailable' in gone);
+});
+
+test('an AC link waits for the read that carries its criterion instead of falling back', () => {
+  const resolve = (acceptancePending: boolean) =>
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: 'AC-1',
+      acceptanceRows: [],
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: true },
+      acceptancePending,
+    });
+  assert.deepEqual(resolve(true), { pending: true });
+  const settled = selected(resolve(false)); // once loaded it falls back
+  assert.equal(settled.scope, RUN_OUTPUT_SCOPE);
 });

@@ -16,6 +16,7 @@ import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import {
   type AcceptanceEvidenceOpen,
+  acceptancePanelInputs,
   acceptancePanelStyles,
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
@@ -304,17 +305,13 @@ export class RunPipeline extends LitElement {
    * operator opens run detail to answer.
    */
   private renderAcceptancePanel() {
-    if (!this.acceptanceStatus && !this.acceptanceCriteria?.length && !this.acceptanceStatusError) {
-      return nothing;
-    }
-    return renderAcceptancePanel(this.acceptanceStatus ?? { schemaVersion: 1, criteria: [] }, {
+    const inputs = acceptancePanelInputs(this);
+    if (!inputs) return nothing;
+    const { ledger, ...options } = inputs;
+    return renderAcceptancePanel(ledger, {
+      ...options,
       ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
       ...(this.acceptanceEvidenceOpen ? { openEvidence: this.acceptanceEvidenceOpen } : {}),
-      ...(this.acceptanceCriteria?.length ? { criteria: this.acceptanceCriteria } : {}),
-      ...(this.acceptanceStatusError ? { error: this.acceptanceStatusError } : {}),
-      ...(this.acceptanceEvidenceLinks?.length
-        ? { evidenceLinks: this.acceptanceEvidenceLinks }
-        : {}),
     });
   }
 

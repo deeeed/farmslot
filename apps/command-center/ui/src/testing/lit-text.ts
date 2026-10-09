@@ -32,44 +32,19 @@ export function litText(value: unknown): string {
 }
 
 /**
- * The value bound to a named binding, e.g. `litBinding(result, '?open=')`. Walks
- * nested templates depth-first and returns the first match, so a test can assert
- * on a boolean or property binding that never reaches the rendered text.
+ * Every value bound to a named binding, e.g. each `@click=` handler in a list, so
+ * a test can assert on bindings that never reach the rendered text. A template's
+ * own bindings come before those of the templates nested in it.
  */
-export function litBinding(value: unknown, binding: string): unknown {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = litBinding(entry, binding);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  if (!isTemplateLike(value)) return undefined;
+export function litBindings(value: unknown, binding: string): unknown[] {
+  if (Array.isArray(value)) return value.flatMap((entry) => litBindings(entry, binding));
+  if (!isTemplateLike(value)) return [];
   const { strings, values } = value;
-  for (let index = 0; index < values.length; index += 1) {
-    if (strings[index]?.trimEnd().endsWith(binding)) return values[index];
-  }
-  for (const nested of values) {
-    const found = litBinding(nested, binding);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+  const own = values.filter((_, index) => strings[index]?.trimEnd().endsWith(binding));
+  return [...own, ...values.flatMap((nested) => litBindings(nested, binding))];
 }
 
-/**
- * Every value bound to a named binding, depth-first in render order, e.g. each
- * `@click=` handler in a list. `litBinding` returns only the first.
- */
-export function litBindings(value: unknown, binding: string, found: unknown[] = []): unknown[] {
-  if (Array.isArray(value)) {
-    for (const entry of value) litBindings(entry, binding, found);
-    return found;
-  }
-  if (!isTemplateLike(value)) return found;
-  const { strings, values } = value;
-  values.forEach((entry, index) => {
-    if (strings[index]?.trimEnd().endsWith(binding)) found.push(entry);
-    else litBindings(entry, binding, found);
-  });
-  return found;
+/** The first value bound to a named binding, e.g. `litBinding(result, '?open=')`. */
+export function litBinding(value: unknown, binding: string): unknown {
+  return litBindings(value, binding).find((found) => found !== undefined);
 }

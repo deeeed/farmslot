@@ -49,7 +49,7 @@ import { type AppState, getState, isHydrating, subscribe } from '../../state.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import {
   type AcceptanceEvidenceOpen,
-  acceptanceEvidenceRows,
+  runAcceptanceEvidenceRows,
 } from '../progress-tracker/acceptance-panel.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -202,7 +202,8 @@ export class RunDetail extends RunDetailState {
       changed.has('selectedStepProgress') ||
       changed.has('acceptanceStatus') ||
       changed.has('acceptanceCriteria') ||
-      changed.has('acceptanceEvidenceLinks')
+      changed.has('acceptanceEvidenceLinks') ||
+      changed.has('_taskProgressLoading')
     )
       this._applyEvidenceArtifactFromHash(true);
   }
@@ -263,6 +264,8 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshing = false;
       this._directRunRequestSeq++;
       this._taskProgressRequestSeq++;
+      this._taskProgressLoading = false;
+      this._acceptanceRequested = false;
       this._siblingsRequestSeq++;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
@@ -339,6 +342,8 @@ export class RunDetail extends RunDetailState {
       prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
     if (activeTaskChanged) {
       this._taskProgressRequestSeq++;
+      this._taskProgressLoading = false;
+      this._acceptanceRequested = false;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
       this.acceptanceStatus = null;
@@ -919,14 +924,18 @@ export class RunDetail extends RunDetailState {
       return;
     // Re-applied when the run, worker progress or acceptance data updates, so a
     // link that arrives before they load still opens; until then, say so.
+    const acceptanceRows = runAcceptanceEvidenceRows(this).map(({ view, evidence }) => ({
+      id: view.id,
+      text: view.text,
+      evidence,
+    }));
+    if (artifactAc && !acceptanceRows.some((row) => row.id === artifactAc)) {
+      this._requestAcceptanceData();
+    }
     const selection = resolveEvidenceLightboxLink({
       path: artifact,
       criterionId: artifactAc,
-      acceptanceRows: this._acceptanceEvidenceRows().map(({ view, evidence }) => ({
-        id: view.id,
-        text: view.text,
-        evidence,
-      })),
+      acceptanceRows,
       runId: this.runId,
       familyId: this.run.familyId,
       runArtifacts: this._linkableRunArtifacts(this.run),
@@ -935,7 +944,10 @@ export class RunDetail extends RunDetailState {
         loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
         runActive: isRunWorking(this.run),
       },
+      acceptancePending: this._taskProgressLoading,
     });
+    // An AC link waits for the progress read that carries its criterion.
+    if ('pending' in selection) return;
     if ('unavailable' in selection) {
       // Never leave a previous artifact showing under the notice.
       this._evidenceLightboxOpen = false;
@@ -953,15 +965,6 @@ export class RunDetail extends RunDetailState {
     }
     // The URL already names this artifact; rewriting it would drop the trace marker.
     this._openEvidenceLightbox(selection, false);
-  }
-
-  /** The acceptance panel's rows, each with the evidence files it lists. */
-  private _acceptanceEvidenceRows() {
-    return acceptanceEvidenceRows(
-      this.acceptanceStatus ?? { schemaVersion: 1, criteria: [] },
-      this.acceptanceCriteria?.length ? this.acceptanceCriteria : undefined,
-      this.acceptanceEvidenceLinks ?? [],
-    );
   }
 
   private _syncSelectedStepToHash() {
@@ -1030,6 +1033,17 @@ export class RunDetail extends RunDetailState {
     );
   }
 
+  /**
+   * A criterion link on a run whose worker progress is not being read (a finished
+   * run) reads its acceptance data once, so the link can reopen that criterion.
+   */
+  private _requestAcceptanceData(): void {
+    if (this._acceptanceRequested || this._taskProgressLoading || !this.run) return;
+    if (!this.run.slotId && !this.run.reviewWorkspace) return;
+    this._acceptanceRequested = true;
+    void this.fetchTaskProgress(this.run.slotId ?? '');
+  }
+
   private async fetchTaskProgress(slotId: string) {
     const runId = this.runId;
     const requestSeq = ++this._taskProgressRequestSeq;
@@ -1038,6 +1052,7 @@ export class RunDetail extends RunDetailState {
       this.runId === runId &&
       (this.run?.slotId ?? '') === slotId;
     this._lastTaskProgressFetchAt = Date.now();
+    this._taskProgressLoading = true;
     try {
       const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
         slotId,
@@ -1054,6 +1069,9 @@ export class RunDetail extends RunDetailState {
       // During slot release/replay the slot can briefly have no task file; keep
       // the existing UI snapshot instead of failing the whole run detail render.
       console.debug(`Task progress unavailable for ${slotId}: ${(err as Error).message}`);
+    } finally {
+      // A superseded read leaves the flag to the read that replaced it.
+      if (requestSeq === this._taskProgressRequestSeq) this._taskProgressLoading = false;
     }
   }
 

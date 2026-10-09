@@ -60,6 +60,7 @@ export function runDetailStepHash(
   ) {
     params.delete(ARTIFACT_RUN_PARAM);
     params.delete(ARTIFACT_PARAM);
+    params.delete(ARTIFACT_AC_PARAM);
     params.delete(ARTIFACT_VIEW_PARAM);
   }
   if (stepName) {

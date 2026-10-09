@@ -7,9 +7,12 @@ import { litBindings, litText } from '../../testing/lit-text.js';
 
 import {
   type AcceptanceEvidenceOpen,
+  acceptancePanelInputs,
   acceptancePanelPresentation,
   evidenceLabel,
   renderAcceptancePanel,
+  type RunAcceptanceData,
+  runAcceptanceEvidenceRows,
 } from './acceptance-panel.js';
 
 function criterion(overrides: Partial<AcceptanceCriterionStatus> = {}): AcceptanceCriterionStatus {
@@ -267,5 +270,57 @@ test('clicking an evidence file opens the files of its criterion, in order, in t
   } finally {
     if (windowOpen) Object.defineProperty(globalThis, 'open', windowOpen);
     else delete (globalThis as { open?: unknown }).open;
+  }
+});
+
+test('the rows run detail resolves links from are exactly the rows the run page panel renders', () => {
+  const shapes: Record<string, RunAcceptanceData> = {
+    ledger: {
+      acceptanceStatus: ledger([
+        criterion({ id: 'AC-1', evidence: ['artifacts/a.png', 'artifacts/b.png'] }),
+        criterion({ id: 'AC-2', text: 'Second', verdict: 'weak', evidence: ['artifacts/c.log'] }),
+      ]),
+      acceptanceCriteria: [
+        { id: 'AC-1', text: 'The panel lists every criterion' },
+        { id: 'AC-2', text: 'Second' },
+        { id: 'AC-3', text: 'Third' },
+      ],
+      // Links are ignored once a ledger exists.
+      acceptanceEvidenceLinks: [{ id: 'AC-3', evidence: ['artifacts/ignored.png'] }],
+    },
+    manifestLinks: {
+      acceptanceStatus: null,
+      acceptanceCriteria: [
+        { id: 'AC-1', text: 'First' },
+        { id: 'AC-2', text: 'Second' },
+      ],
+      acceptanceEvidenceLinks: [{ id: 'AC-2', evidence: ['artifacts/x.png', 'artifacts/y.png'] }],
+    },
+    criteriaOnly: { acceptanceCriteria: [{ id: 'AC-1', text: 'First' }] },
+    errorOnly: { acceptanceStatusError: 'bad json' },
+    nothing: {},
+  };
+  for (const [name, data] of Object.entries(shapes)) {
+    const inputs = acceptancePanelInputs(data);
+    const rows = runAcceptanceEvidenceRows(data);
+    if (!inputs) {
+      assert.deepEqual(rows, [], `${name}: a hidden panel has no rows`);
+      continue;
+    }
+    const { ledger: panelLedger, ...options } = inputs;
+    const panel = renderAcceptancePanel(panelLedger, {
+      ...options,
+      evidenceHref: (evidencePath) => evidencePath,
+    });
+    assert.deepEqual(
+      litBindings(panel, 'data-ac-id='),
+      rows.map((row) => row.view.id),
+      `${name}: same rows in the same order`,
+    );
+    assert.deepEqual(
+      litBindings(panel, 'href='),
+      rows.flatMap((row) => row.evidence),
+      `${name}: same evidence files in the same order`,
+    );
   }
 });

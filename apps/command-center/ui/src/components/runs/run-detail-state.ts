@@ -15,6 +15,7 @@ import type {
 
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import { RUN_OUTPUT_SCOPE } from './run-detail-model.js';
 import type { RunPostureGateState } from './run-detail-posture-gate-renderers.js';
 import type { RunPostureStatusState } from './run-detail-posture-renderers.js';
 import type { RunSessionRowState } from './run-detail-session-renderers.js';
@@ -96,7 +97,11 @@ export abstract class RunDetailState extends LitElement {
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];
   /** What the open lightbox steps through: the run's output, or one criterion's evidence. */
-  @state() _evidenceLightboxScope = 'Run output';
+  @state() _evidenceLightboxScope = RUN_OUTPUT_SCOPE;
+  /** A worker-progress read (which carries the acceptance data) is in flight. */
+  @state() _taskProgressLoading = false;
+  /** A finished run's acceptance data was read once for a criterion link. */
+  _acceptanceRequested = false;
   /** The criterion whose evidence the open lightbox steps through, if any. */
   _evidenceLightboxCriterionId: string | null = null;
   @state() _evidenceLightboxIndex = 0;
