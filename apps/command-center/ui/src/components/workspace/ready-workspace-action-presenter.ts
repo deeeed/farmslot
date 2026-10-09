@@ -16,7 +16,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
-import { visibleDiffSelection } from '../../utils/diff-test-filter.js';
+import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
@@ -535,13 +535,19 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   /**
    * A newly hidden test file hands the viewer to the first visible file; a
    * selection whose diff is not loaded (dropped while everything was hidden)
-   * is fetched again.
+   * is fetched again; nothing listed drops the selection.
    */
   _onHideTestsChanged(): void {
-    const next = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
-    if (!next) return;
-    if (next !== this._selectedFile || (!this._fileDiff && !this._fileDiffLoading)) {
-      void this._selectFile(next);
+    const handOff = diffSelectionHandOff(
+      this._diffSplit().visible,
+      this._selectedFile,
+      Boolean(this._fileDiff) || this._fileDiffLoading,
+    );
+    if (handOff.kind === 'select') {
+      void this._selectFile(handOff.path);
+    } else if (handOff.kind === 'clear') {
+      this._selectedFile = '';
+      this._fileDiff = '';
     }
   }
 

@@ -43,6 +43,8 @@ test('a connected filter follows the shared preference and hands off through onC
 
     host.connect();
     assert.equal(filter.hideTests, initial, 'reconnecting re-reads the preference');
+    assert.equal(host.updates, 2, 'a flip missed while disconnected re-renders the host');
+    assert.equal(changes, 2, 'and runs its selection hand-off');
     filter.toggle();
     assert.equal(readHideTestsPref(), !initial);
     assert.equal(filter.hideTests, !initial);
@@ -104,4 +106,19 @@ test('renderControls offers hide/show with the test count, and nothing without t
   assert.match(controlsText(filter), /Show tests \(2\)/);
 
   assert.equal(litText(filter.renderControls(filter.split([files[0]]).summary)), '');
+});
+
+test('renderFileDiff gives a test file the toggle and a placeholder while tests are hidden', () => {
+  const filter = new DiffTestFilterController(new FakeControllerHost());
+  const diff = () => 'DIFF-BODY';
+  const text = (path: string) => litText(filter.renderFileDiff(path, diff)).replace(/\s+/g, ' ');
+
+  filter.hideTests = false;
+  assert.match(text('src/app.test.ts'), /Hide tests.*DIFF-BODY/);
+  assert.equal(text('src/app.ts').trim(), 'DIFF-BODY', 'a code file gets no toggle');
+
+  filter.hideTests = true;
+  assert.match(text('src/app.test.ts'), /Show tests \(1\).*Test file hidden/);
+  assert.doesNotMatch(text('src/app.test.ts'), /DIFF-BODY/);
+  assert.equal(text('src/app.ts').trim(), 'DIFF-BODY');
 });

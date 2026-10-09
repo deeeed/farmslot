@@ -9,7 +9,6 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type {
   ArtifactRef,
   FsReadResult,
-  GitBranchDiffFile,
   GitBranchDiffResult,
   GitDiffResult,
   GitShowResult,
@@ -28,7 +27,7 @@ import './recipe-output-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { formatDiffFileCount, visibleDiffSelection } from '../../utils/diff-test-filter.js';
+import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
@@ -58,7 +57,7 @@ import { renderReviewWorkspaceStyles } from './review-workspace-renderers.js';
 import {
   renderReviewBranchBanner,
   renderReviewCommentItem,
-  renderReviewFileTab,
+  renderReviewDiffFiles,
   renderReviewLoadingBanner,
   renderReviewTabBar,
   renderReviewTopBar,
@@ -412,13 +411,20 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   /** A newly hidden selected file hands the viewer to the first listed file. */
   private _onHideTestsChanged(): void {
-    const next = visibleDiffSelection(
+    const handOff = diffSelectionHandOff(
       this._testFilter.split(this._diffFiles).visible,
       this._selectedFile,
+      Boolean(this._fileDiff) || this._fileDiffLoading,
     );
-    if (!next) return;
-    if (next !== this._selectedFile || (!this._fileDiff && !this._fileDiffLoading)) {
-      void this._selectFile(next);
+    if (handOff.kind === 'select') {
+      void this._selectFile(handOff.path);
+    } else if (handOff.kind === 'clear') {
+      // Only tests changed: drop the open test file (and its finding) so the
+      // pane shows the all-hidden state instead of a diff the tabs no longer list.
+      this._selectedFile = '';
+      this._fileDiff = '';
+      this._selectedCommentIdx = -1;
+      this._commentFileContent = '';
     }
   }
 
@@ -909,26 +915,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _renderDiffFiles() {
-    const split = this._testFilter.split(this._diffFiles);
-    return html`
-      <div class="rw-file-tabs">
-        <span class="rw-file-count">${formatDiffFileCount(split)} files</span>
-        ${this._testFilter.renderControls(split.summary)}
-        ${split.visible.map((f) => this._renderFileTab(f))}
-      </div>
-      ${split.visible.length === 0 && !this._selectedFile
-        ? html`<div class="rw-diff-empty">Only test files changed — show tests to review them</div>`
-        : this._renderCodePanel()}
-    `;
-  }
-
-  private _renderFileTab(f: GitBranchDiffFile) {
-    return renderReviewFileTab({
-      file: f,
+    return renderReviewDiffFiles({
+      files: this._diffFiles,
+      testFilter: this._testFilter,
       selectedFile: this._selectedFile,
-      commentCount: this._commentCountByFile.get(f.path) ?? 0,
+      findingOpen: this._selectedCommentIdx >= 0,
+      commentCounts: this._commentCountByFile,
       recovering: this._isRecovering,
       selectFile: (path) => this._selectFile(path),
+      renderCodePanel: () => this._renderCodePanel(),
     });
   }
 

@@ -87,6 +87,21 @@ test('hiding tests hands a selected test file to the first visible file', () => 
   assert.deepEqual(selected, [codeFile.path]);
 });
 
+test('hiding tests when only tests changed drops the open test file and its diff', () => {
+  const view = makePresenter({
+    _diffFiles: [testFile],
+    _selectedFile: testFile.path,
+    _fileDiff: 'test diff',
+  });
+  view._selectFile = async () => {
+    assert.fail('nothing is listed, so nothing is selected');
+  };
+
+  setHideTests(view, true);
+  assert.equal(view._selectedFile, '');
+  assert.equal(view._fileDiff, '');
+});
+
 test('a pref flip keeps a loaded visible selection and refetches one without a diff', () => {
   const selected: string[] = [];
   const view = makePresenter({

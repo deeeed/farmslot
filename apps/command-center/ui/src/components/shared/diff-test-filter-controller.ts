@@ -1,10 +1,17 @@
 // The one "hide tests" wiring for every diff and changed-file list. A host adds
 // this controller and renders its rows from `split()`; the controller owns the
 // remembered preference, the matcher built from the project's test globs, the
-// header controls and the hand-off when the selected file gets hidden.
+// header controls and the hand-off when the selected file gets hidden. A
+// one-file diff outside such a list goes through `renderFileDiff()`.
 // diff-test-filter-coverage.test.ts fails for a diff view that skips it.
 
-import type { nothing, ReactiveController, ReactiveControllerHost, TemplateResult } from 'lit';
+import {
+  html,
+  nothing,
+  type ReactiveController,
+  type ReactiveControllerHost,
+  type TemplateResult,
+} from 'lit';
 
 import {
   classifyDiffFile,
@@ -12,9 +19,11 @@ import {
   DEFAULT_TEST_FILE_MATCHER,
   type DiffFileKind,
   type DiffKindSummary,
+  summarizeDiffKinds,
   type TestFileMatcher,
 } from '@farmslot/protocol';
 
+import { colors, fonts } from '../../styles/theme-tokens.js';
 import {
   type DiffKindSplit,
   readHideTestsPref,
@@ -48,7 +57,13 @@ export class DiffTestFilterController implements ReactiveController {
   }
 
   hostConnected(): void {
-    this.hideTests = readHideTestsPref();
+    // A flip while disconnected reaches the host like a live one.
+    const hide = readHideTestsPref();
+    if (hide !== this.hideTests) {
+      this.hideTests = hide;
+      this.host.requestUpdate();
+      this.options.onChange?.();
+    }
     this._unsubscribe = subscribeHideTestsPref((hide) => {
       this.hideTests = hide;
       this.host.requestUpdate();
@@ -93,5 +108,32 @@ export class DiffTestFilterController implements ReactiveController {
       hideTests: this.hideTests,
       onToggle: () => this.toggle(),
     });
+  }
+
+  /**
+   * One file's diff outside a filtered list (an editor tab, a Files-mode
+   * preview): the toggle when the file is a test, and a placeholder in place of
+   * the diff while tests are hidden.
+   */
+  renderFileDiff(path: string, diff: () => unknown): TemplateResult {
+    const controls = this.renderControls(
+      summarizeDiffKinds([{ path, additions: 0, deletions: 0 }], this.matcher),
+    );
+    return html`${controls === nothing
+      ? nothing
+      : html`<div
+          class="diff-test-file-bar"
+          style="display:flex; justify-content:flex-end; padding:2px 8px; flex-shrink:0"
+        >
+          ${controls}
+        </div>`}${this.hides(path)
+      ? html`<div
+          class="diff-test-file-hidden"
+          data-testid="diff-test-file-hidden"
+          style="flex:1; display:flex; align-items:center; justify-content:center; padding:16px; font-family:${fonts.mono}; font-size:12px; color:${colors.textMuted}"
+        >
+          Test file hidden — show tests to see its diff
+        </div>`
+      : diff()}`;
   }
 }

@@ -19,7 +19,7 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
-import { type DiffFileEntry, parseUnifiedDiff } from '../../utils/unified-diff.js';
+import { splitUnifiedDiff, type UnifiedDiffSplit } from '../../utils/unified-diff.js';
 
 import { DiffTestFilterController } from './diff-test-filter-controller.js';
 import {
@@ -49,7 +49,7 @@ export class MediaLightbox extends MediaLightboxState {
   private _logUrl = '';
   private _logFollow = false;
   private readonly _testFilter = new DiffTestFilterController(this);
-  private _diffFiles: { text: string; files: DiffFileEntry[] } | null = null;
+  private _diffSplit: { text: string; split: UnifiedDiffSplit } | null = null;
   private _timelines = new Map<
     string,
     { data?: RecipeRecordingTimelineDocument; error?: string }
@@ -1260,10 +1260,11 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
     this._ensureTextPreview(item.url, 'diff');
     const entry = this._mdCache.get(item.url);
     const text = entry?.status === 'ok' ? entry.data : '';
-    if (this._diffFiles?.text !== text) {
-      this._diffFiles = { text, files: parseUnifiedDiff(text) };
+    if (this._diffSplit?.text !== text) {
+      this._diffSplit = { text, split: splitUnifiedDiff(text) };
     }
-    const split = this._testFilter.split(this._diffFiles.files);
+    const { preamble, files } = this._diffSplit.split;
+    const split = this._testFilter.split(files);
     return html`
       <div class="ml-diff-shell">
         <div class="ml-toolbar ml-md-toolbar">
@@ -1280,7 +1281,10 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
                 ? html`<diff-review .diff=${text} .filename=${item.path}></diff-review>`
                 : split.visible.length > 0
                   ? html`<diff-review
-                      .diff=${split.visible.map((file) => file.diff).join('\n')}
+                      .diff=${[
+                        ...(preamble ? [preamble] : []),
+                        ...split.visible.map((file) => file.diff),
+                      ].join('\n')}
                       .filename=${item.path}
                     ></diff-review>`
                   : html`<div class="ml-fallback">Only test files changed (hidden)</div>`}

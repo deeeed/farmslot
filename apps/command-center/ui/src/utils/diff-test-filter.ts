@@ -103,3 +103,24 @@ export function visibleDiffSelection(
 ): string | undefined {
   return visible.some((file) => file.path === selected) ? selected : visible[0]?.path;
 }
+
+export type DiffSelectionHandOff =
+  | { kind: 'keep' }
+  | { kind: 'select'; path: string }
+  | { kind: 'clear' };
+
+/**
+ * What a list that owns its selection does after the filter changes: keep a
+ * listed selection whose diff is loaded, select the first listed file when the
+ * selection got hidden (or its diff was dropped), clear it when nothing is listed.
+ */
+export function diffSelectionHandOff(
+  visible: readonly { path: string }[],
+  selected: string,
+  diffLoaded: boolean,
+): DiffSelectionHandOff {
+  const next = visibleDiffSelection(visible, selected);
+  if (!next) return selected ? { kind: 'clear' } : { kind: 'keep' };
+  if (next !== selected || !diffLoaded) return { kind: 'select', path: next };
+  return { kind: 'keep' };
+}

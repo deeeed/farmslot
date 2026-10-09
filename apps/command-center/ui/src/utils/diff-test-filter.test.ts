@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  diffSelectionHandOff,
   formatDiffFileCount,
   formatTestShare,
   readHideTestsPref,
@@ -87,4 +88,19 @@ test('visibleDiffSelection keeps a visible file and falls back to the first visi
   assert.equal(visibleDiffSelection(visible, 'src/gate.test.ts'), 'src/gate.ts');
   assert.equal(visibleDiffSelection(visible, ''), 'src/gate.ts');
   assert.equal(visibleDiffSelection([], 'src/gate.test.ts'), undefined);
+});
+
+test('diffSelectionHandOff keeps, moves or clears the selection after a filter change', () => {
+  const visible = [{ path: 'src/gate.ts' }];
+  assert.deepEqual(diffSelectionHandOff(visible, 'src/gate.ts', true), { kind: 'keep' });
+  assert.deepEqual(diffSelectionHandOff(visible, 'src/gate.ts', false), {
+    kind: 'select',
+    path: 'src/gate.ts',
+  });
+  assert.deepEqual(diffSelectionHandOff(visible, 'src/gate.test.ts', true), {
+    kind: 'select',
+    path: 'src/gate.ts',
+  });
+  assert.deepEqual(diffSelectionHandOff([], 'src/gate.test.ts', true), { kind: 'clear' });
+  assert.deepEqual(diffSelectionHandOff([], '', false), { kind: 'keep' });
 });

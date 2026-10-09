@@ -249,6 +249,13 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
+  /** Changes mode filters its list; a Files-mode diff carries the toggle itself. */
+  private renderDiff(diff: NativeWorkspaceDiffResult) {
+    const review = () =>
+      html`<diff-review .filename=${diff.path} .diff=${diff.diff}></diff-review>`;
+    return this.tab === 'files' ? this.testFilter.renderFileDiff(diff.path, review) : review();
+  }
+
   private switchTab(tab: 'files' | 'changes') {
     this.tab = tab;
     this.selected = '';
@@ -375,10 +382,7 @@ export class NativeWorkspace extends LitElement {
               ></code-viewer>`
             : this.diff
               ? this.diff.diff
-                ? html`<diff-review
-                    .filename=${this.diff.path}
-                    .diff=${this.diff.diff}
-                  ></diff-review>`
+                ? this.renderDiff(this.diff)
                 : html`<p class="empty">No changes against HEAD for this file.</p>`
               : html`<p class="empty">
                   ${this.loading ? 'Loading workspace…' : 'Select a file to inspect.'}

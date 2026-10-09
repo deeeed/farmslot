@@ -523,7 +523,7 @@ export class BranchChangedFiles extends LitElement {
   }
 
   updated(changed: Map<string, unknown>) {
-    if (changed.has('files')) this._autoCollapse();
+    if (changed.has('files') || changed.has('testPatterns')) this._autoCollapse();
     if (changed.has('selectedPath') && this.selectedPath) {
       this._revealPath(this.selectedPath);
     }

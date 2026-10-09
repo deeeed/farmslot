@@ -1,8 +1,10 @@
 // Every screen that shows a diff or a changed-file list gets the "hide tests"
-// toggle through DiffTestFilterController. This scans the components: a file
-// that renders templates and shows diff content must use the controller and
-// render its controls, or be listed in DELEGATED with the filtered view that
-// owns its list.
+// toggle through DiffTestFilterController. This scans the whole UI source: a
+// file that renders templates and shows diff content must render the
+// controller's controls (`testFilter.renderControls` for a list,
+// `testFilter.renderFileDiff` for a one-file diff) or hand its controller to a
+// renderer that does. Nothing is exempt except the dev harness pages, which are
+// listed so a new one is a deliberate choice.
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -10,77 +12,77 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const COMPONENTS = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** A diff viewer, a multi-file diff split, or changed-file list data. */
-const DIFF_VIEW_MARKERS = [
+/** A diff viewer: the shared element, a source view with changed lines, a diff split, or hand-coloured diff lines. */
+const DIFF_VIEWER_MARKERS = [
   /<diff-review\b/,
-  /\bparseUnifiedDiff\(/,
+  /<code-viewer\b[^>]*?\.changedLines=/,
+  /\b(parseUnifiedDiff|splitUnifiedDiff)\(/,
+  /startsWith\(\s*['"](@@|\+\+\+)/,
+];
+
+/** Changed-file list data. */
+const FILE_LIST_MARKERS = [
   /\b(GitBranchDiffFile|BranchDiffFile|NativeWorkspaceChangesResult|ImprovementFileChange|DiffFileEntry)\b/,
-  /\bcommittedFiles\b/,
 ];
 
 /** Diff views that must be found, so a scanner regression cannot pass silently. */
 const KNOWN_DIFF_VIEWS = [
-  'chat/native-workspace.ts',
-  'decisions/decision-inbox.ts',
-  'shared/diff-viewer-modal.ts',
-  'shared/media-lightbox.ts',
-  'workspace/branch-changed-files.ts',
-  'workspace/git-changes.ts',
-  'workspace/ready-workspace-shell-renderers.ts',
-  'workspace/review-workspace.ts',
+  'components/chat/native-workspace.ts',
+  'components/decisions/decision-inbox.ts',
+  'components/shared/diff-viewer-modal.ts',
+  'components/shared/media-lightbox.ts',
+  'components/slot-view/slot-view-source-renderers.ts',
+  'components/workspace/branch-changed-files.ts',
+  'components/workspace/git-changes.ts',
+  'components/workspace/ready-workspace-shell-renderers.ts',
+  'components/workspace/review-workspace-shell-renderers.ts',
+  'components/workspace/review-workspace.ts',
+  'components/workspace/slot-workspace.ts',
 ];
 
-/** Files that show diff content but whose list is filtered by another view. */
-const DELEGATED: Record<string, { reason: string; filteredBy: string[] }> = {
-  'slot-view/slot-view-source-renderers.ts': {
-    reason: 'editor tab for one file, opened from the slot changed-file lists',
-    filteredBy: ['workspace/git-changes.ts', 'workspace/branch-changed-files.ts'],
-  },
-  'slot-view/slot-view-panel-renderers.ts': {
-    reason: 'hands the branch diff to the slot changed-file lists',
-    filteredBy: ['workspace/git-changes.ts', 'workspace/branch-changed-files.ts'],
-  },
-  'workspace/review-workspace-shell-renderers.ts': {
-    reason: 'renders one file tab; review-workspace filters the tab list',
-    filteredBy: ['workspace/review-workspace.ts'],
-  },
+/** Dev harness pages (`dev/`, not shipped screens) that show mock diffs. */
+const DEV_HARNESS_DIFF_VIEWS: Record<string, string> = {
+  'dev/dev-harness.ts': 'component gallery: mock diff-review, code-viewer and list fixtures',
+  'dev/improvement-dev.ts': 'mock improvement proposal (diff2html), opened from the gallery',
 };
 
-function componentSources(): Map<string, string> {
+function uiSources(): Map<string, string> {
   const sources = new Map<string, string>();
-  for (const entry of readdirSync(COMPONENTS, { recursive: true, withFileTypes: true })) {
+  for (const entry of readdirSync(SRC, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue;
     const file = path.join(entry.parentPath, entry.name);
-    sources.set(
-      path.relative(COMPONENTS, file).split(path.sep).join('/'),
-      readFileSync(file, 'utf8'),
-    );
+    const relative = path.relative(SRC, file).split(path.sep).join('/');
+    if (relative.startsWith('testing/') || relative.startsWith('generated/')) continue;
+    sources.set(relative, readFileSync(file, 'utf8'));
   }
   return sources;
 }
 
 function isDiffView(source: string): boolean {
-  return source.includes('html`') && DIFF_VIEW_MARKERS.some((marker) => marker.test(source));
+  return (
+    source.includes('html`') &&
+    [...DIFF_VIEWER_MARKERS, ...FILE_LIST_MARKERS].some((marker) => marker.test(source))
+  );
 }
 
 function usesFilter(source: string): boolean {
-  return source.includes('DiffTestFilterController') && source.includes('.renderControls(');
+  return /[tT]estFilter(\.(renderControls|renderFileDiff)\(|: this\._testFilter\b)/.test(source);
 }
 
-const sources = componentSources();
+const sources = uiSources();
 const diffViews = [...sources].filter(([, source]) => isDiffView(source)).map(([file]) => file);
 
 test('every diff or changed-file view renders the shared hide-tests filter', () => {
   const missing = diffViews.filter(
-    (file) => !(file in DELEGATED) && !usesFilter(sources.get(file) ?? ''),
+    (file) => !(file in DEV_HARNESS_DIFF_VIEWS) && !usesFilter(sources.get(file) ?? ''),
   );
   assert.deepEqual(
     missing,
     [],
-    'render the list through DiffTestFilterController (split + renderControls), or add the ' +
-      'file to DELEGATED naming the filtered view that owns its list',
+    'render the list with testFilter.renderControls, a one-file diff with ' +
+      'testFilter.renderFileDiff, or pass the controller to a renderer that does',
   );
 });
 
@@ -90,14 +92,20 @@ test('the scan finds every known diff view', () => {
   }
 });
 
-test('delegated files still show diff content and point at filtered views', () => {
-  for (const [file, { filteredBy }] of Object.entries(DELEGATED)) {
-    assert.ok(diffViews.includes(file), `${file} no longer shows diff content; drop it`);
-    for (const owner of filteredBy) {
-      assert.ok(
-        usesFilter(sources.get(owner) ?? ''),
-        `${file} relies on ${owner}, which is unfiltered`,
-      );
-    }
+test('the dev harness exclusions match the dev pages that show diffs', () => {
+  assert.deepEqual(
+    diffViews.filter((file) => file.startsWith('dev/')).sort(),
+    Object.keys(DEV_HARNESS_DIFF_VIEWS).sort(),
+  );
+});
+
+test('the markers catch a hand-rolled diff view', () => {
+  const handRolled = [
+    'return html`${lines.map((line) => line.startsWith("@@") ? hunk(line) : row(line))}`;',
+    'return html`<code-viewer .content=${src} .changedLines=${lines}></code-viewer>`;',
+  ];
+  for (const source of handRolled) {
+    assert.equal(isDiffView(source), true, source);
+    assert.equal(usesFilter(source), false);
   }
 });

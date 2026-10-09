@@ -15,6 +15,7 @@ import './tab-bar.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import type { FileEntry } from './file-tree.js';
 // NOTE: diff-review and code-viewer use createRenderRoot()=>this (no Shadow DOM)
@@ -54,6 +55,8 @@ export class SlotWorkspace extends LitElement {
   @state() private _liveDiffContents = new Map<string, string>();
   @state() private _loading = false;
   @state() private _error = '';
+  // Slot workspaces have no branch-diff patterns here; the defaults apply.
+  private readonly _testFilter = new DiffTestFilterController(this);
 
   private _gitPollTimer: ReturnType<typeof setInterval> | null = null;
   private _prevSlotId = '';
@@ -208,6 +211,17 @@ export class SlotWorkspace extends LitElement {
     }
 
     /* Plain text fallback viewer */
+    .diff-pane {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .diff-pane-body {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+    }
     .plain-viewer {
       position: absolute;
       top: 0;
@@ -471,7 +485,12 @@ export class SlotWorkspace extends LitElement {
 
     if (tab.type === 'diff') {
       const diff = this._diffs.get(this.activeFile) ?? '';
-      return this._renderDiffView(diff);
+      return html`<div class="diff-pane">
+        ${this._testFilter.renderFileDiff(
+          this.activeFile,
+          () => html`<div class="diff-pane-body">${this._renderDiffView(diff)}</div>`,
+        )}
+      </div>`;
     }
 
     const content = this._files.get(this.activeFile) ?? '';
