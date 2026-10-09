@@ -24,11 +24,15 @@ export async function findUnmergedSlotWork(
   const unpushed = (
     await exec(vars, `${git} log --oneline HEAD --not --remotes 2>/dev/null | head -5`)
   ).stdout.trim();
-  if (!dirty && !unpushed) return null;
-  // GitHub deletes a merged PR's branch, so a branch gone from the remote it
-  // pushes to has nothing left to lose. A remote that cannot be asked proves
-  // nothing, so the work stays protected.
-  const remote = `$(${git} config --get ${shellQuote(`branch.${branch}.pushRemote`)} || ${git} config --get remote.pushDefault || ${git} config --get ${shellQuote(`branch.${branch}.remote`)} || echo origin)`;
+  // Edits in the working tree were never published anywhere: always keep them.
+  if (dirty) return unpushed ? 'dirty files + unpushed commits' : 'dirty files';
+  if (!unpushed) return null;
+  // GitHub deletes a merged PR's branch, so commits whose branch is gone from
+  // the remote the publish pushed to have nothing left to lose. Publication
+  // runs `git push -u`, which records that remote as the branch's upstream;
+  // push-remote config may name a different one and proves nothing. A remote
+  // that cannot be asked proves nothing either, so the work stays protected.
+  const remote = `$(${git} config --get ${shellQuote(`branch.${branch}.remote`)} || echo origin)`;
   const probe = await exec(
     vars,
     `${git} ls-remote --heads "${remote}" ${shellQuote(branch)} 2>/dev/null`,
@@ -39,5 +43,5 @@ export async function findUnmergedSlotWork(
     );
     return null;
   }
-  return [dirty && 'dirty files', unpushed && 'unpushed commits'].filter(Boolean).join(' + ');
+  return 'unpushed commits';
 }

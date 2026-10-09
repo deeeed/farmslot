@@ -5,8 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- A published run frees its slot when it ends. Its worker exits even when Farmslot never captured the worker's conversation id, and reviewer panes are matched by their recorded pane id, so the slot no longer stays held with "Agent is working". An unpublished run still keeps a worker it cannot resume.
-- `slot release` stops reporting a published branch as `UNMERGED_WORK` "unpushed commits". A commit counts as pushed when any remote-tracking ref contains it, so slots that push to a `fork` or `org` remote are covered too. The old check always fell back to comparing against the local default branch. The merged-branch probe asks the branch's push remote instead of `origin`, and refuses when that remote cannot be reached.
+- A published run frees its slot when it ends. Its worker exits even when Farmslot never captured the worker's conversation id, and reviewer panes are matched by their recorded pane id, so the slot no longer stays held with "Agent is working". Before sending the exit it re-reads the live pane and runner, and leaves them alone if either changed. An unpublished run still keeps a worker it cannot resume.
+- `slot release` stops reporting a published branch as `UNMERGED_WORK` "unpushed commits". A commit counts as pushed when any remote-tracking ref contains it, so slots that push to a `fork` or `org` remote are covered too. The old check always fell back to comparing against the local default branch. The merged-branch probe asks the remote the publish pushed to (the upstream `git push -u` recorded), not push-remote config, and refuses when that remote cannot be reached. Dirty files always refuse, even when the branch is gone from the remote.
 
 ## 0.20.5 - 2026-10-08
 

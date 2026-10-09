@@ -5,8 +5,12 @@ import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.
 import { getRun } from '../runs/store.js';
 
 import { getRunnerDefinition, isKnownRunner, runnerPromptSubmitKey } from './registry.js';
-import { RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS, stopRunnerForPark } from './session-lifecycle.js';
-import { probeRunnerDescendantPid } from './session-process.js';
+import {
+  RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS,
+  RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+  stopRunnerForPark,
+} from './session-lifecycle.js';
+import { probeRunnerDescendantPid, RUNNER_PROCESS_PROBE_TIMEOUT_MS } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -16,46 +20,75 @@ export function contextPaneId(target: AgentContextTarget): string | null {
   return target.pane && /^%\d+$/.test(target.pane) ? target.pane : null;
 }
 
+interface PublishedWorker {
+  paneId: string;
+  session: string;
+  panePid: string;
+  runnerPid: string;
+  runner: string;
+}
+
 /** Exit a published run's worker in its exact pane; returns why the exit was not confirmed. */
 async function exitPublishedRunWorker(
   vars: SlotVars,
-  paneId: string,
-  panePid: string,
-  runner: string,
+  worker: PublishedWorker,
   assertOwned: () => Promise<void>,
+  timeoutMs: number,
 ): Promise<string | null> {
-  const exit = isKnownRunner(runner) ? getRunnerDefinition(runner).gracefulExit : null;
-  if (!exit) return `runner '${runner}' has no graceful exit capability`;
+  const exit = isKnownRunner(worker.runner)
+    ? getRunnerDefinition(worker.runner).gracefulExit
+    : null;
+  if (!exit) return `runner '${worker.runner}' has no graceful exit capability`;
+  // Every step spends the same ceiling, so a hung host cannot stretch the stop.
+  const deadline = Date.now() + timeoutMs;
+  const exec = (cmd: string) =>
+    execOnSlot(vars, cmd, { cwd: '/', timeout: Math.max(1, deadline - Date.now()) });
+  const probe = () =>
+    probeRunnerDescendantPid(vars, worker.panePid, worker.runner, {
+      timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+      attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+      deadline,
+    });
   await assertOwned();
-  const preserved = await execOnSlot(
-    vars,
-    tmuxShellSnippet(`set-option -p -t ${shellQuote(paneId)} remain-on-exit on`),
-    { cwd: '/' },
+  const preserved = await exec(
+    tmuxShellSnippet(`set-option -p -t ${shellQuote(worker.paneId)} remain-on-exit on`),
   );
   if (preserved.exitCode !== 0) return 'the worker pane could not be preserved';
   await assertOwned();
-  const sent = await execOnSlot(
-    vars,
-    tmuxSendTextCommand(paneId, exit.command, {
+  // Stored metadata cannot see a pane moved to another session meanwhile, so
+  // the live pane and its runner must still be the ones first checked.
+  const pane = await exec(
+    tmuxShellSnippet(
+      `display-message -p -t ${shellQuote(worker.paneId)} -F '#{session_name}\t#{pane_id}\t#{pane_pid}'`,
+    ),
+  );
+  if (pane.stdout.trim() !== `${worker.session}\t${worker.paneId}\t${worker.panePid}`)
+    return 'the worker pane changed before the exit was sent';
+  const before = await probe();
+  if (before.state !== 'present' || before.pid !== worker.runnerPid)
+    return 'the worker runner changed before the exit was sent';
+  const sent = await exec(
+    tmuxSendTextCommand(worker.paneId, exit.command, {
       enter: true,
-      submitKey: runnerPromptSubmitKey(runner),
+      submitKey: runnerPromptSubmitKey(worker.runner),
       submitDelayMs: exit.submitDelayMs,
     }),
-    { cwd: '/' },
   );
   if (sent.exitCode !== 0) return `graceful exit was not delivered (exit ${sent.exitCode})`;
-  const deadline = Date.now() + RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const live = await probeRunnerDescendantPid(vars, panePid, runner);
+    const live = await probe();
     if (live.state === 'absent') return null;
     if (live.state === 'unknown') return `runner liveness is unknown (${live.code})`;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  return `runner did not exit within ${RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS}ms`;
+  return `runner did not exit within ${timeoutMs}ms`;
 }
 
 /** Stop this run's exact saved conversations (any of its workers once published); sessions stay. */
-export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> {
+export async function stopRunOwnedTmuxWorkers(
+  run: Run,
+  { exitTimeoutMs = RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS }: { exitTimeoutMs?: number } = {},
+): Promise<string | null> {
   const expectedGeneration = run.engineState?.generation;
   const contexts = structuredClone(run.agentContexts ?? []);
   for (const context of contexts) {
@@ -116,10 +149,9 @@ export async function stopRunOwnedTmuxWorkers(run: Run): Promise<string | null> 
         return `Worker ${context.id} cannot be stopped without its exact saved conversation identity; cleanup deferred`;
       const failure = await exitPublishedRunWorker(
         vars,
-        targetPaneId,
-        panePid,
-        context.runner,
+        { paneId: targetPaneId, session, panePid, runnerPid: live.pid, runner: context.runner },
         assertOwned,
+        exitTimeoutMs,
       );
       if (failure) return `Worker ${context.id} stop was not confirmed: ${failure}`;
       continue;

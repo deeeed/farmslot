@@ -14,9 +14,19 @@ const RUN_ID = 'run-owned-stop';
 const SLOT_ID = 'macwork-mmt-3';
 
 let run: Run;
-/** Live panes by pane id: tmux session, pane pid, and whether a codex runs in it. */
-let panes: Map<string, { session: string; panePid: string; runnerLive: boolean }>;
+interface FakePane {
+  session: string;
+  panePid: string;
+  runnerPid: string;
+  runnerLive: boolean;
+  /** False for a runner that ignores the exit command. */
+  exitsOnRequest: boolean;
+}
+/** Live panes by pane id. */
+let panes: Map<string, FakePane>;
 let commands: string[];
+/** Runs when the pane is set to remain on exit: between the ownership check and the send. */
+let onPreserve: (() => void) | null;
 
 mock.module('../core/index.js', {
   namedExports: {
@@ -32,8 +42,10 @@ mock.module('../core/index.js', {
           ? { stdout: `${pane.session}\t${display[1]}\t${pane.panePid}\n`, stderr: '', exitCode: 0 }
           : { stdout: '', stderr: "can't find pane", exitCode: 1 };
       }
+      if (cmd.includes('remain-on-exit on')) onPreserve?.();
       const send = /send-keys -t '?(%\d+)'? -l '?\/exit/.exec(cmd);
-      if (send) panes.get(send[1])!.runnerLive = false;
+      const pane = send && panes.get(send[1]);
+      if (pane?.exitsOnRequest) pane.runnerLive = false;
       return { stdout: '', stderr: '', exitCode: 0 };
     },
   },
@@ -44,23 +56,25 @@ mock.module('../runs/store.js', {
 mock.module('./session-process.js', {
   namedExports: {
     ...realSessionProcess,
-    probeRunnerDescendantPid: async (_vars: unknown, panePid: string) =>
-      [...panes.values()].some((pane) => pane.panePid === panePid && pane.runnerLive)
-        ? { state: 'live', pid: '4242' }
-        : { state: 'absent' },
+    probeRunnerDescendantPid: async (_vars: unknown, panePid: string) => {
+      const pane = [...panes.values()].find((p) => p.panePid === panePid && p.runnerLive);
+      return pane ? { state: 'present', pid: pane.runnerPid } : { state: 'absent' };
+    },
   },
 });
 
 const { stopRunOwnedTmuxWorkers } = await import('./owned-stop.js');
 
 /** TAT-4091's shape: a dev worker whose conversation id was never captured, plus a reviewer. */
-function tat4091Run(publicationStatus?: 'published_ready'): Run {
+type Publication = 'published_ready' | 'published_draft';
+
+function tat4091Run(publicationStatus?: Publication, runner = 'codex'): Run {
   const dev = {
     id: 'dev',
     role: 'dev',
     label: 'Dev',
     status: 'complete',
-    runner: 'codex',
+    runner,
     runId: RUN_ID,
     slotId: SLOT_ID,
     target: { session: 'mmt-3', window: 'dev', pane: '1', paneId: '%75', target: 'mmt-3:dev' },
@@ -88,11 +102,23 @@ function tat4091Run(publicationStatus?: 'published_ready'): Run {
   } as unknown as Run;
 }
 
-function setup(publicationStatus?: 'published_ready'): void {
-  run = tat4091Run(publicationStatus);
+function setup(publicationStatus?: Publication, runner = 'codex'): void {
+  run = tat4091Run(publicationStatus, runner);
   // The reviewer pane already closed; the idle dev worker still holds the slot.
-  panes = new Map([['%75', { session: 'mmt-3', panePid: '62888', runnerLive: true }]]);
+  panes = new Map([
+    [
+      '%75',
+      {
+        session: 'mmt-3',
+        panePid: '62888',
+        runnerPid: '4242',
+        runnerLive: true,
+        exitsOnRequest: true,
+      },
+    ],
+  ]);
   commands = [];
+  onPreserve = null;
 }
 
 const exitsSentTo = (paneId: string) =>
@@ -122,8 +148,63 @@ test('an unpublished run keeps a worker it cannot resume', async () => {
 
 test('a published run never exits a pane another session now holds', async () => {
   setup('published_ready');
-  panes.set('%75', { session: 'other-session', panePid: '62888', runnerLive: true });
+  panes.get('%75')!.session = 'other-session';
 
   assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /pane ownership changed/);
   assert.equal(exitsSentTo('%75'), 0);
+});
+
+test('a pane moved to another session after the check gets no exit', async () => {
+  setup('published_ready');
+  onPreserve = () => {
+    panes.get('%75')!.session = 'other-session';
+  };
+
+  assert.match(
+    (await stopRunOwnedTmuxWorkers(run)) ?? '',
+    /Worker dev stop was not confirmed: the worker pane changed before the exit was sent/,
+  );
+  assert.equal(exitsSentTo('%75'), 0);
+  assert.equal(panes.get('%75')!.runnerLive, true);
+});
+
+test('a runner replaced in the pane after the check gets no exit', async () => {
+  setup('published_ready');
+  onPreserve = () => {
+    panes.get('%75')!.runnerPid = '5151';
+  };
+
+  assert.match(
+    (await stopRunOwnedTmuxWorkers(run)) ?? '',
+    /the worker runner changed before the exit was sent/,
+  );
+  assert.equal(exitsSentTo('%75'), 0);
+});
+
+test('a draft publication also frees the worker', async () => {
+  setup('published_draft');
+
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.equal(exitsSentTo('%75'), 1);
+});
+
+test('a published worker whose runner has no graceful exit is left alone', async () => {
+  setup('published_ready', 'pi');
+
+  assert.match(
+    (await stopRunOwnedTmuxWorkers(run)) ?? '',
+    /runner 'pi' has no graceful exit capability/,
+  );
+  assert.ok(!commands.some((cmd) => cmd.includes('send-keys')));
+});
+
+test('a worker that ignores the exit is reported once the ceiling passes', async () => {
+  setup('published_ready');
+  panes.get('%75')!.exitsOnRequest = false;
+
+  assert.match(
+    (await stopRunOwnedTmuxWorkers(run, { exitTimeoutMs: 300 })) ?? '',
+    /runner did not exit within 300ms/,
+  );
+  assert.equal(exitsSentTo('%75'), 1);
 });

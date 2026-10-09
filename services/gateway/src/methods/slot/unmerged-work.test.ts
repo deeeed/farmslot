@@ -40,6 +40,8 @@ function slotRepo(t: test.TestContext, remotes: string[]) {
   git(root, 'init', '-q', '-b', 'main', repo);
   git(repo, 'config', 'user.email', 'test@example.com');
   git(repo, 'config', 'user.name', 'Test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  git(repo, 'config', 'tag.gpgsign', 'false');
   commit(repo, 'base.txt');
   for (const remote of remotes) {
     const bare = path.join(root, `${remote}.git`);
@@ -80,6 +82,38 @@ test('dirty files on a published branch are still refused', async (t) => {
   writeFileSync(path.join(repo, 'fix.txt'), 'edited\n');
 
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files');
+});
+
+test('dirty files are refused even after the branch was deleted from the remote', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  git(repo, 'push', '-q', 'origin', '--delete', BRANCH);
+  writeFileSync(path.join(repo, 'fix.txt'), 'edited after merge\n');
+
+  // The deletion drops the tracking ref too; without the edit this would be allowed.
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files + unpushed commits');
+});
+
+test('dirty files are refused when push config names a remote the publish never used', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin', 'fork']);
+  git(repo, 'config', 'remote.pushDefault', 'fork');
+  // Publication pushes to origin explicitly; fork never sees the branch.
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  writeFileSync(path.join(repo, 'fix.txt'), 'follow-up edit\n');
+
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files');
+});
+
+test('the merged-branch probe asks the remote the publish pushed to, not push config', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin', 'fork']);
+  git(repo, 'config', `branch.${BRANCH}.pushRemote`, 'fork');
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  commit(repo, 'follow-up.txt');
+
+  // fork has no such branch, but origin (where the publish went) still does.
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+  git(repo, 'push', '-q', 'origin', '--delete', BRANCH);
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
 });
 
 test('unpushed work is allowed to go once its branch is deleted from the remote', async (t) => {
