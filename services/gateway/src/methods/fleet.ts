@@ -44,6 +44,7 @@ import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js'
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 
+import { slotPinIsRequestOnly } from './dispatch/slot-scoring.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
@@ -248,12 +249,7 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   if (!activeRun) return row;
   // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
   // manufacture that claim and make the request fail its own busy-slot check.
-  if (
-    ['created', 'slot-finding'].includes(activeRun.status) &&
-    row.current_run_id !== activeRun.id &&
-    row.handoff_run_id !== activeRun.id
-  )
-    return row;
+  if (slotPinIsRequestOnly(activeRun, row)) return row;
   // A releasing fence belongs to an in-flight teardown: overwriting it with
   // the active run's phase would reopen the slot mid-destruction. Preserve
   // the fence; the teardown's own CAS finalize decides what comes next.

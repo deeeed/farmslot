@@ -2,6 +2,7 @@ import type { SlotActionRunResult, SlotActionSummary } from '@farmslot/protocol'
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import type { SlotView } from './slot-view.js';
 import {
@@ -58,7 +59,7 @@ export async function executeConfiguredSlotViewAction(
     const result = await gateway.request<SlotActionRunResult>(
       Methods.SLOT_ACTION_RUN,
       { slotId: view.slotId, actionId: action.id },
-      5 * 60_000,
+      SLOT_OPERATION_TIMEOUT_MS,
     );
     if (action.mode === 'copy' && result.command) {
       await copySlotViewText(result.command);

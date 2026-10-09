@@ -34,6 +34,7 @@ import {
   resetSlotIf,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
   type SlotVars,
   updateSlotStatusIf,
@@ -74,9 +75,10 @@ import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
 import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
+import { prepareIdentityPath, reapSlotPrepareScope } from './prepare-command.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
-import { applySelectedApp, type EventEmitter } from './shared.js';
+import { activePrepareAborts, applySelectedApp, type EventEmitter } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
@@ -94,6 +96,13 @@ const inflightReleases = new Map<
   string,
   { key: string; promise: Promise<{ released: boolean }> }
 >();
+
+/** How long a release waits for an aborted in-flight prepare to settle. A
+ * git command stalled on a dropped network never observes the abort; past
+ * this the slot is held with the reason instead of the release hanging. */
+export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
+/** Progress while waiting, so a CLI idle timeout does not end the release first. */
+const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
 function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
   // Only semantically identical requests may share one teardown; a request
@@ -116,9 +125,13 @@ export async function slotRelease(
   emit: EventEmitter,
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
-  options?: { restartRunId: string },
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
 ): Promise<{ released: boolean }> {
-  if (options && options.restartRunId !== params.expectedRunId) {
+  if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
   }
   const key = releaseCoalesceKey(params, options?.restartRunId);
@@ -151,18 +164,37 @@ export async function slotRelease(
   return teardown;
 }
 
-async function slotReleaseImpl(
+export interface SlotUnmergedWork {
+  branch: string;
+  details: string;
+}
+
+export interface SlotReleasePreflight {
+  vars: SlotVars;
+  boundOwner: string | null;
+  projectVars: ProjectVars | undefined;
+  projectJson: RawProjectJson;
+  defaultBranch: string;
+  /** Work a full release would discard; null under keepWork/forceReset. */
+  unmergedWork: SlotUnmergedWork | null;
+}
+
+/**
+ * The release's read-only guards, run before any teardown side effect. Returns
+ * null when the release is a no-op (slot mid-release, or held by a run other
+ * than `expectedRunId`) and throws when a guard refuses. Unmerged work is
+ * returned, not thrown, so each caller words the refusal for its own action.
+ */
+export async function slotReleasePreflight(
   params: SlotReleaseParams,
-  emit: EventEmitter,
-  options?: { restartRunId: string },
-): Promise<{ released: boolean }> {
+): Promise<SlotReleasePreflight | null> {
   // Cheap early checks (authoritative validation happens atomically at the
-  // releasing-marker CAS below, after the non-destructive preflight). A slot
+  // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
   // already mid-release belongs to that teardown — a bound release joining at
   // the same epoch would run a second destructive pass.
   if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING) {
     console.log(`[release] slot ${params.slotId} is already mid-release; leaving it untouched`);
-    return { released: false };
+    return null;
   }
   const boundOwner =
     ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
@@ -170,7 +202,7 @@ async function slotReleaseImpl(
     console.log(
       `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
     );
-    return { released: false };
+    return null;
   }
   const vars = await loadSlotVars(params.slotId);
   const forceReset = params.forceReset ?? false;
@@ -215,6 +247,64 @@ async function slotReleaseImpl(
   }
 
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const unmergedWork =
+    params.keepWork || forceReset
+      ? null
+      : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
+  return { vars, boundOwner, projectVars, projectJson, defaultBranch, unmergedWork };
+}
+
+async function findReleaseUnmergedWork(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars: ProjectVars | undefined,
+  defaultBranch: string,
+): Promise<SlotUnmergedWork | null> {
+  const currentBranch = (
+    await execOnSlot(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+    )
+  ).stdout.trim();
+  const linkedWorktree = await detectLinkedWorktree(vars);
+  const trackingBranch = resolveSlotTrackingBranchFromProject(
+    projectJson,
+    vars,
+    projectVars,
+    linkedWorktree,
+  );
+  if (
+    !currentBranch ||
+    isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
+  )
+    return null;
+  const details = await findUnmergedSlotWork(vars, currentBranch);
+  return details ? { branch: currentBranch, details } : null;
+}
+
+function unmergedWorkError(work: SlotUnmergedWork): Error {
+  return new Error(
+    `UNMERGED_WORK:${work.branch}:${work.details}:Slot has work on '${work.branch}' (${work.details}) that would be lost. Use Force Reset to discard.`,
+  );
+}
+
+async function slotReleaseImpl(
+  params: SlotReleaseParams,
+  emit: EventEmitter,
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
+): Promise<{ released: boolean }> {
+  const preflight = await slotReleasePreflight(params);
+  if (!preflight) return { released: false };
+  // Refused before the kill below, so a refusal leaves the worker running. Step 2
+  // checks again after the kill for work the worker wrote in between.
+  if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
+  const { vars, boundOwner, projectVars, projectJson, defaultBranch } = preflight;
+  const forceReset = params.forceReset ?? false;
+  const preserveAgents = params.preserveAgents ?? false;
   const keepWarm = params.keepWarm ?? false;
   const keepWork = params.keepWork ?? false;
   const skipArtifacts = params.skipArtifacts ?? false;
@@ -245,6 +335,9 @@ async function slotReleaseImpl(
   // never be silently replaced by a rival claim's — the predicate re-reads
   // the CURRENT owner inside the write chain, and when expectedRunId is set
   // the teardown is refused unless that exact run still holds the claim.
+  // The owner the releasing fence actually lands on: an unbound release takes
+  // whoever holds the slot then, which may be a claim made after the preflight.
+  let releasedOwner: string | null = null;
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
@@ -257,6 +350,7 @@ async function slotReleaseImpl(
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
+      releasedOwner = owner;
       if (params.expectedRunId) return owner === params.expectedRunId;
       // Unbound (operator) release: releases whoever currently holds the slot.
       return true;
@@ -361,6 +455,66 @@ async function slotReleaseImpl(
       await killAllAgentWindows(vars);
     }
     step('agent', 'Agent killed');
+    // A release during or after preflight would otherwise publish readiness
+    // while the prepare group and its holder keep running in the repository.
+    // A prepare still in flight is stopped and joined first, for at most
+    // RELEASE_PREPARE_STOP_TIMEOUT_MS: it would launch its holder after the
+    // reap found nothing. This teardown holds the
+    // releasing fence, so the recorded scope is this slot's own. A group that
+    // survives keeps the slot held with the reason, and the release fails.
+    let holdReason: string | null = null;
+    const inflightPrepare = activePrepareAborts.get(params.slotId);
+    if (inflightPrepare) {
+      step('prepare', 'Stopping in-flight prepare...');
+      inflightPrepare.abort();
+      const stopMs = options?.prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
+      const waitStart = Date.now();
+      const heartbeat = setInterval(
+        () =>
+          step(
+            'prepare',
+            `Waiting for in-flight prepare to stop… ${Math.round((Date.now() - waitStart) / 1000)}s`,
+          ),
+        options?.prepareStopHeartbeatMs ?? RELEASE_PREPARE_STOP_HEARTBEAT_MS,
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopped = await Promise.race([
+        inflightPrepare.settled.then(() => true),
+        new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), stopMs))),
+      ]);
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      if (!stopped)
+        holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
+    }
+    if (!holdReason) {
+      try {
+        const stopped = await reapSlotPrepareScope(vars, {
+          identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
+        });
+        step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
+      } catch (error) {
+        holdReason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (holdReason) {
+      const reason = holdReason;
+      step('prepare', reason);
+      const held = await guardedTeardownWrite({
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: reason,
+        [SLOT_RELEASING_SINCE]: null,
+      });
+      if (!held) {
+        complete(0);
+        return { released: false };
+      }
+      complete(1);
+      // Thrown, not `released: false`: callers that print or log success on
+      // a settled release must report a slot left held.
+      throw new Error(`Slot ${params.slotId} stays held: ${reason}`);
+    }
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
     // without operator images sitting in its runtime dir.
@@ -400,30 +554,15 @@ async function slotReleaseImpl(
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   if (!keepWork && !forceReset) {
-    const currentBranch = (
-      await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
-      )
-    ).stdout.trim();
-    const linkedWorktree = await detectLinkedWorktree(vars);
-    const trackingBranch = resolveSlotTrackingBranchFromProject(
-      projectJson,
+    const unmergedWork = await findReleaseUnmergedWork(
       vars,
+      projectJson,
       projectVars,
-      linkedWorktree,
+      defaultBranch,
     );
-    if (
-      currentBranch &&
-      !isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
-    ) {
-      const details = await findUnmergedSlotWork(vars, currentBranch);
-      if (details) {
-        await markSlotBusy(params.slotId, 'working');
-        throw new Error(
-          `UNMERGED_WORK:${currentBranch}:${details}:Slot has work on '${currentBranch}' (${details}) that would be lost. Use Force Reset to discard.`,
-        );
-      }
+    if (unmergedWork) {
+      await markSlotBusy(params.slotId, 'working');
+      throw unmergedWorkError(unmergedWork);
     }
   }
 
@@ -537,7 +676,10 @@ async function slotReleaseImpl(
     }
   }
 
-  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. Release flips
+  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. (The preflight
+  // group was already reaped in step 1, so a dev server the preflight hook
+  // backgrounded with `&` inside that group is gone; one started in its own
+  // process group is not.) Release flips
   // the slot back to ready but leaves the simulator / dev-server / browser
   // alive so the next run reuses warm infra and so a human-driven manual
   // build in the worktree isn't yanked out from under them.
@@ -609,7 +751,7 @@ async function slotReleaseImpl(
   if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');
     try {
-      await slotPrepare({ slotId: params.slotId }, emit);
+      await slotPrepare({ slotId: params.slotId }, emit, undefined, { duringRelease: true });
       if (!(await resetSlotIf(params.slotId, epochStillOurs, true))) return abortReset();
     } catch (err) {
       step('reprepare', `Re-prepare had issues: ${(err as Error).message}`);
@@ -619,7 +761,7 @@ async function slotReleaseImpl(
     if (!(await resetSlotIf(params.slotId, epochStillOurs))) return abortReset();
   }
   if (detachRuns) {
-    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit);
+    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit, releasedOwner);
     if (detachedRunIds.length > 0) {
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }

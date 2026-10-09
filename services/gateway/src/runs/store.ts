@@ -1536,33 +1536,50 @@ export async function archiveRun(id: string): Promise<boolean> {
   return archived;
 }
 
-async function archiveRunBody(id: string): Promise<boolean> {
-  const run = runs.get(id);
-  if (!run) return false;
+/**
+ * Whether a blocked run is still its slot's current run. A fleet refresh re-holds
+ * a blocked run's slot, so a settled blocked run can still own it.
+ */
+export async function blockedRunOwnsSlot(run: Run): Promise<boolean> {
+  return (
+    run.status === 'blocked' &&
+    Boolean(run.slotId) &&
+    (await readSlotField(run.slotId!, 'current_run_id')) === run.id
+  );
+}
+
+/**
+ * Archive refusals that need no slot I/O. run.archive checks them before it
+ * releases a blocked run's slot, so it never releases and then refuses.
+ */
+export function assertRunArchivable(run: Run): void {
   if (run.output?.cleanupPending || run.output?.closeError)
-    throw new Error(`Cannot archive run ${id} before output closeout cleanup finishes`);
+    throw new Error(`Cannot archive run ${run.id} before output closeout cleanup finishes`);
   // A settled blocked run counts as active for recovery and the inventory, but
   // nothing can advance it; archiving is the operator's way to close it while
   // keeping the blocked outcome (unlike cancel, which overwrites it).
   if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
-    throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
+    throw new Error(`Cannot archive active run ${run.id} (status=${run.status})`);
   }
-  if (run.status === 'blocked' && run.slotId) {
-    // The live store is what keeps the orphan reconciler off a blocked run's
-    // slot. If the slot row still names this run, something (a preserved
-    // runner, an unfinished release) still owns it; evicting the run would let
-    // the reconciler lifecycle-reset the slot around a live worker.
-    const owner = await readSlotField(run.slotId, 'current_run_id');
-    if (owner === id) {
-      throw new Error(
-        `Cannot archive blocked run ${id}: slot ${run.slotId} still lists it as current run (cancel it to release the slot)`,
-      );
-    }
+  if (run.backlogReconcilePending) {
+    throw new Error(`Cannot archive run ${run.id} while backlog reconciliation is pending`);
+  }
+}
+
+async function archiveRunBody(id: string): Promise<boolean> {
+  const run = runs.get(id);
+  if (!run) return false;
+  assertRunArchivable(run);
+  // The live store is what keeps the orphan reconciler off a blocked run's
+  // slot. If the slot row still names this run, something (a preserved
+  // runner, an unfinished release) still owns it; evicting the run would let
+  // the reconciler lifecycle-reset the slot around a live worker.
+  if (await blockedRunOwnsSlot(run)) {
+    throw new Error(
+      `Cannot archive blocked run ${id}: slot ${run.slotId} still lists it as current run (release the slot first)`,
+    );
   }
   assertNativeWorkersReleased(run);
-  if (run.backlogReconcilePending) {
-    throw new Error(`Cannot archive run ${id} while backlog reconciliation is pending`);
-  }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // A blocked run is not a terminal outcome, so emitAnalyticsForTerminalRun
   // returns null for it on purpose: the archived JSON is its record and the
