@@ -191,6 +191,8 @@ export interface PublishCompletionPackageResult extends CompletionResult {
   publicationStatus: PublicationStatus;
   packageHash: string;
   bodyPostProcessed: boolean;
+  /** The title and body posted to the PR; absent when this call posted nothing. */
+  publishedDescription?: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>;
 }
 
 /**
@@ -1288,17 +1290,32 @@ export async function publishCompletionPackage(
       name: 'post-process-pr-body',
       detail: `Rewriting PR #${prNumber} body with artifact links`,
     });
-    await postProcessPRBody(latestRun, ciRepo, prNumber, artifactUrls, selectedEvidenceKeys, {
-      failOnError: true,
-      baseBody: approvedPackage.draftBody,
-      evidenceManifest,
-      validateBody: prTemplate ? (body) => reportTemplateDrift(body, 'published body') : undefined,
-    });
+    const postedBody = await postProcessPRBody(
+      latestRun,
+      ciRepo,
+      prNumber,
+      artifactUrls,
+      selectedEvidenceKeys,
+      {
+        failOnError: true,
+        baseBody: approvedPackage.draftBody,
+        evidenceManifest,
+        validateBody: prTemplate
+          ? (body) => reportTemplateDrift(body, 'published body')
+          : undefined,
+      },
+    );
     flags.bodyPostProcessed = true;
 
     emit('substep', { name: 'apply-pr-title', detail: `Updating PR #${prNumber} title` });
     await applyApprovedPrTitle(ciRepo, prNumber, approvedPackage);
     flags.prTitleUpdated = true;
+    if (postedBody !== null) {
+      flags.publishedDescription = {
+        draftTitle: approvedPackage.draftTitle,
+        draftBody: postedBody,
+      };
+    }
 
     if (target === 'ready') {
       emit('substep', {

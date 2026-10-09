@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,9 +14,11 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 import {
   assertReadyGatePackageInputsCurrent,
   buildPreparedDraftPrBody,
+  publishCompletionPackage,
   renderCurrentDescription,
 } from './orchestrator.js';
 import { __setPrBodyRenderDepsForTest } from './pr-body-render.js';
+import { postProcessPRBody } from './publication-artifacts.js';
 import {
   assertLiveHeadMatchesPackage,
   computeReadyGatePackageHash,
@@ -293,4 +295,142 @@ test('the gate shows, publishes and records the current render while approval ke
   });
   assert.equal(recorded.prPackage?.packageHash, reviewed.packageHash);
   assert.equal(recorded.prPackage?.draftBody, 'Reviewed body A.');
+});
+
+/** A local `gh` on PATH that copies every posted PR body to `capture`; nothing reaches GitHub. */
+async function installGhCapture(t: import('node:test').TestContext) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-gh-capture-'));
+  const capture = path.join(dir, 'posted-body.md');
+  const gh = path.join(dir, 'gh');
+  await writeFile(
+    gh,
+    `#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = --body-file ]; then cp "$2" '${capture}'; exit $?; fi\n  shift\ndone\nexit 0\n`,
+  );
+  await chmod(gh, 0o700);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath}`;
+  t.after(async () => {
+    process.env.PATH = originalPath;
+    await rm(dir, { recursive: true, force: true });
+  });
+  return capture;
+}
+
+function storedRunWithGate(t: import('node:test').TestContext, payload: unknown) {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-1',
+    runner: 'claude',
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Ready',
+        description: 'Ready',
+        actions: [],
+        createdAt: '2026-10-09T00:00:00.000Z',
+        resolvedAt: '2026-10-09T00:01:00.000Z',
+        resolvedAction: 'approve-publish',
+        payload: payload as ReadyGatePayload,
+      },
+    ],
+  });
+  return run;
+}
+
+test('the recorded description is the body publication posted, without deselected evidence', async (t) => {
+  const capture = await installGhCapture(t);
+  const reviewed = packageWith(
+    'feat: implement PROJ-1',
+    [
+      '## **Description**',
+      '',
+      'Fix the order form.',
+      '',
+      '## **Screenshots/Recordings**',
+      '',
+      '<img src="artifacts/orders.png" alt="Orders" /> <img src="artifacts/activity.png" alt="Activity" />',
+      '',
+    ].join('\n'),
+  );
+  const run = storedRunWithGate(t, { kind: 'ready', prPackage: reviewed });
+  // The operator selected only the Orders screenshot.
+  const posted = await postProcessPRBody(
+    getRun(run.id)!,
+    'owner/repo',
+    4242,
+    new Map([
+      ['artifacts/orders.png', 'https://example.invalid/orders.png'],
+      ['artifacts/activity.png', 'https://example.invalid/activity.png'],
+    ]),
+    ['artifacts/orders.png'],
+    {
+      failOnError: true,
+      baseBody: reviewed.draftBody,
+      evidenceManifest: {
+        version: 1,
+        preferred_mode: 'screenshots',
+        standalone: [
+          { label: 'Orders', file: 'orders.png' },
+          { label: 'Activity', file: 'activity.png' },
+        ],
+      },
+    },
+  );
+  const sent = await readFile(capture, 'utf-8');
+  assert.equal(posted, sent);
+  assert.match(sent, /orders\.png/);
+  assert.doesNotMatch(sent, /activity\.png|Activity/);
+
+  recordPublishedDescription(
+    run.id,
+    'gate-1',
+    { draftTitle: reviewed.draftTitle, draftBody: posted! },
+    '2026-10-09T00:02:00.000Z',
+  );
+  const recorded = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.equal(recorded.currentDescription?.body, sent);
+  assert.equal(recorded.prPackage?.draftBody, reviewed.draftBody);
+});
+
+test('a publish retry that posts nothing leaves the recorded description and its time alone', async (t) => {
+  const capture = await installGhCapture(t);
+  const reviewed = packageWith('feat: implement PROJ-1', 'Reviewed body A.');
+  const record = {
+    title: 'feat: implement PROJ-1',
+    body: 'Posted body.',
+    publishedAt: '2026-10-09T00:02:00.000Z',
+  };
+  const run = storedRunWithGate(t, {
+    kind: 'ready',
+    prPackage: reviewed,
+    currentDescription: record,
+  });
+  updateRun(run.id, {
+    prNumber: 4242,
+    engineState: { publishGate: { publicationStatus: 'published_ready' } },
+  });
+
+  // Finalize re-runs after a prose edit: the PR is already published.
+  const result = await publishCompletionPackage(run.id, {
+    ...reviewed,
+    draftBody: 'Reviewed body A.\n\nEdited after publication.\n',
+  });
+  assert.equal(result.bodyPostProcessed, false);
+  assert.equal(result.publishedDescription, undefined);
+  recordPublishedDescription(
+    run.id,
+    'gate-1',
+    result.publishedDescription,
+    '2026-10-09T00:03:00.000Z',
+  );
+  const payload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.deepEqual(payload.currentDescription, record);
+  assert.equal(payload.prPackage?.packageHash, reviewed.packageHash);
+  await assert.rejects(readFile(capture, 'utf-8'), { code: 'ENOENT' });
 });

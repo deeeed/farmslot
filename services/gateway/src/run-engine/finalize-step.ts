@@ -76,17 +76,18 @@ const S = PipelineSteps;
 const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug', 'update-branch']);
 
 /**
- * Records on the Ready gate decision the title and body publication used, so
- * the card shows what went out rather than the reviewed description.
+ * Records on the Ready gate decision the title and body publication posted, so
+ * the card shows what went out rather than the reviewed description. A
+ * publication that posted nothing (already published) leaves the record as is.
  */
 export function recordPublishedDescription(
   runId: string,
   decisionId: string | undefined,
-  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'> | undefined,
   publishedAt = new Date().toISOString(),
 ): void {
   const run = getRun(runId);
-  if (!run || !decisionId) return;
+  if (!run || !decisionId || !published) return;
   updateRun(runId, {
     decisions: run.decisions.map((decision) => {
       const payload = decision.payload as ReadyGatePayload | undefined;
@@ -370,7 +371,7 @@ export async function executeFinalizeStep(
       selectedEvidenceKeys,
       emit: emitWithBroadcast,
     });
-    recordPublishedDescription(runId, gateDecision?.id, approvedPackage);
+    recordPublishedDescription(runId, gateDecision?.id, published.publishedDescription);
     publicationStatus = published.publicationStatus;
     publicationTarget = selectedTarget;
     publishedPrNumber = published.prNumber;
