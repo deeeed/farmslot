@@ -755,6 +755,30 @@ test('codex-home config copies operator model_provider routing without writing t
   );
 });
 
+test('codex-home is marked usable without auth.json only while its provider needs no OpenAI auth', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-provider-auth-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-provider-auth-'));
+  const marker = path.join(repo, '.agent', 'codex-home', '.farmslot-provider-auth');
+  const authLink = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, 'requires_openai_auth = false', ''].join(
+      '\n',
+    ),
+  );
+  installCodexHome(repo, fakeHome, 'install-test-provider-auth');
+  assert.equal(fs.existsSync(authLink), false, 'no global auth.json to link');
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'codex-lb\n');
+
+  // The same provider without the flag needs auth.json again: the marker goes.
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  installCodexHome(repo, fakeHome, 'install-test-provider-auth');
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test('codex-home config copies a custom provider table that matches model_provider', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-custom-lb-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-custom-'));

@@ -455,12 +455,14 @@ export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string
   // ready-timeout. The observability install (bootstrapCodexHome) provisions this
   // isolated home (auth + isolated config.toml with hook-trust + hooks.json) so the
   // host's ~/.codex config is never written. Use it ONLY when that install actually
-  // provisioned it (auth present); otherwise fall back to the global ~/.codex with no
+  // provisioned it: auth.json linked, or the install's provider-auth marker when the
+  // routed provider needs no OpenAI auth (codex-lb has no auth.json to link). Otherwise
+  // fall back to the global ~/.codex with no
   // farmslot observability, so a codex worker launches regardless. We never create or
   // write the home here — that keeps the global config clean and avoids a half-built
   // home that codex would reject.
   return (
-    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
+    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ] || [ -e ${shellQuote(`${codexHome}/.farmslot-provider-auth`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
     `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
   );
 }
