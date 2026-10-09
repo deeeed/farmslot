@@ -1832,6 +1832,46 @@ test('orphan reconcile reclaims a stale release fence a settled blocked run was 
   );
 });
 
+test('a worker stop that throws keeps the fence and the pass goes on to the next slot', async () => {
+  const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
+  const blocked = minimalActiveRun({
+    id: 'blocked-stop-throws',
+    status: 'blocked',
+    steps: [{ name: 'monitor', status: 'done' }],
+  });
+  const reclaimed: string[] = [];
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [blocked] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        { slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' },
+        { slot: 'macwork-ff-3', lifecycle: 'busy', phase: 'working' },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async (slotId: string, field: string) =>
+      field === 'current_run_id' ? (slotId === 'macwork-ff-2' ? blocked.id : null) : stale,
+    getRun: (id: string) => (id === blocked.id ? blocked : undefined),
+    updateRun: () => {},
+    broadcast: () => {},
+    stopRunOwnedWorkers: async () => {
+      throw new Error('Worker dev ownership changed before stop; exit was not delivered');
+    },
+    resetSlot: async (slotId: string) => reset.push(slotId),
+    resetSlotIf: async (slotId: string) => {
+      reclaimed.push(slotId);
+      return true;
+    },
+    updateSlotStatusIf: async () => true,
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reclaimed, [], 'an unproven stop keeps the fence');
+  assert.deepEqual(reset, ['macwork-ff-3'], 'the orphan after it is still reclaimed');
+});
+
 test('orphan reconcile leaves a releasing fence that is still young', async () => {
   // Reclaiming a LIVE teardown is the worse of the two errors, so the bound
   // is generous and anything inside it keeps its protection.

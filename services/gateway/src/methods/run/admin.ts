@@ -196,7 +196,7 @@ async function slotStillHeldError(runId: string, slotId: string): Promise<Error>
   const interrupted = row?.phase === SLOT_PHASE_RELEASING && !isTerminalTeardownInFlight(slotId);
   return new Error(
     interrupted
-      ? `Cannot archive blocked run ${runId}: slot ${slotId} is still fenced by a release that did not finish (a gateway restart interrupts one). Recovery reclaims it within ${STALE_RELEASE_RECLAIM_MS / 60_000} minutes of it being noticed; archive again after that.`
+      ? `Cannot archive blocked run ${runId}: slot ${slotId} is still fenced by a release that did not finish (a gateway restart interrupts one). Recovery reclaims it within ${STALE_RELEASE_RECLAIM_MS / 60_000} minutes of it being noticed, once its worker is stopped; archive again after that.`
       : `Cannot archive blocked run ${runId}: another release or a handoff is in progress on slot ${slotId}; retry`,
   );
 }

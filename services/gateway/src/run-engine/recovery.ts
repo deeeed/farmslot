@@ -1126,7 +1126,11 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
         // The restart may have cut the release short before its agent kill, and
         // a ready slot must not hide a live worker from the next prepare. Finish
         // that step for the run's own workers; keep the fence unless all stop.
-        const liveWorker = await deps.stopRunOwnedWorkers(blockedOwner);
+        // A stop that throws (an ownership change, a pane it could not prepare)
+        // proves nothing either; it must not abort the rest of this pass.
+        const liveWorker = await deps
+          .stopRunOwnedWorkers(blockedOwner)
+          .catch((error: unknown) => `stop failed: ${(error as Error).message}`);
         if (liveWorker) {
           console.log(
             `[run-engine] reconcile: ${slot.slot} keeps its release fence; worker of blocked run ${blockedOwner.id.slice(0, 8)} not stopped: ${liveWorker}`,

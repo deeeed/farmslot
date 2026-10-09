@@ -57,6 +57,8 @@ export interface ExecOptions {
   onOutput?: (stream: string, data: string) => void;
   signal?: AbortSignal;
   maxBuffer?: number;
+  /** Remote only: fail instead of resending a command whose reply was lost. */
+  noRetry?: boolean;
 }
 
 // ─── execLocal ───
@@ -251,6 +253,7 @@ export async function execOnSlot(
     timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
+    noRetry: opts.noRetry,
   });
 }
 

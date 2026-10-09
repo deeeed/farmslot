@@ -545,6 +545,9 @@ export async function restoreTmuxWorker(
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched self-review pane; later cleanup owns their teardown.
       preserveWindowAfterExit: true,
+      // A blind resend after a lost reply would skip the ownership check above
+      // and could kill the worker of a run that took the slot meanwhile.
+      noRetry: true,
     });
     await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
     const livePane = await waitForRunnerAliveInTarget(vars, ref.session, nextTarget.target, runner);
