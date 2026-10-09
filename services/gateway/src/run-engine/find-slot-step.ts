@@ -69,7 +69,14 @@ import {
   nativeProfileAllowedSlots,
 } from '../runners/native/worker-profile.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
-import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  getAllRuns,
+  getArchivedRuns,
+  getRun,
+  persistRunNow,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -252,7 +259,7 @@ async function claimSelectedSlot(
   if (!claim.claimed) {
     throw slotClaimRefusedError(
       slotId,
-      slotClaimHolder(await readSlotRow(slotId), runId, getRun) ??
+      (await slotClaimHolder(await readSlotRow(slotId), runId, getRun, slotRuns)) ??
         'slot changed hands during the claim',
     );
   }
@@ -272,24 +279,45 @@ function slotClaimRefusedError(slotId: string, holder: string): Error {
   );
 }
 
+type SlotHistoryRun = Pick<
+  Run,
+  'id' | 'status' | 'slotId' | 'slotTeardownSkipped' | 'statusChangedAt'
+>;
+
+/** Live and archived runs: the run whose cancel left an occupancy hold is often archived. */
+async function slotRuns(): Promise<SlotHistoryRun[]> {
+  return [...getAllRuns(), ...(await getArchivedRuns())];
+}
+
 /**
  * What holds the slot against this run's ordinary claim, named so the
  * operator can act on it, or null when the claim CAS in claimSelectedSlot
  * would accept the row.
  */
-function slotClaimHolder(
+async function slotClaimHolder(
   slot: Readonly<Record<string, unknown>> | null,
   runId: string,
   ownerRunLookup: (id: string) => { status: string } | undefined,
-): string | null {
+  listSlotRuns: () => Promise<SlotHistoryRun[]>,
+): Promise<string | null> {
   if (!slot) return null;
   if (slot.phase === SLOT_PHASE_RELEASING) {
     const since = slot[SLOT_RELEASING_SINCE];
     return `release in progress since ${typeof since === 'string' ? since : 'an unknown time'}`;
   }
   if (slotClaimBlockedByRelease(slot) !== null) {
-    const reason = typeof slot.held_reason === 'string' ? ` (${slot.held_reason})` : '';
-    return `slot remains occupied${reason}; release it with \`farmslot slot release ${String(slot.slot)}\``;
+    // The hold row keeps only its reason; the run that left it recorded the
+    // same reason as slotTeardownSkipped when its teardown was skipped.
+    const reason = typeof slot.held_reason === 'string' ? slot.held_reason : null;
+    const leftBy = reason
+      ? (await listSlotRuns())
+          .filter((run) => run.slotId === slot.slot && run.slotTeardownSkipped === reason)
+          .sort((a, b) => (b.statusChangedAt ?? '').localeCompare(a.statusChangedAt ?? ''))[0]
+      : undefined;
+    const since = leftBy
+      ? ` since ${leftBy.statusChangedAt ?? 'an unknown time'}, left by run ${leftBy.id} (${leftBy.status})`
+      : '';
+    return `slot remains occupied${since}: ${reason ?? 'no reason recorded'}; release it with \`farmslot slot release ${String(slot.slot)}\``;
   }
   const handoff = slotClaimBlockedByHandoff(slot, runId);
   if (handoff) return handoff;
@@ -311,6 +339,7 @@ export async function awaitSlotClaimable(
   deps: {
     readRow?: (slotId: string) => Promise<Readonly<Record<string, unknown>> | null>;
     ownerRunLookup?: (id: string) => { status: string } | undefined;
+    listSlotRuns?: () => Promise<SlotHistoryRun[]>;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
     timeoutMs?: number;
@@ -319,6 +348,7 @@ export async function awaitSlotClaimable(
   const {
     readRow = readSlotRow,
     ownerRunLookup = getRun,
+    listSlotRuns = slotRuns,
     now = Date.now,
     sleep = delay,
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
@@ -326,7 +356,7 @@ export async function awaitSlotClaimable(
   const deadline = now() + timeoutMs;
   for (;;) {
     const row = await readRow(slotId);
-    const holder = slotClaimHolder(row, runId, ownerRunLookup);
+    const holder = await slotClaimHolder(row, runId, ownerRunLookup, listSlotRuns);
     if (!holder) return;
     if (row?.phase !== SLOT_PHASE_RELEASING) throw slotClaimRefusedError(slotId, holder);
     if (now() >= deadline) {

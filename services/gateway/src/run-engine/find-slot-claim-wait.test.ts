@@ -86,7 +86,8 @@ test('a slot claimed by a live run fails at once, naming the run and its state',
   assert.equal(clock.sleeps, 0);
 });
 
-test('a workspace-occupancy hold fails at once with its reason, not as mid-release', async () => {
+test('a workspace-occupancy hold fails at once naming its reason, since when and which run left it', async () => {
+  const heldReason = 'Process 50176 still uses the slot repository; slot teardown was skipped';
   const { clock, now, sleep } = fakeClock();
   await assert.rejects(
     awaitSlotClaimable('macpro-mme-1', 'new-run', {
@@ -95,15 +96,41 @@ test('a workspace-occupancy hold fails at once with its reason, not as mid-relea
         lifecycle: 'held',
         phase: 'occupied',
         current_run_id: null,
-        held_reason: 'Process 50176 still uses the slot repository; slot teardown was skipped',
+        held_reason: heldReason,
       }),
       ownerRunLookup,
+      listSlotRuns: async () => [
+        {
+          id: 'older-run',
+          status: 'cancelled',
+          slotId: 'macpro-mme-1',
+          slotTeardownSkipped: heldReason,
+          statusChangedAt: '2026-10-09T07:00:00.000Z',
+        },
+        {
+          id: 'canceller-run',
+          status: 'cancelled',
+          slotId: 'macpro-mme-1',
+          slotTeardownSkipped: heldReason,
+          statusChangedAt: '2026-10-09T11:40:00.000Z',
+        },
+        {
+          id: 'other-slot-run',
+          status: 'cancelled',
+          slotId: 'macpro-mme-2',
+          slotTeardownSkipped: heldReason,
+          statusChangedAt: '2026-10-09T11:44:00.000Z',
+        },
+      ],
       now,
       sleep,
     }),
     (error: Error) => {
-      assert.match(error.message, /slot remains occupied \(Process 50176 still uses/);
-      assert.match(error.message, /farmslot slot release macpro-mme-1/);
+      assert.match(
+        error.message,
+        /slot remains occupied since 2026-10-09T11:40:00\.000Z, left by run canceller-run \(cancelled\): Process 50176 still uses the slot repository/,
+      );
+      assert.match(error.message, /release it with `farmslot slot release macpro-mme-1`/);
       assert.doesNotMatch(error.message, /mid-release/);
       return true;
     },
