@@ -120,6 +120,12 @@ export {
   errorMessage,
   manifestTarget,
 } from './recording/capture-helper.js';
+export {
+  CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT,
+  CAPTURE_INTERRUPTED,
+  captureInterruptedMessage,
+  parseCaptureHelperInterruption,
+} from './recording/capture-helper-interruption.js';
 export { readCaptureHelperTiming } from './recording/capture-helper-timing.js';
 export type { CdpVideoRecorderOptions } from './recording/cdp-video-recorder.js';
 export { createCdpVideoRecorder } from './recording/cdp-video-recorder.js';

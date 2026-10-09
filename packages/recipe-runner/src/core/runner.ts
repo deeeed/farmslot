@@ -17,6 +17,10 @@ import {
   errorMessage,
   manifestTarget,
 } from '../recording/capture-helper.js';
+import {
+  CAPTURE_INTERRUPTED,
+  captureInterruptedMessage,
+} from '../recording/capture-helper-interruption.js';
 import { writeRecordingTimeline } from '../recording/timeline.js';
 import { RECIPE_RUNNER_VERSION } from '../version.js';
 
@@ -62,6 +66,7 @@ import type {
   RecipeLibrarySummary,
   RecipeLogger,
   RecipeRecordingOptions,
+  RecipeRunCaptureInterruption,
   RecipeRunner,
   RecipeRunRequest,
   RecipeRunResult,
@@ -362,6 +367,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
     let runRecording: RunVideoRecording | undefined;
+    let captureInterruption: RecipeRunCaptureInterruption | undefined;
     let canExecute = true;
     if (videoRecorder) {
       try {
@@ -484,6 +490,32 @@ class DefaultRecipeRunner implements RecipeRunner {
               category: 'system',
               label: 'Recording frames and action markers',
             });
+          if (videoArtifact.interruption) {
+            // The partial video stays registered as evidence; the run still fails, typed.
+            const message = captureInterruptedMessage(
+              videoArtifact.interruption,
+              videoArtifact.path,
+            );
+            captureInterruption = {
+              ...videoArtifact.interruption,
+              videoPath: videoArtifact.path,
+              message,
+            };
+            traceWriter.record({
+              nodeId: 'recipe-run:video',
+              action: 'record.video',
+              startedAt: startedAt.toISOString(),
+              endedAt: new Date().toISOString(),
+              durationMs: Date.now() - startedAt.getTime(),
+              ok: false,
+              cause_class: 'environment',
+              error: message,
+              error_code: CAPTURE_INTERRUPTED,
+              error_details: videoArtifact.interruption,
+            });
+            this.#logger.error(`record.video interrupted: ${message}`);
+            status = 'fail';
+          }
         } catch (error) {
           const message = errorMessage(error);
           await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
@@ -577,7 +609,14 @@ class DefaultRecipeRunner implements RecipeRunner {
       );
     }
 
-    return { status, summaryPath, tracePath, artifactManifestPath, recipePath };
+    return {
+      status,
+      summaryPath,
+      tracePath,
+      artifactManifestPath,
+      recipePath,
+      ...(captureInterruption ? { captureInterruption } : {}),
+    };
   }
 
   #createExecutionContext({
@@ -767,6 +806,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const entry = {
       ...runRecording.entry,
       ...(result.recorder ? { recorder: result.recorder } : {}),
+      ...(result.interruption ? { interruption: result.interruption } : {}),
     };
     if (result.timing) {
       try {

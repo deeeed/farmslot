@@ -15,6 +15,7 @@ import type {
   HealPolicy,
   HealState,
 } from '@farmslot/adapter-sdk';
+import { CAPTURE_INTERRUPTED, type RecipeRunCaptureInterruption } from '@farmslot/recipe-runner';
 
 import { assertAdaptersRegistered, harnessAdapter, harnessAdapters } from './adapters.js';
 import { harnessHost, hostEnvName } from './host.js';
@@ -185,6 +186,20 @@ export function recipeRunningRefusal(targetArg: string): { message: string; user
   return {
     message: 'a recipe is currently running — refusing to start while another recipe executes.',
     userAction: `inspect the checkout state with: ${harnessHost().name} status --target ${targetArg} --json; retry after the active recipe finishes`,
+  };
+}
+
+// The recording stream stopped mid-run but the recipe itself passed: a capture
+// environment failure, not app logic. The partial video is kept as evidence.
+export function captureInterruptedViolation(
+  interruption: RecipeRunCaptureInterruption,
+): HealBoundViolation {
+  return {
+    code: CAPTURE_INTERRUPTED,
+    exitCode: EXIT.bounded,
+    message: interruption.message,
+    userAction: `review the partial video at ${interruption.videoPath} (artifacts); rerun the recipe for a full recording`,
+    originalError: interruption.cause,
   };
 }
 

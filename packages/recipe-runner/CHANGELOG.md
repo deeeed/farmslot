@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- A capture-helper recording whose ScreenCaptureKit stream stops mid-run (capture-helper 0.3.1: `stream_interrupted` event, exit 3) is no longer thrown away. The runner keeps the partial MP4 and its timing in the artifacts, marks the video entry with `interruption`, records a `recipe-run:video` failure with `error_code: 'CAPTURE_INTERRUPTED'` and cause `environment`, and returns it as `RecipeRunResult.captureInterruption`. A later `ui.screenshot` takes a standalone `capture-helper snapshot` of the same target, marked `metadata.fallbackFrom: 'record_session_snapshot'`, instead of failing with "Recording is no longer active." Exports `parseCaptureHelperInterruption`, `captureInterruptedMessage`, `CAPTURE_INTERRUPTED` and `CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT`. The recorder now reads the helper's exit after its stderr drains, so the terminal event is never missed.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.28.1 - 2026-10-09

@@ -1056,6 +1056,46 @@ describe('run recording', () => {
     assert.equal(f.artifacts().length, 0);
   });
 
+  const interruption = {
+    frames: 2400,
+    mediaTimeMs: 79966.7,
+    cause:
+      'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+  };
+
+  test('keeps a stream-interrupted recording as partial footage and returns the interruption', async () => {
+    const f = fixture();
+    Object.assign(f.recording, {
+      completedVideo: false,
+      completedRecordingId: undefined,
+      exitCode: 3,
+      interruption: { ...interruption, recordingId: 'test-recording' },
+    });
+    const kept = await stopRecipeRecording(f.recording, f.result);
+    assert.equal(kept?.videoPath, 'videos/full-run.mp4');
+    assert.match(kept?.message ?? '', /^CAPTURE_INTERRUPTED: .*2400 frames .*-3805/u);
+    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
+    const video = f.artifacts().find((artifact) => artifact.type === 'video');
+    assert.deepEqual(video?.interruption, interruption);
+    // The interruption event carries the recording identity, so native timing still verifies.
+    assert.equal(video?.timelinePath, 'videos/full-run.mp4.timeline.json');
+  });
+
+  for (const [label, exitCode, event] of [
+    ['an exit 3 without the interruption event', 3, undefined],
+    ['an interruption event without exit 3', 1, { ...interruption, recordingId: 'test-recording' }],
+  ] as const) {
+    test(`does not keep footage for ${label}`, async () => {
+      const f = fixture();
+      Object.assign(f.recording, { completedVideo: false, exitCode, interruption: event });
+      await assert.rejects(
+        stopRecipeRecording(f.recording, f.result),
+        /Missing finalized video completion/u,
+      );
+      assert.equal(f.artifacts().length, 0);
+    });
+  }
+
   test('records nothing unless asked, or for a platform without a framed recorder', async () => {
     const root = tempRoot();
     assert.equal(await startRecipeRecording('web', root, root, {}), undefined);

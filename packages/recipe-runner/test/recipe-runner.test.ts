@@ -1416,6 +1416,72 @@ test('record-video stop failure removes partial MP4 and writes a failed artifact
   }
 });
 
+test('record-video stream interruption keeps the partial MP4 and fails the run with CAPTURE_INTERRUPTED', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const interruption = {
+      frames: 2400,
+      mediaTimeMs: 79966.7,
+      cause:
+        'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+    };
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'partial mp4');
+            return { interruption };
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'window-id', windowId: '875' };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.captureInterruption?.videoPath, 'videos/recipe-run.mp4');
+    assert.match(result.captureInterruption?.message ?? '', /^CAPTURE_INTERRUPTED: .*2400 frames/u);
+    assert.equal(
+      await readFile(path.join(tempRoot, 'artifacts', 'videos/recipe-run.mp4'), 'utf-8'),
+      'partial mp4',
+    );
+    const manifest = (await readJsonFile(result.artifactManifestPath)) as {
+      artifacts: Array<Record<string, unknown>>;
+    };
+    const video = manifest.artifacts.find((artifact) => artifact.type === 'video');
+    assert.deepEqual(video?.interruption, interruption);
+
+    const trace = (await readJsonFile(result.tracePath)) as Array<Record<string, unknown>>;
+    const videoFailure = trace.find((entry) => entry.nodeId === 'recipe-run:video');
+    assert.equal(videoFailure?.ok, false);
+    assert.equal(videoFailure?.error_code, 'CAPTURE_INTERRUPTED');
+    assert.equal(videoFailure?.cause_class, 'environment');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('record-video stop success still requires a non-empty MP4 artifact', async () => {
   const tempRoot = await createTempRoot();
   try {
