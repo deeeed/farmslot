@@ -215,6 +215,8 @@ describe('launchBrowser', () => {
       const argv = fs.readFileSync(path.join(root, 'argv.log'), 'utf8');
       assert.ok(argv.includes(`--user-data-dir=${path.join(dir, 'profile')}`));
       assert.ok(argv.includes(`--load-extension=${extensionDir}`));
+      // Without it, chrome.runtime.reload() leaves the extension disabled in the profile.
+      assert.ok(argv.includes('--enable-unsafe-extension-debugging'));
       // Not a macOS .app bundle, so the home page is the first tab on the command line.
       assert.ok(
         argv.includes(`chrome-extension://${extensionIdFromExtensionDir(extensionDir)}/home.html`),

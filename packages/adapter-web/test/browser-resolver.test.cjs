@@ -1216,8 +1216,9 @@ describe('browser resolver', () => {
     );
   });
 
-  it('never pairs CDP loading with --disable-extensions-except', () => {
+  it('passes --enable-unsafe-extension-debugging in both modes, never pairing CDP loading with --disable-extensions-except', () => {
     assert.deepStrictEqual(resolver.extensionLaunchArgs('/dist', 'load-extension'), [
+      '--enable-unsafe-extension-debugging',
       '--disable-extensions-except=/dist',
       '--load-extension=/dist',
     ]);
