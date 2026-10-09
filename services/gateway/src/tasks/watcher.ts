@@ -1364,6 +1364,12 @@ export async function startWatchingActiveSlots(options: { machine?: string } = {
     if (slotHasActiveWorkerTask(slot, blockedRunIds) && slot.taskFile) {
       try {
         if (options.machine) {
+          // A setup still pending from the previous connection would register
+          // its dead watch ids after this rebuild and make it look done: let it
+          // settle (its node requests fail or time out) before replacing it.
+          for (const [key, pending] of [...pendingWatchKeys]) {
+            if (slotIdFromWatchKey(key) === slot.slot) await pending.catch(() => {});
+          }
           for (const [key, sw] of [...activeWatches]) {
             if (slotIdFromWatchKey(key) === slot.slot && !sw.isLocal)
               await unwatchKey(key, { expected: sw });
