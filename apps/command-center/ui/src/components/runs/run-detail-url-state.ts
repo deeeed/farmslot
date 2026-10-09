@@ -6,11 +6,14 @@ export interface RunDetailArtifactSelection {
   artifact: string | null;
   /** Which viewer opened the artifact; `step` means the step inspector owns it. */
   artifactView: string | null;
+  /** The acceptance criterion whose evidence the lightbox was stepping through. */
+  artifactAc: string | null;
 }
 
 const STEP_PARAM = 'step';
 export const ARTIFACT_RUN_PARAM = 'artifactRun';
 export const ARTIFACT_PARAM = 'artifact';
+export const ARTIFACT_AC_PARAM = 'artifactAc';
 /**
  * Marks an artifact the step inspector opened in its own viewer. Both viewers
  * share `artifactRun`/`artifact`, and run detail must not answer for a step
@@ -39,6 +42,7 @@ export function artifactSelectionFromRunDetailHash(
     artifactRun: params.get(ARTIFACT_RUN_PARAM),
     artifact: params.get(ARTIFACT_PARAM),
     artifactView: params.get(ARTIFACT_VIEW_PARAM),
+    artifactAc: params.get(ARTIFACT_AC_PARAM),
   };
 }
 
@@ -71,6 +75,8 @@ export function runDetailEvidenceArtifactHash(
   runId: string,
   item: Pick<LightboxItem, 'path'> | null,
   hash: string = location.hash,
+  /** Set when the lightbox steps through one acceptance criterion's evidence. */
+  criterionId: string | null = null,
 ): string {
   const { route, params } = parseHashRoute(hash);
   params.delete('artifactTrace');
@@ -82,6 +88,8 @@ export function runDetailEvidenceArtifactHash(
     params.delete(ARTIFACT_RUN_PARAM);
     params.delete(ARTIFACT_PARAM);
   }
+  if (item && criterionId) params.set(ARTIFACT_AC_PARAM, criterionId);
+  else params.delete(ARTIFACT_AC_PARAM);
   // Run detail's own viewer: never inherit the step inspector's claim.
   params.delete(ARTIFACT_VIEW_PARAM);
   if (!route.startsWith('runs')) params.delete('run');
@@ -108,6 +116,7 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     'step',
     'artifactRun',
     'artifact',
+    ARTIFACT_AC_PARAM,
     ARTIFACT_VIEW_PARAM,
     'artifactTrace',
     'artifactPhase',

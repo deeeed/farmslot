@@ -67,6 +67,13 @@ export class MediaLightbox extends MediaLightboxState {
     this._timelines.clear();
   }
 
+  willUpdate(changed: Map<string, unknown>): void {
+    super.willUpdate(changed);
+    // An explicit open shows the file it was opened on: a kind filter left from
+    // the last visit would otherwise snap to another item and hide that file.
+    if (changed.has('open') && this.open) this._kindFilter = 'all';
+  }
+
   updated(changed: Map<string, unknown>): void {
     const logItem =
       this.open && this.mode === 'single' ? this.items[this.selectedIndex] : undefined;

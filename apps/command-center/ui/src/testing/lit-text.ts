@@ -55,3 +55,21 @@ export function litBinding(value: unknown, binding: string): unknown {
   }
   return undefined;
 }
+
+/**
+ * Every value bound to a named binding, depth-first in render order, e.g. each
+ * `@click=` handler in a list. `litBinding` returns only the first.
+ */
+export function litBindings(value: unknown, binding: string, found: unknown[] = []): unknown[] {
+  if (Array.isArray(value)) {
+    for (const entry of value) litBindings(entry, binding, found);
+    return found;
+  }
+  if (!isTemplateLike(value)) return found;
+  const { strings, values } = value;
+  values.forEach((entry, index) => {
+    if (strings[index]?.trimEnd().endsWith(binding)) found.push(entry);
+    else litBindings(entry, binding, found);
+  });
+  return found;
+}

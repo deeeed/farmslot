@@ -1,4 +1,5 @@
 import type {
+  AcceptanceCriterionRef,
   CiCheckUpdatedPayload,
   CIWatchFixProgress,
   CIWatchFixTrigger,
@@ -20,6 +21,7 @@ import {
   shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
 } from '@farmslot/protocol';
 
+import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
 import { collectRunEvidenceArtifacts } from './run-utils.js';
@@ -241,6 +243,9 @@ export function runEvidenceLightboxItems(
   }));
 }
 
+/** Purpose shown for an acceptance evidence file the run's artifact list does not carry. */
+export const ACCEPTANCE_EVIDENCE_PURPOSE = 'acceptance-evidence';
+
 /**
  * Lightbox items for one acceptance criterion's evidence, in the criterion's order.
  * A file the run already lists keeps its step and source caption; one it doesn't
@@ -251,7 +256,7 @@ export function runEvidenceLightboxItems(
 export function acceptanceEvidenceLightboxItems(args: {
   runId: string;
   familyId: string;
-  criterion: { id: string; text: string };
+  criterion: AcceptanceCriterionRef;
   evidence: readonly string[];
   runArtifacts: readonly FamilyObservabilityArtifact[];
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
@@ -263,7 +268,7 @@ export function acceptanceEvidenceLightboxItems(args: {
         runId: args.runId,
         familyId: args.familyId,
         path,
-        purpose: 'acceptance-evidence',
+        purpose: ACCEPTANCE_EVIDENCE_PURPOSE,
         source: 'task-artifact',
       },
   );
@@ -272,6 +277,76 @@ export function acceptanceEvidenceLightboxItems(args: {
     ...item,
     caption: [criterion, item.caption].filter(Boolean).join(' — '),
   }));
+}
+
+export const RUN_OUTPUT_SCOPE = 'Run output';
+
+/** What the run's evidence lightbox shows: its items, the open one, and which set they are. */
+export interface EvidenceLightboxSelection {
+  items: LightboxItem[];
+  index: number;
+  /** The lightbox scope label. */
+  scope: string;
+  /** Set for one criterion's evidence; written to the URL as `artifactAc`. */
+  criterionId: string | null;
+}
+
+/** The run's own artifacts: the Evidence tab and a plain `artifact=` link. */
+export function runOutputEvidenceSelection(
+  artifacts: readonly FamilyObservabilityArtifact[],
+  index: number,
+  artifactUrl: (artifact: FamilyObservabilityArtifact) => string,
+): EvidenceLightboxSelection {
+  return {
+    items: runEvidenceLightboxItems(artifacts, artifactUrl),
+    index,
+    scope: RUN_OUTPUT_SCOPE,
+    criterionId: null,
+  };
+}
+
+/** One acceptance criterion's evidence files, opened at `index`. */
+export function acceptanceEvidenceSelection(
+  args: Parameters<typeof acceptanceEvidenceLightboxItems>[0] & { index: number },
+): EvidenceLightboxSelection {
+  return {
+    items: acceptanceEvidenceLightboxItems(args),
+    index: args.index,
+    scope: `${args.criterion.id} evidence`,
+    criterionId: args.criterion.id,
+  };
+}
+
+/**
+ * What an `artifact=` link opens. With `artifactAc` and a criterion that still
+ * lists the file, that criterion's evidence, so a reload or shared link reopens
+ * the set it was written from; otherwise the run's own artifacts, or why not.
+ */
+export function resolveEvidenceLightboxLink(args: {
+  path: string;
+  criterionId: string | null;
+  acceptanceRows: ReadonlyArray<AcceptanceCriterionRef & { evidence: readonly string[] }>;
+  runId: string;
+  familyId: string;
+  runArtifacts: readonly FamilyObservabilityArtifact[];
+  artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
+  progress: { loaded: boolean; runActive: boolean };
+}): EvidenceLightboxSelection | { unavailable: { path: string; reason: string } } {
+  const row = args.criterionId
+    ? args.acceptanceRows.find((candidate) => candidate.id === args.criterionId)
+    : undefined;
+  const acIndex = row ? row.evidence.indexOf(args.path) : -1;
+  if (row && acIndex >= 0) {
+    return acceptanceEvidenceSelection({
+      ...args,
+      criterion: row,
+      evidence: row.evidence,
+      index: acIndex,
+    });
+  }
+  const lookup = locateEvidenceArtifact(args.runArtifacts, args.path, args.progress);
+  if ('unavailable' in lookup) return lookup;
+  return runOutputEvidenceSelection(args.runArtifacts, lookup.index, args.artifactUrl);
 }
 
 export interface RunEvidenceSummary {

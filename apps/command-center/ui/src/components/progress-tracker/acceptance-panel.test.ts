@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
 
-import { litText } from '../../testing/lit-text.js';
+import { litBindings, litText } from '../../testing/lit-text.js';
 
 import {
   type AcceptanceEvidenceOpen,
@@ -202,31 +202,6 @@ test('manifest-linked criteria render as evidence linked, labelled, and never as
   assert.match(withLedger, /1\/4 assessed/);
 });
 
-/** Every `@click` handler in a template, in render order. */
-function clickHandlers(value: unknown, found: Array<(event: MouseEvent) => void> = []) {
-  if (Array.isArray(value)) {
-    for (const entry of value) clickHandlers(entry, found);
-    return found;
-  }
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    !('strings' in value) ||
-    !('values' in value)
-  ) {
-    return found;
-  }
-  const { strings, values } = value as { strings: readonly string[]; values: readonly unknown[] };
-  values.forEach((entry, index) => {
-    if (strings[index]?.trimEnd().endsWith('@click=') && typeof entry === 'function') {
-      found.push(entry as (event: MouseEvent) => void);
-    } else {
-      clickHandlers(entry, found);
-    }
-  });
-  return found;
-}
-
 function click(overrides: Partial<MouseEvent> = {}) {
   let prevented = false;
   const event = {
@@ -264,7 +239,7 @@ test('clicking an evidence file opens the files of its criterion, in order, in t
       evidenceHref: (evidencePath) => `/api/run-artifact?path=${evidencePath}`,
       openEvidence: (open) => calls.push(open),
     });
-    const handlers = clickHandlers(panel);
+    const handlers = litBindings(panel, '@click=') as Array<(event: MouseEvent) => void>;
     assert.equal(handlers.length, 3, 'one handler per evidence link');
 
     const second = click();

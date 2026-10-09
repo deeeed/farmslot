@@ -22,7 +22,28 @@ test('run detail helpers read selected step and artifact modal state', () => {
     artifactRun: 'run-1',
     artifact: 'captures/after.png',
     artifactView: null,
+    artifactAc: null,
   });
+});
+
+test('an acceptance evidence link carries its criterion, and closing or a plain artifact drops it', () => {
+  const opened = runDetailEvidenceArtifactHash(
+    'run-1',
+    { path: 'artifacts/evidence-ac1.png' },
+    '#run/run-1',
+    'AC-1',
+  );
+  assert.equal(
+    opened,
+    '#run/run-1?artifactRun=run-1&artifact=artifacts%2Fevidence-ac1.png&artifactAc=AC-1',
+  );
+  assert.equal(artifactSelectionFromRunDetailHash(opened).artifactAc, 'AC-1');
+  assert.equal(
+    runDetailEvidenceArtifactHash('run-1', { path: 'final.png' }, opened).includes('artifactAc'),
+    false,
+  );
+  assert.equal(runDetailEvidenceArtifactHash('run-1', null, opened), '#run/run-1');
+  assert.equal(runInventoryHashFromDetail(opened).includes('artifactAc'), false);
 });
 
 test('run detail recognizes its embedded runs-inventory route', () => {
