@@ -15,8 +15,10 @@ const ENDINGS = [
   '› 1. Open restricted 2. Quit enter continue · esc quit',
   '› 1. Open restricted 2. Back to Agent Command Center enter continue · esc back',
 ];
+// Any Codex selection screen ends in an "enter …" / "esc …" footer, e.g. "Hooks
+// need review" (enter confirm · esc skip); unknown ones must fail, not wait out.
 const PROMPT_MARKERS =
-  /folder access|open restricted|trust this folder|trust and continue|update available|enter continue|esc quit|esc back|press enter|\(y\/n\)/i;
+  /folder access|open restricted|trust this folder|trust and continue|trust all|hooks need review|update available|enter continue|enter confirm|esc quit|esc back|esc skip|press enter|\(y\/n\)/i;
 const WORKING = /esc to interrupt/;
 const COMPOSER = /\? for shortcuts/;
 // The boot splash, and a header frame right after it, already paint the composer

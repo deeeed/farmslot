@@ -197,6 +197,14 @@ export async function reviewTmuxOperation(
       effort: run.effort,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
+      // A cached newer Codex version shows an "Update available" notice (a modal
+      // without a prompt, a history banner with one), which the launch handshake
+      // fails on as an unknown prompt.
+      skipUpdateCheck: true,
+      // The node's own Codex hooks (an operator's hooks.json, plugin hooks) must not
+      // run against PR code, and when untrusted they stop the launch on "Hooks need
+      // review" (macpro).
+      disableHooks: true,
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',

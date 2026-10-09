@@ -55,6 +55,13 @@ const launch = readFileSync(path.join(run.reviewWorkspace.taskPath, '.terminal-s
 const binary = process.env.FARMSLOT_REVIEW_EXPECT_BINARY;
 if (binary) assert.ok(launch.includes(binary), 'Launch must use the configured machine executable');
 assert.ok(launch.includes('untrusted'), 'Review checkout trust must be explicit');
+if (run.metrics.runner === 'codex') {
+  assert.ok(
+    launch.includes('check_for_update_on_startup=false'),
+    'A Codex review launch must skip the startup update check',
+  );
+  assert.ok(launch.includes('features.hooks=false'), 'A Codex review launch must turn hooks off');
+}
 const progress = rpc('task.progress', { slotId: '', runId });
 const children = progress.structured.phases
   .flatMap((phase) => phase.steps)
