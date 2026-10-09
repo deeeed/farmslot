@@ -231,6 +231,47 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
+// Codex's "core" set plus locale and terminal; none of them carries a secret.
+const BASIC_SHELL_ENV = [
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'USER',
+  'USERNAME',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+];
+
+/**
+ * `shell_environment_policy` as an exact allowlist. Codex merges a `-c` table into
+ * the node's, so `exclude` and `include_only` are spelled out to replace the node's
+ * arrays, and `include_only` also drops any variable the node's own `set` adds.
+ * `ZDOTDIR=/var/empty` stops zsh re-exporting secrets from the operator's
+ * ~/.zshenv and ~/.zshrc.
+ */
+export function codexShellEnvironmentPolicy(names: string[]): string {
+  // Codex reads include_only entries as globs: only plain identifiers may pass.
+  const refused = names.filter(
+    (name) => SECRET_ENV_NAME.test(name) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+  );
+  if (refused.length) {
+    console.warn(
+      `[launch] names kept out of Codex tool shells (secret-like or not a plain name): ${refused.join(', ')}`,
+    );
+  }
+  const allowed = [
+    ...new Set([...BASIC_SHELL_ENV, ...names.filter((name) => !refused.includes(name)), 'ZDOTDIR']),
+  ];
+  return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
+}
+
 export function buildInteractiveRefinementRunnerCommand(options: {
   runner: string;
   model?: string | null;
@@ -245,6 +286,12 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   skipUpdateCheck?: boolean;
   /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
   disableHooks?: boolean;
+  /**
+   * Codex only: tool shells see exactly these environment names (plus a few
+   * non-secret basics), with their values from the launch environment, whatever the
+   * node's shell_environment_policy says. Secret-like names are refused.
+   */
+  shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
 }): string | null {
@@ -273,6 +320,9 @@ export function buildInteractiveRefinementRunnerCommand(options: {
         : '',
       options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
       options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
+      options.shellEnvironmentNames
+        ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
+        : '',
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,
