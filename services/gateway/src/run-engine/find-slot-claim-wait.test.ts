@@ -375,37 +375,41 @@ test('a cancel that lands while the claim write is pending leaves the slot free'
   assert.equal(runs['new-run'].status, 'cancelled');
 });
 
-test('a takeover reservation superseded mid-write drops only itself', async () => {
-  const liveOwned = {
-    ...readyRow,
-    lifecycle: 'busy',
-    phase: 'working',
-    agent: 'working',
-    current_run_id: 'live',
-    slot_epoch: 7,
-  };
-  const status = pendingWriteStatus(liveOwned);
-  const runs: Record<string, Lookup> = {
-    'new-run': { status: 'slot-finding' },
-    live: { status: 'monitoring' },
-  };
-  const claim = commitSlotClaim(
-    SLOT,
-    'new-run',
-    0,
-    'working',
-    'working',
-    { takeoverLiveOwner: true },
-    { ...status.deps, runLookup: (id) => runs[id] },
-  );
-  await status.predicateDone;
-  runs['new-run'] = { status: 'paused' };
-  status.release();
-  await assert.rejects(claim, /Run new-run changed while waiting/);
-  const row = status.rows.get(SLOT)!;
-  assert.equal(row.handoff_run_id, null);
-  assert.equal(row.current_run_id, 'live', 'the live owner keeps its slot');
-});
+for (const [shape, claimPhase, agent] of [
+  ['a nudge into the live worker', 'working', 'working'],
+  ['a fresh-reuse fence that relabels the phase', 'preparing', undefined],
+] as const) {
+  test(`a takeover superseded mid-write (${shape}) restores the live owner's row`, async () => {
+    const liveOwned = {
+      ...readyRow,
+      lifecycle: 'busy',
+      phase: 'working',
+      agent: 'working',
+      current_run_id: 'live',
+      handoff_run_id: null,
+      slot_epoch: 7,
+    };
+    const status = pendingWriteStatus({ ...liveOwned });
+    const runs: Record<string, Lookup> = {
+      'new-run': { status: 'slot-finding' },
+      live: { status: 'monitoring' },
+    };
+    const claim = commitSlotClaim(
+      SLOT,
+      'new-run',
+      0,
+      claimPhase,
+      agent,
+      { takeoverLiveOwner: true },
+      { ...status.deps, runLookup: (id) => runs[id] },
+    );
+    await status.predicateDone;
+    runs['new-run'] = { status: 'paused' };
+    status.release();
+    await assert.rejects(claim, /Run new-run changed while waiting/);
+    assert.deepEqual(status.rows.get(SLOT), { ...liveOwned, slot_epoch: 8 });
+  });
+}
 
 test('a claim the CAS refuses is named; one refused for a superseded run says so', async () => {
   const runs: Record<string, Lookup> = {
@@ -489,22 +493,51 @@ for (const [shape, prior] of [
   });
 }
 
-// Later writers bump the epoch. A rival claim also names another run; a
-// release fence that went up over this claim still names this run, so only
-// the epoch fence keeps the undo off it.
+// What may land on the row between this claim's write and its undo. Claims
+// bump the epoch (a rival's, or this run's own replayed attempt reclaiming
+// its slot); marks do not (a release fence, or a cancel settling ownership).
+// Each case pins one clause of the undo fence.
 const laterWriters = [
   [
     'a rival claim',
+    { generation: 0 },
     () => ({
       lifecycle: 'busy',
       phase: 'preparing',
       current_run_id: 'rival',
       handoff_run_id: 'rival',
     }),
+    true,
+  ],
+  [
+    "this run's replayed attempt reclaiming the slot",
+    { generation: 1 },
+    () => ({ lifecycle: 'busy', phase: 'preparing' }),
+    true,
   ],
   [
     'a release fence over this claim',
+    { generation: 0 },
     () => ({ lifecycle: 'busy', phase: 'releasing', releasing_since: releasingSince }),
+    false,
+  ],
+  [
+    'a cancel settling the slot it never owned',
+    { generation: 0 },
+    () => ({
+      lifecycle: 'held',
+      phase: 'occupied',
+      current_run_id: null,
+      handoff_run_id: null,
+      held_reason: 'Process 1 still uses the slot repository; slot teardown was skipped',
+    }),
+    false,
+  ],
+  [
+    'a cancel clearing only the reservation',
+    { generation: 0 },
+    () => ({ handoff_run_id: null }),
+    false,
   ],
 ] as const;
 
@@ -512,11 +545,15 @@ for (const [kind, opts] of [
   ['an ordinary claim', undefined],
   ['a fresh-reuse reservation', { reserveOnly: true }],
 ] as const) {
-  for (const [writer, later] of laterWriters) {
-    test(`undoing ${kind} never touches ${writer} at a later epoch`, async () => {
+  for (const [writer, supersede, later, bumps] of laterWriters) {
+    // An ordinary claim holds no reservation for that cancel to clear.
+    if (!opts && writer === 'a cancel clearing only the reservation') continue;
+    test(`undoing ${kind} leaves ${writer} alone`, async () => {
       let after: Record<string, unknown> = {};
       const status = pendingWriteStatus({ ...readyRow, slot_epoch: 1 }, (slot) => {
-        Object.assign(slot, later(), { slot_epoch: Number(slot.slot_epoch) + 1 });
+        Object.assign(slot, later(), {
+          slot_epoch: Number(slot.slot_epoch) + (bumps ? 1 : 0),
+        });
         after = { ...slot };
       });
       const runs: Record<string, Lookup> = {
@@ -528,10 +565,12 @@ for (const [kind, opts] of [
         runLookup: (id) => runs[id],
       });
       await status.predicateDone;
-      runs['new-run'] = { status: 'cancelled' };
+      runs['new-run'] = {
+        status: supersede.generation ? 'slot-finding' : 'cancelled',
+        engineState: { generation: supersede.generation },
+      };
       status.release();
       await assert.rejects(claim, /Run new-run changed while waiting/);
-      assert.equal(status.rows.get(SLOT)!.slot_epoch, 3);
       assert.deepEqual(status.rows.get(SLOT), after);
     });
   }

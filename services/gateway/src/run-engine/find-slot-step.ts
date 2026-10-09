@@ -21,6 +21,7 @@ import {
   loadProjectVars,
   readSlotRow,
   resetSlotIf,
+  SLOT_PHASE_RELEASING,
   updateSlotStatus,
   updateSlotStatusIf,
 } from '../core/index.js';
@@ -298,31 +299,34 @@ export async function commitSlotClaim(
   }
   // The predicate passed, but a cancel, pause or replay can still land while
   // the write is being renamed into place. That cleanup fenced the slot at the
-  // pre-claim epoch, so it can no longer clear this claim: undo it here,
-  // fenced on the epoch this claim wrote, so a later claim is never touched.
-  // - Ordinary claim: the run owns the slot, so reset it (keeping `warm`).
-  // - Takeover: a live owner's worker keeps the slot; drop only the
-  //   reservation.
-  // - Fresh-reuse reservation on a free or retained slot: nobody else will
-  //   clear a busy row this run does not own, so restore exactly what the
-  //   claim overwrote; the retained worker's `warm` was never touched.
+  // pre-claim epoch, so it can no longer clear this claim: undo it here. Each
+  // undo is fenced on the epoch this claim wrote (a later claim, even this
+  // run's own replayed attempt, bumps it) and on the claim still standing.
+  // - Ordinary claim: the run owns the slot, so reset it, keeping `warm`. A
+  //   cancel teardown that already fenced it as releasing finishes its own
+  //   release.
+  // - Reservation (takeover or fresh reuse): the owner and its worker were
+  //   never this run's, and nobody else will clear a busy row this run does
+  //   not own. Restore exactly what the claim overwrote and drop the
+  //   reservation; `warm` and `current_run_id` were never touched.
   if (runSupersededSince(runLookup(runId), generation)) {
-    if (opts?.takeoverLiveOwner) {
+    if (reservation) {
       await updateIf(
         slotId,
-        (slot) => slot.slot_epoch === claim.epoch && slot.handoff_run_id === runId,
-        { handoff_run_id: null },
-      );
-    } else if (opts?.reserveOnly) {
-      await updateIf(
-        slotId,
-        (slot) => slot.slot_epoch === claim.epoch && slot.handoff_run_id === runId,
-        overwritten,
+        (slot) =>
+          slot.slot_epoch === claim.epoch &&
+          slot.handoff_run_id === runId &&
+          slot.lifecycle === 'busy' &&
+          slot.phase === phase,
+        { ...overwritten, handoff_run_id: null },
       );
     } else {
       await resetIf(
         slotId,
-        (slot) => slot.slot_epoch === claim.epoch && slot.current_run_id === runId,
+        (slot) =>
+          slot.slot_epoch === claim.epoch &&
+          slot.current_run_id === runId &&
+          slot.phase !== SLOT_PHASE_RELEASING,
         Boolean((await readRow(slotId))?.warm),
       );
     }
