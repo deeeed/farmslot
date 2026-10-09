@@ -187,6 +187,7 @@ function runLaunch(opts, acquireLock) {
   // the profile (fixture prefill into LevelDB) needs it unlocked first; a prior
   // run's Chrome would hold the lock and the write fails.
   if (opts.stopOnly) return { stopped: true };
+  removeExtensionWorkerRegistrations(profile);
 
   const requestedProfileQuarantined = hasDetachedLaunchUnproven(profile);
   const portQuarantine = readValidationPortQuarantine(cdpPort);
@@ -705,6 +706,19 @@ function removeProfileSingletonLocks(profile) {
   for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
     const file = path.join(profile, name);
     if (fs.existsSync(file)) fs.rmSync(file, { force: true });
+  }
+}
+
+// Chrome keeps an unpacked extension's service worker registration, scripts
+// included, across restarts and never re-registers it from --load-extension,
+// even after a version bump. A preserved profile would run the background from
+// whatever build first registered it, so every fresh launch drops the stored
+// registrations and Chrome registers the worker from the current extension
+// files. Wallet and extension storage live elsewhere and are kept.
+function removeExtensionWorkerRegistrations(profile) {
+  const workerDir = path.join(profile, 'Default', 'Service Worker');
+  for (const name of ['Database', 'ScriptCache']) {
+    fs.rmSync(path.join(workerDir, name), { recursive: true, force: true });
   }
 }
 

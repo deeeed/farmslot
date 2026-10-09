@@ -182,6 +182,15 @@ describe('launchBrowser', () => {
   it('launches an owned browser, records it, and holds the caller lock for the whole launch', async () => {
     const dir = runtime('launch');
     const port = await freePort();
+    // A preserved profile still holds the worker registration of an older build.
+    const workerDir = path.join(dir, 'profile/Default/Service Worker');
+    for (const name of ['Database', 'ScriptCache', 'CacheStorage']) {
+      fs.mkdirSync(path.join(workerDir, name), { recursive: true });
+      fs.writeFileSync(path.join(workerDir, name, 'entry'), 'old build');
+    }
+    const settings = path.join(dir, 'profile/Default/Local Extension Settings');
+    fs.mkdirSync(settings, { recursive: true });
+    fs.writeFileSync(path.join(settings, 'vault'), 'keep');
     const lockEvents = [];
     const progress = [];
     const result = launchBrowser(
@@ -201,6 +210,11 @@ describe('launchBrowser', () => {
     try {
       assert.equal(result.stopped, false);
       assert.deepEqual(lockEvents, [`acquire ${dir}`, 'release pid-file=true identity=true']);
+      // Chrome re-registers the worker from the current files; extension storage stays.
+      assert.equal(fs.existsSync(path.join(workerDir, 'Database')), false);
+      assert.equal(fs.existsSync(path.join(workerDir, 'ScriptCache')), false);
+      assert.ok(fs.existsSync(path.join(workerDir, 'CacheStorage/entry')));
+      assert.equal(fs.readFileSync(path.join(settings, 'vault'), 'utf8'), 'keep');
       // The caller's stage handle hears what the launch is waiting for.
       assert.deepEqual(progress[0], { message: 'starting the browser' });
       assert.equal(fs.readFileSync(path.join(dir, 'logs/chrome.pid'), 'utf8'), `${result.pid}\n`);
