@@ -13,6 +13,11 @@ import type {
   VideoRecorderStartRequest,
 } from '../core/types.js';
 
+import {
+  type CaptureHelperInterruptionEvent,
+  keptCaptureInterruption,
+  parseCaptureHelperInterruption,
+} from './capture-helper-interruption.js';
 import { readCaptureHelperTiming } from './capture-helper-timing.js';
 import { optionalVideoTiming } from './timeline.js';
 
@@ -126,7 +131,8 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     if (request.maxSize != null) args.push('--max-size', String(request.maxSize));
 
     const startedAtUnixMs = Date.now();
-    const child = spawn(this.#captureHelperPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const helperPath = this.#captureHelperPath;
+    const child = spawn(helperPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const stderr: string[] = [];
     let ready = false;
     let eventBuffer = '';
@@ -140,6 +146,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     >();
     const usedSnapshotPaths = new Set<string>();
     let recordingId: string | undefined;
+    let interruption: CaptureHelperInterruptionEvent | undefined;
     child.stderr.setEncoding('utf-8');
     child.stderr.on('data', (chunk: string) => {
       stderr.push(chunk);
@@ -162,6 +169,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           recordingId = event.recording_id;
           ready = true;
         }
+        interruption ??= parseCaptureHelperInterruption(event);
         const snapshot = typeof event.output === 'string' ? snapshots.get(event.output) : undefined;
         if (snapshot && ['snapshot', 'error'].includes(event.type)) {
           clearTimeout(snapshot.timer);
@@ -197,11 +205,19 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     });
     child.stdout.resume();
 
+    // 'close' waits for stderr to drain, so a terminal stream_interrupted line is parsed first.
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-      child.once('exit', (code, signal) => {
-        for (const snapshot of snapshots.values()) {
+      child.once('close', (code, signal) => {
+        const kept = keptCaptureInterruption(code, interruption);
+        for (const [outputPath, snapshot] of snapshots) {
           clearTimeout(snapshot.timer);
-          snapshot.reject(new Error('Recorder exited before the snapshot completed.'));
+          // The stream stopped under this snapshot: take it outside the session instead.
+          if (kept)
+            standaloneSnapshot(helperPath, request.target, outputPath, kept.cause).then(
+              snapshot.resolve,
+              snapshot.reject,
+            );
+          else snapshot.reject(new Error('Recorder exited before the snapshot completed.'));
         }
         snapshots.clear();
         resolve({ code, signal });
@@ -253,8 +269,12 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
             snapshot(outputPath: string): Promise<Record<string, unknown>> {
               if (/[\r\n]/.test(outputPath))
                 return Promise.reject(new Error('Snapshot path cannot contain a newline.'));
-              if (child.exitCode !== null || child.signalCode !== null)
-                return Promise.reject(new Error('Recording is no longer active.'));
+              if (child.exitCode !== null || child.signalCode !== null) {
+                const kept = keptCaptureInterruption(child.exitCode, interruption);
+                return kept
+                  ? standaloneSnapshot(helperPath, request.target, outputPath, kept.cause)
+                  : Promise.reject(new Error('Recording is no longer active.'));
+              }
               if (usedSnapshotPaths.has(outputPath))
                 return Promise.reject(
                   new Error('This snapshot path was already used in this recording.'),
@@ -284,8 +304,10 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           message: `capture-helper record did not stop within ${stopTimeoutMs}ms after SIGINT.`,
         });
         const expectedInterrupt = result.signal === 'SIGINT';
+        // capture-helper finalized the frames it had before its stream stopped.
+        const kept = keptCaptureInterruption(result.code, interruption);
         const stoppedAtUnixMs = Date.now();
-        if (result.code !== 0 && !expectedInterrupt) {
+        if (result.code !== 0 && !expectedInterrupt && !kept) {
           throw new Error(
             `capture-helper record failed (${formatExit(result.code, result.signal)}): ${stderr.join('').trim()}`,
           );
@@ -305,10 +327,36 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
             platform: 'macos',
             target: manifestTarget(request.target),
           },
+          ...(kept ? { interruption: kept } : {}),
         };
       },
     };
   }
+}
+
+/** A screenshot of the same target taken outside the (interrupted) recording session. */
+async function standaloneSnapshot(
+  helperPath: string,
+  target: RecordingTarget,
+  outputPath: string,
+  cause: string,
+): Promise<Record<string, unknown>> {
+  const result = await runCommand(
+    helperPath,
+    ['snapshot', ...targetArgs(target), '--output', outputPath],
+    { timeoutMs: 15_000 },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Recording stream was interrupted (${cause}) and the standalone snapshot failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
+    );
+  return {
+    ...(JSON.parse(result.stdout) as Record<string, unknown>),
+    fallbackFrom: 'record_session_snapshot',
+    fallbackReason: `recording stream interrupted: ${cause}`,
+    timingUnavailableReason:
+      'Taken after the recording stream was interrupted; not part of the video.',
+  };
 }
 
 interface CommandResult {

@@ -39,6 +39,87 @@ process.on('SIGINT',()=>{fs.writeFileSync(out,'video fixture');process.exit(0)})
   }
 });
 
+async function interruptingHelper(dir: string, emitInterruption: boolean): Promise<string> {
+  const helper = path.join(dir, 'helper.cjs');
+  const event = {
+    type: 'error',
+    code: 'stream_interrupted',
+    frames: 2400,
+    media_time_ms: 79966.7,
+    cause:
+      'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+  };
+  await writeFile(
+    helper,
+    `#!/usr/bin/env node
+const fs=require('node:fs');
+const out=process.argv[process.argv.indexOf('--output')+1];
+if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:['record_session_snapshot']}));process.exit(0)}
+if(process.argv[2]==='snapshot'){fs.writeFileSync(out,'PNG standalone');console.log(JSON.stringify({type:'snapshot',output:out,bytes:14,selector:'window-id'}));process.exit(0)}
+process.on('SIGINT',()=>{fs.writeFileSync(out,'video fixture');process.exit(0)});
+// The first session command finds the stream already gone: keep the partial file and exit 3.
+require('node:readline').createInterface({input:process.stdin}).once('line',()=>{
+ fs.writeFileSync(out,'partial video');
+ const line=${JSON.stringify(emitInterruption)}?JSON.stringify({...${JSON.stringify(event)},output:out})+'\\n':'';
+ process.stderr.write(line,()=>process.exit(3));
+});
+`,
+    { mode: 0o755 },
+  );
+  return helper;
+}
+
+test('an interrupted capture stream keeps the partial video and snapshots fall back outside the session', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'record-interrupted-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = path.join(dir, 'out.mp4');
+  const active = await createCaptureHelperVideoRecorder({
+    captureHelperPath: await interruptingHelper(dir, true),
+  }).start({
+    target: { kind: 'window-id', windowId: '875' },
+    outputPath: output,
+    nodeId: 'run',
+    record: 'full_run',
+  });
+  // Teardown only: stop the helper on every exit path. The body asserts stop()'s outcome;
+  // a second stop() after a failed assertion must not replace that failure.
+  t.after(() => active.stop().catch(() => undefined));
+  // The stream stops under this snapshot; it is taken outside the session instead.
+  const inFlight = await active.snapshot!(path.join(dir, 'in-flight.png'));
+  assert.equal(inFlight.fallbackFrom, 'record_session_snapshot');
+  const fallback = await active.snapshot!(path.join(dir, 'after.png'));
+  assert.equal(fallback.fallbackFrom, 'record_session_snapshot');
+  assert.match(String(fallback.fallbackReason), /-3805/u);
+  assert.ok(fallback.timingUnavailableReason);
+  assert.equal(await readFile(path.join(dir, 'after.png'), 'utf8'), 'PNG standalone');
+  const result = await active.stop();
+  assert.deepEqual(result.interruption, {
+    frames: 2400,
+    mediaTimeMs: 79966.7,
+    cause:
+      'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+  });
+  assert.equal(await readFile(output, 'utf8'), 'partial video');
+});
+
+test('exit 3 without the stream_interrupted event is still a failed recording', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'record-exit3-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const active = await createCaptureHelperVideoRecorder({
+    captureHelperPath: await interruptingHelper(dir, false),
+  }).start({
+    target: { kind: 'window-id', windowId: '875' },
+    outputPath: path.join(dir, 'out.mp4'),
+    nodeId: 'run',
+    record: 'full_run',
+  });
+  // Teardown only (see above); the body expects this stop() to reject.
+  t.after(() => active.stop().catch(() => undefined));
+  await assert.rejects(active.snapshot!(path.join(dir, 'lost.png')), /exited before the snapshot/u);
+  await assert.rejects(active.snapshot!(path.join(dir, 'after.png')), /no longer active/u);
+  await assert.rejects(active.stop(), /capture-helper record failed \(exit 3\)/u);
+});
+
 test('loss of the owned mirror after start invalidates recording completion', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Native capture provider is macOS-only');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'record-mirror-exit-'));

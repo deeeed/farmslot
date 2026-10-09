@@ -17,6 +17,7 @@ import {
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
 import {
+  digestRecipeDocument,
   type RecipeActionManifestDocument,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
@@ -977,8 +978,33 @@ describe('run recording', () => {
     fs.writeFileSync(stagedPath, bytes);
     const artifactManifestPath = path.join(root, 'artifact-manifest.json');
     const tracePath = path.join(root, 'trace.json');
-    fs.writeFileSync(artifactManifestPath, JSON.stringify({ artifacts: [] }));
-    fs.writeFileSync(tracePath, '[]');
+    const summaryPath = path.join(root, 'summary.json');
+    fs.writeFileSync(artifactManifestPath, JSON.stringify({ runStatus: 'pass', artifacts: [] }));
+    fs.writeFileSync(
+      tracePath,
+      JSON.stringify({
+        entries: [
+          {
+            nodeId: 'n1',
+            action: 'ui.press',
+            startedAt: new Date(Date.now() - 4000).toISOString(),
+            endedAt: new Date(Date.now() - 3000).toISOString(),
+            durationMs: 1000,
+            ok: true,
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        status: 'pass',
+        total: 1,
+        passed: 1,
+        failed: 0,
+        cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+      }),
+    );
     const sidecar = {
       version: 1,
       recording_id: 'test-recording',
@@ -996,6 +1022,7 @@ describe('run recording', () => {
     process.env[ACTIVE_PID_ENV] = '123456';
     const recording = {
       pid: 123456,
+      startedAtUnixMs: Date.now() - 5000,
       exited: true,
       finalized: false,
       nativeTiming: true,
@@ -1014,7 +1041,9 @@ describe('run recording', () => {
       JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8')).artifacts as Array<
         Record<string, unknown>
       >;
-    const result = { artifactManifestPath, tracePath } as Parameters<typeof stopRecipeRecording>[1];
+    const result = { artifactManifestPath, tracePath, summaryPath } as Parameters<
+      typeof stopRecipeRecording
+    >[1];
     return { recording, sidecar, result, artifacts, bytes };
   }
 
@@ -1055,6 +1084,73 @@ describe('run recording', () => {
     assert.equal(fs.existsSync(f.recording.outputPath), false);
     assert.equal(f.artifacts().length, 0);
   });
+
+  const interruption = {
+    frames: 2400,
+    mediaTimeMs: 79966.7,
+    cause:
+      'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+  };
+
+  test('keeps a stream-interrupted recording as partial footage and returns the interruption', async () => {
+    const f = fixture();
+    Object.assign(f.recording, {
+      completedVideo: false,
+      completedRecordingId: undefined,
+      exitCode: 3,
+      interruption: { ...interruption, recordingId: 'test-recording' },
+    });
+    const kept = await stopRecipeRecording(f.recording, f.result);
+    assert.equal(kept?.videoPath, 'videos/full-run.mp4');
+    assert.match(kept?.message ?? '', /^CAPTURE_INTERRUPTED: .*2400 frames .*-3805/u);
+    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
+    const video = f.artifacts().find((artifact) => artifact.type === 'video');
+    assert.deepEqual(video?.interruption, interruption);
+    // The package fails the way a runner-owned recording does: trace, summary and manifest agree.
+    const read = (file: string) => JSON.parse(fs.readFileSync(file, 'utf8'));
+    const entries = read(f.result!.tracePath).entries as Array<Record<string, unknown>>;
+    assert.equal(entries.at(-1)?.error_code, 'CAPTURE_INTERRUPTED');
+    assert.equal(entries.at(-1)?.cause_class, 'environment');
+    assert.deepEqual(
+      (({ status, total, passed, failed, cause_counts }) => ({
+        status,
+        total,
+        passed,
+        failed,
+        cause_counts,
+      }))(read(f.result!.summaryPath)),
+      {
+        status: 'fail',
+        total: 2,
+        passed: 1,
+        failed: 1,
+        cause_counts: { subject: 0, harness: 0, environment: 1, unknown: 0 },
+      },
+    );
+    assert.equal(read(f.result!.artifactManifestPath).runStatus, 'fail');
+    // The interruption event carries the recording identity, so native timing still verifies,
+    // and the timeline is bound to the final trace, the interruption included.
+    assert.equal(video?.timelinePath, 'videos/full-run.mp4.timeline.json');
+    const timeline = read(
+      path.join(path.dirname(f.result!.artifactManifestPath), video!.timelinePath as string),
+    );
+    assert.equal(timeline.traceDigest, digestRecipeDocument(entries));
+  });
+
+  for (const [label, exitCode, event] of [
+    ['an exit 3 without the interruption event', 3, undefined],
+    ['an interruption event without exit 3', 1, { ...interruption, recordingId: 'test-recording' }],
+  ] as const) {
+    test(`does not keep footage for ${label}`, async () => {
+      const f = fixture();
+      Object.assign(f.recording, { completedVideo: false, exitCode, interruption: event });
+      await assert.rejects(
+        stopRecipeRecording(f.recording, f.result),
+        /Missing finalized video completion/u,
+      );
+      assert.equal(f.artifacts().length, 0);
+    });
+  }
 
   test('records nothing unless asked, or for a platform without a framed recorder', async () => {
     const root = tempRoot();
