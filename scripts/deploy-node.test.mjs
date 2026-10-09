@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,22 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The deploy installs the node CLI from a committed revision of its checkout.
+const commitFixture = (root) => {
+  const git = (...args) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.com', ...args],
+      {
+        cwd: root,
+        stdio: 'ignore',
+      },
+    );
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-qm', 'fixture');
+};
 
 // Execute the actual deployment script with remote side effects replaced by command stubs.
 // This proves generated service documents, not remote installation or runner execution.
@@ -67,6 +84,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
           );
           for (const command of ['rsync', 'yarn', 'sleep'])
             write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
+          commitFixture(root);
           const env = {
             ...process.env,
             PATH: `${root}/bin:${process.env.PATH}`,
@@ -248,6 +266,7 @@ elif command.startswith('test -d '): sys.exit(1)
     );
     for (const command of ['yarn', 'sleep']) write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
 
+    commitFixture(root);
     const rsyncLog = path.join(root, 'rsync.log');
     const sshLog = path.join(root, 'ssh.log');
     execFileSync(
@@ -322,5 +341,213 @@ elif command.startswith('test -d '): sys.exit(1)
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Workers run the `farmslot` on their PATH, so a node deploy that skipped the CLI
+// left worker-side fixes on whatever revision the CLI was last installed at. The
+// ssh stub runs each remote command locally with HOME at a temp directory: the
+// snapshot, its links and the worker-shell verify are real files and processes.
+const cliFixture = () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-cli-'));
+  const home = path.join(root, 'home');
+  const write = (relative, content, executable = false) => {
+    const target = path.join(root, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content, { mode: executable ? 0o755 : 0o644 });
+  };
+  write('scripts/deploy-node.sh', fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh')));
+  write(
+    'services/node/package.json',
+    fs.readFileSync(path.join(repo, 'services/node/package.json')),
+  );
+  for (const name of ['protocol', 'capabilities', 'agent-runtime']) {
+    write(
+      `packages/${name}/package.json`,
+      fs.readFileSync(path.join(repo, 'packages', name, 'package.json')),
+    );
+    fs.mkdirSync(path.join(root, 'packages', name, 'dist'), { recursive: true });
+  }
+  // Records how each worker-shell invocation saw its environment.
+  write(
+    'packages/cli/bin/farmslot.mjs',
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+const home = process.env.HOME;
+fs.appendFileSync(path.join(home, 'cli-calls.jsonl'), JSON.stringify({
+  argv: process.argv.slice(2),
+  script: fs.realpathSync(process.argv[1]),
+  gwUrl: process.env.GW_URL ?? null,
+  farmslotHome: process.env.FARMSLOT_HOME ?? null,
+  credentials: ['FARMSLOT_NODE_TOKEN', 'FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD'].filter((name) => process.env[name]),
+}) + '\\n');
+if (process.argv[2] === '--version') console.log('0.0.0-fixture');
+else if (fs.existsSync(path.join(home, 'gateway-down'))) { console.error('gateway unreachable'); process.exit(1); }
+else console.log('{}');
+`,
+    true,
+  );
+  commitFixture(root);
+  write('node-token', 'fixture-node-credential');
+  write(
+    'bin/ssh',
+    '#!/bin/sh\nwhile [ "$1" = -o ]; do shift 2; done\nshift\nexec bash -c "$*"\n',
+    true,
+  );
+  write('bin/uname', '#!/bin/sh\necho Linux\n', true);
+  write('bin/yarn', '#!/bin/sh\necho "$PWD $*" >> "$HOME/yarn.log"\n', true);
+  for (const command of ['rsync', 'systemctl', 'sleep'])
+    write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
+  // The node user's login profile puts install.sh's link dir on PATH.
+  write(
+    'home/.bash_profile',
+    `export PATH="$HOME/.local/bin:${path.dirname(process.execPath)}:$PATH"\n`,
+  );
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const snapshot = path.join(home, '.local/share/farmslot-cli', sha);
+  return {
+    root,
+    home,
+    sha,
+    snapshot,
+    entry: path.join(snapshot, 'packages/cli/bin/farmslot.mjs'),
+    deploy: (instance = 'prod') =>
+      execFileSync(
+        'bash',
+        [
+          path.join(root, 'scripts/deploy-node.sh'),
+          'fixture-machine',
+          '127.0.0.1',
+          '--instance',
+          instance,
+          '--node-token-file',
+          path.join(root, 'node-token'),
+        ],
+        {
+          env: {
+            ...process.env,
+            PATH: `${root}/bin:${process.env.PATH}`,
+            HOME: home,
+            SHELL: '/bin/bash',
+            ASDF_DATA_DIR: '',
+            GATEWAY_PORT: '',
+            FARMSLOT_NODE_PATH: process.execPath,
+            FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
+            FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
+          },
+          cwd: root,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 60000,
+        },
+      ),
+    calls: () =>
+      fs
+        .readFileSync(path.join(home, 'cli-calls.jsonl'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    snapshotInstalls: () =>
+      fs
+        .readFileSync(path.join(home, 'yarn.log'), 'utf8')
+        .split('\n')
+        .filter((line) => line === `${snapshot} install --immutable`).length,
+  };
+};
+
+for (const instance of ['prod', 'dev']) {
+  test(`deploy-node installs the deployed revision as the node CLI and verifies it from a worker shell (${instance})`, () => {
+    const fixture = cliFixture();
+    try {
+      // macpro-style: npm-global link into a git checkout with local changes.
+      const checkoutCli = path.join(fixture.home, 'dev/farmslot/packages/cli/bin/farmslot.mjs');
+      fs.mkdirSync(path.dirname(checkoutCli), { recursive: true });
+      fs.writeFileSync(checkoutCli, '// operator checkout\n');
+      fs.mkdirSync(path.join(fixture.home, '.npm-global/bin'), { recursive: true });
+      fs.symlinkSync(checkoutCli, path.join(fixture.home, '.npm-global/bin/farmslot'));
+
+      const first = fixture.deploy(instance);
+      assert.match(first, /installing node CLI snapshot/);
+      assert.match(
+        first,
+        /\.npm-global\/bin\/farmslot \(was .*dev\/farmslot\/packages\/cli\/bin\/farmslot\.mjs\)/,
+      );
+      const archive = execFileSync('git', ['archive', '--format=tar', fixture.sha], {
+        cwd: fixture.root,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(fixture.snapshot, 'DEPLOYED-REVISION.json'), 'utf8')),
+        { sha: fixture.sha, sha256: crypto.createHash('sha256').update(archive).digest('hex') },
+      );
+      assert.equal(fixture.snapshotInstalls(), 1);
+      for (const link of ['.local/bin/farmslot', '.npm-global/bin/farmslot'])
+        assert.equal(fs.readlinkSync(path.join(fixture.home, link)), fixture.entry, link);
+      assert.equal(fs.readFileSync(checkoutCli, 'utf8'), '// operator checkout\n');
+
+      const expected = {
+        script: fs.realpathSync(fixture.entry),
+        gwUrl: `ws://127.0.0.1:${instance === 'dev' ? 7801 : 7777}`,
+        farmslotHome: instance === 'dev' ? path.join(fixture.home, '.farmslot-dev') : null,
+        credentials: [],
+      };
+      assert.deepEqual(fixture.calls(), [
+        { argv: ['--version'], ...expected },
+        { argv: ['rpc', 'gateway.status'], ...expected },
+      ]);
+
+      // Re-deploying the same revision reuses the snapshot and leaves the links.
+      const second = fixture.deploy(instance);
+      assert.match(second, /node CLI snapshot [0-9a-f]+ already installed/);
+      assert.doesNotMatch(second, / → .*\/bin\/farmslot/);
+      assert.equal(fixture.snapshotInstalls(), 1);
+      assert.equal(fixture.calls().length, 4);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('deploy-node fails loudly with the fix when a worker shell cannot reach the gateway', () => {
+  const fixture = cliFixture();
+  try {
+    fs.mkdirSync(fixture.home, { recursive: true });
+    fs.writeFileSync(path.join(fixture.home, 'gateway-down'), '');
+    assert.throws(fixture.deploy, (error) => {
+      assert.notEqual(error.status, 0);
+      const stderr = String(error.stderr);
+      assert.match(stderr, /farmslot rpc gateway\.status failed against ws:\/\/127\.0\.0\.1:7777/);
+      assert.match(
+        stderr,
+        /farmslot gateway add <name> ws:\/\/127\.0\.0\.1:7777 && farmslot login <name>/,
+      );
+      assert.match(stderr, /workers on fixture-machine cannot use the deployed farmslot CLI/);
+      assert.doesNotMatch(
+        `${error.stdout}${stderr}`,
+        /fixture-operator-secret|fixture-node-credential/,
+      );
+      return true;
+    });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('deploy-node fails when an asdf shim shadows the deployed CLI on the worker PATH', () => {
+  const fixture = cliFixture();
+  try {
+    const shim = path.join(fixture.home, '.asdf/shims/farmslot');
+    fs.mkdirSync(path.dirname(shim), { recursive: true });
+    fs.writeFileSync(shim, '#!/bin/sh\necho stale\n', { mode: 0o755 });
+    assert.throws(fixture.deploy, (error) => {
+      assert.match(
+        String(error.stderr),
+        new RegExp(`farmslot on the worker PATH is ${shim}, not the deployed ${fixture.entry}`),
+      );
+      return true;
+    });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
