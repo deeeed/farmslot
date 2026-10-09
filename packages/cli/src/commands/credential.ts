@@ -20,7 +20,7 @@ import type {
 
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
-import { loadProfiles, saveProfiles } from '../gateway-profiles.js';
+import { loadProfiles, profileForUrl, saveProfiles } from '../gateway-profiles.js';
 import { repoRoot } from '../onboarding/workspace.js';
 
 export function registerCredentialCommands(program: Command): void {
@@ -382,9 +382,7 @@ export function persistOwnerCredential(
   secret: string,
 ): string {
   const profiles = loadProfiles();
-  const matching = Object.entries(profiles.gateways).find(
-    ([, profile]) => profile.url === url,
-  )?.[0];
+  const matching = profileForUrl(url, profiles)?.name;
   const name = profileName ?? matching ?? uniqueProfileName(profiles.gateways, 'activated-gateway');
   profiles.gateways[name] = { url, authMode: 'token', secret };
   if (!profiles.active || profiles.active === name || !profiles.gateways[profiles.active]) {

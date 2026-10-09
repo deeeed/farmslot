@@ -11,9 +11,24 @@ export interface ConnectedNode {
   ws: WebSocket;
   nativeSessions?: NativeExecutionNodeDeclaration;
   nativeAuthority?: { principalId: string; valid(): boolean };
+  /** URL the node itself dials to reach this gateway (its GATEWAY_URL). */
+  gatewayUrl?: string;
 }
 
 const nodes = new Map<string, ConnectedNode>();
+
+/** Exported into every worker shell, so keep only a ws(s) URL with no embedded credentials. */
+function workerGatewayUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password
+      ? raw
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function registerNode(
   machine: string,
@@ -23,6 +38,7 @@ export function registerNode(
   gatewayProtocolVersion?: string,
   nativeSessions?: NativeExecutionNodeDeclaration,
   nativeAuthority?: ConnectedNode['nativeAuthority'],
+  gatewayUrl?: string,
 ): void {
   const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
@@ -34,6 +50,7 @@ export function registerNode(
     ws,
     nativeSessions,
     nativeAuthority,
+    gatewayUrl: workerGatewayUrl(gatewayUrl),
   });
 }
 
