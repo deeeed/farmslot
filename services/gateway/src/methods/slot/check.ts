@@ -18,10 +18,18 @@ import {
   type RawProjectJson,
   renderFixtureTemplate,
   type SlotVars,
+  withMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import {
+  resolveClaudeBinary,
+  resolveCodexBinary,
+  wrapWorkerShellCommand,
+} from '../../runners/launch-command.js';
+import { normalizeRunner } from '../../runners/registry.js';
 
+import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -87,6 +95,20 @@ export async function slotCheck(
       );
       checks.push(branchStep);
       emitStep(emit, branchStep);
+      let signingStep: CheckStep;
+      try {
+        signingStep = await checkCommitSigning(slotVars, loadGitIdentity());
+      } catch (err) {
+        signingStep = { name: 'git.signing', status: 'fail', detail: (err as Error).message };
+      }
+      checks.push(signingStep);
+      emitStep(emit, signingStep);
+      // Streams each probe as it completes; pushed here without re-emitting.
+      checks.push(
+        ...(await checkRunnerLaunch(slotVars, projectJson, projectVars, {
+          onProgress: (step) => emitStep(emit, step),
+        })),
+      );
     }
 
     // ── 3. Fixtures ──
@@ -234,6 +256,124 @@ export async function checkDefaultBranch(
   }
   if (probe.blocker) return { name, status: 'fail', detail: probe.blocker };
   return { name, status: 'pass', detail: `Default branch ${defaultBranch} is fetched` };
+}
+
+/**
+ * Runner binaries a dispatch on this slot can launch: claude (the dispatch
+ * fallback) and codex when the pool gives it a path or a project flow
+ * defaults to it.
+ */
+export function slotRunnerBinaries(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+): { runner: string; binary: string }[] {
+  const runners = [{ runner: 'claude', binary: resolveClaudeBinary(vars.claudePath) }];
+  const defaults = Object.values(projectJson.defaults ?? {}).map((d) => normalizeRunner(d.runner));
+  if (vars.codexPath || defaults.includes('codex')) {
+    runners.push({ runner: 'codex', binary: resolveCodexBinary(vars.codexPath) });
+  }
+  return runners;
+}
+
+const PINNED_VERSION_MISSING_RE = /No preinstalled version|is not installed|No version is set/i;
+const TOOL_VERSIONS_PIN = '.tool-versions pins ';
+
+/**
+ * Resolve node and the runner binaries in the slot repo with the env a worker
+ * launch gets (project command_env, worker PATH prefix, machine env, repo cwd),
+ * so a version manager pin the host cannot satisfy (asdf `.tool-versions`)
+ * fails here instead of at dispatch. Probes run in parallel; each result and a
+ * heartbeat while any is pending go to `onProgress`, so streaming clients see
+ * activity when a remote node is slow to answer.
+ */
+export async function checkRunnerLaunch(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars?: ProjectVars,
+  progress: HealthProgressOptions = {},
+): Promise<CheckStep[]> {
+  const onProgress = progress.onProgress ?? (() => {});
+  const inWorkerShell = (command: string) =>
+    wrapWorkerShellCommand(withMachineEnv(command, vars), { projectJson, vars, projectVars });
+  // A bad project command_env fails every probe the same way: report it once.
+  try {
+    inWorkerShell('true');
+  } catch (err) {
+    const step: CheckStep = {
+      name: 'runner',
+      status: 'fail',
+      detail: `Worker env cannot be built: ${(err as Error).message}`,
+    };
+    onProgress(step);
+    return [step];
+  }
+
+  const probes = [
+    { name: 'runner.node', binary: 'node' },
+    ...slotRunnerBinaries(vars, projectJson).map(({ runner, binary }) => ({
+      name: `runner.${runner}`,
+      binary,
+    })),
+  ];
+  const pending = new Set(probes.map((probe) => probe.name));
+  return withHeartbeat(
+    progress,
+    'runner',
+    () => `Still probing ${[...pending].join(', ')}`,
+    () =>
+      Promise.all(
+        probes.map(async ({ name, binary }) => {
+          const step = await probeBinary(vars, name, binary, inWorkerShell);
+          pending.delete(name);
+          onProgress(step);
+          return step;
+        }),
+      ),
+  );
+}
+
+async function probeBinary(
+  vars: SlotVars,
+  name: string,
+  binary: string,
+  inWorkerShell: (command: string) => string,
+): Promise<CheckStep> {
+  let result: Awaited<ReturnType<typeof execOnSlot>>;
+  try {
+    // On failure, name the Node version the repo pins: asdf's own message does not.
+    const command = `cd ${shellQuote(vars.remoteRepo)} && { ${binary} --version 2>&1 || { rc=$?; sed -n 's/^nodejs[[:space:]][[:space:]]*/${TOOL_VERSIONS_PIN}nodejs /p' .tool-versions 2>/dev/null; exit $rc; }; }`;
+    result = await execOnSlot(vars, inWorkerShell(command), { timeout: 30_000 });
+  } catch (err) {
+    return { name, status: 'fail', detail: `${binary} check failed: ${(err as Error).message}` };
+  }
+  const lines = `${result.stdout}\n${result.stderr}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const output = lines.filter((line) => !line.startsWith(TOOL_VERSIONS_PIN));
+  if (result.exitCode === 0) {
+    return { name, status: 'pass', detail: `${binary} ${output[0] ?? ''}`.trim() };
+  }
+  // The pin explains only a version-manager refusal, not an unrelated failure.
+  const pinMissing = PINNED_VERSION_MISSING_RE.test(output.join('\n'));
+  const pin = pinMissing ? lines.find((line) => line.startsWith(TOOL_VERSIONS_PIN)) : undefined;
+  const pinned = pin
+    ? ` ${pin.slice(TOOL_VERSIONS_PIN.length)}`
+    : ' the toolchain version the repo pins';
+  const fix = pinMissing
+    ? `install${pinned} on ${vars.machine} (e.g. \`asdf install\` in ${vars.remoteRepo})`
+    : result.exitCode === 127
+      ? binary === 'node'
+        ? `install node on ${vars.machine} or add its directory to the pool \`env.PATH\``
+        : `install ${binary} on ${vars.machine} or set its path in the pool config`
+      : `run \`${binary} --version\` in ${vars.remoteRepo} on ${vars.machine}`;
+  // The cause leads: asdf follows it with every installed version.
+  const head = output.slice(0, 2).join(' | ');
+  return {
+    name,
+    status: 'fail',
+    detail: `${binary} cannot start in ${vars.remoteRepo} (exit ${result.exitCode})${head ? `: ${head}` : ''}${pin ? `; ${pin}` : ''}. Fix: ${fix}`,
+  };
 }
 
 /**
@@ -496,7 +636,6 @@ export async function checkHealth(
   progress: HealthProgressOptions = {},
 ): Promise<CheckStep | null> {
   const onProgress = progress.onProgress ?? (() => {});
-  const heartbeatMs = progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS;
   const healthHook = expandHook('health_check', projectJson, vars, projectVars);
   if (!healthHook) return null;
 
@@ -518,21 +657,19 @@ export async function checkHealth(
     });
     // Heartbeat through the unlock, the settle wait and the re-read: no window
     // may stay silent past the CLI's idle timeout.
-    const unlockStartedAt = Date.now();
     let phase = 'Unlock still running';
-    const heartbeat = setInterval(() => {
-      const elapsedS = Math.round((Date.now() - unlockStartedAt) / 1000);
-      onProgress({ name: 'health', status: 'warn', detail: `${phase} (${elapsedS} s)` });
-    }, heartbeatMs);
-    try {
-      unlockFailure = await runUnlockHook(vars, unlockHook);
-      phase = 'Re-checking health after unlock';
-      // Re-read health even after a failed unlock: the app can reach ready on its own.
-      await new Promise((r) => setTimeout(r, 3000));
-      healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
-    } finally {
-      clearInterval(heartbeat);
-    }
+    await withHeartbeat(
+      progress,
+      'health',
+      () => phase,
+      async () => {
+        unlockFailure = await runUnlockHook(vars, unlockHook);
+        phase = 'Re-checking health after unlock';
+        // Re-read health even after a failed unlock: the app can reach ready on its own.
+        await new Promise((r) => setTimeout(r, 3000));
+        healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
+      },
+    );
     if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
       return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
     }
@@ -553,6 +690,29 @@ export interface HealthProgressOptions {
   onProgress?: (step: CheckStep) => void;
   /** Heartbeat interval while the unlock and its health re-read run. */
   heartbeatMs?: number;
+}
+
+/**
+ * Run `fn` while sending `<detail()> (<N> s)` as a warn step every
+ * `heartbeatMs`, so no wait stays silent past the CLI's idle timeout.
+ */
+async function withHeartbeat<T>(
+  progress: HealthProgressOptions,
+  name: string,
+  detail: () => string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const onProgress = progress.onProgress ?? (() => {});
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const elapsedS = Math.round((Date.now() - startedAt) / 1000);
+    onProgress({ name, status: 'warn', detail: `${detail()} (${elapsedS} s)` });
+  }, progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(heartbeat);
+  }
 }
 
 /**

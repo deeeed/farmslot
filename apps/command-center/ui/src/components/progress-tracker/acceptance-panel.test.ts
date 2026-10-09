@@ -3,12 +3,16 @@ import { test } from 'node:test';
 
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
 
-import { litText } from '../../testing/lit-text.js';
+import { litBindings, litText } from '../../testing/lit-text.js';
 
 import {
+  type AcceptanceEvidenceOpen,
+  acceptancePanelInputs,
   acceptancePanelPresentation,
   evidenceLabel,
   renderAcceptancePanel,
+  type RunAcceptanceData,
+  runAcceptanceEvidenceRows,
 } from './acceptance-panel.js';
 
 function criterion(overrides: Partial<AcceptanceCriterionStatus> = {}): AcceptanceCriterionStatus {
@@ -199,4 +203,124 @@ test('manifest-linked criteria render as evidence linked, labelled, and never as
   assert.doesNotMatch(withLedger, /evidence linked/);
   assert.doesNotMatch(withLedger, /acceptance-source/);
   assert.match(withLedger, /1\/4 assessed/);
+});
+
+function click(overrides: Partial<MouseEvent> = {}) {
+  let prevented = false;
+  const event = {
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: () => {
+      prevented = true;
+    },
+    ...overrides,
+  } as MouseEvent;
+  return { event, prevented: () => prevented };
+}
+
+test('clicking an evidence file opens the files of its criterion, in order, in the host viewer', () => {
+  const windowOpen = Object.getOwnPropertyDescriptor(globalThis, 'open');
+  const opened: string[] = [];
+  Object.defineProperty(globalThis, 'open', {
+    configurable: true,
+    value: (url: string) => opened.push(url),
+  });
+  try {
+    const calls: AcceptanceEvidenceOpen[] = [];
+    const panel = renderAcceptancePanel(ledger([]), {
+      criteria: [
+        { id: 'AC-1', text: 'First' },
+        { id: 'AC-2', text: 'Second' },
+      ],
+      evidenceLinks: [
+        { id: 'AC-1', evidence: ['artifacts/evidence-ac1-a.png', 'artifacts/evidence-ac1-b.png'] },
+        { id: 'AC-2', evidence: ['artifacts/teardown-final-state.png'] },
+      ],
+      evidenceHref: (evidencePath) => `/api/run-artifact?path=${evidencePath}`,
+      openEvidence: (open) => calls.push(open),
+    });
+    const handlers = litBindings(panel, '@click=') as Array<(event: MouseEvent) => void>;
+    assert.equal(handlers.length, 3, 'one handler per evidence link');
+
+    const second = click();
+    handlers[1](second.event);
+    assert.equal(second.prevented(), true, 'the browser does not follow the link');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].criterion.id, 'AC-1');
+    assert.equal(calls[0].criterion.text, 'First');
+    assert.deepEqual(calls[0].evidence, [
+      'artifacts/evidence-ac1-a.png',
+      'artifacts/evidence-ac1-b.png',
+    ]);
+    assert.equal(calls[0].index, 1);
+
+    handlers[2](click().event);
+    assert.equal(calls[1].criterion.id, 'AC-2');
+    assert.deepEqual(calls[1].evidence, ['artifacts/teardown-final-state.png']);
+    assert.equal(calls[1].index, 0);
+
+    const modified = click({ metaKey: true });
+    handlers[0](modified.event);
+    assert.equal(modified.prevented(), false, 'cmd-click keeps the new-tab behaviour');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(opened, [], 'nothing calls window.open');
+  } finally {
+    if (windowOpen) Object.defineProperty(globalThis, 'open', windowOpen);
+    else delete (globalThis as { open?: unknown }).open;
+  }
+});
+
+test('the rows run detail resolves links from are exactly the rows the run page panel renders', () => {
+  const shapes: Record<string, RunAcceptanceData> = {
+    ledger: {
+      acceptanceStatus: ledger([
+        criterion({ id: 'AC-1', evidence: ['artifacts/a.png', 'artifacts/b.png'] }),
+        criterion({ id: 'AC-2', text: 'Second', verdict: 'weak', evidence: ['artifacts/c.log'] }),
+      ]),
+      acceptanceCriteria: [
+        { id: 'AC-1', text: 'The panel lists every criterion' },
+        { id: 'AC-2', text: 'Second' },
+        { id: 'AC-3', text: 'Third' },
+      ],
+      // Links are ignored once a ledger exists.
+      acceptanceEvidenceLinks: [{ id: 'AC-3', evidence: ['artifacts/ignored.png'] }],
+    },
+    manifestLinks: {
+      acceptanceStatus: null,
+      acceptanceCriteria: [
+        { id: 'AC-1', text: 'First' },
+        { id: 'AC-2', text: 'Second' },
+      ],
+      acceptanceEvidenceLinks: [{ id: 'AC-2', evidence: ['artifacts/x.png', 'artifacts/y.png'] }],
+    },
+    criteriaOnly: { acceptanceCriteria: [{ id: 'AC-1', text: 'First' }] },
+    errorOnly: { acceptanceStatusError: 'bad json' },
+    nothing: {},
+  };
+  for (const [name, data] of Object.entries(shapes)) {
+    const inputs = acceptancePanelInputs(data);
+    const rows = runAcceptanceEvidenceRows(data);
+    if (!inputs) {
+      assert.deepEqual(rows, [], `${name}: a hidden panel has no rows`);
+      continue;
+    }
+    const { ledger: panelLedger, ...options } = inputs;
+    const panel = renderAcceptancePanel(panelLedger, {
+      ...options,
+      evidenceHref: (evidencePath) => evidencePath,
+    });
+    assert.deepEqual(
+      litBindings(panel, 'data-ac-id='),
+      rows.map((row) => row.view.id),
+      `${name}: same rows in the same order`,
+    );
+    assert.deepEqual(
+      litBindings(panel, 'href='),
+      rows.flatMap((row) => row.evidence),
+      `${name}: same evidence files in the same order`,
+    );
+  }
 });

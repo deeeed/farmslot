@@ -5,6 +5,7 @@ import type {
   RecipeExecutionCapability,
   RecipeExecutionPlan,
   RecipeFailureCause,
+  RecipeRecordingInterruption,
   RecipeResolutionDocument,
   RecipeSourceProvenance,
   UiObserverRef,
@@ -99,6 +100,14 @@ export interface RecipeRunResult {
   tracePath: string;
   artifactManifestPath: string;
   recipePath: string;
+  /** The run video's recording stream stopped early; the partial video was kept. */
+  captureInterruption?: RecipeRunCaptureInterruption;
+}
+
+export interface RecipeRunCaptureInterruption extends RecipeRecordingInterruption {
+  /** Package-relative path of the partial video. */
+  videoPath: string;
+  message: string;
 }
 
 export interface RecipeRunner {
@@ -187,6 +196,8 @@ export interface VideoRecordingResult {
   timingUnavailableReason?: string;
   /** Raw provider timing evidence, relative to the private video staging directory. */
   timingEvidencePath?: string;
+  /** The recording stream stopped early; the output holds the frames captured until then. */
+  interruption?: RecipeRecordingInterruption;
 }
 
 export interface VideoRecorder {

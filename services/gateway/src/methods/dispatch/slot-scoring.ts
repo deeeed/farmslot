@@ -17,7 +17,7 @@ import {
 
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
-import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../../core/index.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -61,15 +61,20 @@ export function activeRunSlotIds(
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
-    runs
-      .filter(
-        (run) =>
-          run.id !== excludeRunId &&
-          run.slotId &&
-          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
-          !isSlotFreedByPark(run),
-      )
-      .map((run) => run.slotId as string),
+    runs.filter((run) => isActiveSlotHolder(run, excludeRunId)).map((run) => run.slotId as string),
+  );
+}
+
+/** Whether `run` occupies its slot, by the rule of {@link activeRunSlotIds}. */
+export function isActiveSlotHolder(
+  run: Pick<Run, 'id' | 'slotId' | 'status' | 'park'>,
+  excludeRunId?: string,
+): boolean {
+  return (
+    run.id !== excludeRunId &&
+    Boolean(run.slotId) &&
+    !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
+    !isSlotFreedByPark(run)
   );
 }
 
@@ -562,9 +567,9 @@ export function buildSlotClaimStatus(params: {
  * Refuse CAS claims during teardown or while retained workspace occupants
  * hold the slot. A stale fleet selection must not overwrite either protection.
  */
-export function slotClaimBlockedByRelease(slot: SlotClaimStatus): string | null {
-  if (slot.lifecycle === 'held' && slot.phase === 'occupied') return 'slot remains occupied';
-  return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
+export function slotClaimBlockedByRelease(slot: SlotClaimStatus): 'occupied' | 'releasing' | null {
+  if (slot.lifecycle === 'held' && slot.phase === 'occupied') return 'occupied';
+  return slot.phase === SLOT_PHASE_RELEASING ? 'releasing' : null;
 }
 
 /**
@@ -675,6 +680,36 @@ export function slotClaimBlockedByHandoff(
   const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
   if (!reserved || reserved === runId) return null;
   return `slot is reserved for handoff to run ${reserved}`;
+}
+
+/**
+ * Everything that refuses an ordinary (non-takeover) claim, first match wins,
+ * with the holder spelled out. The find-slot claim CAS and its refusal message
+ * both read this, so a new blocker cannot reach one and miss the other.
+ */
+export function slotClaimBlocker(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
+): { kind: 'releasing' | 'occupied' | 'handoff' | 'live-owner'; detail: string } | null {
+  const release = slotClaimBlockedByRelease(slot);
+  if (release === 'releasing') {
+    const since = slot[SLOT_RELEASING_SINCE];
+    return {
+      kind: 'releasing',
+      detail: `release in progress since ${typeof since === 'string' ? since : 'an unknown time'}`,
+    };
+  }
+  if (release === 'occupied') {
+    const reason = slot.held_reason;
+    return { kind: 'occupied', detail: typeof reason === 'string' ? reason : 'no reason recorded' };
+  }
+  const handoff = slotClaimBlockedByHandoff(slot, runId);
+  if (handoff) return { kind: 'handoff', detail: handoff };
+  const owner = slotClaimBlockedByLiveOwner(slot, runId, ownerRunLookup);
+  if (!owner) return null;
+  const status = ownerRunLookup(String(slot.current_run_id))?.status;
+  return { kind: 'live-owner', detail: `${owner} (${status})` };
 }
 
 /**

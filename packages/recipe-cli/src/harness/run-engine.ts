@@ -12,8 +12,13 @@ import type {
   RecipeNodeEvent,
   RecipeRunOptions,
 } from '@farmslot/adapter-sdk';
-import type { RecipeActionManifestDocument, RecipeExecutionPlan } from '@farmslot/protocol';
 import {
+  type RecipeActionManifestDocument,
+  type RecipeExecutionPlan,
+  recipeTraceEntries,
+} from '@farmslot/protocol';
+import {
+  CAPTURE_INTERRUPTED,
   type RecipeLibrarySource,
   type RecipeRunner,
   type RecipeRunRequest,
@@ -34,6 +39,7 @@ import {
   writeExecutionProvenance,
 } from './execution-provenance.js';
 import {
+  captureInterruptedViolation,
   checkHealBounds,
   conciseFailureForHuman,
   ensureOverlay,
@@ -207,7 +213,9 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   let recordingError: unknown;
   if (executionError === undefined && result) {
     try {
-      await stopRecipeRecording(recording, result);
+      const captureInterruption = await stopRecipeRecording(recording, result);
+      // The partial video is published; the run fails with a typed capture failure.
+      if (captureInterruption) result = { ...result, status: 'fail', captureInterruption };
     } catch (error) {
       recordingError = error;
     }
@@ -806,14 +814,19 @@ export async function prepareHeal(
   return { state, heal };
 }
 
+// Failure text to classify. A capture interruption is reported on its own (captureInterruptedViolation).
 function readRunFailureText(result: RecipeRunResult): string {
   try {
-    const trace = JSON.parse(fs.readFileSync(result.tracePath, 'utf8')) as {
-      entries?: Array<{ ok?: boolean; error?: unknown }>;
-    };
-    const entries = Array.isArray(trace.entries) ? trace.entries : [];
+    const entries = (recipeTraceEntries(JSON.parse(fs.readFileSync(result.tracePath, 'utf8'))) ??
+      []) as Array<{ ok?: boolean; error?: unknown; error_code?: unknown }>;
     return entries
-      .filter((entry) => entry && entry.ok === false && typeof entry.error === 'string')
+      .filter(
+        (entry) =>
+          entry &&
+          entry.ok === false &&
+          typeof entry.error === 'string' &&
+          entry.error_code !== CAPTURE_INTERRUPTED,
+      )
       .map((entry) => entry.error as string)
       .join('\n')
       .trim();
@@ -830,10 +843,11 @@ export async function executeWithHealBounds<T extends RecipeRunResult>(
 ): Promise<{ result: T; violation: HealBoundViolation | null }> {
   const result = await exec();
   if (result.status === 'pass' || result.status === 'unknown') return { result, violation: null };
-  return {
-    result,
-    violation: checkHealBounds(target, readRunFailureText(result), state),
-  };
+  const failureText = readRunFailureText(result);
+  // Any other failure is classified as usual; a lone capture interruption is typed.
+  if (result.captureInterruption && !failureText)
+    return { result, violation: captureInterruptedViolation(result.captureInterruption) };
+  return { result, violation: checkHealBounds(target, failureText, state) };
 }
 
 /** Evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`). */

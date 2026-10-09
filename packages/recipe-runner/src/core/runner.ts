@@ -11,12 +11,21 @@ import {
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
-import { JsonArtifactWriter, JsonSummaryWriter, JsonTraceWriter } from '../node/writers.js';
+import {
+  JsonArtifactWriter,
+  JsonSummaryWriter,
+  JsonTraceWriter,
+  summarizeTraceCounts,
+} from '../node/writers.js';
 import {
   createCaptureHelperVideoRecorder,
   errorMessage,
   manifestTarget,
 } from '../recording/capture-helper.js';
+import {
+  captureInterruptedTraceEntry,
+  runCaptureInterruption,
+} from '../recording/capture-helper-interruption.js';
 import { writeRecordingTimeline } from '../recording/timeline.js';
 import { RECIPE_RUNNER_VERSION } from '../version.js';
 
@@ -62,6 +71,7 @@ import type {
   RecipeLibrarySummary,
   RecipeLogger,
   RecipeRecordingOptions,
+  RecipeRunCaptureInterruption,
   RecipeRunner,
   RecipeRunRequest,
   RecipeRunResult,
@@ -362,6 +372,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
     let runRecording: RunVideoRecording | undefined;
+    let captureInterruption: RecipeRunCaptureInterruption | undefined;
     let canExecute = true;
     if (videoRecorder) {
       try {
@@ -471,10 +482,11 @@ class DefaultRecipeRunner implements RecipeRunner {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const videoArtifact = await this.#stopRunVideoRecording(
+          const { entry: videoArtifact, interruption } = await this.#stopRunVideoRecording(
             recordingToStop,
-            traceWriter.list(),
+            traceWriter,
             artifactWriter,
+            startedAt,
           );
           artifactWriter.register(videoArtifact);
           if (videoArtifact.timelinePath)
@@ -484,6 +496,12 @@ class DefaultRecipeRunner implements RecipeRunner {
               category: 'system',
               label: 'Recording frames and action markers',
             });
+          if (interruption) {
+            // The partial video stays registered as evidence; the run still fails, typed.
+            captureInterruption = interruption;
+            this.#logger.error(`record.video interrupted: ${interruption.message}`);
+            status = 'fail';
+          }
         } catch (error) {
           const message = errorMessage(error);
           await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
@@ -512,19 +530,10 @@ class DefaultRecipeRunner implements RecipeRunner {
     const endedAt = new Date();
     const tracePath = await traceWriter.write();
     const trace = traceWriter.list();
-    const causeCounts = {
-      subject: trace.filter((entry) => !entry.ok && entry.cause_class === 'subject').length,
-      harness: trace.filter((entry) => !entry.ok && entry.cause_class === 'harness').length,
-      environment: trace.filter((entry) => !entry.ok && entry.cause_class === 'environment').length,
-      unknown: trace.filter((entry) => !entry.ok && entry.cause_class === 'unknown').length,
-    };
     const summary: SummaryDocument = {
       invocationDigest: digestRecipeDocument(invocation),
       status,
-      total: trace.length,
-      passed: trace.filter((entry) => entry.ok).length,
-      failed: trace.filter((entry) => !entry.ok).length,
-      cause_counts: causeCounts,
+      ...summarizeTraceCounts(trace),
       startedAt: startedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       durationMs: endedAt.getTime() - startedAt.getTime(),
@@ -577,7 +586,14 @@ class DefaultRecipeRunner implements RecipeRunner {
       );
     }
 
-    return { status, summaryPath, tracePath, artifactManifestPath, recipePath };
+    return {
+      status,
+      summaryPath,
+      tracePath,
+      artifactManifestPath,
+      recipePath,
+      ...(captureInterruption ? { captureInterruption } : {}),
+    };
   }
 
   #createExecutionContext({
@@ -737,10 +753,17 @@ class DefaultRecipeRunner implements RecipeRunner {
 
   async #stopRunVideoRecording(
     runRecording: RunVideoRecording,
-    trace: import('./types.js').TraceEntry[],
+    traceWriter: JsonTraceWriter,
     artifactWriter: JsonArtifactWriter,
-  ): Promise<RecipeArtifactManifestEntry> {
+    runStartedAt: Date,
+  ): Promise<{ entry: RecipeArtifactManifestEntry; interruption?: RecipeRunCaptureInterruption }> {
     const result = await runRecording.recording.stop();
+    const interruption = result.interruption
+      ? runCaptureInterruption(result.interruption, runRecording.entry.path)
+      : undefined;
+    // Record the failure before the timeline, which is bound to the final trace.
+    if (interruption) traceWriter.record(captureInterruptedTraceEntry(interruption, runStartedAt));
+    const trace = traceWriter.list();
     await assertVideoOutputReady(runRecording.outputPath);
     await copyFileWithinRoots(
       runRecording.stagingRoot,
@@ -767,6 +790,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const entry = {
       ...runRecording.entry,
       ...(result.recorder ? { recorder: result.recorder } : {}),
+      ...(result.interruption ? { interruption: result.interruption } : {}),
     };
     if (result.timing) {
       try {
@@ -783,7 +807,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     } else
       entry.timelineUnavailableReason =
         result.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.';
-    return entry;
+    return { entry, ...(interruption ? { interruption } : {}) };
   }
 
   #hudAction(): string | undefined {

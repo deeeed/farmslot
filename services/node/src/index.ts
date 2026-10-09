@@ -154,6 +154,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       pid: process.pid,
       capabilities,
       nativeSessions: nativeSessions.declaration,
+      gatewayUrl: GATEWAY_URL,
     });
     if (ws !== socket) {
       // Superseded while awaiting: the newer socket runs its own handshake and

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- The node sends its `GATEWAY_URL` in `node.connect`, so the gateway can point workers on this machine at the same address.
+
 - Support explicit stop confirmation for legacy native workers through the execution host, and report when an older node or host needs upgrading.
 
 - Preserve configured capture-helper executables during node deployment, with an explicit target-path override.

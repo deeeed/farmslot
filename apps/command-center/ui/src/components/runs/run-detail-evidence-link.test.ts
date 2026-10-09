@@ -1,0 +1,189 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
+
+import { runAcceptanceCriterionEvidence } from '../progress-tracker/acceptance-panel.js';
+
+import {
+  acceptanceEvidenceSelection,
+  type EvidenceLightboxSelection,
+  resolveEvidenceLightboxLink,
+  RUN_OUTPUT_SCOPE,
+  runOutputEvidenceSelection,
+} from './run-detail-model.js';
+import {
+  artifactSelectionFromRunDetailHash,
+  runDetailEvidenceArtifactHash,
+} from './run-detail-url-state.js';
+
+/** The link resolved to an open lightbox set; fails the test otherwise. */
+function selected(
+  result: ReturnType<typeof resolveEvidenceLightboxLink>,
+): EvidenceLightboxSelection {
+  assert.ok('items' in result, JSON.stringify(result));
+  return result;
+}
+
+const listed: FamilyObservabilityArtifact = {
+  runId: 'run-1',
+  familyId: 'family-1',
+  stepName: 'monitor',
+  path: 'artifacts/recipe-run/evidence-ac1-a.png',
+  purpose: 'screenshot',
+  source: 'artifact-manifest',
+};
+const other: FamilyObservabilityArtifact = { ...listed, path: 'artifacts/report.md' };
+const runArtifacts = [other, listed];
+const artifactUrl = (artifact: FamilyObservabilityArtifact) => `/a/${artifact.path}`;
+
+// AC-1's second file is a ledger path the run's artifact list does not carry.
+const rows = runAcceptanceCriterionEvidence({
+  acceptanceCriteria: [
+    { id: 'AC-1', text: 'Every order type places an order' },
+    { id: 'AC-2', text: 'Slippage shows before submit' },
+  ],
+  acceptanceEvidenceLinks: [
+    { id: 'AC-1', evidence: [listed.path, 'artifacts/recipe-run/teardown-final-state.png'] },
+  ],
+});
+
+/** Open from the AC row, write the URL, then resolve that URL as a reload would. */
+function reload(index: number) {
+  const opened = acceptanceEvidenceSelection({
+    runId: 'run-1',
+    familyId: 'family-1',
+    criterion: rows[0],
+    evidence: rows[0].evidence,
+    index,
+    runArtifacts,
+    artifactUrl,
+  });
+  const hash = runDetailEvidenceArtifactHash(
+    'run-1',
+    opened.items[opened.index],
+    '#run/run-1',
+    opened.criterionId,
+  );
+  const { artifact, artifactAc } = artifactSelectionFromRunDetailHash(hash);
+  const restored = selected(
+    resolveEvidenceLightboxLink({
+      path: artifact ?? '',
+      criterionId: artifactAc,
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
+  return { opened, restored };
+}
+
+test('an AC evidence link reopens the same criterion set at the same file after a reload', () => {
+  for (const index of [0, 1]) {
+    const { opened, restored } = reload(index);
+    assert.equal(opened.scope, 'AC-1 evidence');
+    assert.deepEqual(restored, opened, `file ${index}`);
+  }
+  // A ledger path outside the run artifact list still resolves.
+  const outside = reload(1).restored;
+  assert.equal(outside.items[1]?.path, 'artifacts/recipe-run/teardown-final-state.png');
+});
+
+test('a plain artifact link and the Evidence tab open the run output, never a criterion scope', () => {
+  const plain = selected(
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: null,
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
+  assert.equal(plain.scope, RUN_OUTPUT_SCOPE);
+  assert.equal(plain.criterionId, null);
+  assert.equal(plain.index, 1);
+  assert.equal(plain.items.length, 2);
+
+  const tab = runOutputEvidenceSelection(runArtifacts, 0, artifactUrl);
+  assert.equal(tab.scope, RUN_OUTPUT_SCOPE);
+  assert.equal(tab.criterionId, null);
+});
+
+test('a criterion that no longer lists the file falls back to the run artifacts', () => {
+  const stale = selected(
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: 'AC-2',
+      acceptanceRows: rows,
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
+  assert.equal(stale.scope, RUN_OUTPUT_SCOPE);
+
+  const gone = resolveEvidenceLightboxLink({
+    path: 'artifacts/recipe-run/teardown-final-state.png',
+    criterionId: 'AC-2',
+    acceptanceRows: rows,
+    runId: 'run-1',
+    familyId: 'family-1',
+    runArtifacts,
+    artifactUrl,
+    progress: { loaded: true, runActive: false },
+  });
+  assert.ok('unavailable' in gone);
+});
+
+test('an AC link waits for the read that carries its criterion instead of falling back', () => {
+  const resolve = (acceptancePending: boolean) =>
+    resolveEvidenceLightboxLink({
+      path: listed.path,
+      criterionId: 'AC-1',
+      acceptanceRows: [],
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: true },
+      acceptancePending,
+    });
+  assert.deepEqual(resolve(true), { pending: true });
+  const settled = selected(resolve(false)); // once loaded it falls back
+  assert.equal(settled.scope, RUN_OUTPUT_SCOPE);
+});
+
+test('a finished run reopens an AC link from the progress read of its recorded task directory', () => {
+  // task.progress for a released slot: registered criteria and manifest links, no ledger.
+  const progress = {
+    acceptanceCriteria: [{ id: 'AC-1', text: 'Every order type places an order' }],
+    acceptanceEvidenceLinks: [
+      {
+        id: 'AC-1',
+        evidence: [listed.path, 'artifacts/recipe-run-attempt-1/teardown-final-state.png'],
+      },
+    ],
+  };
+  const restored = selected(
+    resolveEvidenceLightboxLink({
+      path: 'artifacts/recipe-run-attempt-1/teardown-final-state.png',
+      criterionId: 'AC-1',
+      acceptanceRows: runAcceptanceCriterionEvidence(progress),
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
+  assert.equal(restored.scope, 'AC-1 evidence');
+  assert.equal(restored.index, 1);
+});

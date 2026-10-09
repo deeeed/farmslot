@@ -401,7 +401,7 @@ function resolveGatewayCredential(): GatewayCredential | null {
   return null;
 }
 
-function credentialFromEnv(
+export function credentialFromEnv(
   env: NodeJS.ProcessEnv | Record<string, string>,
 ): GatewayCredential | null {
   const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);

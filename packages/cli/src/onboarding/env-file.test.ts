@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { GatewayClient } from '../gateway-client.js';
+import { resolveGatewayTarget } from '../gateway-profiles.js';
+
 import { loadCheckoutEnv, parseEnvFile } from './env-file.js';
 
 test('parseEnvFile handles comments, quotes, export, and tilde', () => {
@@ -101,6 +104,56 @@ test('a present-but-unreadable env file throws instead of being silently skipped
   try {
     assert.throws(() => loadCheckoutEnv(root, {}), /cannot read/);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a checkout .env gateway secret reaches only loopback targets, never a remote GW_URL', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-envfile-secret-'));
+  writeFileSync(
+    join(root, '.env'),
+    'FARMSLOT_HOME=~/.farmslot-dev\nFARMSLOT_GATEWAY_TOKEN=file-secret\n',
+  );
+  const saved = {
+    cwd: process.cwd(),
+    token: process.env.FARMSLOT_GATEWAY_TOKEN,
+    password: process.env.FARMSLOT_GATEWAY_PASSWORD,
+  };
+  delete process.env.FARMSLOT_GATEWAY_TOKEN;
+  delete process.env.FARMSLOT_GATEWAY_PASSWORD;
+  try {
+    const env: NodeJS.ProcessEnv = { FARMSLOT_GATEWAY_PASSWORD: 'shell-secret' };
+    loadCheckoutEnv(root, env);
+    assert.equal(env.FARMSLOT_HOME, '~/.farmslot-dev');
+    assert.equal(env.FARMSLOT_GATEWAY_TOKEN, undefined); // stays in its file
+    assert.equal(env.FARMSLOT_GATEWAY_PASSWORD, 'shell-secret'); // the shell still wins
+
+    const fileEnv: NodeJS.ProcessEnv = {};
+    loadCheckoutEnv(root, fileEnv);
+    const remote = resolveGatewayTarget(
+      {},
+      { ...fileEnv, GW_URL: 'ws://remote:7801' },
+      { gateways: {} },
+    );
+    assert.equal(remote.credential, null);
+
+    // Loopback targets still discover the same file through the cwd chain.
+    process.chdir(root);
+    const local = resolveGatewayTarget(
+      {},
+      { ...fileEnv, GW_URL: 'ws://localhost:7801' },
+      { gateways: {} },
+    );
+    const client = new GatewayClient({
+      url: local.url,
+      timeout: 1000,
+      credential: local.credential,
+    });
+    assert.deepEqual(Reflect.get(client, 'credential'), { token: 'file-secret' });
+  } finally {
+    process.chdir(saved.cwd);
+    if (saved.token !== undefined) process.env.FARMSLOT_GATEWAY_TOKEN = saved.token;
+    if (saved.password !== undefined) process.env.FARMSLOT_GATEWAY_PASSWORD = saved.password;
     rmSync(root, { recursive: true, force: true });
   }
 });

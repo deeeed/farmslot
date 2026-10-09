@@ -27,11 +27,9 @@ import {
 } from '../../agents/contexts.js';
 import { assertPRReviewWorktreeHead } from '../../backlog/pr-admission.js';
 import {
-  applyProjectCommandEnv,
   claimSlotStatusIf,
   execLocal,
   execOnSlot,
-  expandTemplate,
   farmslotRoot,
   getProjectField,
   isLocal,
@@ -65,6 +63,7 @@ import {
   assertRunnerLaunchPrerequisites,
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  wrapWorkerShellCommand,
 } from '../../runners/launch-command.js';
 import {
   assertNativeSlotReplacementOwner,
@@ -85,7 +84,6 @@ import {
   runnerPaneHasDeferredLaunchBlocker,
   runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
-  WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
 import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
 import {
@@ -1700,13 +1698,11 @@ export async function dispatchExecute(
     codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
   });
 
-  const effectiveDomain = resolveEffectiveDomain(currentRun?.domain, vars.domain);
-  agentLaunch = applyProjectCommandEnv(projectJson, `${WORKER_ENV_PREFIX} && ${agentLaunch}`, {
-    ...(effectiveDomain ? { domain: effectiveDomain } : {}),
-    expandDomainValue: (value) =>
-      expandTemplate(value, vars, projectVars, {
-        domain: effectiveDomain ?? '',
-      }),
+  agentLaunch = wrapWorkerShellCommand(agentLaunch, {
+    projectJson,
+    vars,
+    projectVars,
+    runDomain: currentRun?.domain,
   });
 
   let sessionMeta: Awaited<ReturnType<typeof captureRunnerSessionMetadata>> = {

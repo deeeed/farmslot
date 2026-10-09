@@ -26,7 +26,13 @@ import {
 } from '../assessment/provider.js';
 import { assessmentRecords, reserveAssessment } from '../assessment/store.js';
 import { resolveTaskPaths } from '../core/config.js';
-import { type SlotLocality, slotReadFile, slotRealpath, slotStat } from '../core/slot-io.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  type SlotLocality,
+  slotReadFile,
+  slotRealpath,
+  slotStat,
+} from '../core/slot-io.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun } from '../runs/store.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
@@ -39,7 +45,6 @@ const VERSION = 'acceptance-evidence-v1';
 const HASH = /^[a-f0-9]{64}$/;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
-const local: SlotLocality = { host: 'localhost', machine: 'local', sshTarget: '' };
 
 type Packet = {
   version: 1;
@@ -124,10 +129,10 @@ async function runLocation(
   // Gateway-owned local synthetic fixtures live beneath FARMSLOT_HOME.
   if (!path.isAbsolute(run.taskFile)) return undefined;
   const dir = path.dirname(run.taskFile);
-  const root = await slotRealpath(local, farmslotHome());
-  const resolved = await slotRealpath(local, dir);
+  const root = await slotRealpath(ORCHESTRATOR_LOCALITY, farmslotHome());
+  const resolved = await slotRealpath(ORCHESTRATOR_LOCALITY, dir);
   if (!resolved.startsWith(`${root}${path.sep}`)) return undefined;
-  return { io: local, dir, project: run.project };
+  return { io: ORCHESTRATOR_LOCALITY, dir, project: run.project };
 }
 async function snapshot(
   runId: string,

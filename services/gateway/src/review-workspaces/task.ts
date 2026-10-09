@@ -29,6 +29,7 @@ import {
 import { farmslotRoot, loadProjectVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import {
+  ORCHESTRATOR_LOCALITY,
   slotCopyDir,
   slotCopyFile,
   slotFileExists,
@@ -65,7 +66,6 @@ const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
 const RESULT = 'artifacts/review-result.json';
 /** The gateway's own filesystem, for the operator-visible copy of a review task. */
-const ORCHESTRATOR: SlotLocality = { host: 'localhost', machine: 'local', sshTarget: '' };
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 function sameWorkspaceIdentity(
@@ -390,7 +390,7 @@ export async function materializeReviewWorkspaceTask(
         `${JSON.stringify(run.repeatReviewContext, null, 2)}\n`,
       );
     await slotWriteFiles(
-      ORCHESTRATOR,
+      ORCHESTRATOR_LOCALITY,
       bundleDir,
       [...guidance, ...(await runtimeFiles())].map((file) => ({
         path: file.relativePath,
@@ -466,9 +466,14 @@ async function materializeReviewViewer(
   for (const file of ['TASK.md', 'CHECKLIST.md']) {
     await writeFile(path.join(viewer, file), await readFile(path.join(bundleDir, file)));
   }
-  await slotCopyDir(ORCHESTRATOR, path.join(bundleDir, 'inputs'), path.join(viewer, 'inputs'), {
-    excludeTopLevel: ['runtime'],
-  });
+  await slotCopyDir(
+    ORCHESTRATOR_LOCALITY,
+    path.join(bundleDir, 'inputs'),
+    path.join(viewer, 'inputs'),
+    {
+      excludeTopLevel: ['runtime'],
+    },
+  );
   return path.join(viewer, 'TASK.md');
 }
 
@@ -477,7 +482,7 @@ async function readOwnedReviewWorkspaceSignal(runId: string, deps: Dependencies 
   const snapshot = await loadSnapshot(run, deps);
   if (!snapshot) throw new Error('Static review task snapshot is missing');
   const cleaned = Boolean(run.reviewWorkspace.cleanedAt);
-  let io = cleaned ? ORCHESTRATOR : await locality(run, deps);
+  let io = cleaned ? ORCHESTRATOR_LOCALITY : await locality(run, deps);
   let taskDir = cleaned ? viewDirFor(run.id, deps) : snapshot.workspace.taskPath;
   if (cleaned && !(await slotFileExists(io, path.posix.join(taskDir, 'SIGNAL.json')))) {
     // Validation can fail before the completion archive is written. Cleanup
@@ -652,7 +657,11 @@ export async function readReviewWorkspaceCompletion(
       ],
       { maxBuffer: 256 * 1024, timeout: 30_000 },
     );
-    await slotCopyDir(ORCHESTRATOR, path.join(mirror, 'artifacts'), path.join(viewer, 'artifacts'));
+    await slotCopyDir(
+      ORCHESTRATOR_LOCALITY,
+      path.join(mirror, 'artifacts'),
+      path.join(viewer, 'artifacts'),
+    );
     await writeFile(path.join(viewer, 'CHECKLIST.md'), checklist);
     await writeFile(path.join(viewer, 'SIGNAL.json'), signalText);
     await mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
@@ -734,7 +743,11 @@ async function progressLocation(
 ): Promise<ReviewWorkspaceProgressSource> {
   if (run.reviewWorkspace!.cleanedAt) {
     const viewer = viewDirFor(run.id, deps);
-    return { io: ORCHESTRATOR, taskDir: viewer, checklistPath: path.join(viewer, 'CHECKLIST.md') };
+    return {
+      io: ORCHESTRATOR_LOCALITY,
+      taskDir: viewer,
+      checklistPath: path.join(viewer, 'CHECKLIST.md'),
+    };
   }
   const taskDir = run.reviewWorkspace!.taskPath;
   return {

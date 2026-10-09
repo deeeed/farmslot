@@ -72,3 +72,34 @@ test('filesystem launch contract rejects overlapping source grants and binds gra
   ])
     assert.throws(() => validateNativeWorkerFilesystemPolicy(invalid), /absolute paths/);
 });
+
+test('launch digest ignores gateway routing but still guards launch settings', async () => {
+  const { nativeWorkerLaunchDigest } = await import('./worker-launch.js');
+  const launch = {
+    leaseId: '10000000-0000-4000-8000-000000000001',
+    safetyTier: 'sandboxed' as const,
+    environment: { set: { PROJECT_FLAG: '1' }, unset: [] },
+  };
+  const withUrl = (GW_URL: string) => ({
+    ...launch,
+    environment: { ...launch.environment, set: { ...launch.environment.set, GW_URL } },
+  });
+  // A session saved before the node reported its URL, or reached through
+  // another URL for the same gateway, still resumes.
+  assert.equal(nativeWorkerLaunchDigest(withUrl('ws://gw:7801')), nativeWorkerLaunchDigest(launch));
+  assert.equal(
+    nativeWorkerLaunchDigest(withUrl('ws://gw:7801')),
+    nativeWorkerLaunchDigest(withUrl('ws://10.0.0.5:7801')),
+  );
+  assert.notEqual(
+    nativeWorkerLaunchDigest({
+      ...withUrl('ws://gw:7801'),
+      environment: { set: { PROJECT_FLAG: '2', GW_URL: 'ws://gw:7801' }, unset: [] },
+    }),
+    nativeWorkerLaunchDigest(withUrl('ws://gw:7801')),
+  );
+  assert.notEqual(
+    nativeWorkerLaunchDigest({ ...launch, accountLabel: 'other' }),
+    nativeWorkerLaunchDigest(launch),
+  );
+});
