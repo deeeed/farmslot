@@ -10,7 +10,6 @@ import {
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
-  readyVisibleDiffSelection,
   selectedReadyEvidenceKeysForSubmit,
   setAllReadyEvidenceIncluded,
   setReadyEvidenceIncluded,
@@ -83,12 +82,4 @@ test('ready workspace selection model excludes selected videos and prepares subm
   ]);
   assert.deepEqual(selectedReadyEvidenceKeysForSubmit(null, ['before.png']), ['before.png']);
   assert.deepEqual(selectedReadyEvidenceKeysForSubmit([], ['before.png']), []);
-});
-
-test('readyVisibleDiffSelection keeps a visible file and falls back to the first visible one', () => {
-  const visible = [{ path: 'src/gate.ts' }, { path: 'src/panel.ts' }];
-  assert.equal(readyVisibleDiffSelection(visible, 'src/panel.ts'), 'src/panel.ts');
-  assert.equal(readyVisibleDiffSelection(visible, 'src/gate.test.ts'), 'src/gate.ts');
-  assert.equal(readyVisibleDiffSelection(visible, ''), 'src/gate.ts');
-  assert.equal(readyVisibleDiffSelection([], 'src/gate.test.ts'), undefined);
 });

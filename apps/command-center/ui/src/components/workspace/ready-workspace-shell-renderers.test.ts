@@ -3,8 +3,9 @@ import test from 'node:test';
 
 import type { GitBranchDiffFile, ReadyGatePayload } from '@farmslot/protocol';
 
+import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { litText } from '../../testing/lit-text.js';
-import { splitDiffFilesByKind } from '../../utils/diff-test-filter.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import { renderReadyDiffTab, renderReadyTabBar } from './ready-workspace-shell-renderers.js';
 
@@ -14,7 +15,7 @@ const files: GitBranchDiffFile[] = [
   { path: 'src/panel.ts', status: 'A', additions: 12, deletions: 0 },
 ];
 
-function tabBarText(diffFileCount: number, diffTotalFileCount: number): string {
+function tabBarText(diffCount: string): string {
   return litText(
     renderReadyTabBar({
       payload: {} as ReadyGatePayload,
@@ -23,37 +24,34 @@ function tabBarText(diffFileCount: number, diffTotalFileCount: number): string {
       evidenceCount: 0,
       qualityCount: 0,
       inputCount: 0,
-      diffFileCount,
-      diffTotalFileCount,
+      diffCount,
       setActiveTab: () => undefined,
     }),
   ).replace(/\s+/g, ' ');
 }
 
 function diffTabText(hideTests: boolean, source = files): string {
-  const split = splitDiffFilesByKind(source, hideTests);
+  const testFilter = new DiffTestFilterController(new FakeControllerHost());
+  testFilter.hideTests = hideTests;
   return litText(
     renderReadyDiffTab({
       slotId: 'slot-1',
       diffLoading: false,
       diffError: '',
-      diffFiles: split.visible,
-      diffTotalFileCount: source.length,
-      diffKindSummary: split.summary,
-      hideTests,
-      selectedFile: split.visible[0]?.path ?? '',
+      diffFiles: source,
+      testFilter,
+      selectedFile: testFilter.split(source).visible[0]?.path ?? '',
       recovering: false,
       fileDiffLoading: false,
       fileDiff: '',
       selectFile: () => undefined,
-      toggleHideTests: () => undefined,
     }),
   ).replace(/\s+/g, ' ');
 }
 
 test('renderReadyTabBar shows the filtered Diff count only while files are hidden', () => {
-  assert.match(tabBarText(12, 12), /Diff \(12\)/);
-  assert.match(tabBarText(5, 12), /Diff \(5 of 12\)/);
+  assert.match(tabBarText('12'), /Diff \(12\)/);
+  assert.match(tabBarText('5 of 12'), /Diff \(5 of 12\)/);
 });
 
 test('renderReadyDiffTab drops test pills and offers to show them when hiding', () => {

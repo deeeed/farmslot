@@ -45,6 +45,7 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
@@ -218,6 +219,11 @@ import {
 
 @customElement('slot-view')
 export class SlotView extends SlotViewRecipePresenter {
+  /** The editor's diff tab; opened from the tree and search too, so it filters itself. */
+  readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this._branchDiffTestPatterns,
+  });
+
   async _retryRecovery() {
     if (!this._isLive || gateway.connectionState !== 'connected') return;
     await this._beginLiveRecovery();

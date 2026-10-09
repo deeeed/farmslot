@@ -3,6 +3,9 @@ import { mock, test } from 'node:test';
 
 import { type GitBranchDiffFile, Methods } from '@farmslot/protocol';
 
+import { FakeControllerHost } from '../../testing/fake-controller-host.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+
 // Gateway stub: branch diffs per slot, and a file diff that names its slot so a
 // stale diff from another run is visible in the assertion.
 const branchFiles: Record<string, GitBranchDiffFile[]> = {};
@@ -42,13 +45,26 @@ function makePresenter(fields: Partial<Presenter> = {}): Presenter {
     slotId: 'slot-a',
     _recoveryEpoch: 1,
     _diffFiles: [],
-    _hideTests: false,
     _selectedFile: '',
     _fileDiff: '',
     _fileDiffLoading: false,
     ...fields,
   });
+  // Field initializers do not run on a prototype-built view; wire the filter
+  // the way the presenter does.
+  Object.assign(view, {
+    _testFilter: new DiffTestFilterController(new FakeControllerHost(), {
+      patterns: () => view._diffTestPatterns,
+      onChange: () => view._onHideTestsChanged(),
+    }),
+  });
   return view;
+}
+
+/** What the preference subscription does on a flip. */
+function setHideTests(view: Presenter, hide: boolean): void {
+  view._testFilter.hideTests = hide;
+  view._onHideTestsChanged();
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -67,9 +83,23 @@ test('hiding tests hands a selected test file to the first visible file', () => 
     selected.push(path);
   };
 
-  view._onHideTestsChanged(true);
-  assert.equal(view._hideTests, true);
+  setHideTests(view, true);
   assert.deepEqual(selected, [codeFile.path]);
+});
+
+test('hiding tests when only tests changed drops the open test file and its diff', () => {
+  const view = makePresenter({
+    _diffFiles: [testFile],
+    _selectedFile: testFile.path,
+    _fileDiff: 'test diff',
+  });
+  view._selectFile = async () => {
+    assert.fail('nothing is listed, so nothing is selected');
+  };
+
+  setHideTests(view, true);
+  assert.equal(view._selectedFile, '');
+  assert.equal(view._fileDiff, '');
 });
 
 test('a pref flip keeps a loaded visible selection and refetches one without a diff', () => {
@@ -83,11 +113,11 @@ test('a pref flip keeps a loaded visible selection and refetches one without a d
     selected.push(path);
   };
 
-  view._onHideTestsChanged(true);
+  setHideTests(view, true);
   assert.deepEqual(selected, []);
 
   view._fileDiff = '';
-  view._onHideTestsChanged(false);
+  setHideTests(view, false);
   assert.deepEqual(selected, [codeFile.path]);
 });
 
@@ -101,14 +131,14 @@ test('showing tests after a hidden reload fetches the new run diff for the same 
   await flush();
   assert.equal(view._fileDiff, 'diff from slot-a');
 
-  view._onHideTestsChanged(true);
+  setHideTests(view, true);
   view.slotId = 'slot-b';
   await view._loadBranchDiff(1);
   await flush();
   assert.equal(view._selectedFile, '', 'nothing visible: the previous selection is dropped');
   assert.equal(view._fileDiff, '');
 
-  view._onHideTestsChanged(false);
+  setHideTests(view, false);
   await flush();
   assert.equal(view._selectedFile, testFile.path);
   assert.equal(view._fileDiff, 'diff from slot-b');

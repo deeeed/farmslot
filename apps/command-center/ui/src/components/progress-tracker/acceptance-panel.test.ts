@@ -158,3 +158,45 @@ test('evidence shows its basename so a long path cannot break the row', () => {
   );
   assert.equal(evidenceLabel('after.png'), 'after.png');
 });
+
+test('manifest-linked criteria render as evidence linked, labelled, and never as proven', () => {
+  const registered = [
+    { id: 'AC-1', text: 'First' },
+    { id: 'AC-2', text: 'Second' },
+    { id: 'AC-3', text: 'Third' },
+    { id: 'AC-4', text: 'Fourth' },
+  ];
+  const evidenceLinks = [
+    { id: 'AC-1', evidence: ['artifacts/run/after-sheet.png'] },
+    { id: 'AC-3', evidence: ['artifacts/trace.json'] },
+  ];
+  const text = litText(
+    renderAcceptancePanel(ledger([]), {
+      criteria: registered,
+      evidenceLinks,
+      evidenceHref: (evidencePath) => `/api/run-artifact?path=${evidencePath}`,
+    }),
+  );
+  // Nothing is assessed: linked evidence is not a verdict.
+  assert.match(text, /0\/4 assessed · 2 evidence linked/);
+  assert.match(text, /from evidence manifest, not verdicts/);
+  assert.match(text, /data-ac-id=AC-1\s+data-ac-verdict=evidence-linked/);
+  assert.match(text, /ac-row ac-evidence-linked/);
+  assert.match(text, /evidence linked/);
+  assert.match(text, /\/api\/run-artifact\?path=artifacts\/run\/after-sheet\.png/);
+  assert.match(text, /after-sheet\.png/);
+  assert.equal(text.match(/ac-row ac-evidence-linked/g)?.length, 2);
+  assert.equal(text.match(/ac-row ac-none/g)?.length, 2, 'AC-2 and AC-4 stay not assessed');
+  assert.doesNotMatch(text, /ac-row ac-proven/);
+
+  // A ledger always wins: links are ignored once any verdict is recorded.
+  const withLedger = litText(
+    renderAcceptancePanel(ledger([criterion({ id: 'AC-2', text: 'Second', verdict: 'weak' })]), {
+      criteria: registered,
+      evidenceLinks,
+    }),
+  );
+  assert.doesNotMatch(withLedger, /evidence linked/);
+  assert.doesNotMatch(withLedger, /acceptance-source/);
+  assert.match(withLedger, /1\/4 assessed/);
+});

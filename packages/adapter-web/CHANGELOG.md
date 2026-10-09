@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Fix: Chrome for Testing (`load-extension` mode) now launches with `--enable-unsafe-extension-debugging`, as branded Chrome already did. When the loaded extension called `chrome.runtime.reload()` (the MetaMask webpack dev server does on every background rebuild), Chrome 147 re-registered it as an unpacked extension and disabled it (`DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION`) because developer mode was off. The disable was saved in the slot profile, so every later launch showed `<id> is blocked` (`ERR_BLOCKED_BY_CLIENT`). The flag only prevents this. A profile that is already disabled stays disabled when relaunched with it.
 
 ## 0.6.5 - 2026-10-09
 

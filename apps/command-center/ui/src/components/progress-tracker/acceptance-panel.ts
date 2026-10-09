@@ -8,7 +8,8 @@
  * and `data-testid` hooks so a CDP check can read verdicts off the DOM.
  *
  * Verdicts are the worker's claim, not the gateway's: this renders what the ledger
- * says and never recomputes a verdict from evidence.
+ * says and never recomputes a verdict from evidence. A run with no ledger may get
+ * manifest links instead; those render as "evidence linked", never as a verdict.
  */
 
 import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
@@ -16,6 +17,7 @@ import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import type {
   AcceptanceCriterionRef,
   AcceptanceCriterionView,
+  AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
 import { acceptanceCriteriaView, summarizeAcceptanceStatus } from '@farmslot/protocol';
@@ -149,6 +151,17 @@ export const acceptancePanelStyles = css`
   .ac-row.ac-none .ac-verdict {
     border-style: dashed;
   }
+  /* Manifest evidence with no verdict: muted and dotted so it never reads as proven. */
+  .ac-row.ac-evidence-linked .ac-verdict {
+    border-style: dotted;
+    border-color: ${unsafeCSS(colors.textSecondary)};
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+
+  .ac-source {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-style: italic;
+  }
   .ac-row.ac-untestable .ac-verdict {
     border-style: dashed;
     border-color: ${unsafeCSS(colors.statusWarn)};
@@ -193,11 +206,14 @@ export const acceptancePanelStyles = css`
 function renderRow(
   view: AcceptanceCriterionView,
   evidenceHref?: (evidencePath: string) => string,
+  link?: AcceptanceEvidenceLink,
 ): TemplateResult {
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
   // must show what still has to be judged, and must not imply a verdict.
-  const verdict = criterion?.verdict ?? 'none';
+  const verdict = criterion?.verdict ?? (link ? 'evidence-linked' : 'none');
+  const evidence = criterion?.evidence ?? link?.evidence ?? [];
+  const recipeNodes = criterion?.recipeNodes ?? [];
   return html`
     <div
       class="ac-row ac-${verdict}"
@@ -208,12 +224,14 @@ function renderRow(
       <span class="ac-id">${view.id}</span>
       <span class="ac-text">${view.text}</span>
       ${criterion?.proofMode ? html`<span class="ac-mode">${criterion.proofMode}</span>` : nothing}
-      <span class="ac-verdict">${criterion ? criterion.verdict : 'not assessed'}</span>
+      <span class="ac-verdict"
+        >${criterion ? criterion.verdict : link ? 'evidence linked' : 'not assessed'}</span
+      >
     </div>
-    ${criterion && (criterion.evidence.length > 0 || criterion.recipeNodes.length > 0)
+    ${evidence.length > 0 || recipeNodes.length > 0
       ? html`
           <div class="ac-meta">
-            ${criterion.evidence.map((evidencePath) =>
+            ${evidence.map((evidencePath) =>
               evidenceHref
                 ? html`<a
                     class="ac-evidence"
@@ -228,7 +246,7 @@ function renderRow(
                     >${evidenceLabel(evidencePath)}</span
                   >`,
             )}
-            ${criterion.recipeNodes.map((node) => html`<span>${node}</span>`)}
+            ${recipeNodes.map((node) => html`<span>${node}</span>`)}
           </div>
         `
       : nothing}
@@ -249,11 +267,16 @@ export function renderAcceptancePanel(
     criteria?: ReadonlyArray<AcceptanceCriterionRef>;
     /** Why the ledger could not be read; shown instead of an empty panel. */
     error?: string | null;
+    /** Manifest links for a run with no ledger; labelled as such, never a verdict. */
+    evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
   } = {},
 ): TemplateResult | typeof nothing {
   const rows = acceptanceCriteriaView(options.criteria ?? ledger.criteria, ledger);
   if (rows.length === 0 && !options.error) return nothing;
   const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria);
+  // The gateway sends links only without a ledger; a ledger still wins here.
+  const links = ledger.criteria.length === 0 ? (options.evidenceLinks ?? []) : [];
+  const linkById = new Map(links.map((link) => [link.id, link]));
   return html`
     <details
       class="ac-panel"
@@ -264,8 +287,16 @@ export function renderAcceptancePanel(
         <span class="ac-caret"></span>
         <span class="ac-label">Acceptance criteria</span>
         <span class="ac-count" data-testid="acceptance-counts" title=${view.countsTooltip}
-          >${view.counts}</span
+          >${view.counts}${links.length > 0 ? ` · ${links.length} evidence linked` : ''}</span
         >
+        ${links.length > 0
+          ? html`<span
+              class="ac-source"
+              data-testid="acceptance-source"
+              title="No acceptance ledger: rows show which criteria artifacts/evidence-manifest.json covers. Not a verdict."
+              >from evidence manifest, not verdicts</span
+            >`
+          : nothing}
       </summary>
       <div class="ac-rows">
         ${options.error
@@ -273,7 +304,7 @@ export function renderAcceptancePanel(
               ledger unreadable: ${options.error}
             </div>`
           : nothing}
-        ${rows.map((row) => renderRow(row, options.evidenceHref))}
+        ${rows.map((row) => renderRow(row, options.evidenceHref, linkById.get(row.id)))}
       </div>
     </details>
   `;

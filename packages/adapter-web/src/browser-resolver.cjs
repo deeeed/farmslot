@@ -309,7 +309,14 @@ function extensionLaunchArgs(extensionDir, extensionLoading) {
     // line: runtime ownership checks match the loaded dist by this flag.
     return [...BRANDED_CHROME_ARGS, `--load-extension=${extensionDir}`];
   }
-  return [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`];
+  return [
+    // chrome.runtime.reload() re-registers the extension as kUnpacked, which
+    // Chrome 147+ disables (DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION, persisted in
+    // the profile) unless developer mode is on or this flag is set.
+    '--enable-unsafe-extension-debugging',
+    `--disable-extensions-except=${extensionDir}`,
+    `--load-extension=${extensionDir}`,
+  ];
 }
 
 function browserMode(env = process.env) {

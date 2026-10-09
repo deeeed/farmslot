@@ -757,6 +757,7 @@ export function candidateIneligibilityReason(
     replaceableWarm?: boolean;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    skipPrepare?: boolean;
   },
 ): string | null {
   if (options.isNudgeRow) return null;
@@ -765,6 +766,7 @@ export function candidateIneligibilityReason(
     targetBranch: options.targetBranch,
     requiredPrepareProfile: options.requiredPrepareProfile,
     allowWorking: options.replaceableWarm,
+    skipPrepare: options.skipPrepare,
   });
 }
 
@@ -874,6 +876,7 @@ export async function dispatchCandidates(
         replaceableWarm,
         targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
+        skipPrepare: params.skipPrepare,
       });
       // A pressure rejection gates every dispatchable row, fresh AND nudge.
       // a nudge still delivers a new task to the loaded machine. The wizard
@@ -1238,6 +1241,7 @@ export function resolveDispatchPreviewFromFleet(
     const err = validateSlotForDispatch(found, slots, {
       targetBranch: params.targetBranch,
       requiredPrepareProfile,
+      skipPrepare: params.skipPrepare,
       allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
     });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
@@ -1257,6 +1261,7 @@ export function resolveDispatchPreviewFromFleet(
         !validateSlotForDispatch(affinitySlot, slots, {
           targetBranch: params.targetBranch,
           requiredPrepareProfile,
+          skipPrepare: params.skipPrepare,
         })
       ) {
         console.log(
@@ -1288,6 +1293,7 @@ export function resolveDispatchPreviewFromFleet(
       variant: params.variant,
       requiredPrepareProfile,
       projectConfigs,
+      skipPrepare: params.skipPrepare,
       pressureRejectedMachines,
       parkPreservedSlotIds: options?.parkPreservedSlotIds,
     });
@@ -1311,6 +1317,7 @@ export function resolveDispatchPreviewFromFleet(
             !validateSlotForDispatch(s, slots, {
               targetBranch: params.targetBranch,
               requiredPrepareProfile,
+              skipPrepare: params.skipPrepare,
             }),
         );
         if (
@@ -1331,6 +1338,7 @@ export function resolveDispatchPreviewFromFleet(
             : (validateSlotForDispatch(s, slots, {
                 targetBranch: params.targetBranch,
                 requiredPrepareProfile,
+                skipPrepare: params.skipPrepare,
               }) ?? 'unknown blocker');
         return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
       });

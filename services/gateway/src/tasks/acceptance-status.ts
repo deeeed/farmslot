@@ -13,12 +13,15 @@ import {
   ACCEPTANCE_STATUS_ARTIFACT,
   acceptanceCriterionId,
   type AcceptanceCriterionRef,
+  type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
+  type AcceptanceStatusSource,
   renderAcceptanceCoverage,
   validateAcceptanceStatusLedger,
 } from '@farmslot/protocol';
 
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+import { normalizeEvidenceManifestArtifactPath } from '../run-completion/evidence-manifest.js';
 
 /** Absolute path of a task directory's acceptance ledger. */
 export function acceptanceStatusPathFor(taskDir: string): string {
@@ -138,6 +141,88 @@ export async function handoffListsAcceptanceCriteria(
   return (await readHandoffAcceptanceCriteria(ctx, taskDir)).length > 0;
 }
 
+/** Task-dir relative path of the evidence manifest, the ledger-less fallback's source. */
+const EVIDENCE_MANIFEST_ARTIFACT = 'artifacts/evidence-manifest.json';
+
+/** `ac1`, `AC1`, `AC-1`, `ac-1`, `AC 1`, `ac_1`: how manifests spell a criterion. */
+const COVER_CRITERION_PATTERN = /^ac[\s_-]?([1-9][0-9]*)$/i;
+
+/**
+ * The `AC-<N>` id a manifest `covers` entry names, or null when it names anything
+ * else. Only a whole criterion reference counts: `AC8b`, `ac-tp8` or `flag-off`
+ * are sub-cases and recipe targets, not criteria.
+ */
+export function acceptanceIdFromCover(cover: string): string | null {
+  const match = COVER_CRITERION_PATTERN.exec(cover.trim());
+  return match ? `AC-${match[1]}` : null;
+}
+
+/**
+ * The ledger-less fallback: each registered criterion that manifest entries list
+ * in `covers`, with the task-dir relative files those entries link. Ids the
+ * handoff does not register are ignored, never invented as criteria, and an entry
+ * with no linkable file links nothing. Throws when the text is not JSON.
+ */
+export function acceptanceEvidenceLinksFromManifest(
+  text: string,
+  criteria: ReadonlyArray<AcceptanceCriterionRef>,
+): AcceptanceEvidenceLink[] {
+  const manifest: unknown = JSON.parse(text);
+  if (!manifest || typeof manifest !== 'object') return [];
+  const { before_after_pairs: pairs, standalone } = manifest as Record<string, unknown>;
+  const registered = new Set(criteria.map((criterion) => criterion.id));
+  const linked = new Map<string, Set<string>>();
+  const entries: unknown[] = [
+    ...(Array.isArray(pairs) ? pairs : []),
+    ...(Array.isArray(standalone) ? standalone : []),
+  ];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { covers, before, after, file } = entry as Record<string, unknown>;
+    if (!Array.isArray(covers)) continue;
+    const files = [before, after, file]
+      .map((value) =>
+        typeof value === 'string'
+          ? normalizeEvidenceManifestArtifactPath(value, { mediaOnly: false })
+          : null,
+      )
+      .filter((value): value is string => value !== null);
+    if (files.length === 0) continue;
+    for (const cover of covers) {
+      const id = typeof cover === 'string' ? acceptanceIdFromCover(cover) : null;
+      if (!id || !registered.has(id)) continue;
+      const evidence = linked.get(id) ?? new Set<string>();
+      for (const evidencePath of files) evidence.add(evidencePath);
+      linked.set(id, evidence);
+    }
+  }
+  return criteria.flatMap((criterion) => {
+    const evidence = linked.get(criterion.id);
+    return evidence ? [{ id: criterion.id, evidence: [...evidence] }] : [];
+  });
+}
+
+/**
+ * The fallback links for a task directory with no ledger. A missing or unreadable
+ * manifest links nothing: the fallback only adds information, so a broken manifest
+ * is warned about and the criteria stay not assessed.
+ */
+async function readAcceptanceEvidenceLinks(
+  ctx: SlotLocality,
+  taskDir: string,
+  criteria: ReadonlyArray<AcceptanceCriterionRef>,
+): Promise<AcceptanceEvidenceLink[]> {
+  if (criteria.length === 0) return [];
+  const manifestPath = path.join(taskDir, EVIDENCE_MANIFEST_ARTIFACT);
+  try {
+    if (!(await slotFileExists(ctx, manifestPath))) return [];
+    return acceptanceEvidenceLinksFromManifest(await slotReadFile(ctx, manifestPath), criteria);
+  } catch (err) {
+    console.warn(`[acceptance] ignoring ${manifestPath}: ${(err as Error).message}`);
+    return [];
+  }
+}
+
 export interface AcceptanceStatusRead {
   /** Registered criteria; empty when the task has none or when the read failed. */
   criteria: AcceptanceCriterionRef[];
@@ -145,6 +230,10 @@ export interface AcceptanceStatusRead {
   ledger: AcceptanceStatusLedger | null;
   /** Why the ledger or the criteria could not be read; clients show this. */
   error?: string;
+  /** `ledger` when one was read; `evidence-manifest` when `evidenceLinks` stands in. */
+  source?: AcceptanceStatusSource;
+  /** Manifest-linked criteria, only when there is no ledger. Never a verdict. */
+  evidenceLinks?: AcceptanceEvidenceLink[];
 }
 
 /**
@@ -166,12 +255,18 @@ export async function readAcceptanceStatusForDisplay(
     return { criteria: [], ledger: null, error: message };
   }
   try {
-    return { criteria, ledger: await readAcceptanceStatusLedger(ctx, taskDir) };
+    const ledger = await readAcceptanceStatusLedger(ctx, taskDir);
+    // The ledger, when present, is the whole answer: nothing is merged into it.
+    if (ledger) return { criteria, ledger, source: 'ledger' };
   } catch (err) {
     const message = (err as Error).message;
     console.warn(`[acceptance] ${message}`);
     return { criteria, ledger: null, error: message };
   }
+  const evidenceLinks = await readAcceptanceEvidenceLinks(ctx, taskDir, criteria);
+  return evidenceLinks.length > 0
+    ? { criteria, ledger: null, source: 'evidence-manifest', evidenceLinks }
+    : { criteria, ledger: null };
 }
 
 /** Ledger basename, for the `readTaskArtifactText(taskFile, name)` readers. */

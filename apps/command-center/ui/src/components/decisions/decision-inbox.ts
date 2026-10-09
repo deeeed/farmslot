@@ -20,11 +20,13 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import {
   feedbackSummaryLabel,
   renderFeedbackCandidates,
 } from '../runs/family-observability-retrospective-renderers.js';
 import { flowColor, flowLabel } from '../runs/run-utils.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import { decisionInboxStyles } from './decision-inbox-styles.js';
 
@@ -148,6 +150,7 @@ export class DecisionInbox extends LitElement {
   @state() private _applyToast: Map<string, string> = new Map();
   @state() private _livePayloads: Map<string, ImprovementDiffPayload> = new Map();
   @state() private _hydrating = false;
+  private readonly _testFilter = new DiffTestFilterController(this);
   private _slotProjectMap = new Map<string, string>();
 
   private _unsubState?: () => void;
@@ -443,6 +446,15 @@ export class DecisionInbox extends LitElement {
     const chatResponse = this._chatResponses.get(d.id);
     const isSending = this._chatSending.has(d.id);
     const toast = this._applyToast.get(d.id);
+    // Proposals carry before/after text, not line counts; the split only needs paths.
+    const changeSplit = this._testFilter.split(
+      raw.proposedChanges.map((change) => ({
+        path: change.filePath,
+        additions: 0,
+        deletions: 0,
+        change,
+      })),
+    );
 
     return html`
       ${raw.rationale ? html` <div class="improvement-rationale">${raw.rationale}</div> ` : nothing}
@@ -474,11 +486,12 @@ export class DecisionInbox extends LitElement {
       </div>
 
       <div class="improvement-diff-count">
-        ${raw.proposedChanges.length} file${raw.proposedChanges.length !== 1 ? 's' : ''}
+        ${formatDiffFileCount(changeSplit)} file${raw.proposedChanges.length !== 1 ? 's' : ''}
+        ${this._testFilter.renderControls(changeSplit.summary)}
       </div>
 
-      ${raw.proposedChanges.map(
-        (change) => html`
+      ${changeSplit.visible.map(
+        ({ change }) => html`
           <div class="improvement-diff">
             <diff-review .diff=${toUnifiedDiff(change)} .filename=${change.filePath}></diff-review>
           </div>
