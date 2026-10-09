@@ -76,11 +76,3 @@ export function selectedReadyEvidenceKeysForSubmit(
 ): string[] {
   return selectedEvidenceKeys ?? candidateKeys;
 }
-
-/** Keeps the selected diff file while it is visible; otherwise the first visible file. */
-export function readyVisibleDiffSelection(
-  visible: readonly { path: string }[],
-  selected: string,
-): string | undefined {
-  return visible.some((file) => file.path === selected) ? selected : visible[0]?.path;
-}
