@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The run-detail ACCEPTANCE CRITERIA panel shows "evidence linked" (muted, dotted, with the linked files) for criteria the evidence manifest covers when the run wrote no acceptance ledger, labels the panel "from evidence manifest, not verdicts", and keeps the assessed count at what the ledger recorded. Every other criterion stays NOT ASSESSED.
 - The pre-publication cockpit Diff tab has the same "Hide tests" toggle as the workspace diff views and shares their remembered preference. File pills and the tab count follow it ("Diff (5 of 12)"), and a hidden selected test file hands the viewer to the first visible file.
 
 ## 0.20.4 - 2026-10-08

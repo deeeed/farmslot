@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   AcceptanceCriterionRef,
+  AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
   Run,
   RunCancelResult,
@@ -77,6 +78,8 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceCriteria?: AcceptanceCriterionRef[] | null;
   /** Why the ledger could not be read, when it could not. */
   @property({ attribute: false }) acceptanceStatusError?: string | null;
+  /** Manifest-linked criteria for a run with no ledger; shown as evidence linked. */
+  @property({ attribute: false }) acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
   /** Turns a task-dir relative evidence path into a link the host can serve. */
   @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
   @property() selectedStepName?: string;
@@ -305,6 +308,9 @@ export class RunPipeline extends LitElement {
       ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
       ...(this.acceptanceCriteria?.length ? { criteria: this.acceptanceCriteria } : {}),
       ...(this.acceptanceStatusError ? { error: this.acceptanceStatusError } : {}),
+      ...(this.acceptanceEvidenceLinks?.length
+        ? { evidenceLinks: this.acceptanceEvidenceLinks }
+        : {}),
     });
   }
 
