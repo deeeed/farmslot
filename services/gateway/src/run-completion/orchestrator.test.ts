@@ -611,7 +611,7 @@ test('readEvidenceManifest falls back to inherited and promoted recipe manifests
   }
 });
 
-test('assertReadyGatePackageInputsCurrent rejects mutable body and manifest drift', async () => {
+test('assertReadyGatePackageInputsCurrent publishes an edited body instead of refusing it', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-package-inputs-current-'));
   try {
     const artifactsDir = path.join(root, 'artifacts');
@@ -697,13 +697,12 @@ test('assertReadyGatePackageInputsCurrent rejects mutable body and manifest drif
       createdAt: '2026-05-18T00:00:00.000Z',
     } satisfies Parameters<typeof assertReadyGatePackageInputsCurrent>[1];
 
-    await assertReadyGatePackageInputsCurrent(run, prPackage);
+    assert.deepEqual(await assertReadyGatePackageInputsCurrent(run, prPackage), prPackage);
 
     await writeFile(path.join(artifactsDir, 'pr-description.md'), '## Summary\nEdited body.\n');
-    await assert.rejects(
-      assertReadyGatePackageInputsCurrent(run, prPackage),
-      /refresh package and re-review.*draft body/,
-    );
+    const published = await assertReadyGatePackageInputsCurrent(run, prPackage);
+    assert.match(published.draftBody, /Edited body\./);
+    assert.equal(published.packageHash, prPackage.packageHash);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

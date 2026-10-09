@@ -88,6 +88,8 @@ import {
   requiresPublicationApproval,
 } from '../run-completion/orchestrator.js';
 import {
+  assertLiveHeadMatchesPackage,
+  packageChangedError,
   readReadyGatePreparedPackage,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
@@ -1322,13 +1324,12 @@ async function assertReadyPublishResolveIsFresh(
 
   const currentPackage = await readReadyGatePreparedPackage(run);
   if (!currentPackage) {
-    throw new Error(
-      'Package changed; refresh package and re-review before publishing (prepared package snapshot missing)',
-    );
+    throw packageChangedError(run.id, 'prepared package snapshot missing');
   }
   if (currentPackage.packageHash !== prPackage.packageHash) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (visible package ${prPackage.packageHash} but current package is ${currentPackage.packageHash})`,
+    throw packageChangedError(
+      run.id,
+      `visible package ${prPackage.packageHash} but current package is ${currentPackage.packageHash}`,
     );
   }
   const decisionWithSelection = { ...decision, selectionData: params.selectionData };
@@ -1381,11 +1382,7 @@ async function assertReadyPublishResolveIsFresh(
       timeout: 15_000,
     })
   ).stdout.trim();
-  if (!liveHead || liveHead !== currentPackage.headSha) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (approved HEAD ${currentPackage.headSha.slice(0, 12)} but live HEAD is ${liveHead ? liveHead.slice(0, 12) : 'unknown'})`,
-    );
-  }
+  assertLiveHeadMatchesPackage(run.id, currentPackage.headSha, liveHead);
 }
 
 export async function runProbeWorkerSignal(

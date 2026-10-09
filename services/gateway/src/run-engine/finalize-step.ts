@@ -23,6 +23,8 @@ import {
   publishCompletionPackage,
 } from '../run-completion/orchestrator.js';
 import {
+  assertLiveHeadMatchesPackage,
+  packageChangedError,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
@@ -288,8 +290,9 @@ export async function executeFinalizeStep(
     }
     const approvedHash = current.engineState?.publishGate?.approvedPackageHash;
     if (approvedHash && approvedHash !== preparedPackage.packageHash) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (approved hash ${approvedHash} but package is ${preparedPackage.packageHash})`,
+      throw packageChangedError(
+        runId,
+        `approved hash ${approvedHash} but package is ${preparedPackage.packageHash}`,
       );
     }
     if (!preparedPackage.headSha || !current.slotId) {
@@ -305,11 +308,7 @@ export async function executeFinalizeStep(
         timeout: 15_000,
       })
     ).stdout.trim();
-    if (!head || head !== preparedPackage.headSha) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (approved HEAD ${preparedPackage.headSha.slice(0, 12)} but live HEAD is ${head ? head.slice(0, 12) : 'unknown'})`,
-      );
-    }
+    assertLiveHeadMatchesPackage(runId, preparedPackage.headSha, head);
     const selection = gateDecision?.selectionData ?? {};
     const selectedTarget: PublicationTarget =
       selection.publicationTarget === 'ready'
@@ -323,9 +322,11 @@ export async function executeFinalizeStep(
       preparedPackage,
       selectedEvidenceKeys ?? [],
     );
-    await assertReadyGatePackageInputsCurrent(current, preparedPackage);
+    // The current title and body are published even when they differ from the
+    // reviewed ones; only code and evidence changes refuse the approval.
+    const currentPackage = await assertReadyGatePackageInputsCurrent(current, preparedPackage);
     const approvedPackage: ReadyGatePrPackage = {
-      ...preparedPackage,
+      ...currentPackage,
       publicationTarget: selectedTarget,
       approvedAt: current.engineState?.publishGate?.approvedAt ?? new Date().toISOString(),
     };

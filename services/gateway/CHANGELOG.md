@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Approve-publish no longer fails with `Package changed ... (draft body)`. The pack renderer writes the PR body to a temporary `--out` file and the gateway uses it as returned, so a mirror refresh copying the worker's own `artifacts/pr-body.md` can no longer put that file in the package, and the approval check writes nothing into the mirror. A changed title or body never blocks approval: the current render is published and the change is logged with both hashes. A changed HEAD, evidence or validation summary still refuses, and the error now names the input and the refresh step (`Refresh current package` on the Ready gate, or `farmslot rpc run.refreshPublishPackage '{"runId":"…"}'`).
 
 ## 0.20.5 - 2026-10-08
 

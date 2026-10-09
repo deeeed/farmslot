@@ -88,6 +88,7 @@ import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
   computeReadyGateReviewSubjectHash,
+  packageChangedError,
   resolveSelectedEvidenceRef,
   sha256Text,
   sortArtifactRefsForComparison,
@@ -402,10 +403,16 @@ export async function buildPreparedDraftPrBody(
   }
 }
 
+/**
+ * Re-check a prepared package at approval and return the package to publish.
+ * The title and body are re-rendered and the current ones are published: a
+ * changed description is logged, never refused. Changed evidence or validation
+ * inputs still refuse, naming the input and the refresh step.
+ */
 export async function assertReadyGatePackageInputsCurrent(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
-): Promise<void> {
+): Promise<ReadyGatePrPackage> {
   if (!current.taskFile) throw new Error('Approved package requires a task directory');
   const taskDir = path.dirname(current.taskFile);
   const artifacts = await scanArtifacts(taskDir);
@@ -419,7 +426,7 @@ export async function assertReadyGatePackageInputsCurrent(
   const validation = await readValidationSummary(current);
   const mismatches: string[] = [];
 
-  if (buildDraftPrTitle(current) !== preparedPackage.draftTitle) mismatches.push('draft title');
+  const draftTitle = buildDraftPrTitle(current);
   // Same body the package was prepared with; a run without project config
   // (fixtures, imported runs) keeps the default branch, as preparation does.
   const baseBranch = await loadProjectVars(current.project)
@@ -435,26 +442,37 @@ export async function assertReadyGatePackageInputsCurrent(
     baseBranch || DEFAULT_BRANCH,
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
-  if (currentDraftBody !== preparedPackage.draftBody) {
-    mismatches.push('draft body');
+  const descriptionChanges = [
+    ...(draftTitle !== preparedPackage.draftTitle ? ['draft title'] : []),
+    ...(currentDraftBody !== preparedPackage.draftBody ? ['draft body'] : []),
+  ];
+  if (descriptionChanges.length > 0) {
+    const shortHash = (text: string) => sha256Text(text).slice(0, 12);
+    console.warn(
+      `[run-completion] run ${current.id.slice(0, 8)} — ${descriptionChanges.join(', ')} changed since the package was prepared` +
+        ` (body ${shortHash(preparedPackage.draftBody)} -> ${shortHash(currentDraftBody)},` +
+        ` title ${shortHash(preparedPackage.draftTitle)} -> ${shortHash(draftTitle)}); publishing the current render`,
+    );
   }
   if (
     stableJson(sortArtifactRefsForComparison(currentManifest)) !==
     stableJson(sortArtifactRefsForComparison(preparedPackage.evidenceManifest ?? []))
   ) {
-    mismatches.push('evidence manifest');
+    mismatches.push('evidence manifest: the evidence files differ from the reviewed package');
   }
   if (validation.path !== (preparedPackage.validationSummaryPath ?? null)) {
-    mismatches.push('validation summary path');
+    mismatches.push(
+      'validation summary path: the validation summary differs from the reviewed package',
+    );
   }
   if (validation.hash !== (preparedPackage.validationSummaryHash ?? null)) {
-    mismatches.push('validation summary hash');
+    mismatches.push(
+      'validation summary hash: the validation summary differs from the reviewed package',
+    );
   }
 
-  if (mismatches.length === 0) return;
-  throw new Error(
-    `Package changed; refresh package and re-review before publishing (${mismatches.join(', ')})`,
-  );
+  if (mismatches.length > 0) throw packageChangedError(current.id, mismatches.join('; '));
+  return { ...preparedPackage, draftTitle, draftBody: currentDraftBody };
 }
 
 export function isPublishedStatus(status: PublicationStatus | undefined | null): boolean {
