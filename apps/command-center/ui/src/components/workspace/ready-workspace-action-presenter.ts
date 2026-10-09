@@ -8,7 +8,12 @@ import type {
   ReviewSessionIntent,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  compileTestFileMatcher,
+  DEFAULT_TEST_FILE_MATCHER,
+  Methods,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
@@ -16,6 +21,12 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
+import {
+  readHideTestsPref,
+  splitDiffFilesByKind,
+  subscribeHideTestsPref,
+  writeHideTestsPref,
+} from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
@@ -79,6 +90,7 @@ import {
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
+  readyVisibleDiffSelection,
   selectedReadyEvidenceKeysForSubmit,
   setAllReadyEvidenceIncluded,
   setReadyEvidenceIncluded,
@@ -150,6 +162,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._readViewStateFromHash();
     window.addEventListener('hashchange', this._boundHashChange);
     window.addEventListener('keydown', this._boundKeydown);
+    this._hideTests = readHideTestsPref();
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
+      this._hideTests = hide;
+      // A newly hidden test file hands the viewer to the first visible file.
+      const next = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
+      if (next && next !== this._selectedFile) void this._selectFile(next);
+    });
     this._unsubConn = gateway.onConnectionChange((state) => {
       if (!this._initialized) return;
       if (this._usesMockData) return;
@@ -169,6 +188,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     window.removeEventListener('hashchange', this._boundHashChange);
     window.removeEventListener('keydown', this._boundKeydown);
     this._unsubConn?.();
+    this._unsubscribeHideTests?.();
+    this._unsubscribeHideTests = null;
     this._splitResizer.disconnect();
     this._confirmTimer.clear();
   }
@@ -483,10 +504,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      const selected =
-        this._selectedFile && result.files.some((file) => file.path === this._selectedFile)
-          ? this._selectedFile
-          : result.files[0]?.path;
+      this._diffTestMatcher = result.testFilePatterns
+        ? compileTestFileMatcher(result.testFilePatterns)
+        : DEFAULT_TEST_FILE_MATCHER;
+      const selected = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
       if (selected) this._selectFile(selected);
     } catch (err) {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
@@ -494,6 +515,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (this._payload?.prPackage) {
         this._diffFiles = [];
         this._diffTestPatterns = null;
+        this._diffTestMatcher = DEFAULT_TEST_FILE_MATCHER;
         this._selectedFile = '';
         this._fileDiff = '';
         this._diffError =
@@ -515,6 +537,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._recoveryMessage = '';
       }
     }
+  }
+
+  _diffSplit() {
+    return splitDiffFilesByKind(this._diffFiles, this._hideTests, {
+      matcher: this._diffTestMatcher,
+    });
+  }
+
+  _toggleHideTests(): void {
+    writeHideTestsPref(!this._hideTests);
   }
 
   async _selectFile(filePath: string) {
