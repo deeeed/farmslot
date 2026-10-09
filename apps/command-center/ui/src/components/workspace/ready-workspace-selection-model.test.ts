@@ -11,6 +11,7 @@ import {
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
+  readyVisibleDiffSelection,
   selectedReadyEvidenceKeysForSubmit,
   setAllReadyEvidenceIncluded,
   setReadyEvidenceIncluded,
@@ -101,4 +102,12 @@ test('readyPrDescription shows the description that is published, else the packa
     { title: 'feat: current', body: 'Current render B' },
   );
   assert.deepEqual(readyPrDescription(payload({})), { title: '', body: '' });
+});
+
+test('readyVisibleDiffSelection keeps a visible file and falls back to the first visible one', () => {
+  const visible = [{ path: 'src/gate.ts' }, { path: 'src/panel.ts' }];
+  assert.equal(readyVisibleDiffSelection(visible, 'src/panel.ts'), 'src/panel.ts');
+  assert.equal(readyVisibleDiffSelection(visible, 'src/gate.test.ts'), 'src/gate.ts');
+  assert.equal(readyVisibleDiffSelection(visible, ''), 'src/gate.ts');
+  assert.equal(readyVisibleDiffSelection([], 'src/gate.test.ts'), undefined);
 });
