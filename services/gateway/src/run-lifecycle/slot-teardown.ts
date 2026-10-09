@@ -22,7 +22,7 @@ import {
 } from '../run-engine/gate-held-lifecycle.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
-import { stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
+import { contextPaneId, stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
 import { archiveRunnerSessionsForSlotRelease } from '../runners/session-archive.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
 import { listRuns, updateRun } from '../runs/store.js';
@@ -93,7 +93,9 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     return 'Tmux ownership inspection failed; slot teardown was skipped';
   const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
   const ownedPanes = new Set(
-    run.agentContexts?.map((context) => context.target?.paneId).filter(Boolean),
+    run.agentContexts
+      ?.map((context) => context.target && contextPaneId(context.target))
+      .filter(Boolean),
   );
   const ownedShells = new Set<string>();
   for (const line of listed.stdout.split('\n')) {
