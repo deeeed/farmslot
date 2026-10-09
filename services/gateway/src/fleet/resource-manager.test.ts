@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { ResourceDefinition, SlotStatus } from '@farmslot/protocol';
 
 import {
   buildBrowserNodeWatchCommand,
-  buildBrowserPidFileCapturableCommand,
+  buildBrowserPidFileOwnsCdpCommand,
   buildBrowserPidRecoveryCommand,
   inferSharedProcessPollProvider,
   isEmptyIosSimulatorProbe,
@@ -157,43 +169,126 @@ test('shouldProbeResourceForSlot suppresses simulator probes without an active r
   assert.equal(shouldProbeResourceForSlot(slot(null, 'ready'), metroResource), true);
 });
 
-test('buildBrowserPidRecoveryCommand rewrites browser pid files from CDP listener', () => {
-  const cmd = buildBrowserPidRecoveryCommand(7666, '/tmp/slot runtime');
-  assert.match(cmd, /tcp:7666/);
-  assert.match(cmd, /browser\.pid/);
-  assert.match(cmd, /chromium\.pid/);
-  assert.match(cmd, /capture_helper_resolve "\$pid"/);
-  assert.match(cmd, /command -v timeout/);
-  assert.match(cmd, /command -v gtimeout/);
-  assert.match(cmd, /\$timeout_bin" 3s capture-helper resolve/);
-  assert.match(cmd, /timeout=3/);
-  assert.match(cmd, /'\/tmp\/slot runtime'/);
+// Runs a generated browser probe with fake `lsof` (printing `listeners`) and
+// `capture-helper` (recording that it ran) first on PATH.
+function runBrowserProbe(
+  build: (dir: string) => string,
+  { pidFile, listeners }: { pidFile?: string; listeners: number[] },
+) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'browser-probe-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, 'lsof'),
+      `#!/bin/sh\nprintf '%s\\n' ${listeners.map(String).join(' ')}\n`,
+    );
+    writeFileSync(
+      path.join(bin, 'capture-helper'),
+      `#!/bin/sh\ntouch '${dir}/capture-helper-ran'\n`,
+    );
+    chmodSync(path.join(bin, 'lsof'), 0o755);
+    chmodSync(path.join(bin, 'capture-helper'), 0o755);
+    if (pidFile !== undefined) writeFileSync(path.join(dir, 'browser.pid'), pidFile);
+    const result = spawnSync('/bin/sh', ['-c', build(dir)], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      encoding: 'utf8',
+    });
+    const read = (name: string) =>
+      existsSync(path.join(dir, name)) ? readFileSync(path.join(dir, name), 'utf8').trim() : null;
+    return {
+      status: result.status,
+      browserPid: read('browser.pid'),
+      chromiumPid: read('chromium.pid'),
+      captureHelperRan: existsSync(path.join(dir, 'capture-helper-ran')),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const livePid = process.pid;
+// Above any macOS or Linux pid_max, so `kill -0` always fails.
+const deadPid = 99_999_999;
+
+test('browser probes never run capture-helper', () => {
+  for (const command of [
+    buildBrowserNodeWatchCommand('/tmp/runtime/browser.pid', '7666'),
+    buildBrowserNodeWatchCommand('/tmp/runtime/browser.pid'),
+    buildBrowserPidRecoveryCommand(7666, '/tmp/runtime'),
+    buildBrowserPidFileOwnsCdpCommand('/tmp/runtime/browser.pid', 7666),
+  ]) {
+    assert.doesNotMatch(command, /capture-helper|capture_helper/);
+  }
+  const probe = runBrowserProbe(
+    (dir) => buildBrowserNodeWatchCommand(path.join(dir, 'browser.pid'), '7666'),
+    { pidFile: String(livePid), listeners: [livePid] },
+  );
+  assert.equal(probe.status, 0);
+  assert.equal(probe.captureHelperRan, false);
 });
 
-test('buildBrowserPidFileCapturableCommand verifies capture-helper can resolve the pid', () => {
-  const cmd = buildBrowserPidFileCapturableCommand('/tmp/runtime/browser.pid');
-  assert.match(cmd, /cat \"\$pid_file\"/);
-  assert.match(cmd, /capture_helper_resolve "\$pid"/);
-  assert.match(cmd, /\$timeout_bin" 3s capture-helper resolve/);
-  assert.match(cmd, /timeout=3/);
+test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () => {
+  const check = (pidFile: string, listeners: number[], port: number | null = 7666) =>
+    runBrowserProbe(
+      (dir) => buildBrowserPidFileOwnsCdpCommand(path.join(dir, 'browser.pid'), port),
+      { pidFile, listeners },
+    ).status;
+  assert.equal(check(String(livePid), [livePid]), 0);
+  assert.notEqual(check(String(livePid), [livePid + 1]), 0);
+  assert.notEqual(check(String(livePid), []), 0);
+  assert.notEqual(check(String(livePid), [livePid, livePid + 1]), 0);
+  assert.notEqual(check(String(deadPid), [deadPid]), 0);
+  // Without a CDP port only liveness can be proven.
+  assert.equal(check(String(livePid), [], null), 0);
+  assert.notEqual(check(String(deadPid), [], null), 0);
 });
 
-test('buildBrowserNodeWatchCommand requires stream-capturable browser status', () => {
-  const recover = buildBrowserNodeWatchCommand('/tmp/runtime/browser.pid', '7666');
-  assert.match(recover, /pid_file='\/tmp\/runtime\/browser\.pid'/);
-  assert.match(recover, /^set -e\n/);
-  assert.match(recover, /exit 0/);
-  assert.match(recover, /tcp:7666/);
-  assert.match(recover, /capture_helper_resolve "\$pid"/);
-  assert.match(recover, /\$timeout_bin" 3s capture-helper resolve/);
-  assert.match(recover, /timeout=3/);
-  assert.ok(recover.indexOf('pid_file=') < recover.indexOf('tcp:7666'));
+test('buildBrowserPidRecoveryCommand rewrites browser pid files from the CDP listener', () => {
+  const recovered = runBrowserProbe(
+    (dir) => buildBrowserPidRecoveryCommand(7666, `${dir}/slot runtime`),
+    { listeners: [livePid] },
+  );
+  assert.equal(recovered.status, 0);
 
-  const pidFileOnly = buildBrowserNodeWatchCommand('/tmp/runtime/browser.pid');
-  assert.match(pidFileOnly, /cat \"\$pid_file\"/);
-  assert.match(pidFileOnly, /capture_helper_resolve "\$pid"/);
-  assert.match(pidFileOnly, /timeout=3/);
-  assert.match(pidFileOnly, /exit 1/);
+  const command = buildBrowserPidRecoveryCommand(7666, '/tmp/slot runtime');
+  assert.match(command, /-iTCP:7666 -sTCP:LISTEN/);
+  assert.match(command, /'\/tmp\/slot runtime'/);
+
+  for (const listeners of [[], [deadPid], [livePid, livePid + 1]]) {
+    assert.notEqual(
+      runBrowserProbe((dir) => buildBrowserPidRecoveryCommand(7666, dir), { listeners }).status,
+      0,
+    );
+  }
+});
+
+test('buildBrowserNodeWatchCommand keeps an owning pid file and repairs a stale one', () => {
+  const watch = (dir: string) =>
+    buildBrowserNodeWatchCommand(path.join(dir, 'browser.pid'), '7666');
+
+  const kept = runBrowserProbe(watch, { pidFile: String(livePid), listeners: [livePid] });
+  assert.equal(kept.status, 0);
+  assert.equal(kept.browserPid, String(livePid));
+  assert.equal(kept.chromiumPid, null);
+
+  const repaired = runBrowserProbe(watch, { pidFile: String(deadPid), listeners: [livePid] });
+  assert.equal(repaired.status, 0);
+  assert.equal(repaired.browserPid, String(livePid));
+  assert.equal(repaired.chromiumPid, String(livePid));
+
+  const missing = runBrowserProbe(watch, { listeners: [livePid] });
+  assert.equal(missing.status, 0);
+  assert.equal(missing.browserPid, String(livePid));
+
+  assert.notEqual(runBrowserProbe(watch, { pidFile: String(deadPid), listeners: [] }).status, 0);
+
+  const pidFileOnly = (dir: string) => buildBrowserNodeWatchCommand(path.join(dir, 'browser.pid'));
+  assert.equal(runBrowserProbe(pidFileOnly, { pidFile: String(livePid), listeners: [] }).status, 0);
+  assert.notEqual(
+    runBrowserProbe(pidFileOnly, { pidFile: String(deadPid), listeners: [] }).status,
+    0,
+  );
 });
 
 test('a resource with no health hook is unknown, never running', () => {

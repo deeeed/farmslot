@@ -478,13 +478,8 @@ export async function executeResourceHealth(
   const result = await execResourceCommand(slotId, slotVars.repo, expanded, 5_000);
   if (result.exitCode === 0) {
     if (resourceDef.type !== 'browser') return { ok: true };
-    const capturable = await verifyBrowserPidFileCapturable(
-      slotId,
-      resourceDef,
-      slotVars,
-      projectVars,
-    );
-    if (capturable.ok) return capturable;
+    const owned = await verifyBrowserPidFileOwnsCdp(slotId, resourceDef, slotVars, projectVars);
+    if (owned.ok) return owned;
   }
 
   const fallback = await recoverBrowserPidFromCdp(
@@ -497,13 +492,13 @@ export async function executeResourceHealth(
   if (fallback.ok) return fallback;
 
   if (resourceDef.type === 'browser' && result.exitCode === 0) {
-    return { ok: false, detail: 'browser pid is not stream-capturable and CDP recovery failed' };
+    return { ok: false, detail: 'browser pid does not own its CDP port and CDP recovery failed' };
   }
 
   return { ok: false, detail: result.stderr?.trim() || `exit ${result.exitCode}` };
 }
 
-async function verifyBrowserPidFileCapturable(
+async function verifyBrowserPidFileOwnsCdp(
   slotId: string,
   resourceDef: NonNullable<RawProjectJson['resources']>[string],
   slotVars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -514,7 +509,7 @@ async function verifyBrowserPidFileCapturable(
   const result = await execResourceCommand(
     slotId,
     slotVars.repo,
-    buildBrowserPidFileCapturableCommand(pidPath),
+    buildBrowserPidFileOwnsCdpCommand(pidPath, parseCdpPort(slotVars.resourceVars.cdp_port)),
     5_000,
   );
   return result.exitCode === 0 ? { ok: true } : { ok: false };
@@ -534,40 +529,42 @@ function browserPidPath(
     : `${slotVars.remoteRepo}/${expandedPidPath}`;
 }
 
-export function buildBrowserPidFileCapturableCommand(pidPath: string): string {
+function parseCdpPort(raw: string | undefined): number | null {
+  const port = raw ? Number(raw) : NaN;
+  return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
+}
+
+export function buildBrowserPidFileOwnsCdpCommand(pidPath: string, cdpPort: number | null): string {
   return [
     'set -e',
-    buildCaptureHelperResolveFunction(),
+    buildBrowserOwnsCdpFunction(cdpPort),
     `pid_file=${shellQuote(pidPath)}`,
     'pid="$(cat "$pid_file")"',
     '[ -n "$pid" ]',
-    'kill -0 "$pid" 2>/dev/null',
-    'capture_helper_resolve "$pid"',
+    'browser_owns_cdp "$pid"',
   ].join('\n');
 }
 
-function buildCaptureHelperResolveFunction(): string {
+/**
+ * Shell functions proving that pid `$1` is alive and, when the slot has a CDP
+ * port, is the only process listening on it. Liveness used to be proven with
+ * `capture-helper resolve`, which goes through ScreenCaptureKit. macOS keys
+ * ScreenCaptureKit clients by executable path, so each probe exiting stopped
+ * every capture-helper recording on the machine (SCStreamErrorDomain -3805).
+ */
+function buildBrowserOwnsCdpFunction(cdpPort: number | null): string {
+  if (cdpPort === null) {
+    return ['browser_owns_cdp() {', '  kill -0 "$1" 2>/dev/null', '}'].join('\n');
+  }
   return [
-    'capture_helper_resolve() {',
-    '  timeout_bin="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"',
-    '  if [ -n "$timeout_bin" ]; then',
-    '    "$timeout_bin" 3s capture-helper resolve --pid "$1" --json >/dev/null 2>&1',
-    '    return $?',
-    '  fi',
-    '  python3 - "$1" <<\'PY\'',
-    'import subprocess',
-    'import sys',
-    'try:',
-    '    subprocess.run(',
-    '        ["capture-helper", "resolve", "--pid", sys.argv[1], "--json"],',
-    '        stdout=subprocess.DEVNULL,',
-    '        stderr=subprocess.DEVNULL,',
-    '        timeout=3,',
-    '        check=True,',
-    '    )',
-    'except Exception:',
-    '    sys.exit(1)',
-    'PY',
+    'cdp_listeners() {',
+    '  lsof_bin="$(command -v lsof 2>/dev/null || true)"',
+    '  [ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
+    `  "$lsof_bin" -nP -iTCP:${cdpPort} -sTCP:LISTEN -t 2>/dev/null | sort -u`,
+    '}',
+    'browser_owns_cdp() {',
+    '  kill -0 "$1" 2>/dev/null || return 1',
+    '  [ "$(cdp_listeners)" = "$1" ]',
     '}',
   ].join('\n');
 }
@@ -581,9 +578,8 @@ async function recoverBrowserPidFromCdp(
 ): Promise<{ ok: boolean; detail?: string }> {
   if (resourceDef.type !== 'browser') return { ok: false };
 
-  const rawPort = slotVars.resourceVars.cdp_port;
-  const cdpPort = rawPort ? Number(rawPort) : NaN;
-  if (!Number.isInteger(cdpPort) || cdpPort <= 0 || cdpPort > 65_535) return { ok: false };
+  const cdpPort = parseCdpPort(slotVars.resourceVars.cdp_port);
+  if (cdpPort === null) return { ok: false };
 
   const pidPath = browserPidPath(resourceDef, slotVars, projectVars);
   if (!pidPath) return { ok: false };
@@ -595,54 +591,47 @@ async function recoverBrowserPidFromCdp(
   return { ok: true, detail: `${resourceId} pid repaired from cdp_port ${cdpPort}` };
 }
 
-export function buildBrowserPidRecoveryCommand(cdpPort: number, pidDir: string): string {
-  const qPidDir = shellQuote(pidDir);
+function buildBrowserPidRecoverySteps(pidDir: string): string[] {
   return [
-    'set -e',
-    buildCaptureHelperResolveFunction(),
-    `pid_dir=${qPidDir}`,
-    'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
-    '[ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
-    `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
+    `pid_dir=${shellQuote(pidDir)}`,
+    'pid="$(cdp_listeners)"',
     '[ -n "$pid" ]',
-    'kill -0 "$pid" 2>/dev/null',
-    'capture_helper_resolve "$pid"',
+    'browser_owns_cdp "$pid"',
     'mkdir -p "$pid_dir"',
     'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
     'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
+  ];
+}
+
+export function buildBrowserPidRecoveryCommand(cdpPort: number, pidDir: string): string {
+  return [
+    'set -e',
+    buildBrowserOwnsCdpFunction(cdpPort),
+    ...buildBrowserPidRecoverySteps(pidDir),
   ].join('\n');
 }
 
 export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: string): string {
-  const cdpPort = cdpPortRaw ? Number(cdpPortRaw) : NaN;
+  const cdpPort = parseCdpPort(cdpPortRaw);
   const pidFileCheck = [
     `pid_file=${shellQuote(pidPath)}`,
     'if [ -f "$pid_file" ]; then',
     '  pid="$(cat "$pid_file" 2>/dev/null || true)"',
-    '  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && capture_helper_resolve "$pid"; then',
+    '  if [ -n "$pid" ] && browser_owns_cdp "$pid"; then',
     '    exit 0',
     '  fi',
     'fi',
   ];
 
-  if (!Number.isInteger(cdpPort) || cdpPort <= 0 || cdpPort > 65_535) {
-    return ['set -e', buildCaptureHelperResolveFunction(), ...pidFileCheck, 'exit 1'].join('\n');
+  if (cdpPort === null) {
+    return ['set -e', buildBrowserOwnsCdpFunction(null), ...pidFileCheck, 'exit 1'].join('\n');
   }
 
   return [
     'set -e',
-    buildCaptureHelperResolveFunction(),
+    buildBrowserOwnsCdpFunction(cdpPort),
     ...pidFileCheck,
-    `pid_dir=${shellQuote(path.dirname(pidPath))}`,
-    'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
-    '[ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
-    `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
-    '[ -n "$pid" ]',
-    'kill -0 "$pid" 2>/dev/null',
-    'capture_helper_resolve "$pid"',
-    'mkdir -p "$pid_dir"',
-    'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
-    'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
+    ...buildBrowserPidRecoverySteps(path.dirname(pidPath)),
   ].join('\n');
 }
 
