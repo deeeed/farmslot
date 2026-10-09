@@ -16,6 +16,8 @@ let repoRoot = '';
 mock.module('../core/config.js', {
   namedExports: {
     ...realConfig,
+    // The fixture's task directories stand in for the project's orchestrator task root.
+    getOrchestratorTaskRoot: () => path.join(repoRoot, '.task'),
     loadSlotVars: async () => ({
       remoteRepo: repoRoot,
       host: 'localhost',
@@ -34,10 +36,13 @@ mock.module('../fleet/state.js', {
   },
 });
 
+// Runs a test registers by id; every other lookup finds none.
+const runs = new Map<string, unknown>();
+
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRunStore,
-    getRun: () => undefined,
+    getRun: (id: string) => runs.get(id),
     listRuns: () => ({ runs: [] }),
   },
 });
@@ -160,6 +165,99 @@ test('with no ledger, manifest links ride in their own field and never as a verd
       { id: 'AC-2', evidence: ['artifacts/after.png'] },
     ]);
   } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+function writeReleasedRun(options: { workerMirror: boolean }) {
+  // The slot fixture has no taskFile, as after a release; the run keeps the
+  // gateway's copy of its task directory, which run artifacts are served from.
+  const fixture = writeFixture(null);
+  const taskDir = path.join(fixture.root, '.task', 'dev', 'demo');
+  writeFileSync(path.join(taskDir, 'TASK.md'), '# Task\n');
+  // That copy's checklist is the unchecked dispatch template; the worker's
+  // checked copy lands beside it as `.worker` at completion.
+  writeFileSync(
+    path.join(taskDir, 'CHECKLIST.md'),
+    ['# Worker', '', '- [ ] **1. build it**', '- [ ] **2. prove it**', ''].join('\n'),
+  );
+  if (options.workerMirror) {
+    writeFileSync(
+      path.join(taskDir, 'CHECKLIST.md.worker'),
+      ['# Worker', '', '- [x] **1. build it**', '- [x] **2. prove it**', ''].join('\n'),
+    );
+  }
+  writeFileSync(
+    path.join(taskDir, 'artifacts', 'evidence-manifest.json'),
+    JSON.stringify({ standalone: [{ label: 'Teardown', covers: ['ac1'], file: 'teardown.png' }] }),
+  );
+  runs.set('run-released', {
+    id: 'run-released',
+    project: 'demo',
+    flowType: 'dev',
+    taskFile: path.join(taskDir, 'TASK.md'),
+  });
+  return fixture;
+}
+
+test('a finished run whose slot no longer holds its task reads its recorded task directory', async () => {
+  const fixture = writeReleasedRun({ workerMirror: true });
+  try {
+    const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
+    assert.equal(result.acceptanceCriteria?.length, 3);
+    assert.deepEqual(result.acceptanceEvidenceLinks, [
+      { id: 'AC-1', evidence: ['artifacts/teardown.png'] },
+    ]);
+    assert.equal(result.structured?.totalSteps, 2);
+    assert.equal(
+      result.structured?.completedSteps,
+      2,
+      "the worker's checked copy, not the template",
+    );
+
+    await assert.rejects(
+      taskProgress({ slotId: 'slot-acceptance', runId: 'run-unknown' }),
+      /No task file for slot slot-acceptance/,
+      'a run with no recorded copy still says why',
+    );
+  } finally {
+    runs.delete('run-released');
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('without the worker mirror a recorded run reports acceptance data and no steps', async () => {
+  const fixture = writeReleasedRun({ workerMirror: false });
+  try {
+    const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
+    assert.equal(result.structured, undefined, 'the unchecked template is never shown as progress');
+    assert.equal(result.acceptanceCriteria?.length, 3);
+    assert.equal(result.acceptanceEvidenceLinks?.length, 1);
+  } finally {
+    runs.delete('run-released');
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a recorded task file outside the project task root is not read', async () => {
+  const fixture = writeReleasedRun({ workerMirror: true });
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'gw-outside-task-'));
+  writeFileSync(path.join(outside, 'TASK.md'), '# Task\n');
+  runs.set('run-outside', {
+    id: 'run-outside',
+    project: 'demo',
+    flowType: 'dev',
+    taskFile: path.join(outside, 'TASK.md'),
+  });
+  try {
+    await assert.rejects(
+      taskProgress({ slotId: 'slot-acceptance', runId: 'run-outside' }),
+      /No task file for slot slot-acceptance/,
+    );
+  } finally {
+    runs.delete('run-released');
+    runs.delete('run-outside');
+    rmSync(outside, { recursive: true, force: true });
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });
