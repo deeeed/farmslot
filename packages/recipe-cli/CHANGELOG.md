@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- A node's `cdp_port` template is read with the recipe template grammar, so `{{ params.port }}` (which the runner does not resolve) is an unresolved port instead of the port's value.
 - An interrupted capture-helper recording fails `run` and `call` as `CAPTURE_INTERRUPTED` (exit 4) with the partial video kept, instead of `APP_LOGIC_FAILURE` with the video deleted. The framed (Extension) recorder publishes the partial video and its timing with `interruption` in the manifest instead of failing with "Missing finalized video completion". When the run has another failed node, that failure is classified as before.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

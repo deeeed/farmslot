@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Recipe templates index arrays: `{{outputs.node.items[0].field}}` (or `.0.`). One grammar (`parseRecipeTemplate`, `replaceRecipeTemplates`, `findUnsupportedRecipeTemplates`) is shared by validation, trace intent matching and the recipe runner. Recipe validation reports a `{{params.` or `{{outputs.` it cannot parse as `workflow.invalid_template` instead of letting it reach an action as literal text; the published schemas reject any such text in a `call` ref.
+- Recipe templates index arrays: `{{outputs.node.items[0].field}}` (or `.0.`); on an object both read key `0`. One grammar (`parseRecipeTemplate`, `replaceRecipeTemplates`, `findUnsupportedRecipeTemplates`) is shared by validation, trace intent matching and the recipe runner. Recipe validation reports a `{{params.` or `{{outputs.` it cannot parse as `workflow.invalid_template` instead of letting it reach an action as literal text; any such text in a `call` ref is `workflow.dynamic_call_ref`, and the published schemas reject it there.
 - `RecipeRecordingInterruption` (`frames`, `mediaTimeMs`, `cause`) and `RecipeArtifactManifestEntry.interruption` (optional): a video kept after its recording stream stopped early holds the frames captured until then. `recipeTraceEntries(trace)` reads a trace.json document's entries in either shape.
 - New `@farmslot/protocol/node/loopback-host` subpath exporting `isLoopbackHost`, the single loopback-host check shared by the gateway's bind/auth checks and the CLI.
 

@@ -85,7 +85,7 @@ Recipes declare inputs with JSON-Schema-shaped `paramsSchema`. Defaults apply be
 }
 ```
 
-Use `{{params.market}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. `[n]` or `.n` indexes an array: `{{outputs.positions.positions[0].size}}`. An exact template preserves its value type; an embedded template becomes a string. A `{{params.` or `{{outputs.` that does not parse as a template fails validation (`workflow.invalid_template`) and resolution; it is never passed on as text. Data does not leak between parent and child recipes.
+Use `{{params.market}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. `[n]` or `.n` indexes an array: `{{outputs.positions.positions[0].size}}`; on an object both read the key `n`. An exact template preserves its value type; an embedded template becomes a string. A `{{params.` or `{{outputs.` that does not parse as a template fails validation (`workflow.invalid_template`) and resolution; it is never passed on as text. Data does not leak between parent and child recipes.
 
 Action parameters are sibling fields on the node. The `params` object is reserved for a `call` boundary.
 

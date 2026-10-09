@@ -30,12 +30,12 @@ export function validateRecipeDependencyParams(options: {
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
 }): void {
   const visit = (document: Record<string, unknown>, params: Record<string, unknown>): void => {
-    for (const rawNode of Object.values(extractWorkflowGraph(document).nodes)) {
+    for (const [nodeId, rawNode] of Object.entries(extractWorkflowGraph(document).nodes)) {
       if (rawNode.action !== 'call' || typeof rawNode.ref !== 'string') continue;
       const ref = normalizeRecipeRef(rawNode.ref);
       const dependency = options.recipes.get(ref);
       if (!dependency) continue;
-      const node = resolveRecipeValue(rawNode, params);
+      const node = resolveRecipeValue(rawNode, params, undefined, { nodeId });
       const childParams = resolveRecipeParams(
         ref,
         dependency.document,

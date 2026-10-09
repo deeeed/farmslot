@@ -1,7 +1,8 @@
 /**
  * Recipe templates: `{{params.<path>}}` and `{{outputs.<nodeId>.<path>}}`. A path is dotted keys;
- * `[n]` or a numeric `.n` segment indexes an array. Every reader of recipe templates uses this
- * grammar, so validation, resolution and trace matching agree on what a template is.
+ * `[n]` or a numeric `.n` segment indexes an array, and on an object both read the key `n`. Every
+ * reader of recipe templates uses this grammar, so validation, resolution and trace matching agree
+ * on what a template is.
  */
 const KEY = '[A-Za-z0-9_-]+';
 const INDEX = String.raw`\[(?:0|[1-9]\d*)\]`;

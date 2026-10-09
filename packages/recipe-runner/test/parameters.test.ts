@@ -149,3 +149,41 @@ test('strict resolution refuses a template it cannot parse instead of keeping it
     '{{outputs.baseline.positions[0].size}}',
   );
 });
+
+test('a resolution error quotes the authored template and the node', () => {
+  const rejects = (template: string, expected: RegExp, values = {}, nodeId?: string) =>
+    assert.throws(
+      () => resolveRecipeValue(template, values, closeAllOutputs, { nodeId }),
+      (error) =>
+        error instanceof RecipeResolutionError &&
+        error.code === 'RECIPE_PARAMS_INVALID' &&
+        expected.test(error.message),
+      template,
+    );
+  rejects(
+    '{{params.arr[1][0]}}',
+    /^Recipe parameter \{\{params\.arr\[1\]\[0\]\}\}: index 1 is out of range for an array of 1\.$/u,
+    { arr: [[0]] },
+  );
+  rejects(
+    'size {{outputs.baseline.positions[1].size}}',
+    /^Recipe output \{\{outputs\.baseline\.positions\[1\]\.size\}\} in node assert-size: index 1 is out of range for an array of 1\.$/u,
+    {},
+    'assert-size',
+  );
+  rejects(
+    '{{outputs.baseline.missing}}',
+    /^Recipe output \{\{outputs\.baseline\.missing\}\} is not defined\.$/u,
+  );
+  rejects(
+    '{{outputs.baseline.positions[x]}}',
+    /^Recipe value \{\{outputs\.baseline\.positions\[x\]\}\} in node cleanup\/assert-size is not a supported template\.$/u,
+    {},
+    'cleanup/assert-size',
+  );
+});
+
+test('an index on an object reads that key', () => {
+  assert.equal(resolveRecipeValue('{{params.byId[7]}}', { byId: { 7: 'seven' } }), 'seven');
+  assert.equal(resolveRecipeValue('{{params.byId.7}}', { byId: { 7: 'seven' } }), 'seven');
+});

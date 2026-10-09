@@ -2556,7 +2556,10 @@ test('runs teardown when an output reference cannot be resolved', async () => {
       ok: boolean;
       error?: string;
     }>;
-    assert.match(trace[0]?.error ?? '', /output missing\.cmd is not defined/u);
+    assert.match(
+      trace[0]?.error ?? '',
+      /output \{\{outputs\.missing\.cmd\}\} in node consume is not defined/u,
+    );
     assert.deepEqual(
       trace.map(({ nodeId, ok }) => ({ nodeId, ok })),
       [

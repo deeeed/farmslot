@@ -1277,13 +1277,15 @@ describe('run report', () => {
           workflow: {
             nodes: {
               a: { cdp_port: '{{params.port}}' },
-              b: { cdp_port: '{{ params.fallback }}' },
+              b: { cdp_port: '{{params.fallback}}' },
               c: { cdp_port: '{{params.unknown}}' },
+              // Not a template the runner resolves, so it cannot name a port.
+              d: { cdp_port: '{{ params.port }}' },
             },
           },
         },
       }),
-      ['9222', '9333', '9444', 'unresolved {{params.unknown}}'],
+      ['9222', '9333', '9444', 'unresolved {{params.unknown}}', 'unresolved {{ params.port }}'],
     );
   });
 });

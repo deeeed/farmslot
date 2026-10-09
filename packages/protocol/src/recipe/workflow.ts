@@ -91,8 +91,9 @@ export function normalizeRecipeRef(value: string): string {
   return value.trim();
 }
 
+// Any template text, parsable or not, makes a ref dynamic.
 export function isDynamicRecipeRef(value: string): boolean {
-  return hasRecipeTemplate(value);
+  return hasRecipeTemplate(value) || findUnsupportedRecipeTemplates(value).length > 0;
 }
 
 export function getRecipeActionParams(node: Record<string, unknown>): Record<string, unknown> {
@@ -470,7 +471,10 @@ function validateNodeShape(
   }
 
   validateNodeIntent(ctx, nodeId, node, path);
-  validateTemplates(ctx, node, path);
+  for (const [field, entry] of Object.entries(node)) {
+    // A templated call ref is reported once, as workflow.dynamic_call_ref.
+    if (action !== 'call' || field !== 'ref') validateTemplates(ctx, entry, `${path}.${field}`);
+  }
   validateProves(ctx, node, path);
   validateVisualReviewMetadata(ctx, node, path);
   const hasNext = hasOwn(node, 'next');

@@ -1076,16 +1076,17 @@ test('published Recipe JSON Schema and runtime both reject dynamic call refs', a
     },
     done: { action: 'end', status: 'pass' },
   });
-  for (const ref of ['{{params.child}}', '{{params.children[0]}}']) {
+  for (const ref of ['{{params.child}}', '{{params.children[0]}}', '{{ params.child }}']) {
     const call = structuredClone(document);
     (
       (call.workflow as Record<string, unknown>).nodes as Record<string, Record<string, unknown>>
     ).call!.ref = ref;
     assert.equal(validatePublicSchema(call), false, ref);
-    assert.ok(
-      validateRecipeDocument(call, { skipRecipeCallResolution: true }).findings.some(
-        (finding) => finding.code === 'workflow.dynamic_call_ref',
+    assert.deepEqual(
+      validateRecipeDocument(call, { skipRecipeCallResolution: true }).findings.map(
+        (finding) => finding.code,
       ),
+      ['workflow.dynamic_call_ref'],
       ref,
     );
   }
