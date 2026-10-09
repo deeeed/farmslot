@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -16,6 +16,7 @@ import {
   runUnlockHook,
 } from './check.js';
 import { verifyPrepareHealth } from './prepare.js';
+import { probeDefaultBranch } from './slot-tracking.js';
 
 function makeSlotVars(remoteRepo: string): SlotVars {
   return {
@@ -321,6 +322,16 @@ test('checkDefaultBranch fails a single-branch clone and passes once main is fet
   assert.equal((await checkDefaultBranch(makeSlotVars(single), 'main')).status, 'pass');
   git(single, 'checkout', '-q', 'main');
 
-  const unreadable = await checkDefaultBranch(makeSlotVars(path.join(root, 'absent')), 'main');
+  const absent = await checkDefaultBranch(makeSlotVars(path.join(root, 'absent')), 'main');
+  assert.equal(absent.status, 'warn');
+
+  // An unreadable packed-refs makes for-each-ref fail: no verdict, never "missing".
+  git(full, 'pack-refs', '--all');
+  const packedRefs = path.join(full, '.git', 'packed-refs');
+  // The temp-dir removal registered above deletes it regardless of its mode.
+  await chmod(packedRefs, 0o000);
+  const unreadable = await checkDefaultBranch(makeSlotVars(full), 'main');
   assert.equal(unreadable.status, 'warn');
+  assert.match(unreadable.detail, /^No verdict: .*git for-each-ref exited/);
+  assert.equal((await probeDefaultBranch(makeSlotVars(full), 'main')).readable, false);
 });

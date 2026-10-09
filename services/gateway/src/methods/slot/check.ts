@@ -225,7 +225,13 @@ export async function checkDefaultBranch(
 ): Promise<CheckStep> {
   const name = 'repo.default-branch';
   const probe = await probeDefaultBranch(vars, defaultBranch);
-  if (!probe.readable) return { name, status: 'warn', detail: 'git could not read the repo refs' };
+  if (!probe.readable) {
+    return {
+      name,
+      status: 'warn',
+      detail: `No verdict: git could not read the repo (${probe.error})`,
+    };
+  }
   if (probe.blocker) return { name, status: 'fail', detail: probe.blocker };
   return { name, status: 'pass', detail: `Default branch ${defaultBranch} is fetched` };
 }

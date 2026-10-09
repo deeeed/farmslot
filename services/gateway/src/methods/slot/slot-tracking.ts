@@ -3,9 +3,10 @@ import path from 'node:path';
 
 import {
   DEFAULT_BRANCH,
-  defaultBranchRepoBlocker,
-  type DefaultBranchRepoState,
+  type DefaultBranchProbe,
+  defaultBranchProbeCommand,
   isSlotIdleBranch,
+  readDefaultBranchProbe,
   remoteBranchRefspec,
   type ResetSlotRepoToIdleOptions,
   resolveSlotTrackingBranch,
@@ -115,52 +116,18 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
   return isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
 }
 
-/**
- * One exec that reads the origin fetch refspecs and the default branch's refs,
- * each on a labelled line, after a `repo=ok` line proving git read the repo.
- */
-export function defaultBranchProbeCommand(repo: string, defaultBranch: string): string {
-  const git = `git -C ${shellQuote(repo)}`;
-  const refs = [`refs/heads/${defaultBranch}`, `refs/remotes/origin/${defaultBranch}`];
-  return (
-    `{ ${git} rev-parse --git-dir >/dev/null && printf 'repo=ok\\n'; ` +
-    `${git} config --get-all remote.origin.fetch | sed 's/^/fetch=/'; ` +
-    `${git} for-each-ref --format='ref=%(refname)' ${refs.map(shellQuote).join(' ')}; } 2>/dev/null`
-  );
-}
-
-/** The probe's repo state, or null when git could not read the repo (no verdict). */
-export function parseDefaultBranchProbe(stdout: string): DefaultBranchRepoState | null {
-  const state: DefaultBranchRepoState = { fetchRefspecs: [], refs: [] };
-  let readable = false;
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === 'repo=ok') readable = true;
-    else if (trimmed.startsWith('fetch=')) state.fetchRefspecs.push(trimmed.slice(6));
-    else if (trimmed.startsWith('ref=')) state.refs.push(trimmed.slice(4));
-  }
-  return readable ? state : null;
-}
-
-/**
- * Probe the slot repo: `blocker` names why prepare cannot check out
- * `defaultBranch`; `readable: false` means git could not read the repo, so
- * there is no verdict either way.
- */
+/** Probe the slot repo for whether prepare can check out `defaultBranch`. */
 export async function probeDefaultBranch(
   vars: SlotVars,
   defaultBranch: string,
   options?: { timeout?: number },
-): Promise<{ readable: boolean; blocker: string | null }> {
-  const result = await execOnSlot(
+): Promise<DefaultBranchProbe> {
+  const output = await execOnSlot(
     vars,
     defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
     options,
   );
-  const state = parseDefaultBranchProbe(result.stdout);
-  return state
-    ? { readable: true, blocker: defaultBranchRepoBlocker(state, defaultBranch) }
-    : { readable: false, blocker: null };
+  return readDefaultBranchProbe(output, defaultBranch);
 }
 
 export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };

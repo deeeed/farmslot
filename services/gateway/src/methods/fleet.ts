@@ -807,7 +807,10 @@ async function checkSingleSlot(
 async function checkDefaultBranch(vars: SlotVars, defaultBranch: string): Promise<string | null> {
   try {
     const probe = await probeDefaultBranch(vars, defaultBranch, { timeout: SLOT_CHECK_TIMEOUT_MS });
-    return probe.blocker;
+    if (probe.readable) return probe.blocker;
+    // A failed git read is not evidence about the default branch: no verdict.
+    console.warn(`[fleet.refresh] ${vars.slotId}: default-branch probe: ${probe.error}`);
+    return null;
   } catch (e) {
     // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
     console.warn(

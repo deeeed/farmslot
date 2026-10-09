@@ -322,6 +322,8 @@ export function findBestSlot(
     pressureRejectedMachines?: ReadonlySet<string>;
     /** Slots whose detached HEAD a park record preserves; see `slotScore`. */
     parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
+    /** The run reuses the slot's checkout, so its repo blocker does not apply. */
+    skipPrepare?: boolean;
   },
 ): SlotStatus | null {
   const allow =
@@ -329,7 +331,7 @@ export function findBestSlot(
   const candidates = slots
     .filter((s) => {
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
-      if (s.repoBlocker) return false;
+      if (slotRepoBlocker(s, options)) return false;
       if (options?.pressureRejectedMachines?.has(s.machine)) return false;
       if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
       if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
@@ -414,6 +416,7 @@ export function validateSlotForDispatch(
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
     allowWorking?: boolean;
+    skipPrepare?: boolean;
   },
 ): string | null {
   return (
@@ -421,8 +424,21 @@ export function validateSlotForDispatch(
       allowWorking: options?.allowWorking,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
-    (slot.repoBlocker ? `Slot repo cannot prepare: ${slot.repoBlocker}` : null)
+    slotRepoBlocker(slot, options)
   );
+}
+
+/**
+ * Why prepare cannot run in this slot's repo (fleet refresh's `repoBlocker`),
+ * or null. A run that skips prepare keeps the slot's checkout, so the blocker
+ * does not apply to it.
+ */
+export function slotRepoBlocker(
+  slot: Pick<SlotStatus, 'repoBlocker'>,
+  options?: { skipPrepare?: boolean },
+): string | null {
+  if (options?.skipPrepare || !slot.repoBlocker) return null;
+  return `Slot repo cannot prepare: ${slot.repoBlocker}`;
 }
 
 export function validateSlot(

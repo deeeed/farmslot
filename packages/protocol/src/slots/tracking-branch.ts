@@ -64,6 +64,73 @@ export function defaultBranchRepoBlocker(
   return null;
 }
 
+function shellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * One POSIX shell command that reads what `defaultBranchRepoBlocker` needs
+ * from `repo`: each git call prints its exit status on a labelled line and its
+ * output as `fetch=`/`ref=` lines, leaving git's own errors on stderr. Run it
+ * locally (`sh -c`) or over a slot transport, then read it with
+ * `readDefaultBranchProbe`.
+ */
+export function defaultBranchProbeCommand(repo: string, defaultBranch: string): string {
+  const git = `git -C ${shellArg(repo)}`;
+  const refs = [`refs/heads/${defaultBranch}`, `refs/remotes/origin/${defaultBranch}`]
+    .map(shellArg)
+    .join(' ');
+  return [
+    `out=$(${git} config --get-all remote.origin.fetch); printf 'fetch-exit=%s\\n' "$?"`,
+    `printf '%s\\n' "$out" | sed '/^$/d; s/^/fetch=/'`,
+    `out=$(${git} for-each-ref --format='%(refname)' ${refs}); printf 'refs-exit=%s\\n' "$?"`,
+    `printf '%s\\n' "$out" | sed '/^$/d; s/^/ref=/'`,
+  ].join('; ');
+}
+
+/** What a default-branch probe ran to: `stdout`/`stderr` and the shell's exit code. */
+export interface DefaultBranchProbeOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * The probe's verdict. `readable: false` means a git read failed (unreadable
+ * refs or config, not a repo, a broken transport): there is no verdict about
+ * the default branch either way, and `error` says why.
+ */
+export type DefaultBranchProbe =
+  | { readable: true; blocker: string | null }
+  | { readable: false; error: string };
+
+export function readDefaultBranchProbe(
+  output: DefaultBranchProbeOutput,
+  defaultBranch: string,
+): DefaultBranchProbe {
+  const state: DefaultBranchRepoState = { fetchRefspecs: [], refs: [] };
+  let fetchExit: string | undefined;
+  let refsExit: string | undefined;
+  for (const line of output.stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('fetch-exit=')) fetchExit = trimmed.slice('fetch-exit='.length);
+    else if (trimmed.startsWith('refs-exit=')) refsExit = trimmed.slice('refs-exit='.length);
+    else if (trimmed.startsWith('fetch=')) state.fetchRefspecs.push(trimmed.slice('fetch='.length));
+    else if (trimmed.startsWith('ref=')) state.refs.push(trimmed.slice('ref='.length));
+  }
+  const detail = output.stderr.trim().split('\n').slice(-1)[0] ?? '';
+  const failure = (what: string) => ({
+    readable: false as const,
+    error: detail ? `${what}: ${detail}` : what,
+  });
+  if (output.exitCode !== 0) return failure(`probe exited ${output.exitCode}`);
+  // `git config --get-all` exits 1 when no refspec is configured: that is a reading.
+  if (fetchExit !== '0' && fetchExit !== '1')
+    return failure(`git config remote.origin.fetch exited ${fetchExit ?? '(no status)'}`);
+  if (refsExit !== '0') return failure(`git for-each-ref exited ${refsExit ?? '(no status)'}`);
+  return { readable: true, blocker: defaultBranchRepoBlocker(state, defaultBranch) };
+}
+
 export interface SlotTrackingProjectConfig {
   defaultBranch?: string;
   slotTrackingBranch?: string;

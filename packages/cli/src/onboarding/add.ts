@@ -24,7 +24,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { defaultBranchRepoBlocker } from '@farmslot/protocol';
+import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
 
 import {
   decideAddAction,
@@ -361,29 +361,16 @@ export function registerProject(
 
 /** Prepare checks out the default branch; refuse a clone that cannot (e.g. --single-branch). */
 function assertDefaultBranchCheckable(repoPath: string, defaultBranch: string): void {
-  const git = (args: string[]) =>
-    spawnSync('git', ['-C', repoPath, ...args], { encoding: 'utf-8' });
-  const lines = (stdout: string): string[] =>
-    stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-  const refs = git([
-    'for-each-ref',
-    '--format=%(refname)',
-    `refs/heads/${defaultBranch}`,
-    `refs/remotes/origin/${defaultBranch}`,
-  ]);
-  if (refs.error || refs.status !== 0) {
-    throw new AddError(`cannot read refs in slot repo ${repoPath}: ${refs.stderr.trim()}`);
-  }
-  // Exit 1 with no output means no fetch refspec is configured; the blocker names that.
-  const fetch = git(['config', '--get-all', 'remote.origin.fetch']);
-  const blocker = defaultBranchRepoBlocker(
-    { fetchRefspecs: lines(fetch.stdout), refs: lines(refs.stdout) },
+  const result = spawnSync('sh', ['-c', defaultBranchProbeCommand(repoPath, defaultBranch)], {
+    encoding: 'utf-8',
+  });
+  const probe = readDefaultBranchProbe(
+    { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? 1 },
     defaultBranch,
   );
-  if (blocker) throw new AddError(`slot repo ${repoPath}: ${blocker}`);
+  // Onboarding must prove the repo can prepare, so an unreadable repo refuses too.
+  if (!probe.readable) throw new AddError(`cannot read slot repo ${repoPath}: ${probe.error}`);
+  if (probe.blocker) throw new AddError(`slot repo ${repoPath}: ${probe.blocker}`);
 }
 
 function cloneSlotRepo(
@@ -706,6 +693,9 @@ export function projectAdd(
         // Honor an operator-repointed slot repo; default for new slots.
         const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
 
+        // An unchanged pack is verified too: a slot repo narrowed after it was added
+        // still cannot prepare.
+        if (!mutate) assertDefaultBranchCheckable(repoPath, registered.defaultBranch);
         if (mutate) {
           cloneSlotRepo(registered.repoUrl, repoPath, registered.defaultBranch, progress);
 

@@ -1132,7 +1132,12 @@ export async function selectQueueDispatchSlot(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
           undefined,
-          { requiredPrepareProfile, pressureDecisions, parkPreservedSlotIds: parkPreserved },
+          {
+            requiredPrepareProfile,
+            pressureDecisions,
+            parkPreservedSlotIds: parkPreserved,
+            skipPrepare: item.skipPrepare,
+          },
         );
         if (preview.pressureAdmission?.outcome === 'rejected') return null;
         return preview.preview.slotId;
@@ -1143,6 +1148,7 @@ export async function selectQueueDispatchSlot(
     requiredPrepareProfile,
     pressureDecisions,
     parkPreservedSlotIds: parkPreserved,
+    skipPrepare: item.skipPrepare,
   });
   // A pinned queue item whose machine is pressure-rejected stays queued until
   // pressure recedes; automatic selection already excluded rejected machines.

@@ -48,6 +48,7 @@ import {
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
+  slotRepoBlocker,
   slotScore,
   validateSlotForDispatch,
 } from '../methods/dispatch/slot-scoring.js';
@@ -435,6 +436,8 @@ export async function executeFindSlotStep(
       : undefined;
   // Explicit prepare only — profile-fit suggestions never rewrite FIND_SLOT eligibility.
   const requiredPrepareProfile = run.prepareProfile || null;
+  // A run that skips prepare keeps the slot's checkout, so slot repo blockers do not apply.
+  const skipPrepare = Boolean(run.engineState?.flags?.skipPrepare);
 
   // CI-watch warm-session handoff: chained follow-up already pinned to the parent's
   // keep-warm slot. Bind immediately so DISPATCH can probe the live worker; do not
@@ -551,6 +554,7 @@ export async function executeFindSlotStep(
       eligibilityFail = validateSlotForDispatch(wizardSlot, liveFleet.slots, {
         targetBranch,
         requiredPrepareProfile,
+        skipPrepare,
         allowWorking: replaceableWarm,
       });
     } else if (activeWorkerFreshReuseAllowed(run.flowType)) {
@@ -571,6 +575,10 @@ export async function executeFindSlotStep(
     } else {
       eligibilityFail = 'slot is busy and not eligible for warm replacement';
     }
+    // The active-worker check above is the nudge gate, which never prepares. A
+    // fresh dispatch does, so refuse a repo that cannot prepare BEFORE the
+    // teardown below kills the worker.
+    eligibilityFail ??= wizardSlot ? slotRepoBlocker(wizardSlot, { skipPrepare }) : null;
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
@@ -618,6 +626,7 @@ export async function executeFindSlotStep(
     !validateSlotForDispatch(slot, fleet.slots, {
       targetBranch,
       requiredPrepareProfile,
+      skipPrepare,
     });
   const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
   const candidates = freeSlots.slice(0, 10).map((s) => ({
@@ -645,6 +654,7 @@ export async function executeFindSlotStep(
       !validateSlotForDispatch(affinitySlot, fleet.slots, {
         targetBranch,
         requiredPrepareProfile,
+        skipPrepare,
       })
     ) {
       console.log(
@@ -807,6 +817,12 @@ export async function executeFindSlotStep(
           };
         }
         if (actionId === 'fresh') {
+          // Fresh dispatch prepares the slot: refuse a repo that cannot, before
+          // the teardown below kills the worker.
+          const repoBlocker = slotRepoBlocker(top.slot, { skipPrepare });
+          if (repoBlocker) {
+            throw new Error(`Kill & dispatch fresh refused on ${top.slot.slot}: ${repoBlocker}`);
+          }
           // The decision-card 'fresh' branch binds the busy slot AND must hard-kill the
           // prior worker BEFORE PREPARE runs — otherwise PREPARE's git reset / checkout /
           // dependency install would race against a still-writing worker in the same
@@ -871,6 +887,7 @@ export async function executeFindSlotStep(
             const err = validateSlotForDispatch(picked, freshFleet.slots, {
               targetBranch,
               requiredPrepareProfile,
+              skipPrepare,
             });
             if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             // A human pick is not a pressure override. The same admission gate
@@ -997,6 +1014,7 @@ export async function executeFindSlotStep(
       const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
         targetBranch,
         requiredPrepareProfile,
+        skipPrepare,
       });
       if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
       // "Use Selected Slot" is not a pressure override. The same admission gate
@@ -1056,6 +1074,7 @@ export async function executeFindSlotStep(
     {
       ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
       includeProfileFit: false,
+      skipPrepare,
     },
   );
   // Automatic selection already excluded pressure-rejected machines; a

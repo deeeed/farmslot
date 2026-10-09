@@ -20,6 +20,7 @@ import {
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
+  slotRepoBlocker,
   slotScore,
   validateSlot,
   validateSlotForDispatch,
@@ -209,6 +210,10 @@ test('a slot whose repo cannot check out the default branch is never selected', 
     /^Slot repo cannot prepare: origin fetch refspec .* does not fetch default branch 'main'/u,
   );
   assert.equal(validateSlotForDispatch(healthy, [healthy]), null);
+  // A run that keeps the checkout (skipPrepare) never prepares, so the blocker does not apply.
+  assert.equal(slotRepoBlocker(blocked, { skipPrepare: true }), null);
+  assert.equal(validateSlotForDispatch(blocked, [blocked], { skipPrepare: true }), null);
+  assert.equal(findBestSlot([blocked], 'demo-farm', { skipPrepare: true })?.slot, 'single-branch');
 });
 
 test('validateSlot explains disabled/manual/working/busy and accepts held', () => {

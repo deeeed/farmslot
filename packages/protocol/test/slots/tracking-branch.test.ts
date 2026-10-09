@@ -6,6 +6,7 @@ import {
   DETACHED_HEAD_BRANCH,
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
+  readDefaultBranchProbe,
   resolveSlotTrackingBranch,
 } from '../../src/slots/tracking-branch.js';
 
@@ -123,5 +124,41 @@ test('defaultBranchRepoBlocker names a fetch refspec that excludes the default b
   assert.match(
     defaultBranchRepoBlocker({ fetchRefspecs: full, refs: [] }, 'main') ?? '',
     /no default branch 'main'/,
+  );
+});
+
+test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
+  const ok = (stdout: string) =>
+    readDefaultBranchProbe({ stdout, stderr: '', exitCode: 0 }, 'main');
+  assert.deepEqual(
+    ok(
+      'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=0\nref=refs/heads/main\n',
+    ),
+    { readable: true, blocker: null },
+  );
+  // No refspec configured (git config exits 1) is a reading, not a failure.
+  assert.match(
+    (ok('fetch-exit=1\nrefs-exit=0\nref=refs/heads/main\n') as { blocker: string }).blocker,
+    /\(none\)/,
+  );
+  const unreadable = readDefaultBranchProbe(
+    {
+      stdout: 'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=128\n',
+      stderr: "fatal: could not open '.git/packed-refs' for reading: Permission denied\n",
+      exitCode: 0,
+    },
+    'main',
+  );
+  assert.deepEqual(unreadable, {
+    readable: false,
+    error:
+      "git for-each-ref exited 128: fatal: could not open '.git/packed-refs' for reading: Permission denied",
+  });
+  assert.equal(ok('fetch-exit=3\nrefs-exit=0\n').readable, false);
+  assert.equal(ok('').readable, false, 'a probe that printed no status has no verdict');
+  assert.equal(
+    readDefaultBranchProbe({ stdout: '', stderr: 'ssh: connect refused', exitCode: 255 }, 'main')
+      .readable,
+    false,
   );
 });

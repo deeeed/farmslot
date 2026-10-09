@@ -396,6 +396,19 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   assert.equal(subsetNoop.action, 'noop');
   state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.equal(state.packs['team-pack'].hash, completedHash);
+
+  // An unchanged pack still verifies its slot repos: one narrowed after it was
+  // added (a single-branch refspec) cannot prepare.
+  spawnSync('git', [
+    '-C',
+    join(ws.reposDir, 'app-1'),
+    'config',
+    'remote.origin.fetch',
+    '+refs/heads/feature:refs/remotes/origin/feature',
+  ]);
+  const narrowed = projectAdd(pack, ws, { step: () => {}, info: () => {} }, { projects: ['app'] });
+  assert.equal(narrowed.action, 'noop');
+  assert.match(narrowed.failures[0] ?? '', /does not fetch default branch 'master'/);
 });
 
 test('projectAdd refuses an existing single-branch slot clone that cannot check out main', (t) => {
