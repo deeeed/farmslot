@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
+  type DiffKindSummary,
   type GitBranchDiffFile,
   latestExhaustedIndependentReview,
   type ReadyGatePayload,
@@ -10,6 +11,7 @@ import {
 } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
 
 import { readyReviewBlockingReason } from './ready-workspace-renderers.js';
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
@@ -168,7 +170,9 @@ export function renderReadyTabBar(input: {
   evidenceCount: number;
   qualityCount: number;
   inputCount: number;
+  /** Files shown in the Diff tab (after the hide-tests filter). */
   diffFileCount: number;
+  diffTotalFileCount: number;
   setActiveTab: (tab: ReadyWorkspaceTab) => void;
 }) {
   const hasRecipe = !!input.payload.recipeJson && !input.hideRecipeTab;
@@ -177,6 +181,10 @@ export function renderReadyTabBar(input: {
   const hasInput = input.inputCount > 0;
   const hasLearnings = !!input.payload.workerLearnings;
   const hasPreview = !!input.payload.prPackage;
+  const diffCount =
+    input.diffFileCount === input.diffTotalFileCount
+      ? `${input.diffTotalFileCount}`
+      : `${input.diffFileCount} of ${input.diffTotalFileCount}`;
 
   return html`
     <div class="rdy-tab-bar">
@@ -204,7 +212,7 @@ export function renderReadyTabBar(input: {
         class="rdy-tab ${input.activeTab === 'diff' ? 'active' : ''}"
         @click=${() => input.setActiveTab('diff')}
       >
-        Diff (${input.diffFileCount})
+        Diff (${diffCount})
       </button>
       ${hasEvidence
         ? html`
@@ -254,17 +262,24 @@ export function renderReadyDiffTab(input: {
   slotId: string;
   diffLoading: boolean;
   diffError: string;
+  /** Visible files; tests are already dropped when `hideTests` is on. */
   diffFiles: GitBranchDiffFile[];
+  diffTotalFileCount: number;
+  diffKindSummary: DiffKindSummary;
+  hideTests: boolean;
   selectedFile: string;
   recovering: boolean;
   fileDiffLoading: boolean;
   fileDiff: string;
   selectFile: (path: string) => void;
+  toggleHideTests: () => void;
 }) {
   if (!input.slotId) return html`<div class="rdy-tab-empty">No slot — diff not available</div>`;
   if (input.diffLoading) return html`<div class="rdy-tab-empty">Loading diff...</div>`;
   if (input.diffError) return html`<div class="rdy-tab-empty">${input.diffError}</div>`;
-  if (input.diffFiles.length === 0) return html`<div class="rdy-tab-empty">No changed files</div>`;
+  if (input.diffTotalFileCount === 0)
+    return html`<div class="rdy-tab-empty">No changed files</div>`;
+  const allHidden = input.diffFiles.length === 0;
 
   const statusColors: Record<string, string> = {
     M: '#6366f1',
@@ -276,6 +291,11 @@ export function renderReadyDiffTab(input: {
   return html`
     <div class="rdy-diff-area">
       <div class="rdy-file-tabs">
+        ${renderDiffKindControls({
+          summary: input.diffKindSummary,
+          hideTests: input.hideTests,
+          onToggle: input.toggleHideTests,
+        })}
         ${input.diffFiles.map((file) => {
           const selected = input.selectedFile === file.path;
           const basename = workspaceArtifactBasename(file.path);
@@ -298,16 +318,20 @@ export function renderReadyDiffTab(input: {
         })}
       </div>
       <div class="rdy-diff-content">
-        ${input.fileDiffLoading
-          ? html`<div class="rdy-tab-empty">Loading file diff...</div>`
-          : input.fileDiff
-            ? html`
-                <diff-review
-                  .diff=${input.fileDiff}
-                  .filename=${workspaceArtifactBasename(input.selectedFile)}
-                ></diff-review>
-              `
-            : html`<div class="rdy-tab-empty">Select a file</div>`}
+        ${allHidden
+          ? html`<div class="rdy-tab-empty">
+              Only test files changed — show tests to review them
+            </div>`
+          : input.fileDiffLoading
+            ? html`<div class="rdy-tab-empty">Loading file diff...</div>`
+            : input.fileDiff
+              ? html`
+                  <diff-review
+                    .diff=${input.fileDiff}
+                    .filename=${workspaceArtifactBasename(input.selectedFile)}
+                  ></diff-review>
+                `
+              : html`<div class="rdy-tab-empty">Select a file</div>`}
       </div>
     </div>
   `;

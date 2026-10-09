@@ -85,6 +85,7 @@ import {
   resolveSlotTrackingBranchFromProject,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
+import { findUnmergedSlotWork } from './unmerged-work.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
@@ -416,56 +417,11 @@ async function slotReleaseImpl(
       currentBranch &&
       !isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
     ) {
-      const dirty = (
-        await execOnSlot(
-          vars,
-          `git -C ${shellQuote(vars.remoteRepo)} status --porcelain 2>/dev/null | grep -v '^\?\? \.omc/' | grep -v '^\?\? \.task/' | grep -v '^\?\? \.claude/CLAUDE\\.local\\.md' | head -5`,
-        )
-      ).stdout.trim();
-      const hasRemote =
-        (
-          await execOnSlot(
-            vars,
-            `git -C ${shellQuote(vars.remoteRepo)} rev-parse --verify ${shellQuote(`origin/${currentBranch}`)} 2>/dev/null && echo yes`,
-          )
-        ).stdout.trim() === 'yes';
-      let unpushed = '';
-      if (hasRemote) {
-        unpushed = (
-          await execOnSlot(
-            vars,
-            `git -C ${shellQuote(vars.remoteRepo)} log --oneline ${shellQuote(`origin/${currentBranch}..HEAD`)} 2>/dev/null | head -5`,
-          )
-        ).stdout.trim();
-      } else {
-        unpushed = (
-          await execOnSlot(
-            vars,
-            `git -C ${shellQuote(vars.remoteRepo)} log --oneline ${shellQuote(`${defaultBranch}..HEAD`)} 2>/dev/null | head -5`,
-          )
-        ).stdout.trim();
-      }
-      if (dirty || unpushed) {
-        // Check if the remote branch still exists — GitHub deletes branches after PR merge.
-        // If gone from remote, the work was merged and there's nothing to lose.
-        const remoteBranchExists =
-          (
-            await execOnSlot(
-              vars,
-              `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(currentBranch)} 2>/dev/null`,
-            )
-          ).stdout.trim() !== '';
-        if (remoteBranchExists) {
-          await markSlotBusy(params.slotId, 'working');
-          const details = [dirty && 'dirty files', unpushed && 'unpushed commits']
-            .filter(Boolean)
-            .join(' + ');
-          throw new Error(
-            `UNMERGED_WORK:${currentBranch}:${details}:Slot has work on '${currentBranch}' (${details}) that would be lost. Use Force Reset to discard.`,
-          );
-        }
-        console.log(
-          `[slot.release] ${params.slotId}: remote branch '${currentBranch}' deleted (merged) — allowing recycle`,
+      const details = await findUnmergedSlotWork(vars, currentBranch);
+      if (details) {
+        await markSlotBusy(params.slotId, 'working');
+        throw new Error(
+          `UNMERGED_WORK:${currentBranch}:${details}:Slot has work on '${currentBranch}' (${details}) that would be lost. Use Force Reset to discard.`,
         );
       }
     }
