@@ -61,15 +61,20 @@ export function activeRunSlotIds(
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
-    runs
-      .filter(
-        (run) =>
-          run.id !== excludeRunId &&
-          run.slotId &&
-          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
-          !isSlotFreedByPark(run),
-      )
-      .map((run) => run.slotId as string),
+    runs.filter((run) => isActiveSlotHolder(run, excludeRunId)).map((run) => run.slotId as string),
+  );
+}
+
+/** Whether `run` occupies its slot, by the rule of {@link activeRunSlotIds}. */
+export function isActiveSlotHolder(
+  run: Pick<Run, 'id' | 'slotId' | 'status' | 'park'>,
+  excludeRunId?: string,
+): boolean {
+  return (
+    run.id !== excludeRunId &&
+    Boolean(run.slotId) &&
+    !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
+    !isSlotFreedByPark(run)
   );
 }
 

@@ -115,6 +115,17 @@ export function createStandardUiAdapters(
           category: typeof node.category === 'string' ? node.category : 'evidence',
           ...(Array.isArray(node.covers) ? { covers: node.covers as string[] } : {}),
           ...(typeof node.proofTarget === 'string' ? { proofTarget: node.proofTarget } : {}),
+          // A recorder that lost its session may capture outside it (`run` reports metadata.fallbackFrom).
+          ...(typeof capture.fallbackFrom === 'string'
+            ? {
+                metadata: {
+                  fallbackFrom: capture.fallbackFrom,
+                  ...(typeof capture.fallbackReason === 'string'
+                    ? { fallbackReason: capture.fallbackReason }
+                    : {}),
+                },
+              }
+            : {}),
         };
         return {
           output: { ...capture, captured: true, path: file, artifact },
