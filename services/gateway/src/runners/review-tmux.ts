@@ -205,6 +205,15 @@ export async function reviewTmuxOperation(
       // run against PR code, and when untrusted they stop the launch on "Hooks need
       // review" (macpro).
       disableHooks: true,
+      // A node policy of inherit = "core" (macpro) dropped FARMSLOT_SIGNAL_ATTEMPT_ID
+      // from the reviewer's shells, so its mark wrote another attempt id. Name exactly
+      // what the review's shells need; review-terminal sets the values.
+      shellEnvironmentNames: [
+        ...Object.keys(environment.set),
+        'DISABLE_OMX',
+        'DISABLE_OMC',
+        'FARMSLOT_SIGNAL_ATTEMPT_ID',
+      ],
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',

@@ -15,6 +15,8 @@ import '../diff-viewer/diff-review.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 export interface NativeSessionApi {
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
@@ -37,6 +39,10 @@ export class NativeWorkspace extends LitElement {
   @state() private error = '';
   @state() private loading = false;
   private revision = 0;
+  // Native sessions carry no project, so the default test globs apply.
+  private readonly testFilter = new DiffTestFilterController(this, {
+    onChange: () => this.leaveHiddenFile(),
+  });
 
   static styles = css`
     :host {
@@ -220,6 +226,50 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
+  /** Status rows carry no line counts; the split only needs paths. */
+  private changeSplit() {
+    const files = (this.changes?.files ?? []).map((file) => ({
+      ...file,
+      additions: 0,
+      deletions: 0,
+    }));
+    return this.testFilter.split(files);
+  }
+
+  /**
+   * A newly hidden selected change hands the viewer to the first listed change;
+   * with nothing listed the selection goes, and so does any request in flight.
+   */
+  private leaveHiddenFile() {
+    if (this.tab !== 'changes' || !this.selected || !this.testFilter.hides(this.selected)) return;
+    const handOff = diffSelectionHandOff(
+      this.changeSplit().visible,
+      this.selected,
+      Boolean(this.diff || this.source) || this.loading,
+    );
+    if (handOff.kind === 'select') {
+      void this.openFile(handOff.path, 'diff');
+    } else if (handOff.kind === 'clear') {
+      this.revision++;
+      this.selected = '';
+      this.source = undefined;
+      this.diff = undefined;
+      this.loading = false;
+    }
+  }
+
+  /**
+   * Changes mode filters its list; a Files-mode diff carries the toggle itself.
+   * A hidden test file's diff never renders, whichever way it arrived.
+   */
+  private renderDiff(diff: NativeWorkspaceDiffResult) {
+    const review = () =>
+      html`<diff-review .filename=${diff.path} .diff=${diff.diff}></diff-review>`;
+    return this.tab === 'files' || this.testFilter.hides(diff.path)
+      ? this.testFilter.renderFileDiff(diff.path, review)
+      : review();
+  }
+
   private switchTab(tab: 'files' | 'changes') {
     this.tab = tab;
     this.selected = '';
@@ -229,6 +279,7 @@ export class NativeWorkspace extends LitElement {
   }
 
   render() {
+    const changeSplit = this.changeSplit();
     return html` <header>
         <span>Workspace</span>
         <div role="tablist" aria-label="Workspace views">
@@ -250,6 +301,7 @@ export class NativeWorkspace extends LitElement {
         <button data-testid="workspace-refresh" ?disabled=${this.loading} @click=${this.refresh}>
           Refresh
         </button>
+        ${this.tab === 'changes' ? this.testFilter.renderControls(changeSplit.summary) : nothing}
       </header>
       <p class="scope">
         ${this.tab === 'changes'
@@ -295,7 +347,7 @@ export class NativeWorkspace extends LitElement {
                   ? html`<p class="scope">First 500 entries shown.</p>`
                   : nothing}
               `
-            : html`${(this.changes?.files ?? []).map(
+            : html`${changeSplit.visible.map(
                 (entry) =>
                   html`<button
                     data-path=${entry.path}
@@ -306,7 +358,9 @@ export class NativeWorkspace extends LitElement {
               )}
               ${this.changes?.files.length === 0
                 ? html`<p class="empty">No workspace changes.</p>`
-                : nothing}
+                : changeSplit.hiddenCount > 0 && changeSplit.visible.length === 0
+                  ? html`<p class="empty">Only test files changed (hidden).</p>`
+                  : nothing}
               ${this.changes?.truncated
                 ? html`<p class="scope">
                     First ${this.changes.files.length} changed files shown. Use Files to inspect
@@ -342,10 +396,7 @@ export class NativeWorkspace extends LitElement {
               ></code-viewer>`
             : this.diff
               ? this.diff.diff
-                ? html`<diff-review
-                    .filename=${this.diff.path}
-                    .diff=${this.diff.diff}
-                  ></diff-review>`
+                ? this.renderDiff(this.diff)
                 : html`<p class="empty">No changes against HEAD for this file.</p>`
               : html`<p class="empty">
                   ${this.loading ? 'Loading workspace…' : 'Select a file to inspect.'}
