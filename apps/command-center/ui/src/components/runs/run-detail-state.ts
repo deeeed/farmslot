@@ -40,6 +40,8 @@ export abstract class RunDetailState extends LitElement {
   @state() acceptanceStatusError: string | null = null;
   /** Manifest-linked criteria, sent only when the run has no ledger. */
   @state() acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null = null;
+  /** Why the evidence manifest behind that fallback could not be read. */
+  @state() acceptanceEvidenceLinksError: string | null = null;
   @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;

@@ -240,6 +240,41 @@ test('other files in artifacts/ never drive a progress update', async () => {
   }
 });
 
+test('the evidence manifest drives a progress update, like the ledger', async () => {
+  const root = writeTaskDir();
+  mkdirSync(path.join(taskDirAbs(), 'inputs'), { recursive: true });
+  writeFileSync(
+    path.join(taskDirAbs(), 'inputs', 'handoff.json'),
+    `${JSON.stringify({ task: { acceptanceCriteria: ['criterion AC-1'] } })}\n`,
+  );
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    // With no ledger the manifest is the panel's fallback, so a write reaches clients.
+    // A write that lands while macOS is still arming the directory watch can go
+    // unreported (the other tests here race the same way), so the write is
+    // repeated a bounded number of times; a routing bug fails every attempt.
+    const manifestPath = path.join(taskDirAbs(), 'artifacts', 'evidence-manifest.json');
+    const linked = (entry: Emitted) => entry.progress.acceptanceEvidenceLinks?.[0]?.id === 'AC-1';
+    for (let attempt = 0; attempt < 3 && !emitted.some(linked); attempt += 1) {
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }] }),
+      );
+      await waitFor('the manifest links', linked, 1_500).catch(() => undefined);
+    }
+    await waitFor('the manifest links', linked, 1_500);
+    const afterManifest = emitted.length;
+    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
+    await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
+    // One more update for the ledger: it is not reported twice.
+    assert.equal(emitted.length, afterManifest + 1);
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a released slot stops reporting ledger writes', async () => {
   const root = writeTaskDir();
   emitted.length = 0;

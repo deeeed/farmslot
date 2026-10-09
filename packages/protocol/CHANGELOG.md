@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `TaskProgressResult.acceptanceEvidenceLinksError` (optional): why the evidence manifest behind the acceptance fallback could not be read, so clients can tell an unreadable manifest from one that covers no criterion. Never a ledger error.
 
 ## 0.35.1 - 2026-10-09
 

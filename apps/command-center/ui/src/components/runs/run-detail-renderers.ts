@@ -87,6 +87,8 @@ export interface RunDetailViewContext {
   acceptanceStatusError: string | null;
   /** Manifest-linked criteria when the run has no ledger; never a verdict. */
   acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
+  /** Why the evidence manifest behind that fallback could not be read. */
+  acceptanceEvidenceLinksError: string | null;
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
   /** Opens a clicked acceptance evidence file in the evidence lightbox. */
@@ -1154,6 +1156,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceCriteria=${ctx.acceptanceCriteria}
         .acceptanceStatusError=${ctx.acceptanceStatusError}
         .acceptanceEvidenceLinks=${ctx.acceptanceEvidenceLinks}
+        .acceptanceEvidenceLinksError=${ctx.acceptanceEvidenceLinksError}
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .acceptanceEvidenceOpen=${ctx.acceptanceEvidenceOpen}
         .selectedStepName=${ctx.selectedStep?.name}

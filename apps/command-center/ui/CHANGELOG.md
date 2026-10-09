@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The acceptance panel shows a muted "evidence manifest unreadable" line when the manifest behind the evidence fallback cannot be read, apart from the ledger error.
 - Archive (run detail and bulk) waits up to 5 minutes, like slot actions, since archiving a blocked run can release its slot. Bulk archive no longer stops at the first refused or slow run: it archives the rest, keeps the failed runs selected and lists them with their reasons.
 
 ## 0.20.5 - 2026-10-09
