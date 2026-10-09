@@ -259,26 +259,31 @@ export async function commitSlotClaim(
     listSlotRuns = getAllRunsWithArchived,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
+  // Ownership binds in the SAME claim write — EXCEPT for the nudge
+  // takeover, which must leave current_run_id with the prior run:
+  // nudgeDispatch's handoff re-reads the owner to terminalize it only
+  // after delivery succeeds, and rebinding here would make it terminalize
+  // the wrong (new) run while the prior worker keeps running.
+  const fields: Record<string, unknown> = {
+    lifecycle: 'busy',
+    phase,
+    // Takeover reserves the handoff instead of rebinding ownership. An
+    // ordinary claim consumes the claimant's own reservation (fresh reuse
+    // fences with one before teardown); a foreign one was refused above.
+    ...(reservation ? { handoff_run_id: runId } : { current_run_id: runId, handoff_run_id: null }),
+    ...(agent ? { agent } : {}),
+  };
+  // What the claim overwrote, read inside the same serialized write.
+  let overwritten: Record<string, unknown> = {};
   const claim = await claimIf(
     slotId,
-    (slot) =>
-      slotClaimAllowed(slot, runId, generation, runLookup, Boolean(opts?.takeoverLiveOwner)),
-    // Ownership binds in the SAME claim write — EXCEPT for the nudge
-    // takeover, which must leave current_run_id with the prior run:
-    // nudgeDispatch's handoff re-reads the owner to terminalize it only
-    // after delivery succeeds, and rebinding here would make it terminalize
-    // the wrong (new) run while the prior worker keeps running.
-    {
-      lifecycle: 'busy',
-      phase,
-      // Takeover reserves the handoff instead of rebinding ownership. An
-      // ordinary claim consumes the claimant's own reservation (fresh reuse
-      // fences with one before teardown); a foreign one was refused above.
-      ...(reservation
-        ? { handoff_run_id: runId }
-        : { current_run_id: runId, handoff_run_id: null }),
-      ...(agent ? { agent } : {}),
+    (slot) => {
+      if (!slotClaimAllowed(slot, runId, generation, runLookup, Boolean(opts?.takeoverLiveOwner)))
+        return false;
+      overwritten = Object.fromEntries(Object.keys(fields).map((key) => [key, slot[key] ?? null]));
+      return true;
     },
+    fields,
   );
   if (!claim.claimed) {
     if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
@@ -294,14 +299,25 @@ export async function commitSlotClaim(
   // The predicate passed, but a cancel, pause or replay can still land while
   // the write is being renamed into place. That cleanup fenced the slot at the
   // pre-claim epoch, so it can no longer clear this claim: undo it here,
-  // fenced on the epoch this claim wrote. A reservation only drops itself —
-  // the slot's own worker and owner were never this run's.
+  // fenced on the epoch this claim wrote, so a later claim is never touched.
+  // - Ordinary claim: the run owns the slot, so reset it (keeping `warm`).
+  // - Takeover: a live owner's worker keeps the slot; drop only the
+  //   reservation.
+  // - Fresh-reuse reservation on a free or retained slot: nobody else will
+  //   clear a busy row this run does not own, so restore exactly what the
+  //   claim overwrote; the retained worker's `warm` was never touched.
   if (runSupersededSince(runLookup(runId), generation)) {
-    if (reservation) {
+    if (opts?.takeoverLiveOwner) {
       await updateIf(
         slotId,
         (slot) => slot.slot_epoch === claim.epoch && slot.handoff_run_id === runId,
         { handoff_run_id: null },
+      );
+    } else if (opts?.reserveOnly) {
+      await updateIf(
+        slotId,
+        (slot) => slot.slot_epoch === claim.epoch && slot.handoff_run_id === runId,
+        overwritten,
       );
     } else {
       await resetIf(
