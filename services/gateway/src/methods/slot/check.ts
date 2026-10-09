@@ -4,8 +4,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
+import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
+  applyProjectCommandEnv,
   execOnSlot,
   expandHook,
   expandPlatformField,
@@ -18,9 +20,12 @@ import {
   type RawProjectJson,
   renderFixtureTemplate,
   type SlotVars,
+  withMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { resolveCodexBinary } from '../../runners/launch-command.js';
+import { normalizeRunner, WORKER_ENV_PREFIX } from '../../runners/registry.js';
 
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
@@ -87,6 +92,10 @@ export async function slotCheck(
       );
       checks.push(branchStep);
       emitStep(emit, branchStep);
+      for (const step of await checkRunnerLaunch(slotVars, projectJson, projectVars)) {
+        checks.push(step);
+        emitStep(emit, step);
+      }
     }
 
     // ── 3. Fixtures ──
@@ -234,6 +243,90 @@ export async function checkDefaultBranch(
   }
   if (probe.blocker) return { name, status: 'fail', detail: probe.blocker };
   return { name, status: 'pass', detail: `Default branch ${defaultBranch} is fetched` };
+}
+
+/**
+ * Runner binaries a dispatch on this slot can launch: claude (the dispatch
+ * fallback) and codex when the pool gives it a path or a project flow
+ * defaults to it.
+ */
+export function slotRunnerBinaries(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+): { runner: string; binary: string }[] {
+  const runners = [{ runner: 'claude', binary: vars.claudePath || 'claude' }];
+  const defaults = Object.values(projectJson.defaults ?? {}).map((d) => normalizeRunner(d.runner));
+  if (vars.codexPath || defaults.includes('codex')) {
+    runners.push({ runner: 'codex', binary: resolveCodexBinary(vars.codexPath) });
+  }
+  return runners;
+}
+
+const PINNED_VERSION_MISSING_RE = /No preinstalled version|is not installed|No version is set/i;
+
+/**
+ * Resolve node and the runner binaries in the slot repo with the env a worker
+ * launch gets (project command_env, worker PATH prefix, machine env, repo cwd),
+ * so a version manager pin the host cannot satisfy (asdf `.tool-versions`)
+ * fails here instead of at dispatch.
+ */
+export async function checkRunnerLaunch(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars?: ProjectVars,
+): Promise<CheckStep[]> {
+  const domain = resolveEffectiveDomain(undefined, vars.domain);
+  const probes = [
+    { name: 'runner.node', binary: 'node' },
+    ...slotRunnerBinaries(vars, projectJson).map(({ runner, binary }) => ({
+      name: `runner.${runner}`,
+      binary,
+    })),
+  ];
+  const steps: CheckStep[] = [];
+  for (const { name, binary } of probes) {
+    let result: Awaited<ReturnType<typeof execOnSlot>>;
+    try {
+      const command = applyProjectCommandEnv(
+        projectJson,
+        `${WORKER_ENV_PREFIX} && ${withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${binary} --version 2>&1`, vars)}`,
+        {
+          ...(domain ? { domain } : {}),
+          expandDomainValue: (value) =>
+            expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+        },
+      );
+      result = await execOnSlot(vars, command, { timeout: 30_000 });
+    } catch (err) {
+      steps.push({
+        name,
+        status: 'fail',
+        detail: `${binary} check failed: ${(err as Error).message}`,
+      });
+      continue;
+    }
+    const output = `${result.stdout}\n${result.stderr}`
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (result.exitCode === 0) {
+      steps.push({ name, status: 'pass', detail: `${binary} ${output[0] ?? ''}`.trim() });
+      continue;
+    }
+    const fix = PINNED_VERSION_MISSING_RE.test(output.join('\n'))
+      ? `install the toolchain version the repo pins (e.g. \`asdf install\` in ${vars.remoteRepo})`
+      : result.exitCode === 127
+        ? `install ${binary} on ${vars.machine} or set its path in the pool config`
+        : `run \`${binary} --version\` in ${vars.remoteRepo} on ${vars.machine}`;
+    // The cause leads: asdf follows it with every installed version.
+    const head = output.slice(0, 2).join(' | ');
+    steps.push({
+      name,
+      status: 'fail',
+      detail: `${binary} cannot start in ${vars.remoteRepo} (exit ${result.exitCode})${head ? `: ${head}` : ''}. Fix: ${fix}`,
+    });
+  }
+  return steps;
 }
 
 /**

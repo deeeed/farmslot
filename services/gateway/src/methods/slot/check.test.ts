@@ -11,6 +11,7 @@ import { assertSlotHealthForRecipeRerun } from '../recipe.js';
 import {
   checkDefaultBranch,
   checkHealth,
+  checkRunnerLaunch,
   isOptionalFixtureAbsence,
   runHealthCheck,
   runUnlockHook,
@@ -339,4 +340,87 @@ test('checkDefaultBranch fails a single-branch clone and passes once main is fet
   assert.equal(unreadable.status, 'warn');
   assert.match(unreadable.detail, /^No verdict: .*git for-each-ref exited/);
   assert.equal((await probeDefaultBranch(makeSlotVars(full), 'main')).readable, false);
+});
+
+// asdf 0.19 shim: resolves node from the cwd's .tool-versions and refuses a
+// pinned version the host has not installed, as on the F67 slots.
+const FAKE_NODE = `#!/bin/sh
+if ! grep -qx 'nodejs 22.15.0' .tool-versions 2>/dev/null; then
+  echo "No version is set for command node"
+  echo "Consider adding one of the following versions in your config file at $PWD/.tool-versions"
+  echo "nodejs 22.15.0"
+  echo "nodejs 20.18.0"
+  exit 126
+fi
+echo v22.15.0
+`;
+// npm-installed runner: a node script, so it inherits the shim's refusal.
+const FAKE_RUNNER = `#!/bin/sh
+out=$(node) || { echo "$out"; exit 1; }
+echo 1.0.0
+`;
+
+async function runnerSlot(t: { after: (fn: () => Promise<void>) => void }, nodePin: string) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-runner-launch-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const bin = path.join(root, 'bin');
+  const repo = path.join(root, 'repo');
+  execFileSync('mkdir', ['-p', bin, repo]);
+  for (const [name, body] of [
+    ['node', FAKE_NODE],
+    ['codex', FAKE_RUNNER],
+    ['claude', FAKE_RUNNER],
+  ]) {
+    await writeFile(path.join(bin, name), body);
+    await chmod(path.join(bin, name), 0o755);
+  }
+  await writeFile(path.join(repo, '.tool-versions'), `nodejs ${nodePin}\n`);
+  return {
+    ...makeSlotVars(repo),
+    codexPath: path.join(bin, 'codex'),
+    machineEnv: { PATH: `${bin}:/usr/bin:/bin` },
+  };
+}
+
+test('checkRunnerLaunch fails when the slot repo pins a node version the host lacks', async (t) => {
+  const vars = await runnerSlot(t, '22.22.1');
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson);
+
+  assert.deepEqual(
+    steps.map((s) => [s.name, s.status]),
+    [
+      ['runner.node', 'fail'],
+      ['runner.claude', 'fail'],
+      ['runner.codex', 'fail'],
+    ],
+  );
+  for (const step of steps) {
+    assert.match(step.detail, /No version is set for command node \| Consider adding/);
+    assert.match(step.detail, /Fix: install the toolchain version the repo pins/);
+  }
+});
+
+test('checkRunnerLaunch passes when node and the runners resolve in the slot repo', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson);
+
+  assert.deepEqual(steps, [
+    { name: 'runner.node', status: 'pass', detail: 'node v22.15.0' },
+    { name: 'runner.claude', status: 'pass', detail: 'claude 1.0.0' },
+    { name: 'runner.codex', status: 'pass', detail: `${vars.codexPath} 1.0.0` },
+  ]);
+});
+
+test('checkRunnerLaunch names a runner binary missing from the worker PATH', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(
+    { ...vars, codexPath: path.join(vars.remoteRepo, 'missing-codex') },
+    {} as RawProjectJson,
+  );
+
+  const codex = steps.find((s) => s.name === 'runner.codex');
+  assert.equal(codex?.status, 'fail');
+  assert.match(codex.detail, /\(exit 127\).*Fix: install .*missing-codex/);
 });
