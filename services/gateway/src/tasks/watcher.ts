@@ -10,6 +10,7 @@ import { type FSWatcher, watch } from 'chokidar';
 import {
   type AgentContext,
   type AgentRole,
+  type SlotStatus,
   SUBTASK_INDEX_FILE,
   type SubtaskIndex,
   type SubtaskIndexUnit,
@@ -1322,17 +1323,36 @@ export function subtaskUnitFilePaths(
 
 // ─── Scan fleet for working slots and start watching ───
 
+/**
+ * Whether a slot's worker may still write its checklist or SIGNAL.json. A
+ * blocked run keeps its slot, which a fleet refresh shows as held/pr-watch,
+ * and its worker can keep going: the signal watch is what resumes the run
+ * (resumeBlockedRunWhoseWorkerContinued).
+ */
+export function slotHasActiveWorkerTask(
+  slot: Pick<SlotStatus, 'lifecycle' | 'phase' | 'currentRunId'>,
+  blockedRunIds: ReadonlySet<string>,
+): boolean {
+  return (
+    slot.lifecycle === 'busy' ||
+    (slot.lifecycle === 'held' && slot.phase === 'ci-watch') ||
+    Boolean(slot.currentRunId && blockedRunIds.has(slot.currentRunId))
+  );
+}
+
 export async function startWatchingActiveSlots(): Promise<void> {
   const fleet = await loadFleetStatus();
-  for (const run of listRuns({ active: true }).runs) {
+  const activeRuns = listRuns({ active: true }).runs;
+  for (const run of activeRuns) {
     if (run.slotId && run.agentContexts?.length) {
       await updateSlotStatus(run.slotId, { agent_contexts: summarizeAgentContexts(run) });
     }
   }
+  const blockedRunIds = new Set(
+    activeRuns.filter((run) => run.status === 'blocked').map((run) => run.id),
+  );
   for (const slot of fleet.slots) {
-    const hasActiveWorkerTask =
-      slot.lifecycle === 'busy' || (slot.lifecycle === 'held' && slot.phase === 'ci-watch');
-    if (hasActiveWorkerTask && slot.taskFile) {
+    if (slotHasActiveWorkerTask(slot, blockedRunIds) && slot.taskFile) {
       try {
         await watchSlot(slot.slot, slot.currentRunId ? { runId: slot.currentRunId } : undefined);
       } catch (err) {
