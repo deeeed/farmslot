@@ -14,7 +14,7 @@ import {
   evidenceManifestArtifactPaths,
 } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
-import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBodyArtifact } from './pr-body-render.js';
+import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
 
@@ -53,20 +53,59 @@ export function buildDraftPrTitle(run: Run): string {
   return `${commitType}${scopePart}: ${verb} ${ticket}`;
 }
 
+// A basename stands for an artifact only when no other artifact shares it:
+// `a/menu.png` and `b/menu.png` never resolve through `menu.png`.
 function buildLocalArtifactUrlMaps(artifacts: ArtifactRef[]): {
   manifestUrls: Map<string, string>;
   detectionUrls: Map<string, string>;
 } {
   const manifestUrls = new Map<string, string>();
   const detectionUrls = new Map<string, string>();
-  for (const artifact of artifacts) {
-    const normalized = artifact.path.replace(/\\/g, '/');
+  const paths = [...new Set(artifacts.map((artifact) => artifact.path.replace(/\\/g, '/')))].sort();
+  const byBasename = groupByBasename(paths);
+  for (const normalized of paths) {
     const basename = path.posix.basename(normalized);
+    const unique = byBasename.get(basename)!.length === 1;
     manifestUrls.set(normalized, normalized);
-    if (!manifestUrls.has(basename)) manifestUrls.set(basename, normalized);
-    if (!detectionUrls.has(basename)) detectionUrls.set(basename, normalized);
+    if (unique && !manifestUrls.has(basename)) manifestUrls.set(basename, normalized);
+    detectionUrls.set(unique ? basename : normalized, normalized);
   }
   return { manifestUrls, detectionUrls };
+}
+
+function groupByBasename(paths: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const artifactPath of paths) {
+    const basename = path.posix.basename(artifactPath);
+    groups.set(basename, [...(groups.get(basename) ?? []), artifactPath]);
+  }
+  return groups;
+}
+
+// A manifest path names one artifact exactly, with or without `artifacts/`.
+function exactEvidenceKeys(key: string): string[] {
+  const relative = key
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .replace(/^artifacts\//, '');
+  return [relative, `artifacts/${relative}`];
+}
+
+/**
+ * Manifest paths that match no artifact exactly and whose basename is shared
+ * by more than one artifact, with the artifacts they could mean, sorted.
+ */
+export function ambiguousEvidenceManifestPaths(
+  artifacts: ArtifactRef[],
+  manifest: EvidenceManifest | null | undefined,
+): Array<{ path: string; matches: string[] }> {
+  const paths = new Set(artifacts.map((artifact) => artifact.path));
+  const byBasename = groupByBasename([...paths].sort());
+  return evidenceManifestArtifactPaths(manifest).flatMap((manifestPath) => {
+    if (exactEvidenceKeys(manifestPath).some((key) => paths.has(key))) return [];
+    const matches = byBasename.get(path.posix.basename(manifestPath)) ?? [];
+    return matches.length > 1 ? [{ path: manifestPath, matches }] : [];
+  });
 }
 
 function trustedEvidencePurpose(artifactPath: string, fallbackPurpose?: string): string {
@@ -81,19 +120,22 @@ export function mergeEvidenceManifestArtifactRefs(
   manifest: EvidenceManifest | null | undefined,
 ): ArtifactRef[] {
   const merged = new Map<string, ArtifactRef>();
-  const variantsToPath = new Map<string, string>();
-  const remember = (artifact: ArtifactRef) => {
-    merged.set(artifact.path, artifact);
-    for (const variant of evidenceKeyVariants(artifact.path)) {
-      if (!variantsToPath.has(variant)) variantsToPath.set(variant, artifact.path);
-    }
-  };
-  for (const artifact of artifacts) remember(artifact);
+  for (const artifact of artifacts) merged.set(artifact.path, artifact);
+  const byBasename = groupByBasename([...merged.keys()].sort());
+  const ambiguous = new Set(
+    ambiguousEvidenceManifestPaths(artifacts, manifest).map((entry) => entry.path),
+  );
+  const claimed = new Set<string>();
 
   for (const manifestPath of evidenceManifestArtifactPaths(manifest)) {
-    const existingPath = evidenceKeyVariants(manifestPath)
-      .map((variant) => variantsToPath.get(variant))
-      .find((value): value is string => typeof value === 'string');
+    // An ambiguous name picks no artifact; the preview warns about it instead.
+    if (ambiguous.has(manifestPath)) continue;
+    const sameName = byBasename.get(path.posix.basename(manifestPath)) ?? [];
+    const existingPath =
+      exactEvidenceKeys(manifestPath).find((key) => merged.has(key)) ??
+      (sameName.length === 1 && merged.has(sameName[0]) && !claimed.has(sameName[0])
+        ? sameName[0]
+        : undefined);
     const existing = existingPath ? merged.get(existingPath) : undefined;
     const next: ArtifactRef = {
       ...(existing ?? {}),
@@ -101,7 +143,8 @@ export function mergeEvidenceManifestArtifactRefs(
       purpose: trustedEvidencePurpose(manifestPath, existing?.purpose),
     };
     if (existingPath && existingPath !== manifestPath) merged.delete(existingPath);
-    remember(next);
+    merged.set(manifestPath, next);
+    claimed.add(manifestPath);
   }
 
   return [...merged.values()];
@@ -154,9 +197,17 @@ async function applyLocalEvidencePreview(
   const { manifestUrls, detectionUrls } = buildLocalArtifactUrlMaps(previewArtifacts);
   const manifest = manifestFromFile ?? autoDetectEvidenceManifest(detectionUrls);
   if (!manifest) return body;
-  const evidenceSection = (await projectHasNoArtifactsRepo(run))
+  const section = (await projectHasNoArtifactsRepo(run))
     ? buildUnhostedEvidenceSection(run, manifest)
     : buildEvidenceSection(manifest, manifestUrls);
+  const warnings = ambiguousEvidenceManifestPaths(artifacts, manifestFromFile).map(
+    (entry) => `ambiguous evidence path ${entry.path}: matches ${entry.matches.join(', ')}`,
+  );
+  for (const warning of warnings)
+    console.warn(`[run-completion] run ${run.id.slice(0, 8)} — ${warning}`);
+  const evidenceSection = [section, ...warnings.map((warning) => `> ${warning}`)]
+    .filter(Boolean)
+    .join('\n\n');
   if (!evidenceSection) return body;
   return replaceMarkdownSection(body, '## **Screenshots/Recordings**', evidenceSection);
 }
@@ -196,17 +247,16 @@ export async function buildDraftPrBody(
   artifacts: ArtifactRef[],
 ): Promise<string> {
   // The pack's renderer (when declared) turns the authored prose plus the
-  // recipe and run artifacts into pr-body.md; that rendered body is published.
-  // Without a renderer the authored file is the body, as before. The freshness
-  // check re-renders and compares, so the renderer must be deterministic for
-  // unchanged inputs (the harness command is).
-  const render = await renderPrBodyArtifact(run);
+  // recipe and run artifacts into the body that is published; the render is
+  // used as returned, never read back from the mirror, where a refresh may
+  // have put the worker's own pr-body.md. Without a renderer the authored file
+  // is the body, as before. Approval re-renders the same way.
+  const render = await renderPrBody(run);
   if (!render.rendered) {
     console.log(`[run-completion] pr-body not rendered for run ${run.id}: ${render.reason}`);
   }
   const existing = render.rendered
-    ? ((await readTaskArtifactText(run, PR_BODY_ARTIFACT)) ??
-      (await readTaskArtifactText(run, PR_PROSE_ARTIFACT)))
+    ? render.body
     : ((await readTaskArtifactText(run, PR_PROSE_ARTIFACT)) ??
       (await readTaskArtifactText(run, PR_BODY_ARTIFACT)));
   if (existing?.trim()) {

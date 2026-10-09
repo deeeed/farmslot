@@ -5,6 +5,7 @@ import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
+import { readyPrDescription } from './ready-workspace-selection-model.js';
 import type { RecipeRunnerUiOptions } from './recipe-runner-options-model.js';
 import { VIDEO_EXTS } from './workspace-artifacts.js';
 
@@ -23,7 +24,7 @@ export function renderReadyPrPreviewTab(input: {
           <div class="rdy-pr-preview-eyebrow">
             ${input.publicationTarget === 'ready' ? 'Ready PR' : 'Draft PR'} description preview
           </div>
-          <h3>${payload.prPackage.draftTitle}</h3>
+          <h3>${readyPrDescription(payload).title}</h3>
         </div>
         <span class="rdy-review-pill"
           >${payload.publicationStatus ?? payload.prPackage.publicationStatus}</span

@@ -1,5 +1,5 @@
-// run-completion/pr-body-render.ts — render artifacts/pr-body.md through the
-// project's harness before a publication package is built.
+// run-completion/pr-body-render.ts — render the publishable PR body through
+// the project's harness before a publication package is built.
 //
 // The worker writes artifacts/pr-description.md in the repository PR template
 // shape; the machine sections (recipe, run log) are inserted by the pack's
@@ -8,8 +8,15 @@
 // remote slot needs no round trip and the publication step publishes the same
 // bytes an engineer gets from the skill. Template conformance is checked
 // afterwards by the existing PR template validation.
+//
+// The rendered body is gateway-owned: it goes to a private temporary `--out`
+// file and is returned, never written into the mirror. The mirror's
+// artifacts/pr-body.md is the worker's own copy, which every mirror refresh
+// replaces, so a body read back from there could be the worker's render.
 
 import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
@@ -30,6 +37,8 @@ export interface PrBodyRenderOutcome {
   /** Why nothing was rendered; absent when rendered. */
   reason?: PrBodyRenderSkip;
   command?: string;
+  /** The rendered body; present when rendered. */
+  body?: string;
 }
 
 export interface PrBodyRenderer {
@@ -71,6 +80,13 @@ const defaultDeps: PrBodyRenderDeps = {
   resolveRenderer: resolvePackRenderer,
 };
 
+let depsOverride: PrBodyRenderDeps | null = null;
+
+/** Replace the renderer's exec and pack lookup in tests; null restores them. */
+export function __setPrBodyRenderDepsForTest(deps: PrBodyRenderDeps | null): void {
+  depsOverride = deps;
+}
+
 function renderFailureMessage(result: ExecResult): string {
   try {
     const parsed = JSON.parse(result.stdout) as { error?: unknown };
@@ -82,14 +98,15 @@ function renderFailureMessage(result: ExecResult): string {
 }
 
 /**
- * Run the pack's PR body renderer against the run's local task directory.
- * Returns without rendering when the run has no task, no authored prose, no
- * slot, or the pack declares no `vars.pr_body_cmd`; throws when the renderer
- * itself fails, carrying its message.
+ * Run the pack's PR body renderer against the run's local task directory and
+ * return the rendered body. Returns without rendering when the run has no
+ * task, no authored prose, no slot, or the pack declares no
+ * `vars.pr_body_cmd`; throws when the renderer itself fails, carrying its
+ * message. Nothing is written into the task directory.
  */
-export async function renderPrBodyArtifact(
+export async function renderPrBody(
   run: Run,
-  deps: PrBodyRenderDeps = defaultDeps,
+  deps: PrBodyRenderDeps = depsOverride ?? defaultDeps,
 ): Promise<PrBodyRenderOutcome> {
   if (!run.taskFile) return { rendered: false, reason: 'no-task' };
   const taskDir = path.dirname(run.taskFile);
@@ -99,13 +116,19 @@ export async function renderPrBodyArtifact(
   const renderer = await deps.resolveRenderer(run);
   if (typeof renderer === 'string') return { rendered: false, reason: renderer };
 
-  const command = withMachineEnv(
-    [renderer.command, shellQuote(taskDir), '--json'].join(' '),
-    renderer,
-  );
-  const result = await deps.exec(command, { cwd: taskDir, timeout: 60_000 });
-  if (result.exitCode !== 0) {
-    throw new Error(`PR body render failed: ${renderFailureMessage(result)}`);
+  const outDir = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-'));
+  try {
+    const out = path.join(outDir, PR_BODY_ARTIFACT);
+    const command = withMachineEnv(
+      [renderer.command, shellQuote(taskDir), '--out', shellQuote(out), '--json'].join(' '),
+      renderer,
+    );
+    const result = await deps.exec(command, { cwd: taskDir, timeout: 60_000 });
+    if (result.exitCode !== 0) {
+      throw new Error(`PR body render failed: ${renderFailureMessage(result)}`);
+    }
+    return { rendered: true, command: renderer.command, body: await readFile(out, 'utf-8') };
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
   }
-  return { rendered: true, command: renderer.command };
 }

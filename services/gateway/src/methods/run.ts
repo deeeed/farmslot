@@ -88,7 +88,10 @@ import {
   requiresPublicationApproval,
 } from '../run-completion/orchestrator.js';
 import {
+  assertLiveHeadMatchesPackage,
+  packageChangedError,
   readReadyGatePreparedPackage,
+  readyGateCurrentDescription,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
@@ -1309,26 +1312,29 @@ export async function runRehydratePrNumber(
   return { ok: true, prNumber, run: getRun(params.runId)! };
 }
 
+/**
+ * Refuses a stale publish approval. Returns the description approval will
+ * publish when it differs from the reviewed package's, for the gate to show.
+ */
 async function assertReadyPublishResolveIsFresh(
   run: Run,
   decision: Run['decisions'][number],
   params: RunResolveDecisionParams,
-): Promise<void> {
-  if (!isPublishApprovalAction(params.actionId)) return;
+): Promise<ReadyGatePayload['currentDescription']> {
+  if (!isPublishApprovalAction(params.actionId)) return undefined;
   const payload = decision.payload as ReadyGatePayload | undefined;
   const prPackage: ReadyGatePrPackage | undefined =
     payload?.kind === 'ready' ? payload.prPackage : undefined;
-  if (!prPackage) return;
+  if (!prPackage) return undefined;
 
   const currentPackage = await readReadyGatePreparedPackage(run);
   if (!currentPackage) {
-    throw new Error(
-      'Package changed; refresh package and re-review before publishing (prepared package snapshot missing)',
-    );
+    throw packageChangedError(run.id, 'prepared package snapshot missing');
   }
   if (currentPackage.packageHash !== prPackage.packageHash) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (visible package ${prPackage.packageHash} but current package is ${currentPackage.packageHash})`,
+    throw packageChangedError(
+      run.id,
+      `visible package ${prPackage.packageHash} but current package is ${currentPackage.packageHash}`,
     );
   }
   const decisionWithSelection = { ...decision, selectionData: params.selectionData };
@@ -1359,8 +1365,11 @@ async function assertReadyPublishResolveIsFresh(
     currentPackage,
     currentPackage.selectedEvidenceKeys ?? [],
   );
-  await assertReadyGatePackageInputsCurrent(run, currentPackage);
-  if (!currentPackage.headSha || !run.slotId) return;
+  const currentDescription = readyGateCurrentDescription(
+    currentPackage,
+    await assertReadyGatePackageInputsCurrent(run, currentPackage),
+  );
+  if (!currentPackage.headSha || !run.slotId) return currentDescription;
 
   let vars: Awaited<ReturnType<typeof loadSlotVars>>;
   try {
@@ -1372,7 +1381,7 @@ async function assertReadyPublishResolveIsFresh(
       error instanceof SlotConfigError &&
       error.code === 'SLOT_NOT_FOUND'
     ) {
-      return;
+      return currentDescription;
     }
     throw error;
   }
@@ -1381,11 +1390,8 @@ async function assertReadyPublishResolveIsFresh(
       timeout: 15_000,
     })
   ).stdout.trim();
-  if (!liveHead || liveHead !== currentPackage.headSha) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (approved HEAD ${currentPackage.headSha.slice(0, 12)} but live HEAD is ${liveHead ? liveHead.slice(0, 12) : 'unknown'})`,
-    );
-  }
+  assertLiveHeadMatchesPackage(run.id, currentPackage.headSha, liveHead);
+  return currentDescription;
 }
 
 export async function runProbeWorkerSignal(
@@ -1732,7 +1738,7 @@ export async function resolveRunDecision(
       existing.slotId,
     );
   }
-  await assertReadyPublishResolveIsFresh(existing, decision, params);
+  const currentDescription = await assertReadyPublishResolveIsFresh(existing, decision, params);
   // The probes above await; a concurrent resolver (operator abort vs re-armed
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
@@ -1774,6 +1780,12 @@ export async function resolveRunDecision(
         },
       });
     }
+  }
+
+  // The gate shows the description approval publishes, not the reviewed one.
+  const readyPayload = decision.payload as ReadyGatePayload | undefined;
+  if (isPublishApprovalAction(params.actionId) && readyPayload?.kind === 'ready') {
+    decision.payload = { ...readyPayload, currentDescription };
   }
 
   // Store selectionData on decision so engine steps can use it. The ADR-054

@@ -255,3 +255,85 @@ test('buildDraftPrBody keeps the authored prose ahead of a stale pr-body.md when
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('buildDraftPrBody gives same-named screenshots in different directories their own images, in any artifact order', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-same-name-'));
+  try {
+    await mkdir(path.join(root, 'artifacts'), { recursive: true });
+    const taskFile = path.join(root, 'task.md');
+    await writeFile(taskFile, '# Task\n');
+    await writeFile(
+      path.join(root, 'artifacts', 'pr-description.md'),
+      '## **Screenshots/Recordings**\n\n<!-- [screenshots/recordings] -->\n',
+    );
+    // Manifest paths without the artifacts/ prefix, as TAT-4045 wrote them.
+    await writeFile(
+      path.join(root, 'artifacts', 'evidence-manifest.json'),
+      JSON.stringify({
+        version: 1,
+        preferred_mode: 'screenshots',
+        standalone: [
+          { label: 'Hyperliquid', file: 'goal/hyperliquid/screenshots/supported-menu.png' },
+          { label: 'Native', file: 'goal/native-menu-04/screenshots/supported-menu.png' },
+        ],
+      }),
+    );
+    const hyperliquid = {
+      path: 'artifacts/goal/hyperliquid/screenshots/supported-menu.png',
+      purpose: 'screenshot',
+    };
+    const native = {
+      path: 'artifacts/goal/native-menu-04/screenshots/supported-menu.png',
+      purpose: 'screenshot',
+    };
+    const run = makeRun({ taskFile, slotId: 'no-such-slot' });
+    const bodies = [];
+    for (const artifacts of [[hyperliquid, native], [native, hyperliquid], [native], []]) {
+      bodies.push(await buildDraftPrBody(run, null, artifacts));
+    }
+    assert.match(
+      bodies[0],
+      /<strong>Hyperliquid<\/strong><br\/><img src="artifacts\/goal\/hyperliquid\/screenshots\/supported-menu\.png"/,
+    );
+    assert.match(
+      bodies[0],
+      /<strong>Native<\/strong><br\/><img src="artifacts\/goal\/native-menu-04\/screenshots\/supported-menu\.png"/,
+    );
+    for (const body of bodies.slice(1)) assert.equal(body, bodies[0]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDraftPrBody warns instead of guessing when a manifest path matches several artifacts by name', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-ambiguous-'));
+  try {
+    await mkdir(path.join(root, 'artifacts'), { recursive: true });
+    const taskFile = path.join(root, 'task.md');
+    await writeFile(taskFile, '# Task\n');
+    await writeFile(
+      path.join(root, 'artifacts', 'pr-description.md'),
+      '## **Screenshots/Recordings**\n\n<!-- [screenshots/recordings] -->\n',
+    );
+    await writeFile(
+      path.join(root, 'artifacts', 'evidence-manifest.json'),
+      JSON.stringify({
+        version: 1,
+        preferred_mode: 'screenshots',
+        standalone: [{ label: 'Menu', file: 'supported-menu.png' }],
+      }),
+    );
+    const a = { path: 'artifacts/a/supported-menu.png', purpose: 'screenshot' };
+    const b = { path: 'artifacts/b/supported-menu.png', purpose: 'screenshot' };
+    const run = makeRun({ taskFile, slotId: 'no-such-slot' });
+    const body = await buildDraftPrBody(run, null, [b, a]);
+    assert.doesNotMatch(body, /<img/);
+    assert.match(
+      body,
+      /ambiguous evidence path artifacts\/supported-menu\.png: matches artifacts\/a\/supported-menu\.png, artifacts\/b\/supported-menu\.png/,
+    );
+    assert.equal(await buildDraftPrBody(run, null, [a, b]), body);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

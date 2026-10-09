@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import test from 'node:test';
 
 import type { ExecResult } from '../core/exec.js';
 
-import { type PrBodyRenderDeps, renderPrBodyArtifact } from './pr-body-render.js';
+import { type PrBodyRenderDeps, renderPrBody } from './pr-body-render.js';
 import { makeRun } from './test-fixtures.js';
 
 async function makeTaskDir(withProse = true): Promise<string> {
@@ -22,6 +23,8 @@ function deps(overrides: Partial<PrBodyRenderDeps> & { calls: string[] }): PrBod
   return {
     exec: async (command) => {
       overrides.calls.push(command);
+      const out = /--out '([^']+)'/.exec(command)?.[1];
+      if (out) await writeFile(out, '## **Description**\n\nrendered\n');
       return { exitCode: 0, stdout: '{"status":"ok"}', stderr: '' } satisfies ExecResult;
     },
     resolveRenderer: async () => ({
@@ -32,15 +35,19 @@ function deps(overrides: Partial<PrBodyRenderDeps> & { calls: string[] }): PrBod
   };
 }
 
-test('renderPrBodyArtifact runs the pack renderer with the fetched template and the machine env', async () => {
+test('renderPrBody runs the pack renderer with the machine env and returns the body from a temporary --out', async () => {
   const root = await makeTaskDir();
   try {
     const calls: string[] = [];
-    const outcome = await renderPrBodyArtifact(
+    const outcome = await renderPrBody(
       makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
       deps({ calls }),
     );
-    assert.deepEqual(outcome, { rendered: true, command: 'mm-harness pr-body render' });
+    assert.deepEqual(outcome, {
+      rendered: true,
+      command: 'mm-harness pr-body render',
+      body: '## **Description**\n\nrendered\n',
+    });
     assert.equal(calls.length, 1);
     const command = calls[0];
     assert.match(
@@ -48,19 +55,22 @@ test('renderPrBodyArtifact runs the pack renderer with the fetched template and 
       /^export MM_HARNESS_BIN='\/opt\/mm-harness' && mm-harness pr-body render '/,
     );
     assert.ok(command.includes(`'${root}'`), 'task dir passed');
-    assert.match(command, / --json$/);
+    const out = / --out '([^']+)' --json$/.exec(command)?.[1];
+    assert.ok(out && !out.startsWith(root), 'renders outside the task directory');
+    assert.equal(existsSync(out), false, 'temporary output removed');
+    assert.equal(existsSync(path.join(root, 'artifacts', 'pr-body.md')), false);
     assert.doesNotMatch(command, /--template/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('renderPrBodyArtifact surfaces the renderer error message on failure', async () => {
+test('renderPrBody surfaces the renderer error message on failure', async () => {
   const root = await makeTaskDir();
   try {
     const calls: string[] = [];
     await assert.rejects(
-      renderPrBodyArtifact(
+      renderPrBody(
         makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
         deps({
           calls,
@@ -79,24 +89,24 @@ test('renderPrBodyArtifact surfaces the renderer error message on failure', asyn
   }
 });
 
-test('renderPrBodyArtifact skips runs without a task, prose, slot or pack renderer', async () => {
+test('renderPrBody skips runs without a task, prose, slot or pack renderer', async () => {
   const withoutProse = await makeTaskDir(false);
   const withProse = await makeTaskDir();
   try {
     const calls: string[] = [];
-    assert.deepEqual(await renderPrBodyArtifact(makeRun({ taskFile: null }), deps({ calls })), {
+    assert.deepEqual(await renderPrBody(makeRun({ taskFile: null }), deps({ calls })), {
       rendered: false,
       reason: 'no-task',
     });
     assert.deepEqual(
-      await renderPrBodyArtifact(
+      await renderPrBody(
         makeRun({ taskFile: path.join(withoutProse, 'task.md') }),
         deps({ calls }),
       ),
       { rendered: false, reason: 'no-prose' },
     );
     assert.deepEqual(
-      await renderPrBodyArtifact(
+      await renderPrBody(
         makeRun({ taskFile: path.join(withProse, 'task.md') }),
         deps({ calls, resolveRenderer: async () => 'no-command' }),
       ),
@@ -113,12 +123,12 @@ test('renderPrBodyArtifact skips runs without a task, prose, slot or pack render
   }
 });
 
-test('renderPrBodyArtifact falls back to stderr, then stdout, then the exit code for a non-JSON failure', async () => {
+test('renderPrBody falls back to stderr, then stdout, then the exit code for a non-JSON failure', async () => {
   const root = await makeTaskDir();
   try {
     const calls: string[] = [];
     const failing = (result: ExecResult) =>
-      renderPrBodyArtifact(
+      renderPrBody(
         makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
         deps({ calls, exec: async () => result }),
       );
@@ -139,11 +149,11 @@ test('renderPrBodyArtifact falls back to stderr, then stdout, then the exit code
   }
 });
 
-test('renderPrBodyArtifact skips a run without a slot through the real pack lookup', async () => {
+test('renderPrBody skips a run without a slot through the real pack lookup', async () => {
   const root = await makeTaskDir();
   try {
     assert.deepEqual(
-      await renderPrBodyArtifact(makeRun({ taskFile: path.join(root, 'task.md'), slotId: null })),
+      await renderPrBody(makeRun({ taskFile: path.join(root, 'task.md'), slotId: null })),
       {
         rendered: false,
         reason: 'no-slot',

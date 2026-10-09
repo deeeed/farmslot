@@ -813,6 +813,14 @@ export interface ReadyGatePayload {
   acceptanceStatusError?: string;
   inputSnapshot?: ReadyGateInputSnapshot;
   prPackage?: ReadyGatePrPackage;
+  /**
+   * The title and body Farmslot will publish, when a re-render at gate open or
+   * approval differs from the reviewed package's, and after publication the
+   * ones it published, with `publishedAt`. Shown in place of
+   * `prPackage.draftTitle`/`draftBody`; not part of the package hash, so
+   * approval identity stays the reviewed package. Absent on older gates.
+   */
+  currentDescription?: { title: string; body: string; publishedAt?: string };
   reviewDepth?: ReviewDepthPolicy;
   independentReviews?: IndependentReviewStatus[];
   reviewLaunchRejection?: PublicationReviewLaunchRejection;
@@ -2563,10 +2571,13 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 export interface RunEngineState {
   /**
    * What the last passing review (pipeline self-review or a publication review)
-   * judged on the slot: HEAD, the PR description, the evidence manifest and the
-   * evidence files. When any of them changes, self-review must run again before
-   * publication is approved. `rerunFor` is the changed state self-review already
-   * ran again for, so it runs once per change.
+   * judged on the slot: HEAD, the evidence manifest and the evidence files. When
+   * any of them changes, self-review must run again before publication is
+   * approved; the PR description is not part of it. Records taken while the
+   * description was still included keep matching until HEAD or evidence changes,
+   * except that a description edit on such a record re-runs self-review once.
+   * `rerunFor` is the changed state self-review already ran again for, so it runs
+   * once per change.
    */
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
   /** The same fingerprint, taken when the latest review document was written. */

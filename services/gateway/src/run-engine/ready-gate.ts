@@ -49,9 +49,13 @@ import {
 import {
   isArtifactOnlyRun,
   publicationStatusForRun,
+  renderCurrentDescription,
   scanArtifacts,
 } from '../run-completion/orchestrator.js';
-import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-package.js';
+import {
+  readReadyGatePreparedPackage,
+  readyGateCurrentDescription,
+} from '../run-completion/ready-gate-package.js';
 import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
@@ -511,6 +515,27 @@ export async function readPreparedPackage(current: Run): Promise<ReadyGatePrPack
   }
 }
 
+/**
+ * The description approval would publish when it differs from the package's:
+ * the gate shows it. A render that fails leaves the package's own on show.
+ */
+async function currentDescriptionForGate(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+): Promise<ReadyGatePayload['currentDescription']> {
+  try {
+    return readyGateCurrentDescription(
+      preparedPackage,
+      await renderCurrentDescription(current, preparedPackage),
+    );
+  } catch (err) {
+    console.warn(
+      `[run-engine] current description render failed for ${current.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+    );
+    return undefined;
+  }
+}
+
 async function buildReadyGateInputSnapshot(current: Run): Promise<ReadyGateInputSnapshot> {
   let taskPrompt: string | undefined;
   if (current.taskFile) {
@@ -862,7 +887,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
-  // The description, evidence or HEAD changed after the last passing review:
+  // The evidence or HEAD changed after the last passing review:
   // self-review must run again before publication, whatever the review minimum.
   const reviewedInputsStale = publicationApprovalGate && (await reviewedInputsChanged(current));
   const reviewSatisfied =
@@ -1017,6 +1042,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
     ? current.ticketData.acceptanceCriteria
     : undefined;
   const inputSnapshot = await buildReadyGateInputSnapshot(current);
+  const currentDescription = preparedPackage
+    ? await currentDescriptionForGate(current, preparedPackage)
+    : undefined;
 
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
   // Soft branch-freshness fields live on the typed ReadyGatePayload only
@@ -1061,6 +1089,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       ...(preparedPackage
         ? {
             prPackage: preparedPackage,
+            ...(currentDescription ? { currentDescription } : {}),
             reviewDepth,
             independentReviews,
             gatePolicy: preparedPackage.gatePolicy,
@@ -1105,7 +1134,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // record, which a `failed` run refuses.
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
-  // F42: the description, evidence or HEAD changed while the gate was open and
+  // F42: the evidence or HEAD changed while the gate was open and
   // self-review has not run again for it. Hold instead of approving: the gate
   // step re-runs self-review and presents the gate again.
   if (
@@ -1121,7 +1150,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       );
     }
     console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: description, evidence or HEAD changed since the last review`,
+      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: evidence or HEAD changed since the last review`,
     );
     return 'hold';
   }
