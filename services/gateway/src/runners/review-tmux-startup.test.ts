@@ -81,6 +81,7 @@ test('a Codex review launch allowlists its tool shell environment and refuses se
       'FARMSLOT_SIGNAL_ATTEMPT_ID',
       'CODEX_LB_API_KEY',
       'GH_TOKEN',
+      'CODEX_*',
     ],
   });
   const policy = command?.match(/--config '(shell_environment_policy=[^']*)'/)?.[1] ?? '';
@@ -97,6 +98,7 @@ test('a Codex review launch allowlists its tool shell environment and refuses se
     assert.ok(policy.includes(`"${name}"`), name);
   assert.ok(!policy.includes('CODEX_LB_API_KEY'));
   assert.ok(!policy.includes('GH_TOKEN'));
+  assert.ok(!policy.includes('*'), 'a glob would admit names nobody listed');
   assert.ok(policy.endsWith(',set={ZDOTDIR="/var/empty"}}'));
 });
 
