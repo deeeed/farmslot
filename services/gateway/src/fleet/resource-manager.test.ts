@@ -173,7 +173,12 @@ test('shouldProbeResourceForSlot suppresses simulator probes without an active r
 // `capture-helper` (recording that it ran) first on PATH.
 function runBrowserProbe(
   build: (dir: string) => string,
-  { pidFile, listeners }: { pidFile?: string; listeners: number[] },
+  {
+    pidFile,
+    listeners,
+    shell = ['/bin/sh', '-c'],
+    pidDir = '.',
+  }: { pidFile?: string; listeners: number[]; shell?: string[]; pidDir?: string },
 ) {
   const dir = mkdtempSync(path.join(tmpdir(), 'browser-probe-'));
   try {
@@ -190,12 +195,14 @@ function runBrowserProbe(
     chmodSync(path.join(bin, 'lsof'), 0o755);
     chmodSync(path.join(bin, 'capture-helper'), 0o755);
     if (pidFile !== undefined) writeFileSync(path.join(dir, 'browser.pid'), pidFile);
-    const result = spawnSync('/bin/sh', ['-c', build(dir)], {
+    const result = spawnSync(shell[0], [...shell.slice(1), build(dir)], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
       encoding: 'utf8',
     });
-    const read = (name: string) =>
-      existsSync(path.join(dir, name)) ? readFileSync(path.join(dir, name), 'utf8').trim() : null;
+    const read = (name: string) => {
+      const file = path.join(dir, pidDir, name);
+      return existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
+    };
     return {
       status: result.status,
       browserPid: read('browser.pid'),
@@ -245,11 +252,14 @@ test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () 
 });
 
 test('buildBrowserPidRecoveryCommand rewrites browser pid files from the CDP listener', () => {
+  // The same pid twice is an IPv4 and an IPv6 listener of one browser.
   const recovered = runBrowserProbe(
     (dir) => buildBrowserPidRecoveryCommand(7666, `${dir}/slot runtime`),
-    { listeners: [livePid] },
+    { listeners: [livePid, livePid], pidDir: 'slot runtime' },
   );
   assert.equal(recovered.status, 0);
+  assert.equal(recovered.browserPid, String(livePid));
+  assert.equal(recovered.chromiumPid, String(livePid));
 
   const command = buildBrowserPidRecoveryCommand(7666, '/tmp/slot runtime');
   assert.match(command, /-iTCP:7666 -sTCP:LISTEN/);
@@ -276,6 +286,17 @@ test('buildBrowserNodeWatchCommand keeps an owning pid file and repairs a stale 
   assert.equal(repaired.status, 0);
   assert.equal(repaired.browserPid, String(livePid));
   assert.equal(repaired.chromiumPid, String(livePid));
+
+  // The node runs watch commands with `zsh -f -c`.
+  if (existsSync('/bin/zsh')) {
+    const underZsh = runBrowserProbe(watch, {
+      pidFile: String(deadPid),
+      listeners: [livePid],
+      shell: ['/bin/zsh', '-f', '-c'],
+    });
+    assert.equal(underZsh.status, 0);
+    assert.equal(underZsh.browserPid, String(livePid));
+  }
 
   const missing = runBrowserProbe(watch, { listeners: [livePid] });
   assert.equal(missing.status, 0);
