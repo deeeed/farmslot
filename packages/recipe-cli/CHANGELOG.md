@@ -4,7 +4,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.1 - 2026-10-09
+
 - `run` and `call` show the automatic HUD for every recipe source and follow `--hud` (on by default, off with `--hud hide`). An untrusted or inherited source (`FARMSLOT_RECIPE_SOURCE_TRUST`) used to run without it, and `call` forced it off for every call, `--hud show` included. A platform whose `run.autoHud()` returns false still turns it off, and `call app.hud` drives the HUD itself, with no automatic updates. A call's HUD text is its `intent=` input (else a generic "Complete the requested <action> operation"), so pass `intent=` on evidence calls such as `call ui.screenshot`. The HUD is part of the plan an approval covers, so a plan approved before this change, or with another `--hud` setting, must be approved again.
+- Publish with adapter-sdk 0.8.1 and recipe-runner 0.28.1 so consumers share one adapter-sdk and one recipe-runner copy.
 
 ## 0.11.0 - 2026-10-09
 
