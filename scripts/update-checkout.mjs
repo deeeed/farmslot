@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { shSingleQuote } from './lib/shell-quote.mjs';
+
 const exec = promisify(execFile);
 export async function updateCheckout(root, recordPath) {
   const operation = JSON.parse(await readFile(recordPath, 'utf8'));
@@ -84,7 +86,7 @@ export async function updateCheckout(root, recordPath) {
     }
     if (dependenciesChanged)
       throw new Error(
-        `This update changes dependencies. Nothing was changed. Run in a terminal: cd '${root.replaceAll("'", "'\\''")}' && git merge --ff-only --no-overwrite-ignore ${target.slice(0, 12)} && yarn install --immutable`,
+        `This update changes dependencies. Nothing was changed. Run in a terminal: cd ${shSingleQuote(root)} && git merge --ff-only --no-overwrite-ignore ${target.slice(0, 12)} && yarn install --immutable`,
       );
     await save({
       message: 'Applying the fast-forward update…',
