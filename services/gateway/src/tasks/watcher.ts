@@ -33,7 +33,11 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
-import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceStatusPathFor,
+  EVIDENCE_MANIFEST_FILENAME,
+} from './acceptance-status.js';
 import { hashChecklistCheckboxes } from './checklist-hash.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -434,12 +438,15 @@ export async function watchSlot(
           depth: 0,
         });
         // Everything else in `artifacts/` is worker output this watch does not
-        // report: only the ledger drives a progress update.
+        // report: only the ledger, the evidence manifest (the panel's fallback
+        // when there is no ledger) and operation notices drive a progress update.
         const onArtifactsEntry = (entryPath: string) => {
           if (
-            ![ACCEPTANCE_STATUS_FILENAME, 'operations-updated.json'].includes(
-              path.basename(entryPath),
-            )
+            ![
+              ACCEPTANCE_STATUS_FILENAME,
+              EVIDENCE_MANIFEST_FILENAME,
+              'operations-updated.json',
+            ].includes(path.basename(entryPath))
           )
             return;
           if (path.basename(entryPath) === 'operations-updated.json') throttledOperationUpdate(key);
@@ -559,6 +566,31 @@ export async function watchSlot(
           } catch (err) {
             console.log(
               `[task-watcher] acceptance ledger not watchable for remote ${key}: ${(err as Error).message}`,
+            );
+          }
+          // The evidence manifest feeds the acceptance panel when the run has no
+          // ledger, so it routes as an acceptance update.
+          const evidenceManifestPath = path.join(
+            path.dirname(sw.acceptanceStatusFilePath),
+            EVIDENCE_MANIFEST_FILENAME,
+          );
+          try {
+            (await sendNodeRequest(
+              node,
+              'fs.watch',
+              { path: evidenceManifestPath },
+              {
+                onRequestId: (id) =>
+                  requestIds.push({
+                    requestId: id,
+                    kind: 'acceptance-status',
+                    path: evidenceManifestPath,
+                  }),
+              },
+            )) as { watching: boolean };
+          } catch (err) {
+            console.log(
+              `[task-watcher] evidence manifest not watchable for remote ${key}: ${(err as Error).message}`,
             );
           }
           await sendNodeRequest(

@@ -254,6 +254,7 @@ test('a remote watch registers the registry and every child file, and unwatch st
       'CHECKLIST.md',
       'SIGNAL.json',
       'artifacts/acceptance-status.json',
+      'artifacts/evidence-manifest.json',
       'artifacts/operations-updated.json',
       'subtasks/index.json',
       'subtasks/perps-review-SIGNAL.json',
