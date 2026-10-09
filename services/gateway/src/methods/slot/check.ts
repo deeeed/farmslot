@@ -22,7 +22,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 
-import { checkCommitSigning } from './git-identity.js';
+import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -82,11 +82,18 @@ export async function slotCheck(
     checks.push(repoStep);
     emitStep(emit, repoStep);
     if (repoStep.status === 'pass') {
-      const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
-      const branchStep = await checkDefaultBranch(slotVars, defaultBranch);
+      const branchStep = await checkDefaultBranch(
+        slotVars,
+        getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
+      );
       checks.push(branchStep);
       emitStep(emit, branchStep);
-      const signingStep = await checkCommitSigning(slotVars, projectJson, defaultBranch);
+      let signingStep: CheckStep;
+      try {
+        signingStep = await checkCommitSigning(slotVars, loadGitIdentity());
+      } catch (err) {
+        signingStep = { name: 'git.signing', status: 'fail', detail: (err as Error).message };
+      }
       checks.push(signingStep);
       emitStep(emit, signingStep);
     }

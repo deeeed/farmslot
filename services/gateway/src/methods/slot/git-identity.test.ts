@@ -5,9 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { RawProjectJson, SlotVars } from '../../core/config.js';
+import type { SlotVars } from '../../core/config.js';
 
-import { checkCommitSigning, readGitIdentity, syncGitIdentity } from './git-identity.js';
+import {
+  checkCommitSigning,
+  type GitIdentity,
+  loadGitIdentity,
+  readGitIdentity,
+  syncGitIdentity,
+} from './git-identity.js';
 
 function makeSlotVars(slotId: string, remoteRepo: string): SlotVars {
   return {
@@ -67,117 +73,91 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     await chmod(file, 0o755);
     return file;
   };
-  return { repo, gpg };
+  return { root, repo, gpg };
 }
 
-const PROJECT = { ci: { repo: 'acme/app' } } as RawProjectJson;
-const requiresSignatures = async () => ['non_fast_forward', 'required_signatures'];
+const FARM_IDENTITY: GitIdentity = {
+  'user.name': 'Slot Signer',
+  'user.email': 'signer@example.com',
+  'user.signingkey': 'A41FEC143503D502',
+  'commit.gpgsign': 'true',
+};
 
-test('syncGitIdentity copies the reference identity into the slot repo once', async (t) => {
+test('loadGitIdentity reads the farm identity and rejects keys it does not copy', async (t) => {
+  const { root } = await fixture(t);
+  assert.equal(loadGitIdentity(root), null);
+  await writeFile(path.join(root, 'git-identity.json'), JSON.stringify(FARM_IDENTITY));
+  assert.deepEqual(loadGitIdentity(root), FARM_IDENTITY);
+  await writeFile(path.join(root, 'git-identity.json'), JSON.stringify({ 'core.editor': 'vi' }));
+  assert.throws(() => loadGitIdentity(root), /core\.editor must be one of user\.name/);
+});
+
+test('syncGitIdentity writes missing or different keys into the local config once', async (t) => {
   const { repo, gpg } = await fixture(t);
-  const gpgProgram = await gpg('gpg-signs', GPG_SIGNS);
-  const reference = repo('macwork-mmt-1', {
-    'user.name': 'Slot Signer',
-    'user.email': 'signer@example.com',
-    'user.signingkey': 'A41FEC143503D502',
-    'commit.gpgsign': 'true',
-    'gpg.program': gpgProgram,
-  });
-  const slot = repo('mini-mmt-1', { 'commit.gpgsign': 'false' });
+  const slot = repo('mini-mmt-1', { 'commit.gpgsign': 'false', 'user.name': 'Slot Signer' });
+  const identity = { ...FARM_IDENTITY, 'gpg.program': await gpg('gpg-signs', GPG_SIGNS) };
 
   assert.equal(
-    await syncGitIdentity(slot, reference),
-    'Git identity copied from macwork-mmt-1: user.name, user.email, user.signingkey, commit.gpgsign, gpg.program',
+    await syncGitIdentity(slot, identity),
+    'Git identity written: user.email, user.signingkey, commit.gpgsign, gpg.program',
   );
-  const synced = await readGitIdentity(slot);
-  assert.equal(synced['user.email'], 'signer@example.com');
-  assert.equal(synced['user.signingkey'], 'A41FEC143503D502');
-  assert.equal(synced['commit.gpgsign'], 'true');
-  assert.equal(
-    execFileSync('git', ['-C', slot.remoteRepo, 'config', '--local', 'user.email']).toString(),
-    'signer@example.com\n',
-  );
-  assert.equal(await syncGitIdentity(slot, reference), 'Git identity matches macwork-mmt-1');
+  assert.deepEqual(await readGitIdentity(slot, 'local'), identity);
+  assert.equal(await syncGitIdentity(slot, identity), 'Git identity up to date');
 });
 
 test('syncGitIdentity skips a gpg.program the slot machine does not have', async (t) => {
   const { repo } = await fixture(t);
-  const reference = repo('ref', {
-    'user.email': 'signer@example.com',
-    'gpg.program': '/nonexistent/bin/gpg',
-  });
   const slot = repo('slot');
 
   assert.match(
-    await syncGitIdentity(slot, reference),
-    /copied from ref: user\.email, gpg\.program \(skipped gpg\.program: \/nonexistent\/bin\/gpg not found\)$/,
+    await syncGitIdentity(slot, {
+      'user.email': 'signer@example.com',
+      'gpg.program': '/nonexistent/bin/gpg',
+    }),
+    /written: user\.email, gpg\.program \(skipped gpg\.program: \/nonexistent\/bin\/gpg not found\)$/,
   );
-  assert.notEqual((await readGitIdentity(slot))['gpg.program'], '/nonexistent/bin/gpg');
+  assert.equal((await readGitIdentity(slot, 'local'))['gpg.program'], undefined);
 });
 
-test('checkCommitSigning passes when the branch rules do not require signatures', async (t) => {
+test('checkCommitSigning skips a repo that does not sign when the farm does not ask it to', async (t) => {
   const { repo } = await fixture(t);
-  const step = await checkCommitSigning(repo('slot'), PROJECT, 'main', async () => [
-    'non_fast_forward',
-  ]);
-  assert.equal(step.status, 'pass');
-  assert.match(step.detail, /acme\/app does not require signed commits/);
+  const step = await checkCommitSigning(repo('slot', { 'commit.gpgsign': 'false' }), null);
+  assert.deepEqual(step, { name: 'git.signing', status: 'skip', detail: 'Commit signing is off' });
 });
 
-test('checkCommitSigning fails a slot with commit signing off and names the key', async (t) => {
+test('checkCommitSigning fails a repo with signing off when the farm identity signs', async (t) => {
   const { repo } = await fixture(t);
-  const slot = repo('slot', { 'commit.gpgsign': 'false', 'user.signingkey': 'A41FEC143503D502' });
-  const step = await checkCommitSigning(slot, PROJECT, 'main', requiresSignatures);
+  const slot = repo('mini-mmt-1', {
+    'commit.gpgsign': 'false',
+    'user.signingkey': 'A41FEC143503D502',
+  });
+  const step = await checkCommitSigning(slot, FARM_IDENTITY);
   assert.equal(step.status, 'fail');
-  assert.match(
-    step.detail,
-    /requires signed commits .*commit\.gpgsign is false .*key A41FEC143503D502/,
-  );
-  assert.match(step.detail, /Fix: set git_identity_slot/);
+  assert.match(step.detail, /commit\.gpgsign is false .*\(key A41FEC143503D502\)/);
+  assert.match(step.detail, /Fix: run `farmslot slot prepare mini-mmt-1`/);
 });
 
 test('checkCommitSigning fails when a test signature from the slot repo fails', async (t) => {
   const { repo, gpg } = await fixture(t);
   const slot = repo('slot', {
-    'user.name': 'Slot Signer',
-    'user.email': 'signer@example.com',
-    'user.signingkey': 'A41FEC143503D502',
-    'commit.gpgsign': 'true',
+    ...FARM_IDENTITY,
     'gpg.program': await gpg('gpg-no-key', GPG_NO_KEY),
   });
-  const step = await checkCommitSigning(slot, PROJECT, 'main', requiresSignatures);
+  const step = await checkCommitSigning(slot, FARM_IDENTITY);
   assert.equal(step.status, 'fail');
   assert.match(step.detail, /test signature with key A41FEC143503D502 failed/);
   assert.match(step.detail, /No secret key/);
-  assert.match(step.detail, /Fix: import key A41FEC143503D502/);
+  assert.match(step.detail, /Fix: import key A41FEC143503D502 on .* and unlock its gpg-agent/);
   // The probe writes no ref.
   assert.equal(execFileSync('git', ['-C', slot.remoteRepo, 'for-each-ref']).toString().trim(), '');
 });
 
 test('checkCommitSigning passes when the slot repo signs', async (t) => {
   const { repo, gpg } = await fixture(t);
-  const slot = repo('slot', {
-    'user.name': 'Slot Signer',
-    'user.email': 'signer@example.com',
-    'user.signingkey': 'A41FEC143503D502',
-    'commit.gpgsign': 'true',
-    'gpg.program': await gpg('gpg-signs', GPG_SIGNS),
-  });
-  assert.deepEqual(await checkCommitSigning(slot, PROJECT, 'main', requiresSignatures), {
+  const slot = repo('slot', { ...FARM_IDENTITY, 'gpg.program': await gpg('gpg-signs', GPG_SIGNS) });
+  assert.deepEqual(await checkCommitSigning(slot, null), {
     name: 'git.signing',
     status: 'pass',
-    detail: 'Commits on main sign with key A41FEC143503D502',
-  });
-});
-
-test('checkCommitSigning gives no verdict when the branch rules cannot be read', async (t) => {
-  const { repo } = await fixture(t);
-  const step = await checkCommitSigning(repo('slot'), PROJECT, 'main', async () => {
-    throw new Error('HTTP 404\nbody');
-  });
-  assert.deepEqual(step, {
-    name: 'git.signing',
-    status: 'warn',
-    detail: 'No verdict: cannot read acme/app branch rules (HTTP 404)',
+    detail: 'Commits sign with key A41FEC143503D502',
   });
 });
