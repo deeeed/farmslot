@@ -34,6 +34,7 @@ import {
   resetSlotIf,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
   type SlotVars,
   updateSlotStatusIf,
@@ -74,9 +75,10 @@ import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
 import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
+import { prepareIdentityPath, reapSlotPrepareScope } from './prepare-command.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
-import { applySelectedApp, type EventEmitter } from './shared.js';
+import { activePrepareAborts, applySelectedApp, type EventEmitter } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
@@ -94,6 +96,13 @@ const inflightReleases = new Map<
   string,
   { key: string; promise: Promise<{ released: boolean }> }
 >();
+
+/** How long a release waits for an aborted in-flight prepare to settle. A
+ * git command stalled on a dropped network never observes the abort; past
+ * this the slot is held with the reason instead of the release hanging. */
+export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
+/** Progress while waiting, so a CLI idle timeout does not end the release first. */
+const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
 function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
   // Only semantically identical requests may share one teardown; a request
@@ -116,9 +125,13 @@ export async function slotRelease(
   emit: EventEmitter,
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
-  options?: { restartRunId: string },
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
 ): Promise<{ released: boolean }> {
-  if (options && options.restartRunId !== params.expectedRunId) {
+  if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
   }
   const key = releaseCoalesceKey(params, options?.restartRunId);
@@ -154,7 +167,11 @@ export async function slotRelease(
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
-  options?: { restartRunId: string },
+  options?: {
+    restartRunId?: string;
+    prepareStopTimeoutMs?: number;
+    prepareStopHeartbeatMs?: number;
+  },
 ): Promise<{ released: boolean }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS below, after the non-destructive preflight). A slot
@@ -361,6 +378,66 @@ async function slotReleaseImpl(
       await killAllAgentWindows(vars);
     }
     step('agent', 'Agent killed');
+    // A release during or after preflight would otherwise publish readiness
+    // while the prepare group and its holder keep running in the repository.
+    // A prepare still in flight is stopped and joined first, for at most
+    // RELEASE_PREPARE_STOP_TIMEOUT_MS: it would launch its holder after the
+    // reap found nothing. This teardown holds the
+    // releasing fence, so the recorded scope is this slot's own. A group that
+    // survives keeps the slot held with the reason, and the release fails.
+    let holdReason: string | null = null;
+    const inflightPrepare = activePrepareAborts.get(params.slotId);
+    if (inflightPrepare) {
+      step('prepare', 'Stopping in-flight prepare...');
+      inflightPrepare.abort();
+      const stopMs = options?.prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
+      const waitStart = Date.now();
+      const heartbeat = setInterval(
+        () =>
+          step(
+            'prepare',
+            `Waiting for in-flight prepare to stop… ${Math.round((Date.now() - waitStart) / 1000)}s`,
+          ),
+        options?.prepareStopHeartbeatMs ?? RELEASE_PREPARE_STOP_HEARTBEAT_MS,
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopped = await Promise.race([
+        inflightPrepare.settled.then(() => true),
+        new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), stopMs))),
+      ]);
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      if (!stopped)
+        holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
+    }
+    if (!holdReason) {
+      try {
+        const stopped = await reapSlotPrepareScope(vars, {
+          identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
+        });
+        step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
+      } catch (error) {
+        holdReason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (holdReason) {
+      const reason = holdReason;
+      step('prepare', reason);
+      const held = await guardedTeardownWrite({
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: reason,
+        [SLOT_RELEASING_SINCE]: null,
+      });
+      if (!held) {
+        complete(0);
+        return { released: false };
+      }
+      complete(1);
+      // Thrown, not `released: false`: callers that print or log success on
+      // a settled release must report a slot left held.
+      throw new Error(`Slot ${params.slotId} stays held: ${reason}`);
+    }
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
     // without operator images sitting in its runtime dir.
@@ -537,7 +614,10 @@ async function slotReleaseImpl(
     }
   }
 
-  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. Release flips
+  // 5. Teardown — DELIBERATELY DOES NOTHING for resources. (The preflight
+  // group was already reaped in step 1, so a dev server the preflight hook
+  // backgrounded with `&` inside that group is gone; one started in its own
+  // process group is not.) Release flips
   // the slot back to ready but leaves the simulator / dev-server / browser
   // alive so the next run reuses warm infra and so a human-driven manual
   // build in the worktree isn't yanked out from under them.
@@ -609,7 +689,7 @@ async function slotReleaseImpl(
   if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');
     try {
-      await slotPrepare({ slotId: params.slotId }, emit);
+      await slotPrepare({ slotId: params.slotId }, emit, undefined, { duringRelease: true });
       if (!(await resetSlotIf(params.slotId, epochStillOurs, true))) return abortReset();
     } catch (err) {
       step('reprepare', `Re-prepare had issues: ${(err as Error).message}`);
