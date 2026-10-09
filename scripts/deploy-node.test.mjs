@@ -368,7 +368,8 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
   write('bin/uname', '#!/bin/sh\necho Linux\n', true);
   write(
     'bin/yarn',
-    '#!/bin/sh\necho "$PWD $* immutable=$YARN_ENABLE_IMMUTABLE_INSTALLS" >> "$HOME/yarn.log"\n' +
+    '#!/bin/sh\n[ "$1" != --version ] || { echo 4.5.3; exit 0; }\n' +
+      'echo "$PWD $* immutable=$YARN_ENABLE_IMMUTABLE_INSTALLS via=${YARN_VIA:-path}" >> "$HOME/yarn.log"\n' +
       'case "$*" in workspaces\\ focus*)\n' +
       '  [ ! -f "$HOME/yarn-fails" ] || { echo "fixture yarn failure"; exit 1; }\n' +
       '  [ ! -f "$HOME/yarn-edits-lock" ] || echo "# resolved anew" >> yarn.lock ;;\nesac\n',
@@ -400,6 +401,17 @@ esac
   // No bash login profile, as on macpro and mini: the worker prefix alone must
   // put the deployed CLI on PATH.
   if (tmuxServer) write('home/tmux-server', '');
+  // The node's own node dir, as the service runs it: node plus corepack, which
+  // hands `yarn` to the stub as the repo's pinned Yarn. PATH below holds nothing
+  // else from the machine, so a real yarn or corepack can never be picked up.
+  const nodeBin = path.join(root, 'node-bin');
+  fs.mkdirSync(nodeBin);
+  fs.symlinkSync(process.execPath, path.join(nodeBin, 'node'));
+  write(
+    'node-bin/corepack',
+    `#!/bin/sh\n[ "$1" = yarn ] || exit 1\nshift\nYARN_VIA=corepack exec ${path.join(root, 'bin/yarn')} "$@"\n`,
+    true,
+  );
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const cliRoot = path.join(home, '.local/share/farmslot-cli');
   const snapshot = path.join(cliRoot, sha);
@@ -426,12 +438,12 @@ esac
         ...process.env,
         // Only the fixture's stubs, node and the system tools: nothing from the
         // developer's own PATH, such as an installed farmslot.
-        PATH: `${root}/bin:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+        PATH: `${root}/bin:${nodeBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
         HOME: home,
         SHELL: shell,
         ASDF_DATA_DIR: '',
         GATEWAY_PORT: '',
-        FARMSLOT_NODE_PATH: process.execPath,
+        FARMSLOT_NODE_PATH: path.join(nodeBin, 'node'),
         FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
         FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
         ...extraEnv,
@@ -502,7 +514,7 @@ for (const instance of ['prod', 'dev']) {
     assert.match(
       installs[0],
       new RegExp(
-        `^${fixture.snapshot}\\.partial\\.\\w+ workspaces focus @farmslot/cli immutable=1$`,
+        `^${fixture.snapshot}\\.partial\\.\\w+ workspaces focus @farmslot/cli immutable=1 via=corepack$`,
       ),
     );
     assert.deepEqual(fs.readdirSync(fixture.cliRoot).sort(), [previous, fixture.sha].sort());
@@ -753,7 +765,8 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
   fs.mkdirSync(bin);
   fs.writeFileSync(
     path.join(bin, 'yarn'),
-    '#!/bin/sh\nsha=$(basename "$PWD"); sha=${sha%%.partial.*}\n' +
+    '#!/bin/sh\n[ "$1" != --version ] || { echo 4.5.3; exit 0; }\n' +
+      'sha=$(basename "$PWD"); sha=${sha%%.partial.*}\n' +
       'echo "start $sha" >> "$HOME/yarn.log"; /bin/sleep 0.05; echo "end $sha" >> "$HOME/yarn.log"\n',
     { mode: 0o755 },
   );
@@ -863,4 +876,40 @@ test('deploy-node stops the hung CLI when the bash -lc verify times out', async 
   assert.ok(pid > 0, 'the fake CLI started and recorded its pid');
   await waitForExit(2000);
   assert.equal(alive(), false, `the probe's CLI (pid ${pid}) outlived the deploy`);
+});
+
+// A global Yarn 1 first on the node's PATH (asdf or `npm -g yarn`, setup-node on
+// CI) has no `workspaces focus`. The install must reach the repo's pinned Yarn
+// through corepack, or stop with the fix.
+const YARN_CLASSIC =
+  '#!/bin/sh\n[ "$1" != --version ] || { echo 1.22.22; exit 0; }\n' +
+  '[ "$1" = workspaces ] || exit 0\n' +
+  'echo "yarn workspaces v1.22.22"; echo \'error Invalid subcommand. Try "info, run"\'; exit 1\n';
+
+test('deploy-node installs with the pinned Yarn through corepack when a Yarn 1 comes first', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('node-bin/yarn', YARN_CLASSIC, true);
+
+  fixture.deploy();
+
+  assert.match(fixture.snapshotInstalls().join('\n'), / via=corepack$/);
+  assert.ok(fs.existsSync(path.join(fixture.snapshot, 'DEPLOYED-REVISION.json')));
+});
+
+test('deploy-node fails with the fix when the node has only a Yarn 1 and no corepack', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('node-bin/yarn', YARN_CLASSIC, true);
+  fs.rmSync(path.join(fixture.root, 'node-bin/corepack'));
+  assert.throws(fixture.deploy, (error) => {
+    const stderr = String(error.stderr);
+    assert.match(stderr, /needs the repo's pinned Yarn, but 'yarn --version' .* gives '1\.22\.22'/);
+    assert.match(
+      stderr,
+      /fix: run 'corepack enable' with the node the service uses \(.*node-bin\/node\)/,
+    );
+    assert.doesNotMatch(`${error.stdout}${stderr}`, /Invalid subcommand/);
+    return true;
+  });
+  assert.equal(fs.existsSync(fixture.snapshot), false);
+  assert.deepEqual(fixture.snapshotInstalls(), []);
 });

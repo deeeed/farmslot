@@ -825,13 +825,27 @@ if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
     echo "  fix: commit yarn.lock at the repository root, then redeploy" >&2
     exit 1
   fi
+  # The repo pins its Yarn in package.json (packageManager) and gets it through
+  # corepack, as install.sh and CI do. A bare `yarn` first on the node's PATH can
+  # be a global Yarn 1, which has no `workspaces focus`, so prefer corepack and
+  # refuse any Yarn older than 2.
+  export PATH="$node_dir:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  yarn_run=yarn
+  if command -v corepack > /dev/null 2>&1; then yarn_run="corepack yarn"; fi
+  yarn_version=$(cd "$partial" && $yarn_run --version 2> /dev/null | tail -1 || true)
+  yarn_major=${yarn_version%%.*}
+  if ! [[ "$yarn_major" =~ ^[0-9]+$ ]] || [ "$yarn_major" -lt 2 ]; then
+    echo "[deploy] ERROR: the node CLI install needs the repo's pinned Yarn, but '$yarn_run --version' with $node_dir first on PATH gives '${yarn_version:-nothing}'" >&2
+    echo "  fix: run 'corepack enable' with the node the service uses ($node_dir/node), then redeploy" >&2
+    exit 1
+  fi
   # Yarn 4 `workspaces focus` ignores immutable mode, so compare the lockfile it
   # leaves with the committed one.
   cp "$partial/yarn.lock" "$partial/.yarn.lock.deployed"
-  if ! (cd "$partial" && PATH="$node_dir:$PATH" YARN_ENABLE_IMMUTABLE_INSTALLS=1 yarn workspaces focus @farmslot/cli) > "$log" 2>&1; then
+  if ! (cd "$partial" && YARN_ENABLE_IMMUTABLE_INSTALLS=1 $yarn_run workspaces focus @farmslot/cli) > "$log" 2>&1; then
     tail -20 "$log" >&2
-    echo "[deploy] ERROR: yarn workspaces focus @farmslot/cli failed for the node CLI; full log: $log" >&2
-    echo "  fix: resolve the error in that log (corepack enable if yarn is missing), then redeploy" >&2
+    echo "[deploy] ERROR: $yarn_run workspaces focus @farmslot/cli failed for the node CLI; full log: $log" >&2
+    echo "  fix: resolve the error in that log, then redeploy" >&2
     exit 1
   fi
   if ! cmp -s "$partial/yarn.lock" "$partial/.yarn.lock.deployed"; then
