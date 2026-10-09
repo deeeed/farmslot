@@ -125,7 +125,7 @@ export function indexProductProvenanceArtifact(
 // params, then the recipe's paramsSchema default; null when it stays unknown.
 function resolveTemplatedPort(value: unknown, params: unknown, recipe: unknown): string | null {
   let resolved: unknown = value;
-  const template = typeof value === 'string' ? parseRecipeTemplate(value) : undefined;
+  const template = typeof value === 'string' ? parseRecipeTemplate(value.trim()) : undefined;
   if (template?.source === 'params' && !template.path.includes('.')) {
     const name = template.path;
     const schema =

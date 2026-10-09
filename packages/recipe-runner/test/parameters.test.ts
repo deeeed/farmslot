@@ -171,6 +171,15 @@ test('a resolution error quotes the authored template and the node', () => {
     {},
     'assert-size',
   );
+  assert.throws(
+    () => resolveRecipeValue('{{params.rows[0]}}', { rows: [] }),
+    (error) =>
+      error instanceof RecipeResolutionError &&
+      error.message ===
+        'Recipe parameter {{params.rows[0]}}: index 0 is out of range for an empty array.' &&
+      error.userAction ===
+        'the array is empty; check the parameter holds an entry before referencing it',
+  );
   rejects(
     '{{outputs.baseline.missing}}',
     /^Recipe output \{\{outputs\.baseline\.missing\}\} is not defined\.$/u,

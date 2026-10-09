@@ -111,6 +111,13 @@ function getNestedValue(
 ): unknown {
   const found = nestedValue(value, path);
   if ('value' in found) return found.value;
+  if (found.arrayLength === 0) {
+    throw new RecipeResolutionError(
+      'RECIPE_PARAMS_INVALID',
+      `Recipe ${kind} ${template}${where}: index ${found.missing} is out of range for an empty array.`,
+      `the array is empty; check the ${kind} holds an entry before referencing it`,
+    );
+  }
   if (found.arrayLength !== undefined) {
     throw new RecipeResolutionError(
       'RECIPE_PARAMS_INVALID',
