@@ -10,6 +10,8 @@
 # Same command for install and update. Rsyncs code and restarts the service,
 # then installs the same git revision as the machine's `farmslot` CLI (the one
 # slot workers run) and verifies it reaches the gateway from a worker shell.
+# When nothing listens on the instance's gateway port, the gateway check only
+# warns: the CLI checks still fail the deploy.
 # A local deploy leaves the CLI as is unless --refresh-cli is passed: there it
 # is the operator's own CLI. CLI_LOCK_WAIT_SECONDS (default 600) bounds the wait
 # for another deploy's CLI refresh on the same machine, and
@@ -913,9 +915,9 @@ REFRESH
   echo "[deploy] verifying node CLI from a worker shell..."
   WORKER_ENV_PREFIX=$(< "$SCRIPT_DIR/lib/worker-env-prefix.sh")
   TMUX_BIN_LOOKUP=$(< "$SCRIPT_DIR/lib/tmux-bin.sh")
-  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}")" << 'VERIFY'
+  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE")" << 'VERIFY'
 set -uo pipefail
-entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5
+entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5 instance=$6
 work=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-cli-verify.XXXXXX")
 session=""
 fallback_pid=""
@@ -932,7 +934,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cat > "$work/probe.sh" << 'PROBE'
-entry=$1
+entry=$1 instance=$2
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
 cd "$HOME" || exit 1
 resolved=$(command -v farmslot) || {
@@ -951,15 +953,31 @@ version=$(farmslot --version < /dev/null) || {
   exit 1
 }
 echo "  farmslot $version"
-farmslot rpc gateway.status < /dev/null > /dev/null || {
+if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
+  # Nothing listening on the gateway's port (the instance's gateway is down) is
+  # not a CLI fault: the checks above passed, so warn and let the deploy finish.
+  # Node runs the CLI, so it is on this PATH; exit 2 means no TCP connection.
+  node -e '
+    const url = new URL(process.argv[1]);
+    const port = Number(url.port || (url.protocol === "wss:" ? 443 : 80));
+    const socket = require("node:net").connect({ host: url.hostname, port });
+    const unreachable = () => process.exit(2);
+    socket.setTimeout(5000, unreachable);
+    socket.on("error", unreachable);
+    socket.on("connect", () => process.exit(0));
+  ' "$GW_URL" < /dev/null
+  if [ "$?" = 2 ]; then
+    echo "[deploy] WARNING: $instance gateway unreachable at $GW_URL; CLI installed and verified; rerun the deploy to verify when it is up"
+    exit 0
+  fi
   echo "[deploy] ERROR: farmslot rpc gateway.status failed against $GW_URL" >&2
   echo "  fix: store a gateway profile for that URL as this user:" >&2
   echo "    farmslot gateway add <name> $GW_URL && farmslot login <name>" >&2
   exit 1
-}
+fi
 echo "  farmslot rpc gateway.status ok ($GW_URL)"
 PROBE
-probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q' "$entry")"
+probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q ' "$entry" "$instance")"
 launch="exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
 eval "$tmux_lookup"
 if [ -n "$TMUX_BIN" ] && "$TMUX_BIN" list-sessions > /dev/null 2>&1; then
