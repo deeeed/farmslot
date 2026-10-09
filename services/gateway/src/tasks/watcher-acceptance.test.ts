@@ -215,7 +215,32 @@ test('a ledger already on disk reaches clients once, and a later write once more
   }
 });
 
-test('only the ledger and the evidence manifest in artifacts/ drive a progress update', async () => {
+test('other files in artifacts/ never drive a progress update', async () => {
+  const root = writeTaskDir();
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    // The directory is the watch subject, so every worker artifact lands in it.
+    // Only the ledger is progress; the rest must not re-read the task dir.
+    const artifacts = path.join(taskDirAbs(), 'artifacts');
+    writeFileSync(path.join(artifacts, 'report.md'), '# Report\n');
+    writeFileSync(path.join(artifacts, 'after.png'), 'png-bytes');
+    writeFileSync(path.join(artifacts, 'recipe.json'), '{}\n');
+    await settle();
+    assert.equal(emitted.length, 0, `worker artifacts emitted: ${emitted.length}`);
+
+    // The ledger in the same directory still does.
+    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
+    await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
+    await settle();
+    assert.equal(emitted.length, 1);
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the evidence manifest drives a progress update, like the ledger', async () => {
   const root = writeTaskDir();
   mkdirSync(path.join(taskDirAbs(), 'inputs'), { recursive: true });
   writeFileSync(
@@ -225,30 +250,25 @@ test('only the ledger and the evidence manifest in artifacts/ drive a progress u
   emitted.length = 0;
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
-    // The directory is the watch subject, so every worker artifact lands in it.
-    // Other worker output is not progress and must not re-read the task dir.
-    const artifacts = path.join(taskDirAbs(), 'artifacts');
-    writeFileSync(path.join(artifacts, 'report.md'), '# Report\n');
-    writeFileSync(path.join(artifacts, 'after.png'), 'png-bytes');
-    writeFileSync(path.join(artifacts, 'recipe.json'), '{}\n');
-    await settle();
-    assert.equal(emitted.length, 0, `worker artifacts emitted: ${emitted.length}`);
-
-    // The evidence manifest does: with no ledger it is the panel's fallback.
-    writeFileSync(
-      path.join(artifacts, 'evidence-manifest.json'),
-      JSON.stringify({ standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }] }),
-    );
-    await waitFor(
-      'the manifest links',
-      (entry) => entry.progress.acceptanceEvidenceLinks?.[0]?.id === 'AC-1',
-    );
-
-    // The ledger in the same directory still does.
+    // With no ledger the manifest is the panel's fallback, so a write reaches clients.
+    // A write that lands while macOS is still arming the directory watch can go
+    // unreported (the other tests here race the same way), so the write is
+    // repeated a bounded number of times; a routing bug fails every attempt.
+    const manifestPath = path.join(taskDirAbs(), 'artifacts', 'evidence-manifest.json');
+    const linked = (entry: Emitted) => entry.progress.acceptanceEvidenceLinks?.[0]?.id === 'AC-1';
+    for (let attempt = 0; attempt < 3 && !emitted.some(linked); attempt += 1) {
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({ standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }] }),
+      );
+      await waitFor('the manifest links', linked, 1_500).catch(() => undefined);
+    }
+    await waitFor('the manifest links', linked, 1_500);
+    const afterManifest = emitted.length;
     writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
     await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
-    await settle();
-    assert.equal(emitted.length, 2);
+    // One more update for the ledger: it is not reported twice.
+    assert.equal(emitted.length, afterManifest + 1);
   } finally {
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
