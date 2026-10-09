@@ -264,7 +264,8 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
 
   const repo = join(root, 'repo');
   mkdirSync(repo, { recursive: true });
-  spawnSync('git', ['init', '-q'], { cwd: repo });
+  // The pack's default_branch, so the cloned slot can check it out.
+  spawnSync('git', ['init', '-q', '-b', 'master'], { cwd: repo });
   writeFileSync(join(repo, 'README.md'), 'fixture repo\n');
   spawnSync('git', ['add', '.'], { cwd: repo });
   spawnSync(
@@ -395,4 +396,70 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   assert.equal(subsetNoop.action, 'noop');
   state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.equal(state.packs['team-pack'].hash, completedHash);
+
+  // An unchanged pack still verifies its slot repos: one narrowed after it was
+  // added (a single-branch refspec) cannot prepare.
+  spawnSync('git', [
+    '-C',
+    join(ws.reposDir, 'app-1'),
+    'config',
+    'remote.origin.fetch',
+    '+refs/heads/feature:refs/remotes/origin/feature',
+  ]);
+  const narrowed = projectAdd(pack, ws, { step: () => {}, info: () => {} }, { projects: ['app'] });
+  assert.equal(narrowed.action, 'noop');
+  assert.match(narrowed.failures[0] ?? '', /does not fetch default branch 'master'/);
+});
+
+test('projectAdd refuses an existing single-branch slot clone that cannot check out main', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-add-single-branch-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (cwd: string, ...args: string[]): void => {
+    const result = spawnSync(
+      'git',
+      ['-c', 'user.email=a@example.com', '-c', 'user.name=A', ...args],
+      { cwd, encoding: 'utf-8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+  };
+
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
+  mkdirSync(ws.reposDir, { recursive: true });
+  writeFileSync(
+    join(ws.farmslotDir, 'pool', 'm.json'),
+    JSON.stringify({ machine: 'm', host: 'localhost', ssh_user: 'me', slots: [] }, null, 2),
+  );
+  writeFileSync(ws.statePath, JSON.stringify(stateWith({}), null, 2));
+
+  const repo = join(root, 'repo');
+  git(root, 'init', '-q', '-b', 'main', repo);
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'main');
+  git(repo, 'checkout', '-q', '-b', 'release/8.14.0');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'release');
+  const slotRepo = join(ws.reposDir, 'app-1');
+  git(root, 'clone', '-q', '--single-branch', '--branch', 'release/8.14.0', repo, slotRepo);
+
+  const pack = join(root, 'pack');
+  const projectDir = join(pack, 'projects', 'app-farm');
+  mkdirSync(join(projectDir, 'setup'), { recursive: true });
+  writeFileSync(
+    join(projectDir, 'project.json'),
+    JSON.stringify({ name: 'app-farm', repo_url: repo, default_branch: 'main' }),
+  );
+  writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
+  writeFileSync(
+    join(pack, 'pack.json'),
+    JSON.stringify({
+      name: 'team-pack',
+      projects: [{ dir: 'projects/app-farm', platform: 'cli', slots: 1, short: 'app' }],
+    }),
+  );
+
+  const result = projectAdd(pack, ws, { step: () => {}, info: () => {} }, { noSetup: true });
+  assert.equal(result.failures.length, 1);
+  assert.match(
+    result.failures[0],
+    /^app-farm: slot repo .*app-1: origin fetch refspec \+refs\/heads\/release\/8\.14\.0:refs\/remotes\/origin\/release\/8\.14\.0 does not fetch default branch 'main'/,
+  );
 });

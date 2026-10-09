@@ -81,6 +81,8 @@ export interface DispatchCandidatesParams {
    * Dispatch UI uses this for the explicit Refresh control.
    */
   forceRefresh?: boolean;
+  /** The dispatch keeps each slot's checkout (no prepare): slot repo blockers do not apply. */
+  skipPrepare?: boolean;
 }
 
 /** Optional metadata attached to busy candidates whose branch matches the dispatch's `targetBranch`.
@@ -295,6 +297,8 @@ export interface DispatchPreviewParams {
   /** Named domain overlay the dispatch will carry — echoed back on the preview. */
   domain?: string;
   prepareProfile?: string;
+  /** The dispatch keeps the slot's checkout (no prepare): slot repo blockers do not apply. */
+  skipPrepare?: boolean;
   /** Explicit selected warm slot may be inspected for a fresh replacement preview. */
   freshReuse?: boolean;
   /** Restrict slot resolution to this set. Empty/omitted = all project slots. */
