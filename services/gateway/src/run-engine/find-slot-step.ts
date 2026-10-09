@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 import {
   type DecisionAction,
   DEFAULT_BRANCH,
@@ -17,6 +19,9 @@ import {
   claimSlotStatusIf,
   getProjectField,
   loadProjectVars,
+  readSlotRow,
+  SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
   updateSlotStatus,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
@@ -245,15 +250,92 @@ async function claimSelectedSlot(
     },
   );
   if (!claim.claimed) {
-    throw Object.assign(
-      new Error(
-        `Slot ${slotId} is mid-release or claimed by another live run; selection cannot claim it — pick a slot again`,
-      ),
-      { code: SLOT_CLAIM_REFUSED_CODE },
+    throw slotClaimRefusedError(
+      slotId,
+      slotClaimHolder(await readSlotRow(slotId), runId, getRun) ??
+        'slot changed hands during the claim',
     );
   }
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
+  }
+}
+
+/** How long an explicit slot pick waits for an in-flight release to land. */
+export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
+const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
+
+function slotClaimRefusedError(slotId: string, holder: string): Error {
+  return Object.assign(
+    new Error(`Slot ${slotId} cannot be claimed: ${holder} — pick a slot again`),
+    { code: SLOT_CLAIM_REFUSED_CODE },
+  );
+}
+
+/**
+ * What holds the slot against this run's ordinary claim, named so the
+ * operator can act on it, or null when the claim CAS in claimSelectedSlot
+ * would accept the row.
+ */
+function slotClaimHolder(
+  slot: Readonly<Record<string, unknown>> | null,
+  runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
+): string | null {
+  if (!slot) return null;
+  if (slot.phase === SLOT_PHASE_RELEASING) {
+    const since = slot[SLOT_RELEASING_SINCE];
+    return `release in progress since ${typeof since === 'string' ? since : 'an unknown time'}`;
+  }
+  if (slotClaimBlockedByRelease(slot) !== null) {
+    const reason = typeof slot.held_reason === 'string' ? ` (${slot.held_reason})` : '';
+    return `slot remains occupied${reason}; release it with \`farmslot slot release ${String(slot.slot)}\``;
+  }
+  const handoff = slotClaimBlockedByHandoff(slot, runId);
+  if (handoff) return handoff;
+  const owner = slotClaimBlockedByLiveOwner(slot, runId, ownerRunLookup);
+  if (!owner) return null;
+  return `${owner} (${ownerRunLookup(String(slot.current_run_id))?.status})`;
+}
+
+/**
+ * Explicit slot picks land right after the previous run on that slot was
+ * cancelled or released, and that teardown runs after the cancel returns. A
+ * release ends by itself, so wait for it (bounded); every other holder — a
+ * live run, a handoff, a workspace-occupancy hold — only ends by an operator
+ * or by that run, so waiting would only delay the same failure.
+ */
+export async function awaitSlotClaimable(
+  slotId: string,
+  runId: string,
+  deps: {
+    readRow?: (slotId: string) => Promise<Readonly<Record<string, unknown>> | null>;
+    ownerRunLookup?: (id: string) => { status: string } | undefined;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
+  const {
+    readRow = readSlotRow,
+    ownerRunLookup = getRun,
+    now = Date.now,
+    sleep = delay,
+    timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+  } = deps;
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const row = await readRow(slotId);
+    const holder = slotClaimHolder(row, runId, ownerRunLookup);
+    if (!holder) return;
+    if (row?.phase !== SLOT_PHASE_RELEASING) throw slotClaimRefusedError(slotId, holder);
+    if (now() >= deadline) {
+      throw slotClaimRefusedError(
+        slotId,
+        `${holder}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
+      );
+    }
+    await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
   }
 }
 
@@ -604,6 +686,18 @@ export async function executeFindSlotStep(
         via: 'wizard-fresh-reuse',
       },
     };
+  }
+
+  // An explicit slot still releasing from its previous run waits for that
+  // release (as queue time) instead of failing preview; any other holder
+  // fails here, named.
+  if (run.slotId) {
+    const explicitSlotId = run.slotId;
+    if ((await readSlotRow(explicitSlotId))?.phase === SLOT_PHASE_RELEASING) {
+      await awaitAsQueueTime(runId, 'find-slot', () => awaitSlotClaimable(explicitSlotId, runId));
+    } else {
+      await awaitSlotClaimable(explicitSlotId, runId);
+    }
   }
 
   // Capture candidate list before selection (live branch check for accurate scoring)
