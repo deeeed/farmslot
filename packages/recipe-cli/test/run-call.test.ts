@@ -2738,6 +2738,37 @@ describe('call', () => {
     assert.deepEqual(calls.runners.at(-1), { adapter: 'web', trustTaskActions: true });
   });
 
+  // The HUD follows the policy like run: unset (the engine default, on), show, hide.
+  for (const [label, hud, expected] of [
+    ['leaves the HUD to the engine default (on) without --hud', [], undefined],
+    ['honours --hud show', ['--hud', 'show'], true],
+    ['honours --hud hide', ['--hud', 'hide'], false],
+  ] as const) {
+    test(`follows the HUD policy like run: ${label}`, async () => {
+      const target = checkout();
+      calls.autoHud = [];
+      const call = await capture(() =>
+        handleCall(
+          [
+            'shop.ping',
+            'mode=fast',
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--json',
+            ...hud,
+          ],
+          callOptions,
+        ),
+      );
+      assert.equal(call.value, 0, call.stderr.join('\n'));
+      assert.deepEqual([...new Set(calls.autoHud)], [expected]);
+    });
+  }
+
   test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
     const target = checkout();
     const call = await capture(() =>

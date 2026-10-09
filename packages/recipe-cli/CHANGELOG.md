@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- `call` follows the HUD policy like `run`: the automatic HUD is on by default and `--hud show`/`--hud hide` are honoured. It used to be forced off for every call, `--hud show` included, so an agent's `call ui.screenshot` evidence had no intent on it.
 - `run` shows the automatic HUD for every recipe source: an untrusted or inherited source (`FARMSLOT_RECIPE_SOURCE_TRUST`) now follows `--hud` like any run (on by default, off with `--hud hide`) instead of always running without it, and a platform whose `run.autoHud()` returns false still turns it off. The HUD is part of the plan an approval covers, so a plan approved before this change, or with another `--hud` setting, must be approved again.
 
 ## 0.11.0 - 2026-10-09

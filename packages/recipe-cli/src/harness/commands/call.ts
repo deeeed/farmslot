@@ -432,11 +432,12 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   let observers: RunObservers | undefined;
   // No `cli`: a call's trustedMutation.load gets no command line, so no funding
   // flag binds a mutation to a call (funded mutations run through `run`, bound
-  // to a reviewed recipe).
+  // to a reviewed recipe). The HUD follows the run's policy, as for `run`: an
+  // agent's `call ui.screenshot` is evidence too, so it carries the intent
+  // unless --hud hide.
   const callRuntimeOptions: RecipeEngineRunOptions = {
     ...requestedRuntimeOptions,
     librarySources,
-    autoHud: false,
     suppressLibraryResolutionLogs: true,
     stdoutIsMachineContract: json,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {
