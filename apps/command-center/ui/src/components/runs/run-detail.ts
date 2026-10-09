@@ -944,7 +944,7 @@ export class RunDetail extends RunDetailState {
         loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
         runActive: isRunWorking(this.run),
       },
-      acceptancePending: this._taskProgressLoading,
+      acceptancePending: this._taskProgressLoading || this._acceptanceFetchQueued,
     });
     // An AC link waits for the progress read that carries its criterion.
     if ('pending' in selection) return;
@@ -1041,7 +1041,13 @@ export class RunDetail extends RunDetailState {
     if (this._acceptanceRequested || this._taskProgressLoading || !this.run) return;
     if (!this.run.slotId && !this.run.reviewWorkspace) return;
     this._acceptanceRequested = true;
-    void this.fetchTaskProgress(this.run.slotId ?? '');
+    this._acceptanceFetchQueued = true;
+    // Called from updated(): the fetch sets reactive state, so it starts after
+    // this update; the link stays pending meanwhile.
+    queueMicrotask(() => {
+      this._acceptanceFetchQueued = false;
+      if (this.run) void this.fetchTaskProgress(this.run.slotId ?? '');
+    });
   }
 
   private async fetchTaskProgress(slotId: string) {

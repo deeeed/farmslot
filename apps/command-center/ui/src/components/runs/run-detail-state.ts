@@ -102,6 +102,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _taskProgressLoading = false;
   /** A finished run's acceptance data was read once for a criterion link. */
   _acceptanceRequested = false;
+  /** That read is queued to start after the current update. */
+  _acceptanceFetchQueued = false;
   /** The criterion whose evidence the open lightbox steps through, if any. */
   _evidenceLightboxCriterionId: string | null = null;
   @state() _evidenceLightboxIndex = 0;
