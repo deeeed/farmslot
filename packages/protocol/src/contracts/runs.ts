@@ -2574,7 +2574,8 @@ export interface RunEngineState {
    * judged on the slot: HEAD, the evidence manifest and the evidence files. When
    * any of them changes, self-review must run again before publication is
    * approved; the PR description is not part of it. Records taken while the
-   * description was still included keep matching until HEAD or evidence changes.
+   * description was still included keep matching until HEAD or evidence changes,
+   * except that a description edit on such a record re-runs self-review once.
    * `rerunFor` is the changed state self-review already ran again for, so it runs
    * once per change.
    */

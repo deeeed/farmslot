@@ -262,7 +262,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   assert.equal(await awaiting(), true);
 });
 
-test('a fingerprint recorded with the description in it still matches until evidence or HEAD changes', async (t) => {
+test('a fingerprint recorded with the description in it still matches until evidence, HEAD or (once) the description changes', async (t) => {
   const { run, artifacts } = await slotWithTask(t);
   const current = await readReviewedInputs(getRun(run.id)!);
   assert.ok(current);
@@ -279,6 +279,11 @@ test('a fingerprint recorded with the description in it still matches until evid
   });
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
   assert.equal(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+  // The one exception: the old record hashed the description, so editing it re-runs self-review once.
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Reworded\n');
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Removed surfaces\n- Banner\n');
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
   await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
 });

@@ -115,7 +115,7 @@ export async function recordReviewedInputs(runId: string): Promise<void> {
  * judged, else null. A run with no record, or a slot that cannot be read,
  * reports no change: the gate then behaves as it did before this check existed.
  * A record taken with the description in it still matches while nothing it
- * covered changed.
+ * covered changed; a description edit on it reports a change once.
  */
 async function changedReviewedInputs(run: Run): Promise<string | null> {
   const recorded = run.engineState?.reviewedInputs?.fingerprint;
