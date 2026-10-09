@@ -354,6 +354,11 @@
       "import": "./dist/node/farmslot-home.js",
       "default": "./dist/node/farmslot-home.js"
     },
+    "./node/loopback-host": {
+      "types": "./dist/node/loopback-host.d.ts",
+      "import": "./dist/node/loopback-host.js",
+      "default": "./dist/node/loopback-host.js"
+    },
     "./node/slot-by-repo": {
       "types": "./dist/node/slot-by-repo.d.ts",
       "import": "./dist/node/slot-by-repo.js",

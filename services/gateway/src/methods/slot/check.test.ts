@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -11,6 +12,7 @@ import { assertSlotHealthForRecipeRerun } from '../recipe.js';
 import {
   checkDefaultBranch,
   checkHealth,
+  checkRunnerLaunch,
   isOptionalFixtureAbsence,
   runHealthCheck,
   runUnlockHook,
@@ -339,4 +341,148 @@ test('checkDefaultBranch fails a single-branch clone and passes once main is fet
   assert.equal(unreadable.status, 'warn');
   assert.match(unreadable.detail, /^No verdict: .*git for-each-ref exited/);
   assert.equal((await probeDefaultBranch(makeSlotVars(full), 'main')).readable, false);
+});
+
+// asdf 0.19 shim: resolves node from the cwd's .tool-versions and refuses a
+// pinned version the host has not installed, as on the F67 slots.
+const FAKE_NODE = `#!/bin/sh
+if ! grep -qx 'nodejs 22.15.0' .tool-versions 2>/dev/null; then
+  echo "No version is set for command node"
+  echo "Consider adding one of the following versions in your config file at $PWD/.tool-versions"
+  echo "nodejs 22.15.0"
+  echo "nodejs 20.18.0"
+  exit 126
+fi
+echo v22.15.0
+`;
+// npm-installed runner: a node script, so it inherits the shim's refusal.
+const FAKE_RUNNER = `#!/bin/sh
+out=$(node) || { echo "$out"; exit 1; }
+echo 1.0.0
+`;
+
+async function runnerSlot(
+  t: { after: (fn: () => Promise<void>) => void },
+  nodePin: string,
+  claudeBody = FAKE_RUNNER,
+) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-runner-launch-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const bin = path.join(root, 'bin');
+  const repo = path.join(root, 'repo');
+  await mkdir(bin, { recursive: true });
+  await mkdir(repo, { recursive: true });
+  for (const [name, body] of [
+    ['node', FAKE_NODE],
+    ['codex', FAKE_RUNNER],
+    ['claude', claudeBody],
+  ]) {
+    await writeFile(path.join(bin, name), body);
+    await chmod(path.join(bin, name), 0o755);
+  }
+  await writeFile(path.join(repo, '.tool-versions'), `nodejs ${nodePin}\n`);
+  return {
+    ...makeSlotVars(repo),
+    codexPath: path.join(bin, 'codex'),
+    machineEnv: { PATH: `${bin}:/usr/bin:/bin` },
+  };
+}
+
+test('checkRunnerLaunch fails when the slot repo pins a node version the host lacks', async (t) => {
+  const vars = await runnerSlot(t, '22.22.1');
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson);
+
+  assert.deepEqual(
+    steps.map((s) => [s.name, s.status]),
+    [
+      ['runner.node', 'fail'],
+      ['runner.claude', 'fail'],
+      ['runner.codex', 'fail'],
+    ],
+  );
+  for (const step of steps) {
+    assert.match(step.detail, /No version is set for command node \| Consider adding/);
+    assert.match(
+      step.detail,
+      /; \.tool-versions pins nodejs 22\.22\.1\. Fix: install nodejs 22\.22\.1 on .*`asdf install`/,
+    );
+  }
+});
+
+test('checkRunnerLaunch passes when node and the runners resolve in the slot repo', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson);
+
+  assert.deepEqual(steps, [
+    { name: 'runner.node', status: 'pass', detail: 'node v22.15.0' },
+    { name: 'runner.claude', status: 'pass', detail: 'claude 1.0.0' },
+    { name: 'runner.codex', status: 'pass', detail: `${vars.codexPath} 1.0.0` },
+  ]);
+});
+
+test('checkRunnerLaunch names a runner binary missing from the worker PATH', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(
+    { ...vars, codexPath: path.join(vars.remoteRepo, 'missing-codex') },
+    {} as RawProjectJson,
+  );
+
+  const codex = steps.find((s) => s.name === 'runner.codex');
+  assert.equal(codex?.status, 'fail');
+  assert.match(codex.detail, /\(exit 127\).*Fix: install .*missing-codex/);
+  // An unrelated failure does not cite the repo's Node pin.
+  assert.doesNotMatch(codex.detail, /pins nodejs/);
+});
+
+test('checkRunnerLaunch streams each probe and heartbeats while one is pending', async (t) => {
+  // claude answers only once a heartbeat names it after node has finished (5 s ceiling).
+  const gatedClaude = `#!/bin/sh
+i=0; while [ ! -e claude-gate ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
+echo 1.0.0
+`;
+  const vars = await runnerSlot(t, '22.15.0', gatedClaude);
+  const heartbeatMs = 20;
+  const progress: { name: string; detail: string }[] = [];
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson, undefined, {
+    onProgress: (step) => {
+      progress.push({ name: step.name, detail: step.detail });
+      const waitingOnClaudeOnly =
+        step.name === 'runner' &&
+        step.detail.includes('runner.claude') &&
+        !step.detail.includes('runner.node');
+      if (waitingOnClaudeOnly) {
+        writeFileSync(path.join(vars.remoteRepo, 'claude-gate'), '');
+      }
+    },
+    heartbeatMs,
+  });
+  const afterReturn = progress.length;
+
+  assert.equal(steps.map((s) => s.status).join(), 'pass,pass,pass');
+  const claudeAt = progress.findIndex((p) => p.name === 'runner.claude');
+  assert.ok(progress.findIndex((p) => p.name === 'runner.node') < claudeAt);
+  assert.ok(
+    progress
+      .slice(0, claudeAt)
+      .some(
+        (p) => p.name === 'runner' && /^Still probing .*runner\.claude.* \(\d+ s\)$/.test(p.detail),
+      ),
+  );
+  // The heartbeat stops once the probes return.
+  await new Promise((resolve) => setTimeout(resolve, heartbeatMs * 3));
+  assert.equal(progress.length, afterReturn);
+});
+
+test('checkRunnerLaunch reports an unbuildable worker env once', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(vars, {
+    command_env: { set: { 'BAD-NAME': 'x' } },
+  } as RawProjectJson);
+
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0]!.name, 'runner');
+  assert.equal(steps[0]!.status, 'fail');
+  assert.match(steps[0]!.detail, /^Worker env cannot be built: .*BAD-NAME/);
 });

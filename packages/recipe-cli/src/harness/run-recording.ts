@@ -6,9 +6,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  type CaptureHelperInterruptionEvent,
+  keptCaptureInterruption,
   optionalVideoTiming,
+  parseCaptureHelperInterruption,
   readCaptureHelperTiming,
+  type RecipeRunCaptureInterruption,
   type RecipeRunResult,
+  recordCaptureInterruptionInPackage,
+  runCaptureInterruption,
   writeRecordingTimeline,
 } from '@farmslot/recipe-runner';
 
@@ -43,6 +49,8 @@ export interface ActiveRecipeRecording {
   nativeTiming: boolean;
   completedRecordingId?: string;
   completedVideo?: boolean;
+  /** capture-helper's `stream_interrupted` event: its stream stopped and it kept the frames so far. */
+  interruption?: CaptureHelperInterruptionEvent;
   nativeTimingEvidence?: Awaited<ReturnType<typeof readCaptureHelperTiming>>;
   error?: Error;
   // The environment variable that names the recorded pid to actions.
@@ -55,7 +63,8 @@ export interface ActiveRecipeRecording {
 interface PendingRecordingSnapshot {
   outputPath: string;
   timer: NodeJS.Timeout;
-  resolve: (event: Record<string, unknown>) => void;
+  // undefined: no in-session frame (the stream stopped), so the caller captures without it.
+  resolve: (event: Record<string, unknown> | undefined) => void;
   reject: (error: Error) => void;
 }
 
@@ -147,12 +156,20 @@ export async function startRecipeRecording(
     recording.exitCode = exitCode;
     activeRecordingsByPid.delete(recording.pid);
     restoreActiveRecordingEnvironment(recording);
-    rejectPendingSnapshots(
-      recording,
-      new Error(
-        `capture-helper recording exited before snapshot completed (code=${exitCode ?? 'unknown'})`,
-      ),
-    );
+    if (keptCaptureInterruption(exitCode, recording.interruption)) {
+      // Snapshots the stream stopped under fall back like any after the recording ended.
+      for (const pending of recording.pendingSnapshots.values()) {
+        clearTimeout(pending.timer);
+        pending.resolve(undefined);
+      }
+      recording.pendingSnapshots.clear();
+    } else
+      rejectPendingSnapshots(
+        recording,
+        new Error(
+          `capture-helper recording exited before snapshot completed (code=${exitCode ?? 'unknown'})`,
+        ),
+      );
   });
 
   await waitForRecordingReady(recording, 15_000);
@@ -188,7 +205,7 @@ export async function captureActiveRecipeRecordingSnapshot(
   if (!recording || recording.exited) return undefined;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.rmSync(outputPath, { force: true });
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
+  return new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
     const timer = setTimeout(() => {
       recording.pendingSnapshots.delete(outputPath);
       reject(
@@ -207,11 +224,12 @@ export async function captureActiveRecipeRecordingSnapshot(
   });
 }
 
+/** Finalize and publish the run video; returns the interruption when only a partial video was kept. */
 export async function stopRecipeRecording(
   recording: ActiveRecipeRecording | undefined,
   result?: RecipeRunResult,
-): Promise<void> {
-  if (!recording || recording.finalized) return;
+): Promise<RecipeRunCaptureInterruption | undefined> {
+  if (!recording || recording.finalized) return undefined;
   recording.finalized = true;
   try {
     await stopRecordingProcess(recording);
@@ -222,7 +240,17 @@ export async function stopRecipeRecording(
       );
     }
     publishRecordingArtifact(recording);
+    const kept = keptInterruption(recording);
+    const interruption = kept ? runCaptureInterruption(kept, recording.relativePath) : undefined;
+    // Before the manifest entry: its timeline is bound to the final trace.
+    if (result && interruption)
+      await recordCaptureInterruptionInPackage(
+        result,
+        interruption,
+        new Date(recording.startedAtUnixMs),
+      );
     if (result) await addRecordingArtifactToManifest(result, recording);
+    return interruption;
   } catch (error) {
     if (result) removeRecordingArtifactFromManifest(result, recording.relativePath);
     throw error;
@@ -313,6 +341,8 @@ function handleRecordingEventLine(recording: ActiveRecipeRecording, line: string
   ) {
     recording.frameReady = true;
   }
+  if (event.output === recording.stagedPath)
+    recording.interruption ??= parseCaptureHelperInterruption(event);
   if (event.type === 'record_complete' && event.output === recording.stagedPath) {
     recording.completedVideo = typeof event.frames === 'number' && event.frames > 0;
     if (typeof event.recording_id === 'string') recording.completedRecordingId = event.recording_id;
@@ -358,12 +388,12 @@ async function validateRecordingArtifact(
   }
   const recorderOutput = `${recording.stdout}\n${recording.stderr}`;
   if (recording.nativeTiming) {
-    if (!recording.completedVideo)
+    if (!recording.completedVideo && !keptInterruption(recording))
       return { ok: false, reason: 'Missing finalized video completion' };
     recording.nativeTimingEvidence = await readNativeRecordingTiming(recording);
     return { ok: true };
   }
-  if (!recorderOutput.includes('record_complete')) {
+  if (!recorderOutput.includes('record_complete') && !keptInterruption(recording)) {
     return {
       ok: false,
       reason: `capture-helper did not report record_complete for ${recording.stagedPath}: ${recorderOutput.trim() || 'no recorder output'}`,
@@ -410,15 +440,16 @@ async function readNativeRecordingTiming(
   recording: ActiveRecipeRecording,
 ): ReturnType<typeof readCaptureHelperTiming> {
   try {
-    if (!recording.completedRecordingId)
-      throw new Error('Missing native recording completion identity');
+    const recordingId =
+      recording.completedRecordingId ??
+      (keptInterruption(recording) ? recording.interruption?.recordingId : undefined);
+    if (!recordingId) throw new Error('Missing native recording completion identity');
     const sidecar = recording.stagedPath + '.timing.json';
     const entry = fs.lstatSync(sidecar);
     if (!entry.isFile() || entry.isSymbolicLink())
       throw new Error('Native timing must be a regular file');
     const native = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
-    if (native.recording_id !== recording.completedRecordingId)
-      throw new Error('Native recording identity mismatch');
+    if (native.recording_id !== recordingId) throw new Error('Native recording identity mismatch');
     return await readCaptureHelperTiming(recording.stagedPath);
   } catch (error) {
     // Timing is optional; retain finalized video without unverifiable markers.
@@ -574,6 +605,7 @@ async function addRecordingArtifactToManifest(
   manifest.artifacts = manifest.artifacts.filter(
     (artifact) => artifact.path !== recording.relativePath,
   );
+  const interruption = keptInterruption(recording);
   const timing = recording.nativeTiming
     ? (recording.nativeTimingEvidence ?? {
         timingUnavailableReason: 'Native recording timing unavailable',
@@ -620,6 +652,7 @@ async function addRecordingArtifactToManifest(
     mimeType: 'video/mp4',
     record: 'full_run',
     ...(timelinePath ? { timelinePath } : { timelineUnavailableReason }),
+    ...(interruption ? { interruption } : {}),
     metadata: {
       provider: 'capture-helper',
       mode: 'full_run',
@@ -627,6 +660,10 @@ async function addRecordingArtifactToManifest(
     },
   });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function keptInterruption(recording: ActiveRecipeRecording) {
+  return keptCaptureInterruption(recording.exitCode, recording.interruption);
 }
 
 function removeRecordingArtifactFromManifest(result: RecipeRunResult, relativePath: string): void {

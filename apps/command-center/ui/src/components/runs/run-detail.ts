@@ -47,6 +47,10 @@ import '../interactive/interactive-operator-packets.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
+import {
+  type AcceptanceEvidenceOpen,
+  runAcceptanceCriterionEvidence,
+} from '../progress-tracker/acceptance-panel.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -68,23 +72,25 @@ import {
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
 import {
+  acceptanceEvidenceSelection,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   currentRunCiStatus,
+  type EvidenceLightboxSelection,
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
   isRunWorking,
   isTaskProgressRunActive,
-  locateEvidenceArtifact,
   mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  resolveEvidenceLightboxLink,
   runArtifactsWithOperationLogs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
-  runEvidenceLightboxItems,
   runFamilyPrStatus,
   runHasTrimmedDetail,
+  runOutputEvidenceSelection,
   shouldAcceptTaskProgressUpdate,
   shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
@@ -190,7 +196,15 @@ export class RunDetail extends RunDetailState {
     }
     // The direct run.get snapshot may arrive after hashchange and after the
     // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
-    if (changed.has('run') || changed.has('taskProgress') || changed.has('selectedStepProgress'))
+    if (
+      changed.has('run') ||
+      changed.has('taskProgress') ||
+      changed.has('selectedStepProgress') ||
+      changed.has('acceptanceStatus') ||
+      changed.has('acceptanceCriteria') ||
+      changed.has('acceptanceEvidenceLinks') ||
+      changed.has('_taskProgressLoading')
+    )
       this._applyEvidenceArtifactFromHash(true);
   }
 
@@ -250,6 +264,8 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshing = false;
       this._directRunRequestSeq++;
       this._taskProgressRequestSeq++;
+      this._taskProgressLoading = false;
+      this._acceptanceRequested = false;
       this._siblingsRequestSeq++;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
@@ -326,6 +342,8 @@ export class RunDetail extends RunDetailState {
       prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
     if (activeTaskChanged) {
       this._taskProgressRequestSeq++;
+      this._taskProgressLoading = false;
+      this._acceptanceRequested = false;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
       this.acceptanceStatus = null;
@@ -858,13 +876,34 @@ export class RunDetail extends RunDetailState {
     void this._loadSelectedStepProgress();
   }
 
-  private _lightboxItemsForArtifacts(artifacts: FamilyObservabilityArtifact[]): LightboxItem[] {
-    return runEvidenceLightboxItems(artifacts, this._artifactUrl);
+  /**
+   * Every artifact run detail can open: the run's evidence plus the worker command
+   * logs from the live progress or, for a finished run, the selected step's
+   * progress (the panel that rendered the link). One list for every opener, so a
+   * link one of them writes always resolves on reload.
+   */
+  private _linkableRunArtifacts(run: Run): FamilyObservabilityArtifact[] {
+    return runArtifactsWithOperationLogs(run, [
+      ...(this.taskProgress?.operations ?? []),
+      ...(this.selectedStepProgress?.operations ?? []),
+    ]);
+  }
+
+  /** The one way the evidence lightbox opens: the Evidence tab, an `artifact=` link or an AC row. */
+  private _openEvidenceLightbox(selection: EvidenceLightboxSelection, writeHash = true): void {
+    this._evidenceLightboxItems = selection.items;
+    this._evidenceLightboxIndex = selection.index;
+    this._evidenceLightboxScope = selection.scope;
+    this._evidenceLightboxCriterionId = selection.criterionId;
+    this._evidenceArtifactUnavailable = null;
+    this._evidenceLightboxOpen = true;
+    if (writeHash) this._updateEvidenceArtifactHash(selection.items[selection.index] ?? null);
   }
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
-    const { artifactRun, artifact, artifactView } = artifactSelectionFromRunDetailHash();
+    const { artifactRun, artifact, artifactView, artifactAc } =
+      artifactSelectionFromRunDetailHash();
     if (!artifact || (artifactView === STEP_ARTIFACT_VIEW && this.selectedStep)) {
       // No artifact, or one the step inspector (showing) answers for.
       this._evidenceArtifactUnavailable = null;
@@ -879,42 +918,49 @@ export class RunDetail extends RunDetailState {
     if (
       preserveCurrent &&
       this._evidenceLightboxOpen &&
-      this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact
+      this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact &&
+      this._evidenceLightboxCriterionId === artifactAc
     )
       return;
-    // Operation logs come from the live progress or, for a finished run, the
-    // selected step's progress (the panel that rendered the link).
-    const operations = [
-      ...(this.taskProgress?.operations ?? []),
-      ...(this.selectedStepProgress?.operations ?? []),
-    ];
-    const artifacts = runArtifactsWithOperationLogs(this.run, operations);
-    // Re-applied when the run or worker progress updates, so a link that
-    // arrives before progress loads still opens; until then, say so.
-    const lookup = locateEvidenceArtifact(artifacts, artifact, {
-      loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
-      runActive: isRunWorking(this.run),
+    // Re-applied when the run, worker progress or acceptance data updates, so a
+    // link that arrives before they load still opens; until then, say so.
+    const acceptanceRows = runAcceptanceCriterionEvidence(this);
+    if (artifactAc && !acceptanceRows.some((row) => row.id === artifactAc)) {
+      this._requestAcceptanceData();
+    }
+    const selection = resolveEvidenceLightboxLink({
+      path: artifact,
+      criterionId: artifactAc,
+      acceptanceRows,
+      runId: this.runId,
+      familyId: this.run.familyId,
+      runArtifacts: this._linkableRunArtifacts(this.run),
+      artifactUrl: this._artifactUrl,
+      progress: {
+        loaded: Boolean(this.taskProgress?.operations || this.selectedStepProgress?.operations),
+        runActive: isRunWorking(this.run),
+      },
+      acceptancePending: this._taskProgressLoading || this._acceptanceFetchQueued,
     });
-    if ('unavailable' in lookup) {
+    // An AC link waits for the progress read that carries its criterion.
+    if ('pending' in selection) return;
+    if ('unavailable' in selection) {
       // Never leave a previous artifact showing under the notice.
       this._evidenceLightboxOpen = false;
-      this._evidenceArtifactUnavailable = lookup.unavailable;
+      this._evidenceArtifactUnavailable = selection.unavailable;
       return;
     }
-    const { index } = lookup;
-    this._evidenceArtifactUnavailable = null;
-    this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
     const params = new URLSearchParams(location.hash.split('?')[1]);
     const traceIndex = params.get('artifactTrace');
     if (traceIndex && /^\d+$/.test(traceIndex) && Number.isSafeInteger(Number(traceIndex))) {
-      this._evidenceLightboxItems[index] = {
-        ...this._evidenceLightboxItems[index],
+      selection.items[selection.index] = {
+        ...selection.items[selection.index],
         initialTraceIndex: Number(traceIndex),
         initialTracePhase: params.get('artifactPhase') === 'start' ? 'start' : 'end',
       };
     }
-    this._evidenceLightboxIndex = index;
-    this._evidenceLightboxOpen = true;
+    // The URL already names this artifact; rewriting it would drop the trace marker.
+    this._openEvidenceLightbox(selection, false);
   }
 
   private _syncSelectedStepToHash() {
@@ -983,6 +1029,23 @@ export class RunDetail extends RunDetailState {
     );
   }
 
+  /**
+   * A criterion link on a run whose worker progress is not being read (a finished
+   * run) reads its acceptance data once, so the link can reopen that criterion.
+   */
+  private _requestAcceptanceData(): void {
+    if (this._acceptanceRequested || this._taskProgressLoading || !this.run) return;
+    if (!this.run.slotId && !this.run.reviewWorkspace) return;
+    this._acceptanceRequested = true;
+    this._acceptanceFetchQueued = true;
+    // Called from updated(): the fetch sets reactive state, so it starts after
+    // this update; the link stays pending meanwhile.
+    queueMicrotask(() => {
+      this._acceptanceFetchQueued = false;
+      if (this.run) void this.fetchTaskProgress(this.run.slotId ?? '');
+    });
+  }
+
   private async fetchTaskProgress(slotId: string) {
     const runId = this.runId;
     const requestSeq = ++this._taskProgressRequestSeq;
@@ -991,6 +1054,7 @@ export class RunDetail extends RunDetailState {
       this.runId === runId &&
       (this.run?.slotId ?? '') === slotId;
     this._lastTaskProgressFetchAt = Date.now();
+    this._taskProgressLoading = true;
     try {
       const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
         slotId,
@@ -1007,6 +1071,9 @@ export class RunDetail extends RunDetailState {
       // During slot release/replay the slot can briefly have no task file; keep
       // the existing UI snapshot instead of failing the whole run detail render.
       console.debug(`Task progress unavailable for ${slotId}: ${(err as Error).message}`);
+    } finally {
+      // A superseded read leaves the flag to the read that replaced it.
+      if (requestSeq === this._taskProgressRequestSeq) this._taskProgressLoading = false;
     }
   }
 
@@ -1047,8 +1114,32 @@ export class RunDetail extends RunDetailState {
     return runArtifactUrl(this.runId, { path: evidencePath });
   };
 
+  /**
+   * An acceptance criterion's evidence file opens in the run's evidence lightbox,
+   * stepping through that criterion's files, not a new browser window.
+   */
+  private _openAcceptanceEvidence = ({ criterion, evidence, index }: AcceptanceEvidenceOpen) => {
+    if (!this.run) return;
+    this._openEvidenceLightbox(
+      acceptanceEvidenceSelection({
+        runId: this.runId,
+        familyId: this.run.familyId,
+        criterion,
+        evidence,
+        index,
+        runArtifacts: this._linkableRunArtifacts(this.run),
+        artifactUrl: this._artifactUrl,
+      }),
+    );
+  };
+
   private _updateEvidenceArtifactHash(item: LightboxItem | null): void {
-    const next = runDetailEvidenceArtifactHash(this.runId, item);
+    const next = runDetailEvidenceArtifactHash(
+      this.runId,
+      item,
+      location.hash,
+      this._evidenceLightboxCriterionId,
+    );
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
@@ -1067,10 +1158,7 @@ export class RunDetail extends RunDetailState {
     e: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
   ): void {
     const { artifacts, index } = e.detail;
-    this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
-    this._evidenceLightboxIndex = index;
-    this._evidenceLightboxOpen = true;
-    this._updateEvidenceArtifactHash(this._evidenceLightboxItems[index] ?? null);
+    this._openEvidenceLightbox(runOutputEvidenceSelection(artifacts, index, this._artifactUrl));
   }
 
   @state() private _refreshingOutput = false;
@@ -1127,6 +1215,7 @@ export class RunDetail extends RunDetailState {
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,
       evidenceLightboxIndex: this._evidenceLightboxIndex,
+      evidenceLightboxScope: this._evidenceLightboxScope,
       evidenceArtifactUnavailable: this._evidenceArtifactUnavailable,
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
@@ -1167,6 +1256,7 @@ export class RunDetail extends RunDetailState {
       acceptanceStatusError: this.acceptanceStatusError,
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
+      acceptanceEvidenceOpen: this._openAcceptanceEvidence,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,
       _hydrating: this._hydrating,

@@ -286,6 +286,12 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 
 **Streamability:** For stream grids, `running` should mean the resource is expected to be stream-capturable, not merely that a process exists. For browser resources, node/gateway health may repair stale CDP/browser pid files, but must not mark a browser stream running when `capture-helper resolve --pid` cannot find a capturable window.
 
+## Amendment: Browser Health Without ScreenCaptureKit (2026-10-09)
+
+**Problem:** The streamability rule above made every browser health check, CDP pid recovery and node pid-file repair run `capture-helper resolve --pid`. `resolve` reads window lists through ScreenCaptureKit, and macOS's replayd keys ScreenCaptureKit clients by executable path. Each probe that exits therefore stops every running `capture-helper record` on the same machine (SCStreamErrorDomain -3805). On macpro the extension slots' watch stopped Android mirror recordings of another slot within seconds.
+
+**Decision:** Browser health no longer proves a capturable window. A browser is `running` when its recorded pid is alive and, when the slot has a `cdp_port`, is the only process listening on that port. Pid recovery adopts only a sole live listener. The stream still resolves the browser's window when it starts and reports a capture failure there, so a browser with no on-screen window can read `running` while its stream fails to start. This supersedes the browser sentence of the Streamability paragraph above.
+
 ## Amendment: Resource Pressure Controls (2026-06-06)
 
 **Problem:** Resource streams and node-owned watches make stale simulators, dev servers, browsers, and other project runtimes visible, but visibility alone does not relieve local machine pressure. Project-specific teardown shortcuts can stop those resources, but they are outside the typed Farmslot protocol and cannot be safely exposed from Command Center or future node-management surfaces.

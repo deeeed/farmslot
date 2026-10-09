@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 
 import {
+  digestRecipeDocument,
   OFFICIAL_RECIPE_ACTIONS,
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecipeActionCatalogEntry,
@@ -1411,6 +1412,95 @@ test('record-video stop failure removes partial MP4 and writes a failed artifact
       (entry) => entry.nodeId === 'recipe-run:video',
     );
     assert.match(videoFailure?.error ?? '', /stop failed after partial write/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video stream interruption keeps the partial MP4 and fails the run with CAPTURE_INTERRUPTED', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const interruption = {
+      frames: 2400,
+      mediaTimeMs: 79966.7,
+      cause:
+        'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
+    };
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'partial mp4');
+            const now = Date.now();
+            return {
+              interruption,
+              timing: {
+                framesMs: [0, 33.3],
+                durationMs: 66.7,
+                clock: {
+                  source: 'coremedia-host-clock',
+                  earliestZeroUnixMs: now - 1000,
+                  latestZeroUnixMs: now - 999,
+                },
+              },
+            };
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'window-id', windowId: '875' };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.captureInterruption?.videoPath, 'videos/recipe-run.mp4');
+    assert.match(result.captureInterruption?.message ?? '', /^CAPTURE_INTERRUPTED: .*2400 frames/u);
+    assert.equal(
+      await readFile(path.join(tempRoot, 'artifacts', 'videos/recipe-run.mp4'), 'utf-8'),
+      'partial mp4',
+    );
+    const manifest = (await readJsonFile(result.artifactManifestPath)) as {
+      artifacts: Array<Record<string, unknown>>;
+    };
+    const video = manifest.artifacts.find((artifact) => artifact.type === 'video');
+    assert.deepEqual(video?.interruption, interruption);
+
+    const trace = (await readJsonFile(result.tracePath)) as Array<Record<string, unknown>>;
+    const videoFailure = trace.find((entry) => entry.nodeId === 'recipe-run:video');
+    assert.equal(videoFailure?.ok, false);
+    assert.equal(videoFailure?.error_code, 'CAPTURE_INTERRUPTED');
+    assert.equal(videoFailure?.cause_class, 'environment');
+    const summary = (await readJsonFile(result.summaryPath)) as {
+      status: string;
+      cause_counts: Record<string, number>;
+    };
+    assert.equal(summary.status, 'fail');
+    assert.equal(summary.cause_counts.environment, 1);
+    // The timeline is written after the interruption entry, so it binds the final trace.
+    const timeline = (await readJsonFile(
+      path.join(tempRoot, 'artifacts', String(video?.timelinePath)),
+    )) as { traceDigest?: string };
+    assert.equal(timeline.traceDigest, digestRecipeDocument(trace));
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import net from 'node:net';
 import os from 'node:os';
 
 import type {
@@ -8,6 +7,7 @@ import type {
   GatewayAuthConnectParams,
   Principal,
 } from '@farmslot/protocol';
+import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -315,11 +315,15 @@ export function authorizeHttpRequest(params: {
       clientIp: resolveRequestIp(params.req, params.runtime.store.env),
     });
     if (result.ok) {
-      authorizeGatewayHttp(params.runtime, {
-        authenticated: true,
-        clientKind: 'companion',
-        authentication: result.authentication,
-      }, params.resource);
+      authorizeGatewayHttp(
+        params.runtime,
+        {
+          authenticated: true,
+          clientKind: 'companion',
+          authentication: result.authentication,
+        },
+        params.resource,
+      );
       return true;
     }
     sendAuthFailure(params.res, result);
@@ -387,14 +391,6 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 function isGatewayAuthMode(value: string): value is GatewayAuthMode {
   return value === 'none' || value === 'token' || value === 'password';
-}
-
-export function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-  if (normalized === 'localhost') return true;
-  if (normalized === '::1' || normalized === '[::1]') return true;
-  if (net.isIP(normalized) === 4) return normalized.startsWith('127.');
-  return false;
 }
 
 export function getHttpCredential(

@@ -46,6 +46,14 @@ export interface RecipeArtifactRecorderMetadata {
   fallbackReason?: string;
 }
 
+/** The recorder's stream stopped mid-run; the video holds the frames captured until then. */
+export interface RecipeRecordingInterruption {
+  frames: number;
+  mediaTimeMs: number;
+  /** Recorder-reported cause, e.g. `com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: …`. */
+  cause: string;
+}
+
 export interface RecipeArtifactManifestEntry {
   path: string;
   type: RecipeArtifactTypeName;
@@ -61,6 +69,8 @@ export interface RecipeArtifactManifestEntry {
   /** Optional package-relative recording timeline; never required for recipe execution. */
   timelinePath?: string;
   timelineUnavailableReason?: string;
+  /** Set on a video kept after its recording stream was interrupted. */
+  interruption?: RecipeRecordingInterruption;
 }
 
 export interface RecipeRunnerProvenance {

@@ -10,6 +10,7 @@ import { type FSWatcher, watch } from 'chokidar';
 import {
   type AgentContext,
   type AgentRole,
+  type SlotStatus,
   SUBTASK_INDEX_FILE,
   type SubtaskIndex,
   type SubtaskIndexUnit,
@@ -1322,19 +1323,66 @@ export function subtaskUnitFilePaths(
 
 // ─── Scan fleet for working slots and start watching ───
 
-export async function startWatchingActiveSlots(): Promise<void> {
+/**
+ * Whether a slot's worker may still write its checklist or SIGNAL.json. A
+ * blocked run keeps its slot, which a fleet refresh shows as held/pr-watch,
+ * and its worker can keep going: the signal watch is what resumes the run
+ * (resumeBlockedRunWhoseWorkerContinued).
+ */
+export function slotHasActiveWorkerTask(
+  slot: Pick<SlotStatus, 'lifecycle' | 'phase' | 'currentRunId'>,
+  blockedRunIds: ReadonlySet<string>,
+): boolean {
+  return (
+    slot.lifecycle === 'busy' ||
+    (slot.lifecycle === 'held' && slot.phase === 'ci-watch') ||
+    Boolean(slot.currentRunId && blockedRunIds.has(slot.currentRunId))
+  );
+}
+
+/**
+ * Watch every slot with an active worker task: at startup, and for one
+ * machine's slots when its node registers (`machine`). A registering node
+ * lost the remote watches its previous connection held, and a node that
+ * comes up after startup had none, so its remote watches are rebuilt.
+ */
+export async function startWatchingActiveSlots(options: { machine?: string } = {}): Promise<void> {
   const fleet = await loadFleetStatus();
-  for (const run of listRuns({ active: true }).runs) {
-    if (run.slotId && run.agentContexts?.length) {
-      await updateSlotStatus(run.slotId, { agent_contexts: summarizeAgentContexts(run) });
+  const activeRuns = listRuns({ active: true }).runs;
+  if (!options.machine) {
+    for (const run of activeRuns) {
+      if (run.slotId && run.agentContexts?.length) {
+        await updateSlotStatus(run.slotId, { agent_contexts: summarizeAgentContexts(run) });
+      }
     }
   }
+  const blockedRunIds = new Set(
+    activeRuns.filter((run) => run.status === 'blocked').map((run) => run.id),
+  );
   for (const slot of fleet.slots) {
-    const hasActiveWorkerTask =
-      slot.lifecycle === 'busy' || (slot.lifecycle === 'held' && slot.phase === 'ci-watch');
-    if (hasActiveWorkerTask && slot.taskFile) {
+    if (options.machine && slot.machine !== options.machine) continue;
+    if (slotHasActiveWorkerTask(slot, blockedRunIds) && slot.taskFile) {
       try {
+        if (options.machine) {
+          // A setup still pending from the previous connection would register
+          // its dead watch ids after this rebuild and make it look done: let it
+          // settle (its node requests fail or time out) before replacing it.
+          for (const [key, pending] of [...pendingWatchKeys]) {
+            if (slotIdFromWatchKey(key) === slot.slot) await pending.catch(() => {});
+          }
+          for (const [key, sw] of [...activeWatches]) {
+            if (slotIdFromWatchKey(key) === slot.slot && !sw.isLocal)
+              await unwatchKey(key, { expected: sw });
+          }
+        }
         await watchSlot(slot.slot, slot.currentRunId ? { runId: slot.currentRunId } : undefined);
+        // A remote watch reports only later writes: read a blocked run's signal
+        // once, so a worker that resumed while it was unwatched is seen.
+        if (slot.currentRunId && blockedRunIds.has(slot.currentRunId)) {
+          for (const key of [...activeWatches.keys()]) {
+            if (slotIdFromWatchKey(key) === slot.slot) await handleSignalChange(key);
+          }
+        }
       } catch (err) {
         // Recovery scan must not abort on a single bad slot: watchKey throws on
         // colon-bearing slot ids, and any other watch-setup failure should be

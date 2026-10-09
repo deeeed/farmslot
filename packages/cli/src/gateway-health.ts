@@ -1,6 +1,7 @@
 import http from 'node:http';
 
 import type { GatewayListenInfo } from '@farmslot/protocol';
+import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
 export interface GatewayHealthPayload {
   status?: string;
@@ -38,9 +39,7 @@ export function readGatewayHealth(url: string, timeoutMs = 3_000): Promise<Gatew
 export function gatewayHealthUrlFromWs(wsUrl: string): string | null {
   try {
     const url = new URL(wsUrl);
-    if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1' && url.hostname !== '::1') {
-      return null;
-    }
+    if (!isLoopbackHost(url.hostname)) return null;
     url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
     url.pathname = '/health';
     url.search = '';
