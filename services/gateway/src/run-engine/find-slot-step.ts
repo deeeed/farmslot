@@ -22,8 +22,8 @@ import {
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
+  transitionSlotStatus,
   updateSlotStatus,
-  updateSlotStatusIf,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
 import {
@@ -245,7 +245,7 @@ export async function commitSlotClaim(
   deps: {
     claimSlotStatusIf?: typeof claimSlotStatusIf;
     resetSlotIf?: typeof resetSlotIf;
-    updateSlotStatusIf?: typeof updateSlotStatusIf;
+    transitionSlotStatus?: typeof transitionSlotStatus;
     readRow?: typeof readSlotRow;
     runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
@@ -254,7 +254,7 @@ export async function commitSlotClaim(
   const {
     claimSlotStatusIf: claimIf = claimSlotStatusIf,
     resetSlotIf: resetIf = resetSlotIf,
-    updateSlotStatusIf: updateIf = updateSlotStatusIf,
+    transitionSlotStatus: transition = transitionSlotStatus,
     readRow = readSlotRow,
     runLookup = getRun,
     listSlotRuns = getAllRunsWithArchived,
@@ -310,20 +310,31 @@ export async function commitSlotClaim(
   //   release.
   // - Reservation (takeover or fresh reuse): the owner and its worker were
   //   never this run's, and nobody else will clear a busy row this run does
-  //   not own. Restore exactly what the claim overwrote and drop the
-  //   reservation; `warm` and `current_run_id` were never touched.
+  //   not own. In one serialized write, each part on its own: drop this
+  //   run's reservation if it still stands, whatever else changed (an owner
+  //   that moved to ci-watch must not keep a dead reservation); and restore
+  //   the busy/phase this claim wrote while the row still shows it beside the
+  //   same owner, even when a native cancel already dropped the reservation.
+  //   `agent` is restored only if it still holds the claimed value, so an
+  //   owner's newer write (ci-watch, an agent-only completion) is kept.
+  //   `warm` and `current_run_id` were never touched.
   if (runSupersededSince(runLookup(runId), generation)) {
     if (reservation) {
-      await updateIf(
-        slotId,
-        (slot) =>
-          slot.slot_epoch === claim.epoch &&
-          slot.handoff_run_id === runId &&
+      await transition(slotId, (slot) => {
+        if (slot.slot_epoch !== claim.epoch) return null;
+        const undo: Record<string, unknown> = {};
+        if (slot.handoff_run_id === runId) undo.handoff_run_id = null;
+        if (
+          (slot.current_run_id ?? null) === ownerBefore &&
           slot.lifecycle === 'busy' &&
-          slot.phase === phase &&
-          (slot.current_run_id ?? null) === ownerBefore,
-        { ...overwritten, handoff_run_id: null },
-      );
+          slot.phase === phase
+        ) {
+          undo.lifecycle = overwritten.lifecycle;
+          undo.phase = overwritten.phase;
+          if (agent && slot.agent === agent) undo.agent = overwritten.agent;
+        }
+        return Object.keys(undo).length > 0 ? { fields: undo } : null;
+      });
     } else {
       await resetIf(
         slotId,

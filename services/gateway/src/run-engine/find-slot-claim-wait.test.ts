@@ -342,11 +342,18 @@ function pendingWriteStatus(
           current_run_id: null,
           handoff_run_id: null,
         }),
-      updateSlotStatusIf: async (
+      transitionSlotStatus: async (
         slotId: string,
-        predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
-        fields: Record<string, unknown>,
-      ) => applyIf(slotId, predicate, fields),
+        decide: (
+          slot: Readonly<Record<string, unknown>>,
+        ) => { fields: Record<string, unknown> } | null,
+      ) => {
+        const slot = rows.get(slotId)!;
+        const decision = decide(slot);
+        if (!decision) return { applied: false, epoch: null };
+        Object.assign(slot, decision.fields);
+        return { applied: true, epoch: Number(slot.slot_epoch) };
+      },
       readRow: async (slotId: string) => rows.get(slotId) ?? null,
     },
   };
@@ -418,7 +425,7 @@ for (const [shape, prior, claimPhase, agent] of [
   });
 }
 
-test('a takeover undo leaves the row alone once ownership moved under the reservation', async () => {
+test('a takeover undo only drops its reservation once ownership moved under it', async () => {
   let after: Record<string, unknown> = {};
   const status = pendingWriteStatus({ ...liveOwned }, (slot) => {
     slot.current_run_id = 'successor';
@@ -441,8 +448,40 @@ test('a takeover undo leaves the row alone once ownership moved under the reserv
   runs['new-run'] = { status: 'cancelled' };
   status.release();
   await assert.rejects(claim, /Run new-run changed while waiting/);
-  assert.deepEqual(status.rows.get(SLOT), after);
+  assert.deepEqual(status.rows.get(SLOT), { ...after, handoff_run_id: null });
 });
+
+for (const [write, newer] of [
+  ['ci-watch hold from FINALIZE', { lifecycle: 'held', phase: 'ci-watch', agent: 'idle' }],
+  ['an agent-only completion', { agent: 'idle' }],
+] as const) {
+  test(`a takeover undo keeps the live owner's newer ${write} and drops the reservation`, async () => {
+    const status = pendingWriteStatus({ ...liveOwned }, (slot) => Object.assign(slot, newer));
+    const runs: Record<string, Lookup> = {
+      'new-run': { status: 'slot-finding' },
+      live: { status: 'ci-watching' },
+    };
+    const claim = commitSlotClaim(
+      SLOT,
+      'new-run',
+      0,
+      'working',
+      'working',
+      { takeoverLiveOwner: true },
+      { ...status.deps, runLookup: (id) => runs[id] },
+    );
+    await status.predicateDone;
+    runs['new-run'] = { status: 'cancelled' };
+    status.release();
+    await assert.rejects(claim, /Run new-run changed while waiting/);
+    assert.deepEqual(status.rows.get(SLOT), {
+      ...liveOwned,
+      ...newer,
+      handoff_run_id: null,
+      slot_epoch: 8,
+    });
+  });
+}
 
 test('a claim the CAS refuses is named; one refused for a superseded run says so', async () => {
   const runs: Record<string, Lookup> = {
@@ -503,33 +542,37 @@ for (const [shape, prior] of [
     },
   ],
 ] as const) {
-  test(`a fresh-reuse reservation on ${shape} cancelled mid-write restores the slot`, async () => {
-    const status = pendingWriteStatus({ ...prior });
-    const runs: Record<string, Lookup> = {
-      'new-run': { status: 'slot-finding' },
-      'prior-run': { status: 'done' },
-    };
-    const claim = commitSlotClaim(
-      SLOT,
-      'new-run',
-      0,
-      'preparing',
-      undefined,
-      { reserveOnly: true },
-      { ...status.deps, runLookup: (id) => runs[id] },
-    );
-    await status.predicateDone;
-    runs['new-run'] = { status: 'cancelled' };
-    status.release();
-    await assert.rejects(claim, /Run new-run changed while waiting/);
-    assert.deepEqual(status.rows.get(SLOT), { ...prior, slot_epoch: 4 });
-  });
+  for (const nativeCancel of [false, true]) {
+    test(`a fresh-reuse reservation on ${shape} cancelled mid-write restores the slot${nativeCancel ? ' after a native cancel dropped the reservation' : ''}`, async () => {
+      const status = pendingWriteStatus({ ...prior }, (slot) => {
+        if (nativeCancel) slot.handoff_run_id = null;
+      });
+      const runs: Record<string, Lookup> = {
+        'new-run': { status: 'slot-finding' },
+        'prior-run': { status: 'done' },
+      };
+      const claim = commitSlotClaim(
+        SLOT,
+        'new-run',
+        0,
+        'preparing',
+        undefined,
+        { reserveOnly: true },
+        { ...status.deps, runLookup: (id) => runs[id] },
+      );
+      await status.predicateDone;
+      runs['new-run'] = { status: 'cancelled' };
+      status.release();
+      await assert.rejects(claim, /Run new-run changed while waiting/);
+      assert.deepEqual(status.rows.get(SLOT), { ...prior, slot_epoch: 4 });
+    });
+  }
 }
 
 // What may land on the row between this claim's write and its undo. Claims
 // bump the epoch (a rival's, or this run's own replayed attempt reclaiming
 // its slot); marks do not (a release fence, or a cancel settling ownership).
-// Each case pins one clause of the undo fence.
+// Each case pins one clause of the undo fences.
 const laterWriters = [
   [
     'a rival claim',
@@ -541,18 +584,21 @@ const laterWriters = [
       handoff_run_id: 'rival',
     }),
     true,
+    false,
   ],
   [
     "this run's replayed attempt reclaiming the slot",
     { generation: 1 },
     () => ({ lifecycle: 'busy', phase: 'preparing' }),
     true,
+    false,
   ],
   [
     'a release fence over this claim',
     { generation: 0 },
     () => ({ lifecycle: 'busy', phase: 'releasing', releasing_since: releasingSince }),
     false,
+    true,
   ],
   [
     'a cancel settling the slot it never owned',
@@ -565,11 +611,6 @@ const laterWriters = [
       held_reason: 'Process 1 still uses the slot repository; slot teardown was skipped',
     }),
     false,
-  ],
-  [
-    'a cancel clearing only the reservation',
-    { generation: 0 },
-    () => ({ handoff_run_id: null }),
     false,
   ],
 ] as const;
@@ -578,10 +619,11 @@ for (const [kind, opts] of [
   ['an ordinary claim', undefined],
   ['a fresh-reuse reservation', { reserveOnly: true }],
 ] as const) {
-  for (const [writer, supersede, later, bumps] of laterWriters) {
-    // An ordinary claim holds no reservation for that cancel to clear.
-    if (!opts && writer === 'a cancel clearing only the reservation') continue;
-    test(`undoing ${kind} leaves ${writer} alone`, async () => {
+  for (const [writer, supersede, later, bumps, reservationStands] of laterWriters) {
+    // A reservation still standing at this claim's epoch is dropped; nothing
+    // else the later writer set is touched.
+    const dropsReservation = Boolean(opts) && reservationStands;
+    test(`undoing ${kind} keeps ${writer}`, async () => {
       let after: Record<string, unknown> = {};
       const status = pendingWriteStatus({ ...readyRow, slot_epoch: 1 }, (slot) => {
         Object.assign(slot, later(), {
@@ -604,7 +646,10 @@ for (const [kind, opts] of [
       };
       status.release();
       await assert.rejects(claim, /Run new-run changed while waiting/);
-      assert.deepEqual(status.rows.get(SLOT), after);
+      assert.deepEqual(
+        status.rows.get(SLOT),
+        dropsReservation ? { ...after, handoff_run_id: null } : after,
+      );
     });
   }
 }
