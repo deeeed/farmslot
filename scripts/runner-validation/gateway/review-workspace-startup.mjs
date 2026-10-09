@@ -61,14 +61,13 @@ if (run.metrics.runner === 'codex') {
     'A Codex review launch must skip the startup update check',
   );
   assert.ok(launch.includes('features.hooks=false'), 'A Codex review launch must turn hooks off');
+  const policy = launch.match(/shell_environment_policy=\{[^']*\}/)?.[0] ?? '';
   assert.ok(
-    launch.includes('shell_environment_policy={inherit=\\"core\\"') &&
-      launch.includes(`FARMSLOT_SIGNAL_ATTEMPT_ID=\\"${launchReceipt.signalAttemptId}\\"`),
-    'A Codex review launch must hand its tool shells the attempt id, not the node environment',
-  );
-  assert.ok(
-    launch.includes('ZDOTDIR=\\"/var/empty\\"'),
-    'A Codex review launch must keep zsh from re-reading operator dotfiles',
+    policy.includes('exclude=[]') &&
+      policy.includes('\\"FARMSLOT_SIGNAL_ATTEMPT_ID\\"') &&
+      policy.includes('ZDOTDIR=\\"/var/empty\\"') &&
+      !/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(policy),
+    'A Codex review launch must allowlist its tool shell environment without secrets',
   );
 }
 const progress = rpc('task.progress', { slotId: '', runId });

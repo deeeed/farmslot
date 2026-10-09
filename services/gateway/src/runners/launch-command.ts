@@ -232,16 +232,43 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
 }
 
 const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
+// Codex's "core" set plus locale and terminal; none of them carries a secret.
+const BASIC_SHELL_ENV = [
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'USER',
+  'USERNAME',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+];
 
-/** `shell_environment_policy` inline table: core variables plus `set`, secrets dropped. */
-export function codexShellEnvironmentPolicy(set: Record<string, string>): string {
-  const entries = Object.entries(set)
-    .filter(([name]) => !SECRET_ENV_NAME.test(name))
-    .map(
-      ([name, value]) =>
-        `${/^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name)}=${JSON.stringify(value)}`,
-    );
-  return `shell_environment_policy={inherit="core",set={${entries.join(',')}}}`;
+/**
+ * `shell_environment_policy` as an exact allowlist. Codex merges a `-c` table into
+ * the node's, so `exclude` and `include_only` are spelled out to replace the node's
+ * arrays, and `include_only` also drops any variable the node's own `set` adds.
+ * `ZDOTDIR=/var/empty` stops zsh re-exporting secrets from the operator's
+ * ~/.zshenv and ~/.zshrc.
+ */
+export function codexShellEnvironmentPolicy(names: string[]): string {
+  const refused = names.filter((name) => SECRET_ENV_NAME.test(name));
+  if (refused.length) {
+    console.warn(`[launch] secret-like names kept out of Codex tool shells: ${refused.join(', ')}`);
+  }
+  const allowed = [
+    ...new Set([
+      ...BASIC_SHELL_ENV,
+      ...names.filter((name) => !SECRET_ENV_NAME.test(name)),
+      'ZDOTDIR',
+    ]),
+  ];
+  return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
 }
 
 export function buildInteractiveRefinementRunnerCommand(options: {
@@ -259,11 +286,11 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
   disableHooks?: boolean;
   /**
-   * Codex only: tool shells get Codex's core variables (PATH, HOME, TMPDIR, …) plus
-   * exactly these, whatever the node's shell_environment_policy says. Secret-like
-   * names are dropped, so provider keys never reach shells working on PR code.
+   * Codex only: tool shells see exactly these environment names (plus a few
+   * non-secret basics), with their values from the launch environment, whatever the
+   * node's shell_environment_policy says. Secret-like names are refused.
    */
-  shellEnvironment?: Record<string, string>;
+  shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
 }): string | null {
@@ -292,8 +319,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
         : '',
       options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
       options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
-      options.shellEnvironment
-        ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironment))}`
+      options.shellEnvironmentNames
+        ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
         : '',
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
