@@ -8,6 +8,7 @@
     "Workers on remote nodes reach the gateway that dispatched them, and Codex reviews launch unattended",
     "An explicitly chosen slot that is still releasing waits up to 5 minutes instead of failing as busy",
     "Browser health checks no longer stop running screen recordings on the same Mac",
-    "The publish package copies only the evidence the manifest names and the media the PR body cites, under a size cap"
+    "The publish package keeps evidence, cited media and recipe outputs instead of the whole artifacts folder, and fails fast over 1 GB",
+    "Every ssh, scp and rsync to a remote node now times out after 10 s instead of hanging"
   ]
 }
