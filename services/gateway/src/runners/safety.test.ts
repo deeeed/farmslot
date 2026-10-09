@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
@@ -30,6 +34,19 @@ describe('WORKER_ENV_PREFIX', () => {
     assert.match(WORKER_ENV_PREFIX, /DISABLE_OMX=1/);
     assert.match(WORKER_ENV_PREFIX, /ASDF_DATA_DIR:-\$HOME\/\.asdf/);
     assert.match(WORKER_ENV_PREFIX, /PATH="\$ASDF_SHIMS:\$PATH"/);
+  });
+
+  it('puts the deploy-managed CLI link dir ahead of the asdf shims', (t) => {
+    // Worker bash -lc shells on the nodes get neither dir from their dotfiles;
+    // the prefix alone must make the deployed farmslot win over an asdf one.
+    const home = mkdtempSync(join(tmpdir(), 'worker-env-prefix-'));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    mkdirSync(join(home, '.asdf/shims'), { recursive: true });
+    const path = execFileSync('bash', ['-c', `${WORKER_ENV_PREFIX}; printf %s "$PATH"`], {
+      env: { HOME: home, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    assert.equal(path, `${home}/.local/bin:${home}/.asdf/shims:/usr/bin:/bin`);
   });
 });
 

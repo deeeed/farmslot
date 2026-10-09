@@ -379,8 +379,8 @@ esac
   );
   for (const command of ['rsync', 'systemctl', 'sleep'])
     write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
-  // Workers start in bash -lc, so the bash login profile decides their PATH.
-  write('home/.bash_profile', 'export PATH="$HOME/.local/bin:$PATH"\n');
+  // No bash login profile, as on macpro and mini: the worker prefix alone must
+  // put the deployed CLI on PATH.
   if (tmuxServer) write('home/tmux-server', '');
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const cliRoot = path.join(home, '.local/share/farmslot-cli');
@@ -589,16 +589,19 @@ test('deploy-node verifies in bash -lc without a tmux server, whatever the zsh d
   );
 });
 
-test('deploy-node fails with the fix when the bash login profile does not put the CLI on PATH', (t) => {
+test('deploy-node verifies when the bash login profile never adds ~/.local/bin', (t) => {
   const fixture = cliFixture(t);
-  fs.rmSync(path.join(fixture.home, '.bash_profile'));
-  assert.throws(fixture.deploy, (error) => {
-    assert.match(
-      String(error.stderr),
-      /no farmslot on the worker PATH; workers start in bash -lc, so add .*\/\.local\/bin to PATH in ~\/\.bash_profile or ~\/\.profile/,
-    );
-    return true;
-  });
+  fixture.write('home/.bash_profile', 'export PATH="/usr/local/bin:$PATH"\n');
+
+  fixture.deploy();
+
+  assert.deepEqual(
+    fixture.calls().map((call) => [call.argv, call.script]),
+    [
+      [['--version'], fs.realpathSync(fixture.entry)],
+      [['rpc', 'gateway.status'], fs.realpathSync(fixture.entry)],
+    ],
+  );
 });
 
 test('deploy-node fails loudly with the fix when a worker cannot reach the gateway', (t) => {
@@ -621,17 +624,14 @@ test('deploy-node fails loudly with the fix when a worker cannot reach the gatew
   });
 });
 
-test('deploy-node fails when an asdf shim shadows the deployed CLI on the worker PATH', (t) => {
+test('deploy-node verifies the deployed CLI ahead of an asdf-installed farmslot', (t) => {
   const fixture = cliFixture(t);
-  const shim = path.join(fixture.home, '.asdf/shims/farmslot');
-  fixture.write('home/.asdf/shims/farmslot', '#!/bin/sh\necho stale\n', true);
-  assert.throws(fixture.deploy, (error) => {
-    assert.match(
-      String(error.stderr),
-      new RegExp(`farmslot on the worker PATH is ${shim}, not the deployed ${fixture.entry}`),
-    );
-    return true;
-  });
+  fixture.write('home/.asdf/shims/farmslot', '#!/bin/sh\necho stale; exit 1\n', true);
+
+  const output = fixture.deploy();
+
+  assert.match(output, /farmslot 0\.0\.0-fixture/);
+  assert.equal(fixture.calls()[0].script, fs.realpathSync(fixture.entry));
 });
 
 test('deploy-node keeps the yarn log and installs nothing when the CLI install fails', (t) => {

@@ -807,7 +807,8 @@ LINKS
   # Verify the way a tmux slot worker runs: `exec bash -lc '<worker prefix> &&
   # export GW_URL=… && …'` in a throwaway session on the node user's tmux server,
   # falling back to plain `bash -lc` when no server is running. The prefix is the
-  # gateway's own (scripts/lib/worker-env-prefix.sh); GW_URL is the URL this node
+  # gateway's own (scripts/lib/worker-env-prefix.sh) and puts ~/.local/bin, where
+  # the links above live, first on PATH. GW_URL is the URL this node
   # dials, and no control-plane credential is set, so the CLI authenticates with
   # the stored profile for that URL exactly as a tmux worker does. FARMSLOT_HOME
   # is left as the shell has it for both instances. Native workers instead inherit
@@ -825,7 +826,8 @@ entry=$1
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
 cd "$HOME" || exit 1
 resolved=$(command -v farmslot) || {
-  echo "[deploy] ERROR: no farmslot on the worker PATH; workers start in bash -lc, so add $HOME/.local/bin to PATH in ~/.bash_profile or ~/.profile" >&2
+  echo "[deploy] ERROR: no farmslot on the worker PATH, though the worker prefix puts $HOME/.local/bin first" >&2
+  echo "  fix: check that $HOME/.local/bin/farmslot links to $entry, then redeploy" >&2
   exit 1
 }
 if [ ! "$resolved" -ef "$entry" ]; then
