@@ -6,6 +6,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - The pre-publication cockpit Diff tab has the same "Hide tests" toggle as the workspace diff views and shares their remembered preference. File pills and the tab count follow it ("Diff (5 of 12)"), and a hidden selected test file hands the viewer to the first visible file.
+- Every diff and changed-file view now has the "Hide tests" toggle through one shared filter: the review-pr run page file tabs ("8 of 17 files"), the native session Changes list, improvement proposal diffs and diff artifacts opened in the lightbox join the gate Diff tab, slot changed-file lists and the diff viewer. The slot branch diff list uses the project's test globs like the rest.
+- One-file diffs outside those lists (the slot editor diff tab, the desktop slot workspace diff tab, a native session Files-mode diff) show the toggle on a test file and hide its diff behind a placeholder. Hiding tests on a review where only tests changed now clears the open file instead of leaving its diff on screen.
 
 ## 0.20.4 - 2026-10-08
 

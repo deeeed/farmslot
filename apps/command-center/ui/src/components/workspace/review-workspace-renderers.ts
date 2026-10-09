@@ -335,6 +335,18 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       flex-shrink: 0;
       overflow-x: auto;
     }
+    review-workspace .rw-file-count {
+      align-self: center;
+      padding: 0 6px 0 2px;
+      color: ${colors.textMuted};
+      font-family: ${fonts.mono};
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    review-workspace .rw-file-tabs .diff-kind-controls {
+      flex-shrink: 0;
+      padding: 0 8px 0 0;
+    }
     review-workspace .rw-ft {
       display: flex;
       align-items: center;

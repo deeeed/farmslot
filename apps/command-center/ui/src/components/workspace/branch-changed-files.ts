@@ -3,13 +3,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  readHideTestsPref,
-  splitDiffFilesByKind,
-  subscribeHideTestsPref,
-  writeHideTestsPref,
-} from '../../utils/diff-test-filter.js';
-import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
+import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { realPath } from '../slot-view/slot-view-model.js';
 
 type BranchDiffStatus = 'M' | 'A' | 'D' | 'R';
@@ -147,12 +142,17 @@ export class BranchChangedFiles extends LitElement {
   @property({ attribute: false }) changes: WorktreeChangeEntry[] = [];
   /** State chips render only in worktree scope — head-scope lists are committed by definition. */
   @property() scope: 'head' | 'worktree' = 'head';
+  /** Effective test-file globs from the host's `git.branchDiff` result; null uses the defaults. */
+  @property({ attribute: false }) testPatterns: readonly string[] | null = null;
+  private readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this.testPatterns,
+    onChange: () => this._autoCollapse(),
+  });
 
   @state() private _collapsed = new Set<string>();
   @state() private _baseInput = '';
   @state() private _viewMode: FileListViewMode = 'tree';
   @state() private _showDropdown = false;
-  @state() private _hideTests = readHideTestsPref();
 
   /** Per-path working-tree entries — rebuilt on demand, avoids O(rows x changes) filters. */
   private get _changesByPath(): Map<string, WorktreeChangeEntry[]> {
@@ -459,23 +459,15 @@ export class BranchChangedFiles extends LitElement {
     `,
   ];
 
-  private _unsubscribeHideTests: (() => void) | null = null;
-
   connectedCallback() {
     super.connectedCallback();
     this._baseInput = this.base;
     document.addEventListener('click', this._onDocClick);
-    this._hideTests = readHideTestsPref();
-    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
-      this._hideTests = hide;
-    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this._onDocClick);
-    this._unsubscribeHideTests?.();
-    this._unsubscribeHideTests = null;
   }
 
   private _onDocClick = (e: MouseEvent) => {
@@ -531,20 +523,20 @@ export class BranchChangedFiles extends LitElement {
   }
 
   updated(changed: Map<string, unknown>) {
-    if (changed.has('files') || changed.has('_hideTests')) {
-      const visible = splitDiffFilesByKind(this.files, this._hideTests, {
-        keepPath: this.selectedPath,
-      }).visible;
-      // Auto-collapse if >= 30 files
-      if (visible.length >= 30) {
-        const tree = buildTree(visible, this.commentCounts);
-        this._collapsed = new Set(tree.filter((n) => n.type === 'dir').map((n) => n.path));
-      } else {
-        this._collapsed = new Set();
-      }
-    }
+    if (changed.has('files') || changed.has('testPatterns')) this._autoCollapse();
     if (changed.has('selectedPath') && this.selectedPath) {
       this._revealPath(this.selectedPath);
+    }
+  }
+
+  /** Collapse every directory once 30+ files are listed. */
+  private _autoCollapse() {
+    const visible = this._testFilter.split(this.files, this.selectedPath).visible;
+    if (visible.length >= 30) {
+      const tree = buildTree(visible, this.commentCounts);
+      this._collapsed = new Set(tree.filter((n) => n.type === 'dir').map((n) => n.path));
+    } else {
+      this._collapsed = new Set();
     }
   }
 
@@ -660,14 +652,8 @@ export class BranchChangedFiles extends LitElement {
     `;
   }
 
-  private _toggleHideTests() {
-    writeHideTestsPref(!this._hideTests);
-  }
-
   render() {
-    const split = splitDiffFilesByKind(this.files, this._hideTests, {
-      keepPath: this.selectedPath,
-    });
+    const split = this._testFilter.split(this.files, this.selectedPath);
     const visible = split.visible;
     const tree = buildTree(visible, this.commentCounts);
     const filteredBranches = this._baseInput
@@ -729,18 +715,14 @@ export class BranchChangedFiles extends LitElement {
               </button>`,
           )}
         </span>
-        ${renderDiffKindControls({
-          summary: split.summary,
-          hideTests: this._hideTests,
-          onToggle: () => this._toggleHideTests(),
-        })}
+        ${this._testFilter.renderControls(split.summary)}
         <span class="summary">
-          ${visible.length} file${visible.length !== 1 ? 's' : ''}
+          ${formatDiffFileCount(split)} file${this.files.length !== 1 ? 's' : ''}
           <span class="add-stat"
-            >+${this._hideTests ? split.visibleAdditions : this.totalAdditions}</span
+            >+${this._testFilter.hideTests ? split.visibleAdditions : this.totalAdditions}</span
           >
           <span class="del-stat"
-            >-${this._hideTests ? split.visibleDeletions : this.totalDeletions}</span
+            >-${this._testFilter.hideTests ? split.visibleDeletions : this.totalDeletions}</span
           >
         </span>
       </div>
