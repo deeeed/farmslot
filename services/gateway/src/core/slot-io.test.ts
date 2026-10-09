@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +28,7 @@ import { setFileTransferBroadcast } from './file-transfer.js';
 import {
   slotCopyDir,
   SlotCopyDirEntryError,
+  type SlotCopyDirSkippedLink,
   slotCopyFile,
   slotFileExists,
   slotReadFileBuffer,
@@ -217,7 +228,7 @@ test('remote slot paths preserve .git segments relative to the filesystem root',
   assert.equal(observed?.relPath, path.join('repo', '.git', 'config'));
 });
 
-test('slotCopyDir skips local symlinks instead of copying them into artifacts', async (t) => {
+test('slotCopyDir skips escaping local symlinks instead of copying them into artifacts', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -529,6 +540,129 @@ test('slotCopyDir local path keeps copying after a nested per-file failure', asy
   assert.equal(await readFile(path.join(destDir, 'top.txt'), 'utf-8'), 'top');
   assert.equal(await readFile(path.join(destDir, 'sub', 'sibling.txt'), 'utf-8'), 'sibling');
   assert.equal(existsSync(path.join(destDir, 'sub', 'blocked.bin')), false);
+});
+
+// A copied recipe-perps tree: in-root file and directory links beside links that
+// escape, dangle, or loop back onto an ancestor.
+async function linkedArtifactTree(
+  t: test.TestContext,
+): Promise<{ sourceDir: string; destDir: string }> {
+  const base = realpathSync(await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-links-')));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const sourceDir = path.join(base, 'artifacts');
+  await mkdir(path.join(sourceDir, 'actions'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'shared'), { recursive: true });
+  await writeFile(path.join(base, 'outside.txt'), 'outside');
+  await writeFile(path.join(sourceDir, 'actions/run.ts'), 'export const x: number = 1;\n');
+  await symlink('run.ts', path.join(sourceDir, 'actions/run.mjs'));
+  await writeFile(path.join(sourceDir, 'shared/a.txt'), 'a');
+  await symlink('shared', path.join(sourceDir, 'alias'));
+  await symlink('..', path.join(sourceDir, 'shared/up'));
+  await symlink('../outside.txt', path.join(sourceDir, 'leak.txt'));
+  await symlink('missing.ts', path.join(sourceDir, 'gone.mjs'));
+  return { sourceDir, destDir: path.join(base, 'dest') };
+}
+
+async function assertLinkedTreeCopied(destDir: string, copied: number): Promise<void> {
+  assert.equal(copied, 4);
+  assert.equal(
+    await readFile(path.join(destDir, 'actions/run.mjs'), 'utf-8'),
+    'export const x: number = 1;\n',
+  );
+  assert.equal(
+    await readFile(path.join(destDir, 'actions/run.ts'), 'utf-8'),
+    'export const x: number = 1;\n',
+  );
+  assert.equal(await readFile(path.join(destDir, 'alias/a.txt'), 'utf-8'), 'a');
+  assert.equal(await readFile(path.join(destDir, 'shared/a.txt'), 'utf-8'), 'a');
+  for (const skipped of ['leak.txt', 'gone.mjs', 'shared/up', 'alias/up'])
+    assert.equal(existsSync(path.join(destDir, skipped)), false, skipped);
+}
+
+function skippedByPath(skipped: SlotCopyDirSkippedLink[], sourceDir: string) {
+  return Object.fromEntries(
+    skipped.map((link) => [path.relative(sourceDir, link.sourcePath), link.reason]),
+  );
+}
+
+test('slotCopyDir local path copies in-root links and skips escaping, dangling, and looping ones', async (t) => {
+  const { sourceDir, destDir } = await linkedArtifactTree(t);
+  const skipped: SlotCopyDirSkippedLink[] = [];
+
+  const copied = await slotCopyDir(
+    { host: 'localhost', machine: 'test-machine', sshTarget: 'localhost' },
+    sourceDir,
+    destDir,
+    { onSkippedLink: (link) => skipped.push(link) },
+  );
+
+  await assertLinkedTreeCopied(destDir, copied);
+  const reasons = skippedByPath(skipped, sourceDir);
+  assert.deepEqual(Object.keys(reasons).sort(), ['alias/up', 'gone.mjs', 'leak.txt', 'shared/up']);
+  assert.match(reasons['leak.txt']!, /resolves to .*outside\.txt, outside .*artifacts$/);
+  assert.equal(reasons['gone.mjs'], 'its target does not resolve (ENOENT)');
+  assert.match(reasons['alias/up']!, /loops back to .*artifacts$/);
+});
+
+test('slotCopyDir remote path copies in-root links and skips escaping and looping ones', async (t) => {
+  const { sourceDir, destDir } = await linkedArtifactTree(t);
+  // The node agent's fs semantics over the same tree: fs.list reports a link as
+  // its target's type and drops a dangling one; fs.stat is lstat; reads refuse a
+  // final-component symlink.
+  const fakeWs = new FakeNodeWebSocket({
+    onExists: ({ path: requested }) => ({ exists: existsSync(requested) }),
+    onRealpath: ({ path: requested }) => ({ path: realpathSync(requested) }),
+    onList: ({ path: requested }) => ({
+      entries: readdirSync(requested).flatMap((name) => {
+        const info = (() => {
+          try {
+            return statSync(path.join(requested, name));
+          } catch {
+            return null;
+          }
+        })();
+        if (!info) return [];
+        return [
+          info.isDirectory()
+            ? { name, type: 'directory' }
+            : { name, type: 'file', size: info.size },
+        ];
+      }),
+    }),
+    onStat: ({ path: requested }) => {
+      const info = lstatSync(requested);
+      return {
+        size: info.size,
+        isFile: info.isFile(),
+        isDirectory: info.isDirectory(),
+        mtimeMs: 0,
+      };
+    },
+    onReadBase64: ({ path: requested }) => {
+      const fd = openSync(requested, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        return { content: readFileSync(fd).toString('base64') };
+      } finally {
+        closeSync(fd);
+      }
+    },
+  });
+  registerNode('remote-links-machine', 123, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+  const skipped: SlotCopyDirSkippedLink[] = [];
+
+  const copied = await slotCopyDir(
+    { host: '203.0.113.13', machine: 'remote-links-machine', sshTarget: 'tester@203.0.113.13' },
+    sourceDir,
+    destDir,
+    { onSkippedLink: (link) => skipped.push(link) },
+  );
+
+  await assertLinkedTreeCopied(destDir, copied);
+  const reasons = skippedByPath(skipped, sourceDir);
+  assert.deepEqual(Object.keys(reasons).sort(), ['alias/up', 'leak.txt', 'shared/up']);
+  assert.match(reasons['leak.txt']!, /resolves to .*outside\.txt, outside .*artifacts$/);
+  assert.match(reasons['shared/up']!, /loops back to .*artifacts$/);
 });
 
 test('remote slotCopyFile uses one-shot fs.readBase64 below the small-file threshold', async (t) => {

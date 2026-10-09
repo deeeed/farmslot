@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A symlink inside a review support library or a copied worker artifact tree is copied as its target when its real path stays inside that root (a linked directory is walked; a loop back to an ancestor is cut). Recipe-perps' `actions/mobile/perps/*.mjs -> *.ts` links had failed every perps review at write-task and the artifact mirror at `complete`. Support collection still refuses a link that dangles, escapes or loops; `slotCopyDir` skips it with a warning instead of failing the copy.
 
 ## 0.20.5 - 2026-10-08
 
