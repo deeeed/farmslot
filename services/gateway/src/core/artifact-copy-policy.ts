@@ -37,14 +37,41 @@ export const WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES = [
   'recipe-harness/source',
 ] as const;
 
+// Directory names skipped at any depth: dependency installs and VCS metadata,
+// the same pair node-support skips when it collects support files.
+export const ARTIFACT_COPY_EXCLUDED_DIR_NAMES = ['node_modules', '.git'] as const;
+
+// Review output directories the gateway writes at the top of artifacts/: a
+// prefix followed by the loop number only. A worker directory that merely
+// starts with a prefix (self-review-fix-20261009/) is the worker's.
+const GATEWAY_OWNED_REVIEW_DIR_PREFIXES = ['review-loop-', 'self-review-', 'independent-review-'];
+
+function gatewayOwnedReviewDirNumber(name: string): string | null {
+  const prefix = GATEWAY_OWNED_REVIEW_DIR_PREFIXES.find((candidate) => name.startsWith(candidate));
+  return prefix ? name.slice(prefix.length) : null;
+}
+
+export function isGatewayOwnedReviewDirName(name: string): boolean {
+  return /^\d+$/.test(gatewayOwnedReviewDirNumber(name) ?? '');
+}
+
+/**
+ * The same names as `find` primaries matching `./<name>`, for a scan run on the
+ * worker: the prefix, at least one digit, and no non-digit after the prefix.
+ */
+export function gatewayOwnedReviewDirFindPredicates(): string[] {
+  return GATEWAY_OWNED_REVIEW_DIR_PREFIXES.map(
+    (prefix) => `\\( -path './${prefix}[0-9]*' ! -path './${prefix}*[!0-9]*' \\)`,
+  );
+}
+
 export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
   return (
     (GATEWAY_OWNED_DIFF_ARTIFACTS as readonly string[]).includes(name) ||
     (GATEWAY_OWNED_RUN_ARTIFACTS as readonly string[]).includes(name) ||
     name.startsWith('diff.txt.previous.') ||
-    /^review-loop-\d+$/.test(name) ||
+    isGatewayOwnedReviewDirName(name) ||
     /^(self-review|independent-review)-\d+\.(json|md)$/.test(name) ||
-    /^(self-review|independent-review)-\d+$/.test(name) ||
     /^publication-gate-[a-z0-9-]+\.md$/i.test(name) ||
     /^pr-package\.(json|md)$/.test(name) ||
     name === 'workflow.mmd'
@@ -55,7 +82,7 @@ export function isGatewayOwnedArtifactPath(artifactPath: string): boolean {
   const normalized = artifactPath.replace(/\\/g, '/');
   if (!normalized.startsWith('artifacts/')) return false;
   const artifactName = normalized.slice('artifacts/'.length);
-  if (/^review-loop-\d+\//.test(artifactName)) return true;
-  if (/^(self-review|independent-review)-\d+\//.test(artifactName)) return true;
-  return !artifactName.includes('/') && isGatewayOwnedArtifactMirrorEntry(artifactName);
+  const [topLevel, ...rest] = artifactName.split('/');
+  if (rest.length > 0) return isGatewayOwnedReviewDirName(topLevel);
+  return isGatewayOwnedArtifactMirrorEntry(artifactName);
 }

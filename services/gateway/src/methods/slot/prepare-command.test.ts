@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -236,8 +237,121 @@ test('buildPrepareWrappedCommand reaps the prior exact identity before replacing
   assert.match(reapCommand, /case "\$pgid" in ''\|\*\[!0-9\]\*/);
   assert.match(reapCommand, /case "\$sentinel" in ''\|\*\[!0-9\]\*/);
   assert.match(reapCommand, /grep -Fxq -- 'farmslot-prepare-scope'/);
-  assert.match(reapCommand, /rm -f "\$identityfile"$/);
+  assert.match(reapCommand, /rm -f "\$identityfile"; fi$/);
 });
+
+// Linux CI's /bin/sh is dash; run under it explicitly where it exists.
+for (const shell of ['/bin/sh', '/bin/dash'].filter((candidate) => existsSync(candidate))) {
+  test(`an identity a successor writes while the reaped group drains stays recorded (${shell})`, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-reap-successor-'));
+    const identityPath = path.join(root, 'preflight.identity');
+    const scope = 'd'.repeat(32);
+    const successor = `999999\t999998\t${'e'.repeat(32)}`;
+    // The group leader is the sentinel itself: its argv carries the marker and
+    // scope. Its TERM trap stands in for a successor prepare recording its own
+    // identity during the reap's drain wait.
+    const group = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        `trap 'printf "%s\\n" "$SUCCESSOR" > "$IDENTITY"; exit 0' TERM; while :; do sleep 0.05; done`,
+        'farmslot-prepare-scope',
+        scope,
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, SUCCESSOR: successor, IDENTITY: identityPath },
+      },
+    );
+    assert.ok(group.pid && group.pid > 1);
+    group.unref();
+    writeFileSync(identityPath, `${group.pid}\t${group.pid}\t${scope}\n`);
+    try {
+      const result = spawnSync(
+        shell,
+        ['-c', buildPrepareIdentityReapCommand(identityPath, { awaitExit: true })],
+        { encoding: 'utf-8', timeout: 15_000 },
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /killed verified preflight group/);
+      assert.equal(readFileSync(identityPath, 'utf-8').trim(), successor);
+    } finally {
+      try {
+        process.kill(-group.pid, 'SIGKILL');
+      } catch {
+        // Already reaped.
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const shell of ['/bin/sh', '/bin/dash'].filter((candidate) => existsSync(candidate))) {
+  test(`a reaped group whose members are only zombies counts as stopped (${shell})`, async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-reap-zombie-'));
+    const identityPath = path.join(root, 'preflight.identity');
+    const scope = 'f'.repeat(32);
+    // The sentinel leads its own group under a parent that never reaps it, so
+    // once signalled it stays a zombie for the rest of the reap, as under a slow
+    // parent shell. Linux reports such a group as alive to `kill -0`.
+    const parent = spawn(
+      'python3',
+      [
+        '-c',
+        [
+          'import os, sys, time',
+          'pid = os.fork()',
+          'if pid == 0:',
+          '    os.setpgid(0, 0)',
+          "    os.execv('/bin/sh', ['sh', '-c', 'while :; do sleep 0.05; done', 'farmslot-prepare-scope', sys.argv[1]])",
+          'print(pid, flush=True)',
+          'time.sleep(30)',
+        ].join('\n'),
+        scope,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let sentinel = 0;
+    try {
+      const [line] = (await once(parent.stdout!, 'data')) as [Buffer];
+      sentinel = Number(String(line).trim());
+      assert.ok(sentinel > 1, 'sentinel pid was not reported');
+      // The exec has replaced the forked child once its argv carries the marker.
+      const deadline = Date.now() + 2_000;
+      while (
+        !spawnSync('ps', ['-ww', '-p', String(sentinel), '-o', 'command='], {
+          encoding: 'utf-8',
+        }).stdout.includes('farmslot-prepare-scope') &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      writeFileSync(identityPath, `${sentinel}\t${sentinel}\t${scope}\n`);
+
+      const result = spawnSync(
+        shell,
+        ['-c', buildPrepareIdentityReapCommand(identityPath, { awaitExit: true })],
+        { encoding: 'utf-8', timeout: 15_000 },
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /killed verified preflight group/);
+      assert.equal(existsSync(identityPath), false);
+    } finally {
+      parent.kill('SIGKILL');
+      if (sentinel > 1) {
+        try {
+          process.kill(-sentinel, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('clearStalePrepareProcess returns false when there is no live tracked preflight', async () => {
   // Missing pid file: the tracked-PID branch is skipped and the fallback sweep

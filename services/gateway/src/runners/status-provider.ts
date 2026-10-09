@@ -14,6 +14,7 @@ import type { RunnerAccountInspection, RunnerAccountInventory } from '@farmslot/
 import type { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 
 import { probeOpenCodeAccounts, probePiAccounts } from './account-inventory.js';
@@ -537,7 +538,7 @@ export function accountInspectionForHost(
     ...inspection,
     command: isLocal(vars.host, vars.machine)
       ? command
-      : `ssh ${shellQuote(vars.sshTarget)} ${shellQuote(command)}`,
+      : `ssh ${SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS} ${shellQuote(vars.sshTarget)} ${shellQuote(command)}`,
   };
 }
 

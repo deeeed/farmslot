@@ -85,8 +85,8 @@ if [ -n "${SLOT_ID}" ]; then
     SSH_CTL_DIR="$(mktemp -d /tmp/fs-ssh.XXXXXX)"
     SSH_CTL_PATH="${SSH_CTL_DIR}/cm-%C"
     trap 'rm -rf "${SSH_CTL_DIR}"' EXIT
-    SSH_MUX_OPTS=(-o ControlMaster=auto -o "ControlPath=${SSH_CTL_PATH}" -o ControlPersist=60)
-    SSH_MUX_E="ssh -o ControlMaster=auto -o ControlPath=${SSH_CTL_PATH} -o ControlPersist=60"
+    SSH_MUX_OPTS=("${SSH_CONNECT_OPTS[@]}" -o ControlMaster=auto -o "ControlPath=${SSH_CTL_PATH}" -o ControlPersist=60)
+    SSH_MUX_E="${RSYNC_SSH} -o ControlMaster=auto -o ControlPath=${SSH_CTL_PATH} -o ControlPersist=60"
   fi
 
   # Helper: copy file to slot (preserves exec bit on *.sh so repo-local

@@ -2,16 +2,11 @@ import path from 'node:path';
 
 import type { SlotPrepareParams } from '@farmslot/protocol';
 
-import {
-  execOnSlot,
-  isLocal,
-  isMissingProjectConfigError,
-  loadProjectVars,
-  loadSlotVars,
-  type SlotVars,
-} from '../../core/index.js';
+import { execOnSlot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+
+import { resolvePrepareRuntimeDir } from './prepare-command.js';
 
 const PREPARE_SENTINEL = '.preparing.lock';
 const PREPARE_SENTINEL_MAX_AGE_SECONDS = 5 * 60;
@@ -42,16 +37,6 @@ function bindHeartbeatShutdown(): void {
   // the first already cleared the set.
   process.once('beforeExit', cleanup);
   process.once('exit', cleanup);
-}
-
-async function resolvePrepareRuntimeDir(projectName: string): Promise<string> {
-  try {
-    const projectVars = await loadProjectVars(projectName);
-    return projectVars.runtimeDir || '.agent';
-  } catch (error) {
-    if (isMissingProjectConfigError(error)) return '.agent';
-    throw error;
-  }
 }
 
 function prepareSentinelPaths(

@@ -13,6 +13,7 @@ import {
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
 import { markSlotHeld } from '../core/index.js';
+import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
@@ -137,7 +138,9 @@ export async function executeFinalizeStep(
     const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
     const result = isLocal(vars.host, vars.machine)
       ? await execLocal(cmd, { timeout: 15000 })
-      : await execLocal(`ssh ${vars.sshTarget} "${cmd}"`, { timeout: 15000 });
+      : await execLocal(`ssh ${SSH_CONNECT_SHELL_OPTIONS} ${vars.sshTarget} "${cmd}"`, {
+          timeout: 15000,
+        });
     if (result.stdout.trim()) {
       const metricsLines = result.stdout.trim().split('\n');
       session = Object.fromEntries(

@@ -99,7 +99,7 @@ read_artifact() {
   if is_local "$HOST" "$MACHINE"; then
     cat "$path" 2>/dev/null || true
   else
-    ssh "${SSH_TARGET}" "cat '${path}' 2>/dev/null" 2>/dev/null || true
+    ssh "${SSH_CONNECT_OPTS[@]}" "${SSH_TARGET}" "cat '${path}' 2>/dev/null" 2>/dev/null || true
   fi
 }
 
@@ -118,7 +118,7 @@ VIDEO_PATH="${ARTIFACT_BASE}/evidence/review.mp4"
 if is_local "$HOST" "$MACHINE"; then
   [ -f "$VIDEO_PATH" ] && VIDEO_SIZE=$(du -h "$VIDEO_PATH" 2>/dev/null | cut -f1 | tr -d ' ')
 else
-  VIDEO_SIZE=$(ssh "${SSH_TARGET}" "du -h '${VIDEO_PATH}' 2>/dev/null | cut -f1 | tr -d ' '" 2>/dev/null || true)
+  VIDEO_SIZE=$(ssh "${SSH_CONNECT_OPTS[@]}" "${SSH_TARGET}" "du -h '${VIDEO_PATH}' 2>/dev/null | cut -f1 | tr -d ' '" 2>/dev/null || true)
 fi
 
 # ── Parse task file for metadata ──────────────────────────────────
@@ -411,7 +411,7 @@ if [ "$SKIP_ARTIFACT_UPLOAD" = false ] && [ -n "$ARTIFACTS_REPO" ]; then
   else
     LOCAL_UPLOAD_DIR=$(mktemp -d /tmp/review-upload-XXXXXX)
     CLEANUP_UPLOAD_DIR="$LOCAL_UPLOAD_DIR"
-    rsync -az "${SSH_TARGET}:${ARTIFACT_BASE}/" "${LOCAL_UPLOAD_DIR}/" 2>/dev/null || true
+    rsync -az -e "$RSYNC_SSH" "${SSH_TARGET}:${ARTIFACT_BASE}/" "${LOCAL_UPLOAD_DIR}/" 2>/dev/null || true
   fi
 
   if [ -d "$LOCAL_UPLOAD_DIR" ]; then
@@ -524,7 +524,7 @@ if [ "$SKIP_ARCHIVE" = false ] && [ -n "$ORCH_TASK_DIR" ] && [ -d "$ORCH_TASK_DI
   if is_local "$HOST" "$MACHINE"; then
     cp -r "${ARTIFACT_BASE}/"* "${ORCH_TASK_DIR}/artifacts/" 2>/dev/null || true
   else
-    rsync -az "${SSH_TARGET}:${ARTIFACT_BASE}/" "${ORCH_TASK_DIR}/artifacts/" 2>/dev/null || true
+    rsync -az -e "$RSYNC_SSH" "${SSH_TARGET}:${ARTIFACT_BASE}/" "${ORCH_TASK_DIR}/artifacts/" 2>/dev/null || true
   fi
 
   # Save the posted comment
