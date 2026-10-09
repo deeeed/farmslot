@@ -31,6 +31,8 @@ export interface ReviewTmuxOperationResult {
   startedAt?: string;
   stopped?: boolean;
   signalAttemptId?: string;
+  /** Set when the launch answered Codex's Folder access screen with Open restricted. */
+  folderAccess?: 'restricted';
 }
 
 /** Native prompt acceptance and task progress are independent startup evidence. */
@@ -195,6 +197,23 @@ export async function reviewTmuxOperation(
       effort: run.effort,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
+      // A cached newer Codex version shows an "Update available" notice (a modal
+      // without a prompt, a history banner with one), which the launch handshake
+      // fails on as an unknown prompt.
+      skipUpdateCheck: true,
+      // The node's own Codex hooks (an operator's hooks.json, plugin hooks) must not
+      // run against PR code, and when untrusted they stop the launch on "Hooks need
+      // review" (macpro).
+      disableHooks: true,
+      // A node policy of inherit = "core" (macpro) dropped FARMSLOT_SIGNAL_ATTEMPT_ID
+      // from the reviewer's shells, so its mark wrote another attempt id. Name exactly
+      // what the review's shells need; review-terminal sets the values.
+      shellEnvironmentNames: [
+        ...Object.keys(environment.set),
+        'DISABLE_OMX',
+        'DISABLE_OMC',
+        'FARMSLOT_SIGNAL_ATTEMPT_ID',
+      ],
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',
@@ -283,5 +302,9 @@ export async function launchReviewTmux(
     ...(started.signalAttemptId ? { signalAttemptId: started.signalAttemptId } : {}),
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');
+  if (started.folderAccess === 'restricted') {
+    console.log(`[review-tmux] ${runId}: answered Codex Folder access with Open restricted`);
+    return { session, folderAccess: started.folderAccess };
+  }
   return { session };
 }

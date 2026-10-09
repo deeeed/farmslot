@@ -86,3 +86,41 @@ export function formatTestShare(summary: DiffKindSummary): string | null {
   if (summary.testShare === null) return files;
   return `${files} · ${Math.round(summary.testShare * 100)}% of lines`;
 }
+
+/** File count for a filtered list: `12`, or `5 of 12` while files are hidden. */
+export function formatDiffFileCount(split: {
+  visible: readonly unknown[];
+  hiddenCount: number;
+}): string {
+  const total = split.visible.length + split.hiddenCount;
+  return split.hiddenCount === 0 ? `${total}` : `${split.visible.length} of ${total}`;
+}
+
+/** Keeps the selected file while it is visible; otherwise the first visible file. */
+export function visibleDiffSelection(
+  visible: readonly { path: string }[],
+  selected: string,
+): string | undefined {
+  return visible.some((file) => file.path === selected) ? selected : visible[0]?.path;
+}
+
+export type DiffSelectionHandOff =
+  | { kind: 'keep' }
+  | { kind: 'select'; path: string }
+  | { kind: 'clear' };
+
+/**
+ * What a list that owns its selection does after the filter changes: keep a
+ * listed selection whose diff is loaded, select the first listed file when the
+ * selection got hidden (or its diff was dropped), clear it when nothing is listed.
+ */
+export function diffSelectionHandOff(
+  visible: readonly { path: string }[],
+  selected: string,
+  diffLoaded: boolean,
+): DiffSelectionHandOff {
+  const next = visibleDiffSelection(visible, selected);
+  if (!next) return selected ? { kind: 'clear' } : { kind: 'keep' };
+  if (next !== selected || !diffLoaded) return { kind: 'select', path: next };
+  return { kind: 'keep' };
+}

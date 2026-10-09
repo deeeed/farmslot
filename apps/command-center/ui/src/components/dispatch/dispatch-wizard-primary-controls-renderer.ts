@@ -66,8 +66,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   setRunner: (runner: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
-  setSkipPrepare: (skipPrepare: boolean) => void;
-  setPrepareProfile: (prepareProfile: string) => void;
+  setPrepareOptions: (options: { skipPrepare: boolean; prepareProfile: string }) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
 }
 
@@ -276,12 +275,10 @@ function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
         show-plan=${false}
         ?show-advanced=${false}
         @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
-          if (event.detail.skipPrepare) {
-            ctx.setSkipPrepare(true);
-            return;
-          }
-          ctx.setSkipPrepare(false);
-          ctx.setPrepareProfile(event.detail.prepareProfile);
+          ctx.setPrepareOptions({
+            skipPrepare: event.detail.skipPrepare === true,
+            prepareProfile: event.detail.prepareProfile,
+          });
         }}
       ></slot-prepare-options>
     </div>

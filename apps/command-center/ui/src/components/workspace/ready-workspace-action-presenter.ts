@@ -16,6 +16,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
+import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
@@ -23,6 +24,7 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import {
@@ -108,6 +110,11 @@ index 1111111..2222222 100644
 `;
 
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
+  readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this._diffTestPatterns,
+    onChange: () => this._onHideTestsChanged(),
+  });
+
   get _payload(): ReadyGatePayload | undefined {
     return this.decision?.payload as ReadyGatePayload | undefined;
   }
@@ -483,11 +490,15 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      const selected =
-        this._selectedFile && result.files.some((file) => file.path === this._selectedFile)
-          ? this._selectedFile
-          : result.files[0]?.path;
-      if (selected) this._selectFile(selected);
+      const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
+      if (selected) {
+        this._selectFile(selected);
+      } else {
+        // Nothing visible: drop the previous selection and its diff so showing
+        // tests fetches this branch's file instead of reusing a stale one.
+        this._selectedFile = '';
+        this._fileDiff = '';
+      }
     } catch (err) {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[ready-workspace] branch diff failed:', err);
@@ -514,6 +525,29 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
       }
+    }
+  }
+
+  _diffSplit() {
+    return this._testFilter.split(this._diffFiles);
+  }
+
+  /**
+   * A newly hidden test file hands the viewer to the first visible file; a
+   * selection whose diff is not loaded (dropped while everything was hidden)
+   * is fetched again; nothing listed drops the selection.
+   */
+  _onHideTestsChanged(): void {
+    const handOff = diffSelectionHandOff(
+      this._diffSplit().visible,
+      this._selectedFile,
+      Boolean(this._fileDiff) || this._fileDiffLoading,
+    );
+    if (handOff.kind === 'select') {
+      void this._selectFile(handOff.path);
+    } else if (handOff.kind === 'clear') {
+      this._selectedFile = '';
+      this._fileDiff = '';
     }
   }
 

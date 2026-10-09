@@ -122,8 +122,7 @@ interface DispatchWizardViewContext {
   setRunner: (runner: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
-  setSkipPrepare: (skipPrepare: boolean) => void;
-  setPrepareProfile: (prepareProfile: string) => void;
+  setPrepareOptions: (options: { skipPrepare: boolean; prepareProfile: string }) => void;
   applySuggestedPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
@@ -253,8 +252,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               setModel: ctx.setModel,
               setEffort: ctx.setEffort,
 
-              setSkipPrepare: ctx.setSkipPrepare,
-              setPrepareProfile: ctx.setPrepareProfile,
+              setPrepareOptions: ctx.setPrepareOptions,
               setDevInteractiveProfile: ctx.setDevInteractiveProfile,
             })}
             ${renderVariantInput({

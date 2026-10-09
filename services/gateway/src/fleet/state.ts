@@ -353,6 +353,7 @@ interface RawSlot {
   enabled?: boolean;
   mode?: string;
   dispatchable?: boolean;
+  repo_blocker?: string;
   lifecycle?: string;
   phase?: string | null;
   warm?: boolean;
@@ -464,6 +465,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     agent: (raw.agent as SlotStatus['agent']) ?? 'idle',
     enabled: raw.enabled ?? true,
     dispatchable: raw.dispatchable ?? false,
+    ...(raw.repo_blocker ? { repoBlocker: raw.repo_blocker } : {}),
     lifecycle,
     phase,
     warm,

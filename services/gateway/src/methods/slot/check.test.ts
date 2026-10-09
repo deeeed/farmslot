@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -7,8 +8,15 @@ import test, { describe } from 'node:test';
 import type { ProjectVars, RawProjectJson, SlotVars } from '../../core/config.js';
 import { assertSlotHealthForRecipeRerun } from '../recipe.js';
 
-import { checkHealth, isOptionalFixtureAbsence, runHealthCheck, runUnlockHook } from './check.js';
+import {
+  checkDefaultBranch,
+  checkHealth,
+  isOptionalFixtureAbsence,
+  runHealthCheck,
+  runUnlockHook,
+} from './check.js';
 import { verifyPrepareHealth } from './prepare.js';
+import { probeDefaultBranch } from './slot-tracking.js';
 
 function makeSlotVars(remoteRepo: string): SlotVars {
   return {
@@ -255,4 +263,80 @@ test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeho
     isOptionalFixtureAbsence({ src: 'sentry.debug.properties' }, 'sentry.debug.properties'),
     false,
   );
+});
+
+test('checkDefaultBranch fails a single-branch clone and passes once main is fetchable', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-default-branch-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'init.defaultBranch=main',
+        ...args,
+      ],
+      { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  const upstream = path.join(root, 'upstream');
+  git(root, 'init', '-q', upstream);
+  git(upstream, 'commit', '-q', '--allow-empty', '-m', 'main');
+  git(upstream, 'checkout', '-q', '-b', 'release/8.14.0');
+  git(upstream, 'commit', '-q', '--allow-empty', '-m', 'release');
+  const single = path.join(root, 'single');
+  git(root, 'clone', '-q', '--single-branch', '--branch', 'release/8.14.0', upstream, single);
+  const full = path.join(root, 'full');
+  git(root, 'clone', '-q', upstream, full);
+
+  const blocked = await checkDefaultBranch(makeSlotVars(single), 'main');
+  assert.equal(blocked.status, 'fail');
+  assert.match(
+    blocked.detail,
+    /^origin fetch refspec \+refs\/heads\/release\/8\.14\.0:refs\/remotes\/origin\/release\/8\.14\.0 does not fetch default branch 'main'/,
+  );
+  // Prepare's own explicit fetch does not rescue it: checkout cannot DWIM origin/main.
+  git(single, 'fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main');
+  assert.equal((await checkDefaultBranch(makeSlotVars(single), 'main')).status, 'fail');
+  assert.throws(() => git(single, 'checkout', '-q', 'main'), /pathspec 'main' did not match/);
+
+  assert.equal((await checkDefaultBranch(makeSlotVars(full), 'main')).status, 'pass');
+  // A full clone without the configured default branch names the missing ref.
+  const missing = await checkDefaultBranch(makeSlotVars(full), 'develop');
+  assert.equal(missing.status, 'fail');
+  assert.match(missing.detail, /no default branch 'develop'/);
+
+  // A refspec without a destination fetches main only into FETCH_HEAD: still blocked.
+  git(single, 'config', '--add', 'remote.origin.fetch', '+refs/heads/main');
+  assert.equal((await checkDefaultBranch(makeSlotVars(single), 'main')).status, 'fail');
+  assert.throws(() => git(single, 'checkout', '-q', 'main'), /pathspec 'main' did not match/);
+
+  // The operator repair: widen the refspec; the slot passes and checkout works.
+  git(
+    single,
+    'config',
+    '--add',
+    'remote.origin.fetch',
+    '+refs/heads/main:refs/remotes/origin/main',
+  );
+  assert.equal((await checkDefaultBranch(makeSlotVars(single), 'main')).status, 'pass');
+  git(single, 'checkout', '-q', 'main');
+
+  const absent = await checkDefaultBranch(makeSlotVars(path.join(root, 'absent')), 'main');
+  assert.equal(absent.status, 'warn');
+
+  // An unreadable packed-refs makes for-each-ref fail: no verdict, never "missing".
+  git(full, 'pack-refs', '--all');
+  const packedRefs = path.join(full, '.git', 'packed-refs');
+  // The temp-dir removal registered above deletes it regardless of its mode.
+  await chmod(packedRefs, 0o000);
+  const unreadable = await checkDefaultBranch(makeSlotVars(full), 'main');
+  assert.equal(unreadable.status, 'warn');
+  assert.match(unreadable.detail, /^No verdict: .*git for-each-ref exited/);
+  assert.equal((await probeDefaultBranch(makeSlotVars(full), 'main')).readable, false);
 });

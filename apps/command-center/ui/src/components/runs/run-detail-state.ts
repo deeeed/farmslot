@@ -3,6 +3,7 @@ import { property, state } from 'lit/decorators.js';
 
 import type {
   AcceptanceCriterionRef,
+  AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
   CiCheckUpdatedPayload,
   PRStatus,
@@ -36,6 +37,8 @@ export abstract class RunDetailState extends LitElement {
   @state() acceptanceCriteria: AcceptanceCriterionRef[] | null = null;
   /** Why the ledger could not be read; the panel says so rather than showing nothing. */
   @state() acceptanceStatusError: string | null = null;
+  /** Manifest-linked criteria, sent only when the run has no ledger. */
+  @state() acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null = null;
   @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;

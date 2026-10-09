@@ -579,6 +579,34 @@ test('buildRefreshSlotRow carries the handoff reservation and epoch through a re
   assert.equal(row.current_run_id, 'prior-owner', 'ownership survives refresh');
 });
 
+test('buildRefreshSlotRow records only the current probe repo blocker', () => {
+  const probe = {
+    slot: 'macpro-mm-pixel6',
+    machine: 'macpro',
+    platform: 'android',
+    project: 'metamask-mobile-farm',
+    ssh: 'OK',
+    dev: 'emu:OK',
+    devserver: 'OK',
+    device: 'pixel6',
+    cdp: 'OFF',
+    fixtures: 'OK',
+    branch: 'release/8.14.0',
+    agent: 'idle',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: false,
+    repoBlocker: "repo has no default branch 'main' (neither local nor origin/main); fetch origin",
+  };
+  assert.equal(buildRefreshSlotRow(probe, { lifecycle: 'ready' }).repo_blocker, probe.repoBlocker);
+  const repaired = { ...probe, dispatchable: true, repoBlocker: undefined };
+  assert.equal(
+    'repo_blocker' in buildRefreshSlotRow(repaired, { lifecycle: 'ready' }),
+    false,
+    'a repaired repo clears the blocker on the next refresh',
+  );
+});
+
 test('buildRefreshSlotRow carries the harness readiness record through a refresh', () => {
   const probe = {
     slot: 'macwork-mm-4',

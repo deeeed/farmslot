@@ -105,6 +105,8 @@ test('task.progress carries the acceptance ledger beside the step projection', a
   try {
     const result = await progressFor(fixture);
     assert.deepEqual(result.acceptanceStatus, LEDGER);
+    assert.equal(result.acceptanceSource, 'ledger');
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
     // The registered criteria travel too, so a client can show the third one as
     // awaiting a verdict instead of hiding it.
     assert.deepEqual(result.acceptanceCriteria, [
@@ -139,6 +141,24 @@ test('an unreadable ledger leaves progress intact instead of failing the call', 
     const result = await progressFor(fixture);
     assert.equal(result.acceptanceStatus, undefined);
     assert.equal(result.structured?.totalSteps, 2, 'the checklist still reports');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('with no ledger, manifest links ride in their own field and never as a verdict', async () => {
+  const fixture = writeFixture(null);
+  try {
+    writeFileSync(
+      path.join(fixture.root, '.task', 'dev', 'demo', 'artifacts', 'evidence-manifest.json'),
+      JSON.stringify({ standalone: [{ label: 'Panel', covers: ['ac2'], file: 'after.png' }] }),
+    );
+    const result = await progressFor(fixture);
+    assert.equal(result.acceptanceStatus, undefined, 'the ledger field stays empty');
+    assert.equal(result.acceptanceSource, 'evidence-manifest');
+    assert.deepEqual(result.acceptanceEvidenceLinks, [
+      { id: 'AC-2', evidence: ['artifacts/after.png'] },
+    ]);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

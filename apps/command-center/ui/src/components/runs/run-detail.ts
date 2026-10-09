@@ -167,6 +167,7 @@ export class RunDetail extends RunDetailState {
           this.acceptanceStatus = p.progress.acceptanceStatus ?? null;
           this.acceptanceCriteria = p.progress.acceptanceCriteria ?? null;
           this.acceptanceStatusError = p.progress.acceptanceStatusError ?? null;
+          this.acceptanceEvidenceLinks = p.progress.acceptanceEvidenceLinks ?? null;
         }
       },
     );
@@ -255,6 +256,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
+      this.acceptanceEvidenceLinks = null;
       this.selectedStepProgress = null;
       this._selectedStepProgressKey = '';
       this.ciStatus = null;
@@ -329,6 +331,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
+      this.acceptanceEvidenceLinks = null;
     }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
@@ -998,6 +1001,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceStatus = res.acceptanceStatus ?? null;
       this.acceptanceCriteria = res.acceptanceCriteria ?? null;
       this.acceptanceStatusError = res.acceptanceStatusError ?? null;
+      this.acceptanceEvidenceLinks = res.acceptanceEvidenceLinks ?? null;
     } catch (err) {
       if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
@@ -1161,6 +1165,7 @@ export class RunDetail extends RunDetailState {
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
+      acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,

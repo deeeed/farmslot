@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  defaultBranchRepoBlocker,
   DETACHED_HEAD_BRANCH,
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
+  readDefaultBranchProbe,
   resolveSlotTrackingBranch,
 } from '../../src/slots/tracking-branch.js';
 
@@ -85,4 +87,109 @@ test('a detached HEAD is still a stale branch to the shared predicate', () => {
     'an unexplained detached HEAD must not silence the unmerged-work refusal',
   );
   assert.equal(DETACHED_HEAD_BRANCH, 'HEAD');
+});
+
+test('defaultBranchRepoBlocker names a fetch refspec that excludes the default branch', () => {
+  const full = ['+refs/heads/*:refs/remotes/origin/*'];
+  const local = ['refs/heads/main'];
+  assert.equal(defaultBranchRepoBlocker({ fetchRefspecs: full, refs: local }, 'main'), null);
+  assert.equal(
+    defaultBranchRepoBlocker({ fetchRefspecs: full, refs: ['refs/remotes/origin/main'] }, 'main'),
+    null,
+  );
+  // Explicit, short-source and multi-spec configs that map main to origin/main.
+  for (const fetchRefspecs of [
+    ['+refs/heads/main:refs/remotes/origin/main'],
+    ['main:refs/remotes/origin/main'],
+    ['+refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0', ...full],
+  ]) {
+    assert.equal(defaultBranchRepoBlocker({ fetchRefspecs, refs: local }, 'main'), null);
+  }
+  // Fetching main somewhere other than origin/main is not a fetch prepare can use:
+  // no `:dst` (FETCH_HEAD only), a mirror into refs/heads, or a glob source with a fixed dst.
+  for (const fetchRefspecs of [
+    ['+refs/heads/main'],
+    ['+refs/*:refs/*'],
+    ['+refs/heads/*:refs/remotes/upstream/*'],
+    ['+refs/heads/*:refs/remotes/origin/main'],
+  ]) {
+    assert.match(
+      defaultBranchRepoBlocker({ fetchRefspecs, refs: local }, 'main') ?? '',
+      /does not fetch default branch 'main' into refs\/remotes\/origin\/main/,
+      fetchRefspecs.join(','),
+    );
+  }
+  const single = defaultBranchRepoBlocker(
+    {
+      fetchRefspecs: ['+refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0'],
+      refs: [],
+    },
+    'main',
+  );
+  assert.match(single ?? '', /does not fetch default branch 'main'/);
+  assert.match(single ?? '', /release\/8\.14\.0/);
+  assert.match(
+    defaultBranchRepoBlocker(
+      { fetchRefspecs: [...full, '^refs/heads/main'], refs: local },
+      'main',
+    ) ?? '',
+    /does not fetch default branch 'main'/,
+  );
+  assert.match(
+    defaultBranchRepoBlocker({ fetchRefspecs: [], refs: local }, 'main') ?? '',
+    /\(none\)/,
+  );
+  assert.match(
+    defaultBranchRepoBlocker({ fetchRefspecs: full, refs: [] }, 'main') ?? '',
+    /no default branch 'main'/,
+  );
+});
+
+test('readDefaultBranchProbe gives no verdict when a git read fails', () => {
+  const ok = (stdout: string) =>
+    readDefaultBranchProbe({ stdout: `${stdout}probe=done\n`, stderr: '', exitCode: 0 }, 'main');
+  assert.deepEqual(
+    ok(
+      'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=0\nref=refs/heads/main\n',
+    ),
+    { readable: true, blocker: null },
+  );
+  // No refspec configured (git config exits 1) is a reading, not a failure.
+  assert.match(
+    (ok('fetch-exit=1\nrefs-exit=0\nref=refs/heads/main\n') as { blocker: string }).blocker,
+    /\(none\)/,
+  );
+  const unreadable = readDefaultBranchProbe(
+    {
+      stdout:
+        'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=128\nprobe=done\n',
+      stderr: "fatal: could not open '.git/packed-refs' for reading: Permission denied\n",
+      exitCode: 0,
+    },
+    'main',
+  );
+  assert.deepEqual(unreadable, {
+    readable: false,
+    error:
+      "git for-each-ref exited 128: fatal: could not open '.git/packed-refs' for reading: Permission denied",
+  });
+  assert.equal(ok('fetch-exit=3\nrefs-exit=0\n').readable, false);
+  assert.equal(ok('').readable, false, 'a probe that printed no status has no verdict');
+  // Cut short after the ref status (a timeout): no end sentinel, so no verdict, never "missing".
+  assert.deepEqual(
+    readDefaultBranchProbe(
+      {
+        stdout: 'fetch-exit=0\nfetch=+refs/heads/*:refs/remotes/origin/*\nrefs-exit=0\n',
+        stderr: '',
+        exitCode: 0,
+      },
+      'main',
+    ),
+    { readable: false, error: 'probe output ended early' },
+  );
+  assert.equal(
+    readDefaultBranchProbe({ stdout: '', stderr: 'ssh: connect refused', exitCode: 255 }, 'main')
+      .readable,
+    false,
+  );
 });

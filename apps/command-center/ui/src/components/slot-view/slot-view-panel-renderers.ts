@@ -226,6 +226,7 @@ export function renderSlotViewChangesPanel(view: SlotView) {
     .commentCounts=${view._branchDiffCommentCounts}
     .selectedPath=${realPath(view._activeFile)}
     .branches=${view._branchDiffBranches}
+    .testPatterns=${view._branchDiffTestPatterns}
     @file-select=${(e: CustomEvent) =>
       view._handleBranchDiffSelect(e.detail.path, e.detail.status, e.detail.oldPath)}
     @base-change=${(e: CustomEvent) => view._handleBranchDiffBaseChange(e.detail.base)}

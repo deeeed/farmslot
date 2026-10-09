@@ -35,4 +35,15 @@ export interface TaskProgressResult {
    * the two mean very different things for a run's proof.
    */
   acceptanceStatusError?: string;
+  /**
+   * `ledger` when `acceptanceStatus` is present; `evidence-manifest` when the run
+   * has no ledger and `acceptanceEvidenceLinks` was derived from the manifest's
+   * `covers`. Absent when neither applies.
+   */
+  acceptanceSource?: import('../contracts/index.js').AcceptanceStatusSource;
+  /**
+   * Criteria the evidence manifest links files to, for a run with no ledger.
+   * Evidence linked, not proven: no verdict, and no gate or check reads it.
+   */
+  acceptanceEvidenceLinks?: import('../contracts/index.js').AcceptanceEvidenceLink[];
 }
