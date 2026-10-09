@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, TaskProgressResult } from '@farmslot/protocol';
 
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
 // wholesale, so the real namespaces are spread in and only the fixtures these
@@ -172,9 +172,9 @@ const CHILD_MARKDOWN = ['- [ ] **1. read the diff**', '- [ ] **2. check the patt
   '\n',
 );
 
-const progressUpdates: Array<{ parentChecklist?: string }> = [];
-onTaskProgress((_slotId, _progress, _role, _contextId, _runId, parentChecklist) => {
-  progressUpdates.push({ ...(parentChecklist ? { parentChecklist } : {}) });
+const progressUpdates: Array<{ progress: TaskProgressResult; parentChecklist?: string }> = [];
+onTaskProgress((_slotId, progress, _role, _contextId, _runId, parentChecklist) => {
+  progressUpdates.push({ progress, ...(parentChecklist ? { parentChecklist } : {}) });
 });
 
 /**
@@ -351,6 +351,64 @@ test('a remote watch registers the registry and every child file, and unwatch st
     // here is reported at error level rather than swallowed — but NOT rethrown,
     // because a throw from `finally` replaces the assertion error that actually
     // explains the test, and a leaked watch would then hide its own cause.
+    try {
+      await unwatchSlot(SLOT_ID);
+    } catch (err) {
+      console.error(`[test] teardown unwatch failed for ${SLOT_ID}: ${(err as Error).message}`);
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a remote evidence manifest event updates acceptance once, and nothing routes after unwatch', async () => {
+  const root = writeTaskDir();
+  const dir = taskDirAbs();
+  mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  writeFileSync(
+    path.join(dir, 'inputs', 'handoff.json'),
+    `${JSON.stringify({ task: { acceptanceCriteria: ['criterion AC-1'] } })}\n`,
+  );
+  watchCalls = [];
+  stopCalls = [];
+  progressUpdates.length = 0;
+  const warn = console.warn;
+  const warnings: string[] = [];
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const manifestCall = watchCalls.find((call) => call.path.endsWith('evidence-manifest.json'));
+    assert.ok(manifestCall, 'the manifest is watched on the node');
+    const manifest = JSON.stringify({
+      standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }],
+    });
+    writeFileSync(manifestCall.path, manifest);
+    const event = {
+      requestId: manifestCall.requestId,
+      machine: MACHINE,
+      path: manifestCall.path,
+      content: manifest,
+    };
+    handleAgentFsChanged(event);
+    const deadline = Date.now() + 10_000;
+    while (!progressUpdates.length && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(progressUpdates.length, 1, 'one event, one update');
+    assert.deepEqual(progressUpdates[0].progress.acceptanceEvidenceLinks, [
+      { id: 'AC-1', evidence: ['artifacts/after.png'] },
+    ]);
+    assert.equal(progressUpdates[0].parentChecklist, undefined, 'a parent-level update');
+
+    await unwatchSlot(SLOT_ID);
+    assert.ok(stopCalls.includes(manifestCall.requestId), 'unwatch stops the manifest watch');
+    // A late node event for the stopped watch is refused on the spot, so no
+    // update can be scheduled for it.
+    console.warn = (...args: unknown[]) => warnings.push(args.join(' '));
+    handleAgentFsChanged(event);
+    console.warn = warn;
+    assert.match(warnings.join('\n'), /no active watch owns that request id/);
+    assert.equal(progressUpdates.length, 1);
+  } finally {
+    console.warn = warn;
     try {
       await unwatchSlot(SLOT_ID);
     } catch (err) {
