@@ -1340,23 +1340,38 @@ export function slotHasActiveWorkerTask(
   );
 }
 
-export async function startWatchingActiveSlots(): Promise<void> {
+/**
+ * Watch every slot with an active worker task: at startup, and for one
+ * machine's slots when its node registers (`machine`). A registering node
+ * lost the remote watches its previous connection held, and a node that
+ * comes up after startup had none, so its remote watches are rebuilt.
+ */
+export async function startWatchingActiveSlots(options: { machine?: string } = {}): Promise<void> {
   const fleet = await loadFleetStatus();
   const activeRuns = listRuns({ active: true }).runs;
-  for (const run of activeRuns) {
-    if (run.slotId && run.agentContexts?.length) {
-      await updateSlotStatus(run.slotId, { agent_contexts: summarizeAgentContexts(run) });
+  if (!options.machine) {
+    for (const run of activeRuns) {
+      if (run.slotId && run.agentContexts?.length) {
+        await updateSlotStatus(run.slotId, { agent_contexts: summarizeAgentContexts(run) });
+      }
     }
   }
   const blockedRunIds = new Set(
     activeRuns.filter((run) => run.status === 'blocked').map((run) => run.id),
   );
   for (const slot of fleet.slots) {
+    if (options.machine && slot.machine !== options.machine) continue;
     if (slotHasActiveWorkerTask(slot, blockedRunIds) && slot.taskFile) {
       try {
+        if (options.machine) {
+          for (const [key, sw] of [...activeWatches]) {
+            if (slotIdFromWatchKey(key) === slot.slot && !sw.isLocal)
+              await unwatchKey(key, { expected: sw });
+          }
+        }
         await watchSlot(slot.slot, slot.currentRunId ? { runId: slot.currentRunId } : undefined);
         // A remote watch reports only later writes: read a blocked run's signal
-        // once, so a worker that resumed while the gateway was down is seen.
+        // once, so a worker that resumed while it was unwatched is seen.
         if (slot.currentRunId && blockedRunIds.has(slot.currentRunId)) {
           for (const key of [...activeWatches.keys()]) {
             if (slotIdFromWatchKey(key) === slot.slot) await handleSignalChange(key);
