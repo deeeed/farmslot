@@ -1096,11 +1096,12 @@ async function routeAuthorizedMethod(
     // Nodes
     case 'node.connect': {
       requireNodeSession(authRuntime, state);
-      const { machine, pid, protocolVersion, capabilities } = p as {
+      const { machine, pid, protocolVersion, capabilities, gatewayUrl } = p as {
         machine: string;
         pid: number;
         protocolVersion?: string;
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
+        gatewayUrl?: unknown;
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
       assertNativeMachineAssignment(
@@ -1160,6 +1161,7 @@ async function routeAuthorizedMethod(
         PROTOCOL_VERSION,
         nativeSessions,
         nativeAuthority,
+        typeof gatewayUrl === 'string' ? gatewayUrl : undefined,
       );
       markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;
