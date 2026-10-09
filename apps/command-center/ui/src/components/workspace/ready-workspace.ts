@@ -309,7 +309,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       evidenceCount: this._evidenceArtifacts(payload).length,
       qualityCount: this._qualityItemCount(payload),
       inputCount: this._inputItemCount(payload),
-      diffFileCount: this._diffFiles.length,
+      diffFileCount: this._diffSplit().visible.length,
+      diffTotalFileCount: this._diffFiles.length,
       setActiveTab: (tab) => this._setActiveTab(tab),
     });
   }
@@ -352,16 +353,21 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderDiffTab() {
+    const split = this._diffSplit();
     return renderReadyDiffTab({
       slotId: this.slotId,
       diffLoading: this._diffLoading,
       diffError: this._diffError,
-      diffFiles: this._diffFiles,
+      diffFiles: split.visible,
+      diffTotalFileCount: this._diffFiles.length,
+      diffKindSummary: split.summary,
+      hideTests: this._hideTests,
       selectedFile: this._selectedFile,
       recovering: this._isRecovering,
       fileDiffLoading: this._fileDiffLoading,
       fileDiff: this._fileDiff,
       selectFile: (path) => this._selectFile(path),
+      toggleHideTests: () => this._toggleHideTests(),
     });
   }
 

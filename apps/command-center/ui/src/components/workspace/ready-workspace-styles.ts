@@ -735,6 +735,7 @@ export function readyWorkspaceLightStyles(): string {
       }
       ready-workspace .rdy-ft:hover { background: ${colors.bgSurface}; color: ${colors.textSecondary}; }
       ready-workspace .rdy-ft.selected { background: ${colors.accent}18; color: ${colors.textPrimary}; }
+      ready-workspace .rdy-file-tabs .diff-kind-controls { flex-shrink: 0; padding: 0 8px 0 4px; }
       ready-workspace .rdy-diff-content {
         flex: 1; overflow: hidden; display: flex; flex-direction: column;
       }
