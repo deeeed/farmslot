@@ -420,42 +420,32 @@ test('slotRelease still releases the new occupant of a slot a gate park freed', 
   );
 });
 
-test('slotRelease refuses unmerged work before it fences the slot or stops the agent', async (t) => {
+/** A local slot on a temp git repo on `branch`, from a fixture pool file. */
+async function fixtureSlot(t: test.TestContext, label: string, branch: string): Promise<string> {
   const { spawnSync } = await import('node:child_process');
   const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
   const { poolDir } = await import('../../core/config.js');
-  const { readSlotField } = await import('../../core/index.js');
-  const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-release-unmerged-'));
-  const slotId = `release-unmerged-${process.pid}`;
-  const poolFile = path.join(poolDir, `release-unmerged-fixture-${process.pid}.json`);
+  const root = mkdtempSync(path.join(os.tmpdir(), `farmslot-release-${label}-`));
+  const slotId = `release-${label}-${process.pid}`;
+  const poolFile = path.join(poolDir, `release-${label}-fixture-${process.pid}.json`);
   t.after(() => {
     rmSync(poolFile, { force: true });
     rmSync(root, { recursive: true, force: true });
   });
   const git = (...args: string[]) => {
     const isolated = ['-c', 'core.hooksPath=.git/hooks', '-c', 'commit.gpgsign=false'];
-    const result = spawnSync('git', [...isolated, ...args], {
+    const identity = ['-c', 'user.email=t@example.com', '-c', 'user.name=T'];
+    const result = spawnSync('git', [...isolated, ...identity, ...args], {
       cwd: root,
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
   };
   git('init', '-q', '-b', 'main');
-  git(
-    '-c',
-    'user.email=t@example.com',
-    '-c',
-    'user.name=T',
-    'commit',
-    '-q',
-    '--allow-empty',
-    '-m',
-    'base',
-  );
-  git('checkout', '-q', '-b', 'PROJ-1-unmerged');
-  writeFileSync(path.join(root, 'fix.txt'), 'work in progress\n');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  if (branch !== 'main') git('checkout', '-q', '-b', branch);
   writeFileSync(
     poolFile,
     JSON.stringify({
@@ -466,6 +456,18 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
       ssh_user: os.userInfo().username,
       slots: [{ id: slotId, repo: root, session: slotId }],
     }),
+  );
+  return slotId;
+}
+
+test('slotRelease refuses unmerged work before it fences the slot or stops the agent', async (t) => {
+  const { writeFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  const { loadSlotVars, readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'unmerged', 'PROJ-1-unmerged');
+  writeFileSync(
+    path.join((await loadSlotVars(slotId)).remoteRepo, 'fix.txt'),
+    'work in progress\n',
   );
   await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
   const steps: string[] = [];
@@ -480,4 +482,36 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
   assert.deepEqual(steps, [], 'no teardown step ran: no posture reconcile, no agent kill');
   assert.equal(await readSlotField(slotId, 'phase'), 'working', 'the slot was never fenced');
   assert.equal(await readSlotField(slotId, 'agent'), 'working');
+});
+
+test('an operator release detaches the run it released even while that run is in find-slot', async (t) => {
+  const { readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'owner-detach', 'main');
+  // Claimed by its find-slot step, which has not returned yet.
+  const owner = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-find-slot-owner`,
+    slotId,
+  });
+  t.after(() => cleanupRun(owner.id));
+  updateRun(owner.id, {
+    status: 'slot-finding',
+    steps: owner.steps.map((step) =>
+      step.name === 'find-slot' ? { ...step, status: 'running' } : step,
+    ),
+  });
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'busy',
+    phase: 'preparing',
+    agent: 'orchestrator',
+    current_run_id: owner.id,
+  });
+
+  const result = await slotRelease({ slotId, keepWork: true }, noopEmit);
+
+  assert.deepEqual(result, { released: true });
+  assert.equal(getRun(owner.id)?.slotId, null, 'the released owner lost the slot');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), null);
 });

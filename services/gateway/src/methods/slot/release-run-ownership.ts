@@ -1,6 +1,7 @@
 import { Events, isSlotFreedByPark } from '@farmslot/protocol';
 
 import { listRuns, updateRun } from '../../runs/store.js';
+import { slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -22,11 +23,7 @@ export function detachRunsForReleasedSlot(
   const detached: string[] = [];
   for (const run of listRuns({ active: true }).runs) {
     if (run.slotId !== slotId) continue;
-    const waitingForSlot = run.steps.some(
-      (step) =>
-        step.name === 'find-slot' && (step.status === 'pending' || step.status === 'running'),
-    );
-    if (waitingForSlot && run.id !== ownerRunId) continue;
+    if (run.id !== ownerRunId && slotPinIsRequestOnly(run)) continue;
     // A run whose park freed this slot is not the occupant this release is
     // tearing down — it gave the slot up so a successor could use it. Its
     // `slotId` is the park record's restore target and its preserved branch

@@ -318,6 +318,9 @@ async function slotReleaseImpl(
   // never be silently replaced by a rival claim's — the predicate re-reads
   // the CURRENT owner inside the write chain, and when expectedRunId is set
   // the teardown is refused unless that exact run still holds the claim.
+  // The owner the releasing fence actually lands on: an unbound release takes
+  // whoever holds the slot then, which may be a claim made after the preflight.
+  let releasedOwner: string | null = null;
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
@@ -330,6 +333,7 @@ async function slotReleaseImpl(
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
+      releasedOwner = owner;
       if (params.expectedRunId) return owner === params.expectedRunId;
       // Unbound (operator) release: releases whoever currently holds the slot.
       return true;
@@ -677,11 +681,7 @@ async function slotReleaseImpl(
     if (!(await resetSlotIf(params.slotId, epochStillOurs))) return abortReset();
   }
   if (detachRuns) {
-    const detachedRunIds = detachRunsForReleasedSlot(
-      params.slotId,
-      emit,
-      params.expectedRunId ?? boundOwner,
-    );
+    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit, releasedOwner);
     if (detachedRunIds.length > 0) {
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }

@@ -20,7 +20,7 @@ import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
 import { type ArchiveSlotRelease, runArchive } from './admin.js';
 import { runAdopt } from './adopt.js';
-import { runReplayStep } from './replay-step.js';
+import { rebindReleasedSlot, runReplayStep } from './replay-step.js';
 
 // The real-release case resolves the committed demo pool's slot.
 process.env.FARMSLOT_DEMO_POOL = '1';
@@ -176,16 +176,13 @@ test('a resume admitted before the archive takes the run makes the archive back 
   });
   await admitted;
   const { calls, slot } = recordingSlot();
-  slot.preflight = async () => {
-    // The archive passed its first checks; let the resume land before its lock.
-    finishResume();
-    return clean;
-  };
 
-  await assert.rejects(
-    runArchive({ runId: run.id }, noopEmit, slot),
-    /no longer a settled blocked run \(status=monitoring\)/,
-  );
+  // The archive passed its first checks and queues for the run transition the
+  // resume holds; the resume lands first.
+  const archive = runArchive({ runId: run.id }, noopEmit, slot);
+  finishResume();
+  await assert.rejects(archive, /no longer a settled blocked run \(status=monitoring\)/);
+  assert.equal(calls.preflight, 0);
   await resume;
   assert.equal(calls.releases.length, 0, 'the resumed worker was never torn down');
   assert.equal(getRun(run.id)?.status, 'monitoring');
@@ -319,4 +316,48 @@ test('a session reload re-checks slot ownership right before relaunching', async
     assertReloadStillOwnsSlot(run.id, slotId, 7),
     /no longer belongs to run .*; its session was not reloaded/,
   );
+});
+
+test('a free-slot archive goes through the run transition, so a re-bind before it is released', async (t) => {
+  // The block's cleanup left the slot ready while the run kept its slotId, and
+  // its worker kept going: the automatic resume re-binds such a slot under the
+  // run transition. An archive that skipped the transition evicted the run
+  // with the slot still naming it, and the reconciler later reset it under
+  // that live worker.
+  const run = blockedRun(t, 'archive-free-slot', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  await updateSlotStatus(slotId, { current_run_id: null, lifecycle: 'ready', phase: null });
+  const { calls, slot } = recordingSlot();
+  let resumeAdmitted!: () => void;
+  const admitted = new Promise<void>((resolve) => (resumeAdmitted = resolve));
+  let letResumeRun!: () => void;
+  const resumeMayRun = new Promise<void>((resolve) => (letResumeRun = resolve));
+  let rebound: string | null | undefined;
+  const resume = withRunTransition(run.id, async () => {
+    resumeAdmitted();
+    await resumeMayRun;
+    rebound = await rebindReleasedSlot(getRun(run.id)!);
+  });
+  await admitted;
+
+  const archive = runArchive({ runId: run.id }, noopEmit, slot);
+  letResumeRun();
+  await resume;
+  await archive;
+
+  assert.equal(rebound, null, 'the resume re-bound the slot before the archive took the run');
+  assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id }], 'so archive released it');
+  assert.equal(getRun(run.id), undefined, 'the run is archived');
+  assert.equal(await readSlotField(slotId, 'current_run_id'), null, 'no archived run holds it');
+});
+
+test('a slot re-bind refuses a run being archived', async (t) => {
+  const run = blockedRun(t, 'rebind-fenced', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  await updateSlotStatus(slotId, { current_run_id: null, lifecycle: 'ready', phase: null });
+
+  beginRunArchive(run.id);
+  t.after(() => endRunArchive(run.id));
+  assert.match(String(await rebindReleasedSlot(run)), /being archived/);
+  assert.equal(await readSlotField(slotId, 'current_run_id'), null);
 });

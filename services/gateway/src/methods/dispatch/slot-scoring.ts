@@ -78,6 +78,25 @@ export function isActiveSlotHolder(
   );
 }
 
+/**
+ * Before find-slot claims it, a run's slotId is only its request for that slot
+ * (an explicit pick waiting for the slot), not occupancy. A slot row naming the
+ * run as owner or handoff target means it did claim.
+ */
+export function slotPinIsRequestOnly(
+  run: Pick<Run, 'id' | 'status' | 'steps'>,
+  row?: Readonly<Record<string, unknown>> | null,
+): boolean {
+  if (row && (row.current_run_id === run.id || row.handoff_run_id === run.id)) return false;
+  return (
+    ['created', 'slot-finding'].includes(run.status) ||
+    (run.steps ?? []).some(
+      (step) =>
+        step.name === 'find-slot' && (step.status === 'pending' || step.status === 'running'),
+    )
+  );
+}
+
 export function activeRunIds(
   runs: ReadonlyArray<Pick<Run, 'id' | 'status'>>,
   excludeRunId?: string,

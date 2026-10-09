@@ -122,8 +122,11 @@ export async function runArchive(
   const archivedAsBlocked = run?.status === 'blocked';
   let fenced = false;
   try {
-    if (run && (await blockedRunOwnsSlot(run)))
-      fenced = await releaseBlockedRunSlot(run, emit, slot);
+    if (run && isSettledBlockedRun(run)) {
+      await fenceBlockedRunArchive(run);
+      fenced = true;
+      await releaseBlockedRunSlot(run, emit, slot);
+    }
     const ok = await storeArchiveRun(params.runId);
     if (!ok) throw new Error(`Run not found: ${params.runId}`);
   } finally {
@@ -136,34 +139,14 @@ export async function runArchive(
 }
 
 /**
- * A fleet refresh re-holds a blocked run's slot. Archive frees it through the
- * ordinary slot release, whose guards decide, and runs every refusal it can
- * before anything is torn down. Returns whether it left the run fenced from
- * replay; false when the slot turned out not to be the run's any more.
+ * Resume (operator or automatic) re-admits a blocked run under the run
+ * transition, and the automatic one can re-bind a slot its block left free.
+ * Re-check there and fence first, whether or not the slot still names the run:
+ * replay and re-binding refuse a fenced run, and a replay in flight aborts at
+ * its next ownership check. Archive refusals that need no slot I/O come first.
  */
-async function releaseBlockedRunSlot(
-  run: Run,
-  emit: Emit,
-  slot: ArchiveSlotRelease,
-): Promise<boolean> {
-  const slotId = run.slotId!;
+async function fenceBlockedRunArchive(run: Run): Promise<void> {
   assertRunArchivable(run);
-  const preflight = await slot.preflight({ slotId, expectedRunId: run.id });
-  if (!preflight) {
-    // The slot is mid-release, or another run holds it now.
-    if (await blockedRunOwnsSlot(run)) throw await slotStillHeldError(run.id, slotId);
-    return false;
-  }
-  if (preflight.unmergedWork) {
-    const { branch, details } = preflight.unmergedWork;
-    throw new Error(
-      `Cannot archive blocked run ${run.id}: slot ${slotId} has work on '${branch}' (${details}) that releasing it would lose. Push it, or release the slot with Force Reset, then archive.`,
-    );
-  }
-  // Resume (operator or automatic) re-admits a blocked run under the run
-  // transition. Re-check there and fence: replay refuses a fenced run, and one
-  // already in flight aborts at its next ownership check. The release stays
-  // outside the lock because a native handoff inside it takes run locks.
   await withRunTransition(run.id, async () => {
     const current = getRun(run.id);
     if (!current || !isSettledBlockedRun(current) || isRunArchiving(run.id)) {
@@ -173,15 +156,36 @@ async function releaseBlockedRunSlot(
     }
     beginRunArchive(run.id);
   });
-  try {
-    const { released } = await slot.release({ slotId, expectedRunId: run.id }, emit);
-    if (!released && (await readSlotField(slotId, 'current_run_id')) === run.id)
-      throw await slotStillHeldError(run.id, slotId);
-  } catch (error) {
-    endRunArchive(run.id);
-    throw error;
+}
+
+/**
+ * A fleet refresh re-holds a blocked run's slot. Archive frees it through the
+ * ordinary slot release, whose guards decide, and checks them before anything
+ * is torn down. The release runs outside the run transition because a native
+ * handoff inside it takes run locks; the fence covers the run meanwhile.
+ */
+async function releaseBlockedRunSlot(
+  run: Run,
+  emit: Emit,
+  slot: ArchiveSlotRelease,
+): Promise<void> {
+  if (!(await blockedRunOwnsSlot(run))) return;
+  const slotId = run.slotId!;
+  const preflight = await slot.preflight({ slotId, expectedRunId: run.id });
+  if (!preflight) {
+    // The slot is mid-release, or another run holds it now.
+    if (await blockedRunOwnsSlot(run)) throw await slotStillHeldError(run.id, slotId);
+    return;
   }
-  return true;
+  if (preflight.unmergedWork) {
+    const { branch, details } = preflight.unmergedWork;
+    throw new Error(
+      `Cannot archive blocked run ${run.id}: slot ${slotId} has work on '${branch}' (${details}) that releasing it would lose. Push it, or release the slot with Force Reset, then archive.`,
+    );
+  }
+  const { released } = await slot.release({ slotId, expectedRunId: run.id }, emit);
+  if (!released && (await readSlotField(slotId, 'current_run_id')) === run.id)
+    throw await slotStillHeldError(run.id, slotId);
 }
 
 async function slotStillHeldError(runId: string, slotId: string): Promise<Error> {

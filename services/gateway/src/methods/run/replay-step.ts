@@ -54,7 +54,11 @@ import {
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
-import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
+import {
+  assertRunNotArchiving,
+  isRunArchiving,
+  isRunArchivingRefusal,
+} from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -587,7 +591,10 @@ export async function rebindReleasedSlot(run: Run): Promise<string | null> {
     (slot) => {
       const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
       const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
-      if (owner && owner !== run.id) holder = `run ${owner}`;
+      // An archive evicts the run without this slot; re-binding would leave the
+      // slot held by a run that no longer exists.
+      if (isRunArchiving(run.id) || !getRun(run.id)) holder = 'nobody: the run is being archived';
+      else if (owner && owner !== run.id) holder = `run ${owner}`;
       else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
       else if (slotClaimBlockedByRelease(slot) !== null || slot.lifecycle !== 'ready')
         holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
