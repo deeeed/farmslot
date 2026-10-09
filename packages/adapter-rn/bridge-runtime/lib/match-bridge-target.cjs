@@ -61,19 +61,26 @@ function matchesBridgeTarget(target, env) {
 // (an in-app agentic bridge is live), not merely a registered debug target.
 // Two phones of the same model on one Metro both report "Google Pixel 6a"; the
 // snapshot cannot tell which one is pinned, so a manufacturer-form match counts only
-// when it is the sole one.
+// when it is the sole one. The count includes entries that have not reported a
+// platform yet: the pinned phone may still be starting while the other one answers.
 function hasMatchingRoute(value, env) {
   const e = env || process.env;
-  const targets = (Array.isArray(value) ? value : [value]).filter((t) => matchesBridgeTarget(t, e));
+  const entries = (Array.isArray(value) ? value : [value]).filter(
+    (t) => t && typeof t === 'object',
+  );
   const androidName = e.ANDROID_TARGET_DEVICE_NAME || e.ANDROID_DEVICE || '';
   const adbSerial = e.ADB_SERIAL || e.ANDROID_SERIAL || '';
   const manufacturerForm = (t) =>
     Boolean(androidName) &&
-    t.platform === 'android' &&
+    (!t.platform || t.platform === 'android') &&
     manufacturerNameMatches(String(t.deviceName || ''), androidName, adbSerial);
-  const ambiguous = targets.filter(manufacturerForm).length > 1;
-  return targets.some(
-    (t) => !(ambiguous && manufacturerForm(t)) && t.agenticPresent === true && Boolean(t.route),
+  const ambiguous = entries.filter(manufacturerForm).length > 1;
+  return entries.some(
+    (t) =>
+      matchesBridgeTarget(t, e) &&
+      !(ambiguous && manufacturerForm(t)) &&
+      t.agenticPresent === true &&
+      Boolean(t.route),
   );
 }
 
@@ -108,4 +115,10 @@ function describeRequested(env) {
   return 'any platform';
 }
 
-module.exports = { matchesBridgeTarget, hasMatchingRoute, describeTargets, describeRequested };
+module.exports = {
+  matchesBridgeTarget,
+  manufacturerNameMatches,
+  hasMatchingRoute,
+  describeTargets,
+  describeRequested,
+};

@@ -66,6 +66,18 @@ describe('matchesBridgeTarget android device name', () => {
     );
   });
 
+  it('refuses a second phone while the pinned one has not reported a platform', () => {
+    const starting = { deviceName: 'Google Pixel 6a', platform: '' };
+    assert.equal(hasMatchingRoute([starting, live('Google Pixel 6a')], phone), false);
+  });
+
+  it('keeps an android launch on the phone with an ambient iOS simulator', () => {
+    const ambientSim = { ...phone, IOS_SIMULATOR: 'mmdev-3' };
+    const ios = { platform: 'ios', deviceName: 'mmdev-3', route: 'Home', agenticPresent: true };
+    assert.equal(hasMatchingRoute([ios, live('Google Pixel 6a')], ambientSim), true);
+    assert.equal(hasMatchingRoute([ios], ambientSim), false);
+  });
+
   it('keeps an iOS confirm on iOS with an ambient physical Android pin', () => {
     const iosReq = { ...phone, WAIT_FOR_BRIDGE_PLATFORM: 'ios' };
     const ios = { platform: 'ios', deviceName: 'iPhone 15', route: 'Home', agenticPresent: true };
