@@ -98,6 +98,7 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     repo: overrides.repo,
     linkedWorktree: overrides.linkedWorktree,
     agentContexts: overrides.agentContexts,
+    repoBlocker: overrides.repoBlocker,
   };
 }
 
@@ -1101,6 +1102,36 @@ test('candidateIneligibilityReason: full-fleet ownership scan, nudge rows exclud
     }),
     null,
   );
+});
+
+test('Skip Prepare keeps a repo-blocked free slot eligible in candidates and preview', () => {
+  const blocked = makeSlot({
+    slot: 'macpro-mm-pixel6',
+    lifecycle: 'ready',
+    phase: null,
+    branch: 'release/8.14.0',
+    repoBlocker:
+      "origin fetch refspec +refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0 does not fetch default branch 'main' into refs/remotes/origin/main",
+  });
+  const base = { project: 'farmslot-farm', flowType: 'qa' as const, ticketOrPr: 'PROJ-1' };
+  assert.match(
+    candidateIneligibilityReason(blocked, [blocked], { isNudgeRow: false }) ?? '',
+    /^Slot repo cannot prepare:/,
+  );
+  assert.equal(
+    candidateIneligibilityReason(blocked, [blocked], { isNudgeRow: false, skipPrepare: true }),
+    null,
+  );
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet({ ...base, slotId: blocked.slot }, [blocked]),
+    /Slot repo cannot prepare/,
+  );
+  for (const params of [{ ...base, slotId: blocked.slot }, base]) {
+    assert.equal(
+      resolveDispatchPreviewFromFleet({ ...params, skipPrepare: true }, [blocked]).preview.slotId,
+      blocked.slot,
+    );
+  }
 });
 
 test('validateSlotForTargetBranch rejects disabled linked worktree branch owners', () => {

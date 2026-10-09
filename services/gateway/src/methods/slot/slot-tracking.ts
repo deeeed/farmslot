@@ -3,7 +3,10 @@ import path from 'node:path';
 
 import {
   DEFAULT_BRANCH,
+  type DefaultBranchProbe,
+  defaultBranchProbeCommand,
   isSlotIdleBranch,
+  readDefaultBranchProbe,
   remoteBranchRefspec,
   type ResetSlotRepoToIdleOptions,
   resolveSlotTrackingBranch,
@@ -111,6 +114,20 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
     `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
   );
   return isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
+}
+
+/** Probe the slot repo for whether prepare can check out `defaultBranch`. */
+export async function probeDefaultBranch(
+  vars: SlotVars,
+  defaultBranch: string,
+  options?: { timeout?: number },
+): Promise<DefaultBranchProbe> {
+  const output = await execOnSlot(
+    vars,
+    defaultBranchProbeCommand(vars.remoteRepo, defaultBranch),
+    options,
+  );
+  return readDefaultBranchProbe(output, defaultBranch);
 }
 
 export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };
