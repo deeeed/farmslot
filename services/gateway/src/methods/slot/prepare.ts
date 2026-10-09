@@ -66,7 +66,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
-import { loadGitIdentity, syncGitIdentity } from './git-identity.js';
+import { gitIdentityConfigPath, loadGitIdentity, syncGitIdentity } from './git-identity.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -598,7 +598,12 @@ async function slotPrepareInner(
     // prepare; `slot check` reports a slot that cannot sign.
     try {
       const identity = loadGitIdentity();
-      if (identity) step('git-identity', await syncGitIdentity(vars, identity));
+      step(
+        'git-identity',
+        identity
+          ? await syncGitIdentity(vars, identity)
+          : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
+      );
     } catch (err) {
       step('git-identity', `Git identity not synced: ${(err as Error).message}`);
     }

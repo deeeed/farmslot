@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
@@ -24,6 +25,10 @@ export const GIT_IDENTITY_KEYS = [
 
 export type GitIdentity = Partial<Record<(typeof GIT_IDENTITY_KEYS)[number], string>>;
 
+/** git's boolean grammar for config values. */
+const GIT_BOOLEAN = /^(true|false|yes|no|on|off|1|0)$/i;
+const isGitTrue = (value: string | undefined) => /^(true|yes|on|1)$/i.test(value ?? '');
+
 export function gitIdentityConfigPath(home = farmslotHome()): string {
   return path.join(home, 'git-identity.json');
 }
@@ -36,21 +41,35 @@ export function gitIdentityConfigPath(home = farmslotHome()): string {
 export function loadGitIdentity(home = farmslotHome()): GitIdentity | null {
   const filePath = gitIdentityConfigPath(home);
   if (!existsSync(filePath)) return null;
-  const data: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
+  let data: unknown;
+  try {
+    data = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`Invalid ${filePath}: ${(err as Error).message}`);
+  }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(`Invalid ${filePath}: expected an object of git config values`);
   }
   for (const [key, value] of Object.entries(data)) {
-    if (!(GIT_IDENTITY_KEYS as readonly string[]).includes(key) || typeof value !== 'string') {
+    if (!(GIT_IDENTITY_KEYS as readonly string[]).includes(key)) {
       throw new Error(
-        `Invalid ${filePath}: ${key} must be one of ${GIT_IDENTITY_KEYS.join(', ')} with a string value`,
+        `Invalid ${filePath}: unknown key ${key} (expected ${GIT_IDENTITY_KEYS.join(', ')})`,
       );
+    }
+    if (typeof value !== 'string') {
+      throw new Error(`Invalid ${filePath}: ${key} must be a string`);
+    }
+    if (key === 'commit.gpgsign' && !GIT_BOOLEAN.test(value)) {
+      throw new Error(`Invalid ${filePath}: commit.gpgsign must be a git boolean, got ${value}`);
     }
   }
   return data as GitIdentity;
 }
 
-/** Identity keys set in the slot repo (`local`: its own config only); unset keys are omitted. */
+/**
+ * Identity keys set in the slot repo (`local`: its own config only); unset keys
+ * are omitted. A config git cannot read (any exit but 1, "key not set") throws.
+ */
 export async function readGitIdentity(
   vars: SlotVars,
   scope: 'local' | 'effective' = 'effective',
@@ -58,11 +77,13 @@ export async function readGitIdentity(
   const git = `git -C ${shellQuote(vars.remoteRepo)} config${scope === 'local' ? ' --local' : ''}`;
   const result = await execOnSlot(
     vars,
-    `for k in ${GIT_IDENTITY_KEYS.join(' ')}; do printf '%s\\t%s\\n' "$k" "$(${git} --get "$k")"; done`,
+    `for k in ${GIT_IDENTITY_KEYS.join(' ')}; do v=$(${git} --get "$k"); rc=$?; if [ $rc -gt 1 ]; then exit $rc; fi; printf '%s\\t%s\\n' "$k" "$v"; done`,
     { timeout: 15_000 },
   );
   if (result.exitCode !== 0) {
-    throw new Error(`cannot read git config in ${vars.remoteRepo}: ${result.stderr.trim()}`);
+    throw new Error(
+      `cannot read git config in ${vars.remoteRepo} (exit ${result.exitCode}): ${result.stderr.trim()}`,
+    );
   }
   const identity: Record<string, string> = {};
   for (const line of result.stdout.split('\n')) {
@@ -89,7 +110,7 @@ export async function syncGitIdentity(vars: SlotVars, identity: GitIdentity): Pr
   const git = `git -C ${shellQuote(vars.remoteRepo)} config --local`;
   const writes = changed.map((key) => {
     const value = identity[key]!;
-    const write = `${git} ${key} ${shellQuote(value)}`;
+    const write = `${git} ${key} ${shellQuote(value)} && echo ${shellQuote(`wrote ${key}`)}`;
     return key === 'gpg.program'
       ? `if command -v ${shellQuote(value)} >/dev/null 2>&1; then ${write}; else echo ${shellQuote(`skipped gpg.program: ${value} not found`)}; fi`
       : write;
@@ -100,14 +121,17 @@ export async function syncGitIdentity(vars: SlotVars, identity: GitIdentity): Pr
       `cannot write git identity in ${vars.remoteRepo}: ${result.stderr.trim() || result.stdout.trim()}`,
     );
   }
-  const skipped = result.stdout.trim();
-  return `Git identity written: ${changed.join(', ')}${skipped ? ` (${skipped})` : ''}`;
+  const lines = result.stdout.trim().split('\n').filter(Boolean);
+  const written = lines.filter((line) => line.startsWith('wrote ')).map((line) => line.slice(6));
+  const skipped = lines.filter((line) => !line.startsWith('wrote ')).join('; ');
+  const summary = written.length
+    ? `Git identity written: ${written.join(', ')}`
+    : 'Git identity up to date';
+  return skipped ? `${summary} (${skipped})` : summary;
 }
 
 /** Bound for the test signature: gpg-agent can wait on a pinentry nobody answers. */
 export const SIGNING_PROBE_TIMEOUT_MS = 20_000;
-
-const isGitTrue = (value: string | undefined) => /^(true|yes|on|1)$/i.test(value ?? '');
 
 /**
  * When the slot repo signs commits (or the farm identity asks it to), prove it
@@ -117,8 +141,10 @@ const isGitTrue = (value: string | undefined) => /^(true|yes|on|1)$/i.test(value
 export async function checkCommitSigning(
   vars: SlotVars,
   farmIdentity: GitIdentity | null,
+  options: { identityPath?: string; probeTimeoutMs?: number } = {},
 ): Promise<CheckStep> {
   const name = 'git.signing';
+  const prepareFix = `run \`farmslot slot prepare ${vars.slotId}\`, which writes the farm identity into the repo`;
   let identity: GitIdentity;
   try {
     identity = await readGitIdentity(vars);
@@ -131,18 +157,37 @@ export async function checkCommitSigning(
       return {
         name,
         status: 'fail',
-        detail: `The farm git identity signs commits, but commit.gpgsign is ${identity['commit.gpgsign'] ?? 'unset'} in ${vars.remoteRepo} (key ${key}). Fix: run \`farmslot slot prepare ${vars.slotId}\`, which writes the farm identity into the repo`,
+        detail: `The farm git identity signs commits, but commit.gpgsign is ${identity['commit.gpgsign'] ?? 'unset'} in ${vars.remoteRepo} (key ${key}). Fix: ${prepareFix}`,
       };
     }
-    return { name, status: 'skip', detail: 'Commit signing is off' };
+    // A farm identity in the wrong FARMSLOT_HOME is otherwise silent.
+    const detail = farmIdentity
+      ? 'Commit signing is off'
+      : `Commit signing is off (no farm git identity at ${options.identityPath ?? gitIdentityConfigPath()})`;
+    return { name, status: 'skip', detail };
+  }
+  if (!identity['user.email']) {
+    return {
+      name,
+      status: 'fail',
+      detail: `Commits are signed, but user.email is unset in ${vars.remoteRepo}, so git cannot commit. Fix: ${farmIdentity?.['user.email'] ? prepareFix : 'set user.email in the farm git identity and run slot prepare'}`,
+    };
   }
 
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const timeoutMs = options.probeTimeoutMs ?? SIGNING_PROBE_TIMEOUT_MS;
   const probe = await execOnSlot(
     vars,
     `${git} commit-tree -S $(${git} hash-object -t tree /dev/null) -m 'farmslot signing probe' </dev/null 2>&1`,
-    { timeout: SIGNING_PROBE_TIMEOUT_MS },
+    { timeout: timeoutMs },
   );
+  if (probe.exitCode === EXEC_TIMEOUT_EXIT_CODE) {
+    return {
+      name,
+      status: 'fail',
+      detail: `Commits are signed, but gpg-agent did not answer within ${timeoutMs / 1000} s on ${vars.machine} for key ${key} (likely a pinentry waiting for a passphrase). Fix: unlock the key in gpg-agent on ${vars.machine}`,
+    };
+  }
   if (probe.exitCode !== 0) {
     const cause = `${probe.stdout}\n${probe.stderr}`
       .split('\n')
