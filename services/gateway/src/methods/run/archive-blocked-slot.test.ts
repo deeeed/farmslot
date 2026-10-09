@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { PipelineSteps, type Run, type SlotReleaseParams } from '@farmslot/protocol';
 
-import { restoreTmuxWorker } from '../../agents/runtime-recovery.js';
+import { assertReloadStillOwnsSlot, restoreTmuxWorker } from '../../agents/runtime-recovery.js';
 import { readSlotField, updateSlotStatus } from '../../core/index.js';
 import { statusFile } from '../../core/state.js';
 import {
@@ -270,4 +270,49 @@ test('a release a restart cut short is named instead of a retry loop', async (t)
   );
   assert.ok(getRun(run.id));
   assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a release that left the slot held refuses the archive with its held reason', async (t) => {
+  const run = blockedRun(t, 'archive-held', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  const { slot } = recordingSlot();
+  slot.release = async (params) => {
+    await updateSlotStatus(params.slotId, {
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: 'Workspace process census is unavailable; slot teardown was skipped',
+    });
+    return { released: false };
+  };
+
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit, slot),
+    /slot demo-work-1 was left held: Workspace process census is unavailable/,
+  );
+  assert.ok(getRun(run.id));
+  assert.equal(isRunArchiving(run.id), false);
+});
+
+test('a session reload re-checks slot ownership right before relaunching', async (t) => {
+  const run = blockedRun(t, 'reload-owner', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  await updateSlotStatus(slotId, { slot_epoch: 7 });
+
+  await assertReloadStillOwnsSlot(run.id, slotId, 7);
+
+  beginRunArchive(run.id);
+  await assert.rejects(
+    assertReloadStillOwnsSlot(run.id, slotId, 7),
+    /is being archived and its slot released/,
+  );
+  endRunArchive(run.id);
+
+  // While the reload awaited remote setup, the archive finished and dispatch
+  // handed the slot to another run: relaunching would take over its window.
+  const successor = blockedRun(t, 'reload-successor', [{ name: 'monitor', status: 'done' }]);
+  await updateSlotStatus(slotId, { current_run_id: successor.id, slot_epoch: 8 });
+  await assert.rejects(
+    assertReloadStillOwnsSlot(run.id, slotId, 7),
+    /no longer belongs to run .*; its session was not reloaded/,
+  );
 });

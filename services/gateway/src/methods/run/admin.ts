@@ -26,7 +26,7 @@ import {
 } from '@farmslot/protocol';
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
-import { readSlotField, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { readSlotField, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { STALE_RELEASE_RECLAIM_MS } from '../../run-engine/recovery.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
@@ -185,11 +185,15 @@ async function releaseBlockedRunSlot(
 }
 
 async function slotStillHeldError(runId: string, slotId: string): Promise<Error> {
+  const row = await readSlotRow(slotId);
+  // A release that could not finish its teardown leaves the slot held and says why.
+  if (row?.lifecycle === 'held' && typeof row.held_reason === 'string' && row.held_reason)
+    return new Error(
+      `Cannot archive blocked run ${runId}: slot ${slotId} was left held: ${row.held_reason}`,
+    );
   // A fence no teardown in this process owns was left by a release a restart
   // cut short; retrying cannot clear it, only the orphan reconciler does.
-  const interrupted =
-    (await readSlotField(slotId, 'phase')) === SLOT_PHASE_RELEASING &&
-    !isTerminalTeardownInFlight(slotId);
+  const interrupted = row?.phase === SLOT_PHASE_RELEASING && !isTerminalTeardownInFlight(slotId);
   return new Error(
     interrupted
       ? `Cannot archive blocked run ${runId}: slot ${slotId} is still fenced by a release that did not finish (a gateway restart interrupts one). Recovery reclaims it within ${STALE_RELEASE_RECLAIM_MS / 60_000} minutes of it being noticed; archive again after that.`

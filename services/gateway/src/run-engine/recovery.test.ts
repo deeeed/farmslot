@@ -1778,12 +1778,14 @@ test('orphan reconcile reclaims a stale release fence a settled blocked run was 
     status: 'blocked',
     steps: [{ name: 'monitor', status: 'done' }],
   });
-  const settledBlocked = (status: Run['steps'][number]['status']) => ({
+  const blockedWithMonitor = (status: Run['steps'][number]['status']) => ({
     ...blocked,
     steps: [{ name: 'monitor', status }],
   });
   const reclaimed: string[] = [];
   const updates: Array<{ runId: string; fields: Partial<Run> }> = [];
+  const stopped: string[] = [];
+  let liveWorker: string | null = 'Worker dev stop was not confirmed: runner did not exit';
   const deps = (owner: Run, phase: string) =>
     ({
       listRuns: () => ({ runs: [owner] }),
@@ -1796,6 +1798,10 @@ test('orphan reconcile reclaims a stale release fence a settled blocked run was 
       getRun: () => owner,
       updateRun: (runId: string, fields: Partial<Run>) => updates.push({ runId, fields }),
       broadcast: () => {},
+      stopRunOwnedWorkers: async (run: Run) => {
+        stopped.push(run.id);
+        return liveWorker;
+      },
       resetSlot: async (slotId: string) => reclaimed.push(`unguarded:${slotId}`),
       resetSlotIf: async (slotId: string) => {
         reclaimed.push(slotId);
@@ -1804,10 +1810,19 @@ test('orphan reconcile reclaims a stale release fence a settled blocked run was 
       updateSlotStatusIf: async () => true,
     }) as unknown as RunRecoveryCollaborators;
 
-  await reconcileOrphanedSlots(deps(settledBlocked('running'), 'releasing'));
+  await reconcileOrphanedSlots(deps(blockedWithMonitor('running'), 'releasing'));
   await reconcileOrphanedSlots(deps(blocked, 'pr-watch'));
   assert.deepEqual(reclaimed, [], 'a live blocked run, or one merely holding its slot, keeps it');
 
+  assert.deepEqual(stopped, [], 'neither of those is touched');
+
+  // The restart may have cut the release short before its agent kill.
+  await reconcileOrphanedSlots(deps(blocked, 'releasing'));
+  assert.deepEqual(stopped, ['blocked-archive']);
+  assert.deepEqual(reclaimed, [], 'a worker that did not stop keeps the fence');
+  assert.deepEqual(updates, []);
+
+  liveWorker = null;
   await reconcileOrphanedSlots(deps(blocked, 'releasing'));
   assert.deepEqual(reclaimed, ['macwork-ff-2']);
   assert.deepEqual(

@@ -19,7 +19,7 @@ import {
 
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { readSlotField, SLOT_PHASE_RELEASING } from '../core/index.js';
+import { readSlotRow, SLOT_PHASE_RELEASING } from '../core/index.js';
 import {
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
@@ -418,6 +418,33 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
   return { slotId: run.slotId, runId: run.id, restored: false, contexts: results };
 }
 
+/**
+ * Checked right before a reload relaunches a conversation. The awaits before it
+ * (remote setup) leave room for a release to start, or for the run's archive to
+ * finish and dispatch to hand the slot to another run, whose role window the
+ * respawn would take over.
+ */
+export async function assertReloadStillOwnsSlot(
+  runId: string,
+  slotId: string,
+  entrySlotEpoch: unknown,
+): Promise<void> {
+  const slot = await readSlotRow(slotId);
+  const run = getRun(runId);
+  if (
+    !run ||
+    isTerminalRunStatus(run.status) ||
+    run.slotId !== slotId ||
+    slot?.current_run_id !== runId ||
+    slot.slot_epoch !== entrySlotEpoch ||
+    slot.phase === SLOT_PHASE_RELEASING
+  )
+    throw new Error(
+      `Slot ${slotId} no longer belongs to run ${runId}; its session was not reloaded`,
+    );
+  assertRunNotArchiving(runId);
+}
+
 export async function restoreTmuxWorker(
   params: TmuxWorkerRestoreParams,
 ): Promise<TmuxWorkerRestoreResult> {
@@ -458,6 +485,7 @@ export async function restoreTmuxWorker(
   const binding = await sessionBindingForContext(vars, run, selected, ref.paneId);
   const runner = normalizeRunner(selected.runner ?? run.metrics.runner);
   if (params.mode === 'reload-session') {
+    const entrySlotEpoch = (await readSlotRow(params.slotId))?.slot_epoch;
     const existing = await inspectContextRuntime(run, selected);
     if (existing.runnerAlive) {
       const liveTarget = existing.target ?? ref;
@@ -512,11 +540,7 @@ export async function restoreTmuxWorker(
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
       },
     )}`;
-    // The awaits above leave room for a release (an archive's included) to
-    // start on this slot; a reload then would relaunch the worker it kills.
-    if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING)
-      throw new Error(`Slot ${params.slotId} is being released; its worker cannot be reloaded`);
-    assertRunNotArchiving(run.id);
+    await assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch);
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
       // freshly launched self-review pane; later cleanup owns their teardown.

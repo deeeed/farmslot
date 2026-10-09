@@ -1449,6 +1449,10 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     isTerminalTeardownInFlight,
     readSlotField,
     quarantineLeakedRun,
+    stopRunOwnedWorkers: async (run) => {
+      const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');
+      return stopRunOwnedTmuxWorkers(run);
+    },
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
     },

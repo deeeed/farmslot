@@ -78,6 +78,11 @@ export interface RunRecoveryCollaborators {
   readSlotField: (slotId: string, field: string) => Promise<unknown>;
   getRun: (runId: string) => Run | undefined;
   updateRun: (runId: string, fields: Partial<Run>) => void;
+  /**
+   * Stop a run's own tmux workers, as cancel's teardown does; null once none is
+   * left alive, else why one may still be (live, or liveness unknown).
+   */
+  stopRunOwnedWorkers: (run: Run) => Promise<string | null>;
   updateRunStep: (runId: string, stepName: string, fields: Partial<RunStep>) => void;
   broadcast: (event: string, payload: unknown) => void;
   copyWorkerArtifacts: (runId: string) => Promise<void>;
@@ -1037,6 +1042,8 @@ async function interruptedBlockedReleaseOwner(
   const ownerId = await deps.readSlotField(slotId, 'current_run_id');
   const owner = active.find((run) => run.id === ownerId);
   if (!owner || owner.slotId !== slotId || !isSettledBlockedRun(owner)) return undefined;
+  // Native worker liveness is not provable from here, so that fence stays.
+  if (owner.transport === 'native') return undefined;
   return activeRunSlotIds(active, owner.id).has(slotId) ? undefined : owner;
 }
 
@@ -1115,12 +1122,25 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
       // the row, the slot is still releasing, and no teardown registered
       // itself in the meantime. A release that landed, or a new one that
       // re-fenced, changes the stamp and the predicate refuses.
+      if (blockedOwner) {
+        // The restart may have cut the release short before its agent kill, and
+        // a ready slot must not hide a live worker from the next prepare. Finish
+        // that step for the run's own workers; keep the fence unless all stop.
+        const liveWorker = await deps.stopRunOwnedWorkers(blockedOwner);
+        if (liveWorker) {
+          console.log(
+            `[run-engine] reconcile: ${slot.slot} keeps its release fence; worker of blocked run ${blockedOwner.id.slice(0, 8)} not stopped: ${liveWorker}`,
+          );
+          continue;
+        }
+      }
       const reclaimed = await deps.resetSlotIf(
         slot.slot,
         (row) =>
           row.phase === SLOT_PHASE_RELEASING &&
           row[SLOT_RELEASING_SINCE] === observedSince &&
-          !deps.isTerminalTeardownInFlight(slot.slot),
+          !deps.isTerminalTeardownInFlight(slot.slot) &&
+          (!blockedOwner || row.current_run_id === blockedOwner.id),
       );
       console.log(
         reclaimed

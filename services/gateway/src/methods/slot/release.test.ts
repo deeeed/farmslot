@@ -428,8 +428,15 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
   const { poolDir } = await import('../../core/config.js');
   const { readSlotField } = await import('../../core/index.js');
   const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-release-unmerged-'));
+  const slotId = `release-unmerged-${process.pid}`;
+  const poolFile = path.join(poolDir, `release-unmerged-fixture-${process.pid}.json`);
+  t.after(() => {
+    rmSync(poolFile, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
   const git = (...args: string[]) => {
-    const result = spawnSync('git', ['-c', 'core.hooksPath=.git/hooks', ...args], {
+    const isolated = ['-c', 'core.hooksPath=.git/hooks', '-c', 'commit.gpgsign=false'];
+    const result = spawnSync('git', [...isolated, ...args], {
       cwd: root,
       encoding: 'utf8',
     });
@@ -449,8 +456,6 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
   );
   git('checkout', '-q', '-b', 'PROJ-1-unmerged');
   writeFileSync(path.join(root, 'fix.txt'), 'work in progress\n');
-  const slotId = `release-unmerged-${process.pid}`;
-  const poolFile = path.join(poolDir, `release-unmerged-fixture-${process.pid}.json`);
   writeFileSync(
     poolFile,
     JSON.stringify({
@@ -462,10 +467,6 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
       slots: [{ id: slotId, repo: root, session: slotId }],
     }),
   );
-  t.after(() => {
-    rmSync(poolFile, { force: true });
-    rmSync(root, { recursive: true, force: true });
-  });
   await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
   const steps: string[] = [];
 
