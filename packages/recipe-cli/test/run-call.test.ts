@@ -277,7 +277,7 @@ function shopEngine(
               {
                 action: 'app.hud',
                 source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
-                execute: () => Promise.resolve({ hud: false, cleared: true }),
+                execute: () => Promise.resolve({ output: { hud: false, cleared: true } }),
               } satisfies ActionAdapter,
             ]
           : []),
