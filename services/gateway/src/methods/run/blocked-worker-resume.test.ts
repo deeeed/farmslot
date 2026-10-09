@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { Events, type Run, type WorkerSignal } from '@farmslot/protocol';
 
-import { statusFile } from '../../core/state.js';
+import { claimSlotStatusIf, statusFile } from '../../core/state.js';
 import { cleanupSlotAfterRunFailure } from '../../run-engine/orchestrator.js';
 import { isWorkerSignalFreshForRun } from '../../run-engine/run-monitor.js';
 import {
@@ -13,11 +13,17 @@ import {
 } from '../../run-engine/terminal-teardown-registry.js';
 import { routeTerminalRunTransition } from '../../run-lifecycle/terminal-transition.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
+import {
+  slotClaimBlockedByHandoff,
+  slotClaimBlockedByLiveOwner,
+  slotClaimBlockedByRelease,
+} from '../dispatch/slot-scoring.js';
 
 import {
   blockedRunWorkerRunningAgain,
   type BlockedWorkerContinuedDependencies,
   freshBlockedMonitorAttempt,
+  rebindReleasedSlot,
   resumeBlockedRunWhoseWorkerContinued,
 } from './replay-step.js';
 
@@ -239,7 +245,7 @@ test('cancelled and eval runs are left alone, even when the worker kept going', 
   assert.equal(getRun(evalRun.id)!.status, 'blocked');
 });
 
-test('a worker that resumes during the block teardown waits for the cleanup and for its slot to be re-bound', async (t) => {
+test('a worker that resumes during the block teardown waits for the cleanup, then re-binds its free slot and resumes', async (t) => {
   const slotId = 'slot-terminal-overlap';
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-OVERLAP' });
   t.after(async () => {
@@ -309,27 +315,85 @@ test('a worker that resumes during the block teardown waits for the cleanup and 
 
   release();
   await terminal;
-  const slot = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
-  assert.equal(slot.current_run_id, null, 'the block cleanup released the slot');
-  // A released slot is not this run's workspace: the real ownership check refuses it.
-  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
-  assert.deepEqual(replayed, []);
-  assert.equal(getRun(run.id)!.status, 'blocked');
+  const released = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.equal(released.current_run_id, null, 'the block cleanup released the slot');
+  assert.equal(released.lifecycle, 'ready');
 
-  // A fleet refresh re-binds the slot to the blocked run; the next signal resumes it.
-  await setSlotRow(heldBy(slotId, run.id));
+  // The worker is still in that workspace: the free slot is re-bound, then resumed.
   assert.equal(
     (await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps))?.status,
     'monitoring',
   );
   assert.deepEqual(order, ['slot-cleanup', 'replay']);
+  const rebound = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.equal(rebound.current_run_id, run.id);
+  assert.equal(rebound.lifecycle, 'held');
+  assert.ok(rebound.slot_epoch > released.slot_epoch, 'a claim-type write');
+
+  // The next signal finds the run monitoring: nothing more.
+  assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
+  assert.deepEqual(replayed, [run.id]);
 });
 
-test('a blocked run whose slot another run claimed stays blocked', async (t) => {
+test('a blocked run whose released slot another run claimed stays blocked and says so', async (t) => {
   const run = await blockedRun(t, 'PROJ-CLAIMED');
   await setSlotRow({ ...heldBy(run.slotId!, 'other-run'), lifecycle: 'busy', phase: 'working' });
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (line: string) => warnings.push(line));
   const { replayed, deps } = recordingDeps(runningAgain);
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
   assert.deepEqual(replayed, []);
   assert.equal(getRun(run.id)!.status, 'blocked');
+  assert.match(
+    warnings.join('\n'),
+    /worker resumed .* but slot slot-PROJ-CLAIMED now belongs to run other-run/,
+  );
+  assert.equal(
+    JSON.parse(await readFile(statusFile, 'utf8')).slots.find(
+      (s: { slot: string }) => s.slot === run.slotId,
+    ).current_run_id,
+    'other-run',
+  );
+});
+
+test('a dispatch claim racing the re-bind of a released slot: exactly one wins', async (t) => {
+  for (const dispatchFirst of [true, false]) {
+    const run = await blockedRun(t, `PROJ-RACE-${dispatchFirst}`);
+    const slotId = run.slotId!;
+    await setSlotRow({
+      slot: slotId,
+      current_run_id: null,
+      handoff_run_id: null,
+      slot_epoch: 3,
+      lifecycle: 'ready',
+      phase: null,
+    });
+    // The dispatcher's claim: the same write chain and predicates as find-slot.
+    const dispatch = () =>
+      claimSlotStatusIf(
+        slotId,
+        (slot) =>
+          slotClaimBlockedByRelease(slot) === null &&
+          slotClaimBlockedByHandoff(slot, 'dispatch-run') === null &&
+          slotClaimBlockedByLiveOwner(slot, 'dispatch-run', getRun) === null,
+        {
+          lifecycle: 'busy',
+          phase: 'preparing',
+          current_run_id: 'dispatch-run',
+          handoff_run_id: null,
+        },
+      );
+    const [first, second] = dispatchFirst
+      ? await Promise.all([dispatch(), rebindReleasedSlot(run)])
+      : (await Promise.all([rebindReleasedSlot(run), dispatch()])).reverse();
+    const claimed = (first as { claimed: boolean }).claimed;
+    const rebound = second === null;
+    assert.equal(Number(claimed) + Number(rebound), 1, `dispatchFirst=${dispatchFirst}`);
+    assert.equal(claimed, dispatchFirst);
+    const row = JSON.parse(await readFile(statusFile, 'utf8')).slots.find(
+      (s: { slot: string }) => s.slot === slotId,
+    );
+    assert.equal(row.current_run_id, dispatchFirst ? 'dispatch-run' : run.id);
+    if (dispatchFirst) assert.equal(second, 'run dispatch-run');
+  }
 });

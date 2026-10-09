@@ -7,6 +7,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isInteractiveDevRun,
+  isSlotFreedByPark,
   isTerminalRunStatus,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
@@ -34,7 +35,7 @@ import {
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
-import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { claimSlotStatusIf, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
@@ -66,7 +67,9 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
+import { slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
+import { slotOwnershipFieldsForRun } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
 
 import {
@@ -469,7 +472,7 @@ const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies 
  * takes, and SIGNAL.json is never written. Called on every running signal the
  * slot watcher sees; does nothing unless the run is still blocked, so a
  * repeat, a cancelled run or one already monitoring is left alone, and so is
- * a run whose slot is not held by it (the block's cleanup released it). A refused
+ * a run whose released slot another run now holds. A refused
  * replay is logged and recorded nowhere, so the worker's next signal retries,
  * as does a signal that arrives while the block's slot teardown is running.
  * Eval runs are skipped: their replay can restart at prepare under a live
@@ -503,10 +506,18 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     if (!run || !signal?.attemptId || !waiting()) return null;
     const blockedAttemptId = blockedMonitorSignal(run)?.attemptId ?? null;
     const id = runId.slice(0, 8);
-    // The block's cleanup resets a slot its run owns, so a blocked run holds
-    // its slot again only once a fleet refresh re-binds it from the run store
-    // (and no other run claimed it first). Until then the workspace is not
-    // this run's to resume in.
+    // The block's cleanup resets a slot its run owns. The worker running again
+    // proves the workspace is still this run's, so a slot left free is re-bound
+    // here, as a fleet refresh would; one another run holds is not taken back.
+    if (!blockedMonitorOwnsSlot(await readSlotRow(run.slotId!), runId)) {
+      const holder = await rebindReleasedSlot(run);
+      if (holder) {
+        console.warn(
+          `[run] blocked run ${id}: worker resumed (attempt ${signal.attemptId}, step ${signal.step ?? '?'}) but slot ${run.slotId} now belongs to ${holder}; staying blocked`,
+        );
+        return null;
+      }
+    }
     const slot = await readSlotRow(run.slotId!);
     if (!blockedMonitorOwnsSlot(slot, runId)) {
       console.warn(
@@ -548,6 +559,42 @@ export async function resumeBlockedRunWhoseWorkerContinued(
     emit(Events.RUN_UPDATED, { run: current });
     return current;
   });
+}
+
+/**
+ * Bind a blocked run's released slot back to it with the fields a fleet
+ * refresh writes, in a claim-type write on the dispatcher's write chain: a
+ * dispatch claim and this re-bind cannot both win, and the epoch bump aborts a
+ * teardown's remaining writes. Returns what holds the slot instead (a run, a
+ * handoff reservation, or a lifecycle that is not free), or null when re-bound.
+ */
+export async function rebindReleasedSlot(run: Run): Promise<string | null> {
+  const slotId = run.slotId!;
+  // A run created for this slot but not yet claiming it counts as its holder,
+  // as it does for dispatch (activeRunSlotIds).
+  const rival = getAllRuns().find(
+    (other) =>
+      other.id !== run.id &&
+      other.slotId === slotId &&
+      !isTerminalRunStatus(other.status) &&
+      !isSlotFreedByPark(other),
+  );
+  if (rival) return `run ${rival.id}`;
+  let holder: string | null = null;
+  const { claimed } = await claimSlotStatusIf(
+    slotId,
+    (slot) => {
+      const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+      const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+      if (owner && owner !== run.id) holder = `run ${owner}`;
+      else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
+      else if (slotClaimBlockedByRelease(slot) !== null || slot.lifecycle !== 'ready')
+        holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
+      return holder === null;
+    },
+    { ...slotOwnershipFieldsForRun(run), handoff_run_id: null, dispatchable: false },
+  );
+  return claimed ? null : (holder ?? 'an unknown holder');
 }
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {

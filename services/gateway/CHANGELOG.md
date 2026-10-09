@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - A symlink inside a review support library or a copied worker artifact tree is copied as its target when its real path stays inside that root (a linked directory is walked; a loop back to an ancestor is cut). Recipe-perps' `actions/mobile/perps/*.mjs -> *.ts` links had failed every perps review at write-task and the artifact mirror at `complete`. Support collection still refuses a link that dangles, escapes or loops; `slotCopyDir` skips it with a warning instead of failing the copy.
-- A blocked run that holds its slot again (after a fleet refresh) resumes monitoring by itself when its worker starts working again, after `./mark start` or by marking a later step on the blocked attempt, also when that happened while the gateway was down. It used to stay blocked ("This worker attempt is still blocked") until an operator ran `./mark start` and replayed the monitor.
+- A blocked run resumes monitoring by itself when its worker starts working again (after `./mark start` or by marking a later step, also while the gateway was down), taking its slot back if the block's cleanup left it free but never from another run. It used to stay blocked ("This worker attempt is still blocked") until an operator ran `./mark start` and replayed the monitor.
 
 ## 0.20.5 - 2026-10-08
 
