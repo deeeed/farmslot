@@ -594,6 +594,22 @@
       },
       "additionalProperties": false
     },
+    "diff_view": {
+      "type": "object",
+      "description": "Command Center diff views: which changed files count as tests for the \"Hide tests\" toggle.",
+      "properties": {
+        "test_patterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra test-file globs (gitignore-style; no slash = basename anywhere)."
+        },
+        "use_default_test_patterns": {
+          "type": "boolean",
+          "description": "Set false to drop the built-in defaults and use only test_patterns."
+        }
+      },
+      "additionalProperties": false
+    },
     "workflow_defaults": {
       "type": "object",
       "description": "Farm defaults for Review and QA execution and review options. Request/rule, repository and team selections take precedence. These placement policies are separate from QA skill presets.",
