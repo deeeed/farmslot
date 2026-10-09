@@ -41,7 +41,10 @@ async function codexHandshake(marker, claim, record, folders) {
     });
     if (fs.existsSync(claim)) record.folderAccess = 'restricted';
     record.codexHandshake = 'done';
-    fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
+    // Replace, never truncate in place: a helper killed mid-write must not leave
+    // a marker every replay then fails to parse.
+    fs.writeFileSync(`${marker}.tmp`, JSON.stringify(record), { mode: 0o600 });
+    fs.renameSync(`${marker}.tmp`, marker);
   } catch (error) {
     tmux(['kill-session', '-t', target]);
     throw error;
