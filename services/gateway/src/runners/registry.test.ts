@@ -179,7 +179,7 @@ describe('codex runner', () => {
     // Use the isolated codex-home only if provisioned; otherwise fall back to global.
     assert.match(
       launch,
-      /if \[ -e '\/workspace\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
+      /if \[ -e '\/workspace\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/workspace\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
     );
     assert.match(
       launch,
@@ -1694,7 +1694,7 @@ describe('buildLaunchCommand', () => {
       // Isolated home only when provisioned; else fall back to global ~/.codex.
       assert.match(
         cmd,
-        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" .*--model gpt-5/,
+        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/tmp\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" .*--model gpt-5/,
       );
       // Must never seed (copy/symlink) into or write config back to the global ~/.codex.
       assert.doesNotMatch(cmd, /ln -sf "\$HOME\/\.codex/);
