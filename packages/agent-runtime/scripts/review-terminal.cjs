@@ -3,6 +3,7 @@ const fs = require('node:fs'),
   path = require('node:path'),
   cp = require('node:child_process');
 const { sandbox } = require('./review-filesystem.cjs');
+const { answerCodexFolderAccess } = require('./review-codex-folder-access.cjs');
 const input = JSON.parse(process.argv[2]);
 const quote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
 const tmux = (args) => cp.spawnSync('tmux', args, { encoding: 'utf8' });
@@ -12,6 +13,45 @@ const check = (result) => {
   return result.stdout.trim();
 };
 const target = input.session;
+
+/**
+ * Answer Codex's Folder access screen for a launch record. The one Enter per
+ * launch is claimed by creating `claim` exclusively, so overlapping or replayed
+ * helpers (a gateway restart can leave the first one running) never send two.
+ * The marker goes `watching` → `done`; a replay of an unfinished one resumes here.
+ */
+async function codexHandshake(marker, claim, record, folders) {
+  try {
+    await answerCodexFolderAccess({
+      capture: () => {
+        const pane = tmux(['capture-pane', '-p', '-t', target]);
+        return pane.status === 0 ? pane.stdout : null;
+      },
+      claimAnswer: () => {
+        try {
+          fs.writeFileSync(claim, record.runId, { mode: 0o600, flag: 'wx' });
+          return true;
+        } catch (error) {
+          if (error.code === 'EEXIST') return false;
+          throw error;
+        }
+      },
+      sendEnter: () => check(tmux(['send-keys', '-t', target, 'Enter'])),
+      folders,
+    });
+  } catch (error) {
+    tmux(['kill-session', '-t', target]);
+    throw error;
+  }
+  if (fs.existsSync(claim)) record.folderAccess = 'restricted';
+  record.codexHandshake = 'done';
+  // Replace, never truncate in place: a helper killed mid-write must not leave a
+  // marker every replay then fails to parse. Per-process name: helpers can overlap.
+  const temporary = `${marker}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
+  fs.renameSync(temporary, marker);
+}
+
 async function main() {
   if (!['launch', 'inspect', 'stop'].includes(input.action))
     throw Error('Unknown review terminal action');
@@ -31,6 +71,7 @@ async function main() {
     throw Error('Invalid review terminal identity');
   const marker = path.join(input.task, '.terminal-launch.json');
   const cancelled = path.join(input.task, '.terminal-cancelled');
+  const claim = path.join(input.task, '.terminal-folder-access-claim');
   const existing = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : undefined;
   if (
     existing &&
@@ -64,6 +105,8 @@ async function main() {
         'Review terminal receipt does not match the requested runner and model; request a new review',
       );
     if (has.status !== 0) throw Error('Review terminal exited; explicit retry required');
+    if (existing.codexHandshake && existing.codexHandshake !== 'done')
+      await codexHandshake(marker, claim, existing, [input.cwd, fs.realpathSync(input.cwd)]);
     process.stdout.write(JSON.stringify(existing));
     return;
   }
@@ -118,6 +161,7 @@ async function main() {
     model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
+    ...(input.runner === 'codex' ? { codexHandshake: 'watching' } : {}),
   };
   const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ['FARMSLOT_NODE_TOKEN','FARMSLOT_GATEWAY_TOKEN','FARMSLOT_GATEWAY_PASSWORD','CLAUDECODE'])delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;
   fs.writeFileSync(commandFile, launch, { mode: 0o600 });
@@ -147,6 +191,7 @@ async function main() {
     check(tmux(['kill-session', '-t', target]));
     throw new Error('Review terminal launch was cancelled');
   }
+  if (record.codexHandshake) await codexHandshake(marker, claim, record, [input.cwd, cwd]);
   process.stdout.write(JSON.stringify(record));
 }
 main().catch((error) => {
