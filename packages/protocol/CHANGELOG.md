@@ -4,10 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.35.1 - 2026-10-09
+
 - `RecipeRecordingInterruption` (`frames`, `mediaTimeMs`, `cause`) and `RecipeArtifactManifestEntry.interruption` (optional): a video kept after its recording stream stopped early holds the frames captured until then. `recipeTraceEntries(trace)` reads a trace.json document's entries in either shape.
 - New `@farmslot/protocol/node/loopback-host` subpath exporting `isLoopbackHost`, the single loopback-host check shared by the gateway's bind/auth checks and the CLI.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 - `VIEW_QUERY_PARAMETERS` accepts `artifactAc`: a run-detail artifact link that names the acceptance criterion whose evidence the lightbox was stepping through, so a reload or shared link reopens the same set.
 - `AcceptanceStatusSource` (`ledger` | `evidence-manifest`) and `AcceptanceEvidenceLink`; `TaskProgressResult.acceptanceSource` and `acceptanceEvidenceLinks` (optional) carry the run-detail fallback for a run with no acceptance ledger. Links are display-only and never a verdict.
 - `defaultBranchRepoBlocker(state, defaultBranch)` names why a slot repo cannot check out the project's default branch: no origin fetch refspec stores it in `refs/remotes/origin/<branch>` (a `--single-branch` clone, or a refspec with no destination), or no local or `origin/` ref for it. `defaultBranchProbeCommand` and `readDefaultBranchProbe` are the one probe the gateway and CLI run for it; a failed git read or output cut short gives no verdict. `SlotStatus.repoBlocker` (optional) carries that reason from fleet refresh; `DispatchCandidatesParams.skipPrepare` and `DispatchPreviewParams.skipPrepare` (optional) let a dispatch that keeps the checkout still use that slot.

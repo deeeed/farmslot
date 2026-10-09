@@ -1,7 +1,10 @@
 {
-  "version": "0.20.4",
-  "date": "2026-10-08",
+  "version": "0.20.5",
+  "date": "2026-10-09",
   "items": [
-    "Pipeline nodes and the step inspector show queue time, execution time and last progress"
+    "Acceptance-criteria evidence opens in the run's evidence lightbox and steps through that criterion's files",
+    "Runs without an acceptance ledger show which criteria their evidence manifest covers, marked as links, not verdicts",
+    "Every diff and changed-file view has a remembered \"Hide tests\" toggle, including the pre-publication Diff tab",
+    "With Skip Prepare, the dispatch wizard can pick a slot whose repo cannot check out the default branch"
   ]
 }
