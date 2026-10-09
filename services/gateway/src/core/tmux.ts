@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ExecResult } from '@farmslot/protocol';
@@ -77,15 +78,20 @@ export function tmuxAttachCommandForTarget(session: string, windowTarget?: strin
   return `tmux select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
 }
 
+/**
+ * Sets TMUX_BIN from PATH or the usual install locations, empty when tmux is
+ * absent. The text lives verbatim in scripts/lib/tmux-bin.sh, so deploy-node.sh
+ * finds the node user's tmux exactly as gateway commands do.
+ */
+const TMUX_BIN_LOOKUP = readFileSync(
+  new URL('../../../../scripts/lib/tmux-bin.sh', import.meta.url),
+  'utf8',
+).trim();
+
 export function tmuxShellSnippet(snippet: string): string {
   const trimmed = snippet.trim();
   return [
-    'TMUX_BIN="$(command -v tmux 2>/dev/null || true)"',
-    'if [ -z "$TMUX_BIN" ]; then',
-    '  for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do',
-    '    if [ -x "$candidate" ]; then TMUX_BIN="$candidate"; break; fi',
-    '  done',
-    'fi',
+    TMUX_BIN_LOOKUP,
     '[ -n "$TMUX_BIN" ] || { echo "tmux not found" >&2; exit 127; }',
     `"$TMUX_BIN" ${trimmed}`,
   ].join('\n');

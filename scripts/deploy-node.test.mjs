@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,6 +23,7 @@ const deployFixture = (t, prefix) => {
   for (const relative of [
     'scripts/deploy-node.sh',
     'scripts/lib/worker-env-prefix.sh',
+    'scripts/lib/tmux-bin.sh',
     'services/node/package.json',
   ])
     write(relative, fs.readFileSync(path.join(repo, relative)));
@@ -354,6 +355,7 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
   const { root, write } = deployFixture(t, 'node-deploy-cli-');
   const home = path.join(root, 'home');
   write('packages/cli/bin/farmslot.mjs', FAKE_CLI, true);
+  write('yarn.lock', '# fixture lockfile\n');
   commitFixture(root);
   write(
     'bin/ssh',
@@ -364,7 +366,9 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
   write(
     'bin/yarn',
     '#!/bin/sh\necho "$PWD $* immutable=$YARN_ENABLE_IMMUTABLE_INSTALLS" >> "$HOME/yarn.log"\n' +
-      'case "$*" in workspaces\\ focus*) [ ! -f "$HOME/yarn-fails" ] || { echo "fixture yarn failure"; exit 1; } ;; esac\n',
+      'case "$*" in workspaces\\ focus*)\n' +
+      '  [ ! -f "$HOME/yarn-fails" ] || { echo "fixture yarn failure"; exit 1; }\n' +
+      '  [ ! -f "$HOME/yarn-edits-lock" ] || echo "# resolved anew" >> yarn.lock ;;\nesac\n',
     true,
   );
   write(
@@ -372,7 +376,11 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
     `#!/bin/sh
 case "$1" in
   list-sessions) [ -f "$HOME/tmux-server" ] ;;
-  new-session) for arg; do command=$arg; done; echo "$command" >> "$HOME/tmux.log"; bash -c "$command" ;;
+  new-session)
+    for arg; do command=$arg; done
+    echo "$command" >> "$HOME/tmux.log"
+    [ -f "$HOME/tmux-hangs" ] || bash -c "$command" ;;
+  kill-session) echo "$*" >> "$HOME/tmux-kills.log" ;;
 esac
 `,
     true,
@@ -402,6 +410,7 @@ esac
       machine = 'fixture-machine',
       args = [],
       shell = '/bin/bash',
+      env: extraEnv = {},
     } = {}) => {
       const env = {
         ...process.env,
@@ -415,6 +424,7 @@ esac
         FARMSLOT_NODE_PATH: process.execPath,
         FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
         FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
+        ...extraEnv,
       };
       for (const name of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
         delete env[name];
@@ -435,6 +445,7 @@ esac
     },
     calls: () => read('cli-calls.jsonl').map((line) => JSON.parse(line)),
     tmuxLaunches: () => read('tmux.log'),
+    tmuxKills: () => read('tmux-kills.log'),
     snapshotInstalls: () => read('yarn.log').filter((line) => line.includes(' workspaces focus ')),
   };
 };
@@ -650,4 +661,69 @@ test('deploy-node keeps the yarn log and installs nothing when the CLI install f
     /fixture yarn failure/,
   );
   assert.equal(fs.existsSync(path.join(fixture.home, '.local/bin/farmslot')), false);
+});
+
+// Overlapping deploys on one machine serialize on the node: a deploy waits for a
+// live holder, takes over a lock whose holder is gone, and releases it after.
+test('deploy-node takes over a stale CLI lock, clears its partial install and releases the lock', (t) => {
+  const fixture = cliFixture(t);
+  const lock = path.join(fixture.cliRoot, '.lock');
+  const gone = spawnSync('true').pid;
+  fixture.write(`home/.local/share/farmslot-cli/.lock/pid`, `${gone}\n`);
+  fixture.write(`home/.local/share/farmslot-cli/${'d'.repeat(40)}.partial.killed/yarn.lock`, '');
+
+  const output = fixture.deploy();
+
+  assert.match(output, new RegExp(`removing stale lock ${lock} \\(pid ${gone} is gone\\)`));
+  assert.match(output, /removed stale .*\.partial\.killed/);
+  assert.deepEqual(fs.readdirSync(fixture.cliRoot), [fixture.sha]);
+  assert.equal(fixture.calls().length, 2);
+});
+
+test('deploy-node fails with the fix while another live deploy holds the CLI lock', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/.local/share/farmslot-cli/.lock/pid', `${process.pid}\n`);
+  assert.throws(
+    () => fixture.deploy({ env: { CLI_LOCK_WAIT_SECONDS: '3' } }),
+    (error) => {
+      assert.match(
+        String(error.stderr),
+        new RegExp(`another deploy has held .*/\\.lock for 3 s \\(pid ${process.pid}\\)`),
+      );
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(fixture.snapshot), false);
+  assert.equal(
+    fs.readFileSync(path.join(fixture.cliRoot, '.lock/pid'), 'utf8'),
+    `${process.pid}\n`,
+    "the holder's lock is left alone",
+  );
+});
+
+test('deploy-node refuses a CLI install that rewrites the committed yarn.lock', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/yarn-edits-lock', '');
+  assert.throws(fixture.deploy, (error) => {
+    assert.match(String(error.stderr), /installing the node CLI changed yarn\.lock/);
+    return true;
+  });
+  assert.deepEqual(fs.readdirSync(fixture.cliRoot), [`${fixture.sha}.yarn-install.log`]);
+  assert.equal(fs.existsSync(path.join(fixture.home, '.local/bin/farmslot')), false);
+});
+
+test('deploy-node gives up on a verify session that never finishes and kills only that session', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/tmux-hangs', '');
+  assert.throws(
+    () => fixture.deploy({ env: { CLI_VERIFY_TIMEOUT_SECONDS: '2' } }),
+    (error) => {
+      assert.match(String(error.stderr), /the worker-shell verify did not finish within 2 s/);
+      return true;
+    },
+  );
+  assert.equal(fixture.tmuxLaunches().length, 1);
+  const kills = fixture.tmuxKills();
+  assert.equal(kills.length, 1);
+  assert.match(kills[0], /^kill-session -t =farmslot-cli-verify-\d+$/);
 });

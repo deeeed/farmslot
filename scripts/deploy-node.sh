@@ -11,7 +11,9 @@
 # then installs the same git revision as the machine's `farmslot` CLI (the one
 # slot workers run) and verifies it reaches the gateway from a worker shell.
 # A local deploy leaves the CLI as is unless --refresh-cli is passed: there it
-# is the operator's own CLI.
+# is the operator's own CLI. CLI_LOCK_WAIT_SECONDS (default 600) bounds the wait
+# for another deploy's CLI refresh on the same machine, and
+# CLI_VERIFY_TIMEOUT_SECONDS (default 120) the worker-shell verify.
 #
 # Instances: a machine can run a prod node and a dev node side by side —
 # distinct install dir, service name, gateway URL, and IPC state. Default
@@ -704,7 +706,7 @@ fi
 # CLI was last installed at. Install the deployed revision as an immutable
 # snapshot, ~/.local/share/farmslot-cli/<sha>/, and point the user's farmslot
 # links at it. Links into a git checkout are switched too; the checkout is never
-# touched, and the previous target is printed for rollback. One CLI per machine:
+# touched, and the previous target is printed and kept for rollback. One CLI per machine:
 # dev and prod workers resolve the same `farmslot`, so the last deploy wins. On
 # a local deploy the CLI is the operator's own, so it is refreshed only on request.
 if [[ "$IS_LOCAL" == true && "$REFRESH_CLI" != true ]]; then
@@ -721,6 +723,10 @@ else
   CLI_ROOT="$REMOTE_HOME/.local/share/farmslot-cli"
   CLI_SNAPSHOT="$CLI_ROOT/$CLI_SHA"
   CLI_ENTRY="$CLI_SNAPSHOT/packages/cli/bin/farmslot.mjs"
+  # The archive is streamed only when the snapshot is missing; the node checks
+  # again under its lock.
+  CLI_ARCHIVE=/dev/null
+  CLI_ARCHIVE_SHA256=""
   if run "test -f $(printf '%q' "$CLI_SNAPSHOT/DEPLOYED-REVISION.json")"; then
     echo "[deploy] node CLI snapshot $CLI_SHA already installed"
   else
@@ -729,48 +735,94 @@ else
     trap 'rm -f "$CLI_ARCHIVE"' EXIT
     git -C "$REPO_ROOT" archive --format=tar "$CLI_SHA" > "$CLI_ARCHIVE"
     CLI_ARCHIVE_SHA256=$(shasum -a 256 "$CLI_ARCHIVE" | cut -d' ' -f1)
-    # Build in a private partial directory and rename it into place once the
-    # install and DEPLOYED-REVISION.json are done: concurrent deploys never share
-    # a directory, and live links never point at a snapshot being rebuilt. Only
-    # the CLI and its workspace dependencies are installed (about 100 MB; the
-    # full monorepo install is several GB and builds native modules).
-    CLI_INSTALL=$(cat << 'INSTALL'
-set -euo pipefail
-snapshot=$1 sha=$2 sha256=$3 node_dir=$4
-log="$snapshot.yarn-install.log"
-mkdir -p "$(dirname "$snapshot")"
-partial=$(mktemp -d "$snapshot.partial.XXXXXX")
-trap 'rm -rf "$partial"' EXIT
-tar -xf - -C "$partial"
-if ! (cd "$partial" && PATH="$node_dir:$PATH" YARN_ENABLE_IMMUTABLE_INSTALLS=1 yarn workspaces focus @farmslot/cli) > "$log" 2>&1; then
-  tail -20 "$log" >&2
-  echo "[deploy] ERROR: yarn workspaces focus @farmslot/cli failed for the node CLI; full log: $log" >&2
-  echo "  fix: resolve the error in that log (corepack enable if yarn is missing), then redeploy" >&2
-  exit 1
-fi
-rm -f "$log"
-printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$sha" "$sha256" > "$partial/DEPLOYED-REVISION.json"
-# A concurrent deploy of the same revision may have finished first.
-[[ -f "$snapshot/DEPLOYED-REVISION.json" ]] && exit 0
-# Without the marker, a directory here is an install that never finished.
-rm -rf "$snapshot"
-mv "$partial" "$snapshot"
-trap - EXIT
-INSTALL
-)
-    if ! run "bash -c $(printf '%q ' "$CLI_INSTALL" _ "$CLI_SNAPSHOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR")" < "$CLI_ARCHIVE"; then
-      echo "[deploy] ERROR: could not install the node CLI snapshot on $MACHINE; see the fix above" >&2
-      exit 1
-    fi
   fi
 
+  # Install, link swap and prune run as one script on the node, holding
+  # $CLI_ROOT/.lock: overlapping deploys (dev and prod, or two revisions) never
+  # prune a snapshot another deploy has just linked. A lock whose holder is gone
+  # is stale and taken over, along with the partial directories it left.
+  # The snapshot is built in a partial directory and renamed into place once the
+  # install and DEPLOYED-REVISION.json are done, so live links never point at a
+  # snapshot being rebuilt. Only the CLI and its workspace dependencies are
+  # installed (about 100 MB; the full monorepo install is several GB and builds
+  # native modules). When a link moves, snapshots nothing points at any more are
+  # pruned; this one and the previous link targets stay for rollback.
   # install.sh links ~/.local/bin/farmslot; npm-style installs own ~/.npm-global/bin.
-  # When a link moves, snapshots nothing points at any more are pruned: this one
-  # and the previous link targets stay, so a rollback target always exists.
   echo "[deploy] pointing farmslot links at the node CLI snapshot..."
-  run "bash -s $(printf '%q ' "$CLI_ENTRY" "$CLI_ROOT" "$CLI_SHA")" << 'LINKS'
+  CLI_REFRESH=$(cat << 'REFRESH'
 set -euo pipefail
-entry=$1 root=$2 sha=$3
+root=$1 sha=$2 sha256=$3 node_dir=$4 lock_wait=$5
+snapshot="$root/$sha"
+entry="$snapshot/packages/cli/bin/farmslot.mjs"
+lock="$root/.lock"
+partial=""
+mkdir -p "$root"
+held=false
+for _ in $(seq 1 "$lock_wait"); do
+  if mkdir "$lock" 2> /dev/null; then
+    held=true
+    break
+  fi
+  holder=$(cat "$lock/pid" 2> /dev/null || true)
+  # A holder that is gone, or one that never wrote its pid a minute on, is stale.
+  if { [ -n "$holder" ] && ! kill -0 "$holder" 2> /dev/null; } ||
+    { [ -z "$holder" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]; }; then
+    echo "  removing stale lock $lock${holder:+ (pid $holder is gone)}"
+    rm -rf "$lock"
+    continue
+  fi
+  sleep 1
+done
+if [ "$held" != true ]; then
+  echo "[deploy] ERROR: another deploy has held $lock for $lock_wait s (pid $(cat "$lock/pid" 2> /dev/null || echo unknown))" >&2
+  echo "  fix: wait for it to finish, or remove $lock if no deploy is running, then redeploy" >&2
+  exit 1
+fi
+trap 'rm -rf "$lock" ${partial:+"$partial"}' EXIT
+echo "$$" > "$lock/pid"
+# Snapshots are built only under the lock, so a partial directory now is left
+# by a deploy that was killed.
+for stale in "$root"/*.partial.*; do
+  [ -e "$stale" ] || continue
+  rm -rf "$stale"
+  echo "  removed stale $stale"
+done
+
+if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
+  if [ -z "$sha256" ]; then
+    echo "[deploy] ERROR: $snapshot disappeared after this deploy found it installed" >&2
+    echo "  fix: redeploy" >&2
+    exit 1
+  fi
+  log="$snapshot.yarn-install.log"
+  partial=$(mktemp -d "$snapshot.partial.XXXXXX")
+  tar -xf - -C "$partial"
+  if [ ! -f "$partial/yarn.lock" ]; then
+    echo "[deploy] ERROR: the archive of $sha has no yarn.lock; refusing an unpinned CLI install" >&2
+    exit 1
+  fi
+  # Yarn 4 `workspaces focus` ignores immutable mode, so compare the lockfile it
+  # leaves with the committed one.
+  cp "$partial/yarn.lock" "$partial/.yarn.lock.deployed"
+  if ! (cd "$partial" && PATH="$node_dir:$PATH" YARN_ENABLE_IMMUTABLE_INSTALLS=1 yarn workspaces focus @farmslot/cli) > "$log" 2>&1; then
+    tail -20 "$log" >&2
+    echo "[deploy] ERROR: yarn workspaces focus @farmslot/cli failed for the node CLI; full log: $log" >&2
+    echo "  fix: resolve the error in that log (corepack enable if yarn is missing), then redeploy" >&2
+    exit 1
+  fi
+  if ! cmp -s "$partial/yarn.lock" "$partial/.yarn.lock.deployed"; then
+    echo "[deploy] ERROR: installing the node CLI changed yarn.lock, so $sha's lockfile is out of date; full log: $log" >&2
+    echo "  fix: commit the yarn.lock that yarn install produces, then redeploy" >&2
+    exit 1
+  fi
+  rm -f "$log" "$partial/.yarn.lock.deployed"
+  printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$sha" "$sha256" > "$partial/DEPLOYED-REVISION.json"
+  # Without the marker, a directory here is an install that never finished.
+  rm -rf "$snapshot"
+  mv "$partial" "$snapshot"
+  partial=""
+fi
+
 keep=" $sha "
 moved=false
 for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
@@ -802,25 +854,40 @@ for dir in "$root"/*/; do
   rm -rf "${root:?}/$name"
   echo "  pruned $root/$name"
 done
-LINKS
+REFRESH
+)
+  if ! run "bash -c $(printf '%q ' "$CLI_REFRESH" _ "$CLI_ROOT" "$CLI_SHA" "$CLI_ARCHIVE_SHA256" "$NODE_DIR" "${CLI_LOCK_WAIT_SECONDS:-600}")" < "$CLI_ARCHIVE"; then
+    echo "[deploy] ERROR: could not refresh the node CLI on $MACHINE; see the fix above" >&2
+    exit 1
+  fi
 
   # Verify the way a tmux slot worker runs: `exec bash -lc '<worker prefix> &&
   # export GW_URL=… && …'` in a throwaway session on the node user's tmux server,
-  # falling back to plain `bash -lc` when no server is running. The prefix is the
-  # gateway's own (scripts/lib/worker-env-prefix.sh) and puts ~/.local/bin, where
-  # the links above live, first on PATH. GW_URL is the URL this node
-  # dials, and no control-plane credential is set, so the CLI authenticates with
-  # the stored profile for that URL exactly as a tmux worker does. FARMSLOT_HOME
-  # is left as the shell has it for both instances. Native workers instead inherit
-  # the node's FARMSLOT_HOME (~/.farmslot-dev for dev); that is a known follow-up,
-  # and this verifies the tmux worker path only.
+  # falling back to plain `bash -lc` when no server is running; either way within
+  # CLI_VERIFY_TIMEOUT_SECONDS. The worker prefix and the tmux lookup are the gateway's own
+  # (scripts/lib/worker-env-prefix.sh, scripts/lib/tmux-bin.sh); the prefix puts
+  # ~/.local/bin, where the links above live, first on PATH. GW_URL is the URL
+  # this node dials, and no control-plane credential is set, so the CLI
+  # authenticates with the stored profile for that URL exactly as a tmux worker
+  # does. FARMSLOT_HOME is left as the shell has it for both instances. Native
+  # workers instead inherit the node's FARMSLOT_HOME (~/.farmslot-dev for dev);
+  # that is a known follow-up, and this verifies the tmux worker path only.
   echo "[deploy] verifying node CLI from a worker shell..."
-  WORKER_ENV_PREFIX=$(grep -v -e '^#' -e '^$' "$SCRIPT_DIR/lib/worker-env-prefix.sh")
-  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX")" << 'VERIFY'
+  WORKER_ENV_PREFIX=$(< "$SCRIPT_DIR/lib/worker-env-prefix.sh")
+  TMUX_BIN_LOOKUP=$(< "$SCRIPT_DIR/lib/tmux-bin.sh")
+  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}")" << 'VERIFY'
 set -uo pipefail
-entry=$1 gw_url=$2 prefix=$3
+entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5
 work=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-cli-verify.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+session=""
+fallback_pid=""
+cleanup() {
+  if [ -n "$session" ]; then "$TMUX_BIN" kill-session -t "=$session" 2> /dev/null || true; fi
+  if [ -n "$fallback_pid" ]; then kill "$fallback_pid" 2> /dev/null || true; fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 cat > "$work/probe.sh" << 'PROBE'
 entry=$1
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
@@ -850,28 +917,27 @@ farmslot rpc gateway.status < /dev/null > /dev/null || {
 echo "  farmslot rpc gateway.status ok ($GW_URL)"
 PROBE
 probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q' "$entry")"
-tmux_bin=$(command -v tmux 2>/dev/null || true)
-if [ -z "$tmux_bin" ]; then
-  for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
-    if [ -x "$candidate" ]; then tmux_bin=$candidate; break; fi
-  done
-fi
-if [ -z "$tmux_bin" ] || ! "$tmux_bin" list-sessions > /dev/null 2>&1; then
+launch="exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
+eval "$tmux_lookup"
+if [ -n "$TMUX_BIN" ] && "$TMUX_BIN" list-sessions > /dev/null 2>&1; then
+  session="farmslot-cli-verify-$$"
+  if ! "$TMUX_BIN" new-session -d -s "$session" "$launch"; then
+    session=""
+    echo "[deploy] ERROR: could not start a verify session on the tmux server ($TMUX_BIN)" >&2
+    exit 1
+  fi
+else
   echo "  (no tmux server running; probing in bash -lc)"
-  bash -lc "$probe"
-  exit
+  bash -c "$launch" &
+  fallback_pid=$!
 fi
-session="farmslot-cli-verify-$$"
-"$tmux_bin" new-session -d -s "$session" \
-  "exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
-for _ in $(seq 1 240); do
+for _ in $(seq 1 "$((timeout * 2))"); do
   [ -s "$work/status" ] && break
   sleep 0.5
 done
-"$tmux_bin" kill-session -t "=$session" 2> /dev/null || true
 if [ ! -s "$work/status" ]; then
   cat "$work/out" >&2 2> /dev/null
-  echo "[deploy] ERROR: the verify session on the tmux server did not finish within 120 s" >&2
+  echo "[deploy] ERROR: the worker-shell verify did not finish within $timeout s" >&2
   exit 1
 fi
 status=$(cat "$work/status")

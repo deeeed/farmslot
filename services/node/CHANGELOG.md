@@ -4,7 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
-- fix(deploy): `deploy-node.sh` now installs the deployed git revision as the machine's `farmslot` CLI, so worker-side CLI fixes reach nodes without a manual update. It runs `yarn workspaces focus @farmslot/cli` in a partial directory, writes `DEPLOYED-REVISION.json` last, renames it to `~/.local/share/farmslot-cli/<sha>/`, points `~/.local/bin/farmslot` and an existing `~/.npm-global/bin/farmslot` link at it, and prunes snapshots no link uses. A git checkout is never touched. Redeploying a revision changes nothing, and local deploys need `--refresh-cli`. It then runs `farmslot --version` and `farmslot rpc gateway.status` as a tmux worker would, and fails with the fix if either fails.
+- fix(deploy): `deploy-node.sh` now installs the deployed git revision as the machine's `farmslot` CLI, so worker-side CLI fixes reach nodes without a manual update. Under a per-machine lock, it runs `yarn workspaces focus @farmslot/cli` in a partial directory (refusing a changed `yarn.lock`), writes `DEPLOYED-REVISION.json` last, renames it to `~/.local/share/farmslot-cli/<sha>/`, and points `~/.local/bin/farmslot` and an existing `~/.npm-global/bin/farmslot` link at it. The previous link target is kept for rollback, and older snapshots no link uses are pruned. A git checkout is never touched. Redeploying a revision changes nothing, and local deploys need `--refresh-cli`. It then runs `farmslot --version` and `farmslot rpc gateway.status` as a tmux worker would, and fails with the fix if either fails.
 
 - The node sends its `GATEWAY_URL` in `node.connect`, so the gateway can point workers on this machine at the same address.
 

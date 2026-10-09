@@ -103,16 +103,21 @@ import {
  * `node`) can shadow the project-pinned Node version even when the slot
  * fixture injected the correct `.tool-versions` file.
  *
- * The snippet lives in scripts/lib/worker-env-prefix.sh so deploy-node.sh
+ * `~/.local/bin`, where deploy-node.sh links the node's farmslot CLI, then goes
+ * ahead of the shims: workers start in a non-interactive `bash -lc` whose
+ * dotfiles may never add it (the tmux server PATH on macpro and mini has neither
+ * `~/.local/bin` nor `~/.npm-global/bin`), and it must win over a stale
+ * asdf-installed farmslot. Nothing there is expected to share a name with an
+ * asdf shim (on the nodes it holds farmslot and user-installed CLIs such as
+ * cursor-agent), so node and the other pinned tools still resolve through the shims.
+ *
+ * The text lives verbatim in scripts/lib/worker-env-prefix.sh, so deploy-node.sh
  * verifies a node's CLI under exactly the prefix workers launch with.
  */
 export const WORKER_ENV_PREFIX = readFileSync(
   new URL('../../../../scripts/lib/worker-env-prefix.sh', import.meta.url),
   'utf8',
-)
-  .split('\n')
-  .filter((line) => line.trim() && !line.startsWith('#'))
-  .join('\n');
+).trim();
 
 export type RetainedSessionHandoff =
   | 'resume-with-prompt'
