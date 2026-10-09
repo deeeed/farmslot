@@ -3,6 +3,7 @@ const fs = require('node:fs'),
   path = require('node:path'),
   cp = require('node:child_process');
 const { sandbox } = require('./review-filesystem.cjs');
+const { answerCodexFolderAccess } = require('./review-codex-folder-access.cjs');
 const input = JSON.parse(process.argv[2]);
 const quote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
 const tmux = (args) => cp.spawnSync('tmux', args, { encoding: 'utf8' });
@@ -147,7 +148,23 @@ async function main() {
     check(tmux(['kill-session', '-t', target]));
     throw new Error('Review terminal launch was cancelled');
   }
-  process.stdout.write(JSON.stringify(record));
+  let folderAccess = null;
+  if (input.runner === 'codex') {
+    try {
+      folderAccess = await answerCodexFolderAccess({
+        capture: () => {
+          const pane = tmux(['capture-pane', '-p', '-t', target]);
+          return pane.status === 0 ? pane.stdout : null;
+        },
+        sendEnter: () => check(tmux(['send-keys', '-t', target, 'Enter'])),
+        folders: [input.cwd, cwd],
+      });
+    } catch (error) {
+      tmux(['kill-session', '-t', target]);
+      throw error;
+    }
+  }
+  process.stdout.write(JSON.stringify(folderAccess ? { ...record, folderAccess } : record));
 }
 main().catch((error) => {
   process.stderr.write(String(error));
