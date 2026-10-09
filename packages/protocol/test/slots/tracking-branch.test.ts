@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  defaultBranchRepoBlocker,
   DETACHED_HEAD_BRANCH,
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
@@ -85,4 +86,42 @@ test('a detached HEAD is still a stale branch to the shared predicate', () => {
     'an unexplained detached HEAD must not silence the unmerged-work refusal',
   );
   assert.equal(DETACHED_HEAD_BRANCH, 'HEAD');
+});
+
+test('defaultBranchRepoBlocker names a fetch refspec that excludes the default branch', () => {
+  const full = ['+refs/heads/*:refs/remotes/origin/*'];
+  const local = ['refs/heads/main'];
+  assert.equal(defaultBranchRepoBlocker({ fetchRefspecs: full, refs: local }, 'main'), null);
+  assert.equal(
+    defaultBranchRepoBlocker({ fetchRefspecs: full, refs: ['refs/remotes/origin/main'] }, 'main'),
+    null,
+  );
+  assert.equal(
+    defaultBranchRepoBlocker({ fetchRefspecs: ['+refs/*:refs/*'], refs: local }, 'main'),
+    null,
+  );
+  const single = defaultBranchRepoBlocker(
+    {
+      fetchRefspecs: ['+refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0'],
+      refs: [],
+    },
+    'main',
+  );
+  assert.match(single ?? '', /does not fetch default branch 'main'/);
+  assert.match(single ?? '', /release\/8\.14\.0/);
+  assert.match(
+    defaultBranchRepoBlocker(
+      { fetchRefspecs: [...full, '^refs/heads/main'], refs: local },
+      'main',
+    ) ?? '',
+    /does not fetch default branch 'main'/,
+  );
+  assert.match(
+    defaultBranchRepoBlocker({ fetchRefspecs: [], refs: local }, 'main') ?? '',
+    /\(none\)/,
+  );
+  assert.match(
+    defaultBranchRepoBlocker({ fetchRefspecs: full, refs: [] }, 'main') ?? '',
+    /no default branch 'main'/,
+  );
 });

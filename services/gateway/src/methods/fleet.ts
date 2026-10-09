@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   type AgentContextSummary,
+  DEFAULT_BRANCH,
   type FleetStatus,
   type FleetStatusParams,
   type FleetStatusResult,
@@ -43,7 +44,7 @@ import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js'
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 
-import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
+import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -123,6 +124,7 @@ interface SlotCheckResult {
   enabled: boolean;
   mode: string;
   dispatchable: boolean;
+  repoBlocker?: string;
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
 
@@ -479,6 +481,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     enabled: r.enabled,
     mode: r.mode,
     dispatchable: r.dispatchable,
+    ...(r.repoBlocker ? { repo_blocker: r.repoBlocker } : {}),
     lifecycle,
     phase,
     warm,
@@ -752,7 +755,8 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
+  const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree, repoBlocker] =
     await Promise.all([
       checkBranch(vars),
       checkAgent(vars),
@@ -761,10 +765,12 @@ async function checkSingleSlot(
       checkCDP(vars, projectJson, projectVars),
       checkFixtures(vars, projectVars, projectJson),
       checkLinkedWorktree(vars),
+      checkDefaultBranch(vars, defaultBranch),
     ]);
 
   const dispatchable =
     mode === 'dispatch' &&
+    !repoBlocker &&
     (sshStr === 'OK' || sshStr === 'LOCAL') &&
     (emuStr === '-' || emuStr.endsWith(':OK')) &&
     (devserverStr === '-' || devserverStr === 'OK') &&
@@ -791,11 +797,26 @@ async function checkSingleSlot(
     enabled: true,
     mode,
     dispatchable,
+    ...(repoBlocker ? { repoBlocker } : {}),
     resources: rawSlot.resources,
   };
 }
 
 // ─── Individual check helpers ───
+
+async function checkDefaultBranch(vars: SlotVars, defaultBranch: string): Promise<string | null> {
+  try {
+    const probe = await probeDefaultBranch(vars, defaultBranch, { timeout: SLOT_CHECK_TIMEOUT_MS });
+    return probe.blocker;
+  } catch (e) {
+    // Transport failure is not evidence about the repo; the SSH probe owns that verdict.
+    console.warn(
+      `[fleet.refresh] ${vars.slotId}: default-branch probe failed; no repo verdict`,
+      (e as Error).message ?? e,
+    );
+    return null;
+  }
+}
 
 async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
   try {

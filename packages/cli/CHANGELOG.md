@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot project add` refuses a slot repo, existing or freshly cloned, that cannot check out the project's default branch (for example a `--single-branch` clone), naming the fetch refspec or missing ref.
 - `farmslot run get` prints, per step, its queue time, run time and last progress after the run JSON (`find-slot: queued 2m10s · ran 3s`).
 - `farmslot graph add-edge --condition published` adds a stack edge: the target node starts on top of the source node's published PR.
 - `farmslot update` and the onboarding doctor build and check `packages/recipe-runner` (renamed from `recipe-harness`).

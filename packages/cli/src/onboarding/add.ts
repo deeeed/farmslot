@@ -24,6 +24,8 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { defaultBranchRepoBlocker } from '@farmslot/protocol';
+
 import {
   decideAddAction,
   expandPackVars,
@@ -357,7 +359,39 @@ export function registerProject(
   };
 }
 
-function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress): void {
+/** Prepare checks out the default branch; refuse a clone that cannot (e.g. --single-branch). */
+function assertDefaultBranchCheckable(repoPath: string, defaultBranch: string): void {
+  const git = (args: string[]) =>
+    spawnSync('git', ['-C', repoPath, ...args], { encoding: 'utf-8' });
+  const lines = (stdout: string): string[] =>
+    stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  const refs = git([
+    'for-each-ref',
+    '--format=%(refname)',
+    `refs/heads/${defaultBranch}`,
+    `refs/remotes/origin/${defaultBranch}`,
+  ]);
+  if (refs.error || refs.status !== 0) {
+    throw new AddError(`cannot read refs in slot repo ${repoPath}: ${refs.stderr.trim()}`);
+  }
+  // Exit 1 with no output means no fetch refspec is configured; the blocker names that.
+  const fetch = git(['config', '--get-all', 'remote.origin.fetch']);
+  const blocker = defaultBranchRepoBlocker(
+    { fetchRefspecs: lines(fetch.stdout), refs: lines(refs.stdout) },
+    defaultBranch,
+  );
+  if (blocker) throw new AddError(`slot repo ${repoPath}: ${blocker}`);
+}
+
+function cloneSlotRepo(
+  repoUrl: string,
+  repoPath: string,
+  defaultBranch: string,
+  progress: AddProgress,
+): void {
   const stdio = childStdio(progress);
   if (!isAbsolute(repoUrl) && !isGitUrl(repoUrl) && !repoUrl.startsWith('file://')) {
     throw new AddError(
@@ -375,10 +409,12 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
         `slot repo ${repoPath} tracks ${origin || '(no origin remote)'}, but the pack declares ${repoUrl} — move or remove the old clone, then re-run project add`,
       );
     }
+    assertDefaultBranchCheckable(repoPath, defaultBranch);
     progress.info(`repo exists: ${repoPath}`);
     return;
   }
   run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/', stdio });
+  assertDefaultBranchCheckable(repoPath, defaultBranch);
   progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
 }
 
@@ -671,7 +707,7 @@ export function projectAdd(
         const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
 
         if (mutate) {
-          cloneSlotRepo(registered.repoUrl, repoPath, progress);
+          cloneSlotRepo(registered.repoUrl, repoPath, registered.defaultBranch, progress);
 
           const added = registerSlot(pool, {
             id: slotId,

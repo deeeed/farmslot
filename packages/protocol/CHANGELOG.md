@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `defaultBranchRepoBlocker(state, defaultBranch)` names why a slot repo cannot check out the project's default branch: an origin fetch refspec that does not fetch it (a `--single-branch` clone), or no local or `origin/` ref for it. `SlotStatus.repoBlocker` (optional) carries that reason from fleet refresh.
 
 ## 0.35.0 - 2026-10-09
 

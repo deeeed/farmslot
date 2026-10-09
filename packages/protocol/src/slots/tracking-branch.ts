@@ -15,6 +15,55 @@ export function remoteBranchRefspec(name: string): string {
   return `+refs/heads/${name}:refs/remotes/origin/${name}`;
 }
 
+/** What a slot repo says about its origin fetch config and default-branch refs. */
+export interface DefaultBranchRepoState {
+  /** `remote.origin.fetch` values, in config order. */
+  fetchRefspecs: string[];
+  /** Existing refs among `refs/heads/<branch>` and `refs/remotes/origin/<branch>`. */
+  refs: string[];
+}
+
+function refPatternMatches(pattern: string, ref: string): boolean {
+  const full = pattern.startsWith('refs/') ? pattern : `refs/heads/${pattern}`;
+  const star = full.indexOf('*');
+  if (star === -1) return full === ref;
+  const prefix = full.slice(0, star);
+  const suffix = full.slice(star + 1);
+  return (
+    ref.length >= prefix.length + suffix.length && ref.startsWith(prefix) && ref.endsWith(suffix)
+  );
+}
+
+/**
+ * Why prepare cannot check out the project's default branch in this repo, or
+ * null when it can. A single-branch clone fetches only its own branch: even
+ * after prepare fetches `origin/<branch>` explicitly, `git checkout <branch>`
+ * cannot create the local branch from a ref no configured refspec maps, and
+ * fails with "pathspec did not match".
+ */
+export function defaultBranchRepoBlocker(
+  state: DefaultBranchRepoState,
+  defaultBranch: string,
+): string | null {
+  const head = `refs/heads/${defaultBranch}`;
+  const sources = state.fetchRefspecs
+    .map((spec) => spec.trim().replace(/^\+/, '').split(':')[0])
+    .filter(Boolean);
+  const excluded = sources.some(
+    (src) => src.startsWith('^') && refPatternMatches(src.slice(1), head),
+  );
+  const fetched =
+    !excluded && sources.some((src) => !src.startsWith('^') && refPatternMatches(src, head));
+  if (!fetched) {
+    const configured = state.fetchRefspecs.length ? state.fetchRefspecs.join(', ') : '(none)';
+    return `origin fetch refspec ${configured} does not fetch default branch '${defaultBranch}' (single-branch clone?); add ${remoteBranchRefspec(defaultBranch)} to remote.origin.fetch and fetch`;
+  }
+  if (!state.refs.includes(head) && !state.refs.includes(`refs/remotes/origin/${defaultBranch}`)) {
+    return `repo has no default branch '${defaultBranch}' (neither local nor origin/${defaultBranch}); fetch origin`;
+  }
+  return null;
+}
+
 export interface SlotTrackingProjectConfig {
   defaultBranch?: string;
   slotTrackingBranch?: string;

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { SlotCheckParams, SlotCheckResult } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -23,6 +23,7 @@ import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmu
 import { loadFleetStatus } from '../../fleet/state.js';
 
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
+import { probeDefaultBranch } from './slot-tracking.js';
 
 function emitStep(emit: EventEmitter, step: CheckStep): void {
   emit('slot.check.step', step);
@@ -79,6 +80,14 @@ export async function slotCheck(
     const repoStep = await checkRepo(slotVars);
     checks.push(repoStep);
     emitStep(emit, repoStep);
+    if (repoStep.status === 'pass') {
+      const branchStep = await checkDefaultBranch(
+        slotVars,
+        getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
+      );
+      checks.push(branchStep);
+      emitStep(emit, branchStep);
+    }
 
     // ── 3. Fixtures ──
     const fixtureSteps = await checkFixtures(slotVars, projectVars, projectJson);
@@ -208,6 +217,17 @@ async function checkRepo(vars: SlotVars): Promise<CheckStep> {
   } catch {
     return { name: 'repo', status: 'fail', detail: `Repo not found at ${vars.remoteRepo}` };
   }
+}
+
+export async function checkDefaultBranch(
+  vars: SlotVars,
+  defaultBranch: string,
+): Promise<CheckStep> {
+  const name = 'repo.default-branch';
+  const probe = await probeDefaultBranch(vars, defaultBranch);
+  if (!probe.readable) return { name, status: 'warn', detail: 'git could not read the repo refs' };
+  if (probe.blocker) return { name, status: 'fail', detail: probe.blocker };
+  return { name, status: 'pass', detail: `Default branch ${defaultBranch} is fetched` };
 }
 
 /**

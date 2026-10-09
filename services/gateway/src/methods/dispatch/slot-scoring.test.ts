@@ -22,6 +22,7 @@ import {
   slotClaimBlockedByRelease,
   slotScore,
   validateSlot,
+  validateSlotForDispatch,
 } from './slot-scoring.js';
 
 function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
@@ -192,6 +193,22 @@ test('findBestSlot honors allow-list, identity policy, and CDP preference', () =
   });
   assert.equal(slotScore(liveButDegraded), slotScore(noCdp));
   assert.equal(findBestSlot([noCdp, liveButDegraded], 'demo-farm')?.slot, 'live-degraded');
+});
+
+test('a slot whose repo cannot check out the default branch is never selected', () => {
+  const blocked = slot({
+    slot: 'single-branch',
+    repoBlocker:
+      "origin fetch refspec +refs/heads/release/8.14.0:refs/remotes/origin/release/8.14.0 does not fetch default branch 'main'",
+  });
+  const healthy = slot({ slot: 'healthy', health: { ...blocked.health, cdp: 'OFF' } });
+  assert.equal(findBestSlot([blocked], 'demo-farm'), null);
+  assert.equal(findBestSlot([blocked, healthy], 'demo-farm')?.slot, 'healthy');
+  assert.match(
+    validateSlotForDispatch(blocked, [blocked]) ?? '',
+    /^Slot repo cannot prepare: origin fetch refspec .* does not fetch default branch 'main'/u,
+  );
+  assert.equal(validateSlotForDispatch(healthy, [healthy]), null);
 });
 
 test('validateSlot explains disabled/manual/working/busy and accepts held', () => {

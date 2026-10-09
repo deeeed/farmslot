@@ -329,6 +329,7 @@ export function findBestSlot(
   const candidates = slots
     .filter((s) => {
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
+      if (s.repoBlocker) return false;
       if (options?.pressureRejectedMachines?.has(s.machine)) return false;
       if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
       if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
@@ -418,7 +419,9 @@ export function validateSlotForDispatch(
   return (
     validateSlotForTargetBranch(slot, slots, options?.targetBranch, {
       allowWorking: options?.allowWorking,
-    }) ?? companionResourceBlocker(slot, options?.requiredPrepareProfile)
+    }) ??
+    companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
+    (slot.repoBlocker ? `Slot repo cannot prepare: ${slot.repoBlocker}` : null)
   );
 }
 
