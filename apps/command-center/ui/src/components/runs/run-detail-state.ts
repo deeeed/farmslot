@@ -95,6 +95,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _directRunUnavailable = false;
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];
+  /** What the open lightbox steps through: the run's output, or one criterion's evidence. */
+  @state() _evidenceLightboxScope = 'Run output';
   @state() _evidenceLightboxIndex = 0;
   /** An artifact link that could not be opened, and why. Never a silent no-op. */
   @state() _evidenceArtifactUnavailable: { path: string; reason: string } | null = null;

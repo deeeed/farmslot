@@ -241,6 +241,39 @@ export function runEvidenceLightboxItems(
   }));
 }
 
+/**
+ * Lightbox items for one acceptance criterion's evidence, in the criterion's order.
+ * A file the run already lists keeps its step and source caption; one it doesn't
+ * (a ledger path outside the manifest) is served from the run's artifact endpoint
+ * all the same. Every caption leads with the criterion, so the viewer says which
+ * claim the file backs.
+ */
+export function acceptanceEvidenceLightboxItems(args: {
+  runId: string;
+  familyId: string;
+  criterion: { id: string; text: string };
+  evidence: readonly string[];
+  runArtifacts: readonly FamilyObservabilityArtifact[];
+  artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
+}): RunEvidenceLightboxItem[] {
+  const byPath = new Map(args.runArtifacts.map((artifact) => [artifact.path, artifact]));
+  const artifacts = args.evidence.map(
+    (path): FamilyObservabilityArtifact =>
+      byPath.get(path) ?? {
+        runId: args.runId,
+        familyId: args.familyId,
+        path,
+        purpose: 'acceptance-evidence',
+        source: 'task-artifact',
+      },
+  );
+  const criterion = [args.criterion.id, args.criterion.text].filter(Boolean).join(' · ');
+  return runEvidenceLightboxItems(artifacts, args.artifactUrl).map((item) => ({
+    ...item,
+    caption: [criterion, item.caption].filter(Boolean).join(' — '),
+  }));
+}
+
 export interface RunEvidenceSummary {
   shouldRender: boolean;
   completeStep: RunStep | undefined;

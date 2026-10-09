@@ -47,6 +47,7 @@ import '../interactive/interactive-operator-packets.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
+import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -68,6 +69,7 @@ import {
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
 import {
+  acceptanceEvidenceLightboxItems,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   currentRunCiStatus,
@@ -903,6 +905,7 @@ export class RunDetail extends RunDetailState {
     }
     const { index } = lookup;
     this._evidenceArtifactUnavailable = null;
+    this._evidenceLightboxScope = 'Run output';
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
     const params = new URLSearchParams(location.hash.split('?')[1]);
     const traceIndex = params.get('artifactTrace');
@@ -1047,6 +1050,31 @@ export class RunDetail extends RunDetailState {
     return runArtifactUrl(this.runId, { path: evidencePath });
   };
 
+  /**
+   * An acceptance criterion's evidence file opens in the run's evidence lightbox,
+   * stepping through that criterion's files, not a new browser window.
+   */
+  private _openAcceptanceEvidence = ({ criterion, evidence, index }: AcceptanceEvidenceOpen) => {
+    if (!this.run) return;
+    const operations = [
+      ...(this.taskProgress?.operations ?? []),
+      ...(this.selectedStepProgress?.operations ?? []),
+    ];
+    this._evidenceLightboxItems = acceptanceEvidenceLightboxItems({
+      runId: this.runId,
+      familyId: this.run.familyId,
+      criterion,
+      evidence,
+      runArtifacts: runArtifactsWithOperationLogs(this.run, operations),
+      artifactUrl: this._artifactUrl,
+    });
+    this._evidenceLightboxScope = `${criterion.id} evidence`;
+    this._evidenceLightboxIndex = index;
+    this._evidenceArtifactUnavailable = null;
+    this._evidenceLightboxOpen = true;
+    this._updateEvidenceArtifactHash(this._evidenceLightboxItems[index] ?? null);
+  };
+
   private _updateEvidenceArtifactHash(item: LightboxItem | null): void {
     const next = runDetailEvidenceArtifactHash(this.runId, item);
     if (location.hash !== next) history.replaceState(null, '', next);
@@ -1067,6 +1095,7 @@ export class RunDetail extends RunDetailState {
     e: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
   ): void {
     const { artifacts, index } = e.detail;
+    this._evidenceLightboxScope = 'Run output';
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
     this._evidenceLightboxIndex = index;
     this._evidenceLightboxOpen = true;
@@ -1127,6 +1156,7 @@ export class RunDetail extends RunDetailState {
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,
       evidenceLightboxIndex: this._evidenceLightboxIndex,
+      evidenceLightboxScope: this._evidenceLightboxScope,
       evidenceArtifactUnavailable: this._evidenceArtifactUnavailable,
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
@@ -1167,6 +1197,7 @@ export class RunDetail extends RunDetailState {
       acceptanceStatusError: this.acceptanceStatusError,
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
+      acceptanceEvidenceOpen: this._openAcceptanceEvidence,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,
       _hydrating: this._hydrating,

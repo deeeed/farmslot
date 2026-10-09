@@ -203,10 +203,23 @@ export const acceptancePanelStyles = css`
   }
 `;
 
+/** A click on one of a criterion's evidence files: which criterion, its files in order, and which one. */
+export interface AcceptanceEvidenceOpen {
+  criterion: AcceptanceCriterionView;
+  evidence: readonly string[];
+  index: number;
+}
+
+/** A plain left click; modified and middle clicks keep the browser's own new-tab behaviour. */
+function isPlainClick(event: MouseEvent): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
 function renderRow(
   view: AcceptanceCriterionView,
   evidenceHref?: (evidencePath: string) => string,
   link?: AcceptanceEvidenceLink,
+  openEvidence?: (open: AcceptanceEvidenceOpen) => void,
 ): TemplateResult {
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
@@ -231,7 +244,7 @@ function renderRow(
     ${evidence.length > 0 || recipeNodes.length > 0
       ? html`
           <div class="ac-meta">
-            ${evidence.map((evidencePath) =>
+            ${evidence.map((evidencePath, index) =>
               evidenceHref
                 ? html`<a
                     class="ac-evidence"
@@ -240,6 +253,11 @@ function renderRow(
                     title=${evidencePath}
                     target="_blank"
                     rel="noreferrer"
+                    @click=${(event: MouseEvent) => {
+                      if (!openEvidence || !isPlainClick(event)) return;
+                      event.preventDefault();
+                      openEvidence({ criterion: view, evidence, index });
+                    }}
                     >${evidenceLabel(evidencePath)}</a
                   >`
                 : html`<span class="ac-evidence" title=${evidencePath}
@@ -257,12 +275,14 @@ function renderRow(
 /**
  * Render the ledger panel. `evidenceHref` turns a task-dir relative evidence path
  * into a link the host can serve; without it the paths render as plain text, which
- * is what a surface with no artifact endpoint should show.
+ * is what a surface with no artifact endpoint should show. `openEvidence` lets the
+ * host show a clicked file in its own viewer instead of a new browser window.
  */
 export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
     evidenceHref?: (evidencePath: string) => string;
+    openEvidence?: (open: AcceptanceEvidenceOpen) => void;
     /** Registered criteria, so an unjudged one still gets a row. */
     criteria?: ReadonlyArray<AcceptanceCriterionRef>;
     /** Why the ledger could not be read; shown instead of an empty panel. */
@@ -304,7 +324,9 @@ export function renderAcceptancePanel(
               ledger unreadable: ${options.error}
             </div>`
           : nothing}
-        ${rows.map((row) => renderRow(row, options.evidenceHref, linkById.get(row.id)))}
+        ${rows.map((row) =>
+          renderRow(row, options.evidenceHref, linkById.get(row.id), options.openEvidence),
+        )}
       </div>
     </details>
   `;

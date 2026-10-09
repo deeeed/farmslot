@@ -15,6 +15,7 @@ import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import {
+  type AcceptanceEvidenceOpen,
   acceptancePanelStyles,
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
@@ -82,6 +83,8 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
   /** Turns a task-dir relative evidence path into a link the host can serve. */
   @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
+  /** Opens a clicked acceptance evidence file in the host's viewer. */
+  @property({ attribute: false }) acceptanceEvidenceOpen?: (open: AcceptanceEvidenceOpen) => void;
   @property() selectedStepName?: string;
   @state() private monitorExpanded = false;
   /**
@@ -306,6 +309,7 @@ export class RunPipeline extends LitElement {
     }
     return renderAcceptancePanel(this.acceptanceStatus ?? { schemaVersion: 1, criteria: [] }, {
       ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
+      ...(this.acceptanceEvidenceOpen ? { openEvidence: this.acceptanceEvidenceOpen } : {}),
       ...(this.acceptanceCriteria?.length ? { criteria: this.acceptanceCriteria } : {}),
       ...(this.acceptanceStatusError ? { error: this.acceptanceStatusError } : {}),
       ...(this.acceptanceEvidenceLinks?.length

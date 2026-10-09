@@ -17,6 +17,7 @@ import {
 } from '@farmslot/protocol/checklist-target';
 
 import {
+  acceptanceEvidenceLightboxItems,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
   canReplayRunSteps,
@@ -266,6 +267,39 @@ test('runEvidenceLightboxItems derives stable captions from artifact provenance'
       viewUrl: '#run/run-1?artifactRun=run-1&artifact=artifacts%2Ffinal.png',
     },
   ]);
+});
+
+test('acceptanceEvidenceLightboxItems keeps the criterion order and leads each caption with it', () => {
+  const items = acceptanceEvidenceLightboxItems({
+    runId: 'run-1',
+    familyId: 'family-1',
+    criterion: { id: 'AC-1', text: 'The sheet shows the fee' },
+    evidence: ['artifacts/evidence-ac1-after.png', 'artifacts/final.png', 'logs/ac1-trace.txt'],
+    runArtifacts: [artifact],
+    artifactUrl: (entry) => `/artifact/${entry.runId}?path=${entry.path}`,
+  });
+
+  assert.deepEqual(
+    items.map((item) => [item.path, item.url, item.caption]),
+    [
+      [
+        'artifacts/evidence-ac1-after.png',
+        '/artifact/run-1?path=artifacts/evidence-ac1-after.png',
+        'AC-1 · The sheet shows the fee — task artifact',
+      ],
+      [
+        'artifacts/final.png',
+        '/artifact/run-1?path=artifacts/final.png',
+        'AC-1 · The sheet shows the fee — step complete · step output',
+      ],
+      [
+        'logs/ac1-trace.txt',
+        '/artifact/run-1?path=logs/ac1-trace.txt',
+        'AC-1 · The sheet shows the fee — task artifact',
+      ],
+    ],
+  );
+  assert.equal(items[1].purpose, 'screenshot', 'a listed run artifact keeps its own purpose');
 });
 
 test('buildRunDiagnosisPrompt includes failure context and omits blank optional fields', () => {

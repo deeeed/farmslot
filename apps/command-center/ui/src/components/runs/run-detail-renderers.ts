@@ -33,6 +33,7 @@ import '../shared/workspace-pin.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
@@ -87,6 +88,8 @@ export interface RunDetailViewContext {
   acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
+  /** Opens a clicked acceptance evidence file in the evidence lightbox. */
+  acceptanceEvidenceOpen: (open: AcceptanceEvidenceOpen) => void;
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
@@ -201,6 +204,8 @@ export interface RunEvidenceRenderContext {
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
   evidenceLightboxIndex: number;
+  /** Lightbox scope label; defaults to the run's output. */
+  evidenceLightboxScope?: string;
   evidenceArtifactUnavailable?: { path: string; reason: string } | null;
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
   onEvidenceArtifactClick: (
@@ -363,7 +368,7 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       .items=${ctx.evidenceLightboxItems}
       .open=${ctx.evidenceLightboxOpen}
       .selectedIndex=${ctx.evidenceLightboxIndex}
-      scopeLabel="Run output"
+      scopeLabel=${ctx.evidenceLightboxScope ?? 'Run output'}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}
       @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
     ></media-lightbox>`;
@@ -1149,6 +1154,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceStatusError=${ctx.acceptanceStatusError}
         .acceptanceEvidenceLinks=${ctx.acceptanceEvidenceLinks}
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
+        .acceptanceEvidenceOpen=${ctx.acceptanceEvidenceOpen}
         .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >

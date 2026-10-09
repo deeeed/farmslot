@@ -6,6 +6,7 @@ import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslo
 import { litText } from '../../testing/lit-text.js';
 
 import {
+  type AcceptanceEvidenceOpen,
   acceptancePanelPresentation,
   evidenceLabel,
   renderAcceptancePanel,
@@ -199,4 +200,97 @@ test('manifest-linked criteria render as evidence linked, labelled, and never as
   assert.doesNotMatch(withLedger, /evidence linked/);
   assert.doesNotMatch(withLedger, /acceptance-source/);
   assert.match(withLedger, /1\/4 assessed/);
+});
+
+/** Every `@click` handler in a template, in render order. */
+function clickHandlers(value: unknown, found: Array<(event: MouseEvent) => void> = []) {
+  if (Array.isArray(value)) {
+    for (const entry of value) clickHandlers(entry, found);
+    return found;
+  }
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('strings' in value) ||
+    !('values' in value)
+  ) {
+    return found;
+  }
+  const { strings, values } = value as { strings: readonly string[]; values: readonly unknown[] };
+  values.forEach((entry, index) => {
+    if (strings[index]?.trimEnd().endsWith('@click=') && typeof entry === 'function') {
+      found.push(entry as (event: MouseEvent) => void);
+    } else {
+      clickHandlers(entry, found);
+    }
+  });
+  return found;
+}
+
+function click(overrides: Partial<MouseEvent> = {}) {
+  let prevented = false;
+  const event = {
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: () => {
+      prevented = true;
+    },
+    ...overrides,
+  } as MouseEvent;
+  return { event, prevented: () => prevented };
+}
+
+test('clicking an evidence file opens the files of its criterion, in order, in the host viewer', () => {
+  const windowOpen = Object.getOwnPropertyDescriptor(globalThis, 'open');
+  const opened: string[] = [];
+  Object.defineProperty(globalThis, 'open', {
+    configurable: true,
+    value: (url: string) => opened.push(url),
+  });
+  try {
+    const calls: AcceptanceEvidenceOpen[] = [];
+    const panel = renderAcceptancePanel(ledger([]), {
+      criteria: [
+        { id: 'AC-1', text: 'First' },
+        { id: 'AC-2', text: 'Second' },
+      ],
+      evidenceLinks: [
+        { id: 'AC-1', evidence: ['artifacts/evidence-ac1-a.png', 'artifacts/evidence-ac1-b.png'] },
+        { id: 'AC-2', evidence: ['artifacts/teardown-final-state.png'] },
+      ],
+      evidenceHref: (evidencePath) => `/api/run-artifact?path=${evidencePath}`,
+      openEvidence: (open) => calls.push(open),
+    });
+    const handlers = clickHandlers(panel);
+    assert.equal(handlers.length, 3, 'one handler per evidence link');
+
+    const second = click();
+    handlers[1](second.event);
+    assert.equal(second.prevented(), true, 'the browser does not follow the link');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].criterion.id, 'AC-1');
+    assert.equal(calls[0].criterion.text, 'First');
+    assert.deepEqual(calls[0].evidence, [
+      'artifacts/evidence-ac1-a.png',
+      'artifacts/evidence-ac1-b.png',
+    ]);
+    assert.equal(calls[0].index, 1);
+
+    handlers[2](click().event);
+    assert.equal(calls[1].criterion.id, 'AC-2');
+    assert.deepEqual(calls[1].evidence, ['artifacts/teardown-final-state.png']);
+    assert.equal(calls[1].index, 0);
+
+    const modified = click({ metaKey: true });
+    handlers[0](modified.event);
+    assert.equal(modified.prevented(), false, 'cmd-click keeps the new-tab behaviour');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(opened, [], 'nothing calls window.open');
+  } finally {
+    if (windowOpen) Object.defineProperty(globalThis, 'open', windowOpen);
+    else delete (globalThis as { open?: unknown }).open;
+  }
 });
