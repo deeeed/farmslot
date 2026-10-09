@@ -15,29 +15,33 @@ const check = (result) => {
 const target = input.session;
 
 /**
- * Answer Codex's Folder access screen for a launch record, persisting each stage
- * in the marker (`watching` → `answered` before the key is sent → `done`) so a
- * launch replayed after the helper died resumes the watch and never answers twice.
+ * Answer Codex's Folder access screen for a launch record. The one Enter per
+ * launch is claimed by creating `claim` exclusively, so overlapping or replayed
+ * helpers (a gateway restart can leave the first one running) never send two.
+ * The marker goes `watching` → `done`; a replay of an unfinished one resumes here.
  */
-async function codexHandshake(marker, record, folders) {
-  const persist = () => fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
+async function codexHandshake(marker, claim, record, folders) {
   try {
-    const answered = await answerCodexFolderAccess({
+    await answerCodexFolderAccess({
       capture: () => {
         const pane = tmux(['capture-pane', '-p', '-t', target]);
         return pane.status === 0 ? pane.stdout : null;
       },
-      sendEnter: () => {
-        record.codexHandshake = 'answered';
-        persist();
-        check(tmux(['send-keys', '-t', target, 'Enter']));
+      claimAnswer: () => {
+        try {
+          fs.writeFileSync(claim, record.runId, { mode: 0o600, flag: 'wx' });
+          return true;
+        } catch (error) {
+          if (error.code === 'EEXIST') return false;
+          throw error;
+        }
       },
+      sendEnter: () => check(tmux(['send-keys', '-t', target, 'Enter'])),
       folders,
-      mayAnswer: record.codexHandshake === 'watching',
     });
-    if (answered || record.codexHandshake === 'answered') record.folderAccess = 'restricted';
+    if (fs.existsSync(claim)) record.folderAccess = 'restricted';
     record.codexHandshake = 'done';
-    persist();
+    fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
   } catch (error) {
     tmux(['kill-session', '-t', target]);
     throw error;
@@ -63,6 +67,7 @@ async function main() {
     throw Error('Invalid review terminal identity');
   const marker = path.join(input.task, '.terminal-launch.json');
   const cancelled = path.join(input.task, '.terminal-cancelled');
+  const claim = path.join(input.task, '.terminal-folder-access-claim');
   const existing = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : undefined;
   if (
     existing &&
@@ -97,7 +102,7 @@ async function main() {
       );
     if (has.status !== 0) throw Error('Review terminal exited; explicit retry required');
     if (existing.codexHandshake && existing.codexHandshake !== 'done')
-      await codexHandshake(marker, existing, [input.cwd, fs.realpathSync(input.cwd)]);
+      await codexHandshake(marker, claim, existing, [input.cwd, fs.realpathSync(input.cwd)]);
     process.stdout.write(JSON.stringify(existing));
     return;
   }
@@ -182,7 +187,7 @@ async function main() {
     check(tmux(['kill-session', '-t', target]));
     throw new Error('Review terminal launch was cancelled');
   }
-  if (record.codexHandshake) await codexHandshake(marker, record, [input.cwd, cwd]);
+  if (record.codexHandshake) await codexHandshake(marker, claim, record, [input.cwd, cwd]);
   process.stdout.write(JSON.stringify(record));
 }
 main().catch((error) => {

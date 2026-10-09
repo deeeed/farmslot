@@ -9,7 +9,7 @@ const { answerCodexFolderAccess, classifyCodexLaunchScreen } =
       capture: () => string | null;
       sendEnter: () => void;
       folders: string[];
-      mayAnswer?: boolean;
+      claimAnswer?: () => boolean;
       now?: () => number;
       sleep?: (ms: number) => Promise<void>;
     }) => Promise<'restricted' | null>;
@@ -76,7 +76,7 @@ const splash = `
 `;
 
 /** Replays panes in order (the last one repeats) on a fake clock, counting Enter presses. */
-function drive(panes: string[], mayAnswer = true) {
+function drive(panes: string[], claimAnswer = () => true) {
   let clock = 0;
   let index = 0;
   const sent: string[] = [];
@@ -86,7 +86,7 @@ function drive(panes: string[], mayAnswer = true) {
       sent.push('Enter');
     },
     folders: [folder],
-    mayAnswer,
+    claimAnswer,
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -145,11 +145,17 @@ test('a changed or unknown screen fails the launch instead of pressing Enter bli
   await assert.rejects(stuck.result, /still shows Folder access after Open restricted/);
   assert.deepEqual(stuck.sent, ['Enter']);
 
-  // A resumed launch whose answer was already sent never sends a second one.
-  const resumed = drive([folderAccess], false);
+  // A resumed launch whose answer was already claimed never sends a second one.
+  const resumed = drive([folderAccess], () => false);
   await assert.rejects(resumed.result, /still shows Folder access after Open restricted/);
   assert.deepEqual(resumed.sent, []);
-  const resumedClear = drive(['', ready], false);
-  assert.equal(await resumedClear.result, null);
-  assert.deepEqual(resumedClear.sent, []);
+});
+
+test('overlapping watchers of one launch send exactly one Enter between them', async () => {
+  let claimed = false;
+  const claimAnswer = () => (claimed ? false : (claimed = true));
+  const first = drive(['', folderAccess, folderAccess, '', ready], claimAnswer);
+  const second = drive(['', folderAccess, folderAccess, '', ready], claimAnswer);
+  assert.deepEqual(await Promise.all([first.result, second.result]), ['restricted', 'restricted']);
+  assert.deepEqual([...first.sent, ...second.sent], ['Enter']);
 });
