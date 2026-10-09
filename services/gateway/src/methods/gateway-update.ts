@@ -9,13 +9,16 @@ import type { CheckoutUpdateOperation, GatewayUpdateParams } from '@farmslot/pro
 import { farmslotRoot } from '../core/index.js';
 
 const exec = promisify(execFile);
-async function recordPath(): Promise<string> {
+async function recordPath(root = farmslotRoot): Promise<string> {
   const { stdout } = await exec(
     'git',
     ['rev-parse', '--git-path', 'farmslot-checkout-update.json'],
-    { cwd: farmslotRoot, timeout: 8000 },
+    {
+      cwd: root,
+      timeout: 8000,
+    },
   );
-  return resolve(farmslotRoot, stdout.trim());
+  return resolve(root, stdout.trim());
 }
 
 async function writeOperation(path: string, operation: CheckoutUpdateOperation): Promise<void> {
@@ -23,10 +26,12 @@ async function writeOperation(path: string, operation: CheckoutUpdateOperation):
   await rename(`${path}.tmp`, path);
 }
 
-export async function readCheckoutUpdate(): Promise<CheckoutUpdateOperation | undefined> {
+export async function readCheckoutUpdate(
+  root = farmslotRoot,
+): Promise<CheckoutUpdateOperation | undefined> {
   let path: string;
   try {
-    path = await recordPath();
+    path = await recordPath(root);
   } catch {
     // Packaged deployments outside Git cannot have a checkout update operation.
     return undefined;
@@ -59,6 +64,17 @@ export async function readCheckoutUpdate(): Promise<CheckoutUpdateOperation | un
       await writeOperation(path, operation);
       await rm(`${path}.lock`, { recursive: true, force: true });
     }
+  }
+  if (operation.phase !== 'running') {
+    // A finished record describes one commit: the target once complete, the
+    // untouched local commit after an error. When HEAD moved on by any route
+    // (a terminal pull, another update), it no longer describes this checkout.
+    const describes = operation.phase === 'complete' ? operation.targetSha : operation.localSha;
+    const head = await exec('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 8000 }).then(
+      ({ stdout }) => stdout.trim(),
+      () => '',
+    );
+    if (head && !head.startsWith(describes)) return undefined;
   }
   return operation;
 }

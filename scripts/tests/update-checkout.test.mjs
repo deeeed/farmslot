@@ -89,6 +89,13 @@ for (const kind of ['dirty', 'branch', 'diverged', 'stale-target', 'dependencies
     assert.equal(f.git(f.root, 'rev-parse', 'HEAD'), before);
     if (kind === 'dirty')
       assert.equal(await readFile(join(f.root, 'local.txt'), 'utf8'), 'keep this');
+    if (kind === 'dependencies')
+      assert.ok(
+        result.message.endsWith(
+          `cd '${f.root}' && git merge --ff-only ${target.slice(0, 12)} && yarn install --immutable`,
+        ),
+        result.message,
+      );
   });
 }
 

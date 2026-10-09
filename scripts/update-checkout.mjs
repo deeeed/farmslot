@@ -84,7 +84,7 @@ export async function updateCheckout(root, recordPath) {
     }
     if (dependenciesChanged)
       throw new Error(
-        'This update changes dependencies. Update the checkout and run yarn install --immutable in a terminal. Nothing was changed.',
+        `This update changes dependencies, so it was not applied. Nothing was changed. Run in a terminal: cd '${root}' && git merge --ff-only ${target.slice(0, 12)} && yarn install --immutable`,
       );
     await save({
       message: 'Applying the fast-forward update…',
