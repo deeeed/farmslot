@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -637,24 +638,66 @@ test('deploy-node verifies when the bash login profile never adds ~/.local/bin',
   );
 });
 
-test('deploy-node fails loudly with the fix when a worker cannot reach the gateway', (t) => {
+// A port on loopback: listening (until the test ends) or, once closed, free.
+const loopbackPort = async (t, { listening }) => {
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  if (listening) t.after(() => server.close());
+  else await new Promise((resolve) => server.close(resolve));
+  return String(port);
+};
+
+test('deploy-node fails loudly with the fix when the gateway answers but the RPC fails', async (t) => {
   const fixture = cliFixture(t);
   fixture.write('home/gateway-down', '');
-  assert.throws(fixture.deploy, (error) => {
-    assert.notEqual(error.status, 0);
-    const stderr = String(error.stderr);
-    assert.match(stderr, /farmslot rpc gateway\.status failed against ws:\/\/127\.0\.0\.1:7777/);
-    assert.match(
-      stderr,
-      /farmslot gateway add <name> ws:\/\/127\.0\.0\.1:7777 && farmslot login <name>/,
-    );
-    assert.match(stderr, /workers on fixture-machine cannot use the deployed farmslot CLI/);
-    assert.doesNotMatch(
-      `${error.stdout}${stderr}`,
-      /fixture-operator-secret|fixture-node-credential/,
-    );
-    return true;
-  });
+  const port = await loopbackPort(t, { listening: true });
+  assert.throws(
+    () => fixture.deploy({ env: { GATEWAY_PORT: port } }),
+    (error) => {
+      assert.notEqual(error.status, 0);
+      const stderr = String(error.stderr);
+      assert.match(
+        stderr,
+        new RegExp(`rpc gateway\\.status failed against ws://127\\.0\\.0\\.1:${port}`),
+      );
+      assert.match(
+        stderr,
+        new RegExp(
+          `farmslot gateway add <name> ws://127\\.0\\.0\\.1:${port} && farmslot login <name>`,
+        ),
+      );
+      assert.doesNotMatch(`${error.stdout}${stderr}`, /WARNING/);
+      assert.match(stderr, /workers on fixture-machine cannot use the deployed farmslot CLI/);
+      assert.doesNotMatch(
+        `${error.stdout}${stderr}`,
+        /fixture-operator-secret|fixture-node-credential/,
+      );
+      return true;
+    },
+  );
+});
+
+test('deploy-node warns and succeeds when nothing listens on the gateway port', async (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/gateway-down', '');
+  const port = await loopbackPort(t, { listening: false });
+
+  const output = fixture.deploy({ env: { GATEWAY_PORT: port } });
+
+  assert.match(output, /farmslot 0\.0\.0-fixture/);
+  assert.match(
+    output,
+    new RegExp(
+      `\\[deploy\\] WARNING: prod gateway unreachable at ws://127\\.0\\.0\\.1:${port}; CLI installed and verified; rerun the deploy to verify when it is up$`,
+      'm',
+    ),
+  );
+  assert.doesNotMatch(output, /cannot use the deployed farmslot CLI/);
+  assert.deepEqual(
+    fixture.calls().map((call) => call.argv),
+    [['--version'], ['rpc', 'gateway.status']],
+  );
 });
 
 test('deploy-node verifies the deployed CLI ahead of an asdf-installed farmslot', (t) => {
