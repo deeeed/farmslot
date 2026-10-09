@@ -284,7 +284,6 @@ export async function checkRunnerLaunch(
   progress: HealthProgressOptions = {},
 ): Promise<CheckStep[]> {
   const onProgress = progress.onProgress ?? (() => {});
-  const heartbeatMs = progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS;
   const inWorkerShell = (command: string) =>
     wrapWorkerShellCommand(withMachineEnv(command, vars), { projectJson, vars, projectVars });
   // A bad project command_env fails every probe the same way: report it once.
@@ -308,27 +307,20 @@ export async function checkRunnerLaunch(
     })),
   ];
   const pending = new Set(probes.map((probe) => probe.name));
-  const startedAt = Date.now();
-  const heartbeat = setInterval(() => {
-    const elapsedS = Math.round((Date.now() - startedAt) / 1000);
-    onProgress({
-      name: 'runner',
-      status: 'warn',
-      detail: `Still probing ${[...pending].join(', ')} (${elapsedS} s)`,
-    });
-  }, heartbeatMs);
-  try {
-    return await Promise.all(
-      probes.map(async ({ name, binary }) => {
-        const step = await probeBinary(vars, name, binary, inWorkerShell);
-        pending.delete(name);
-        onProgress(step);
-        return step;
-      }),
-    );
-  } finally {
-    clearInterval(heartbeat);
-  }
+  return withHeartbeat(
+    progress,
+    'runner',
+    () => `Still probing ${[...pending].join(', ')}`,
+    () =>
+      Promise.all(
+        probes.map(async ({ name, binary }) => {
+          const step = await probeBinary(vars, name, binary, inWorkerShell);
+          pending.delete(name);
+          onProgress(step);
+          return step;
+        }),
+      ),
+  );
 }
 
 async function probeBinary(
@@ -349,15 +341,17 @@ async function probeBinary(
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
-  const pin = lines.find((line) => line.startsWith(TOOL_VERSIONS_PIN));
-  const output = lines.filter((line) => line !== pin);
+  const output = lines.filter((line) => !line.startsWith(TOOL_VERSIONS_PIN));
   if (result.exitCode === 0) {
     return { name, status: 'pass', detail: `${binary} ${output[0] ?? ''}`.trim() };
   }
+  // The pin explains only a version-manager refusal, not an unrelated failure.
+  const pinMissing = PINNED_VERSION_MISSING_RE.test(output.join('\n'));
+  const pin = pinMissing ? lines.find((line) => line.startsWith(TOOL_VERSIONS_PIN)) : undefined;
   const pinned = pin
     ? ` ${pin.slice(TOOL_VERSIONS_PIN.length)}`
     : ' the toolchain version the repo pins';
-  const fix = PINNED_VERSION_MISSING_RE.test(output.join('\n'))
+  const fix = pinMissing
     ? `install${pinned} on ${vars.machine} (e.g. \`asdf install\` in ${vars.remoteRepo})`
     : result.exitCode === 127
       ? binary === 'node'
@@ -633,7 +627,6 @@ export async function checkHealth(
   progress: HealthProgressOptions = {},
 ): Promise<CheckStep | null> {
   const onProgress = progress.onProgress ?? (() => {});
-  const heartbeatMs = progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS;
   const healthHook = expandHook('health_check', projectJson, vars, projectVars);
   if (!healthHook) return null;
 
@@ -655,21 +648,19 @@ export async function checkHealth(
     });
     // Heartbeat through the unlock, the settle wait and the re-read: no window
     // may stay silent past the CLI's idle timeout.
-    const unlockStartedAt = Date.now();
     let phase = 'Unlock still running';
-    const heartbeat = setInterval(() => {
-      const elapsedS = Math.round((Date.now() - unlockStartedAt) / 1000);
-      onProgress({ name: 'health', status: 'warn', detail: `${phase} (${elapsedS} s)` });
-    }, heartbeatMs);
-    try {
-      unlockFailure = await runUnlockHook(vars, unlockHook);
-      phase = 'Re-checking health after unlock';
-      // Re-read health even after a failed unlock: the app can reach ready on its own.
-      await new Promise((r) => setTimeout(r, 3000));
-      healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
-    } finally {
-      clearInterval(heartbeat);
-    }
+    await withHeartbeat(
+      progress,
+      'health',
+      () => phase,
+      async () => {
+        unlockFailure = await runUnlockHook(vars, unlockHook);
+        phase = 'Re-checking health after unlock';
+        // Re-read health even after a failed unlock: the app can reach ready on its own.
+        await new Promise((r) => setTimeout(r, 3000));
+        healthValue = await runHealthCheck(vars, healthHook, parseHealthCmd);
+      },
+    );
     if (healthValue && (!readyIndicator || healthValue === readyIndicator)) {
       return { name: 'health', status: 'pass', detail: `Health after unlock — ${healthValue}` };
     }
@@ -690,6 +681,29 @@ export interface HealthProgressOptions {
   onProgress?: (step: CheckStep) => void;
   /** Heartbeat interval while the unlock and its health re-read run. */
   heartbeatMs?: number;
+}
+
+/**
+ * Run `fn` while sending `<detail()> (<N> s)` as a warn step every
+ * `heartbeatMs`, so no wait stays silent past the CLI's idle timeout.
+ */
+async function withHeartbeat<T>(
+  progress: HealthProgressOptions,
+  name: string,
+  detail: () => string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const onProgress = progress.onProgress ?? (() => {});
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const elapsedS = Math.round((Date.now() - startedAt) / 1000);
+    onProgress({ name, status: 'warn', detail: `${detail()} (${elapsedS} s)` });
+  }, progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(heartbeat);
+  }
 }
 
 /**

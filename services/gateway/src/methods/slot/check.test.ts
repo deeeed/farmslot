@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -431,15 +432,33 @@ test('checkRunnerLaunch names a runner binary missing from the worker PATH', asy
   const codex = steps.find((s) => s.name === 'runner.codex');
   assert.equal(codex?.status, 'fail');
   assert.match(codex.detail, /\(exit 127\).*Fix: install .*missing-codex/);
+  // An unrelated failure does not cite the repo's Node pin.
+  assert.doesNotMatch(codex.detail, /pins nodejs/);
 });
 
 test('checkRunnerLaunch streams each probe and heartbeats while one is pending', async (t) => {
-  const vars = await runnerSlot(t, '22.15.0', `#!/bin/sh\nsleep 1\necho 1.0.0\n`);
+  // claude answers only once a heartbeat names it after node has finished (5 s ceiling).
+  const gatedClaude = `#!/bin/sh
+i=0; while [ ! -e claude-gate ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
+echo 1.0.0
+`;
+  const vars = await runnerSlot(t, '22.15.0', gatedClaude);
+  const heartbeatMs = 20;
   const progress: { name: string; detail: string }[] = [];
   const steps = await checkRunnerLaunch(vars, {} as RawProjectJson, undefined, {
-    onProgress: (step) => progress.push({ name: step.name, detail: step.detail }),
-    heartbeatMs: 200,
+    onProgress: (step) => {
+      progress.push({ name: step.name, detail: step.detail });
+      const waitingOnClaudeOnly =
+        step.name === 'runner' &&
+        step.detail.includes('runner.claude') &&
+        !step.detail.includes('runner.node');
+      if (waitingOnClaudeOnly) {
+        writeFileSync(path.join(vars.remoteRepo, 'claude-gate'), '');
+      }
+    },
+    heartbeatMs,
   });
+  const afterReturn = progress.length;
 
   assert.equal(steps.map((s) => s.status).join(), 'pass,pass,pass');
   const claudeAt = progress.findIndex((p) => p.name === 'runner.claude');
@@ -448,9 +467,12 @@ test('checkRunnerLaunch streams each probe and heartbeats while one is pending',
     progress
       .slice(0, claudeAt)
       .some(
-        (p) => p.name === 'runner' && /^Still probing runner\.claude \(\d+ s\)$/.test(p.detail),
+        (p) => p.name === 'runner' && /^Still probing .*runner\.claude.* \(\d+ s\)$/.test(p.detail),
       ),
   );
+  // The heartbeat stops once the probes return.
+  await new Promise((resolve) => setTimeout(resolve, heartbeatMs * 3));
+  assert.equal(progress.length, afterReturn);
 });
 
 test('checkRunnerLaunch reports an unbuildable worker env once', async (t) => {
