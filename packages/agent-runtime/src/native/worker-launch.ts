@@ -169,6 +169,12 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
   };
 }
 
+/**
+ * Gateway routing, not a launch setting: the gateway sets it from the URL the
+ * node dials, which may change across a node redeploy or reconnect.
+ */
+const ROUTING_ENVIRONMENT = new Set(['GW_URL']);
+
 /** Journals compare launch settings without retaining project environment values. */
 export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
   return createHash('sha256')
@@ -180,7 +186,9 @@ export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
         effort: launch.effort,
         ...(launch.filesystemPolicy ? { filesystemPolicy: launch.filesystemPolicy } : {}),
         environment: {
-          set: Object.entries(launch.environment.set).sort(([a], [b]) => a.localeCompare(b)),
+          set: Object.entries(launch.environment.set)
+            .filter(([name]) => !ROUTING_ENVIRONMENT.has(name))
+            .sort(([a], [b]) => a.localeCompare(b)),
           unset: [...new Set(launch.environment.unset)].sort(),
         },
       }),

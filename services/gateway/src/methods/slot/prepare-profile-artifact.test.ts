@@ -27,6 +27,8 @@ mock.module('../../core/exec.js', {
     },
     execFileArgv: async (): Promise<ExecResult> => nextResult,
     isLocal: () => false,
+    // Reached transitively via slot/git-identity.ts (prepare's git-identity sync).
+    EXEC_TIMEOUT_EXIT_CODE: 124,
   },
 });
 

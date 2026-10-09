@@ -29,6 +29,7 @@ import {
 } from '../../runners/launch-command.js';
 import { normalizeRunner } from '../../runners/registry.js';
 
+import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -94,6 +95,14 @@ export async function slotCheck(
       );
       checks.push(branchStep);
       emitStep(emit, branchStep);
+      let signingStep: CheckStep;
+      try {
+        signingStep = await checkCommitSigning(slotVars, loadGitIdentity());
+      } catch (err) {
+        signingStep = { name: 'git.signing', status: 'fail', detail: (err as Error).message };
+      }
+      checks.push(signingStep);
+      emitStep(emit, signingStep);
       // Streams each probe as it completes; pushed here without re-emitting.
       checks.push(
         ...(await checkRunnerLaunch(slotVars, projectJson, projectVars, {

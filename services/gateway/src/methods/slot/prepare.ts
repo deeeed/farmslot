@@ -68,6 +68,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
+import { gitIdentityConfigPath, loadGitIdentity, syncGitIdentity } from './git-identity.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -614,6 +615,21 @@ async function slotPrepareInner(
       );
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
+
+    // Every slot pushes as the farm's one identity and signing key, so branch
+    // rules requiring signed commits accept it. A sync failure does not stop
+    // prepare; `slot check` reports a slot that cannot sign.
+    try {
+      const identity = loadGitIdentity();
+      step(
+        'git-identity',
+        identity
+          ? await syncGitIdentity(vars, identity)
+          : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
+      );
+    } catch (err) {
+      step('git-identity', `Git identity not synced: ${(err as Error).message}`);
+    }
   }
 
   // A requested start ref must resolve to structured provenance on every branch

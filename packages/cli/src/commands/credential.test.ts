@@ -65,6 +65,11 @@ test('activation persists the owner secret without overwriting an unrelated acti
         },
       },
     });
+    // Same gateway spelled differently updates its profile, as GW_URL matching does.
+    assert.equal(
+      persistOwnerCredential('WSS://OTHER.EXAMPLE:443/ws/', undefined, 'rotated'),
+      'other',
+    );
   } finally {
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
