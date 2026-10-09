@@ -361,3 +361,20 @@ test('a slot re-bind refuses a run being archived', async (t) => {
   assert.match(String(await rebindReleasedSlot(run)), /being archived/);
   assert.equal(await readSlotField(slotId, 'current_run_id'), null);
 });
+
+test('a release that throws because it left the slot held aborts the archive with that reason', async (t) => {
+  const run = blockedRun(t, 'archive-held-throw', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  const { slot } = recordingSlot();
+  // What a prepare-scope reap failure or stop timeout does after the kill.
+  slot.release = async (params) => {
+    throw new Error(`Slot ${params.slotId} stays held: In-flight prepare did not stop within 180s`);
+  };
+
+  await assert.rejects(
+    runArchive({ runId: run.id }, noopEmit, slot),
+    /Slot demo-work-1 stays held: In-flight prepare did not stop within 180s/,
+  );
+  assert.equal(getRun(run.id)?.status, 'blocked', 'the run is not archived');
+  assert.equal(isRunArchiving(run.id), false, 'the fence is ended');
+});
