@@ -4,8 +4,9 @@
 // A worker's artifacts/ can hold far more than evidence (a 24 GB /goal
 // workspace of copied repos and installs, TAT-4045). The package collects
 // only what the gate and PR read:
-//   - media named by evidence-manifest.json (copied by the manifest step) or
-//     cited by the worker's pr-body.md / pr-description.md;
+//   - files named by evidence-manifest.json, of any type (copied by the
+//     manifest step), and media cited by the worker's pr-body.md /
+//     pr-description.md;
 //   - recipe output packages, i.e. each directory up to
 //     PUBLISH_PACKAGE_MAX_DEPTH levels under artifacts/ holding a
 //     recipe-runner package root marker (artifact-manifest.json, or
@@ -144,7 +145,9 @@ export function buildPublishPackageScanCommand(
     // Roots: the step directories and named paths that exist (`R`), and the
     // directory of each package marker (`M`); a failing marker find reports
     // `E:<status>`. Sorted and reduced to the outermost roots, so a package
-    // met as a step directory and through both markers is walked once.
+    // met as a step directory and through both markers is walked once. Case
+    // patterns inside $(...) take a leading parenthesis: bash 3.2 (macOS
+    // /bin/bash) otherwise reads the first `)` as closing the substitution.
     'set -f',
     'scan_ifs=$IFS',
     "IFS='\n'",
@@ -153,10 +156,10 @@ export function buildPublishPackageScanCommand(
     `  find . -maxdepth ${PUBLISH_PACKAGE_MAX_DEPTH + 1} \\( ${detectionPrunes} \\) -prune -o -type f -path './*/*' \\( -name artifact-manifest.json -o -name summary.json \\) -exec printf 'M %s\\n' {} + || echo "E:$?"`,
     '} | while IFS= read -r m; do',
     '  case $m in',
-    `    'R '*) printf '%s\\n' "\${m#??}" ;;`,
-    `    'M '*/summary.json) m=\${m#??}; [ ! -f "\${m%/*}/trace.json" ] || printf '%s\\n' "\${m%/*}" ;;`,
-    `    'M '*) m=\${m#??}; printf '%s\\n' "\${m%/*}" ;;`,
-    `    *) printf '%s\\n' "$m" ;;`,
+    `    ('R '*) printf '%s\\n' "\${m#??}" ;;`,
+    `    ('M '*/summary.json) m=\${m#??}; [ ! -f "\${m%/*}/trace.json" ] || printf '%s\\n' "\${m%/*}" ;;`,
+    `    ('M '*) m=\${m#??}; printf '%s\\n' "\${m%/*}" ;;`,
+    `    (*) printf '%s\\n' "$m" ;;`,
     '  esac',
     `done | LC_ALL=C sort -u | awk '{ for (i = 1; i <= n; i++) if (index($0, kept[i] "/") == 1) next; kept[++n] = $0; print }'); do`,
     '  case $r in',

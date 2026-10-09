@@ -106,9 +106,11 @@ test('the scan command finds recipe packages by marker within the depth bound, p
     namedPaths: ['goal/a b/shot.png', 'goal/missing.png', 'repro/before.json'],
     snapshotRoot: 'recipe-runs/r1',
   });
-  // A local slot runs it under bash; a remote darwin node under `zsh -f`,
-  // where `status` is read-only, so both shells are exercised when present.
+  // A local slot runs it under the bash on PATH; a remote darwin node under
+  // `zsh -f`, where `status` is read-only, so each shell present is exercised.
   const shells = [['bash', '--noprofile', '--norc', '-c']];
+  // macOS /bin/bash is 3.2, whose parser differs inside $(...).
+  if (existsSync('/bin/bash')) shells.push(['/bin/bash', '--noprofile', '--norc', '-c']);
   if (existsSync('/bin/zsh')) shells.push(['/bin/zsh', '-f', '-c']);
   for (const [shell, ...flags] of shells) {
     const stdout = execFileSync(shell, [...flags, command]).toString();
