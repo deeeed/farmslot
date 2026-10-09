@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   type ArtifactRef,
   isPublishEvidenceArtifact,
+  type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
 } from '@farmslot/protocol';
@@ -103,6 +104,13 @@ export function computeReadyGatePackageInputHash(prPackage: ReadyGatePrPackageWi
   );
 }
 
+/**
+ * What a review certifies: the branch, HEAD, diff, selected evidence and
+ * validation summary. The title and body are left out (v2), so editing the
+ * description never makes a review stale; the package hash still covers them.
+ * Hashes stamped under v1 stay comparable: stored stamps are compared with the
+ * stored package hash, and a refresh recomputes both packages with this one.
+ */
 export function computeReadyGateReviewSubjectHash(
   prPackage: ReadyGatePrPackageWithoutHash,
 ): string {
@@ -133,13 +141,11 @@ export function computeReadyGateReviewSubjectHash(
   );
   return sha256Text(
     stableJson({
-      kind: 'ready-gate-review-subject-v1',
+      kind: 'ready-gate-review-subject-v2',
       branch: payload.branch,
       remoteBranchRef: payload.remoteBranchRef,
       headSha: payload.headSha,
       diffStat: payload.diffStat,
-      draftTitle: payload.draftTitle,
-      draftBody: payload.draftBody,
       evidenceManifest: reviewEvidenceManifest,
       selectedEvidenceKeys:
         canonicalSelectedEvidenceKeys.length > 0
@@ -148,6 +154,55 @@ export function computeReadyGateReviewSubjectHash(
       validationSummaryHash: payload.validationSummaryHash,
       reviewSnapshot: payload.reviewSnapshot,
     }),
+  );
+}
+
+/**
+ * The description the Ready gate shows instead of the package's own: the given
+ * title and body when they differ from the reviewed package's, or always once
+ * published. The package and its hash are untouched.
+ */
+export function readyGateCurrentDescription(
+  prPackage: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  description: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  publishedAt?: string,
+): ReadyGatePayload['currentDescription'] {
+  if (
+    !publishedAt &&
+    description.draftTitle === prPackage.draftTitle &&
+    description.draftBody === prPackage.draftBody
+  ) {
+    return undefined;
+  }
+  return {
+    title: description.draftTitle,
+    body: description.draftBody,
+    ...(publishedAt ? { publishedAt } : {}),
+  };
+}
+
+/**
+ * A stale-package refusal at approval: names what changed and the one action
+ * that rebuilds the package, so the operator is not left at a dead end.
+ */
+export function packageChangedError(runId: string, detail: string): Error {
+  return new Error(
+    `Package changed; refresh package and re-review before publishing (${detail}). ` +
+      `To refresh, click "Refresh current package" on the Ready gate or run: ` +
+      `farmslot rpc run.refreshPublishPackage '${JSON.stringify({ runId })}'`,
+  );
+}
+
+/** Refuse publishing when the slot HEAD is no longer the package's HEAD. */
+export function assertLiveHeadMatchesPackage(
+  runId: string,
+  approvedHead: string,
+  liveHead: string,
+): void {
+  if (liveHead && liveHead === approvedHead) return;
+  throw packageChangedError(
+    runId,
+    `approved HEAD ${approvedHead.slice(0, 12)} but live HEAD is ${liveHead ? liveHead.slice(0, 12) : 'unknown'}`,
   );
 }
 
@@ -186,23 +241,17 @@ export async function verifyReadyGateSelectedEvidenceFiles(
       evidenceByPath.get(key) ??
       resolveSelectedEvidenceRef(key, preparedPackage.evidenceManifest ?? []);
     if (!evidence) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (selected evidence missing from package: ${key})`,
-      );
+      throw packageChangedError(current.id, `selected evidence missing from package: ${key}`);
     }
     const artifactPath = path.resolve(taskDir, evidence.path);
     const relative = path.relative(taskDir, artifactPath);
     if (relative.startsWith('..') || path.isAbsolute(relative) || !existsSync(artifactPath)) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (selected evidence file missing: ${evidence.path})`,
-      );
+      throw packageChangedError(current.id, `selected evidence file missing: ${evidence.path}`);
     }
     if (evidence.sha256) {
       const actual = await sha256File(artifactPath);
       if (actual !== evidence.sha256) {
-        throw new Error(
-          `Package changed; refresh package and re-review before publishing (selected evidence hash mismatch: ${evidence.path})`,
-        );
+        throw packageChangedError(current.id, `selected evidence hash mismatch: ${evidence.path}`);
       }
     }
   }

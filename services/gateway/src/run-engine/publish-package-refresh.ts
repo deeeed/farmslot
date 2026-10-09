@@ -249,7 +249,8 @@ export async function refreshPublishPackage(params: {
           requireCrossRunnerCertification: reviewDepth?.requireCrossRunner,
         })
       : 0;
-  // A refresh after the description or evidence changed needs a new review.
+  // A refresh after the evidence or HEAD changed needs a new review; a
+  // description edit does not.
   const reviewedInputsStale = await reviewedInputsChanged(refreshedRun);
   const reviewSatisfied =
     independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
@@ -323,6 +324,8 @@ export async function refreshPublishPackage(params: {
       headSha: prPackage.headSha,
       artifactManifest: prPackage.evidenceManifest,
       prPackage,
+      // The refreshed package carries the current description itself.
+      currentDescription: undefined,
       reviewDepth,
       independentReviews,
       gatePolicy: prPackage.gatePolicy,

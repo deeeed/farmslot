@@ -352,8 +352,6 @@ function legacyReviewSubjectMatchesIgnoringNewEvidenceDigests(
     return false;
   if (JSON.stringify(reviewedPackage.diffStat) !== JSON.stringify(preparedPackage.diffStat))
     return false;
-  if (reviewedPackage.draftTitle !== preparedPackage.draftTitle) return false;
-  if (reviewedPackage.draftBody !== preparedPackage.draftBody) return false;
   if (
     (reviewedPackage.validationSummaryHash ?? null) !==
     (preparedPackage.validationSummaryHash ?? null)
@@ -821,7 +819,7 @@ export async function holdSlotForPublicationGate(
 }
 
 /**
- * F42: when the description, evidence or HEAD changed after the last passing
+ * F42: when the evidence or HEAD changed after the last passing
  * review, self-review runs again before the publication gate is presented, once
  * per changed state: one that does not pass leaves review unsatisfied at the
  * gate instead of looping. Returns whether a review ran.
@@ -839,7 +837,7 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
   const changedInputs = await reviewedInputsAwaitingReview(latest);
   if (!changedInputs) return false;
   console.log(
-    `[run-engine] run ${runId.slice(0, 8)} — description, evidence or HEAD changed since the last review; running self-review again`,
+    `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running self-review again`,
   );
   const plan: ReviewLoopRequest[] = [{ order: 1, runner: 'same', validationDepth: 'static-code' }];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);

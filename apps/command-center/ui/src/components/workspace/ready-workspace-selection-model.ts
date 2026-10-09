@@ -15,6 +15,14 @@ export function readyPublicationTarget(payload: ReadyGatePayload): PublicationTa
   return existingTarget === 'draft' || existingTarget === 'ready' ? existingTarget : 'ready';
 }
 
+/** The PR title and body the gate shows: what is (or was) published, else the package's. */
+export function readyPrDescription(payload: ReadyGatePayload): { title: string; body: string } {
+  return {
+    title: payload.currentDescription?.title ?? payload.prPackage?.draftTitle ?? '',
+    body: payload.currentDescription?.body ?? payload.prPackage?.draftBody ?? '',
+  };
+}
+
 export function readyEvidenceSelectionKey(input: {
   decisionId?: string;
   payload: ReadyGatePayload;

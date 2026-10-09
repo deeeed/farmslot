@@ -88,6 +88,7 @@ import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
   computeReadyGateReviewSubjectHash,
+  packageChangedError,
   resolveSelectedEvidenceRef,
   sha256Text,
   sortArtifactRefsForComparison,
@@ -190,6 +191,8 @@ export interface PublishCompletionPackageResult extends CompletionResult {
   publicationStatus: PublicationStatus;
   packageHash: string;
   bodyPostProcessed: boolean;
+  /** The title and body posted to the PR; absent when this call posted nothing. */
+  publishedDescription?: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>;
 }
 
 /**
@@ -402,10 +405,45 @@ export async function buildPreparedDraftPrBody(
   }
 }
 
+/**
+ * The title and body a package would carry if it were prepared now: what
+ * approval publishes. Renders to a temporary file; writes nothing in the task.
+ */
+export async function renderCurrentDescription(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+  artifacts?: ArtifactRef[],
+): Promise<{ draftTitle: string; draftBody: string }> {
+  if (!current.taskFile) throw new Error('Approved package requires a task directory');
+  const report = await readWorkerReport(current);
+  // Same body the package was prepared with; a run without project config
+  // (fixtures, imported runs) keeps the default branch, as preparation does.
+  const baseBranch = await loadProjectVars(current.project)
+    .then((projectVars) => getProjectField(projectVars.projectJson, 'default_branch'))
+    .catch((error: Error) => {
+      if (!/not found/i.test(error.message)) throw error;
+      return null;
+    });
+  const draftBody = await buildPreparedDraftPrBody(
+    current,
+    report,
+    artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
+    baseBranch || DEFAULT_BRANCH,
+    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
+  );
+  return { draftTitle: buildDraftPrTitle(current), draftBody };
+}
+
+/**
+ * Re-check a prepared package at approval and return the package to publish.
+ * The title and body are re-rendered and the current ones are published: a
+ * changed description is logged, never refused. Changed evidence or validation
+ * inputs still refuse, naming the input and the refresh step.
+ */
 export async function assertReadyGatePackageInputsCurrent(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
-): Promise<void> {
+): Promise<ReadyGatePrPackage> {
   if (!current.taskFile) throw new Error('Approved package requires a task directory');
   const taskDir = path.dirname(current.taskFile);
   const artifacts = await scanArtifacts(taskDir);
@@ -415,46 +453,45 @@ export async function assertReadyGatePackageInputsCurrent(
     artifacts,
     currentEvidenceManifest,
   );
-  const report = await readWorkerReport(current);
   const validation = await readValidationSummary(current);
   const mismatches: string[] = [];
 
-  if (buildDraftPrTitle(current) !== preparedPackage.draftTitle) mismatches.push('draft title');
-  // Same body the package was prepared with; a run without project config
-  // (fixtures, imported runs) keeps the default branch, as preparation does.
-  const baseBranch = await loadProjectVars(current.project)
-    .then((projectVars) => getProjectField(projectVars.projectJson, 'default_branch'))
-    .catch((error: Error) => {
-      if (!/not found/i.test(error.message)) throw error;
-      return null;
-    });
-  const currentDraftBody = await buildPreparedDraftPrBody(
+  const { draftTitle, draftBody: currentDraftBody } = await renderCurrentDescription(
     current,
-    report,
+    preparedPackage,
     artifacts,
-    baseBranch || DEFAULT_BRANCH,
-    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
-  if (currentDraftBody !== preparedPackage.draftBody) {
-    mismatches.push('draft body');
+  const descriptionChanges = [
+    ...(draftTitle !== preparedPackage.draftTitle ? ['draft title'] : []),
+    ...(currentDraftBody !== preparedPackage.draftBody ? ['draft body'] : []),
+  ];
+  if (descriptionChanges.length > 0) {
+    const shortHash = (text: string) => sha256Text(text).slice(0, 12);
+    console.warn(
+      `[run-completion] run ${current.id.slice(0, 8)} — ${descriptionChanges.join(', ')} changed since the package was prepared` +
+        ` (body ${shortHash(preparedPackage.draftBody)} -> ${shortHash(currentDraftBody)},` +
+        ` title ${shortHash(preparedPackage.draftTitle)} -> ${shortHash(draftTitle)}); publishing the current render`,
+    );
   }
   if (
     stableJson(sortArtifactRefsForComparison(currentManifest)) !==
     stableJson(sortArtifactRefsForComparison(preparedPackage.evidenceManifest ?? []))
   ) {
-    mismatches.push('evidence manifest');
+    mismatches.push('evidence manifest: the evidence files differ from the reviewed package');
   }
   if (validation.path !== (preparedPackage.validationSummaryPath ?? null)) {
-    mismatches.push('validation summary path');
+    mismatches.push(
+      'validation summary path: the validation summary differs from the reviewed package',
+    );
   }
   if (validation.hash !== (preparedPackage.validationSummaryHash ?? null)) {
-    mismatches.push('validation summary hash');
+    mismatches.push(
+      'validation summary hash: the validation summary differs from the reviewed package',
+    );
   }
 
-  if (mismatches.length === 0) return;
-  throw new Error(
-    `Package changed; refresh package and re-review before publishing (${mismatches.join(', ')})`,
-  );
+  if (mismatches.length > 0) throw packageChangedError(current.id, mismatches.join('; '));
+  return { ...preparedPackage, draftTitle, draftBody: currentDraftBody };
 }
 
 export function isPublishedStatus(status: PublicationStatus | undefined | null): boolean {
@@ -1253,17 +1290,32 @@ export async function publishCompletionPackage(
       name: 'post-process-pr-body',
       detail: `Rewriting PR #${prNumber} body with artifact links`,
     });
-    await postProcessPRBody(latestRun, ciRepo, prNumber, artifactUrls, selectedEvidenceKeys, {
-      failOnError: true,
-      baseBody: approvedPackage.draftBody,
-      evidenceManifest,
-      validateBody: prTemplate ? (body) => reportTemplateDrift(body, 'published body') : undefined,
-    });
+    const postedBody = await postProcessPRBody(
+      latestRun,
+      ciRepo,
+      prNumber,
+      artifactUrls,
+      selectedEvidenceKeys,
+      {
+        failOnError: true,
+        baseBody: approvedPackage.draftBody,
+        evidenceManifest,
+        validateBody: prTemplate
+          ? (body) => reportTemplateDrift(body, 'published body')
+          : undefined,
+      },
+    );
     flags.bodyPostProcessed = true;
 
     emit('substep', { name: 'apply-pr-title', detail: `Updating PR #${prNumber} title` });
     await applyApprovedPrTitle(ciRepo, prNumber, approvedPackage);
     flags.prTitleUpdated = true;
+    if (postedBody !== null) {
+      flags.publishedDescription = {
+        draftTitle: approvedPackage.draftTitle,
+        draftBody: postedBody,
+      };
+    }
 
     if (target === 'ready') {
       emit('substep', {

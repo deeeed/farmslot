@@ -5,6 +5,7 @@ import {
   Events,
   PipelineSteps,
   type PublicationTarget,
+  type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
   type RunDecision,
@@ -24,6 +25,9 @@ import {
   publishCompletionPackage,
 } from '../run-completion/orchestrator.js';
 import {
+  assertLiveHeadMatchesPackage,
+  packageChangedError,
+  readyGateCurrentDescription,
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
@@ -71,6 +75,35 @@ const S = PipelineSteps;
 
 /** Flows whose rounds push to the farm's own PR and therefore re-request review. */
 const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug', 'update-branch']);
+
+/**
+ * Records on the Ready gate decision the title and body publication posted, so
+ * the card shows what went out rather than the reviewed description. A
+ * publication that posted nothing (already published) leaves the record as is.
+ */
+export function recordPublishedDescription(
+  runId: string,
+  decisionId: string | undefined,
+  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'> | undefined,
+  publishedAt = new Date().toISOString(),
+): void {
+  const run = getRun(runId);
+  if (!run || !decisionId || !published) return;
+  updateRun(runId, {
+    decisions: run.decisions.map((decision) => {
+      const payload = decision.payload as ReadyGatePayload | undefined;
+      if (decision.id !== decisionId || payload?.kind !== 'ready' || !payload.prPackage) {
+        return decision;
+      }
+      const currentDescription = readyGateCurrentDescription(
+        payload.prPackage,
+        published,
+        publishedAt,
+      );
+      return { ...decision, payload: { ...payload, currentDescription } };
+    }),
+  });
+}
 
 export async function executeFinalizeStep(
   runId: string,
@@ -291,8 +324,9 @@ export async function executeFinalizeStep(
     }
     const approvedHash = current.engineState?.publishGate?.approvedPackageHash;
     if (approvedHash && approvedHash !== preparedPackage.packageHash) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (approved hash ${approvedHash} but package is ${preparedPackage.packageHash})`,
+      throw packageChangedError(
+        runId,
+        `approved hash ${approvedHash} but package is ${preparedPackage.packageHash}`,
       );
     }
     if (!preparedPackage.headSha || !current.slotId) {
@@ -308,11 +342,7 @@ export async function executeFinalizeStep(
         timeout: 15_000,
       })
     ).stdout.trim();
-    if (!head || head !== preparedPackage.headSha) {
-      throw new Error(
-        `Package changed; refresh package and re-review before publishing (approved HEAD ${preparedPackage.headSha.slice(0, 12)} but live HEAD is ${head ? head.slice(0, 12) : 'unknown'})`,
-      );
-    }
+    assertLiveHeadMatchesPackage(runId, preparedPackage.headSha, head);
     const selection = gateDecision?.selectionData ?? {};
     const selectedTarget: PublicationTarget =
       selection.publicationTarget === 'ready'
@@ -326,9 +356,11 @@ export async function executeFinalizeStep(
       preparedPackage,
       selectedEvidenceKeys ?? [],
     );
-    await assertReadyGatePackageInputsCurrent(current, preparedPackage);
+    // The current title and body are published even when they differ from the
+    // reviewed ones; only code and evidence changes refuse the approval.
+    const currentPackage = await assertReadyGatePackageInputsCurrent(current, preparedPackage);
     const approvedPackage: ReadyGatePrPackage = {
-      ...preparedPackage,
+      ...currentPackage,
       publicationTarget: selectedTarget,
       approvedAt: current.engineState?.publishGate?.approvedAt ?? new Date().toISOString(),
     };
@@ -342,6 +374,7 @@ export async function executeFinalizeStep(
       selectedEvidenceKeys,
       emit: emitWithBroadcast,
     });
+    recordPublishedDescription(runId, gateDecision?.id, published.publishedDescription);
     publicationStatus = published.publicationStatus;
     publicationTarget = selectedTarget;
     publishedPrNumber = published.prNumber;

@@ -7,6 +7,7 @@ import {
   excludeReadyEvidenceVideos,
   initialReadyEvidenceSelection,
   readyEvidenceSelectionKey,
+  readyPrDescription,
   readyPublicationTarget,
   readyPublicationTargetKey,
   readyPublishEvidenceSet,
@@ -82,4 +83,22 @@ test('ready workspace selection model excludes selected videos and prepares subm
   ]);
   assert.deepEqual(selectedReadyEvidenceKeysForSubmit(null, ['before.png']), ['before.png']);
   assert.deepEqual(selectedReadyEvidenceKeysForSubmit([], ['before.png']), []);
+});
+
+test('readyPrDescription shows the description that is published, else the package one', () => {
+  const prPackage = { draftTitle: 'feat: reviewed', draftBody: 'Reviewed body A' };
+  assert.deepEqual(readyPrDescription(payload({ prPackage })), {
+    title: 'feat: reviewed',
+    body: 'Reviewed body A',
+  });
+  assert.deepEqual(
+    readyPrDescription(
+      payload({
+        prPackage,
+        currentDescription: { title: 'feat: current', body: 'Current render B' },
+      }),
+    ),
+    { title: 'feat: current', body: 'Current render B' },
+  );
+  assert.deepEqual(readyPrDescription(payload({})), { title: '', body: '' });
 });

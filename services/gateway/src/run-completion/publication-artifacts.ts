@@ -743,6 +743,7 @@ export function replaceMarkdownSection(body: string, heading: string, content: s
   return `${trimmed}\n\n${heading}\n\n${content.trim()}\n`;
 }
 
+/** Rewrites and posts the PR body; returns the body posted, or null when it was not. */
 export async function postProcessPRBody(
   run: Run,
   ciRepo: string,
@@ -755,7 +756,7 @@ export async function postProcessPRBody(
     evidenceManifest?: EvidenceManifest | null;
     validateBody?: (body: string) => void | Promise<void>;
   } = {},
-): Promise<void> {
+): Promise<string | null> {
   try {
     let body: string;
     if (options.baseBody !== undefined) {
@@ -866,9 +867,11 @@ export async function postProcessPRBody(
     }
     if (cleanupError) throw cleanupError;
     console.log(`[run-completion] post-processed PR #${prNumber} body (sanitized + checklist)`);
+    return body;
   } catch (err) {
     if (options.failOnError) throw err;
     console.warn(`[run-completion] PR body post-processing failed: ${(err as Error).message}`);
+    return null;
   }
 }
 
