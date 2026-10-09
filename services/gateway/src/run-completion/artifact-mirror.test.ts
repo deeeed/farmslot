@@ -1,7 +1,7 @@
 // @farmslot:serial — creates and removes real JSON under the shared repo `pool/`.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -134,9 +134,10 @@ test('refreshArtifactMirror copies a large multi-chunk fixture with local byte e
   await writeFile(taskFile, '# large mirror test\n');
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# large mirror test\n');
   // Multi-chunk-sized fixture — production refreshArtifactMirror path must preserve bytes.
+  // Top-level media is in the publish package at any size.
   const large = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 3 + 17);
   for (let i = 0; i < large.byteLength; i++) large[i] = i % 251;
-  const largePath = path.join(workerTaskDir, 'artifacts/large-mirror.bin');
+  const largePath = path.join(workerTaskDir, 'artifacts/large-mirror.mp4');
   await writeFile(largePath, large);
   const expectedHash = createHash('sha256').update(large).digest('hex');
 
@@ -161,7 +162,7 @@ test('refreshArtifactMirror copies a large multi-chunk fixture with local byte e
     makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
   );
   assert.ok(copied >= 1);
-  const dest = path.join(taskDir, 'artifacts/large-mirror.bin');
+  const dest = path.join(taskDir, 'artifacts/large-mirror.mp4');
   assert.equal(existsSync(dest), true);
   const got = await readFile(dest);
   assert.equal(got.byteLength, large.byteLength);
@@ -343,4 +344,115 @@ test('pruneRecipeRunHistory keeps cached history when promoted run cache is miss
   assert.equal(existsSync(oldRunDir), true);
   assert.equal(existsSync(anotherRunDir), true);
   assert.ok(warnings.some((warning) => warning.includes('promoted run cache is missing')));
+});
+
+async function publishPackageFixture(t: test.TestContext, name: string) {
+  const testId = `${name}-${process.pid}-${Date.now()}`;
+  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
+  const taskRelDir = `test/${testId}`;
+  const taskDir = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks', taskRelDir);
+  const taskFile = path.join(taskDir, 'TASK.md');
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
+  const workerArtifacts = path.join(workerTaskDir, 'artifacts');
+  const slotId = `${testId}-slot`;
+  t.after(async () => {
+    await rm(taskDir, { recursive: true, force: true });
+    await rm(workerRepo, { recursive: true, force: true });
+    await rm(poolFile, { force: true });
+  });
+  await mkdir(workerArtifacts, { recursive: true });
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(taskFile, '# publish package test\n');
+  await writeFile(path.join(workerTaskDir, 'TASK.md'), '# publish package test\n');
+  await writeFile(
+    poolFile,
+    JSON.stringify({
+      machine: 'localhost',
+      project: 'farmslot-farm',
+      platform: 'cli',
+      os: 'darwin',
+      host: 'localhost',
+      ssh_user: userInfo().username,
+      slots: [{ id: slotId, enabled: true, repo: workerRepo, session: slotId }],
+    }),
+  );
+  const put = async (relativePath: string, content: string | Buffer = 'x\n') => {
+    await mkdir(path.dirname(path.join(workerArtifacts, relativePath)), { recursive: true });
+    await writeFile(path.join(workerArtifacts, relativePath), content);
+  };
+  const run = makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile });
+  return { taskDir, workerArtifacts, put, run };
+}
+
+test('refreshArtifactMirror collects manifest-named, step and small top-level files, not scratch trees', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-scope');
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Deep shot', file: 'goal/session/round-3/shots/deep.png' }],
+    }),
+  );
+  await put('goal/session/round-3/shots/deep.png', 'png');
+  await put('goal/repo-copy/src/index.ts', 'export {};\n');
+  await put('goal/repo-copy/notes.md', '# scratch\n');
+  await put('pr-body.md', '# PR\n');
+  await put('report.md', '# Report\n');
+  await put('after.png', 'png');
+  await put('big.log', Buffer.alloc(1024 * 1024 + 1, 'a'));
+  await put('dump.bin', 'binary');
+  await put('recipe-library/recipes/flow.recipe.json', '{}\n');
+  await put('recipe-library/node_modules/dep/index.js', 'module.exports = 1;\n');
+  await put('recipe-library/vendor/.git/HEAD', 'ref: refs/heads/main\n');
+  await put('recipe-harness/verify/result.json', '{}\n');
+  await put('recipe-harness/source/node_modules/x/index.js', 'x\n');
+
+  await refreshArtifactMirror(run);
+
+  const has = (relativePath: string) => existsSync(path.join(taskDir, 'artifacts', relativePath));
+  assert.equal(has('goal/session/round-3/shots/deep.png'), true);
+  assert.equal(has('goal/repo-copy'), false);
+  assert.equal(has('pr-body.md'), true);
+  assert.equal(has('report.md'), true);
+  assert.equal(has('evidence-manifest.json'), true);
+  assert.equal(has('after.png'), true);
+  assert.equal(has('big.log'), false);
+  assert.equal(has('dump.bin'), false);
+  assert.equal(has('recipe-library/recipes/flow.recipe.json'), true);
+  assert.equal(has('recipe-library/node_modules'), false);
+  assert.equal(has('recipe-library/vendor/.git'), false);
+  assert.equal(has('recipe-harness/verify/result.json'), true);
+  assert.equal(has('recipe-harness/source'), false);
+});
+
+test('refreshArtifactMirror fails fast on an oversized package, listing the five largest directories', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-cap');
+  await put('report.md', '# Report\n');
+  // Sparse files: the size guard reads sizes from stat, so no data is written.
+  for (let i = 1; i <= 6; i++) {
+    await put(`recipe-library/scratch-${i}/blob.bin`, '');
+    await truncate(
+      path.join(workerArtifacts, `recipe-library/scratch-${i}/blob.bin`),
+      i * 100 * 1024 ** 2,
+    );
+  }
+  await writeFile(path.join(taskDir, 'artifacts/previous.md'), 'previous mirror\n');
+
+  await assert.rejects(
+    () => refreshArtifactMirror(run),
+    (error: Error) => {
+      assert.match(error.message, /publish package would mirror 7 file\(s\), 2\.1 GB from /);
+      assert.match(error.message, /over the cap of 20000 files \/ 1\.0 GB/);
+      assert.match(
+        error.message,
+        /Largest directories: artifacts\/recipe-library\/scratch-6\/ 600\.0 MB in 1 file\(s\); artifacts\/recipe-library\/scratch-5\/ 500\.0 MB/,
+      );
+      assert.match(error.message, /scratch-2\/ 200\.0 MB in 1 file\(s\)\. Keep clones/);
+      assert.doesNotMatch(error.message, /scratch-1\//);
+      return true;
+    },
+  );
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/report.md')), false);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/previous.md')), true);
 });

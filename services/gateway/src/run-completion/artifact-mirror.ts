@@ -10,11 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { removeStaleArtifactDirectory } from '../core/artifact-cleanup.js';
-import {
-  isGatewayOwnedArtifactMirrorEntry,
-  WORKER_ARTIFACT_COPY_EXCLUDES,
-  WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
-} from '../core/artifact-copy-policy.js';
+import { isGatewayOwnedArtifactMirrorEntry } from '../core/artifact-copy-policy.js';
 import {
   getOrchestratorTaskRoot,
   loadProjectVars,
@@ -42,8 +38,17 @@ import {
 } from '../live-recipe/context.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 
-import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
+import {
+  type EvidenceManifest,
+  evidenceManifestArtifactPaths,
+  validateEvidenceManifest,
+} from './evidence-manifest.js';
 import { readEvidenceManifest } from './publication-artifacts.js';
+import {
+  assertPublishPackageWithinCaps,
+  scanPublishPackage,
+  selectPublishPackageEntries,
+} from './publish-package-scope.js';
 
 // Push only executable recipe inputs (recipe.json + recipe-library/) from
 // the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
@@ -149,12 +154,25 @@ async function clearWorkerOwnedArtifactMirror(
   );
 }
 
-async function workerGatewayOwnedCopyExcludes(
+// Paths (relative to artifacts/) named by the worker's evidence manifest, read
+// before the mirror so the size guard counts them. An unreadable or invalid
+// manifest names nothing here; the manifest copy step reports it as before.
+async function workerEvidenceManifestPaths(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
 ): Promise<string[]> {
-  if (!(await slotFileExists(vars, workerArtifactsDir))) return [];
-  return (await slotListDir(vars, workerArtifactsDir)).filter(isGatewayOwnedArtifactMirrorEntry);
+  const manifestPath = path.join(workerArtifactsDir, 'evidence-manifest.json');
+  if (!(await slotFileExists(vars, manifestPath))) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await slotReadFile(vars, manifestPath));
+  } catch {
+    return [];
+  }
+  if (validateEvidenceManifest(parsed).length > 0) return [];
+  return evidenceManifestArtifactPaths(parsed as EvidenceManifest).map((artifactPath) =>
+    artifactPath.slice('artifacts/'.length),
+  );
 }
 
 async function copyEvidenceManifestReferencedArtifacts(
@@ -228,22 +246,41 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     }
   }
 
-  // Copy top-level artifacts first, but skip bulk recipe-runs history on the hot path.
-  // slotCopyDir failures intentionally reject this refresh; a partially copied
-  // artifact mirror is not trustworthy.
+  // Plan the publish package on the worker before touching the local mirror:
+  // an oversized package fails here, in one exec, with the previous mirror
+  // intact. Copy failures below also reject this refresh; a partially copied
+  // artifact mirror is not trustworthy. recipe-runs history is copied
+  // separately (promoted snapshot only).
+  const workerArtifactsExist = await slotFileExists(vars, workerArtifactsDir);
+  const manifestPaths = workerArtifactsExist
+    ? await workerEvidenceManifestPaths(vars, workerArtifactsDir)
+    : [];
+  const packaged = workerArtifactsExist
+    ? selectPublishPackageEntries(
+        await scanPublishPackage(vars, workerArtifactsDir, manifestPaths),
+        manifestPaths,
+      )
+    : [];
+  assertPublishPackageWithinCaps(packaged, workerArtifactsDir);
   const clearLocalRecipeRuns = shouldClearLocalRecipeRunCache(workerPointerExists, promotedPointer);
   await clearWorkerOwnedArtifactMirror(localArtifactsDir, {
     preserveRecipeRuns: !clearLocalRecipeRuns,
   });
-  const gatewayOwnedWorkerEntries = await workerGatewayOwnedCopyExcludes(vars, workerArtifactsDir);
   const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
-  let copied = await slotCopyDir(vars, workerArtifactsDir, localArtifactsDir, {
-    excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedWorkerEntries],
-    excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
-    phase: 'mirror',
-    ...transferMeta,
-    labelPrefix: 'artifacts',
-  });
+  const manifestNamed = new Set(manifestPaths);
+  let copied = 0;
+  for (const entry of packaged) {
+    // Manifest-named files are copied (and checked) by the manifest step below.
+    if (manifestNamed.has(entry.path)) continue;
+    const localPath = path.join(localArtifactsDir, entry.path);
+    await mkdir(path.dirname(localPath), { recursive: true });
+    await slotCopyFile(vars, path.join(workerArtifactsDir, entry.path), localPath, {
+      phase: 'mirror',
+      ...transferMeta,
+      label: `artifacts/${entry.path}`,
+    });
+    copied += 1;
+  }
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.
   await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'screenshots'));
   copied += await copyEvidenceManifestReferencedArtifacts(
