@@ -374,6 +374,14 @@ export function renderSlotViewWorkspaceStyles(): string {
         width: 100%;
         height: 100%;
       }
+      slot-view .sv-diff-pane {
+        display: flex;
+        flex-direction: column;
+      }
+      slot-view .sv-diff-pane > diff-review {
+        flex: 1;
+        min-height: 0;
+      }
       slot-view .sv-image-viewer {
         display: flex;
         align-items: center;

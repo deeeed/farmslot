@@ -241,6 +241,10 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   effort?: string;
   trustWorkspace?: boolean;
   workspaceTrust?: 'trusted' | 'untrusted';
+  /** Codex only: no startup update check, whose modal would block an unattended launch. */
+  skipUpdateCheck?: boolean;
+  /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
+  disableHooks?: boolean;
   machine?: RawPoolJson;
   resumeSessionId?: string;
 }): string | null {
@@ -267,6 +271,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       options.workspaceTrust
         ? `--config ${shellQuote(`projects={${JSON.stringify(options.repo)}={trust_level=${JSON.stringify(options.workspaceTrust)}}}`)}`
         : '',
+      options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
+      options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,
@@ -475,7 +481,7 @@ export function buildCodexHomeSetup(
     : '';
   return (
     `if ${provisioned}${resumable}; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
-    `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
+    `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not selected; using global ~/.codex without observability" >&2; fi`
   );
 }
 
