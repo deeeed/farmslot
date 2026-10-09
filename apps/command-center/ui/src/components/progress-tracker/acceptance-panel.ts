@@ -203,16 +203,109 @@ export const acceptancePanelStyles = css`
   }
 `;
 
+/** A click on one of a criterion's evidence files: which criterion, its files in order, and which one. */
+export interface AcceptanceEvidenceOpen {
+  criterion: AcceptanceCriterionView;
+  evidence: readonly string[];
+  index: number;
+}
+
+/** A plain left click; modified and middle clicks keep the browser's own new-tab behaviour. */
+function isPlainClick(event: MouseEvent): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+export interface AcceptanceEvidenceRow {
+  view: AcceptanceCriterionView;
+  /** The manifest link, only for a run with no ledger. */
+  link?: AcceptanceEvidenceLink;
+  /** The files the row lists, in order: the ledger's, else the manifest link's. */
+  evidence: string[];
+}
+
+/**
+ * The panel's rows with the evidence each one lists. Run detail resolves an
+ * acceptance evidence link from the same rows, so a reload reopens exactly the
+ * files the panel showed.
+ */
+export function acceptanceEvidenceRows(
+  ledger: AcceptanceStatusLedger,
+  criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
+  evidenceLinks: ReadonlyArray<AcceptanceEvidenceLink> = [],
+): AcceptanceEvidenceRow[] {
+  // The gateway sends links only without a ledger; a ledger still wins here.
+  const links = ledger.criteria.length === 0 ? evidenceLinks : [];
+  const linkById = new Map(links.map((link) => [link.id, link]));
+  return acceptanceCriteriaView(criteria, ledger).map((view) => {
+    const link = linkById.get(view.id);
+    return {
+      view,
+      ...(link ? { link } : {}),
+      evidence: view.status?.evidence ?? link?.evidence ?? [],
+    };
+  });
+}
+
+/** A run's acceptance data as run detail holds it; null means none or not loaded. */
+export interface RunAcceptanceData {
+  acceptanceStatus?: AcceptanceStatusLedger | null;
+  acceptanceCriteria?: AcceptanceCriterionRef[] | null;
+  acceptanceStatusError?: string | null;
+  acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
+}
+
+export interface AcceptancePanelInputs {
+  ledger: AcceptanceStatusLedger;
+  criteria?: ReadonlyArray<AcceptanceCriterionRef>;
+  error?: string;
+  evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
+}
+
+/**
+ * The panel's ledger and inputs from a run's acceptance data, or null when the
+ * panel is hidden. The run page renders from this, and run detail resolves an
+ * acceptance evidence link from it, so both read the same rows.
+ */
+export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelInputs | null {
+  if (!data.acceptanceStatus && !data.acceptanceCriteria?.length && !data.acceptanceStatusError) {
+    return null;
+  }
+  return {
+    ledger: data.acceptanceStatus ?? { schemaVersion: 1, criteria: [] },
+    ...(data.acceptanceCriteria?.length ? { criteria: data.acceptanceCriteria } : {}),
+    ...(data.acceptanceStatusError ? { error: data.acceptanceStatusError } : {}),
+    ...(data.acceptanceEvidenceLinks?.length
+      ? { evidenceLinks: data.acceptanceEvidenceLinks }
+      : {}),
+  };
+}
+
+/** The rows the run page's panel shows, each with its evidence; empty when it is hidden. */
+export function runAcceptanceEvidenceRows(data: RunAcceptanceData): AcceptanceEvidenceRow[] {
+  const inputs = acceptancePanelInputs(data);
+  return inputs ? acceptanceEvidenceRows(inputs.ledger, inputs.criteria, inputs.evidenceLinks) : [];
+}
+
+/** Each shown criterion with its evidence files: what an acceptance evidence link resolves against. */
+export function runAcceptanceCriterionEvidence(
+  data: RunAcceptanceData,
+): Array<AcceptanceCriterionRef & { evidence: string[] }> {
+  return runAcceptanceEvidenceRows(data).map(({ view, evidence }) => ({
+    id: view.id,
+    text: view.text,
+    evidence,
+  }));
+}
+
 function renderRow(
-  view: AcceptanceCriterionView,
+  { view, link, evidence }: AcceptanceEvidenceRow,
   evidenceHref?: (evidencePath: string) => string,
-  link?: AcceptanceEvidenceLink,
+  openEvidence?: (open: AcceptanceEvidenceOpen) => void,
 ): TemplateResult {
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
   // must show what still has to be judged, and must not imply a verdict.
   const verdict = criterion?.verdict ?? (link ? 'evidence-linked' : 'none');
-  const evidence = criterion?.evidence ?? link?.evidence ?? [];
   const recipeNodes = criterion?.recipeNodes ?? [];
   return html`
     <div
@@ -231,7 +324,7 @@ function renderRow(
     ${evidence.length > 0 || recipeNodes.length > 0
       ? html`
           <div class="ac-meta">
-            ${evidence.map((evidencePath) =>
+            ${evidence.map((evidencePath, index) =>
               evidenceHref
                 ? html`<a
                     class="ac-evidence"
@@ -240,6 +333,11 @@ function renderRow(
                     title=${evidencePath}
                     target="_blank"
                     rel="noreferrer"
+                    @click=${(event: MouseEvent) => {
+                      if (!openEvidence || !isPlainClick(event)) return;
+                      event.preventDefault();
+                      openEvidence({ criterion: view, evidence, index });
+                    }}
                     >${evidenceLabel(evidencePath)}</a
                   >`
                 : html`<span class="ac-evidence" title=${evidencePath}
@@ -257,12 +355,14 @@ function renderRow(
 /**
  * Render the ledger panel. `evidenceHref` turns a task-dir relative evidence path
  * into a link the host can serve; without it the paths render as plain text, which
- * is what a surface with no artifact endpoint should show.
+ * is what a surface with no artifact endpoint should show. `openEvidence` lets the
+ * host show a clicked file in its own viewer instead of a new browser window.
  */
 export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
     evidenceHref?: (evidencePath: string) => string;
+    openEvidence?: (open: AcceptanceEvidenceOpen) => void;
     /** Registered criteria, so an unjudged one still gets a row. */
     criteria?: ReadonlyArray<AcceptanceCriterionRef>;
     /** Why the ledger could not be read; shown instead of an empty panel. */
@@ -271,12 +371,14 @@ export function renderAcceptancePanel(
     evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
   } = {},
 ): TemplateResult | typeof nothing {
-  const rows = acceptanceCriteriaView(options.criteria ?? ledger.criteria, ledger);
+  const rows = acceptanceEvidenceRows(
+    ledger,
+    options.criteria ?? ledger.criteria,
+    options.evidenceLinks,
+  );
   if (rows.length === 0 && !options.error) return nothing;
   const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria);
-  // The gateway sends links only without a ledger; a ledger still wins here.
-  const links = ledger.criteria.length === 0 ? (options.evidenceLinks ?? []) : [];
-  const linkById = new Map(links.map((link) => [link.id, link]));
+  const linked = rows.filter((row) => row.link).length;
   return html`
     <details
       class="ac-panel"
@@ -287,9 +389,9 @@ export function renderAcceptancePanel(
         <span class="ac-caret"></span>
         <span class="ac-label">Acceptance criteria</span>
         <span class="ac-count" data-testid="acceptance-counts" title=${view.countsTooltip}
-          >${view.counts}${links.length > 0 ? ` · ${links.length} evidence linked` : ''}</span
+          >${view.counts}${linked > 0 ? ` · ${linked} evidence linked` : ''}</span
         >
-        ${links.length > 0
+        ${linked > 0
           ? html`<span
               class="ac-source"
               data-testid="acceptance-source"
@@ -304,7 +406,7 @@ export function renderAcceptancePanel(
               ledger unreadable: ${options.error}
             </div>`
           : nothing}
-        ${rows.map((row) => renderRow(row, options.evidenceHref, linkById.get(row.id)))}
+        ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence))}
       </div>
     </details>
   `;
