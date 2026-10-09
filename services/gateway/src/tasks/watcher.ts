@@ -549,50 +549,31 @@ export async function watchSlot(
             );
           }
           await ensureArtifactsDir(sw, contextTaskPath);
-          try {
-            (await sendNodeRequest(
-              node,
-              'fs.watch',
-              { path: sw.acceptanceStatusFilePath },
-              {
-                onRequestId: (id) =>
-                  requestIds.push({
-                    requestId: id,
-                    kind: 'acceptance-status',
-                    path: sw.acceptanceStatusFilePath,
-                  }),
-              },
-            )) as { watching: boolean };
-          } catch (err) {
-            console.log(
-              `[task-watcher] acceptance ledger not watchable for remote ${key}: ${(err as Error).message}`,
-            );
-          }
-          // The evidence manifest feeds the acceptance panel when the run has no
-          // ledger, so it routes as an acceptance update.
-          const evidenceManifestPath = path.join(
-            path.dirname(sw.acceptanceStatusFilePath),
-            EVIDENCE_MANIFEST_FILENAME,
+          // The ledger and the evidence manifest (the panel's fallback when the run
+          // has no ledger) both route as acceptance updates. Either may not exist
+          // yet when the watch arms, so a refused watch is logged, not fatal.
+          const registerAcceptanceWatch = async (filePath: string, label: string) => {
+            try {
+              await sendNodeRequest(
+                node,
+                'fs.watch',
+                { path: filePath },
+                {
+                  onRequestId: (id) =>
+                    requestIds.push({ requestId: id, kind: 'acceptance-status', path: filePath }),
+                },
+              );
+            } catch (err) {
+              console.log(
+                `[task-watcher] ${label} not watchable for remote ${key}: ${(err as Error).message}`,
+              );
+            }
+          };
+          await registerAcceptanceWatch(sw.acceptanceStatusFilePath, 'acceptance ledger');
+          await registerAcceptanceWatch(
+            path.join(path.dirname(sw.acceptanceStatusFilePath), EVIDENCE_MANIFEST_FILENAME),
+            'evidence manifest',
           );
-          try {
-            (await sendNodeRequest(
-              node,
-              'fs.watch',
-              { path: evidenceManifestPath },
-              {
-                onRequestId: (id) =>
-                  requestIds.push({
-                    requestId: id,
-                    kind: 'acceptance-status',
-                    path: evidenceManifestPath,
-                  }),
-              },
-            )) as { watching: boolean };
-          } catch (err) {
-            console.log(
-              `[task-watcher] evidence manifest not watchable for remote ${key}: ${(err as Error).message}`,
-            );
-          }
           await sendNodeRequest(
             node,
             'fs.watch',
