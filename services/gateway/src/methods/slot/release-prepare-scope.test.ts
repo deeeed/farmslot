@@ -89,6 +89,7 @@ mock.module('../../runners/native/worker.js', {
 
 const { slotRelease } = await import('./release.js');
 const { activePrepareAborts } = await import('./shared.js');
+const { slotPrepare } = await import('./prepare.js');
 
 const emit = (event: string, payload: unknown) =>
   emitted.push({ event, payload: payload as Record<string, unknown> });
@@ -135,4 +136,35 @@ test('a preflight group that survives the reap keeps the slot held and fails the
   assert.ok(!events.includes('reset'), 'readiness is never published');
   const completed = emitted.find((entry) => entry.event === 'script.complete');
   assert.equal(completed?.payload.exitCode, 1);
+});
+
+test('a prepare that never stops keeps the slot held and fails the release', async () => {
+  // A git command stalled on a dropped network never observes the abort.
+  activePrepareAborts.set(SLOT_ID, {
+    abort: () => events.push('prepare-aborted'),
+    settled: new Promise<void>(() => {}),
+  });
+
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit, { prepareStopTimeoutMs: 20 }),
+    /Slot macpro-mm-1 stays held: In-flight prepare did not stop within/,
+  );
+
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.equal(slotRow.phase, 'occupied');
+  assert.match(String(slotRow.held_reason), /In-flight prepare did not stop within/);
+  assert.equal(slotRow.releasing_since, null);
+  assert.ok(!events.includes('reap'), 'the unfinished prepare is not reaped underneath');
+  assert.ok(!events.includes('reset'), 'readiness is never published');
+  const completed = emitted.find((entry) => entry.event === 'script.complete');
+  assert.equal(completed?.payload.exitCode, 1);
+});
+
+test('a prepare started while the slot is releasing is refused', async () => {
+  // The release reads the in-flight registry once, so a later prepare must not start.
+  slotRow = { ...slotRow, lifecycle: 'busy', phase: 'releasing' };
+
+  await assert.rejects(slotPrepare({ slotId: SLOT_ID }, emit), /is being released/);
+
+  assert.equal(activePrepareAborts.has(SLOT_ID), false, 'the refused prepare deregisters');
 });

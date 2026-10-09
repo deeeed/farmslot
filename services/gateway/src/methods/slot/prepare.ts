@@ -27,6 +27,8 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  readSlotField,
+  SLOT_PHASE_RELEASING,
   slotFileExists,
   slotReadFile,
   type SlotVars,
@@ -170,13 +172,7 @@ export async function slotPrepare(
   }
   assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
-  const stop = new AbortController();
-  const prepareSignal = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
   let settle = () => {};
-  activePrepareAborts.set(params.slotId, {
-    abort: () => stop.abort(),
-    settled: new Promise<void>((resolve) => (settle = resolve)),
-  });
   const requestId = params.requestId ?? `prepare-${randomUUID()}`;
   const stream = createPrepareStream(emit, {
     slotId: params.slotId,
@@ -186,6 +182,22 @@ export async function slotPrepare(
   let prepareError: unknown;
   let sentinel: PrepareSentinelLock | null = null;
   try {
+    const stop = new AbortController();
+    activePrepareAborts.set(params.slotId, {
+      abort: () => stop.abort(),
+      settled: new Promise<void>((resolve) => (settle = resolve)),
+    });
+    const prepareSignal = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+    // A release reads the registry once; a prepare registered after that
+    // read is refused here, because the release already fenced the slot.
+    if (
+      !opts?.duringRelease &&
+      (await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING
+    ) {
+      throw new Error(
+        `Slot ${params.slotId} is being released; prepare it once the release finishes`,
+      );
+    }
     const vars = await loadSlotVars(params.slotId);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.

@@ -97,6 +97,11 @@ const inflightReleases = new Map<
   { key: string; promise: Promise<{ released: boolean }> }
 >();
 
+/** How long a release waits for an aborted in-flight prepare to settle. A
+ * git command stalled on a dropped network never observes the abort; past
+ * this the slot is held with the reason instead of the release hanging. */
+export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
+
 function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
   // Only semantically identical requests may share one teardown; a request
   // with different options/owner must wait for the in-flight one and then run
@@ -118,9 +123,9 @@ export async function slotRelease(
   emit: EventEmitter,
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
-  options?: { restartRunId: string },
+  options?: { restartRunId?: string; prepareStopTimeoutMs?: number },
 ): Promise<{ released: boolean }> {
-  if (options && options.restartRunId !== params.expectedRunId) {
+  if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
   }
   const key = releaseCoalesceKey(params, options?.restartRunId);
@@ -156,7 +161,7 @@ export async function slotRelease(
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
-  options?: { restartRunId: string },
+  options?: { restartRunId?: string; prepareStopTimeoutMs?: number },
 ): Promise<{ released: boolean }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS below, after the non-destructive preflight). A slot
@@ -365,23 +370,38 @@ async function slotReleaseImpl(
     step('agent', 'Agent killed');
     // A release during or after preflight would otherwise publish readiness
     // while the prepare group and its holder keep running in the repository.
-    // A prepare still in flight is stopped and joined first: it would launch
-    // its holder after the reap found nothing. This teardown holds the
+    // A prepare still in flight is stopped and joined first, for at most
+    // RELEASE_PREPARE_STOP_TIMEOUT_MS: it would launch its holder after the
+    // reap found nothing. This teardown holds the
     // releasing fence, so the recorded scope is this slot's own. A group that
     // survives keeps the slot held with the reason, and the release fails.
+    let holdReason: string | null = null;
     const inflightPrepare = activePrepareAborts.get(params.slotId);
     if (inflightPrepare) {
       step('prepare', 'Stopping in-flight prepare...');
       inflightPrepare.abort();
-      await inflightPrepare.settled;
+      const stopMs = options?.prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopped = await Promise.race([
+        inflightPrepare.settled.then(() => true),
+        new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), stopMs))),
+      ]);
+      clearTimeout(timer);
+      if (!stopped)
+        holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
     }
-    try {
-      const stopped = await reapSlotPrepareScope(vars, {
-        identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
-      });
-      step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+    if (!holdReason) {
+      try {
+        const stopped = await reapSlotPrepareScope(vars, {
+          identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
+        });
+        step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
+      } catch (error) {
+        holdReason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (holdReason) {
+      const reason = holdReason;
       step('prepare', reason);
       const held = await guardedTeardownWrite({
         lifecycle: 'held',
@@ -649,7 +669,7 @@ async function slotReleaseImpl(
   if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');
     try {
-      await slotPrepare({ slotId: params.slotId }, emit);
+      await slotPrepare({ slotId: params.slotId }, emit, undefined, { duringRelease: true });
       if (!(await resetSlotIf(params.slotId, epochStillOurs, true))) return abortReset();
     } catch (err) {
       step('reprepare', `Re-prepare had issues: ${(err as Error).message}`);

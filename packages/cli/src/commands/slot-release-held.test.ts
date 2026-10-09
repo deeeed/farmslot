@@ -75,11 +75,14 @@ test('slot release and recycle report a slot the gateway left held and exit non-
   const url = `ws://127.0.0.1:${address.port}`;
   const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-slot-release-held-'));
   try {
-    for (const verb of ['release', 'recycle']) {
-      const run = await spawnCli(
-        ['--url', url, '--timeout', '3000', 'slot', verb, 'macpro-mm-1'],
-        home,
-      );
+    // Both verbs run at once: each is a cold tsx spawn.
+    const runs = await Promise.all(
+      ['release', 'recycle'].map(async (verb) => ({
+        verb,
+        run: await spawnCli(['--url', url, '--timeout', '3000', 'slot', verb, 'macpro-mm-1'], home),
+      })),
+    );
+    for (const { verb, run } of runs) {
       // Piped stdout puts the CLI in machine mode: one error envelope, exit 1.
       assert.equal(run.status, 1, `${verb}: ${run.stdout}${run.stderr}`);
       const envelope = JSON.parse(run.stdout) as { status: string; error: { message: string } };

@@ -21,6 +21,8 @@ export type SlotPrepareResult = {
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
 };
 export interface SlotPrepareInternalOptions {
+  /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
+  duringRelease?: boolean;
   stripClean?: boolean;
   /** Reuse the run's existing work branch without resetting or cleaning it. */
   preserveBranch?: boolean;
