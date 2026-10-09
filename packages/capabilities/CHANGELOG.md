@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.4 - 2026-10-09
+
+- Publish with protocol 0.35.1 so consumers share one protocol copy. No code change.
+
 ## 0.1.3 - 2026-10-09
 
 - Publish with protocol 0.35.0 so consumers share one protocol copy. No code change.
