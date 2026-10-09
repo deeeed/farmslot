@@ -14,6 +14,7 @@ import { machineShellEnv, resolveProjectCommandEnv } from '../../core/project-en
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
+  resolveClaudeBinary,
   resolveCodexBinary,
   resolveRunnerEffort,
   taskRecipeTrustEnvironment,
@@ -138,7 +139,7 @@ export async function prepareNativeWorkerLaunch(input: {
   } else if (runner === 'codex') {
     executable = resolveCodexBinary(vars.codexPath);
   } else if (runner === 'claude') {
-    executable = vars.claudePath || 'claude';
+    executable = resolveClaudeBinary(vars.claudePath);
   } else {
     throw new Error('Native worker launch is unavailable for this runner');
   }
