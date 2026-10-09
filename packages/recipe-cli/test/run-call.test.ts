@@ -272,6 +272,15 @@ function shopEngine(
               } satisfies ActionAdapter,
             ]
           : []),
+        ...(manifest.actions['app.hud']
+          ? [
+              {
+                action: 'app.hud',
+                source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
+                execute: () => Promise.resolve({ output: { hud: false, cleared: true } }),
+              } satisfies ActionAdapter,
+            ]
+          : []),
       ].map((entry) => ({
         ...entry,
         async execute(node: Record<string, unknown>, context: ActionExecutionContext) {
@@ -2736,6 +2745,83 @@ describe('call', () => {
     assert.deepEqual(envelope.defaultsUsed, { count: 1 });
     assert.deepEqual(envelope.output, { pong: 1, mode: 'fast' });
     assert.deepEqual(calls.runners.at(-1), { adapter: 'web', trustTaskActions: true });
+  });
+
+  // The HUD follows the policy like run: unset (the engine default, on), show, hide.
+  for (const [label, hud, expected] of [
+    ['leaves the HUD to the engine default (on) without --hud', [], undefined],
+    ['honours --hud show', ['--hud', 'show'], true],
+    ['honours --hud hide', ['--hud', 'hide'], false],
+  ] as const) {
+    test(`follows the HUD policy like run: ${label}`, async () => {
+      const target = checkout();
+      calls.autoHud = [];
+      const call = await capture(() =>
+        handleCall(
+          [
+            'shop.ping',
+            'mode=fast',
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--heal',
+            'off',
+            '--json',
+            ...hud,
+          ],
+          callOptions,
+        ),
+      );
+      assert.equal(call.value, 0, call.stderr.join('\n'));
+      assert.deepEqual([...new Set(calls.autoHud)], [expected]);
+    });
+  }
+
+  test('a call to app.hud drives the HUD itself: no automatic updates redraw what it clears', async () => {
+    const target = checkout();
+    const manifestPath = path.join(target, 'hud.action-manifest.json');
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        ...CORE_ACTIONS,
+        actions: {
+          ...CORE_ACTIONS.actions,
+          'shop.ping': PING_ACTION,
+          'app.hud': {
+            description: 'Show or clear the recipe HUD.',
+            execution_capabilities: ['host-read-export'],
+            examples: [{ action: 'app.hud', clear: true, intent: 'Clear the HUD.', next: 'done' }],
+            schema: {
+              type: 'object',
+              properties: { clear: { type: 'boolean' } },
+              additionalProperties: false,
+            },
+          },
+        },
+      }),
+    );
+    calls.autoHud = [];
+    const call = await capture(() =>
+      handleCall(
+        [
+          'app.hud',
+          'clear=true',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--action-manifest',
+          manifestPath,
+          '--json',
+        ],
+        callOptions,
+      ),
+    );
+    assert.equal(call.value, 0, call.stderr.join('\n'));
+    assert.deepEqual([...new Set(calls.autoHud)], [false]);
   });
 
   test('never loads a trusted mutation from its command line: funded mutations run through run', async () => {
