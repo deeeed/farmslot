@@ -6,7 +6,6 @@ import {
   execOnSlot,
   loadSlotVars,
   markSlotStatusIf,
-  readSlotField,
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -16,6 +15,7 @@ import {
 } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { tmuxShellSnippet } from '../core/tmux.js';
+import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
@@ -56,6 +56,16 @@ export async function fenceRunSlotCleanup(
   return { before, token };
 }
 
+/** A non-terminal run other than `run` that is bound to the same slot. */
+function findOtherActiveRunOnSlot(run: Run): Run | undefined {
+  return listRuns().runs.find(
+    (candidate) =>
+      candidate.id !== run.id &&
+      candidate.slotId === run.slotId &&
+      !isTerminalRunStatus(candidate.status),
+  );
+}
+
 /** Run transitions may never turn a shared workspace release into a global teardown. */
 export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   if (!run.slotId) return null;
@@ -75,12 +85,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     return error.message; // Foreign native ownership is a durable cleanup blocker.
   }
   if (owner !== run.id) return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
-  const other = listRuns().runs.find(
-    (candidate) =>
-      candidate.id !== run.id &&
-      candidate.slotId === run.slotId &&
-      !isTerminalRunStatus(candidate.status),
-  );
+  const other = findOtherActiveRunOnSlot(run);
   if (other) return `Another active run ${other.id} uses this slot`;
   const listed = await execOnSlot(
     vars,
@@ -264,13 +269,32 @@ export async function releaseRunOwnedCapabilities(
 export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | null> {
   const blocker = await stopRunOwnedTmuxWorkers(run);
   if (!run.slotId) return blocker;
-  await unwatchSlot(run.slotId, { expectedRunId: run.id });
-  if ((await readSlotField(run.slotId, 'current_run_id')) === run.id)
-    await archiveRunnerSessionsForSlotRelease({
-      vars: await loadSlotVars(run.slotId),
-      runId: run.id,
-    });
-  return blocker;
+  const slotId = run.slotId;
+  await unwatchSlot(slotId, { expectedRunId: run.id });
+  const slot = await readSlotRow(slotId);
+  if (slot?.current_run_id !== run.id) return blocker;
+  const vars = await loadSlotVars(slotId);
+  // The slot's recorded prepare scope (preflight group plus its nohup'd
+  // holder) outlives an aborted or kept-alive prepare window in the slot
+  // repository; left alive, the occupancy census holds the slot for it. It can
+  // belong to another active run sharing the slot, so only reap when none
+  // does, and only while this run still owns the slot at the same epoch.
+  let prepareBlocker: string | null = null;
+  if ((!slot.handoff_run_id || slot.handoff_run_id === run.id) && !findOtherActiveRunOnSlot(run)) {
+    try {
+      await reapSlotPrepareScope(vars, {
+        stillOwned: async () => {
+          const row = await readSlotRow(slotId);
+          return row?.current_run_id === run.id && row.slot_epoch === slot.slot_epoch;
+        },
+      });
+    } catch (error) {
+      // Surfaced as a teardown blocker, so the slot is held with this reason.
+      prepareBlocker = error instanceof Error ? error.message : String(error);
+    }
+  }
+  await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
+  return [blocker, prepareBlocker].filter(Boolean).join('; ') || null;
 }
 
 /** Foreign occupancy prevents destructive cleanup, but does not retain a terminal run's pointer. */

@@ -27,6 +27,8 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  readSlotField,
+  SLOT_PHASE_RELEASING,
   slotFileExists,
   slotReadFile,
   type SlotVars,
@@ -74,6 +76,7 @@ import {
   ensureSlotReachable,
   PREPARE_DEPS_TIMEOUT_MS,
   PREPARE_PREFLIGHT_TIMEOUT_MS,
+  prepareIdentityPath,
   prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
@@ -94,6 +97,7 @@ import {
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
+  activePrepareAborts,
   activePrepareSessions,
   activePrepareSlots,
   applySelectedApp,
@@ -169,6 +173,7 @@ export async function slotPrepare(
   }
   assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
+  let settle = () => {};
   const requestId = params.requestId ?? `prepare-${randomUUID()}`;
   const stream = createPrepareStream(emit, {
     slotId: params.slotId,
@@ -178,6 +183,22 @@ export async function slotPrepare(
   let prepareError: unknown;
   let sentinel: PrepareSentinelLock | null = null;
   try {
+    const stop = new AbortController();
+    activePrepareAborts.set(params.slotId, {
+      abort: () => stop.abort(),
+      settled: new Promise<void>((resolve) => (settle = resolve)),
+    });
+    const prepareSignal = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+    // A release reads the registry once; a prepare registered after that
+    // read is refused here, because the release already fenced the slot.
+    if (
+      !opts?.duringRelease &&
+      (await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING
+    ) {
+      throw new Error(
+        `Slot ${params.slotId} is being released; prepare it once the release finishes`,
+      );
+    }
     const vars = await loadSlotVars(params.slotId);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
@@ -202,7 +223,7 @@ export async function slotPrepare(
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     await retireNativeWorkersForSlot(params.slotId, params.runId);
-    const result = await slotPrepareInner(params, stream, signal, opts);
+    const result = await slotPrepareInner(params, stream, prepareSignal, opts);
     if (!result.prepared) {
       stream.complete(1, `Slot ${params.slotId} is disabled`);
     } else {
@@ -218,6 +239,8 @@ export async function slotPrepare(
       if (sentinel) await releasePrepareSentinel(sentinel, prepareError);
     } finally {
       activePrepareSlots.delete(params.slotId);
+      activePrepareAborts.delete(params.slotId);
+      settle();
       // Belt-and-suspenders: stream.complete() already clears this, but guard
       // against any path that throws before complete() runs so the reattach
       // buffer can't go stale.
@@ -1331,7 +1354,7 @@ async function slotPrepareInner(
   }
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
-    const preflightIdentityPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.identity');
+    const preflightIdentityPath = prepareIdentityPath(vars.remoteRepo, runtimeDir);
     const preflightScope = randomUUID().replaceAll('-', '');
     const rawCleanupPatterns = getProjectFieldRaw(projectJson, 'cleanup_patterns');
     const cleanupPatterns = Array.isArray(rawCleanupPatterns)

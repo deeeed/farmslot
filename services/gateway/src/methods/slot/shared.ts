@@ -21,6 +21,8 @@ export type SlotPrepareResult = {
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
 };
 export interface SlotPrepareInternalOptions {
+  /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
+  duringRelease?: boolean;
   stripClean?: boolean;
   /** Reuse the run's existing work branch without resetting or cleaning it. */
   preserveBranch?: boolean;
@@ -60,6 +62,11 @@ export interface ActivePrepareSession {
   steps: PrepareStepRecord[];
 }
 export const activePrepareSessions = new Map<string, ActivePrepareSession>();
+
+/** In-flight prepare per slot, so a release can stop it and wait for it to
+ * settle before reaping its scope: otherwise the prepare launches its
+ * preflight holder after the release found nothing to reap. */
+export const activePrepareAborts = new Map<string, { abort: () => void; settled: Promise<void> }>();
 
 export const DEFAULT_GATEWAY_PORT = 7777;
 
