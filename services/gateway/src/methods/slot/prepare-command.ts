@@ -302,9 +302,13 @@ export function buildPrepareIdentityReapCommand(
     : [];
   const awaitExit = opts.awaitExit
     ? [
-        '    n=0; while kill -0 -"$pgid" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
-        '    if kill -0 -"$pgid" 2>/dev/null; then kill -KILL -"$pgid" 2>/dev/null; sleep 0.2; fi',
-        '    if kill -0 -"$pgid" 2>/dev/null; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
+        // Linux still delivers `kill -0 -PGID` to a zombie, so a killed member
+        // its parent has not reaped yet would read as surviving SIGKILL. Count
+        // only members ps does not report as Z (BSD ps and procps agree).
+        `    group_alive() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; }`,
+        '    n=0; while group_alive "$pgid" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        '    if group_alive "$pgid"; then kill -KILL -"$pgid" 2>/dev/null; sleep 0.2; fi',
+        '    if group_alive "$pgid"; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
       ]
     : [];
   return [
