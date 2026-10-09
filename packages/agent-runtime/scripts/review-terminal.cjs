@@ -147,7 +147,9 @@ async function main() {
     'FARMSLOT_GATEWAY_PASSWORD',
   ])
     delete environment[key];
-  environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
+  // The gateway mints the id so it can also hand it to Codex's tool shells.
+  environment.FARMSLOT_SIGNAL_ATTEMPT_ID =
+    input.signalAttemptId || require('node:crypto').randomUUID();
   if (input.setup)
     check(
       cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, env: environment, encoding: 'utf8' }),

@@ -231,6 +231,19 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
+
+/** `shell_environment_policy` inline table: core variables plus `set`, secrets dropped. */
+export function codexShellEnvironmentPolicy(set: Record<string, string>): string {
+  const entries = Object.entries(set)
+    .filter(([name]) => !SECRET_ENV_NAME.test(name))
+    .map(
+      ([name, value]) =>
+        `${/^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name)}=${JSON.stringify(value)}`,
+    );
+  return `shell_environment_policy={inherit="core",set={${entries.join(',')}}}`;
+}
+
 export function buildInteractiveRefinementRunnerCommand(options: {
   runner: string;
   model?: string | null;
@@ -245,6 +258,12 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   skipUpdateCheck?: boolean;
   /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
   disableHooks?: boolean;
+  /**
+   * Codex only: tool shells get Codex's core variables (PATH, HOME, TMPDIR, …) plus
+   * exactly these, whatever the node's shell_environment_policy says. Secret-like
+   * names are dropped, so provider keys never reach shells working on PR code.
+   */
+  shellEnvironment?: Record<string, string>;
   machine?: RawPoolJson;
   resumeSessionId?: string;
 }): string | null {
@@ -273,6 +292,9 @@ export function buildInteractiveRefinementRunnerCommand(options: {
         : '',
       options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
       options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
+      options.shellEnvironment
+        ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironment))}`
+        : '',
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,

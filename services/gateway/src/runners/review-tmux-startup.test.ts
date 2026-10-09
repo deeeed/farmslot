@@ -69,6 +69,30 @@ test('a Codex review launch can skip the startup update check and turn hooks off
   assert.ok(command?.includes("--config 'features.hooks=false'"));
 });
 
+test('a Codex review launch gives tool shells core plus its own variables, never secrets', () => {
+  const command = buildInteractiveRefinementRunnerCommand({
+    runner: 'codex',
+    repo: '/tmp/review.source',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'gpt-6-astra',
+    workspaceTrust: 'untrusted',
+    shellEnvironment: {
+      FARMSLOT_SIGNAL_ATTEMPT_ID: 'attempt-1',
+      PERPS_LIBRARY: '/support/libraries/perps',
+      CODEX_LB_API_KEY: 'sk-never',
+      GH_TOKEN: 'ghp-never',
+    },
+  });
+  assert.ok(
+    command?.includes(
+      `--config 'shell_environment_policy={inherit="core",set={FARMSLOT_SIGNAL_ATTEMPT_ID="attempt-1",PERPS_LIBRARY="/support/libraries/perps"}}'`,
+    ),
+    command ?? '',
+  );
+  assert.ok(!command?.includes('never'));
+  assert.ok(!command?.includes('inherit="all"'));
+});
+
 test('a missing task mark does not time out or manufacture startup acknowledgment', () => {
   assert.equal(reviewTmuxStartupState(null, null), 'starting');
 });

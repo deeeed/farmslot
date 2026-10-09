@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -188,6 +189,7 @@ export async function reviewTmuxOperation(
   if (action === 'launch') {
     const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
+    const signalAttemptId = randomUUID();
     const command = buildInteractiveRefinementRunnerCommand({
       runner,
       machine: pool,
@@ -205,6 +207,18 @@ export async function reviewTmuxOperation(
       // run against PR code, and when untrusted they stop the launch on "Hooks need
       // review" (macpro).
       disableHooks: true,
+      // A node policy of inherit = "core" (macpro) dropped FARMSLOT_SIGNAL_ATTEMPT_ID
+      // from the reviewer's shells, so its mark wrote another attempt id. Pass core
+      // plus exactly the review's own variables; never the node's secrets.
+      shellEnvironment: {
+        ...environment.set,
+        DISABLE_OMX: '1',
+        DISABLE_OMC: '1',
+        FARMSLOT_SIGNAL_ATTEMPT_ID: signalAttemptId,
+        // Operator dotfiles (~/.zshenv, ~/.zshrc) export provider keys into every
+        // zsh; an empty ZDOTDIR keeps the reviewer's shells from re-reading them.
+        ZDOTDIR: '/var/empty',
+      },
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',
@@ -215,6 +229,7 @@ export async function reviewTmuxOperation(
       command,
       prompt,
       environment,
+      signalAttemptId,
       ...(trustSeed ? { setup: `node -e ${shellQuote(trustSeed)}` } : {}),
       support: w.support?.path,
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
