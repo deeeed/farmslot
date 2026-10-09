@@ -6,6 +6,7 @@ import {
   type DispatchPreviewParams,
   Events,
   isDispatchScoreStale,
+  isTerminalRunStatus,
   ReviewQaConfigurationError,
   type Run,
   type RunDecision,
@@ -20,8 +21,6 @@ import {
   getProjectField,
   loadProjectVars,
   readSlotRow,
-  SLOT_PHASE_RELEASING,
-  SLOT_RELEASING_SINCE,
   updateSlotStatus,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
@@ -50,9 +49,8 @@ import {
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   SLOT_CLAIM_REFUSED_CODE,
-  slotClaimBlockedByHandoff,
-  slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
+  slotClaimBlocker,
   slotRepoBlocker,
   slotScore,
   validateSlotForDispatch,
@@ -225,19 +223,19 @@ async function claimSelectedSlot(
   const claim = await claimSlotStatusIf(
     slotId,
     (slot) => {
-      if (slotClaimBlockedByRelease(slot) !== null) return false;
-      // A foreign handoff reservation blocks every claim — including a second
-      // takeover, which would otherwise deliver a second prompt into the same
-      // worker and split-brain it.
-      if (slotClaimBlockedByHandoff(slot, runId) !== null) return false;
+      const blocker = slotClaimBlocker(slot, runId, getRun);
+      // Release, occupancy and a foreign handoff reservation block every
+      // claim — a second takeover would otherwise deliver a second prompt into
+      // the same worker and split-brain it.
       // Exclusive by default: two selections racing over one free snapshot
       // must not both succeed. The takeover mode is the exception — it
       // deliberately claims over a live worker, either for an
       // operator-approved nudge (prior run terminalized by nudgeDispatch
       // after delivery) or as the fresh-reuse fence taken before the prior
       // worker is destroyed.
-      if (opts?.takeoverLiveOwner) return true;
-      return slotClaimBlockedByLiveOwner(slot, runId, getRun) === null;
+      return (
+        blocker === null || (Boolean(opts?.takeoverLiveOwner) && blocker.kind === 'live-owner')
+      );
     },
     // Ownership binds in the SAME claim write — EXCEPT for the nudge
     // takeover, which must leave current_run_id with the prior run:
@@ -257,10 +255,13 @@ async function claimSelectedSlot(
     },
   );
   if (!claim.claimed) {
+    const row = await readSlotRow(slotId);
+    const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
     throw slotClaimRefusedError(
       slotId,
-      (await slotClaimHolder(await readSlotRow(slotId), runId, getRun, slotRuns)) ??
-        'slot changed hands during the claim',
+      blocker
+        ? await describeSlotClaimBlocker(slotId, blocker, slotRuns)
+        : 'slot changed hands during the claim',
     );
   }
   if (selectedExecutionTemplate && !run.executionTemplate) {
@@ -281,92 +282,123 @@ function slotClaimRefusedError(slotId: string, holder: string): Error {
 
 type SlotHistoryRun = Pick<
   Run,
-  'id' | 'status' | 'slotId' | 'slotTeardownSkipped' | 'statusChangedAt'
+  'id' | 'status' | 'slotId' | 'slotTeardownSkipped' | 'statusChangedAt' | 'steps'
 >;
 
-/** Live and archived runs: the run whose cancel left an occupancy hold is often archived. */
+/** Live and archived runs: the run that left an occupancy hold is often archived. */
 async function slotRuns(): Promise<SlotHistoryRun[]> {
   return [...getAllRuns(), ...(await getArchivedRuns())];
 }
 
 /**
- * What holds the slot against this run's ordinary claim, named so the
- * operator can act on it, or null when the claim CAS in claimSelectedSlot
- * would accept the row.
+ * The blocker as the operator needs it. An occupancy hold row keeps only its
+ * reason; the run that left it recorded the same reason as
+ * `slotTeardownSkipped`, so name that run (one that actually bound the slot,
+ * not a run refused before claiming whose census saw the same occupant).
  */
-async function slotClaimHolder(
-  slot: Readonly<Record<string, unknown>> | null,
-  runId: string,
-  ownerRunLookup: (id: string) => { status: string } | undefined,
+async function describeSlotClaimBlocker(
+  slotId: string,
+  blocker: NonNullable<ReturnType<typeof slotClaimBlocker>>,
   listSlotRuns: () => Promise<SlotHistoryRun[]>,
-): Promise<string | null> {
-  if (!slot) return null;
-  if (slot.phase === SLOT_PHASE_RELEASING) {
-    const since = slot[SLOT_RELEASING_SINCE];
-    return `release in progress since ${typeof since === 'string' ? since : 'an unknown time'}`;
-  }
-  if (slotClaimBlockedByRelease(slot) !== null) {
-    // The hold row keeps only its reason; the run that left it recorded the
-    // same reason as slotTeardownSkipped when its teardown was skipped.
-    const reason = typeof slot.held_reason === 'string' ? slot.held_reason : null;
-    const leftBy = reason
-      ? (await listSlotRuns())
-          .filter((run) => run.slotId === slot.slot && run.slotTeardownSkipped === reason)
-          .sort((a, b) => (b.statusChangedAt ?? '').localeCompare(a.statusChangedAt ?? ''))[0]
-      : undefined;
-    const since = leftBy
-      ? ` since ${leftBy.statusChangedAt ?? 'an unknown time'}, left by run ${leftBy.id} (${leftBy.status})`
-      : '';
-    return `slot remains occupied${since}: ${reason ?? 'no reason recorded'}; release it with \`farmslot slot release ${String(slot.slot)}\``;
-  }
-  const handoff = slotClaimBlockedByHandoff(slot, runId);
-  if (handoff) return handoff;
-  const owner = slotClaimBlockedByLiveOwner(slot, runId, ownerRunLookup);
-  if (!owner) return null;
-  return `${owner} (${ownerRunLookup(String(slot.current_run_id))?.status})`;
+): Promise<string> {
+  if (blocker.kind !== 'occupied') return blocker.detail;
+  const leftBy = (await listSlotRuns())
+    .filter(
+      (run) =>
+        run.slotId === slotId &&
+        run.slotTeardownSkipped === blocker.detail &&
+        run.steps.some((step) => step.name === 'find-slot' && step.status === 'done'),
+    )
+    .sort((a, b) => (b.statusChangedAt ?? '').localeCompare(a.statusChangedAt ?? ''))[0];
+  const since = leftBy
+    ? ` since ${leftBy.statusChangedAt ?? 'an unknown time'}, left by run ${leftBy.id} (${leftBy.status})`
+    : '';
+  return `slot remains occupied${since}: ${blocker.detail}; release it with \`farmslot slot release ${slotId}\``;
 }
 
 /**
- * Explicit slot picks land right after the previous run on that slot was
- * cancelled or released, and that teardown runs after the cancel returns. A
- * release ends by itself, so wait for it (bounded); every other holder — a
- * live run, a handoff, a workspace-occupancy hold — only ends by an operator
- * or by that run, so waiting would only delay the same failure.
+ * Preview an explicit slot pick once the slot can be claimed. Explicit picks
+ * land right after the previous run on that slot ended, and its teardown runs
+ * after the cancel returns. A release ends by itself, so wait for it
+ * (bounded, as queue time); every other holder — a live run, a handoff, an
+ * occupancy hold — only ends by an operator or by that run, so it fails at
+ * once, named. A cancel, pause or replay while waiting owns the run: stop
+ * without previewing or claiming. Scored picks (no slotId) preview directly.
  */
-export async function awaitSlotClaimable(
-  slotId: string,
+export async function previewWhenSlotClaimable<T>(
   runId: string,
+  slotId: string | undefined,
+  preview: () => Promise<T>,
   deps: {
     readRow?: (slotId: string) => Promise<Readonly<Record<string, unknown>> | null>;
-    ownerRunLookup?: (id: string) => { status: string } | undefined;
+    runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
     timeoutMs?: number;
+    wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
   } = {},
-): Promise<void> {
+): Promise<T> {
+  if (!slotId) return preview();
   const {
     readRow = readSlotRow,
-    ownerRunLookup = getRun,
+    runLookup = getRun,
     listSlotRuns = slotRuns,
     now = Date.now,
     sleep = delay,
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+    wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
   } = deps;
-  const deadline = now() + timeoutMs;
-  for (;;) {
-    const row = await readRow(slotId);
-    const holder = await slotClaimHolder(row, runId, ownerRunLookup, listSlotRuns);
-    if (!holder) return;
-    if (row?.phase !== SLOT_PHASE_RELEASING) throw slotClaimRefusedError(slotId, holder);
-    if (now() >= deadline) {
-      throw slotClaimRefusedError(
-        slotId,
-        `${holder}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
-      );
-    }
-    await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+  const generation = runLookup(runId)?.engineState?.generation ?? 0;
+  const assertRunUnchanged = () => {
+    const current = runLookup(runId);
+    if (
+      !current ||
+      isTerminalRunStatus(current.status) ||
+      current.status === 'paused' ||
+      (current.engineState?.generation ?? 0) !== generation
+    )
+      throw new Error(`Run ${runId.slice(0, 8)} changed while waiting for slot ${slotId}`);
+  };
+  const blockerOf = (row: Readonly<Record<string, unknown>> | null) =>
+    row ? slotClaimBlocker(row, runId, runLookup) : null;
+  const refuse = async (blocker: NonNullable<ReturnType<typeof slotClaimBlocker>>) =>
+    slotClaimRefusedError(slotId, await describeSlotClaimBlocker(slotId, blocker, listSlotRuns));
+
+  let blocker = blockerOf(await readRow(slotId));
+  if (blocker?.kind === 'releasing') {
+    // One read decides both whether to wait and whether it counts as queue time.
+    blocker = await wrapWait(async () => {
+      const deadline = now() + timeoutMs;
+      let current = blocker;
+      while (current?.kind === 'releasing') {
+        if (now() >= deadline) {
+          throw slotClaimRefusedError(
+            slotId,
+            `${current.detail}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
+          );
+        }
+        await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+        assertRunUnchanged();
+        current = blockerOf(await readRow(slotId));
+      }
+      return current;
+    });
   }
+  if (blocker) throw await refuse(blocker);
+  assertRunUnchanged();
+  let result: T;
+  try {
+    result = await preview();
+  } catch (error) {
+    // A rival that claimed the slot after the release landed fails preview
+    // with a generic "busy"/"working"; name the holder instead.
+    const rival = blockerOf(await readRow(slotId));
+    if (rival) throw await refuse(rival);
+    throw error;
+  }
+  assertRunUnchanged();
+  return result;
 }
 
 /**
@@ -567,7 +599,11 @@ export async function executeFindSlotStep(
       );
     }
     const blocked = slotClaimBlockedByRelease(warmSlot);
-    if (blocked) throw new Error(`Warm-session reuse slot '${run.slotId}' ${blocked}`);
+    if (blocked) {
+      throw new Error(
+        `Warm-session reuse slot '${run.slotId}' ${blocked === 'releasing' ? 'is mid-release' : 'remains occupied'}`,
+      );
+    }
     // Warm reuse still delivers a NEW task into the session. The same admission
     // gate as every other binding; the kill switch is the deliberate bypass.
     await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);
@@ -716,18 +752,6 @@ export async function executeFindSlotStep(
         via: 'wizard-fresh-reuse',
       },
     };
-  }
-
-  // An explicit slot still releasing from its previous run waits for that
-  // release (as queue time) instead of failing preview; any other holder
-  // fails here, named.
-  if (run.slotId) {
-    const explicitSlotId = run.slotId;
-    if ((await readSlotRow(explicitSlotId))?.phase === SLOT_PHASE_RELEASING) {
-      await awaitAsQueueTime(runId, 'find-slot', () => awaitSlotClaimable(explicitSlotId, runId));
-    } else {
-      await awaitSlotClaimable(explicitSlotId, runId);
-    }
   }
 
   // Capture candidate list before selection (live branch check for accurate scoring)
@@ -1188,18 +1212,20 @@ export async function executeFindSlotStep(
     };
   }
 
-  const result = await dispatchPreview(
-    {
-      ...buildDispatchPreviewParamsForRun(run),
-      ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
-      ...(skipPrepare ? { skipPrepare } : {}),
-    },
-    // Delayed engine preview: the audit principal was resolved and persisted
-    // at run.create; never re-derive it from ambient context here.
-    {
-      ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
-      includeProfileFit: false,
-    },
+  const result = await previewWhenSlotClaimable(runId, run.slotId || undefined, () =>
+    dispatchPreview(
+      {
+        ...buildDispatchPreviewParamsForRun(run),
+        ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+        ...(skipPrepare ? { skipPrepare } : {}),
+      },
+      // Delayed engine preview: the audit principal was resolved and persisted
+      // at run.create; never re-derive it from ambient context here.
+      {
+        ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
+        includeProfileFit: false,
+      },
+    ),
   );
   // Automatic selection already excluded pressure-rejected machines; a
   // rejection here means an explicit slot (or a pinned affinity slot) sits on
