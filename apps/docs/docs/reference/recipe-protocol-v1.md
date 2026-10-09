@@ -53,7 +53,7 @@ For UI actions, prefer `"Open the purchase path for the selected asset."` over `
 
 Recipes declare inputs with `paramsSchema`. Defaults apply before validation; explicit values win, including falsy values.
 
-Use `{{params.name}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. An exact template preserves its type; an embedded template becomes a string. Data does not leak between parent and child recipes.
+Use `{{params.name}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. `[n]` or `.n` indexes an array: `{{outputs.positions.positions[0].size}}`. An exact template preserves its type; an embedded template becomes a string. A `{{params.` or `{{outputs.` that does not parse as a template fails validation (`workflow.invalid_template`) and resolution; it is never passed on as text. Data does not leak between parent and child recipes.
 
 Action parameters are sibling fields on the node. The `params` object is reserved for the `call` boundary shown below.
 

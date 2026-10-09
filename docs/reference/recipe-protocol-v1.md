@@ -85,7 +85,7 @@ Recipes declare inputs with JSON-Schema-shaped `paramsSchema`. Defaults apply be
 }
 ```
 
-Use `{{params.market}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. An exact template preserves its value type; an embedded template becomes a string. Data does not leak between parent and child recipes.
+Use `{{params.market}}` for inputs and `{{outputs.nodeId.path}}` for a prior node's output. `[n]` or `.n` indexes an array: `{{outputs.positions.positions[0].size}}`. An exact template preserves its value type; an embedded template becomes a string. A `{{params.` or `{{outputs.` that does not parse as a template fails validation (`workflow.invalid_template`) and resolution; it is never passed on as text. Data does not leak between parent and child recipes.
 
 Action parameters are sibling fields on the node. The `params` object is reserved for a `call` boundary.
 
@@ -226,14 +226,14 @@ timestamps or infer frame rate from `maxFps`.
 
 The timeline contains:
 
-| Field | Meaning |
-|---|---|
-| `version` | `1` |
-| `videoPath`, `videoDigest` | Package-relative video and `sha256:` digest of its bytes |
-| `traceDigest` | Canonical recipe digest of the trace entry array, excluding wrapper metadata |
-| `framesMs`, `durationMs` | Increasing measured presentation times and duration on the video's seek clock |
-| `clock` | `source`, `earliestZeroUnixMs`, `latestZeroUnixMs`: measured bounds for media time zero on the runner's clock |
-| `markers` | Trace index, namespaced node ID, action, optional intent/proof targets, recorded `ok`, start/end time ranges |
+| Field                      | Meaning                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `version`                  | `1`                                                                                                           |
+| `videoPath`, `videoDigest` | Package-relative video and `sha256:` digest of its bytes                                                      |
+| `traceDigest`              | Canonical recipe digest of the trace entry array, excluding wrapper metadata                                  |
+| `framesMs`, `durationMs`   | Increasing measured presentation times and duration on the video's seek clock                                 |
+| `clock`                    | `source`, `earliestZeroUnixMs`, `latestZeroUnixMs`: measured bounds for media time zero on the runner's clock |
+| `markers`                  | Trace index, namespaced node ID, action, optional intent/proof targets, recorded `ok`, start/end time ranges  |
 
 Each marker's `startRangeMs` and `endRangeMs` are ordered two-number ranges. They
 retain clock uncertainty, including negative times and events beyond the footage.

@@ -74,6 +74,13 @@ export {
   validateRecipeSuiteScopeDocument,
 } from './suite.js';
 export {
+  findUnsupportedRecipeTemplates,
+  parseRecipeTemplate,
+  type RecipeTemplateReference,
+  type RecipeTemplateSource,
+  replaceRecipeTemplates,
+} from './template.js';
+export {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
   officialRecipeActionCapabilities,
   RECIPE_EXECUTION_CAPABILITIES,

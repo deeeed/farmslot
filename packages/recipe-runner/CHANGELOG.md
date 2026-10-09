@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Fix: `{{outputs.node.items[0].field}}` resolved to its own text, so an `assert_output` compared the value against the template; `{{outputs.node.items.0.field}}` failed as not defined. Both now index the array. A `{{params.` or `{{outputs.` that does not parse as a template fails resolution with `RECIPE_PARAMS_INVALID`, and a missing output names its node. Needs the protocol release with `parseRecipeTemplate`.
 - A capture-helper recording whose stream stops mid-run (capture-helper 0.3.1: `stream_interrupted`, exit 3) keeps its partial video: the video entry carries `interruption`, and the run fails with a `CAPTURE_INTERRUPTED` environment failure (`RecipeRunResult.captureInterruption`). A screenshot after, or during, the stream stop is taken with a standalone `capture-helper snapshot` of the same target, marked `metadata.fallbackFrom: 'record_session_snapshot'`, instead of failing with "Recording is no longer active."
 - Active-development baseline; add user-facing changes here before release or package publication.
 

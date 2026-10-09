@@ -1,4 +1,10 @@
-import { applyRecipeParamDefaults, validateRecipeParams } from '@farmslot/protocol';
+import {
+  applyRecipeParamDefaults,
+  findUnsupportedRecipeTemplates,
+  parseRecipeTemplate,
+  replaceRecipeTemplates,
+  validateRecipeParams,
+} from '@farmslot/protocol';
 
 import { isRecord } from './json.js';
 import { RecipeResolutionError } from './resolution-error.js';
@@ -25,9 +31,10 @@ export function resolveRecipeParams(
 
 /**
  * `value` with its `{{params.*}}`/`{{outputs.*}}` references resolved. Strict
- * (the default) interpolates every reference and throws on a missing one.
- * `lenient` is the static view before a run: only an exact reference to a
- * parameter that exists resolves; anything else stays as written.
+ * (the default) interpolates every reference and throws on a missing one or on
+ * a template it cannot parse. `lenient` is the static view before a run: only
+ * an exact reference to a parameter that exists resolves; anything else stays
+ * as written.
  */
 export function resolveRecipeValue(
   value: unknown,
@@ -36,21 +43,27 @@ export function resolveRecipeValue(
   options: { lenient?: boolean } = {},
 ): unknown {
   if (typeof value === 'string') {
-    const exact = /^\{\{(params|outputs)\.([A-Za-z0-9_.-]+)\}\}$/u.exec(value);
+    const exact = parseRecipeTemplate(value);
     if (options.lenient) {
-      const found = exact?.[1] === 'params' ? nestedValue(params, exact[2]!) : undefined;
+      const found = exact?.source === 'params' ? nestedValue(params, exact.path) : undefined;
       return found ? found.value : value;
     }
-    if (exact) {
-      if (exact[1] === 'outputs' && !outputs) return value;
-      return getRecipeReference(exact[1]!, exact[2]!, params, outputs);
+    const [unsupported] = findUnsupportedRecipeTemplates(value);
+    if (unsupported !== undefined) {
+      throw new RecipeResolutionError(
+        'RECIPE_PARAMS_INVALID',
+        `Recipe value ${unsupported} is not a supported template.`,
+        'use {{params.<name>}} or {{outputs.<node>.<path>}}, with [n] for an array index',
+      );
     }
-    return value.replace(
-      /\{\{(params|outputs)\.([A-Za-z0-9_.-]+)\}\}/gu,
-      (_match, source: string, key: string) =>
-        source === 'outputs' && !outputs
-          ? _match
-          : String(getRecipeReference(source, key, params, outputs)),
+    if (exact) {
+      if (exact.source === 'outputs' && !outputs) return value;
+      return getRecipeReference(exact.source, exact.path, params, outputs);
+    }
+    return replaceRecipeTemplates(value, (reference, template) =>
+      reference.source === 'outputs' && !outputs
+        ? template
+        : String(getRecipeReference(reference.source, reference.path, params, outputs)),
     );
   }
   if (Array.isArray(value)) {
@@ -81,28 +94,40 @@ function getRecipeReference(
       `run the producing node before referencing outputs.${path}`,
     );
   }
-  return getNestedValue(outputs.get(nodeId), segments.join('.'), 'output');
+  return getNestedValue(outputs.get(nodeId), segments.join('.'), 'output', path);
 }
 
-function getNestedValue(value: unknown, path: string, kind: 'parameter' | 'output'): unknown {
+function getNestedValue(
+  value: unknown,
+  path: string,
+  kind: 'parameter' | 'output',
+  reference = path,
+): unknown {
   const found = nestedValue(value, path);
   if (!found) {
     throw new RecipeResolutionError(
       'RECIPE_PARAMS_INVALID',
-      `Recipe ${kind} ${path} is not defined.`,
+      `Recipe ${kind} ${reference} is not defined.`,
       kind === 'parameter'
         ? `declare ${path} in paramsSchema or provide it before running the recipe`
-        : `inspect the producing node output before referencing ${path}`,
+        : `inspect the producing node output before referencing ${reference}`,
     );
   }
   return found.value;
 }
 
-// The value at a dotted path, or undefined when a segment is missing.
+// The value at a dotted path, or undefined when a segment is missing. A numeric
+// segment indexes an array.
 function nestedValue(value: unknown, path: string): { value: unknown } | undefined {
   let current: unknown = value;
   if (!path) return { value: current };
   for (const segment of path.split('.')) {
+    if (Array.isArray(current)) {
+      const index = /^(?:0|[1-9]\d*)$/u.test(segment) ? Number(segment) : -1;
+      if (index < 0 || index >= current.length) return undefined;
+      current = current[index];
+      continue;
+    }
     if (!isRecord(current) || !Object.hasOwn(current, segment)) return undefined;
     current = current[segment];
   }

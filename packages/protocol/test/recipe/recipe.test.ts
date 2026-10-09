@@ -404,6 +404,52 @@ test('rejects ambiguous parameter boundaries and dotted reference names', () => 
   );
 });
 
+test('accepts array-index templates and rejects a template it cannot parse', () => {
+  const closeAll = (value: string) =>
+    recipe({
+      baseline: {
+        action: 'demo.read',
+        intent: 'Record the pre-existing position before the preview.',
+        next: 'check',
+      },
+      check: {
+        action: 'assert_output',
+        source: 'baseline',
+        assert: { path: '$.positions[0].size', operator: 'eq', value },
+        intent: 'The pre-existing position size is unchanged.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+  for (const value of [
+    '{{outputs.baseline.positions[0].size}}',
+    '{{outputs.baseline.positions.0.size}}',
+    'size {{outputs.baseline.positions[12].size}} BTC',
+  ]) {
+    assert.equal(
+      validateRecipeDocument(closeAll(value), { skipRecipeCallResolution: true }).status,
+      'valid',
+      value,
+    );
+  }
+  for (const value of [
+    '{{outputs.baseline.positions[first].size}}',
+    '{{outputs.baseline.positions[01].size}}',
+    'size {{outputs.baseline.positions[0]size}}',
+    '{{ outputs.baseline.count }}',
+    '{{outputs.baseline.count',
+  ]) {
+    const findings = validateRecipeDocument(closeAll(value), {
+      skipRecipeCallResolution: true,
+    }).findings.filter((finding) => finding.code === 'workflow.invalid_template');
+    assert.deepEqual(
+      findings.map((finding) => [finding.severity, finding.path]),
+      [['error', 'workflow.nodes.check.assert.value']],
+      value,
+    );
+  }
+});
+
 test('requires UI intent to describe the visible outcome instead of interaction mechanics', () => {
   const valid = validateRecipeDocument(
     recipe({
@@ -1030,12 +1076,19 @@ test('published Recipe JSON Schema and runtime both reject dynamic call refs', a
     },
     done: { action: 'end', status: 'pass' },
   });
-  assert.equal(validatePublicSchema(document), false);
-  assert.ok(
-    validateRecipeDocument(document, { skipRecipeCallResolution: true }).findings.some(
-      (finding) => finding.code === 'workflow.dynamic_call_ref',
-    ),
-  );
+  for (const ref of ['{{params.child}}', '{{params.children[0]}}']) {
+    const call = structuredClone(document);
+    (
+      (call.workflow as Record<string, unknown>).nodes as Record<string, Record<string, unknown>>
+    ).call!.ref = ref;
+    assert.equal(validatePublicSchema(call), false, ref);
+    assert.ok(
+      validateRecipeDocument(call, { skipRecipeCallResolution: true }).findings.some(
+        (finding) => finding.code === 'workflow.dynamic_call_ref',
+      ),
+      ref,
+    );
+  }
 });
 
 test('action-manifest JSON Schema and runtime validator agree on action names', async () => {
