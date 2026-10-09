@@ -1,5 +1,6 @@
 export {
   mergeRecipeValidationResults,
+  recipeTraceEntries,
   validateArtifactManifestDocument,
   validateRecipeArtifactPackage,
 } from './artifact.js';

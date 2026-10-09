@@ -117,6 +117,25 @@ export class JsonTraceWriter implements TraceWriter {
   }
 }
 
+/** Summary counts derived from the trace; the artifact package validator requires exactly these. */
+export function summarizeTraceCounts(
+  trace: readonly Pick<TraceEntry, 'ok' | 'cause_class'>[],
+): Pick<SummaryDocument, 'total' | 'passed' | 'failed' | 'cause_counts'> {
+  const failedWith = (cause: string) =>
+    trace.filter((entry) => !entry.ok && entry.cause_class === cause).length;
+  return {
+    total: trace.length,
+    passed: trace.filter((entry) => entry.ok).length,
+    failed: trace.filter((entry) => !entry.ok).length,
+    cause_counts: {
+      subject: failedWith('subject'),
+      harness: failedWith('harness'),
+      environment: failedWith('environment'),
+      unknown: failedWith('unknown'),
+    },
+  };
+}
+
 export class JsonSummaryWriter implements SummaryWriter {
   readonly #artifactsDir: string;
 
