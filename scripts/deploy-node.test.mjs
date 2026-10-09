@@ -412,36 +412,41 @@ else console.log('{}');
     sha,
     snapshot,
     entry: path.join(snapshot, 'packages/cli/bin/farmslot.mjs'),
-    deploy: (instance = 'prod') =>
-      execFileSync(
+    deploy: (instance = 'prod', machine = 'fixture-machine', ...extraArgs) => {
+      const env = {
+        ...process.env,
+        PATH: `${root}/bin:${process.env.PATH}`,
+        HOME: home,
+        SHELL: '/bin/bash',
+        ASDF_DATA_DIR: '',
+        GATEWAY_PORT: '',
+        FARMSLOT_NODE_PATH: process.execPath,
+        FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
+        FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
+      };
+      // A tmux worker's login shell has no FARMSLOT_HOME of its own.
+      delete env.FARMSLOT_HOME;
+      return execFileSync(
         'bash',
         [
           path.join(root, 'scripts/deploy-node.sh'),
-          'fixture-machine',
+          machine,
           '127.0.0.1',
           '--instance',
           instance,
           '--node-token-file',
           path.join(root, 'node-token'),
+          ...extraArgs,
         ],
         {
-          env: {
-            ...process.env,
-            PATH: `${root}/bin:${process.env.PATH}`,
-            HOME: home,
-            SHELL: '/bin/bash',
-            ASDF_DATA_DIR: '',
-            GATEWAY_PORT: '',
-            FARMSLOT_NODE_PATH: process.execPath,
-            FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
-            FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
-          },
+          env,
           cwd: root,
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout: 60000,
         },
-      ),
+      );
+    },
     calls: () =>
       fs
         .readFileSync(path.join(home, 'cli-calls.jsonl'), 'utf8')
@@ -489,7 +494,8 @@ for (const instance of ['prod', 'dev']) {
       const expected = {
         script: fs.realpathSync(fixture.entry),
         gwUrl: `ws://127.0.0.1:${instance === 'dev' ? 7801 : 7777}`,
-        farmslotHome: instance === 'dev' ? path.join(fixture.home, '.farmslot-dev') : null,
+        // Tmux workers keep the login shell's FARMSLOT_HOME for both instances.
+        farmslotHome: null,
         credentials: [],
       };
       assert.deepEqual(fixture.calls(), [
@@ -508,6 +514,41 @@ for (const instance of ['prod', 'dev']) {
     }
   });
 }
+
+// On a local deploy the CLI on PATH is the operator's own, so the deploy leaves
+// it alone unless asked. MACHINE matching `hostname -s` selects local mode.
+test('deploy-node leaves the CLI as is on a local deploy unless --refresh-cli is passed', () => {
+  const fixture = cliFixture();
+  try {
+    const local = execFileSync('hostname', ['-s'], { encoding: 'utf8' }).trim();
+    const operatorCli = path.join(fixture.home, 'farmslot/packages/cli/bin/farmslot.mjs');
+    const link = path.join(fixture.home, '.local/bin/farmslot');
+    fs.mkdirSync(path.dirname(operatorCli), { recursive: true });
+    fs.writeFileSync(operatorCli, '// operator checkout\n');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(operatorCli, link);
+
+    const skipped = fixture.deploy('prod', local);
+    assert.match(
+      skipped,
+      /local deploy: node CLI left as is; pass --refresh-cli to install the deployed revision/,
+    );
+    assert.equal(fs.readlinkSync(link), operatorCli);
+    assert.equal(fs.existsSync(fixture.snapshot), false);
+    assert.equal(fs.existsSync(path.join(fixture.home, 'cli-calls.jsonl')), false);
+
+    const refreshed = fixture.deploy('prod', local, '--refresh-cli');
+    assert.match(refreshed, /installing node CLI snapshot/);
+    assert.equal(fs.readlinkSync(link), fixture.entry);
+    assert.equal(fixture.snapshotInstalls(), 1);
+    assert.deepEqual(
+      fixture.calls().map((call) => call.argv),
+      [['--version'], ['rpc', 'gateway.status']],
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test('deploy-node fails loudly with the fix when a worker shell cannot reach the gateway', () => {
   const fixture = cliFixture();

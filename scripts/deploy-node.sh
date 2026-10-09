@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path] [--refresh-cli]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -10,6 +10,8 @@
 # Same command for install and update. Rsyncs code and restarts the service,
 # then installs the same git revision as the machine's `farmslot` CLI (the one
 # slot workers run) and verifies it reaches the gateway from a worker shell.
+# A local deploy leaves the CLI as is unless --refresh-cli is passed: there it
+# is the operator's own CLI.
 #
 # Instances: a machine can run a prod node and a dev node side by side —
 # distinct install dir, service name, gateway URL, and IPC state. Default
@@ -29,6 +31,7 @@ set -euo pipefail
 INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
 NODE_TOKEN_FILE=""
 NODE_TOKEN_FROM_FILE=false
+REFRESH_CLI=false
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --instance=*)
       INSTANCE="${1#--instance=}"
+      shift
+      ;;
+    --refresh-cli)
+      REFRESH_CLI=true
       shift
       ;;
     --node-token-file)
@@ -60,7 +67,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path]}"
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path] [--refresh-cli]}"
 GATEWAY_IP="${2:-}"
 
 # --- Per-instance configuration (dev + prod coexist on the same machine) ---
@@ -697,41 +704,45 @@ fi
 # written last as the completion marker, and point the user's farmslot links at
 # it. Links into a git checkout are switched too; the checkout is never touched,
 # and the previous target is printed for rollback. One CLI per machine: dev and
-# prod workers resolve the same `farmslot`, so the last deploy wins.
-CLI_SHA=$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null || true)
-if [[ ! "$CLI_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
-  echo "[deploy] ERROR: $REPO_ROOT is not a git checkout; the node CLI is installed from a committed revision" >&2
-  exit 1
-fi
-if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no -- packages)" ]]; then
-  echo "[deploy] WARNING: uncommitted changes under packages/ reach the node service but not the CLI snapshot of $CLI_SHA" >&2
-fi
-CLI_SNAPSHOT="$REMOTE_HOME/.local/share/farmslot-cli/$CLI_SHA"
-CLI_SNAPSHOT_QUOTED=$(printf '%q' "$CLI_SNAPSHOT")
-CLI_ENTRY="$CLI_SNAPSHOT/packages/cli/bin/farmslot.mjs"
-if run "test -f $CLI_SNAPSHOT_QUOTED/DEPLOYED-REVISION.json"; then
-  echo "[deploy] node CLI snapshot $CLI_SHA already installed"
+# prod workers resolve the same `farmslot`, so the last deploy wins. On a local
+# deploy the CLI is the operator's own, so it is refreshed only on request.
+if [[ "$IS_LOCAL" == true && "$REFRESH_CLI" != true ]]; then
+  echo "[deploy] local deploy: node CLI left as is; pass --refresh-cli to install the deployed revision"
 else
-  echo "[deploy] installing node CLI snapshot $CLI_SHA..."
-  CLI_ARCHIVE=$(mktemp "${TMPDIR:-/tmp}/deploy-node-cli-XXXXXX")
-  trap 'rm -f "$CLI_ARCHIVE"' EXIT
-  git -C "$REPO_ROOT" archive --format=tar "$CLI_SHA" > "$CLI_ARCHIVE"
-  CLI_ARCHIVE_SHA256=$(shasum -a 256 "$CLI_ARCHIVE" | cut -d' ' -f1)
-  # No marker means an earlier install of this sha did not finish; start over.
-  run "rm -rf $CLI_SNAPSHOT_QUOTED && mkdir -p $CLI_SNAPSHOT_QUOTED"
-  run "tar -xf - -C $CLI_SNAPSHOT_QUOTED" < "$CLI_ARCHIVE"
-  if ! run "set -o pipefail; cd $CLI_SNAPSHOT_QUOTED && PATH=$NODE_DIR:\$PATH yarn install --immutable 2>&1 | tail -5"; then
-    echo "[deploy] ERROR: yarn install --immutable failed for the node CLI in $CLI_SNAPSHOT on $MACHINE" >&2
-    echo "  fix: resolve the error above (corepack enable if yarn is missing), then redeploy" >&2
+  CLI_SHA=$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null || true)
+  if [[ ! "$CLI_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+    echo "[deploy] ERROR: $REPO_ROOT is not a git checkout; the node CLI is installed from a committed revision" >&2
     exit 1
   fi
-  printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$CLI_SHA" "$CLI_ARCHIVE_SHA256" \
-    | run "cat > $CLI_SNAPSHOT_QUOTED/DEPLOYED-REVISION.json"
-fi
+  if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no -- packages)" ]]; then
+    echo "[deploy] WARNING: uncommitted changes under packages/ reach the node service but not the CLI snapshot of $CLI_SHA" >&2
+  fi
+  CLI_SNAPSHOT="$REMOTE_HOME/.local/share/farmslot-cli/$CLI_SHA"
+  CLI_SNAPSHOT_QUOTED=$(printf '%q' "$CLI_SNAPSHOT")
+  CLI_ENTRY="$CLI_SNAPSHOT/packages/cli/bin/farmslot.mjs"
+  if run "test -f $CLI_SNAPSHOT_QUOTED/DEPLOYED-REVISION.json"; then
+    echo "[deploy] node CLI snapshot $CLI_SHA already installed"
+  else
+    echo "[deploy] installing node CLI snapshot $CLI_SHA..."
+    CLI_ARCHIVE=$(mktemp "${TMPDIR:-/tmp}/deploy-node-cli-XXXXXX")
+    trap 'rm -f "$CLI_ARCHIVE"' EXIT
+    git -C "$REPO_ROOT" archive --format=tar "$CLI_SHA" > "$CLI_ARCHIVE"
+    CLI_ARCHIVE_SHA256=$(shasum -a 256 "$CLI_ARCHIVE" | cut -d' ' -f1)
+    # No marker means an earlier install of this sha did not finish; start over.
+    run "rm -rf $CLI_SNAPSHOT_QUOTED && mkdir -p $CLI_SNAPSHOT_QUOTED"
+    run "tar -xf - -C $CLI_SNAPSHOT_QUOTED" < "$CLI_ARCHIVE"
+    if ! run "set -o pipefail; cd $CLI_SNAPSHOT_QUOTED && PATH=$NODE_DIR:\$PATH yarn install --immutable 2>&1 | tail -5"; then
+      echo "[deploy] ERROR: yarn install --immutable failed for the node CLI in $CLI_SNAPSHOT on $MACHINE" >&2
+      echo "  fix: resolve the error above (corepack enable if yarn is missing), then redeploy" >&2
+      exit 1
+    fi
+    printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$CLI_SHA" "$CLI_ARCHIVE_SHA256" \
+      | run "cat > $CLI_SNAPSHOT_QUOTED/DEPLOYED-REVISION.json"
+  fi
 
-# install.sh links ~/.local/bin/farmslot; npm-style installs own ~/.npm-global/bin.
-echo "[deploy] pointing farmslot links at the node CLI snapshot..."
-run "bash -s $(printf '%q' "$CLI_ENTRY")" << 'LINKS'
+  # install.sh links ~/.local/bin/farmslot; npm-style installs own ~/.npm-global/bin.
+  echo "[deploy] pointing farmslot links at the node CLI snapshot..."
+  run "bash -s $(printf '%q' "$CLI_ENTRY")" << 'LINKS'
 set -euo pipefail
 entry=$1
 for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
@@ -752,19 +763,19 @@ for link in "$HOME/.local/bin/farmslot" "$HOME/.npm-global/bin/farmslot"; do
 done
 LINKS
 
-# Verify in a shell shaped like a worker launch: the user's login shell, asdf
-# shims first, GW_URL set to the URL this node dials, FARMSLOT_HOME per
-# instance, and no control-plane credential. The CLI authenticates with the
-# stored profile for that URL, exactly as a worker does.
-echo "[deploy] verifying node CLI from a worker shell..."
-NODE_USER_SHELL=$(run 'printf "%s" "${SHELL:-/bin/sh}"')
-CLI_FARMSLOT_HOME=""
-[[ -n "$INSTANCE_SUFFIX" ]] && CLI_FARMSLOT_HOME="$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}"
-CLI_GATEWAY_URL="ws://${GATEWAY_IP}:${GATEWAY_PORT}"
-if ! run "$(printf '%q ' "$NODE_USER_SHELL" -l -s "$CLI_ENTRY" "$CLI_GATEWAY_URL" "$CLI_FARMSLOT_HOME")" << 'VERIFY'
+  # Verify in a shell shaped like a tmux slot worker: the user's login shell,
+  # asdf shims first, GW_URL set to the URL this node dials, and no control-plane
+  # credential. FARMSLOT_HOME stays as the login shell has it (normally unset, so
+  # ~/.farmslot) for both instances, and the CLI authenticates with the stored
+  # profile for that URL, exactly as a tmux worker does. Native workers instead
+  # inherit the node's FARMSLOT_HOME (~/.farmslot-dev for dev); that is a known
+  # follow-up, and this verifies the tmux worker path only.
+  echo "[deploy] verifying node CLI from a worker shell..."
+  NODE_USER_SHELL=$(run 'printf "%s" "${SHELL:-/bin/sh}"')
+  CLI_GATEWAY_URL="ws://${GATEWAY_IP}:${GATEWAY_PORT}"
+  if ! run "$(printf '%q ' "$NODE_USER_SHELL" -l -s "$CLI_ENTRY" "$CLI_GATEWAY_URL")" << 'VERIFY'
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
 export GW_URL="$2"
-if [ -n "$3" ]; then export FARMSLOT_HOME="$3"; fi
 PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 export PATH
 cd "$HOME" || exit 1
@@ -785,15 +796,16 @@ version=$(farmslot --version < /dev/null) || {
 echo "  farmslot $version"
 farmslot rpc gateway.status < /dev/null > /dev/null || {
   echo "[deploy] ERROR: farmslot rpc gateway.status failed against $GW_URL" >&2
-  echo "  fix: store a gateway profile for that URL as this user${3:+ with FARMSLOT_HOME=$3}:" >&2
+  echo "  fix: store a gateway profile for that URL as this user:" >&2
   echo "    farmslot gateway add <name> $GW_URL && farmslot login <name>" >&2
   exit 1
 }
 echo "  farmslot rpc gateway.status ok ($GW_URL)"
 VERIFY
-then
-  echo "[deploy] ERROR: workers on $MACHINE cannot use the deployed farmslot CLI; see the fix above" >&2
-  exit 1
+  then
+    echo "[deploy] ERROR: workers on $MACHINE cannot use the deployed farmslot CLI; see the fix above" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$INSTANCE" == "prod" ]]; then
