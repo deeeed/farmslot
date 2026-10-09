@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The native worker launch digest ignores `GW_URL`, the gateway URL the gateway now injects. A native session saved before the node reported its URL, or reached through another URL for the same gateway, still resumes or parks. Any other launch setting change is still refused. The node and gateway must both run this version, because an older native host still digests `GW_URL`.
+- The native worker launch digest ignores `GW_URL`, the gateway URL the gateway now injects. A native session saved before the node reported its URL, or reached through another URL for the same gateway, still resumes or parks. Any other launch setting change is still refused. A node built from main never reports its gateway URL, so a gateway with this change sends no `GW_URL` to it and digests match. Only a node built from an intermediate commit of this change, one that reports the URL with an older digest, could see a mismatch. The detached native host belongs to the node and is upgraded with it. A running host is reused (`native/client.ts`), so it must be restarted along with the node.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - The review launch handshake fails fast on any Codex selection screen it doesn't know (for example "Hooks need review", footer "enter confirm · esc skip") instead of waiting it out and reporting the launch as started.
