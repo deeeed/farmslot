@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
@@ -24,8 +26,10 @@ test('detachRunsForReleasedSlot preserves blocked run state while freeing slot o
   updateRun(run.id, { status: 'blocked' });
   const events: string[] = [];
 
-  const detached = detachRunsForReleasedSlot('macwork-mm-release-test', (event) =>
-    events.push(event),
+  const detached = detachRunsForReleasedSlot(
+    'macwork-mm-release-test',
+    (event) => events.push(event),
+    run.id,
   );
 
   assert.deepEqual(detached, [run.id]);
@@ -83,7 +87,7 @@ test('a successor release does not detach the park record that freed the slot', 
   });
   updateRun(successor.id, { status: 'monitoring' });
 
-  const detached = detachRunsForReleasedSlot(slotId, () => {});
+  const detached = detachRunsForReleasedSlot(slotId, () => {}, successor.id);
 
   // Only the occupant this release tore down loses its binding. The parked
   // run's slotId is its restore target and its preserved-branch key.
@@ -91,4 +95,39 @@ test('a successor release does not detach the park record that freed the slot', 
   assert.equal(getRun(successor.id)!.slotId, null);
   assert.equal(getRun(parked.id)!.slotId, slotId);
   assert.equal(getRun(parked.id)!.park?.slotFreedAt, freedAt);
+});
+
+test('a release keeps the explicit pick of a run still waiting in find-slot for that slot', async (t) => {
+  const slotId = `macwork-mm-waiter-detach-${Date.now()}`;
+  const runOn = (label: string) => {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-${Date.now()}-${label}`,
+      slotId,
+      runner: 'claude',
+      model: 'opus',
+    });
+    t.after(() => cleanupRun(run.id));
+    return run;
+  };
+  const withFindSlot = (run: Run, status: Run['steps'][number]['status']) =>
+    updateRun(run.id, {
+      steps: run.steps.map((step) => (step.name === 'find-slot' ? { ...step, status } : step)),
+    });
+  const owner = runOn('owner');
+  updateRun(owner.id, { status: 'blocked' });
+  // A blocked run past find-slot that the row no longer names still held the slot.
+  const bound = withFindSlot(runOn('bound'), 'done');
+  updateRun(bound.id, { status: 'blocked' });
+  // An explicit `--slot` dispatch parked in find-slot until this release lands.
+  const waiter = withFindSlot(runOn('waiter'), 'running');
+  updateRun(waiter.id, { status: 'slot-finding' });
+
+  const detached = detachRunsForReleasedSlot(slotId, () => {}, owner.id);
+
+  assert.deepEqual(detached.sort(), [owner.id, bound.id].sort());
+  assert.equal(getRun(owner.id)!.slotId, null, 'the released owner is detached');
+  assert.equal(getRun(bound.id)!.slotId, null);
+  assert.equal(getRun(waiter.id)!.slotId, slotId, 'the waiter still targets the slot it asked for');
 });

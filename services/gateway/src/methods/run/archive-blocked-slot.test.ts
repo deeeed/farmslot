@@ -72,7 +72,7 @@ function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
     release: async (params) => {
       calls.releases.push(params);
       await updateSlotStatus(params.slotId, { current_run_id: null, lifecycle: 'ready' });
-      detachRunsForReleasedSlot(params.slotId, noopEmit);
+      detachRunsForReleasedSlot(params.slotId, noopEmit, params.expectedRunId);
       return { released: true };
     },
   };
@@ -82,6 +82,9 @@ function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
 test('archiving a settled blocked run that holds its slot releases the slot first', async (t) => {
   const run = blockedRun(t, 'archive-release', [{ name: 'monitor', status: 'done' }]);
   await holdSlotFor(t, run.id);
+  // An explicit dispatch waiting in find-slot for this slot to come free.
+  const waiter = blockedRun(t, 'archive-waiter', [{ name: 'find-slot', status: 'running' }]);
+  updateRun(waiter.id, { status: 'slot-finding' });
   const { calls, slot } = recordingSlot();
 
   const result = await runArchive({ runId: run.id }, noopEmit, slot);
@@ -93,6 +96,7 @@ test('archiving a settled blocked run that holds its slot releases the slot firs
   const archived = await getRunWithArchived(run.id);
   assert.equal(archived?.status, 'blocked', 'archiving keeps the blocked outcome');
   assert.equal(archived?.slotId, null, 'the release detached the run from its slot');
+  assert.equal(getRun(waiter.id)?.slotId, slotId, 'the waiting dispatch keeps its pick');
   assert.equal(isRunArchiving(run.id), false);
 });
 

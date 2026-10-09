@@ -677,7 +677,11 @@ async function slotReleaseImpl(
     if (!(await resetSlotIf(params.slotId, epochStillOurs))) return abortReset();
   }
   if (detachRuns) {
-    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit);
+    const detachedRunIds = detachRunsForReleasedSlot(
+      params.slotId,
+      emit,
+      params.expectedRunId ?? boundOwner,
+    );
     if (detachedRunIds.length > 0) {
       step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
     }
