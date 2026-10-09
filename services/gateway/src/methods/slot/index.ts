@@ -31,8 +31,10 @@ export {
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
+  prepareIdentityPath,
   prepareSessionTarget,
   prepareSilenceNotice,
+  reapSlotPrepareScope,
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
 } from './prepare-command.js';
