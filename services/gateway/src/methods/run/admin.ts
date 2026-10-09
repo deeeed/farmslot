@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   Events,
   type HumanGrade,
+  isSettledBlockedRun,
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
@@ -25,6 +26,7 @@ import {
 } from '@farmslot/protocol';
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
+import { readSlotField } from '../../core/index.js';
 import {
   archiveRun as storeArchiveRun,
   cleanupRuns as storeCleanup,
@@ -35,6 +37,7 @@ import {
   updateRun,
 } from '../../runs/store.js';
 import { schedulerTick } from '../../work-graph/store.js';
+import { slotRelease } from '../slot/release.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -90,8 +93,26 @@ export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<Ru
   return { ok: true };
 }
 
-export async function runArchive(params: RunArchiveParams, emit: Emit): Promise<RunArchiveResult> {
-  const archivedAsBlocked = getRun(params.runId)?.status === 'blocked';
+export async function runArchive(
+  params: RunArchiveParams,
+  emit: Emit,
+  releaseSlot: typeof slotRelease = slotRelease,
+): Promise<RunArchiveResult> {
+  const run = getRun(params.runId);
+  const archivedAsBlocked = run?.status === 'blocked';
+  // A fleet refresh re-holds a blocked run's slot, so a settled blocked run can
+  // still own it. Archive releases it through the ordinary slot release: its
+  // guards (unmerged work, gates) decide, and their refusal refuses the archive.
+  if (
+    run?.slotId &&
+    isSettledBlockedRun(run) &&
+    (await readSlotField(run.slotId, 'current_run_id')) === run.id
+  ) {
+    const { released } = await releaseSlot({ slotId: run.slotId, expectedRunId: run.id }, emit);
+    if (!released) {
+      throw new Error(`Cannot archive blocked run ${run.id}: slot ${run.slotId} was not released`);
+    }
+  }
   const ok = await storeArchiveRun(params.runId);
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
   // Archiving a blocked run closes it; it must not requeue the backlog item.
