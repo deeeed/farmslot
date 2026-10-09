@@ -1355,6 +1355,13 @@ export async function startWatchingActiveSlots(): Promise<void> {
     if (slotHasActiveWorkerTask(slot, blockedRunIds) && slot.taskFile) {
       try {
         await watchSlot(slot.slot, slot.currentRunId ? { runId: slot.currentRunId } : undefined);
+        // A remote watch reports only later writes: read a blocked run's signal
+        // once, so a worker that resumed while the gateway was down is seen.
+        if (slot.currentRunId && blockedRunIds.has(slot.currentRunId)) {
+          for (const key of [...activeWatches.keys()]) {
+            if (slotIdFromWatchKey(key) === slot.slot) await handleSignalChange(key);
+          }
+        }
       } catch (err) {
         // Recovery scan must not abort on a single bad slot: watchKey throws on
         // colon-bearing slot ids, and any other watch-setup failure should be
