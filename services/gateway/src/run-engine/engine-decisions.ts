@@ -32,6 +32,7 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
+import { runSupersededSince } from './run-generation.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -418,13 +419,7 @@ export async function handleRepeatReviewDecision(
   );
   // A cancel, pause or replay during the GitHub lookup owns the run now; opening
   // a decision would revive it as blocked. The engine keeps the operator state.
-  const settled = getRun(runId);
-  if (
-    !settled ||
-    settled.status === 'cancelled' ||
-    settled.status === 'paused' ||
-    (settled.engineState?.generation ?? 0) !== generation
-  )
+  if (runSupersededSince(getRun(runId), generation))
     throw new Error(`Run ${runId.slice(0, 8)} changed during the review ancestry lookup`);
   if (current.prWork?.kind === 'review' && current.prWork.review) {
     const selected = automatedRepeatReviewSelection(context, current.prWork.review.options);
