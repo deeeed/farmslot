@@ -103,6 +103,13 @@ export function computeReadyGatePackageInputHash(prPackage: ReadyGatePrPackageWi
   );
 }
 
+/**
+ * What a review certifies: the branch, HEAD, diff, selected evidence and
+ * validation summary. The title and body are left out (v2), so editing the
+ * description never makes a review stale; the package hash still covers them.
+ * Hashes stamped under v1 stay comparable: stored stamps are compared with the
+ * stored package hash, and a refresh recomputes both packages with this one.
+ */
 export function computeReadyGateReviewSubjectHash(
   prPackage: ReadyGatePrPackageWithoutHash,
 ): string {
@@ -133,13 +140,11 @@ export function computeReadyGateReviewSubjectHash(
   );
   return sha256Text(
     stableJson({
-      kind: 'ready-gate-review-subject-v1',
+      kind: 'ready-gate-review-subject-v2',
       branch: payload.branch,
       remoteBranchRef: payload.remoteBranchRef,
       headSha: payload.headSha,
       diffStat: payload.diffStat,
-      draftTitle: payload.draftTitle,
-      draftBody: payload.draftBody,
       evidenceManifest: reviewEvidenceManifest,
       selectedEvidenceKeys:
         canonicalSelectedEvidenceKeys.length > 0

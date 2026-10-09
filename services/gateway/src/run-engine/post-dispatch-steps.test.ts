@@ -13,6 +13,10 @@ import type {
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
+import {
+  computeReadyGatePackageHash,
+  computeReadyGateReviewSubjectHash,
+} from '../run-completion/ready-gate-package.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -886,6 +890,29 @@ test('review-pr always presents its publication gate in autonomous mode', async 
   assert.equal(reviewGateCalls, 1);
   assert.deepEqual(io.inputs, { gateType: 'review', gateEnabled: true, forced: false });
   assert.equal(io.outputs?.resolvedAction, null);
+});
+
+test('a description-only edit keeps the review subject; the package hash still covers it', () => {
+  const reviewed = makeReadyGatePackage({ headSha: 'head-1', draftBody: 'Reviewed body.' });
+  const edited = {
+    ...reviewed,
+    draftTitle: 'fix(command-center): harden the gate',
+    draftBody: 'Reviewed body.\n\nReviewer clarification: validation uses the saved recipe.\n',
+  };
+  assert.equal(
+    computeReadyGateReviewSubjectHash(edited),
+    computeReadyGateReviewSubjectHash(reviewed),
+  );
+  assert.notEqual(computeReadyGatePackageHash(edited), computeReadyGatePackageHash(reviewed));
+  assert.equal(readyGateReviewSubjectMatches(reviewed, edited), true);
+  // Code drift still counts.
+  assert.equal(
+    readyGateReviewSubjectMatches(reviewed, {
+      ...edited,
+      diffStat: { files: 2, additions: 3, deletions: 0 },
+    }),
+    false,
+  );
 });
 
 test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects subject drift', () => {

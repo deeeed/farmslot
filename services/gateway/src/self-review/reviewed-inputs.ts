@@ -21,7 +21,8 @@ const EVIDENCE_INDEXES = ['evidence-manifest.json', 'latest-valid-recipe-run.jso
  * the one inherited from an upstream run) and every evidence media file or
  * evidence index under the task's artifacts or inherited inputs, with git blob ids.
  * Gateway-written review files are other names, so a review never changes its
- * own fingerprint.
+ * own fingerprint. The description is listed only so a fingerprint recorded
+ * before it was left out can still be matched (see fingerprintReviewedInputs).
  */
 export function reviewedInputsCommand(repo: string, taskDir: string): string {
   const artifacts = `${taskDir}/artifacts`;
@@ -37,10 +38,33 @@ export function reviewedInputsCommand(repo: string, taskDir: string): string {
   ].join(' && ');
 }
 
-/** The fingerprint of what a reviewer judges now, or null when the slot cannot say. */
+export interface ReviewedInputsFingerprint {
+  /** HEAD and evidence; the description is left out, so editing it never holds approval. */
+  fingerprint: string;
+  /** The earlier fingerprint, description included, that runs recorded before. */
+  legacyFingerprint: string;
+}
+
+/** Fingerprints of a reviewedInputsCommand listing for the task at `taskDir`. */
+export function fingerprintReviewedInputs(
+  listing: string,
+  taskDir: string,
+): ReviewedInputsFingerprint {
+  const description = `${taskDir}/artifacts/pr-description.md `;
+  const withoutDescription = listing
+    .split('\n')
+    .filter((line) => !line.startsWith(description))
+    .join('\n');
+  return {
+    fingerprint: createHash('sha256').update(withoutDescription).digest('hex'),
+    legacyFingerprint: createHash('sha256').update(listing).digest('hex'),
+  };
+}
+
+/** The fingerprints of what a reviewer judges now, or null when the slot cannot say. */
 export async function readReviewedInputs(
   run: Pick<Run, 'project' | 'taskFile' | 'slotId'>,
-): Promise<string | null> {
+): Promise<ReviewedInputsFingerprint | null> {
   if (!run.slotId) return null;
   try {
     const vars = await loadSlotVars(run.slotId);
@@ -50,7 +74,7 @@ export async function readReviewedInputs(
       timeout: 60_000,
     });
     if (result.exitCode !== 0) return null;
-    return createHash('sha256').update(result.stdout).digest('hex');
+    return fingerprintReviewedInputs(result.stdout, taskDir);
   } catch {
     return null;
   }
@@ -73,8 +97,8 @@ async function patchEngineState(runId: string, patch: Partial<RunEngineState>): 
 export async function noteReviewInputsAtLaunch(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
-  const fingerprint = await readReviewedInputs(run);
-  await patchEngineState(runId, { reviewInputsAtLaunch: fingerprint ?? undefined });
+  const current = await readReviewedInputs(run);
+  await patchEngineState(runId, { reviewInputsAtLaunch: current?.fingerprint });
 }
 
 /** Called when a review passes: what it was given is now what was reviewed. */
@@ -90,12 +114,17 @@ export async function recordReviewedInputs(runId: string): Promise<void> {
  * The current fingerprint when it differs from what the last passing review
  * judged, else null. A run with no record, or a slot that cannot be read,
  * reports no change: the gate then behaves as it did before this check existed.
+ * A record taken with the description in it still matches while nothing it
+ * covered changed.
  */
 async function changedReviewedInputs(run: Run): Promise<string | null> {
   const recorded = run.engineState?.reviewedInputs?.fingerprint;
   if (!recorded) return null;
   const current = await readReviewedInputs(run);
-  return current !== null && current !== recorded ? current : null;
+  if (!current) return null;
+  return current.fingerprint !== recorded && current.legacyFingerprint !== recorded
+    ? current.fingerprint
+    : null;
 }
 
 export async function reviewedInputsChanged(run: Run): Promise<boolean> {

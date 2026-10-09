@@ -2563,10 +2563,12 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 export interface RunEngineState {
   /**
    * What the last passing review (pipeline self-review or a publication review)
-   * judged on the slot: HEAD, the PR description, the evidence manifest and the
-   * evidence files. When any of them changes, self-review must run again before
-   * publication is approved. `rerunFor` is the changed state self-review already
-   * ran again for, so it runs once per change.
+   * judged on the slot: HEAD, the evidence manifest and the evidence files. When
+   * any of them changes, self-review must run again before publication is
+   * approved; the PR description is not part of it. Records taken while the
+   * description was still included keep matching until HEAD or evidence changes.
+   * `rerunFor` is the changed state self-review already ran again for, so it runs
+   * once per change.
    */
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
   /** The same fingerprint, taken when the latest review document was written. */

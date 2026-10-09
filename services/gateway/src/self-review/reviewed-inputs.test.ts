@@ -16,6 +16,7 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   noteReviewInputsAtLaunch,
+  readReviewedInputs,
   recordReviewedInputs,
   reviewedInputsAwaitingReview,
   reviewedInputsChanged,
@@ -91,7 +92,7 @@ async function reviewPasses(runId: string) {
   await recordReviewedInputs(runId);
 }
 
-test('what a passing review judged changes with the description, evidence or HEAD', async (t) => {
+test('what a passing review judged changes with the evidence or HEAD, not the description', async (t) => {
   const { run, repo, artifacts } = await slotWithTask(t);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), false, 'no record: no change');
 
@@ -103,11 +104,10 @@ test('what a passing review judged changes with the description, evidence or HEA
   await writeFile(path.join(artifacts, 'review-feedback.md'), '## Verdict: PASS\n');
   assert.equal(await changed(), false, "the review's own text output is not an input");
 
-  // The rework from delete to hide-behind-flag rewrites the description.
+  // A reworded description is published as it is; it never holds approval.
   await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden behind a flag\n');
-  assert.equal(await changed(), true, 'description');
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Removed surfaces\n- Banner\n');
-  assert.equal(await changed(), false, 'the same content is the same fingerprint');
+  assert.equal(await changed(), false, 'description');
+  assert.equal(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
 
   await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
   assert.equal(await changed(), true, 're-captured evidence');
@@ -151,7 +151,7 @@ test('a pass records what the review was given, not the slot as it is when it pa
   await noteReviewInputsAtLaunch(run.id);
   // Edited while the review ran, or while a crashed gateway was down before
   // recovery returned the retained pass.
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden behind a flag\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden behind a flag\n');
   await recordReviewedInputs(run.id);
   assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
 });
@@ -173,11 +173,11 @@ test('the publication gate re-runs self-review once per change before it is pres
       plans.push(plan);
       if (launch === 'crash') throw new Error('gateway restarted mid-review');
       if (launch === 'nothing') return { reviewIds: [] };
-      if (fixLoopEdit) await writeFile(path.join(artifacts, 'pr-description.md'), fixLoopEdit);
+      if (fixLoopEdit) await writeFile(path.join(artifacts, 'on-after.png'), fixLoopEdit);
       // As executeSelfReview does: the document notes the inputs, a pass records them.
       await noteReviewInputsAtLaunch(run.id);
       if (editWhileReviewing)
-        await writeFile(path.join(artifacts, 'pr-description.md'), editWhileReviewing);
+        await writeFile(path.join(artifacts, 'on-after.png'), editWhileReviewing);
       if (passing) await recordReviewedInputs(run.id);
       return { reviewIds: [`review-${plans.length}`] };
     },
@@ -208,7 +208,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), false);
   assert.equal(plans.length, 0, 'nothing changed since the review');
 
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden behind a flag\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden behind a flag\n');
   assert.equal(await awaiting(), true, 'an approval now is held');
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
   assert.deepEqual(plans, [[{ order: 1, runner: 'same', validationDepth: 'static-code' }]]);
@@ -217,7 +217,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   // A re-run that finds issues runs once, also across a gateway restart: the
   // gate shows review unsatisfied and an explicit override is no longer held.
   passing = false;
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, flag on only\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden, flag on only\n');
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), false);
   assert.equal(plans.length, 2);
@@ -225,7 +225,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   assert.equal(await awaiting(), false);
 
   // A failing re-run whose fix loop moved the slot does not hold again for its end state.
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, partly fixed\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden, partly fixed\n');
   fixLoopEdit = '## Hidden, fixed again\n';
   assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
   assert.equal(plans.length, 3);
@@ -234,7 +234,7 @@ test('the publication gate re-runs self-review once per change before it is pres
 
   // An attempt interrupted before it settled, or one that launched nothing,
   // leaves the change pending: the next presentation re-runs it.
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Interrupted\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Interrupted\n');
   launch = 'crash';
   await assert.rejects(rerunSelfReviewIfReviewedInputsChanged(run.id, context));
   assert.equal(await awaiting(), true, 'a crashed attempt is not a re-run');
@@ -249,7 +249,7 @@ test('the publication gate re-runs self-review once per change before it is pres
   // that review passes or not: it stays pending.
   for (const pass of [true, false]) {
     passing = pass;
-    await writeFile(path.join(artifacts, 'pr-description.md'), `## Before the re-run ${pass}\n`);
+    await writeFile(path.join(artifacts, 'on-after.png'), `## Before the re-run ${pass}\n`);
     editWhileReviewing = `## Edited during the re-run ${pass}\n`;
     assert.equal(await rerunSelfReviewIfReviewedInputsChanged(run.id, context), true);
     editWhileReviewing = null;
@@ -258,6 +258,27 @@ test('the publication gate re-runs self-review once per change before it is pres
   passing = false;
 
   // A further change is a new state: reviewed again.
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Hidden, both states\n');
+  await writeFile(path.join(artifacts, 'on-after.png'), '## Hidden, both states\n');
   assert.equal(await awaiting(), true);
+});
+
+test('a fingerprint recorded with the description in it still matches until evidence or HEAD changes', async (t) => {
+  const { run, artifacts } = await slotWithTask(t);
+  const current = await readReviewedInputs(getRun(run.id)!);
+  assert.ok(current);
+  assert.notEqual(current.legacyFingerprint, current.fingerprint);
+  // A run whose review passed before the description was left out.
+  updateRun(run.id, {
+    engineState: {
+      ...getRun(run.id)!.engineState,
+      reviewedInputs: {
+        fingerprint: current.legacyFingerprint,
+        recordedAt: '2026-10-08T00:00:00Z',
+      },
+    },
+  });
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), false);
+  assert.equal(await reviewedInputsAwaitingReview(getRun(run.id)!), null);
+  await writeFile(path.join(artifacts, 'on-after.png'), 'png-v2');
+  assert.equal(await reviewedInputsChanged(getRun(run.id)!), true);
 });

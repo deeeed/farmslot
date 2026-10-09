@@ -862,7 +862,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
-  // The description, evidence or HEAD changed after the last passing review:
+  // The evidence or HEAD changed after the last passing review:
   // self-review must run again before publication, whatever the review minimum.
   const reviewedInputsStale = publicationApprovalGate && (await reviewedInputsChanged(current));
   const reviewSatisfied =
@@ -1105,7 +1105,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // record, which a `failed` run refuses.
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
-  // F42: the description, evidence or HEAD changed while the gate was open and
+  // F42: the evidence or HEAD changed while the gate was open and
   // self-review has not run again for it. Hold instead of approving: the gate
   // step re-runs self-review and presents the gate again.
   if (
@@ -1121,7 +1121,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       );
     }
     console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: description, evidence or HEAD changed since the last review`,
+      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: evidence or HEAD changed since the last review`,
     );
     return 'hold';
   }
