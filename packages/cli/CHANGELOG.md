@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- With `GW_URL` set, the CLI authenticates with the credential of the stored profile in `gateways.json` that has the same URL. Scheme and host case, a default port and a trailing slash don't count as differences, and the active profile is tried first. Workers on a remote node get `GW_URL` from the gateway, so they now authenticate with that node's operator profile for the dispatching gateway. Before, they dropped it and failed. A `GW_URL` that matches no profile still uses `FARMSLOT_GATEWAY_TOKEN` or `.env` files and never borrows another profile's secret. A corrupt store no longer breaks a `GW_URL` call; it just matches nothing.
 - `farmslot project add` refuses a slot repo, existing, freshly cloned or under an unchanged pack, that cannot check out the project's default branch (for example a `--single-branch` clone), naming the fetch refspec or missing ref.
 - `farmslot run get` prints, per step, its queue time, run time and last progress after the run JSON (`find-slot: queued 2m10s · ran 3s`).
 - `farmslot graph add-edge --condition published` adds a stack edge: the target node starts on top of the source node's published PR.

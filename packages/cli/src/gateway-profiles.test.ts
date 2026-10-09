@@ -73,11 +73,35 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
     profileName: 'lab',
     source: 'gateway-flag',
   });
-  // GW_URL keeps its pre-profile behavior so existing scripts never change target.
+  // GW_URL keeps its pre-profile behavior so existing scripts never change target,
+  // and never borrows the secret of a profile for a different gateway.
   assert.deepEqual(resolveGatewayTarget({}, { GW_URL: 'ws://env' }, profiles), {
     url: 'ws://env',
     source: 'env',
   });
+  // A worker's GW_URL naming a stored profile's gateway reuses that profile's
+  // credential; scheme/host case, default port and trailing slash are normalized.
+  assert.deepEqual(resolveGatewayTarget({}, { GW_URL: 'WSS://LAB:7777/' }, profiles), {
+    url: 'WSS://LAB:7777/',
+    credential: { password: 'l' },
+    profileName: 'lab',
+    source: 'env',
+  });
+  assert.deepEqual(
+    resolveGatewayTarget(
+      {},
+      { GW_URL: 'ws://gw.local' },
+      { gateways: { node: { url: 'ws://gw.local:80/', authMode: 'token', secret: 'n' } } },
+    ),
+    { url: 'ws://gw.local', credential: { token: 'n' }, profileName: 'node', source: 'env' },
+  );
+  // Same host, other port or scheme is another gateway.
+  for (const GW_URL of ['ws://lab:7778', 'ws://lab:7777']) {
+    assert.deepEqual(resolveGatewayTarget({}, { GW_URL }, profiles), {
+      url: GW_URL,
+      source: 'env',
+    });
+  }
   assert.deepEqual(resolveGatewayTarget({}, {}, profiles), {
     url: 'ws://home:7777',
     credential: { token: 'h' },
@@ -97,8 +121,8 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
 });
 
 test('resolveGatewayTarget ignores a corrupt store for default targets', () => {
-  // profilesOverride simulating loadProfiles() throwing is covered through the
-  // lazy path: url/env branches must never call the loader at all.
+  // profilesOverride simulating loadProfiles() throwing: --url never calls the
+  // loader, and GW_URL only looks for a matching profile, so corruption is ignored.
   let loaderCalls = 0;
   const throwingProfiles: GatewayProfilesFile = {
     get gateways(): Record<string, never> {
@@ -114,7 +138,7 @@ test('resolveGatewayTarget ignores a corrupt store for default targets', () => {
     url: 'ws://env',
     source: 'env',
   });
-  assert.equal(loaderCalls, 0);
+  assert.equal(loaderCalls, 1);
 });
 
 test('resolveGatewayTarget rejects unknown --gateway with an actionable hint', () => {

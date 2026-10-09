@@ -105,13 +105,48 @@ export function profileCredential(
   return profile.authMode === 'password' ? { password: profile.secret } : { token: profile.secret };
 }
 
+/** Scheme, host, explicit-or-default port and path without a trailing slash. */
+function comparableGatewayUrl(raw: string): string | undefined {
+  try {
+    const url = new URL(raw);
+    const port = url.port || (url.protocol === 'wss:' ? '443' : '80');
+    return `${url.protocol}//${url.hostname}:${port}${url.pathname.replace(/\/+$/u, '')}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The credentialed profile stored for `url`, active profile first. A corrupt store matches nothing. */
+function profileForUrl(
+  url: string,
+  getProfiles: () => GatewayProfilesFile,
+): { name: string; credential: { token?: string; password?: string } } | undefined {
+  const target = comparableGatewayUrl(url);
+  if (!target) return undefined;
+  try {
+    const profiles = getProfiles();
+    const names = Object.keys(profiles.gateways).sort(
+      (a, b) => Number(b === profiles.active) - Number(a === profiles.active),
+    );
+    for (const name of names) {
+      const profile = profiles.gateways[name];
+      const credential = profileCredential(profile);
+      if (credential && comparableGatewayUrl(profile.url) === target) return { name, credential };
+    }
+  } catch {
+    // A corrupt store must not break GW_URL invocations.
+  }
+  return undefined;
+}
+
 /**
  * Resolve which gateway a command targets.
  * Precedence: --url > --gateway <name> > GW_URL env (back-compat) >
- * active profile > default localhost.
+ * active profile > default localhost. GW_URL carries the credential of a stored
+ * profile with the same URL, if any.
  *
- * The profile store is read lazily and only on the profile branches: a corrupt
- * gateways.json must never break --url/GW_URL/default invocations.
+ * The profile store is read lazily: a corrupt gateways.json must never break
+ * --url/GW_URL/default invocations.
  */
 export function resolveGatewayTarget(
   opts: { url?: string; gateway?: string },
@@ -137,7 +172,14 @@ export function resolveGatewayTarget(
     };
   }
 
-  if (env.GW_URL) return { url: env.GW_URL, source: 'env' };
+  if (env.GW_URL) {
+    // A worker's GW_URL names the gateway its node dials. Reuse a stored
+    // profile's credential only for that exact gateway, never another one.
+    const match = profileForUrl(env.GW_URL, getProfiles);
+    return match
+      ? { url: env.GW_URL, credential: match.credential, profileName: match.name, source: 'env' }
+      : { url: env.GW_URL, source: 'env' };
+  }
 
   // Fail hard on a corrupt store here: silently falling back to localhost
   // could aim a mutating command at the wrong gateway when the operator's
