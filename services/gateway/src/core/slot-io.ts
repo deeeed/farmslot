@@ -12,6 +12,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -60,11 +61,23 @@ export interface SlotCopyDirOptions {
    * where one transient EACCES on a screenshot must not abort the whole copy.
    */
   onEntryFailure?: (err: SlotCopyDirEntryError) => void;
+  /**
+   * A symlink whose real path stays inside the copied root is copied as its
+   * target (a file's content, a directory walked in place). One that dangles,
+   * escapes the root, or loops back onto an ancestor is skipped and reported
+   * here (and logged), instead of failing the copy.
+   */
+  onSkippedLink?: (link: SlotCopyDirSkippedLink) => void;
   /** Progress phase for large remote files (default download). */
   phase?: FileTransferPhase;
   runId?: string;
   slotId?: string;
   labelPrefix?: string;
+}
+
+export interface SlotCopyDirSkippedLink {
+  sourcePath: string;
+  reason: string;
 }
 
 export class SlotCopyDirEntryError extends Error {
@@ -114,7 +127,7 @@ function nodePathParams(fullPath: string): { root: string; relPath: string } {
 async function assertConcreteDirRoot(
   dirPath: string,
   resolvePath: (inputPath: string) => Promise<string>,
-): Promise<void> {
+): Promise<string> {
   const [resolvedDirPath, resolvedParentPath] = await Promise.all([
     resolvePath(dirPath),
     resolvePath(path.dirname(dirPath)),
@@ -123,6 +136,7 @@ async function assertConcreteDirRoot(
   if (resolvedDirPath !== expectedResolvedDirPath) {
     throw new Error(`slotCopyDir refuses symlinked root ${dirPath}`);
   }
+  return resolvedDirPath;
 }
 
 // ─── slotReadFile ───
@@ -617,6 +631,24 @@ export { FILE_TRANSFER_CHUNK_MAX_BYTES };
 // Local: manual walk so the return value is the number of files copied.
 // Remote: recursively walk via agent fs.list → fs.readBase64.
 
+/** Why a symlink is not copied, or null when its target is inside the root and loop-free. */
+function skippedLinkReason(
+  ancestors: string[],
+  target: { realPath: string; isDirectory: boolean },
+): string | null {
+  const relative = path.relative(ancestors[0]!, target.realPath);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    return `it resolves to ${target.realPath}, outside ${ancestors[0]}`;
+  if (target.isDirectory && ancestors.includes(target.realPath))
+    return `it loops back to ${target.realPath}`;
+  return null;
+}
+
+function skipLink(options: SlotCopyDirOptions, sourcePath: string, reason: string): void {
+  console.warn(`[slot-io] skipping symlink ${sourcePath}: ${reason}`);
+  options.onSkippedLink?.({ sourcePath, reason });
+}
+
 async function copyLocalRecursive(
   rootDir: string,
   sourceDir: string,
@@ -624,7 +656,9 @@ async function copyLocalRecursive(
   excluded: Set<string>,
   excludedRelativePaths: Set<string>,
   depth: number,
-  onEntryFailure?: (err: SlotCopyDirEntryError) => void,
+  /** Real paths from the copied root down to sourceDir. */
+  ancestors: string[],
+  options: SlotCopyDirOptions,
 ): Promise<number> {
   if (depth > MAX_ARTIFACT_TREE_DEPTH) {
     throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
@@ -636,11 +670,30 @@ async function copyLocalRecursive(
     const sourcePath = path.join(sourceDir, entry.name);
     const targetPath = path.join(targetDir, entry.name);
     if (isExcludedRelativePath(rootDir, sourcePath, excludedRelativePaths)) continue;
+    let realPath = path.join(ancestors.at(-1)!, entry.name);
+    let isDirectory = entry.isDirectory();
+    let isFile = entry.isFile();
     if (entry.isSymbolicLink()) {
-      console.log(`[slot-io] skipping symlink ${sourcePath}`);
-      continue;
+      const target = await realpath(sourcePath)
+        .then(async (resolved) => {
+          const info = await stat(resolved);
+          return { realPath: resolved, isDirectory: info.isDirectory(), isFile: info.isFile() };
+        })
+        .catch(() => null);
+      if (!target) {
+        skipLink(options, sourcePath, 'its target does not resolve');
+        continue;
+      }
+      const reason = skippedLinkReason(ancestors, target);
+      if (reason) {
+        skipLink(options, sourcePath, reason);
+        continue;
+      }
+      realPath = target.realPath;
+      isDirectory = target.isDirectory;
+      isFile = target.isFile;
     }
-    if (entry.isDirectory()) {
+    if (isDirectory) {
       await mkdir(targetPath, { recursive: true });
       count += await copyLocalRecursive(
         rootDir,
@@ -649,18 +702,19 @@ async function copyLocalRecursive(
         excluded,
         excludedRelativePaths,
         depth + 1,
-        onEntryFailure,
+        [...ancestors, realPath],
+        options,
       );
       continue;
     }
-    if (entry.isFile()) {
+    if (isFile) {
       try {
         await copyFile(sourcePath, targetPath);
         count += 1;
       } catch (err) {
         const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);
-        if (onEntryFailure) {
-          onEntryFailure(entryError);
+        if (options.onEntryFailure) {
+          options.onEntryFailure(entryError);
           continue;
         }
         throw entryError;
@@ -713,7 +767,8 @@ export async function slotCopyDir(
       excluded,
       excludedRelativePaths,
       0,
-      options.onEntryFailure,
+      [await realpath(remoteDir)],
+      options,
     );
   }
 
@@ -721,7 +776,7 @@ export async function slotCopyDir(
   if (!(await slotFileExists(ctx, remoteDir))) return 0;
 
   const request = requestFor(ctx);
-  await assertConcreteDirRoot(remoteDir, async (inputPath) => {
+  const rootRealPath = await assertConcreteDirRoot(remoteDir, async (inputPath) => {
     const result = (await request('fs.realpath', {
       ...nodePathParams(inputPath),
     })) as {
@@ -735,9 +790,35 @@ export async function slotCopyDir(
     (options.excludeRelativePaths ?? []).map(normalizeRelativeCopyPath),
   );
 
+  // The node's fs.list reports a symlink as its target's type and drops a
+  // dangling one, so an entry's real path is what tells a link apart.
+  // Memoized: the count and copy walks ask about the same directories.
+  const realPaths = new Map<string, Promise<string>>();
+  /** A listed entry as a plain entry, an in-root link target, or a skip reason. */
+  async function remoteEntryTarget(
+    sourcePath: string,
+    ancestors: string[],
+    isDirectory: boolean,
+  ): Promise<{ realPath: string; linked: boolean } | { reason: string }> {
+    let pending = realPaths.get(sourcePath);
+    if (!pending) {
+      pending = request('fs.realpath', {
+        root: remoteDir,
+        relPath: path.relative(remoteDir, sourcePath),
+      }).then((result) => (result as { path: string }).path);
+      realPaths.set(sourcePath, pending);
+    }
+    const realPath = await pending;
+    if (realPath === path.join(ancestors.at(-1)!, path.basename(sourcePath)))
+      return { realPath, linked: false };
+    const reason = skippedLinkReason(ancestors, { realPath, isDirectory });
+    return reason ? { reason } : { realPath, linked: true };
+  }
+
   async function countRemoteFiles(
     sourceDir: string,
     depth: number,
+    ancestors: string[],
   ): Promise<{ files: number; bytes: number }> {
     if (depth > MAX_ARTIFACT_TREE_DEPTH) return { files: 0, bytes: 0 };
     const listResult = (await request('fs.list', {
@@ -754,7 +835,12 @@ export async function slotCopyDir(
         files += 1;
         if (typeof entry.size === 'number' && entry.size > 0) bytes += entry.size;
       } else if (entry.type === 'directory' || entry.type === 'dir') {
-        const nested = await countRemoteFiles(sourcePath, depth + 1);
+        const target = await remoteEntryTarget(sourcePath, ancestors, true);
+        if ('reason' in target) continue;
+        const nested = await countRemoteFiles(sourcePath, depth + 1, [
+          ...ancestors,
+          target.realPath,
+        ]);
         files += nested.files;
         bytes += nested.bytes;
       }
@@ -762,7 +848,7 @@ export async function slotCopyDir(
     return { files, bytes };
   }
 
-  const totals = await countRemoteFiles(remoteDir, 0);
+  const totals = await countRemoteFiles(remoteDir, 0, [rootRealPath]);
   const filesTotal = totals.files;
   const aggregate = new AggregateTransferSession({
     path: remoteDir,
@@ -778,6 +864,8 @@ export async function slotCopyDir(
     sourceDir: string,
     targetDir: string,
     depth: number,
+    /** Real paths from the copied root down to sourceDir. */
+    ancestors: string[],
   ): Promise<number> {
     if (depth > MAX_ARTIFACT_TREE_DEPTH) {
       throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
@@ -808,24 +896,38 @@ export async function slotCopyDir(
         throw new Error(`slotCopyDir encountered out-of-root path ${sourcePath}`);
       }
       if (entry.type === 'file') {
+        const copyOptions: SlotCopyFileOptions = {
+          phase: options.phase ?? 'download',
+          label: options.labelPrefix
+            ? `${options.labelPrefix}/${path.relative(remoteDir, sourcePath)}`
+            : path.relative(remoteDir, sourcePath),
+          runId: options.runId,
+          slotId: options.slotId,
+          parentTransferId: aggregate.transferId,
+          filesCompleted: aggregate.filesDone,
+          filesTotal,
+          abortSignal: aggregate.signal,
+          onProgress: (p) => {
+            if (p.state === 'running') {
+              aggregate.noteFileProgress(p.bytesTransferred, p.totalBytes);
+            }
+          },
+        };
         try {
-          await slotCopyFile(ctx, sourcePath, targetPath, {
-            phase: options.phase ?? 'download',
-            label: options.labelPrefix
-              ? `${options.labelPrefix}/${path.relative(remoteDir, sourcePath)}`
-              : path.relative(remoteDir, sourcePath),
-            runId: options.runId,
-            slotId: options.slotId,
-            parentTransferId: aggregate.transferId,
-            filesCompleted: aggregate.filesDone,
-            filesTotal,
-            abortSignal: aggregate.signal,
-            onProgress: (p) => {
-              if (p.state === 'running') {
-                aggregate.noteFileProgress(p.bytesTransferred, p.totalBytes);
-              }
-            },
-          });
+          try {
+            await slotCopyFile(ctx, sourcePath, targetPath, copyOptions);
+          } catch (err) {
+            // The node refuses to read through a final-component symlink. Only
+            // then ask where the entry leads, so plain files cost no extra call.
+            if (aggregate.signal.aborted) throw err;
+            const target = await remoteEntryTarget(sourcePath, ancestors, false).catch(() => null);
+            if (!target || ('linked' in target && !target.linked)) throw err;
+            if ('reason' in target) {
+              skipLink(options, sourcePath, target.reason);
+              continue;
+            }
+            await slotCopyFile(ctx, target.realPath, targetPath, copyOptions);
+          }
           aggregate.noteFileComplete(typeof entry.size === 'number' ? entry.size : 0);
         } catch (err) {
           const { FileTransferCancelledError } = await import('./file-transfer.js');
@@ -853,8 +955,16 @@ export async function slotCopyDir(
       }
 
       if (entry.type === 'directory' || entry.type === 'dir') {
+        const target = await remoteEntryTarget(sourcePath, ancestors, true);
+        if ('reason' in target) {
+          skipLink(options, sourcePath, target.reason);
+          continue;
+        }
         await mkdir(targetPath, { recursive: true });
-        count += await copyRecursive(sourcePath, targetPath, depth + 1);
+        count += await copyRecursive(sourcePath, targetPath, depth + 1, [
+          ...ancestors,
+          target.realPath,
+        ]);
         continue;
       }
 
@@ -866,7 +976,7 @@ export async function slotCopyDir(
   }
 
   try {
-    const copied = await copyRecursive(remoteDir, localDir, 0);
+    const copied = await copyRecursive(remoteDir, localDir, 0, [rootRealPath]);
     // Yield so observers (UI / listActiveTransfers) can sample final filesCompleted
     // before the aggregate unregisters on complete().
     await new Promise<void>((resolve) => setImmediate(resolve));
