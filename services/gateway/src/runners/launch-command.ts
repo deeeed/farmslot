@@ -257,16 +257,17 @@ const BASIC_SHELL_ENV = [
  * ~/.zshenv and ~/.zshrc.
  */
 export function codexShellEnvironmentPolicy(names: string[]): string {
-  const refused = names.filter((name) => SECRET_ENV_NAME.test(name));
+  // Codex reads include_only entries as globs: only plain identifiers may pass.
+  const refused = names.filter(
+    (name) => SECRET_ENV_NAME.test(name) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+  );
   if (refused.length) {
-    console.warn(`[launch] secret-like names kept out of Codex tool shells: ${refused.join(', ')}`);
+    console.warn(
+      `[launch] names kept out of Codex tool shells (secret-like or not a plain name): ${refused.join(', ')}`,
+    );
   }
   const allowed = [
-    ...new Set([
-      ...BASIC_SHELL_ENV,
-      ...names.filter((name) => !SECRET_ENV_NAME.test(name)),
-      'ZDOTDIR',
-    ]),
+    ...new Set([...BASIC_SHELL_ENV, ...names.filter((name) => !refused.includes(name)), 'ZDOTDIR']),
   ];
   return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
 }
