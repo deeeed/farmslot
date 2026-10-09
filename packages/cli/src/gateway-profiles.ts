@@ -8,6 +8,9 @@ import { dirname, join } from 'node:path';
 
 import type { GatewayAuthMode } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
+
+import { credentialFromEnv } from './gateway-client.js';
 
 export type { GatewayAuthMode };
 
@@ -105,13 +108,51 @@ export function profileCredential(
   return profile.authMode === 'password' ? { password: profile.secret } : { token: profile.secret };
 }
 
+/** Scheme, host, explicit-or-default port and path without a trailing slash. */
+function comparableGatewayUrl(raw: string): string | undefined {
+  try {
+    const url = new URL(raw);
+    const port = url.port || (url.protocol === 'wss:' ? '443' : '80');
+    return `${url.protocol}//${url.hostname}:${port}${url.pathname.replace(/\/+$/u, '')}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The stored profile for `url`, ignoring scheme/host case, a default port and a
+ * trailing slash; the active profile wins a tie.
+ */
+export function profileForUrl(
+  url: string,
+  profiles: GatewayProfilesFile,
+): { name: string; profile: GatewayProfile } | undefined {
+  const target = comparableGatewayUrl(url);
+  if (!target) return undefined;
+  const names = Object.keys(profiles.gateways).sort(
+    (a, b) => Number(b === profiles.active) - Number(a === profiles.active),
+  );
+  const name = names.find((n) => comparableGatewayUrl(profiles.gateways[n].url) === target);
+  return name ? { name, profile: profiles.gateways[name] } : undefined;
+}
+
+function isLoopbackGatewayUrl(raw: string): boolean {
+  try {
+    return isLoopbackHost(new URL(raw).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve which gateway a command targets.
  * Precedence: --url > --gateway <name> > GW_URL env (back-compat) >
- * active profile > default localhost.
+ * active profile > default localhost. GW_URL carries the credential of a stored
+ * profile with the same URL; with no such profile, .env file discovery applies
+ * to loopback URLs only.
  *
- * The profile store is read lazily and only on the profile branches: a corrupt
- * gateways.json must never break --url/GW_URL/default invocations.
+ * The profile store is read lazily: a corrupt gateways.json must never break
+ * --url/GW_URL/default invocations.
  */
 export function resolveGatewayTarget(
   opts: { url?: string; gateway?: string },
@@ -137,7 +178,29 @@ export function resolveGatewayTarget(
     };
   }
 
-  if (env.GW_URL) return { url: env.GW_URL, source: 'env' };
+  if (env.GW_URL) {
+    // The gateway sets GW_URL for remote workers to the URL their node dials.
+    // A stored profile for that gateway supplies its credential (or none).
+    let match: ReturnType<typeof profileForUrl>;
+    try {
+      match = profileForUrl(env.GW_URL, getProfiles());
+    } catch {
+      // A corrupt store must not break GW_URL invocations; it matches nothing.
+    }
+    if (match) {
+      return {
+        url: env.GW_URL,
+        credential: profileCredential(match.profile) ?? null,
+        profileName: match.name,
+        source: 'env',
+      };
+    }
+    // Only a loopback gateway may use secrets discovered in .env files; a
+    // remote one gets an explicit env credential or none, so a file secret
+    // meant for another gateway never travels to it.
+    if (isLoopbackGatewayUrl(env.GW_URL)) return { url: env.GW_URL, source: 'env' };
+    return { url: env.GW_URL, credential: credentialFromEnv(env) ?? null, source: 'env' };
+  }
 
   // Fail hard on a corrupt store here: silently falling back to localhost
   // could aim a mutating command at the wrong gateway when the operator's

@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { WebSocket } from 'ws';
+
+import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+
 import {
   buildMachineEnvPrefix,
   buildProjectCommandEnvPrefix,
+  machineShellEnv,
   resolveProjectCommandEnv,
   withMachineEnv,
 } from './project-env.js';
@@ -115,4 +120,50 @@ test('machine env exports pool.env values, quoted, ahead of the command', () => 
   );
   assert.equal(withMachineEnv('cd /repo && claude', {}), 'cd /repo && claude');
   assert.equal(withMachineEnv('cd /repo && claude', { machineEnv: {} }), 'cd /repo && claude');
+});
+
+test('remote machine shells target the gateway URL their node dials, never a credential', () => {
+  const ws = {} as WebSocket;
+  const remote = { machine: 'fixture-remote-node', host: '10.0.0.9' };
+  registerNode(
+    remote.machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'ws://10.0.0.5:7777',
+  );
+  try {
+    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777' });
+    assert.equal(
+      withMachineEnv('cd /repo && claude', remote),
+      "export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude",
+    );
+    // An operator-pinned pool value wins over the node's own URL.
+    assert.deepEqual(machineShellEnv({ ...remote, machineEnv: { GW_URL: 'wss://pinned' } }), {
+      GW_URL: 'wss://pinned',
+    });
+    // Gateway-local slots keep the operator's CLI profile (and its credential).
+    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {});
+  } finally {
+    unregisterByWs(ws);
+  }
+  assert.deepEqual(machineShellEnv(remote), {});
+  for (const unsafe of ['ws://x; id', 'http://gw:7801', 'ws://user:secret@gw:7801']) {
+    registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, unsafe);
+    try {
+      assert.deepEqual(machineShellEnv(remote), {});
+    } finally {
+      unregisterByWs(ws);
+    }
+  }
+  // A URL that parses yet carries shell syntax is exported inert.
+  registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, "ws://gw/'$(id)");
+  try {
+    assert.equal(withMachineEnv('true', remote), "export GW_URL='ws://gw/'\\''$(id)' && true");
+  } finally {
+    unregisterByWs(ws);
+  }
 });

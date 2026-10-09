@@ -10,7 +10,7 @@ import {
   type ProjectVars,
   type RawProjectJson,
 } from '../../core/index.js';
-import { resolveProjectCommandEnv } from '../../core/project-env.js';
+import { machineShellEnv, resolveProjectCommandEnv } from '../../core/project-env.js';
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -64,10 +64,9 @@ export async function prepareNativeWorkerLaunch(input: {
   });
   // Match terminal launches: pool values override project command_env, while
   // the task trust and runner account settings below remain runtime-owned.
-  environment.set = { ...environment.set, ...vars.machineEnv };
-  environment.unset = environment.unset.filter(
-    (name) => !Object.hasOwn(vars.machineEnv ?? {}, name),
-  );
+  const machineEnv = machineShellEnv(vars);
+  environment.set = { ...environment.set, ...machineEnv };
+  environment.unset = environment.unset.filter((name) => !Object.hasOwn(machineEnv, name));
   const taskRoot = path.posix.isAbsolute(input.taskDir)
     ? input.taskDir
     : path.posix.join(vars.remoteRepo, input.taskDir);
