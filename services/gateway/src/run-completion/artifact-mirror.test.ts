@@ -1,7 +1,16 @@
 // @farmslot:serial — creates and removes real JSON under the shared repo `pool/`.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -357,9 +366,10 @@ async function publishPackageFixture(t: test.TestContext, name: string) {
   const workerArtifacts = path.join(workerTaskDir, 'artifacts');
   const slotId = `${testId}-slot`;
   t.after(async () => {
+    // The pool entry goes first: a leftover one breaks other suites' slot lookups.
+    await rm(poolFile, { force: true });
     await rm(taskDir, { recursive: true, force: true });
     await rm(workerRepo, { recursive: true, force: true });
-    await rm(poolFile, { force: true });
   });
   await mkdir(workerArtifacts, { recursive: true });
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
@@ -458,27 +468,95 @@ test('refreshArtifactMirror collects named, step-dir and top-level text and medi
 });
 
 test('refreshArtifactMirror keeps subdirectory media the PR body cites without a manifest', async (t) => {
-  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-cited');
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-cited');
   await put(
-    'pr-body.md',
+    'pr-description.md',
     [
       '## Evidence',
       '![after](artifacts/proof/after-fix.png)',
       'Recording: `.task/fix/abc/artifacts/videos/walkthrough.mp4`',
+      '[Full iOS recording](scale-e2e-run/videos/recipe-run.mp4)',
+      '![linked](proof/linked.png)',
       '![remote](https://example.com/artifacts/remote.png)',
-      '![escape](artifacts/../outside.png)',
+      '![escape](../outside.png)',
     ].join('\n'),
   );
   await put('proof/after-fix.png', 'png');
   await put('proof/unrelated.png', 'png');
+  await put('proof/real.png', 'real png');
+  await symlink('real.png', path.join(workerArtifacts, 'proof/linked.png'));
   await put('videos/walkthrough.mp4', 'mp4');
+  await put('scale-e2e-run/videos/recipe-run.mp4', 'mp4');
+  await writeFile(path.join(path.dirname(workerArtifacts), 'outside.png'), 'outside');
 
   await refreshArtifactMirror(run);
 
   const has = (relativePath: string) => existsSync(path.join(taskDir, 'artifacts', relativePath));
   assert.equal(has('proof/after-fix.png'), true);
   assert.equal(has('videos/walkthrough.mp4'), true);
+  assert.equal(has('scale-e2e-run/videos/recipe-run.mp4'), true);
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/proof/linked.png'), 'utf-8'),
+    'real png',
+    'a cited symlink is copied as its target',
+  );
   assert.equal(has('proof/unrelated.png'), false);
+  assert.equal(existsSync(path.join(taskDir, 'outside.png')), false);
+});
+
+test('refreshArtifactMirror keeps recipe packages whole by marker, within the depth bound', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-packages');
+  await put('recipe-run-1/artifact-manifest.json', '{"version":1,"artifacts":[]}\n');
+  await put('recipe-run-1/summary.json', '{}\n');
+  await put('recipe-run-1/trace.json', '[]\n');
+  await put('recipe-run-1/report.md', '# Run\n');
+  await put('recipe-run-1/videos/recipe-run.mp4', 'mp4');
+  await put('recipe-run-1/videos/recipe-run.mp4.timeline.json', '[]\n');
+  await put('recipe-run-1/network/run-summary.json', '{}\n');
+  await put('goal/repo-copy/src/index.ts', 'export {};\n');
+  await put('goal/repo-copy/videos/clip.mp4', 'mp4');
+  await put('deep/a/b/c/artifact-manifest.json', '{}\n');
+  await put('deep/a/b/c/clip.mp4', 'mp4');
+
+  await refreshArtifactMirror(run);
+
+  const has = (relativePath: string) => existsSync(path.join(taskDir, 'artifacts', relativePath));
+  for (const file of [
+    'artifact-manifest.json',
+    'summary.json',
+    'trace.json',
+    'report.md',
+    'videos/recipe-run.mp4',
+    'videos/recipe-run.mp4.timeline.json',
+    'network/run-summary.json',
+  ]) {
+    assert.equal(has(`recipe-run-1/${file}`), true, file);
+  }
+  assert.equal(has('goal'), false, 'a scratch tree without markers is dropped');
+  assert.equal(has('deep'), false, 'a marker past the depth bound is ignored');
+});
+
+test('refreshArtifactMirror fails when a snapshot link cannot be resolved for a reason other than dangling', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-realpath');
+  await put('report.md', '# Report\n');
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: 'run-1', relativeArtifactRoot: 'recipe-runs/run-1' }),
+  );
+  await put('recipe-runs/run-1/summary.json', '{}\n');
+  // The link leads through a directory the gateway may not search: realpath
+  // fails with EACCES, which is not a dangling link, so the count is unknown.
+  const locked = path.join(path.dirname(workerArtifacts), 'locked');
+  await mkdir(path.join(locked, 'inner'), { recursive: true });
+  await symlink(path.join(locked, 'inner'), path.join(workerArtifacts, 'recipe-runs/run-1/link'));
+  await chmod(locked, 0o600);
+  try {
+    await assert.rejects(() => refreshArtifactMirror(run), /EACCES/);
+  } finally {
+    // Restored here: the fixture's own cleanup runs first among the t.after hooks.
+    await chmod(locked, 0o700);
+  }
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/report.md')), false);
 });
 
 test('refreshArtifactMirror counts the promoted snapshot before clearing the mirror', async (t) => {

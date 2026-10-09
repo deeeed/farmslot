@@ -179,6 +179,9 @@ async function workerEvidenceManifestPaths(
   );
 }
 
+// realpath codes for a link with no target: dangling, looping, or through a file.
+const UNRESOLVABLE_LINK_CODES = new Set(['ENOENT', 'ELOOP', 'ENOTDIR']);
+
 // Media paths (relative to artifacts/) the worker's PR body and prose cite as
 // local files. Publication uploads them and rewrites the links, and a body
 // still citing a local path fails FINALIZE, so they belong in the package
@@ -290,23 +293,41 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     : { entries: [], links: [], truncated: false };
   const inSnapshot = (entryPath: string) =>
     snapshotRoot !== null && entryPath.startsWith(`${snapshotRoot}/`);
+  // A link that dangles or loops has no real path and is skipped, as
+  // slotCopyDir skips it; any other failure (a broken transport to the slot)
+  // means the count is unknown, so the refresh fails.
+  const workerRealpath = (relativePath: string) =>
+    slotRealpath(vars, path.join(workerArtifactsDir, relativePath)).catch((error: unknown) => {
+      if (UNRESOLVABLE_LINK_CODES.has((error as NodeJS.ErrnoException).code ?? '')) return null;
+      throw error;
+    });
   const packaged = selectPublishPackageEntries(
     scan.entries.filter((entry) => !inSnapshot(entry.path)),
     [...manifestPaths, ...citedPaths],
   );
+  // A cited media symlink is copied as its target, like a manifest-named one,
+  // when the target stays inside artifacts/.
+  const citedLinks = scan.links.filter((link) => citedPaths.includes(link));
+  const artifactsRealPath =
+    citedLinks.length > 0 ? await slotRealpath(vars, workerArtifactsDir) : '';
+  for (const link of citedLinks) {
+    const target = await workerRealpath(link);
+    if (!target?.startsWith(`${artifactsRealPath}${path.sep}`)) continue;
+    const info = await slotStat(vars, target);
+    if (info.isFile) packaged.entries.push({ path: link, bytes: info.size, sourcePath: target });
+  }
   const snapshotEntries = snapshotRoot
     ? [
         ...scan.entries.filter((entry) => inSnapshot(entry.path)),
-        ...(await promotedSnapshotLinkEntries(scan, snapshotRoot, (relativePath) =>
-          slotRealpath(vars, path.join(workerArtifactsDir, relativePath)).catch(() => null),
-        )),
+        ...(await promotedSnapshotLinkEntries(scan, snapshotRoot, workerRealpath)),
       ]
     : [];
   assertPublishPackageWithinCaps([...packaged.entries, ...snapshotEntries], workerArtifactsDir, {
     truncated: scan.truncated,
   });
+  const packagedPaths = new Set(packaged.entries.map((entry) => entry.path));
   const skippedLinks = scan.links.filter(
-    (link) => !inSnapshot(link) && !manifestPaths.includes(link),
+    (link) => !inSnapshot(link) && !manifestPaths.includes(link) && !packagedPaths.has(link),
   );
   if (packaged.dropped.length > 0 || skippedLinks.length > 0) {
     console.warn(
@@ -328,11 +349,16 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     if (manifestNamed.has(entry.path)) continue;
     const localPath = path.join(localArtifactsDir, entry.path);
     await mkdir(path.dirname(localPath), { recursive: true });
-    await slotCopyFile(vars, path.join(workerArtifactsDir, entry.path), localPath, {
-      phase: 'mirror',
-      ...transferMeta,
-      label: `artifacts/${entry.path}`,
-    });
+    await slotCopyFile(
+      vars,
+      entry.sourcePath ?? path.join(workerArtifactsDir, entry.path),
+      localPath,
+      {
+        phase: 'mirror',
+        ...transferMeta,
+        label: `artifacts/${entry.path}`,
+      },
+    );
     copied += 1;
   }
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.

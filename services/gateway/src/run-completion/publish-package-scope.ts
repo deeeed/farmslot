@@ -6,12 +6,18 @@
 // only what the gate and PR read:
 //   - media named by evidence-manifest.json (copied by the manifest step) or
 //     cited by the worker's pr-body.md / pr-description.md;
+//   - recipe output packages, i.e. each directory up to
+//     PUBLISH_PACKAGE_MAX_DEPTH levels under artifacts/ holding a
+//     recipe-runner package root marker (artifact-manifest.json, or
+//     summary.json beside trace.json), kept whole since its recording,
+//     timeline and trace are read together;
 //   - the step directories Farmslot templates write or Farmslot reads back
-//     (PUBLISH_PACKAGE_STEP_DIRS);
+//     (PUBLISH_PACKAGE_STEP_DIRS), packages or not;
 //   - top-level text and media files, by extension, at any size. Reports and
 //     proof files (report.html, trace.json, recordings) have readers whatever
 //     their size, so the overall caps bound them instead of a per-file one.
-// Anything else under a subdirectory is never walked. The promoted
+// Anything else under a subdirectory is walked only to find package markers,
+// no deeper than PUBLISH_PACKAGE_MAX_DEPTH + 1. The promoted
 // recipe-runs/<id> snapshot, copied separately, is measured in the same scan
 // so the caps cover the whole mirror.
 
@@ -29,7 +35,13 @@ import { shellQuote } from '../core/tmux.js';
 
 import { normalizeEvidenceManifestArtifactPath } from './evidence-manifest.js';
 
-/** Subdirectories of artifacts/ Farmslot templates write or Farmslot reads back, kept whole. */
+/**
+ * Subdirectories of artifacts/ Farmslot templates write or Farmslot reads
+ * back, kept whole. Package detection does not cover them: the library,
+ * harness logs, check-diff and review evidence carry no package marker, and a
+ * template's recipe-run directory is still read (mm-harness `pr-body render`
+ * reads recipe-run/report.md) when the run died before writing its markers.
+ */
 export const PUBLISH_PACKAGE_STEP_DIRS = [
   // Worker recipe library; pushRunRecipeToSlot replays from the mirror's copy.
   'recipe-library',
@@ -51,6 +63,8 @@ export const PUBLISH_PACKAGE_STEP_DIRS = [
   // Review recordings and screenshots (review-pr templates).
   'evidence',
 ] as const;
+/** Deepest package root detected, in directory levels under artifacts/. */
+export const PUBLISH_PACKAGE_MAX_DEPTH = 3;
 export const PUBLISH_PACKAGE_MAX_BYTES = 1024 ** 3;
 export const PUBLISH_PACKAGE_MAX_FILES = 20_000;
 /**
@@ -70,6 +84,8 @@ export interface PublishPackageEntry {
   /** Path relative to artifacts/, POSIX separators. */
   path: string;
   bytes: number;
+  /** Worker path to read instead of `path`, for a cited symlink resolved to its target. */
+  sourcePath?: string;
 }
 
 export interface PublishPackageScanRoots {
@@ -91,11 +107,13 @@ export interface PublishPackageScan {
 /**
  * One shell command, run on the worker, printing `<bytes> ./<path>` for every
  * regular file and `L ./<path>` for every symlink in scope: top-level entries,
- * the step directories, the named paths, and the promoted snapshot minus its
- * raw screenshots/. node_modules, .git and the relative copy excludes are
- * pruned, so their trees are never walked. `wc -c` reads sizes from stat for
- * regular files on both BSD and GNU. The last line, `S <status>`, carries the
- * first failing find's exit status; output is capped at SCAN_LINE_LIMIT lines.
+ * the step directories, the named paths, the recipe packages found by their
+ * markers, and the promoted snapshot minus its raw screenshots/. Marker
+ * detection walks only PUBLISH_PACKAGE_MAX_DEPTH + 1 levels. node_modules,
+ * .git and the relative copy excludes are pruned, so their trees are never
+ * walked. `wc -c` reads sizes from stat for regular files on both BSD and
+ * GNU. The last line, `S <status>`, carries the first failing find's exit
+ * status; output is capped at SCAN_LINE_LIMIT lines.
  */
 export function buildPublishPackageScanCommand(
   workerArtifactsDir: string,
@@ -108,6 +126,16 @@ export function buildPublishPackageScanCommand(
     ...ARTIFACT_COPY_EXCLUDED_DIR_NAMES.map((name) => `-name ${shellQuote(name)}`),
     ...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES.map((p) => `-path ${shellQuote(`./${p}`)}`),
   ].join(' -o ');
+  // Top-level trees the mirror never takes from the worker (raw screenshot
+  // spool, recipe-runs history, internal launch output, gateway-owned review
+  // directories) are pruned from package detection too.
+  const detectionPrunes = [
+    prunes,
+    ...WORKER_ARTIFACT_COPY_EXCLUDES.map((name) => `-path ${shellQuote(`./${name}`)}`),
+    ...['review-loop-*', 'self-review-*', 'independent-review-*'].map(
+      (pattern) => `-path ${shellQuote(`./${pattern}`)}`,
+    ),
+  ].join(' -o ');
   const list = `\\( -type f -exec wc -c {} + \\) -o \\( -type l -exec printf 'L %s\\n' {} + \\)`;
   const keep = '|| { rc=$?; [ "$scan_status" -ne 0 ] || scan_status=$rc; }';
   const lines = [
@@ -115,6 +143,19 @@ export function buildPublishPackageScanCommand(
     `find . -mindepth 1 -maxdepth 1 ${list} ${keep}`,
     'set --',
     `for p in ${scopeRoots.join(' ')}; do if [ -e "$p" ] || [ -L "$p" ]; then set -- "$@" "$p"; fi; done`,
+    // A package root is the directory of its marker. One newline-split loop
+    // reads the marker list; a failing find reports `E:<status>` through it.
+    'set -f',
+    'scan_ifs=$IFS',
+    "IFS='\n'",
+    `for m in $(find . -maxdepth ${PUBLISH_PACKAGE_MAX_DEPTH + 1} \\( ${detectionPrunes} \\) -prune -o -type f -path './*/*' \\( -name artifact-manifest.json -o -name summary.json \\) -print || echo "E:$?"); do`,
+    '  case $m in',
+    '    E:*) [ "$scan_status" -ne 0 ] || scan_status=${m#E:}; continue ;;',
+    '    */summary.json) [ -f "${m%/*}/trace.json" ] || continue ;;',
+    '  esac',
+    '  set -- "$@" "${m%/*}"',
+    'done',
+    'IFS=$scan_ifs',
     `if [ "$#" -gt 0 ]; then find "$@" \\( ${prunes} \\) -prune -o ${list} ${keep}; fi`,
   ];
   if (roots.snapshotRoot) {
@@ -153,20 +194,27 @@ export function parsePublishPackageScan(
   };
 }
 
-/** Media paths (relative to artifacts/) a PR body cites as local artifact files. */
+/**
+ * Media paths (relative to artifacts/) a PR body cites as local artifact
+ * files: a path after its last `artifacts/` segment, or a relative path with a
+ * directory, normalized like manifest paths (no `..`, absolute or URL paths).
+ * Citations under screenshots/ or recipe-runs/ are dropped: the mirror deletes
+ * the raw spool and non-promoted runs after copying, and the promoted snapshot
+ * is copied whole.
+ */
 export function prBodyCitedArtifactPaths(body: string): string[] {
   const paths = new Set<string>();
   for (const [token] of body.matchAll(/[^\s<>()[\]'"`|]+\.(?:png|jpe?g|gif|mp4|mov|webm)/gi)) {
     if (token.includes('://')) continue;
     const marker = token.lastIndexOf('artifacts/');
     const candidate =
-      marker >= 0 && (marker === 0 || token[marker - 1] === '/')
-        ? token.slice(marker)
-        : /^(?:\.\/)?(?:screenshots|videos|recipe-runs)\//.test(token)
-          ? token
-          : null;
-    const normalized = candidate ? normalizeEvidenceManifestArtifactPath(candidate) : null;
-    if (normalized) paths.add(normalized.slice('artifacts/'.length));
+      marker >= 0 && (marker === 0 || token[marker - 1] === '/') ? token.slice(marker) : token;
+    if (!candidate.replace(/^(?:\.\/)?(?:artifacts\/)?/, '').includes('/')) continue;
+    const normalized = normalizeEvidenceManifestArtifactPath(candidate);
+    if (!normalized) continue;
+    const relative = normalized.slice('artifacts/'.length);
+    if (/^(?:screenshots|recipe-runs)\//.test(relative)) continue;
+    paths.add(relative);
   }
   return [...paths].sort();
 }
