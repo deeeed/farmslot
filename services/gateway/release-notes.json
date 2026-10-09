@@ -8,6 +8,6 @@
     "Workers on remote nodes reach the gateway that dispatched them, and Codex reviews launch unattended",
     "An explicitly chosen slot that is still releasing waits up to 5 minutes instead of failing as busy",
     "Browser health checks no longer stop running screen recordings on the same Mac",
-    "The publish package copies only the evidence the run's manifest names, under a size cap"
+    "The publish package copies only the evidence the manifest names and the media the PR body cites, under a size cap"
   ]
 }
