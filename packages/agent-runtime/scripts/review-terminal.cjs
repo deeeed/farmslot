@@ -164,7 +164,11 @@ async function main() {
       throw error;
     }
   }
-  process.stdout.write(JSON.stringify(folderAccess ? { ...record, folderAccess } : record));
+  if (folderAccess) {
+    record.folderAccess = folderAccess;
+    fs.writeFileSync(marker, JSON.stringify(record), { mode: 0o600 });
+  }
+  process.stdout.write(JSON.stringify(record));
 }
 main().catch((error) => {
   process.stderr.write(String(error));

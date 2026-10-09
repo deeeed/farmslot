@@ -56,6 +56,17 @@ const ready = `
   ? for shortcuts
 `;
 
+// Painted for ~50-100 ms between the splash and Folder access on every 0.162 launch.
+const header = `
+  >_ OpenAI Codex (v0.162.0)
+     /Users/me/.farmslot-dev/review-workspaces/…/source
+
+› Ask Codex to do anything
+  ? for shortcuts
+`;
+
+const idle = `${header}  permissions: YOLO mode\n`;
+
 const splash = `
   >_ OpenAI Codex (v0.162.0) loading
 
@@ -90,13 +101,19 @@ test('the exact Folder access screen for the launched folder is answered with Op
   assert.equal(classifyCodexLaunchScreen(app, [folder]).kind, 'folder-access');
 
   assert.equal(classifyCodexLaunchScreen(splash, [folder]).kind, 'starting');
-  const answered = drive(['', splash, folderAccess, '', ready]);
+  assert.equal(classifyCodexLaunchScreen(header, [folder]).kind, 'idle');
+  const answered = drive(['', splash, header, folderAccess, '', ready]);
   assert.equal(await answered.result, 'restricted');
   assert.deepEqual(answered.sent, ['Enter']);
 
   const noPrompt = drive(['', ready]);
   assert.equal(await noPrompt.result, null);
   assert.deepEqual(noPrompt.sent, []);
+
+  // An idle composer that holds counts as ready without a prompt.
+  const idleOnly = drive(['', idle]);
+  assert.equal(await idleOnly.result, null);
+  assert.deepEqual(idleOnly.sent, []);
 });
 
 test('Trust is never chosen: a trust prompt, another folder or option 2 selected fail without a key', async () => {
