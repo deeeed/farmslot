@@ -2,6 +2,7 @@
 // Ported from farm-monitor skill logic to be gateway-resident and persistent.
 
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import {
   type AgentContext,
@@ -865,6 +866,57 @@ export async function readFreshTerminalSignalForRun(
 ): Promise<WorkerSignal | undefined> {
   const probe = await probeWorkerSignalForRun(runId, slotId, monitorContext);
   return probe.ok ? probe.signal : undefined;
+}
+
+/**
+ * Shell that replaces SIGNAL.json with `next` only while it still holds the
+ * bytes the gateway read, so a `./mark` the worker wrote in between wins.
+ * `$(cat)` drops trailing newlines, so the observed bytes are compared without
+ * them. Exits non-zero when the file changed.
+ */
+export function replaceSignalIfUnchangedCommand(
+  signalPath: string,
+  observed: string,
+  next: string,
+): string {
+  const tmp = shellQuote(
+    `${path.posix.dirname(signalPath)}/.${path.posix.basename(signalPath)}.gateway.tmp`,
+  );
+  const file = shellQuote(signalPath);
+  return (
+    `[ "$(cat ${file})" = ${shellQuote(observed.replace(/\n+$/, ''))} ] && ` +
+    `printf '%s' ${shellQuote(next)} > ${tmp} && chmod 644 ${tmp} && mv -f ${tmp} ${file}`
+  );
+}
+
+/**
+ * Give a running signal a new attempt id, as `./mark start` would: the worker
+ * keeps its step, checklist events and timestamp (its own clock). Throws when
+ * SIGNAL.json is no longer `expectedAttemptId` running, or changed mid-write.
+ * Returns the new attempt id.
+ */
+export async function rotateWorkerSignalAttempt(
+  run: Run,
+  slotId: string,
+  monitorContext: AgentContext | null,
+  expectedAttemptId: string,
+): Promise<string> {
+  const signalPath = await resolveSignalJsonPathForRun(run, slotId, monitorContext);
+  if (!signalPath) throw new Error('Could not resolve SIGNAL.json path for this run.');
+  const vars = await loadSlotVars(slotId);
+  const read = await execOnSlot(vars, `cat ${shellQuote(signalPath)}`);
+  if (read.exitCode !== 0) throw new Error(`Could not read ${signalPath}`);
+  const current = JSON.parse(read.stdout) as Record<string, unknown>;
+  if (current.attemptId !== expectedAttemptId || current.status !== 'running')
+    throw new Error(`${signalPath} is no longer attempt ${expectedAttemptId} running`);
+  const attemptId = randomUUID();
+  const next = `${JSON.stringify({ ...current, attemptId }, null, 2)}\n`;
+  const write = await execOnSlot(
+    vars,
+    replaceSignalIfUnchangedCommand(signalPath, read.stdout, next),
+  );
+  if (write.exitCode !== 0) throw new Error(`${signalPath} changed while rotating its attempt`);
+  return attemptId;
 }
 
 function launchCommandForRun(run: Run): unknown {
