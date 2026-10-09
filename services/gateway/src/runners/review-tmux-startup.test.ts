@@ -52,9 +52,10 @@ test('read-only Codex review records untrusted workspace policy in launch argume
   assert.ok(command?.includes('projects={"/tmp/review.source"={trust_level="untrusted"}}'));
   assert.ok(!command?.includes('trust_level="trusted"'));
   assert.ok(!command?.includes('check_for_update_on_startup'));
+  assert.ok(!command?.includes('features.hooks'));
 });
 
-test('a Codex review launch can skip the startup update check', () => {
+test('a Codex review launch can skip the startup update check and turn hooks off', () => {
   const command = buildInteractiveRefinementRunnerCommand({
     runner: 'codex',
     repo: '/tmp/review.source',
@@ -62,8 +63,10 @@ test('a Codex review launch can skip the startup update check', () => {
     model: 'gpt-6-astra',
     workspaceTrust: 'untrusted',
     skipUpdateCheck: true,
+    disableHooks: true,
   });
   assert.ok(command?.includes("--config 'check_for_update_on_startup=false'"));
+  assert.ok(command?.includes("--config 'features.hooks=false'"));
 });
 
 test('a missing task mark does not time out or manufacture startup acknowledgment', () => {

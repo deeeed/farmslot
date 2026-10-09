@@ -60,6 +60,8 @@ if (run.metrics.runner === 'codex')
     launch.includes('check_for_update_on_startup=false'),
     'A Codex review launch must skip the startup update check',
   );
+if (run.metrics.runner === 'codex')
+  assert.ok(launch.includes('features.hooks=false'), 'A Codex review launch must turn hooks off');
 const progress = rpc('task.progress', { slotId: '', runId });
 const children = progress.structured.phases
   .flatMap((phase) => phase.steps)

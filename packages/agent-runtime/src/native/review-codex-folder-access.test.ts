@@ -134,7 +134,17 @@ test('Trust is never chosen: a trust prompt, another folder or option 2 selected
 test('a changed or unknown screen fails the launch instead of pressing Enter blindly', async () => {
   const reworded = folderAccess.replace('stay disabled', 'are disabled');
   const update = '  ✨ Update available! 0.162.0 -> 0.163.0\n\n› 1. Update now\n  2. Skip\n';
-  for (const pane of [reworded, update, `${folderAccess}\n  Trust and continue\n`]) {
+  // Captured on macpro after Open restricted, from the node's own untrusted hooks.
+  const hooksReview = [
+    '  Hooks need review',
+    '  6 hooks are new or changed.',
+    '  Hooks can run outside the sandbox after you trust them.',
+    '› 1. Review hooks',
+    '  2. Trust all and continue',
+    "  3. Continue without trusting (hooks won't run)",
+    '  enter confirm · esc skip',
+  ].join('\n');
+  for (const pane of [reworded, update, hooksReview, `${folderAccess}\n  Trust and continue\n`]) {
     const { result, sent } = drive(['', pane]);
     await assert.rejects(result, /unexpected launch prompt/);
     assert.deepEqual(sent, []);
