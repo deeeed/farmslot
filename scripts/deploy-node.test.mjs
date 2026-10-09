@@ -44,7 +44,9 @@ for (const platform of ['Darwin', 'Linux']) {
             `#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
-command=' '.join(sys.argv[2:])
+args=sys.argv[1:]
+while args and args[0]=='-o': args=args[2:]
+command=' '.join(args[1:])
 body=sys.stdin.read()
 if body.startswith('<?xml'): Path(os.environ['RENDER_ROOT'],'service.plist').write_text(body)
 elif body.startswith('[Unit]'): Path(os.environ['RENDER_ROOT'],'service.unit').write_text(body)
@@ -223,7 +225,10 @@ test("deploy-node syncs a bundled package's scripts/ and bin/ beside dist/ and s
       'bin/ssh',
       `#!/usr/bin/env python3
 import os,sys
-command=' '.join(sys.argv[2:])
+with open(os.environ['SSH_LOG'],'a') as log: log.write(' '.join(sys.argv[1:3])+'\\n')
+args=sys.argv[1:]
+while args and args[0]=='-o': args=args[2:]
+command=' '.join(args[1:])
 sys.stdin.read()
 if command=='uname -s': print(os.environ['RENDER_OS'])
 elif command=='echo $HOME': print('/home/node-validation')
@@ -235,10 +240,16 @@ elif command.startswith('test -d '): sys.exit(1)
       true,
     );
     // Record argv per invocation; one line per rsync the deploy runs.
-    write('bin/rsync', '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$RSYNC_LOG"\nexit 0\n', true);
+    // The remote shell rsync uses (RSYNC_RSH) leads each line.
+    write(
+      'bin/rsync',
+      '#!/bin/sh\nprintf \'%s | %s\\n\' "$RSYNC_RSH" "$*" >> "$RSYNC_LOG"\nexit 0\n',
+      true,
+    );
     for (const command of ['yarn', 'sleep']) write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
 
     const rsyncLog = path.join(root, 'rsync.log');
+    const sshLog = path.join(root, 'ssh.log');
     execFileSync(
       'bash',
       [
@@ -255,6 +266,7 @@ elif command.startswith('test -d '): sys.exit(1)
           RENDER_ROOT: root,
           RENDER_OS: 'Darwin',
           RSYNC_LOG: rsyncLog,
+          SSH_LOG: sshLog,
           FARMSLOT_NODE_PATH: '/opt/homebrew/bin/node',
           FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
           FARMSLOT_NODE_INSTANCE: 'prod',
@@ -267,6 +279,12 @@ elif command.startswith('test -d '): sys.exit(1)
     );
 
     const invocations = fs.readFileSync(rsyncLog, 'utf8').split('\n').filter(Boolean);
+    // F56: a host name whose first address does not answer must not fail the
+    // deploy, so every ssh and rsync to the node bounds its connect.
+    const sshCalls = fs.readFileSync(sshLog, 'utf8').split('\n').filter(Boolean);
+    assert.ok(sshCalls.length > 0);
+    for (const call of sshCalls) assert.equal(call, '-o ConnectTimeout=10');
+    for (const line of invocations) assert.ok(line.startsWith('ssh -o ConnectTimeout=10 | '), line);
     const remote = 'fixture-machine.local:/home/node-validation/farmslot-node';
     const syncOf = (source, destination) =>
       invocations.find(

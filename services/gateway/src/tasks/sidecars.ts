@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol/checklist-target';
 
 import { execLocal, isLocal } from '../core/exec.js';
+import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
@@ -80,7 +81,7 @@ export async function copyTaskDirSubdirectories(
     } else {
       if (!params.sshTarget) throw new Error(`missing ssh target for ${subdir}/ copy`);
       const result = await execLocal(
-        `rsync -az --exclude=${shellQuote(`*${WORKER_MIRROR_SUFFIX}`)} ` +
+        `rsync -az ${RSYNC_SSH_SHELL_OPTION} --exclude=${shellQuote(`*${WORKER_MIRROR_SUFFIX}`)} ` +
           `${shellQuote(`${source}/`)} ${shellQuote(`${params.sshTarget}:${dest}/`)}`,
       );
       if (result.exitCode !== 0) {
@@ -123,7 +124,7 @@ export async function copyPreparedTaskRootSidecars(
         } else {
           if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar reset`);
           const rmRes = await execLocal(
-            `ssh ${shellQuote(params.sshTarget)} ${shellQuote(`rm -f ${shellQuote(dest)}`)}`,
+            `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(params.sshTarget)} ${shellQuote(`rm -f ${shellQuote(dest)}`)}`,
           );
           if (rmRes.exitCode !== 0) {
             throw new Error(
@@ -143,7 +144,7 @@ export async function copyPreparedTaskRootSidecars(
     } else {
       if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar copy`);
       const scpRes = await execLocal(
-        `scp -q ${shellQuote(source)} ${shellQuote(`${params.sshTarget}:${dest}`)}`,
+        `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(source)} ${shellQuote(`${params.sshTarget}:${dest}`)}`,
       );
       if (scpRes.exitCode !== 0) {
         throw new Error(
@@ -152,7 +153,7 @@ export async function copyPreparedTaskRootSidecars(
       }
       if (sidecar === CHECKLIST_MARKER_INPUT) {
         const chmodRes = await execLocal(
-          `ssh ${shellQuote(params.sshTarget)} ${shellQuote(`chmod 755 ${shellQuote(dest)}`)}`,
+          `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(params.sshTarget)} ${shellQuote(`chmod 755 ${shellQuote(dest)}`)}`,
         );
         if (chmodRes.exitCode !== 0) {
           throw new Error(
