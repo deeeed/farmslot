@@ -252,6 +252,7 @@ export interface RunAcceptanceData {
   acceptanceCriteria?: AcceptanceCriterionRef[] | null;
   acceptanceStatusError?: string | null;
   acceptanceEvidenceLinks?: AcceptanceEvidenceLink[] | null;
+  acceptanceEvidenceLinksError?: string | null;
 }
 
 export interface AcceptancePanelInputs {
@@ -259,6 +260,7 @@ export interface AcceptancePanelInputs {
   criteria?: ReadonlyArray<AcceptanceCriterionRef>;
   error?: string;
   evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
+  evidenceLinksError?: string;
 }
 
 /**
@@ -276,6 +278,9 @@ export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelI
     ...(data.acceptanceStatusError ? { error: data.acceptanceStatusError } : {}),
     ...(data.acceptanceEvidenceLinks?.length
       ? { evidenceLinks: data.acceptanceEvidenceLinks }
+      : {}),
+    ...(data.acceptanceEvidenceLinksError
+      ? { evidenceLinksError: data.acceptanceEvidenceLinksError }
       : {}),
   };
 }
@@ -369,6 +374,8 @@ export function renderAcceptancePanel(
     error?: string | null;
     /** Manifest links for a run with no ledger; labelled as such, never a verdict. */
     evidenceLinks?: ReadonlyArray<AcceptanceEvidenceLink>;
+    /** Why the manifest behind the fallback could not be read; shown muted. */
+    evidenceLinksError?: string | null;
   } = {},
 ): TemplateResult | typeof nothing {
   const rows = acceptanceEvidenceRows(
@@ -379,6 +386,8 @@ export function renderAcceptancePanel(
   if (rows.length === 0 && !options.error) return nothing;
   const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria);
   const linked = rows.filter((row) => row.link).length;
+  // Like the links, a manifest read error only matters while there is no ledger.
+  const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
   return html`
     <details
       class="ac-panel"
@@ -404,6 +413,11 @@ export function renderAcceptancePanel(
         ${options.error
           ? html`<div class="ac-error" data-testid="acceptance-error">
               ledger unreadable: ${options.error}
+            </div>`
+          : nothing}
+        ${linksError
+          ? html`<div class="ac-note ac-source" data-testid="acceptance-evidence-error">
+              evidence manifest unreadable: ${linksError}
             </div>`
           : nothing}
         ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence))}

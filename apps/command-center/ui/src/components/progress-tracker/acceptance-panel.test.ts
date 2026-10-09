@@ -324,3 +324,24 @@ test('the rows run detail resolves links from are exactly the rows the run page 
     );
   }
 });
+
+test('an unreadable evidence manifest is shown muted, apart from a ledger error', () => {
+  const text = litText(
+    renderAcceptancePanel(ledger([]), {
+      criteria: [{ id: 'AC-1', text: 'First' }],
+      evidenceLinksError: 'artifacts/evidence-manifest.json: Unexpected token',
+    }),
+  );
+  assert.match(text, /evidence manifest unreadable: artifacts\/evidence-manifest\.json/);
+  assert.match(text, /acceptance-evidence-error/);
+  assert.doesNotMatch(text, /acceptance-error"/, 'not the loud ledger error');
+  assert.match(text, /not assessed/);
+  // Run detail hands it through the same inputs the panel renders from.
+  assert.equal(
+    acceptancePanelInputs({
+      acceptanceCriteria: [{ id: 'AC-1', text: 'First' }],
+      acceptanceEvidenceLinksError: 'artifacts/evidence-manifest.json: Unexpected token',
+    })?.evidenceLinksError,
+    'artifacts/evidence-manifest.json: Unexpected token',
+  );
+});

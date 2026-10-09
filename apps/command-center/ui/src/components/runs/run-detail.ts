@@ -174,6 +174,7 @@ export class RunDetail extends RunDetailState {
           this.acceptanceCriteria = p.progress.acceptanceCriteria ?? null;
           this.acceptanceStatusError = p.progress.acceptanceStatusError ?? null;
           this.acceptanceEvidenceLinks = p.progress.acceptanceEvidenceLinks ?? null;
+          this.acceptanceEvidenceLinksError = p.progress.acceptanceEvidenceLinksError ?? null;
         }
       },
     );
@@ -273,6 +274,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
       this.acceptanceEvidenceLinks = null;
+      this.acceptanceEvidenceLinksError = null;
       this.selectedStepProgress = null;
       this._selectedStepProgressKey = '';
       this.ciStatus = null;
@@ -350,6 +352,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
       this.acceptanceEvidenceLinks = null;
+      this.acceptanceEvidenceLinksError = null;
     }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
@@ -1066,6 +1069,7 @@ export class RunDetail extends RunDetailState {
       this.acceptanceCriteria = res.acceptanceCriteria ?? null;
       this.acceptanceStatusError = res.acceptanceStatusError ?? null;
       this.acceptanceEvidenceLinks = res.acceptanceEvidenceLinks ?? null;
+      this.acceptanceEvidenceLinksError = res.acceptanceEvidenceLinksError ?? null;
     } catch (err) {
       if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
@@ -1255,6 +1259,7 @@ export class RunDetail extends RunDetailState {
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
+      acceptanceEvidenceLinksError: this.acceptanceEvidenceLinksError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
       acceptanceEvidenceOpen: this._openAcceptanceEvidence,
       selectedStep: this.selectedStep,
