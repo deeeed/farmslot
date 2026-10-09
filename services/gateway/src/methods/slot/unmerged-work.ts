@@ -1,0 +1,43 @@
+import { execOnSlot, type SlotVars } from '../../core/index.js';
+import { shellQuote } from '../../core/tmux.js';
+
+/**
+ * Work on the checked-out `branch` that a slot reset would lose, as a detail
+ * such as "dirty files + unpushed commits", or null when nothing is at risk.
+ *
+ * A commit counts as pushed once any remote-tracking ref contains it, so a slot
+ * that publishes to a fork or org remote instead of `origin` is judged by where
+ * the publish actually went.
+ */
+export async function findUnmergedSlotWork(
+  vars: SlotVars,
+  branch: string,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<string | null> {
+  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const dirty = (
+    await exec(
+      vars,
+      `${git} status --porcelain 2>/dev/null | grep -v '^\?\? \.omc/' | grep -v '^\?\? \.task/' | grep -v '^\?\? \.claude/CLAUDE\\.local\\.md' | head -5`,
+    )
+  ).stdout.trim();
+  const unpushed = (
+    await exec(vars, `${git} log --oneline HEAD --not --remotes 2>/dev/null | head -5`)
+  ).stdout.trim();
+  if (!dirty && !unpushed) return null;
+  // GitHub deletes a merged PR's branch, so a branch gone from the remote it
+  // pushes to has nothing left to lose. A remote that cannot be asked proves
+  // nothing, so the work stays protected.
+  const remote = `$(${git} config --get ${shellQuote(`branch.${branch}.pushRemote`)} || ${git} config --get remote.pushDefault || ${git} config --get ${shellQuote(`branch.${branch}.remote`)} || echo origin)`;
+  const probe = await exec(
+    vars,
+    `${git} ls-remote --heads "${remote}" ${shellQuote(branch)} 2>/dev/null`,
+  );
+  if (probe.exitCode === 0 && !probe.stdout.trim()) {
+    console.log(
+      `[slot.release] ${vars.slotId}: remote branch '${branch}' deleted (merged) — allowing recycle`,
+    );
+    return null;
+  }
+  return [dirty && 'dirty files', unpushed && 'unpushed commits'].filter(Boolean).join(' + ');
+}
