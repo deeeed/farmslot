@@ -16,6 +16,7 @@ import {
 import { loadProjectVars } from '../core/config.js';
 import { execFileArgv, isLocal } from '../core/exec.js';
 import {
+  ORCHESTRATOR_LOCALITY,
   type SlotLocality,
   slotMkdir,
   slotWriteFileBuffer,
@@ -230,7 +231,7 @@ async function gatewayBundle(
     const incoming = await mkdtemp(path.join(parent, '.incoming-'));
     try {
       await slotWriteFiles(
-        { host: 'localhost', machine: 'local', sshTarget: '' },
+        ORCHESTRATOR_LOCALITY,
         incoming,
         bundle.files.map((file) => ({
           path: file.relativePath,

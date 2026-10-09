@@ -39,6 +39,7 @@ const RUN_DETAIL_PARAMS = [
   'step',
   'artifactRun',
   'artifact',
+  'artifactAc',
   'artifactView',
 ] as const;
 
