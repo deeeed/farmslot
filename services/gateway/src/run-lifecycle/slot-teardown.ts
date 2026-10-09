@@ -304,7 +304,15 @@ export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | nul
   await unwatchSlot(run.slotId, { expectedRunId: run.id });
   const slot = await readSlotRow(run.slotId);
   if (slot?.current_run_id !== run.id) return blocker;
-  if (!slot.handoff_run_id || slot.handoff_run_id === run.id)
+  // The recorded prepare scope is the slot's latest preflight, which can belong
+  // to another active run sharing this slot; only reap when none does.
+  const sharedWithActiveRun = listRuns().runs.some(
+    (candidate) =>
+      candidate.id !== run.id &&
+      candidate.slotId === run.slotId &&
+      !isTerminalRunStatus(candidate.status),
+  );
+  if ((!slot.handoff_run_id || slot.handoff_run_id === run.id) && !sharedWithActiveRun)
     await stopSlotPrepareScope(run.slotId);
   await archiveRunnerSessionsForSlotRelease({
     vars: await loadSlotVars(run.slotId),

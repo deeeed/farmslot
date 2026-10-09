@@ -11,6 +11,7 @@ import type { Run } from '@farmslot/protocol';
 import * as realCore from '../core/index.js';
 import * as realOwnedStop from '../runners/owned-stop.js';
 import * as realSessionArchive from '../runners/session-archive.js';
+import * as realRunStore from '../runs/store.js';
 
 const RUN_ID = 'run-cancelled';
 const SLOT_ID = 'macpro-mm-pixel6';
@@ -22,6 +23,7 @@ let commands: string[];
 let identityRecorded: boolean;
 /** The preflight group (and its farmslot-prepare-scope holder) is running. */
 let holderAlive: boolean;
+let otherRuns: Run[];
 
 mock.module('../core/index.js', {
   namedExports: {
@@ -50,6 +52,9 @@ mock.module('../core/index.js', {
     },
   },
 });
+mock.module('../runs/store.js', {
+  namedExports: { ...realRunStore, listRuns: () => ({ runs: otherRuns }) },
+});
 mock.module('../runners/owned-stop.js', {
   namedExports: { ...realOwnedStop, stopRunOwnedTmuxWorkers: async () => null },
 });
@@ -70,6 +75,7 @@ beforeEach(() => {
   commands = [];
   identityRecorded = true;
   holderAlive = true;
+  otherRuns = [];
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -108,6 +114,16 @@ test('a slot another run now owns keeps its prepare scope', async () => {
 
 test('a slot reserved by another run handoff keeps its prepare scope', async () => {
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1, handoff_run_id: 'successor' };
+
+  await stopRunOwnedTmuxAndWatches(run);
+
+  assert.equal(reaps().length, 0);
+  assert.equal(holderAlive, true);
+});
+
+test('a slot another active run shares keeps its prepare scope', async () => {
+  // Two active runs on one slot: the recorded preflight may be the other run's.
+  otherRuns = [{ id: 'sibling', slotId: SLOT_ID, status: 'running' } as unknown as Run];
 
   await stopRunOwnedTmuxAndWatches(run);
 
