@@ -70,7 +70,7 @@ for f in "$POOL_DIR"/*.json; do
 
   # Probe all binaries in one SSH round-trip.
   cmd="for b in $BINARIES; do printf '%s=%s\n' \"\$b\" \"\$(command -v \"\$b\" 2>/dev/null || echo MISSING)\"; done"
-  if ! output="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cmd" 2>/dev/null)"; then
+  if ! output="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_target" "$cmd" 2>/dev/null)"; then
     for b in $BINARIES; do
       printf '%-10s %-25s %-10s %s\n' "$machine" "$host" "$b" "UNREACHABLE"
       missing=$((missing + 1))

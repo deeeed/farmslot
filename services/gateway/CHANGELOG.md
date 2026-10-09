@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Every ssh, scp and rsync the gateway spawns to a slot host passes `-o ConnectTimeout=10`, with `BatchMode=yes` unless it is an interactive `ssh -t`: the remote TASK.md and task-dir copies (dispatch, nudge, warm handoff, run recovery), the sidecar copies, finalize session metrics, the PATH probe, PTY and screen streams, and the OpenClaw auth import. So do the scripts it runs: `post-review.sh`, `sync-fixtures.sh` (its multiplexed ssh, scp and rsync), `deploy-node.sh` (ConnectTimeout only, since operators run it by hand too) and `lib/slot-common.sh`. macOS ssh fails at once on a host name whose first address is link-local IPv6 (`ssh mini.local`: `Undefined error: 0`), so every remote dispatch failed; with a connect timeout it tries the next address. Calls that had `ConnectTimeout=5` now use 10 s.
+- Fix: every ssh, scp and rsync the gateway and its slot scripts run passes `-o ConnectTimeout=10` (and `BatchMode=yes` where nothing is meant to prompt), so `ssh mini.local` / `ssh macpro.local` no longer fail at once with `Undefined error: 0` when the host name resolves to a link-local IPv6 address first. Remote dispatches to those hosts work again.
 
 ## 0.20.5 - 2026-10-08
 
