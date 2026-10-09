@@ -4,10 +4,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
-import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
-  applyProjectCommandEnv,
   execOnSlot,
   expandHook,
   expandPlatformField,
@@ -24,8 +22,12 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import { resolveCodexBinary } from '../../runners/launch-command.js';
-import { normalizeRunner, WORKER_ENV_PREFIX } from '../../runners/registry.js';
+import {
+  resolveClaudeBinary,
+  resolveCodexBinary,
+  wrapWorkerShellCommand,
+} from '../../runners/launch-command.js';
+import { normalizeRunner } from '../../runners/registry.js';
 
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
@@ -92,10 +94,12 @@ export async function slotCheck(
       );
       checks.push(branchStep);
       emitStep(emit, branchStep);
-      for (const step of await checkRunnerLaunch(slotVars, projectJson, projectVars)) {
-        checks.push(step);
-        emitStep(emit, step);
-      }
+      // Streams each probe as it completes; pushed here without re-emitting.
+      checks.push(
+        ...(await checkRunnerLaunch(slotVars, projectJson, projectVars, {
+          onProgress: (step) => emitStep(emit, step),
+        })),
+      );
     }
 
     // ── 3. Fixtures ──
@@ -254,7 +258,7 @@ export function slotRunnerBinaries(
   vars: SlotVars,
   projectJson: RawProjectJson,
 ): { runner: string; binary: string }[] {
-  const runners = [{ runner: 'claude', binary: vars.claudePath || 'claude' }];
+  const runners = [{ runner: 'claude', binary: resolveClaudeBinary(vars.claudePath) }];
   const defaults = Object.values(projectJson.defaults ?? {}).map((d) => normalizeRunner(d.runner));
   if (vars.codexPath || defaults.includes('codex')) {
     runners.push({ runner: 'codex', binary: resolveCodexBinary(vars.codexPath) });
@@ -263,19 +267,39 @@ export function slotRunnerBinaries(
 }
 
 const PINNED_VERSION_MISSING_RE = /No preinstalled version|is not installed|No version is set/i;
+const TOOL_VERSIONS_PIN = '.tool-versions pins ';
 
 /**
  * Resolve node and the runner binaries in the slot repo with the env a worker
  * launch gets (project command_env, worker PATH prefix, machine env, repo cwd),
  * so a version manager pin the host cannot satisfy (asdf `.tool-versions`)
- * fails here instead of at dispatch.
+ * fails here instead of at dispatch. Probes run in parallel; each result and a
+ * heartbeat while any is pending go to `onProgress`, so streaming clients see
+ * activity when a remote node is slow to answer.
  */
 export async function checkRunnerLaunch(
   vars: SlotVars,
   projectJson: RawProjectJson,
   projectVars?: ProjectVars,
+  progress: HealthProgressOptions = {},
 ): Promise<CheckStep[]> {
-  const domain = resolveEffectiveDomain(undefined, vars.domain);
+  const onProgress = progress.onProgress ?? (() => {});
+  const heartbeatMs = progress.heartbeatMs ?? UNLOCK_HEARTBEAT_MS;
+  const inWorkerShell = (command: string) =>
+    wrapWorkerShellCommand(withMachineEnv(command, vars), { projectJson, vars, projectVars });
+  // A bad project command_env fails every probe the same way: report it once.
+  try {
+    inWorkerShell('true');
+  } catch (err) {
+    const step: CheckStep = {
+      name: 'runner',
+      status: 'fail',
+      detail: `Worker env cannot be built: ${(err as Error).message}`,
+    };
+    onProgress(step);
+    return [step];
+  }
+
   const probes = [
     { name: 'runner.node', binary: 'node' },
     ...slotRunnerBinaries(vars, projectJson).map(({ runner, binary }) => ({
@@ -283,50 +307,70 @@ export async function checkRunnerLaunch(
       binary,
     })),
   ];
-  const steps: CheckStep[] = [];
-  for (const { name, binary } of probes) {
-    let result: Awaited<ReturnType<typeof execOnSlot>>;
-    try {
-      const command = applyProjectCommandEnv(
-        projectJson,
-        `${WORKER_ENV_PREFIX} && ${withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${binary} --version 2>&1`, vars)}`,
-        {
-          ...(domain ? { domain } : {}),
-          expandDomainValue: (value) =>
-            expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-        },
-      );
-      result = await execOnSlot(vars, command, { timeout: 30_000 });
-    } catch (err) {
-      steps.push({
-        name,
-        status: 'fail',
-        detail: `${binary} check failed: ${(err as Error).message}`,
-      });
-      continue;
-    }
-    const output = `${result.stdout}\n${result.stderr}`
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (result.exitCode === 0) {
-      steps.push({ name, status: 'pass', detail: `${binary} ${output[0] ?? ''}`.trim() });
-      continue;
-    }
-    const fix = PINNED_VERSION_MISSING_RE.test(output.join('\n'))
-      ? `install the toolchain version the repo pins (e.g. \`asdf install\` in ${vars.remoteRepo})`
-      : result.exitCode === 127
-        ? `install ${binary} on ${vars.machine} or set its path in the pool config`
-        : `run \`${binary} --version\` in ${vars.remoteRepo} on ${vars.machine}`;
-    // The cause leads: asdf follows it with every installed version.
-    const head = output.slice(0, 2).join(' | ');
-    steps.push({
-      name,
-      status: 'fail',
-      detail: `${binary} cannot start in ${vars.remoteRepo} (exit ${result.exitCode})${head ? `: ${head}` : ''}. Fix: ${fix}`,
+  const pending = new Set(probes.map((probe) => probe.name));
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const elapsedS = Math.round((Date.now() - startedAt) / 1000);
+    onProgress({
+      name: 'runner',
+      status: 'warn',
+      detail: `Still probing ${[...pending].join(', ')} (${elapsedS} s)`,
     });
+  }, heartbeatMs);
+  try {
+    return await Promise.all(
+      probes.map(async ({ name, binary }) => {
+        const step = await probeBinary(vars, name, binary, inWorkerShell);
+        pending.delete(name);
+        onProgress(step);
+        return step;
+      }),
+    );
+  } finally {
+    clearInterval(heartbeat);
   }
-  return steps;
+}
+
+async function probeBinary(
+  vars: SlotVars,
+  name: string,
+  binary: string,
+  inWorkerShell: (command: string) => string,
+): Promise<CheckStep> {
+  let result: Awaited<ReturnType<typeof execOnSlot>>;
+  try {
+    // On failure, name the Node version the repo pins: asdf's own message does not.
+    const command = `cd ${shellQuote(vars.remoteRepo)} && { ${binary} --version 2>&1 || { rc=$?; sed -n 's/^nodejs[[:space:]][[:space:]]*/${TOOL_VERSIONS_PIN}nodejs /p' .tool-versions 2>/dev/null; exit $rc; }; }`;
+    result = await execOnSlot(vars, inWorkerShell(command), { timeout: 30_000 });
+  } catch (err) {
+    return { name, status: 'fail', detail: `${binary} check failed: ${(err as Error).message}` };
+  }
+  const lines = `${result.stdout}\n${result.stderr}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const pin = lines.find((line) => line.startsWith(TOOL_VERSIONS_PIN));
+  const output = lines.filter((line) => line !== pin);
+  if (result.exitCode === 0) {
+    return { name, status: 'pass', detail: `${binary} ${output[0] ?? ''}`.trim() };
+  }
+  const pinned = pin
+    ? ` ${pin.slice(TOOL_VERSIONS_PIN.length)}`
+    : ' the toolchain version the repo pins';
+  const fix = PINNED_VERSION_MISSING_RE.test(output.join('\n'))
+    ? `install${pinned} on ${vars.machine} (e.g. \`asdf install\` in ${vars.remoteRepo})`
+    : result.exitCode === 127
+      ? binary === 'node'
+        ? `install node on ${vars.machine} or add its directory to the pool \`env.PATH\``
+        : `install ${binary} on ${vars.machine} or set its path in the pool config`
+      : `run \`${binary} --version\` in ${vars.remoteRepo} on ${vars.machine}`;
+  // The cause leads: asdf follows it with every installed version.
+  const head = output.slice(0, 2).join(' | ');
+  return {
+    name,
+    status: 'fail',
+    detail: `${binary} cannot start in ${vars.remoteRepo} (exit ${result.exitCode})${head ? `: ${head}` : ''}${pin ? `; ${pin}` : ''}. Fix: ${fix}`,
+  };
 }
 
 /**

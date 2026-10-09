@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -360,18 +360,23 @@ out=$(node) || { echo "$out"; exit 1; }
 echo 1.0.0
 `;
 
-async function runnerSlot(t: { after: (fn: () => Promise<void>) => void }, nodePin: string) {
+async function runnerSlot(
+  t: { after: (fn: () => Promise<void>) => void },
+  nodePin: string,
+  claudeBody = FAKE_RUNNER,
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-runner-launch-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
   const bin = path.join(root, 'bin');
   const repo = path.join(root, 'repo');
-  execFileSync('mkdir', ['-p', bin, repo]);
+  await mkdir(bin, { recursive: true });
+  await mkdir(repo, { recursive: true });
   for (const [name, body] of [
     ['node', FAKE_NODE],
     ['codex', FAKE_RUNNER],
-    ['claude', FAKE_RUNNER],
+    ['claude', claudeBody],
   ]) {
     await writeFile(path.join(bin, name), body);
     await chmod(path.join(bin, name), 0o755);
@@ -398,7 +403,10 @@ test('checkRunnerLaunch fails when the slot repo pins a node version the host la
   );
   for (const step of steps) {
     assert.match(step.detail, /No version is set for command node \| Consider adding/);
-    assert.match(step.detail, /Fix: install the toolchain version the repo pins/);
+    assert.match(
+      step.detail,
+      /; \.tool-versions pins nodejs 22\.22\.1\. Fix: install nodejs 22\.22\.1 on .*`asdf install`/,
+    );
   }
 });
 
@@ -423,4 +431,36 @@ test('checkRunnerLaunch names a runner binary missing from the worker PATH', asy
   const codex = steps.find((s) => s.name === 'runner.codex');
   assert.equal(codex?.status, 'fail');
   assert.match(codex.detail, /\(exit 127\).*Fix: install .*missing-codex/);
+});
+
+test('checkRunnerLaunch streams each probe and heartbeats while one is pending', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0', `#!/bin/sh\nsleep 1\necho 1.0.0\n`);
+  const progress: { name: string; detail: string }[] = [];
+  const steps = await checkRunnerLaunch(vars, {} as RawProjectJson, undefined, {
+    onProgress: (step) => progress.push({ name: step.name, detail: step.detail }),
+    heartbeatMs: 200,
+  });
+
+  assert.equal(steps.map((s) => s.status).join(), 'pass,pass,pass');
+  const claudeAt = progress.findIndex((p) => p.name === 'runner.claude');
+  assert.ok(progress.findIndex((p) => p.name === 'runner.node') < claudeAt);
+  assert.ok(
+    progress
+      .slice(0, claudeAt)
+      .some(
+        (p) => p.name === 'runner' && /^Still probing runner\.claude \(\d+ s\)$/.test(p.detail),
+      ),
+  );
+});
+
+test('checkRunnerLaunch reports an unbuildable worker env once', async (t) => {
+  const vars = await runnerSlot(t, '22.15.0');
+  const steps = await checkRunnerLaunch(vars, {
+    command_env: { set: { 'BAD-NAME': 'x' } },
+  } as RawProjectJson);
+
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0]!.name, 'runner');
+  assert.equal(steps[0]!.status, 'fail');
+  assert.match(steps[0]!.detail, /^Worker env cannot be built: .*BAD-NAME/);
 });
