@@ -9,6 +9,6 @@
     "An explicitly chosen slot that is still releasing waits up to 5 minutes instead of failing as busy",
     "Browser health checks no longer stop running screen recordings on the same Mac",
     "The publish package keeps evidence, cited media and recipe outputs instead of the whole artifacts folder, and fails fast over 1 GB",
-    "Every ssh, scp and rsync to a remote node now times out after 10 s instead of hanging"
+    "Remote dispatches to hosts like mini.local work again: ssh no longer fails at once with \"Undefined error: 0\""
   ]
 }
