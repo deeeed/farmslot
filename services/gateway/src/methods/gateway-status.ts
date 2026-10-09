@@ -221,15 +221,6 @@ export async function gatewayStatus(params?: GatewayStatusParams): Promise<Gatew
     canUpdate: true,
     operation: await readCheckoutUpdate(),
   };
-  if (
-    update.operation?.phase === 'error' &&
-    update.operation.targetSha.startsWith(update.localSha) &&
-    update.localSha
-  ) {
-    // A manual pull can complete the requested update after a refusal. The
-    // earlier error no longer describes the checkout and must not linger.
-    update.operation = undefined;
-  }
   const listen = getGatewayListenSnapshot();
   return {
     version: GATEWAY_VERSION,

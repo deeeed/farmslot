@@ -166,3 +166,20 @@ test('project schema accepts an opt-in host-pressure mode and rejects anything e
   assert.equal(validate(project({ mode: 'refuse', load1_critical_multiplier: 0 })), false);
   assert.equal(validate(project({ mode: 'refuse', unknown_knob: 1 })), false);
 });
+
+test('project schema accepts diff_view test patterns and rejects other shapes', async () => {
+  const schema = await readProjectSchema();
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const project = (diffView: unknown) => ({ name: 'schema-test', diff_view: diffView });
+
+  assert.equal(
+    validate(project({ test_patterns: ['**/test-utils/**'], use_default_test_patterns: false })),
+    true,
+    JSON.stringify(validate.errors),
+  );
+  assert.equal(validate(project({})), true, JSON.stringify(validate.errors));
+  assert.equal(validate(project({ test_patterns: '**/fixtures/**' })), false);
+  assert.equal(validate(project({ test_patterns: [1] })), false);
+  assert.equal(validate(project({ use_default_test_patterns: 'no' })), false);
+  assert.equal(validate(project({ test_patterns: [], extra: true })), false);
+});

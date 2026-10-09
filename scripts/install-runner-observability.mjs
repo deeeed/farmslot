@@ -739,6 +739,33 @@ function resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel }) {
   };
 }
 
+/**
+ * Whether the routed provider table (`[model_providers.<id>]`, copied from the
+ * operator config) says it needs no OpenAI auth, so codex-home works without auth.json.
+ */
+function routedProviderNeedsNoOpenAiAuth(routing) {
+  const { providerId } = rootTomlModelProvider(routing);
+  if (!providerId) return false;
+  const lines = routing.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  let inBaseTable = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headers.has(index)) {
+      const name = tomlSectionName(lines[index]);
+      inBaseTable =
+        sectionBelongsToProvider(name, providerId) && tomlDottedParts(name ?? '').length === 2;
+      continue;
+    }
+    if (inBaseTable && /^\s*requires_openai_auth\s*=\s*false\s*(#.*)?$/.test(lines[index]))
+      return true;
+  }
+  return false;
+}
+
+// The launch uses codex-home only when it holds auth.json or this marker; without
+// either it falls back to the global ~/.codex, where Farmslot hooks are disabled.
+const CODEX_HOME_PROVIDER_AUTH_MARKER = '.farmslot-provider-auth';
+
 async function bootstrapCodexHome({
   repoPath,
   runtimeDir,
@@ -796,6 +823,10 @@ async function bootstrapCodexHome({
   const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
   fs.chmodSync(configPath, 0o600);
+  // Cleared first: a failed credential bind below must not leave an old marker
+  // telling the launch this home is usable.
+  const providerAuthMarker = path.join(codexHomeDir, CODEX_HOME_PROVIDER_AUTH_MARKER);
+  fs.rmSync(providerAuthMarker, { force: true });
   const resolved = await resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel });
   const destAuth = path.join(codexHomeDir, 'auth.json');
   const requireSource =
@@ -808,6 +839,11 @@ async function bootstrapCodexHome({
     requireSource,
     label: resolved.label || accountLabel || null,
   });
+  // A provider routed without OpenAI auth (e.g. codex-lb) leaves no auth.json to
+  // link, yet the isolated home is complete. Mark it so the launch still uses it.
+  if (routing && routedProviderNeedsNoOpenAiAuth(routing)) {
+    fs.writeFileSync(providerAuthMarker, `${nextProviderId}\n`);
+  }
   return { codexHomeDir, resolvedAuth: resolved };
 }
 
