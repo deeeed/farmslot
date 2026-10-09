@@ -34,10 +34,13 @@ mock.module('../fleet/state.js', {
   },
 });
 
+// Runs a test registers by id; every other lookup finds none.
+const runs = new Map<string, unknown>();
+
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRunStore,
-    getRun: () => undefined,
+    getRun: (id: string) => runs.get(id),
     listRuns: () => ({ runs: [] }),
   },
 });
@@ -160,6 +163,40 @@ test('with no ledger, manifest links ride in their own field and never as a verd
       { id: 'AC-2', evidence: ['artifacts/after.png'] },
     ]);
   } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a finished run whose slot no longer holds its task reads its recorded task directory', async () => {
+  // The slot fixture has no taskFile, as after a release; the run keeps the
+  // gateway's copy of its task directory, which run artifacts are served from.
+  const fixture = writeFixture(null);
+  const taskDir = path.join(fixture.root, '.task', 'dev', 'demo');
+  writeFileSync(path.join(taskDir, 'TASK.md'), '# Task\n');
+  writeFileSync(
+    path.join(taskDir, 'artifacts', 'evidence-manifest.json'),
+    JSON.stringify({ standalone: [{ label: 'Teardown', covers: ['ac1'], file: 'teardown.png' }] }),
+  );
+  runs.set('run-released', {
+    id: 'run-released',
+    flowType: 'dev',
+    taskFile: path.join(taskDir, 'TASK.md'),
+  });
+  try {
+    const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
+    assert.equal(result.acceptanceCriteria?.length, 3);
+    assert.deepEqual(result.acceptanceEvidenceLinks, [
+      { id: 'AC-1', evidence: ['artifacts/teardown.png'] },
+    ]);
+    assert.equal(result.structured?.totalSteps, 2, 'the checklist reads from the same copy');
+
+    await assert.rejects(
+      taskProgress({ slotId: 'slot-acceptance', runId: 'run-unknown' }),
+      /No task file for slot slot-acceptance/,
+      'a run with no recorded copy still says why',
+    );
+  } finally {
+    runs.delete('run-released');
     rmSync(fixture.root, { recursive: true, force: true });
   }
 });

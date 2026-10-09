@@ -19,7 +19,12 @@ import {
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
-import { type SlotLocality, slotReadFile } from '../core/slot-io.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  slotFileExists,
+  type SlotLocality,
+  slotReadFile,
+} from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
@@ -60,7 +65,11 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   }
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === params.slotId);
-  if (!slot && !params.taskFile) throw new Error(`No task file for slot ${params.slotId}`);
+  if (!params.taskFile && !slot?.taskFile) {
+    const recorded = params.runId ? await recordedRunProgress(params.slotId, params.runId) : null;
+    if (recorded) return recorded;
+    throw new Error(`No task file for slot ${params.slotId}`);
+  }
 
   if (params.taskFile) {
     const vars = await loadSlotVars(params.slotId);
@@ -145,6 +154,32 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
   await attachAcceptanceStatus(vars, effectiveMdPath, result);
 
+  return result;
+}
+
+/**
+ * Progress for a run whose slot no longer holds its task (released after the run
+ * finished), read from the run's recorded task directory on the gateway: the copy
+ * run artifacts are served from. Same parse, operations and acceptance read as a
+ * live slot. Null when the run has no recorded copy.
+ */
+async function recordedRunProgress(
+  slotId: string,
+  runId: string,
+): Promise<TaskProgressResult | null> {
+  const run = getRun(runId);
+  if (!run?.taskFile || !(await slotFileExists(ORCHESTRATOR_LOCALITY, run.taskFile))) return null;
+  const io = ORCHESTRATOR_LOCALITY;
+  const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, run.taskFile);
+  const markdown = await slotReadFile(io, effectiveMdPath);
+  const result: TaskProgressResult = { slotId, markdown };
+  const schema = generateTaskSchema(markdown, run.flowType);
+  if (schema.phases.length > 0) {
+    result.structured = joinSchemaWithMarkdown(schema, markdown);
+    await attachSubtaskProgress(io, effectiveMdPath, run.flowType, result.structured);
+    await attachOperations(io, effectiveMdPath, result.structured);
+  }
+  await attachAcceptanceStatus(io, effectiveMdPath, result);
   return result;
 }
 

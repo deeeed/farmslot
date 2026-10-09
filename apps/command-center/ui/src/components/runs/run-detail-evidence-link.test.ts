@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
-import { acceptanceEvidenceRows } from '../progress-tracker/acceptance-panel.js';
+import {
+  acceptanceEvidenceRows,
+  runAcceptanceEvidenceRows,
+} from '../progress-tracker/acceptance-panel.js';
 
 import {
   acceptanceEvidenceSelection,
@@ -158,4 +161,35 @@ test('an AC link waits for the read that carries its criterion instead of fallin
   assert.deepEqual(resolve(true), { pending: true });
   const settled = selected(resolve(false)); // once loaded it falls back
   assert.equal(settled.scope, RUN_OUTPUT_SCOPE);
+});
+
+test('a finished run reopens an AC link from the progress read of its recorded task directory', () => {
+  // task.progress for a released slot: registered criteria and manifest links, no ledger.
+  const progress = {
+    acceptanceCriteria: [{ id: 'AC-1', text: 'Every order type places an order' }],
+    acceptanceEvidenceLinks: [
+      {
+        id: 'AC-1',
+        evidence: [listed.path, 'artifacts/recipe-run-attempt-1/teardown-final-state.png'],
+      },
+    ],
+  };
+  const restored = selected(
+    resolveEvidenceLightboxLink({
+      path: 'artifacts/recipe-run-attempt-1/teardown-final-state.png',
+      criterionId: 'AC-1',
+      acceptanceRows: runAcceptanceEvidenceRows(progress).map(({ view, evidence }) => ({
+        id: view.id,
+        text: view.text,
+        evidence,
+      })),
+      runId: 'run-1',
+      familyId: 'family-1',
+      runArtifacts,
+      artifactUrl,
+      progress: { loaded: true, runActive: false },
+    }),
+  );
+  assert.equal(restored.scope, 'AC-1 evidence');
+  assert.equal(restored.index, 1);
 });
