@@ -6,6 +6,7 @@ import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
+import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   invalidateArtifactTextCache,
@@ -23,9 +24,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
   try {
     const vars = await loadSlotVars(run.slotId);
     const pv = await loadProjectVarsOrNull(run.project, 'run recovery', run.id);
-    const taskDirName = pv
-      ? resolveProjectTaskDirName(pv.projectJson)
-      : DEFAULT_TASK_DIR;
+    const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
     const taskDir = path.dirname(run.taskFile);
     const taskFolderId = path.basename(taskDir);
@@ -56,7 +55,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     } else {
       const sshTarget = vars.sshTarget;
       const mkdirRes = await execLocal(
-        `ssh ${shellQuote(sshTarget)} ${shellQuote(`mkdir -p ${shellQuote(workerTaskAbs)}`)}`,
+        `ssh ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(sshTarget)} ${shellQuote(`mkdir -p ${shellQuote(workerTaskAbs)}`)}`,
       );
       if (mkdirRes.exitCode !== 0) {
         throw new Error(
@@ -64,7 +63,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
         );
       }
       const scpRes = await execLocal(
-        `scp -q ${shellQuote(run.taskFile)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/TASK.md`)}`,
+        `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(run.taskFile)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/TASK.md`)}`,
       );
       if (scpRes.exitCode !== 0) {
         throw new Error(
@@ -86,7 +85,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
         // worker-to-gateway release copies where gateway-owned outputs must
         // not be overwritten.
         const rsyncRes = await execLocal(
-          `rsync -az ${shellQuote(`${localDir}/`)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
+          `rsync -az ${RSYNC_SSH_SHELL_OPTION} ${shellQuote(`${localDir}/`)} ${shellQuote(`${sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
         );
         if (rsyncRes.exitCode !== 0) {
           throw new Error(

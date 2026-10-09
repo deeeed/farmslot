@@ -43,6 +43,7 @@ import {
   resolveProjectTaskDirName,
   updateSlotStatus,
 } from '../../core/index.js';
+import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
@@ -1512,7 +1513,9 @@ export async function dispatchExecute(
     await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
   } else {
     await execOnSlot(vars, `mkdir -p '${workerTaskAbs}'`);
-    await execLocal(`scp -q '${taskFilePath}' '${vars.sshTarget}:${workerTaskAbs}/TASK.md'`);
+    await execLocal(
+      `scp -q ${SSH_CONNECT_SHELL_OPTIONS} '${taskFilePath}' '${vars.sshTarget}:${workerTaskAbs}/TASK.md'`,
+    );
   }
   step('copy', `TASK.md copied to ${workerTaskDir}/TASK.md`);
   for (const sidecar of await copyPreparedTaskRootSidecars({
