@@ -83,6 +83,12 @@ export interface SlotStatus {
   agent: SlotAgent;
   enabled: boolean;
   dispatchable: boolean;
+  /**
+   * Why prepare cannot check out the project's default branch in this repo
+   * (see `defaultBranchRepoBlocker`), probed at fleet refresh. Dispatch never
+   * selects a slot that carries one.
+   */
+  repoBlocker?: string;
   /** True when this slot id no longer resolves in live pool JSONs — a status-file ghost. Never prepare/dispatch it. */
   missingFromPool?: boolean;
   lifecycle: SlotLifecycle;

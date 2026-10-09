@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The review launch handshake fails fast on any Codex selection screen it doesn't know (for example "Hooks need review", footer "enter confirm · esc skip") instead of waiting it out and reporting the launch as started.
+- `scripts/review-terminal.cjs` answers Codex 0.162's "Folder access" screen for a review workspace with option 1, Open restricted, once per launch. Codex shows it on every launch in a folder declared untrusted and saves nothing when you choose it, so no config can skip it. Any other prompt, including Trust, or a changed screen fails the launch with the pane excerpt and no key is sent. The launch receipt carries `folderAccess: "restricted"` when it answered.
 
 ## 0.17.1 - 2026-10-09
 

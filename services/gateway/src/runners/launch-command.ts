@@ -231,6 +231,47 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
+// Codex's "core" set plus locale and terminal; none of them carries a secret.
+const BASIC_SHELL_ENV = [
+  'HOME',
+  'LOGNAME',
+  'PATH',
+  'SHELL',
+  'USER',
+  'USERNAME',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+];
+
+/**
+ * `shell_environment_policy` as an exact allowlist. Codex merges a `-c` table into
+ * the node's, so `exclude` and `include_only` are spelled out to replace the node's
+ * arrays, and `include_only` also drops any variable the node's own `set` adds.
+ * `ZDOTDIR=/var/empty` stops zsh re-exporting secrets from the operator's
+ * ~/.zshenv and ~/.zshrc.
+ */
+export function codexShellEnvironmentPolicy(names: string[]): string {
+  // Codex reads include_only entries as globs: only plain identifiers may pass.
+  const refused = names.filter(
+    (name) => SECRET_ENV_NAME.test(name) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+  );
+  if (refused.length) {
+    console.warn(
+      `[launch] names kept out of Codex tool shells (secret-like or not a plain name): ${refused.join(', ')}`,
+    );
+  }
+  const allowed = [
+    ...new Set([...BASIC_SHELL_ENV, ...names.filter((name) => !refused.includes(name)), 'ZDOTDIR']),
+  ];
+  return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
+}
+
 export function buildInteractiveRefinementRunnerCommand(options: {
   runner: string;
   model?: string | null;
@@ -241,6 +282,16 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   effort?: string;
   trustWorkspace?: boolean;
   workspaceTrust?: 'trusted' | 'untrusted';
+  /** Codex only: no startup update check, whose modal would block an unattended launch. */
+  skipUpdateCheck?: boolean;
+  /** Codex only: hooks off, so the operator's own hooks neither run nor ask for review. */
+  disableHooks?: boolean;
+  /**
+   * Codex only: tool shells see exactly these environment names (plus a few
+   * non-secret basics), with their values from the launch environment, whatever the
+   * node's shell_environment_policy says. Secret-like names are refused.
+   */
+  shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
 }): string | null {
@@ -266,6 +317,11 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       codexSafety,
       options.workspaceTrust
         ? `--config ${shellQuote(`projects={${JSON.stringify(options.repo)}={trust_level=${JSON.stringify(options.workspaceTrust)}}}`)}`
+        : '',
+      options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
+      options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
+      options.shellEnvironmentNames
+        ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
         : '',
       modelFlag.trim(),
       options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
@@ -390,7 +446,9 @@ export function buildRunnerSessionReloadCommand(
     const workerConfigFlags = codexWorkerConfigFlags();
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
-    const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent');
+    const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent', {
+      resumeSessionId: sessionId,
+    });
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
         withRunnerObservabilityInstall(
@@ -448,20 +506,32 @@ export function assertRunnerLaunchPrerequisites(
   // launch time as a missing-binary error rather than here.
 }
 
-export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string {
+export function buildCodexHomeSetup(
+  repo: string,
+  runtimeDir = '.agent',
+  options: { resumeSessionId?: string } = {},
+): string {
   const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
   // Codex refuses to start when CODEX_HOME points at a non-existent dir ("Error
   // finding codex home"), which leaves dispatch with an empty pane and a false
   // ready-timeout. The observability install (bootstrapCodexHome) provisions this
   // isolated home (auth + isolated config.toml with hook-trust + hooks.json) so the
   // host's ~/.codex config is never written. Use it ONLY when that install actually
-  // provisioned it (auth present); otherwise fall back to the global ~/.codex with no
-  // farmslot observability, so a codex worker launches regardless. We never create or
-  // write the home here — that keeps the global config clean and avoids a half-built
-  // home that codex would reject.
+  // provisioned it: auth.json linked, or the install's provider-auth marker when the
+  // routed provider needs no OpenAI auth (codex-lb has no auth.json to link).
+  // Otherwise fall back to the global ~/.codex with no farmslot observability, so a
+  // codex worker launches regardless. We never create or write the home here — that
+  // keeps the global config clean and avoids a half-built home that codex would reject.
+  const provisioned = `{ [ -e ${shellQuote(`${codexHome}/auth.json`)} ] || [ -e ${shellQuote(`${codexHome}/.farmslot-provider-auth`)} ]; }`;
+  // Codex resumes only from $CODEX_HOME/sessions. A session started on the global
+  // home (before its node's codex-home was usable) keeps resuming there.
+  const rollout = options.resumeSessionId ? shellQuote(`*${options.resumeSessionId}*.jsonl`) : null;
+  const resumable = rollout
+    ? ` && { find ${shellQuote(`${codexHome}/sessions`)} -name ${rollout} 2>/dev/null | grep -q . || ! find "$HOME/.codex/sessions" -name ${rollout} 2>/dev/null | grep -q .; }`
+    : '';
   return (
-    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
-    `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
+    `if ${provisioned}${resumable}; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
+    `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not selected; using global ~/.codex without observability" >&2; fi`
   );
 }
 

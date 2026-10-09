@@ -7,12 +7,12 @@ import test from 'node:test';
 
 import { updateCheckout } from '../update-checkout.mjs';
 
-async function fixture(t) {
+async function fixture(t, checkoutName = 'checkout') {
   const dir = await mkdtemp(join(tmpdir(), 'checkout-update-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const remote = join(dir, 'remote.git');
   const publisher = join(dir, 'publisher');
-  const root = join(dir, 'checkout');
+  const root = join(dir, checkoutName);
   const git = (cwd, ...args) =>
     execFileSync(
       'git',
@@ -70,7 +70,8 @@ test('updates a clean checkout and leaves FETCH_HEAD alone', async (t) => {
 });
 for (const kind of ['dirty', 'branch', 'diverged', 'stale-target', 'dependencies']) {
   test(`refuses ${kind} without changing the checkout`, async (t) => {
-    const f = await fixture(t);
+    // The dependency refusal quotes the checkout path into a command; an apostrophe must survive.
+    const f = await fixture(t, kind === 'dependencies' ? "Arthur's checkout" : 'checkout');
     let target = await f.publish(
       kind === 'dependencies' ? 'package.json' : 'README.md',
       kind === 'dependencies' ? '{"dependencies":{"example":"1.0.0"}}' : 'after\n',
@@ -89,6 +90,16 @@ for (const kind of ['dirty', 'branch', 'diverged', 'stale-target', 'dependencies
     assert.equal(f.git(f.root, 'rev-parse', 'HEAD'), before);
     if (kind === 'dirty')
       assert.equal(await readFile(join(f.root, 'local.txt'), 'utf8'), 'keep this');
+    if (kind === 'dependencies') {
+      const command = `cd '${dirname(f.root)}/Arthur'\\''s checkout' && git merge --ff-only --no-overwrite-ignore ${target.slice(0, 12)} && yarn install --immutable`;
+      assert.ok(result.message.endsWith(command), result.message);
+      // Run the suggested update as the operator would; the install is out of scope here.
+      execFileSync('bash', ['-c', command.replace(/ && yarn install --immutable$/, '')], {
+        cwd: tmpdir(),
+        stdio: 'pipe',
+      });
+      assert.equal(f.git(f.root, 'rev-parse', 'HEAD'), target);
+    }
   });
 }
 

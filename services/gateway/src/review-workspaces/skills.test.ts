@@ -161,7 +161,7 @@ test('symlink escapes, entry traversal and installer commands are refused before
   await symlink(f.library, path.join(f.skill, 'external-library'));
   await assert.rejects(
     collectReviewWorkspaceSupport(f.project, f.config, { env: f.env }),
-    /refuses symlinked/,
+    /refuses symlink .*external-library: it resolves to .*library, outside /,
   );
   await rm(path.join(f.skill, 'external-library'));
   await assert.rejects(
@@ -181,6 +181,18 @@ test('symlink escapes, entry traversal and installer commands are refused before
     ),
     /compiled Node entry/,
   );
+});
+
+test('an in-root library link is frozen as its target content', async (t) => {
+  const f = await fixture(t);
+  await symlink('policy.md', path.join(f.library, 'policy.mjs'));
+  const support = await collectReviewWorkspaceSupport(f.project, f.config, { env: f.env });
+  const linked = support.files.find((file) => file.relativePath === 'libraries/team/policy.mjs');
+  assert.equal(
+    Buffer.from(linked?.contentBase64 ?? '', 'base64').toString(),
+    'Library version one.\n',
+  );
+  verifyReviewWorkspaceSupport(support, support.manifest.sha256);
 });
 
 test('support configuration cannot redirect runtime loading or overlap writable outputs', async (t) => {

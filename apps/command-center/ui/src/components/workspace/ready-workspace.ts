@@ -18,6 +18,7 @@ import '../reviews/review-loop-timeline.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
@@ -309,7 +310,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       evidenceCount: this._evidenceArtifacts(payload).length,
       qualityCount: this._qualityItemCount(payload),
       inputCount: this._inputItemCount(payload),
-      diffFileCount: this._diffFiles.length,
+      diffCount: formatDiffFileCount(this._diffSplit()),
       setActiveTab: (tab) => this._setActiveTab(tab),
     });
   }
@@ -357,6 +358,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       diffLoading: this._diffLoading,
       diffError: this._diffError,
       diffFiles: this._diffFiles,
+      testFilter: this._testFilter,
       selectedFile: this._selectedFile,
       recovering: this._isRecovering,
       fileDiffLoading: this._fileDiffLoading,

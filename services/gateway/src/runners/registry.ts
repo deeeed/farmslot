@@ -3645,9 +3645,13 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
+    // Once this call has sent the prompt, a runner at work is working on it. Codex
+    // scrolls the echoed prompt out of the tail and only names files it read, so
+    // waiting for the instruction text to show would resend into its queue.
     const immediatePaneClaimsTaskActive =
       runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner) ||
-      runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner);
+      runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner) ||
+      (sentAttempts > 0 && runnerPaneShowsCurrentInteractiveProgress(immediatePane, runner));
     if (immediatePaneClaimsTaskActive) {
       if (requirePromptDigest) {
         await new Promise((resolve) =>
@@ -3701,7 +3705,8 @@ export async function sendRunnerPostLaunchPrompt(
       }
       const preSendPaneClaimsTaskActive =
         runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
-        runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
+        runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner) ||
+        (sentAttempts > 0 && runnerPaneShowsCurrentInteractiveProgress(preSendPane, runner));
       // The previous attempt's prompt may have been accepted just after its verify
       // window closed. Pane progress prevents a duplicate transport send, but an
       // exact-ack caller must keep waiting for structured evidence.

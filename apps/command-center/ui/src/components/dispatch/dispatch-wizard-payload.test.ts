@@ -5,6 +5,7 @@ import test from 'node:test';
 import type { DispatchQueueAddParams, RunCreateParams } from '@farmslot/protocol';
 
 import {
+  buildDispatchCandidatesParams,
   buildDispatchQueueAddParams,
   buildRunCreateParams,
   type DispatchPayloadDraft,
@@ -305,5 +306,52 @@ test('Review workspace and QA profile payloads stay distinct for create and queu
     assert.deepEqual(qa.qaInputs, { scope: { since: 'yesterday' }, recipes: ['smoke'] });
     assert.equal(qa.reviewWorkspaceTarget, undefined);
     assert.equal(qa.reviewValidationDepth, undefined);
+  }
+});
+
+test('candidate requests carry Skip Prepare so repo-blocked slots stay selectable', () => {
+  const draft = {
+    flowType: 'qa' as const,
+    machines: ['macpro'],
+    targetBranch: undefined,
+    ticketOrPr: 'MetaMask/metamask-mobile#1',
+    app: undefined,
+    prepareProfile: undefined,
+    comparison: undefined,
+    skipPrepare: true,
+  };
+  assert.equal(buildDispatchCandidatesParams(draft).skipPrepare, true);
+  assert.equal(
+    'skipPrepare' in buildDispatchCandidatesParams({ ...draft, skipPrepare: false }),
+    false,
+  );
+});
+
+test('candidates, run.create and queue agree on the prepare profile under Skip Prepare', () => {
+  for (const skipPrepare of [true, false]) {
+    const draft: DispatchPayloadDraft = {
+      ...baseDraft,
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'DEV-1',
+      mode: 'autonomous',
+      devInteractiveProfile: 'lightweight',
+      skipPrepare,
+      prepareProfile: 'sandbox-companion',
+    };
+    const candidates = buildDispatchCandidatesParams({
+      flowType: draft.flowType,
+      machines: ['mini'],
+      targetBranch: undefined,
+      ticketOrPr: draft.ticketOrPr,
+      app: undefined,
+      prepareProfile: draft.prepareProfile,
+      comparison: undefined,
+      skipPrepare,
+    });
+    const expected = skipPrepare ? undefined : 'sandbox-companion';
+    assert.equal(candidates.prepareProfile, expected, `candidates skipPrepare=${skipPrepare}`);
+    assert.equal(buildRunCreateParams(draft).prepareProfile, expected);
+    assert.equal(buildDispatchQueueAddParams(draft).prepareProfile, expected);
   }
 });

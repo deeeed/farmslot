@@ -1,31 +1,14 @@
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import {
-  compileTestFileMatcher,
-  DEFAULT_TEST_FILE_MATCHER,
-  type TestFileMatcher,
-} from '@farmslot/protocol';
-
 import '../diff-viewer/diff-review.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  readHideTestsPref,
-  splitDiffFilesByKind,
-  subscribeHideTestsPref,
-  writeHideTestsPref,
-} from '../../utils/diff-test-filter.js';
+import { formatDiffFileCount, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { type DiffFileEntry, parseUnifiedDiff } from '../../utils/unified-diff.js';
 
-import { renderDiffKindControls } from './diff-kind-controls.js';
-
-interface DiffFileEntry {
-  path: string;
-  diff: string;
-  additions: number;
-  deletions: number;
-}
+import { DiffTestFilterController } from './diff-test-filter-controller.js';
 
 interface DiffTreeFolder {
   kind: 'folder';
@@ -45,46 +28,6 @@ interface DiffTreeFile {
 }
 
 type DiffTreeNode = DiffTreeFolder | DiffTreeFile;
-
-function parseUnifiedDiff(diffText: string): DiffFileEntry[] {
-  const lines = diffText.split('\n');
-  const files: DiffFileEntry[] = [];
-  let current: string[] = [];
-  let currentPath = '';
-  const flush = () => {
-    if (!current.length) return;
-    let additions = 0;
-    let deletions = 0;
-    for (const line of current) {
-      if (line.startsWith('+++') || line.startsWith('---')) continue;
-      if (line.startsWith('+')) additions += 1;
-      else if (line.startsWith('-')) deletions += 1;
-    }
-    files.push({
-      path: currentPath || `diff-${files.length + 1}`,
-      diff: current.join('\n'),
-      additions,
-      deletions,
-    });
-  };
-  for (const line of lines) {
-    if (line.startsWith('diff --git ')) {
-      flush();
-      current = [line];
-      const match = line.match(/^diff --git a\/(.*?) b\/(.*)$/);
-      currentPath = match?.[2] ?? match?.[1] ?? line.replace(/^diff --git\s+/, '');
-      continue;
-    }
-    if (!current.length && (line.startsWith('--- ') || line.startsWith('+++ '))) {
-      current = [line];
-      currentPath = line.replace(/^[-+]{3}\s+[ab]\//, '').trim();
-      continue;
-    }
-    if (current.length) current.push(line);
-  }
-  flush();
-  return files;
-}
 
 function groupSegments(pathValue: string): string[] {
   return pathValue.split('/').filter(Boolean);
@@ -169,35 +112,9 @@ export class DiffViewerModal extends LitElement {
   @state() private _loading = false;
   @state() private _error = '';
   @state() private _selectedPath = '';
-  @state() private _hideTests = readHideTestsPref();
-  private _unsubscribeHideTests: (() => void) | null = null;
-  private _matcherCache: { patterns: readonly string[] | null; matcher: TestFileMatcher } | null =
-    null;
-
-  override connectedCallback() {
-    super.connectedCallback();
-    this._hideTests = readHideTestsPref();
-    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
-      this._hideTests = hide;
-    });
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsubscribeHideTests?.();
-    this._unsubscribeHideTests = null;
-  }
-
-  private _testMatcher(): TestFileMatcher {
-    if (!this.testPatterns) return DEFAULT_TEST_FILE_MATCHER;
-    if (this._matcherCache?.patterns !== this.testPatterns) {
-      this._matcherCache = {
-        patterns: this.testPatterns,
-        matcher: compileTestFileMatcher(this.testPatterns),
-      };
-    }
-    return this._matcherCache.matcher;
-  }
+  private readonly _testFilter = new DiffTestFilterController(this, {
+    patterns: () => this.testPatterns,
+  });
 
   override updated(changed: Map<string, unknown>): void {
     if (!this.open && (changed.has('artifactUrl') || changed.has('diffText'))) {
@@ -290,19 +207,16 @@ export class DiffViewerModal extends LitElement {
     });
   }
 
-  private _toggleHideTests() {
-    writeHideTestsPref(!this._hideTests);
-  }
-
   override render() {
     if (!this.open) return nothing;
     const parsed = parseUnifiedDiff(this._loadedText);
     // No keepPath here: the modal auto-selects its first file, so pinning it
     // would make a test-only diff impossible to hide. The pane simply follows
     // the first visible file.
-    const split = splitDiffFilesByKind(parsed, this._hideTests, { matcher: this._testMatcher() });
+    const split = this._testFilter.split(parsed);
     const files = split.visible;
-    const selected = files.find((file) => file.path === this._selectedPath) ?? files[0];
+    const selectedPath = visibleDiffSelection(files, this._selectedPath);
+    const selected = files.find((file) => file.path === selectedPath);
     const tree = buildDiffTree(files);
     const total = files.reduce(
       (acc, file) => {
@@ -478,12 +392,9 @@ export class DiffViewerModal extends LitElement {
           <div class="dvm-header">
             <div class="dvm-title">${this.title}</div>
             <div class="dvm-stat">
-              ${renderDiffKindControls({
-                summary: split.summary,
-                hideTests: this._hideTests,
-                onToggle: () => this._toggleHideTests(),
-              })}
-              <span>${files.length} files</span><span class="dvm-add">+${total.additions}</span
+              ${this._testFilter.renderControls(split.summary)}
+              <span>${formatDiffFileCount(split)} files</span
+              ><span class="dvm-add">+${total.additions}</span
               ><span class="dvm-del">-${total.deletions}</span>
             </div>
             <button class="dvm-close" @click=${this._close}>Close</button>
