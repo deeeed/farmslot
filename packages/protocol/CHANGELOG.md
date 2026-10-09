@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `AcceptanceStatusSource` (`ledger` | `evidence-manifest`) and `AcceptanceEvidenceLink`; `TaskProgressResult.acceptanceSource` and `acceptanceEvidenceLinks` (optional) carry the run-detail fallback for a run with no acceptance ledger. Links are display-only and never a verdict.
 
 ## 0.35.0 - 2026-10-09
 
