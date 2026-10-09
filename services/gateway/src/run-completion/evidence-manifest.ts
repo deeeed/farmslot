@@ -194,7 +194,15 @@ export function validateEvidenceManifest(value: unknown): string[] {
   return issues;
 }
 
-export function normalizeEvidenceManifestArtifactPath(value: string): string | null {
+/**
+ * Task-dir relative `artifacts/...` path for a manifest file value, or null when it
+ * is not a local artifact path. `mediaOnly: false` keeps non-media files (logs,
+ * JSON traces) for readers that link evidence rather than embed it.
+ */
+export function normalizeEvidenceManifestArtifactPath(
+  value: string,
+  { mediaOnly = true }: { mediaOnly?: boolean } = {},
+): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return null;
@@ -205,7 +213,7 @@ export function normalizeEvidenceManifestArtifactPath(value: string): string | n
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
   const withoutArtifacts =
     segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
-  if (!withoutArtifacts || !EVIDENCE_MEDIA_EXT.test(withoutArtifacts)) return null;
+  if (!withoutArtifacts || (mediaOnly && !EVIDENCE_MEDIA_EXT.test(withoutArtifacts))) return null;
   return `artifacts/${withoutArtifacts}`;
 }
 
