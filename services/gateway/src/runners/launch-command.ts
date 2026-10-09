@@ -13,9 +13,14 @@ import {
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
 
-import type { loadSlotVars, RawPoolJson } from '../core/config.js';
-import { expandDispatchCmd, quoteRunnerArgValue } from '../core/hooks.js';
-import { withMachineEnv } from '../core/project-env.js';
+import type { loadSlotVars, ProjectVars, RawPoolJson, RawProjectJson } from '../core/config.js';
+import {
+  expandDispatchCmd,
+  expandTemplate,
+  quoteRunnerArgValue,
+  resolveEffectiveDomain,
+} from '../core/hooks.js';
+import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -29,6 +34,7 @@ import {
   runnerSessionReloadCapability,
   runnerSupportsInitialPromptArg,
   runnerSupportsInteractivePrompt,
+  WORKER_ENV_PREFIX,
 } from './registry.js';
 import {
   buildClaudeObservabilityFallbackCommand,
@@ -412,7 +418,7 @@ export function buildRunnerSessionReloadCommand(
     const modelFlag = runnerModelFlag(model);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
-    const claudePath = vars.claudePath || 'claude';
+    const claudePath = resolveClaudeBinary(vars.claudePath);
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
       claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     )}`;
@@ -594,6 +600,34 @@ function codexWorkerConfigFlags(): string {
 export function resolveCodexBinary(preferred?: string | null): string {
   if (preferred && preferred.trim()) return preferred.trim();
   return 'codex';
+}
+
+export function resolveClaudeBinary(preferred?: string | null): string {
+  if (preferred && preferred.trim()) return preferred.trim();
+  return 'claude';
+}
+
+/**
+ * The env every worker shell starts with: project `command_env` (with the
+ * run's or slot's domain overlay) around WORKER_ENV_PREFIX. Dispatch wraps its
+ * runner launch here and `slot check` its runner probes, so a probe resolves
+ * node and the runner exactly as the launch does.
+ */
+export function wrapWorkerShellCommand(
+  command: string,
+  context: {
+    projectJson: RawProjectJson;
+    vars: Awaited<ReturnType<typeof loadSlotVars>>;
+    projectVars?: ProjectVars;
+    runDomain?: string | null;
+  },
+): string {
+  const domain = resolveEffectiveDomain(context.runDomain, context.vars.domain);
+  return applyProjectCommandEnv(context.projectJson, `${WORKER_ENV_PREFIX} && ${command}`, {
+    ...(domain ? { domain } : {}),
+    expandDomainValue: (value) =>
+      expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
+  });
 }
 
 /**
@@ -870,7 +904,7 @@ export function buildLaunchCommand(
         ),
       );
     }
-    const claudePath = vars.claudePath || 'claude';
+    const claudePath = resolveClaudeBinary(vars.claudePath);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
     return withRecipeTrust(
