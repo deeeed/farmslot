@@ -11,7 +11,12 @@ import {
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
-import { JsonArtifactWriter, JsonSummaryWriter, JsonTraceWriter } from '../node/writers.js';
+import {
+  JsonArtifactWriter,
+  JsonSummaryWriter,
+  JsonTraceWriter,
+  summarizeTraceCounts,
+} from '../node/writers.js';
 import {
   createCaptureHelperVideoRecorder,
   errorMessage,
@@ -525,19 +530,10 @@ class DefaultRecipeRunner implements RecipeRunner {
     const endedAt = new Date();
     const tracePath = await traceWriter.write();
     const trace = traceWriter.list();
-    const causeCounts = {
-      subject: trace.filter((entry) => !entry.ok && entry.cause_class === 'subject').length,
-      harness: trace.filter((entry) => !entry.ok && entry.cause_class === 'harness').length,
-      environment: trace.filter((entry) => !entry.ok && entry.cause_class === 'environment').length,
-      unknown: trace.filter((entry) => !entry.ok && entry.cause_class === 'unknown').length,
-    };
     const summary: SummaryDocument = {
       invocationDigest: digestRecipeDocument(invocation),
       status,
-      total: trace.length,
-      passed: trace.filter((entry) => entry.ok).length,
-      failed: trace.filter((entry) => !entry.ok).length,
-      cause_counts: causeCounts,
+      ...summarizeTraceCounts(trace),
       startedAt: startedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       durationMs: endedAt.getTime() - startedAt.getTime(),

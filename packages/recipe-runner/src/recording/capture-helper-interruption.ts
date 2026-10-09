@@ -1,8 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-import type { RecipeRecordingInterruption } from '@farmslot/protocol';
+import { type RecipeRecordingInterruption, recipeTraceEntries } from '@farmslot/protocol';
 
 import type { RecipeRunCaptureInterruption, RecipeRunResult, TraceEntry } from '../core/types.js';
+import { summarizeTraceCounts } from '../node/writers.js';
 
 /** capture-helper (0.3.1+) exits with this status after finalizing a partial recording. */
 export const CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT = 3;
@@ -89,22 +90,18 @@ export async function recordCaptureInterruptionInPackage(
   run: RecipeRunCaptureInterruption,
   startedAt: Date,
 ): Promise<void> {
-  const trace = JSON.parse(await readFile(result.tracePath, 'utf8')) as
-    | TraceEntry[]
-    | { entries: TraceEntry[] };
-  const entries = Array.isArray(trace) ? trace : trace.entries;
+  const trace: unknown = JSON.parse(await readFile(result.tracePath, 'utf8'));
+  const entries = recipeTraceEntries(trace) as TraceEntry[] | undefined;
+  if (!entries) throw new Error(`Run trace has no entries: ${result.tracePath}`);
   entries.push(captureInterruptedTraceEntry(run, startedAt));
   await writeJson(result.tracePath, trace);
 
   const summary = JSON.parse(await readFile(result.summaryPath, 'utf8'));
-  summary.status = 'fail';
-  summary.total = entries.length;
-  summary.failed = entries.filter((entry) => !entry.ok).length;
-  summary.cause_counts = { ...summary.cause_counts };
-  summary.cause_counts.environment = entries.filter(
-    (entry) => !entry.ok && entry.cause_class === 'environment',
-  ).length;
-  await writeJson(result.summaryPath, summary);
+  await writeJson(result.summaryPath, {
+    ...summary,
+    status: 'fail',
+    ...summarizeTraceCounts(entries),
+  });
 
   const manifest = JSON.parse(await readFile(result.artifactManifestPath, 'utf8'));
   manifest.runStatus = 'fail';

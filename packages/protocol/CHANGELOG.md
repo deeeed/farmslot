@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `RecipeRecordingInterruption` (`frames`, `mediaTimeMs`, `cause`) and `RecipeArtifactManifestEntry.interruption` (optional): a video kept after its recording stream stopped early holds the frames captured until then.
+- `RecipeRecordingInterruption` (`frames`, `mediaTimeMs`, `cause`) and `RecipeArtifactManifestEntry.interruption` (optional): a video kept after its recording stream stopped early holds the frames captured until then. `recipeTraceEntries(trace)` reads a trace.json document's entries in either shape.
 - New `@farmslot/protocol/node/loopback-host` subpath exporting `isLoopbackHost`, the single loopback-host check shared by the gateway's bind/auth checks and the CLI.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

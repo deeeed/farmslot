@@ -12,7 +12,11 @@ import type {
   RecipeNodeEvent,
   RecipeRunOptions,
 } from '@farmslot/adapter-sdk';
-import type { RecipeActionManifestDocument, RecipeExecutionPlan } from '@farmslot/protocol';
+import {
+  type RecipeActionManifestDocument,
+  type RecipeExecutionPlan,
+  recipeTraceEntries,
+} from '@farmslot/protocol';
 import {
   CAPTURE_INTERRUPTED,
   type RecipeLibrarySource,
@@ -813,16 +817,8 @@ export async function prepareHeal(
 // Failure text to classify. A capture interruption is reported on its own (captureInterruptedViolation).
 function readRunFailureText(result: RecipeRunResult): string {
   try {
-    type Entry = { ok?: boolean; error?: unknown; error_code?: unknown };
-    // A runner without provenance writes the entries as a bare array.
-    const trace = JSON.parse(fs.readFileSync(result.tracePath, 'utf8')) as
-      | Entry[]
-      | { entries?: Entry[] };
-    const entries = Array.isArray(trace)
-      ? trace
-      : Array.isArray(trace.entries)
-        ? trace.entries
-        : [];
+    const entries = (recipeTraceEntries(JSON.parse(fs.readFileSync(result.tracePath, 'utf8'))) ??
+      []) as Array<{ ok?: boolean; error?: unknown; error_code?: unknown }>;
     return entries
       .filter(
         (entry) =>

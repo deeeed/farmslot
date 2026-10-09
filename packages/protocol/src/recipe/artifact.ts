@@ -467,7 +467,7 @@ function validateRunEvidence(
       'summary.json must be an object.',
     );
   }
-  const entries = traceEntries(trace);
+  const entries = recipeTraceEntries(trace);
   if (!entries) {
     addFinding(
       ctx,
@@ -647,7 +647,7 @@ function validateTraceConsistency(
   documents: ReadonlyMap<string, unknown>,
   manifest: unknown,
 ): void {
-  const entries = traceEntries(trace);
+  const entries = recipeTraceEntries(trace);
   if (!entries) {
     addFinding(
       ctx,
@@ -814,7 +814,8 @@ function traceIntentMatches(authored: string, retained: unknown): boolean {
   return retained.endsWith(suffix) && retained.length - suffix.length >= cursor;
 }
 
-function traceEntries(trace: unknown): unknown[] | undefined {
+/** A trace.json document's entries: written as `{ metadata, entries }` or, without runner provenance, a bare array. */
+export function recipeTraceEntries(trace: unknown): unknown[] | undefined {
   if (Array.isArray(trace)) return trace;
   return isRecord(trace) && Array.isArray(trace.entries) ? trace.entries : undefined;
 }

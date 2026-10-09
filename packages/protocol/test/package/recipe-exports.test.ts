@@ -35,6 +35,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'normalizeRecipeRef',
     'officialRecipeActionCapabilities',
     'recipeProtocolSchemaUrlForVersion',
+    'recipeTraceEntries',
     'resolvedRecipeArtifactPath',
     'validateArtifactManifestDocument',
     'validateRecipeActionManifestDocument',
