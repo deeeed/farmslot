@@ -37,6 +37,10 @@ export const WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES = [
   'recipe-harness/source',
 ] as const;
 
+// Directory names skipped at any depth: dependency installs and VCS metadata,
+// the same pair node-support skips when it collects support files.
+export const ARTIFACT_COPY_EXCLUDED_DIR_NAMES = ['node_modules', '.git'] as const;
+
 export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
   return (
     (GATEWAY_OWNED_DIFF_ARTIFACTS as readonly string[]).includes(name) ||
