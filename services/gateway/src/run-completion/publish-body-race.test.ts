@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
+import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import type { ExecResult } from '../core/exec.js';
+import { farmslotRoot } from '../fleet/state.js';
 import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
@@ -297,14 +300,31 @@ test('the gate shows, publishes and records the current render while approval ke
   assert.equal(recorded.prPackage?.draftBody, 'Reviewed body A.');
 });
 
-/** A local `gh` on PATH that copies every posted PR body to `capture`; nothing reaches GitHub. */
+/**
+ * A local `gh` first on PATH: it copies every posted PR body to `capture`,
+ * logs each call, answers `gh api` with a 404 and refuses anything but
+ * `pr edit`. The test asserts it is the `gh` the gateway resolves, so no call
+ * can reach GitHub.
+ */
 async function installGhCapture(t: import('node:test').TestContext) {
   const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-gh-capture-'));
   const capture = path.join(dir, 'posted-body.md');
+  const calls = path.join(dir, 'calls.log');
   const gh = path.join(dir, 'gh');
   await writeFile(
     gh,
-    `#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = --body-file ]; then cp "$2" '${capture}'; exit $?; fi\n  shift\ndone\nexit 0\n`,
+    [
+      '#!/bin/sh',
+      `echo "$*" >> '${calls}'`,
+      `if [ "$1" = api ]; then printf 'HTTP/2.0 404 Not Found\\r\\n\\r\\n{}'; exit 0; fi`,
+      'if [ "$1" != pr ] || [ "$2" != edit ]; then exit 97; fi',
+      'while [ "$#" -gt 0 ]; do',
+      `  if [ "$1" = --body-file ]; then cp "$2" '${capture}'; exit $?; fi`,
+      '  shift',
+      'done',
+      'exit 0',
+      '',
+    ].join('\n'),
   );
   await chmod(gh, 0o700);
   const originalPath = process.env.PATH;
@@ -313,7 +333,9 @@ async function installGhCapture(t: import('node:test').TestContext) {
     process.env.PATH = originalPath;
     await rm(dir, { recursive: true, force: true });
   });
-  return capture;
+  const resolved = execFileSync('sh', ['-c', 'command -v gh'], { encoding: 'utf-8' }).trim();
+  assert.equal(resolved, gh);
+  return { capture, calls };
 }
 
 function storedRunWithGate(t: import('node:test').TestContext, payload: unknown) {
@@ -344,7 +366,7 @@ function storedRunWithGate(t: import('node:test').TestContext, payload: unknown)
 }
 
 test('the recorded description is the body publication posted, without deselected evidence', async (t) => {
-  const capture = await installGhCapture(t);
+  const { capture } = await installGhCapture(t);
   const reviewed = packageWith(
     'feat: implement PROJ-1',
     [
@@ -399,7 +421,7 @@ test('the recorded description is the body publication posted, without deselecte
 });
 
 test('a publish retry that posts nothing leaves the recorded description and its time alone', async (t) => {
-  const capture = await installGhCapture(t);
+  const { capture } = await installGhCapture(t);
   const reviewed = packageWith('feat: implement PROJ-1', 'Reviewed body A.');
   const record = {
     title: 'feat: implement PROJ-1',
@@ -433,4 +455,52 @@ test('a publish retry that posts nothing leaves the recorded description and its
   assert.deepEqual(payload.currentDescription, record);
   assert.equal(payload.prPackage?.packageHash, reviewed.packageHash);
   await assert.rejects(readFile(capture, 'utf-8'), { code: 'ENOENT' });
+});
+
+test('a successful publication hands the posted body to the published-description record', async (t) => {
+  const { capture, calls } = await installGhCapture(t);
+  const project = `.publish-body-test-${process.pid}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({ name: project, default_branch: 'main', ci: { repo: 'owner/repo' } }),
+  );
+  invalidateProjectVarsCache(project);
+  t.after(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
+  // Publication ticks the author checklist, so what it posts is not the approved body.
+  const reviewed = packageWith(
+    'feat: implement PROJ-1',
+    '## **Description**\n\nFix the order form.\n\n- [ ] I tested this\n',
+  );
+  const run = storedRunWithGate(t, { kind: 'ready', prPackage: reviewed });
+  updateRun(run.id, { project, prNumber: 4242 });
+
+  const result = await publishCompletionPackage(run.id, reviewed, { publicationTarget: 'draft' });
+  const sent = await readFile(capture, 'utf-8');
+  assert.match(sent, /- \[x\] I tested this/);
+  assert.deepEqual(result.publishedDescription, {
+    draftTitle: 'feat: implement PROJ-1',
+    draftBody: sent,
+  });
+  // As finalize does with the result.
+  recordPublishedDescription(
+    run.id,
+    'gate-1',
+    result.publishedDescription,
+    '2026-10-09T00:02:00.000Z',
+  );
+  const payload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.deepEqual(payload.currentDescription, {
+    title: 'feat: implement PROJ-1',
+    body: sent,
+    publishedAt: '2026-10-09T00:02:00.000Z',
+  });
+  assert.equal(payload.prPackage?.packageHash, reviewed.packageHash);
+  const log = await readFile(calls, 'utf-8');
+  assert.match(log, /^pr edit 4242 --repo owner\/repo --body-file /m);
+  assert.match(log, /^pr edit 4242 --repo owner\/repo --title feat: implement PROJ-1$/m);
 });
