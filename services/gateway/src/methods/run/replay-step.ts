@@ -51,8 +51,10 @@ import {
 } from '../../run-engine/orchestrator.js';
 import {
   probeWorkerSignalForRun,
+  rotateWorkerSignalAttempt,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -336,20 +338,36 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
 }
 
+/** The `blocked` signal a blocked run's monitor stopped on, or null. */
+function blockedMonitorSignal(run: Pick<Run, 'status' | 'steps'>): Record<string, unknown> | null {
+  const monitor = run.steps.find((step) => step.name === PS.MONITOR);
+  const previous = monitor?.outputs?.workerSignal;
+  const previousSignal =
+    previous && typeof previous === 'object' ? (previous as Record<string, unknown>) : null;
+  return run.status === 'blocked' &&
+    monitor?.status === 'done' &&
+    previousSignal?.status === 'blocked'
+    ? previousSignal
+    : null;
+}
+
+function signalNewerThan(signal: WorkerSignal, previousSignal: Record<string, unknown>): boolean {
+  const signalAt = parseStrictIsoMs(signal.timestamp);
+  const previousAt = parseStrictIsoMs(
+    typeof previousSignal.timestamp === 'string' ? previousSignal.timestamp : undefined,
+  );
+  return signalAt !== null && previousAt !== null && signalAt > previousAt;
+}
+
 export function freshBlockedMonitorAttempt(
   run: Pick<Run, 'status' | 'steps'>,
   probe: RunProbeWorkerSignalResult,
   context?: Pick<AgentContext, 'id' | 'role'> | null,
 ): WorkerSignal | null {
-  const monitor = run.steps.find((step) => step.name === PS.MONITOR);
-  const previous = monitor?.outputs?.workerSignal;
-  const previousSignal =
-    previous && typeof previous === 'object' ? (previous as Record<string, unknown>) : null;
+  const previousSignal = blockedMonitorSignal(run);
   const signal = probe.signal;
   if (
-    run.status !== 'blocked' ||
-    monitor?.status !== 'done' ||
-    previousSignal?.status !== 'blocked' ||
+    !previousSignal ||
     !signal ||
     !signal.attemptId ||
     // The same attempt counts only when it finished: a worker that marked
@@ -361,12 +379,31 @@ export function freshBlockedMonitorAttempt(
     !signalMatchesMonitorContext(signal, context)
   )
     return null;
-  const signalAt = parseStrictIsoMs(signal.timestamp);
-  const previousAt = parseStrictIsoMs(
-    typeof previousSignal.timestamp === 'string' ? previousSignal.timestamp : undefined,
-  );
-  if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
-  return signal;
+  return signalNewerThan(signal, previousSignal) ? signal : null;
+}
+
+/**
+ * The blocked attempt itself running again: the worker marked blocked, then
+ * went on with `./mark N` without `./mark start` (TAT-4034), so its signal
+ * still carries the blocked attempt id and the monitor refuses it.
+ */
+export function blockedAttemptRunningAgain(
+  run: Pick<Run, 'status' | 'steps'>,
+  probe: RunProbeWorkerSignalResult,
+  context?: Pick<AgentContext, 'id' | 'role'> | null,
+): WorkerSignal | null {
+  const previousSignal = blockedMonitorSignal(run);
+  const signal = probe.signal;
+  if (
+    !previousSignal ||
+    !signal?.attemptId ||
+    signal.attemptId !== previousSignal.attemptId ||
+    probe.code !== 'non_terminal' ||
+    signal.status !== 'running' ||
+    !signalMatchesMonitorContext(signal, context)
+  )
+    return null;
+  return signalNewerThan(signal, previousSignal) ? signal : null;
 }
 
 /**
@@ -393,6 +430,82 @@ export async function blockedRunResumableSignal(run: Run): Promise<BlockedRunRes
   const context = blockedMonitorContext(run);
   const probe = await probeWorkerSignalForRun(run.id, run.slotId, context);
   return { signal: freshBlockedMonitorAttempt(run, probe, context), probe };
+}
+
+export interface BlockedWorkerContinuedDependencies {
+  /** The blocked attempt's own later running signal, or null. */
+  runningBlockedAttempt(run: Run): Promise<WorkerSignal | null>;
+  /** What `./mark start` does: give that signal a new attempt id; returns it. */
+  rotateAttempt(run: Run, signal: WorkerSignal): Promise<string>;
+  /** Replay the monitor; returns the run as the replay left it. */
+  replayMonitor(runId: string): Promise<Run>;
+}
+
+const DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS: BlockedWorkerContinuedDependencies = {
+  runningBlockedAttempt: async (run) => {
+    const context = blockedMonitorContext(run);
+    return blockedAttemptRunningAgain(
+      run,
+      await probeWorkerSignalForRun(run.id, run.slotId, context),
+      context,
+    );
+  },
+  rotateAttempt: (run, signal) =>
+    rotateWorkerSignalAttempt(run, run.slotId!, blockedMonitorContext(run), signal.attemptId!),
+  replayMonitor: async (runId) =>
+    (await runReplayStep({ runId, stepName: PS.MONITOR, triggeredBy: 'operator' }, () => {})).run,
+};
+
+/**
+ * A worker that marked blocked and then kept working on the same attempt is
+ * picked up without an operator: the gateway rotates the attempt for it and
+ * replays the monitor, the same path `run resume` takes once a worker runs
+ * `./mark start`. Called on every running signal the slot watcher sees; does
+ * nothing unless the run is still blocked on that attempt, so a repeat, a
+ * cancelled run or one already monitoring is left alone. The resume is
+ * recorded on the dispatch step, which a monitor restart does not reset.
+ */
+export async function resumeBlockedRunWhoseWorkerContinued(
+  runId: string,
+  emit: Emit,
+  deps: BlockedWorkerContinuedDependencies = DEFAULT_BLOCKED_WORKER_CONTINUED_DEPS,
+): Promise<Run | null> {
+  const waiting = (): Run | null => {
+    const run = getRun(runId);
+    return run?.slotId && !run.reviewWorkspaceTarget && blockedMonitorSignal(run) ? run : null;
+  };
+  if (!waiting()) return null;
+  return withRunTransition(runId, async () => {
+    const run = waiting();
+    const signal = run ? await deps.runningBlockedAttempt(run) : null;
+    if (!run || !signal?.attemptId || !waiting()) return null;
+    const attemptId = await deps.rotateAttempt(run, signal);
+    const replayed = await deps.replayMonitor(runId);
+    const dispatch = replayed.steps.find((step) => step.name === PS.DISPATCH);
+    if (dispatch) {
+      const prior = dispatch.outputs?.workerResumedAfterBlocked;
+      updateRunStep(runId, PS.DISPATCH, {
+        outputs: {
+          ...dispatch.outputs,
+          workerResumedAfterBlocked: [
+            ...(Array.isArray(prior) ? prior : []),
+            {
+              fromAttemptId: signal.attemptId,
+              toAttemptId: attemptId,
+              step: signal.step ?? null,
+              at: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    }
+    console.log(
+      `[run] blocked run ${runId.slice(0, 8)}: worker resumed after blocked at step ${signal.step ?? '?'}; attempt ${signal.attemptId} -> ${attemptId}, monitor re-attached`,
+    );
+    const current = getRun(runId) ?? replayed;
+    emit(Events.RUN_UPDATED, { run: current });
+    return current;
+  });
 }
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
