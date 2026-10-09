@@ -54,6 +54,11 @@ import {
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
+import {
+  assertRunNotArchiving,
+  isRunArchiving,
+  isRunArchivingRefusal,
+} from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
@@ -122,6 +127,7 @@ function assertReplayOwnsRun(
 ): void {
   const live = getRun(runId);
   if (!live) throw new Error(`Run not found: ${runId}`);
+  assertRunNotArchiving(runId);
   if (live.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
   }
@@ -133,8 +139,12 @@ function assertReplayOwnsRun(
   }
 }
 
-function isForceCompleteOwnershipError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('was force-completed and cannot be replayed');
+function isReplayOwnershipError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes('was force-completed and cannot be replayed') ||
+      isRunArchivingRefusal(err))
+  );
 }
 
 const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
@@ -581,7 +591,10 @@ export async function rebindReleasedSlot(run: Run): Promise<string | null> {
     (slot) => {
       const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
       const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
-      if (owner && owner !== run.id) holder = `run ${owner}`;
+      // An archive evicts the run without this slot; re-binding would leave the
+      // slot held by a run that no longer exists.
+      if (isRunArchiving(run.id) || !getRun(run.id)) holder = 'nobody: the run is being archived';
+      else if (owner && owner !== run.id) holder = `run ${owner}`;
       else if (reserved && reserved !== run.id) holder = `a handoff to run ${reserved}`;
       else if (slotClaimBlockedByRelease(slot) !== null || slot.lifecycle !== 'ready')
         holder = `nobody, but it is ${String(slot.lifecycle ?? 'missing')}/${String(slot.phase ?? '-')}`;
@@ -848,6 +861,7 @@ export async function runReplayStep(
   if (existing.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
   }
+  assertRunNotArchiving(params.runId);
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
@@ -1495,7 +1509,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
-        if (isForceCompleteOwnershipError(err)) throw err;
+        if (isReplayOwnershipError(err)) throw err;
         console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }
@@ -1552,7 +1566,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
-        if (isForceCompleteOwnershipError(err)) throw err;
+        if (isReplayOwnershipError(err)) throw err;
         console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
       }
     }

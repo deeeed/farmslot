@@ -4,8 +4,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- An interrupted capture-helper recording fails `run` and `call` as `CAPTURE_INTERRUPTED` (exit 4) with the partial video kept, instead of `APP_LOGIC_FAILURE` with the video deleted. The framed (Extension) recorder publishes the partial video and its timing with `interruption` in the manifest instead of failing with "Missing finalized video completion". When the run has another failed node, that failure is classified as before.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.2 - 2026-10-09
+
+- An interrupted capture-helper recording fails `run` and `call` as `CAPTURE_INTERRUPTED` (exit 4) with the partial video kept, instead of `APP_LOGIC_FAILURE` with the video deleted. The framed (Extension) recorder publishes the partial video and its timing with `interruption` in the manifest instead of failing with "Missing finalized video completion". When the run has another failed node, that failure is classified as before.
+- Publish with adapter-sdk 0.8.2, agent-runtime 0.17.2, protocol 0.35.1 and recipe-runner 0.28.2 so consumers share one copy of each.
 
 ## 0.11.1 - 2026-10-09
 

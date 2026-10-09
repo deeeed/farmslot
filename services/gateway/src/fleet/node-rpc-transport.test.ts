@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import { WebSocket } from 'ws';
 
+import { registerNode, unregisterByWs } from './machine-registry.js';
 import {
   handleNodeResponse,
   isNodeTransportUnavailableError,
+  nodeExec,
   NodeRpcTimeoutError,
   NodeTransportUnavailableError,
   sendNodeRequest,
@@ -69,4 +71,28 @@ test('remote codes and messages cannot forge a local transport failure', async (
       return true;
     });
   }
+});
+
+test('a noRetry exec is not resent after a lost reply; the default still retries once', async (t) => {
+  let sends = 0;
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      sends += 1;
+      // The reply never arrives: what a node that dropped mid-request reports.
+      handleNodeResponse(JSON.parse(raw).id, false, undefined, 'WebSocket not open');
+    },
+  } as unknown as WebSocket;
+  registerNode('noretry-fixture', 1, ws);
+  t.after(() => unregisterByWs(ws));
+
+  await assert.rejects(
+    nodeExec('noretry-fixture', 'tmux respawn-window -k', undefined, { noRetry: true }),
+    /not open/,
+  );
+  assert.equal(sends, 1, 'a command that may already have run is not sent again');
+
+  sends = 0;
+  await assert.rejects(nodeExec('noretry-fixture', 'true'), /not open/);
+  assert.equal(sends, 2);
 });

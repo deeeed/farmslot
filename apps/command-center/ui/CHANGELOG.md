@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - The Ready gate PR preview shows the title and body that will be published (`currentDescription`, re-rendered when the gate opens and at approval) instead of the reviewed package's, and the completed card shows the body that was posted.
+- Archive (run detail and bulk) waits up to 5 minutes, like slot actions, since archiving a blocked run can release its slot. Bulk archive no longer stops at the first refused or slow run: it archives the rest, keeps the failed runs selected and lists them with their reasons.
+
+## 0.20.5 - 2026-10-09
+
 - Acceptance criteria evidence on the run page opens in the run's evidence lightbox instead of a new browser window: prev/next steps through that criterion's files, the caption names the criterion, and non-image files use the lightbox's artifact viewer. Cmd/middle-click still opens a new tab. The URL names the criterion (`artifactAc`), so a reload or shared link reopens the same set at the same file, on a finished run too. Every media lightbox (run evidence, gates, family observability) now resets its kind filter when it opens or when the page selects a file the filter hides, so the file you clicked shows.
 - The run-detail ACCEPTANCE CRITERIA panel shows "evidence linked" (muted, dotted, with the linked files) for criteria the evidence manifest covers when the run wrote no acceptance ledger, labels the panel "from evidence manifest, not verdicts", and keeps the assessed count at what the ledger recorded. Every other criterion stays NOT ASSESSED.
 - The dispatch wizard sends Skip Prepare with its slot candidates and reloads them when the toggle changes, so a slot whose repo cannot prepare (a single-branch clone) is selectable for a dispatch that keeps the checkout. Under Skip Prepare the slot list, run creation and the queue all drop the prepare profile, so a profile's device requirement no longer disables a slot the dispatch would accept; changing the Prepare control reloads the slot list once.

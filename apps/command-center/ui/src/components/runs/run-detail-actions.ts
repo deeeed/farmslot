@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
@@ -68,8 +69,12 @@ export async function confirmRunLifecycleAction(
   }
   if (action === 'archive') {
     // Keeps the blocked outcome in history; the gateway refuses anything that
-    // is not a settled blocked run or a terminal run.
-    await gateway.request<RunArchiveResult>(Methods.RUN_ARCHIVE, { runId: run.id });
+    // is not a settled blocked run or a terminal run, and may release its slot.
+    await gateway.request<RunArchiveResult>(
+      Methods.RUN_ARCHIVE,
+      { runId: run.id },
+      SLOT_OPERATION_TIMEOUT_MS,
+    );
     context.navigateToRuns();
     return;
   }

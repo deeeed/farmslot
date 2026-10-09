@@ -7,6 +7,11 @@ import test from 'node:test';
 
 import { Events, PipelineSteps, type RunReplayStepResult } from '@farmslot/protocol';
 
+import {
+  assertRunNotArchiving,
+  beginRunArchive,
+  endRunArchive,
+} from '../run-lifecycle/archive-fence.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -236,6 +241,44 @@ test('watcher skips force-complete reclaim refuse instead of dead-lettering', as
 
   const stored = getRun(run.id)!;
   assert.equal(stored.engineState?.autoRecoveryDeadLetter, undefined);
+  const audit = await readAuditLines();
+  assert.equal(audit.at(-1).outcome, 'skipped');
+  assert.equal(audit.at(-1).outcomeReason, 'manual_in_progress');
+});
+
+test('watcher skips a replay refused because the run is being archived', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['prepare'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const run = failRun(project);
+  __resetAutoRecoveryForTest();
+  __setAutoRecoveryHandlersForTest({
+    runReplayStep: async (params) => {
+      beginRunArchive(params.runId);
+      try {
+        assertRunNotArchiving(params.runId);
+      } finally {
+        endRunArchive(params.runId);
+      }
+      throw new Error('unreachable');
+    },
+  });
+  initAutoRecovery(() => undefined);
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+
+  assert.equal(getRun(run.id)!.engineState?.autoRecoveryDeadLetter, undefined);
   const audit = await readAuditLines();
   assert.equal(audit.at(-1).outcome, 'skipped');
   assert.equal(audit.at(-1).outcomeReason, 'manual_in_progress');
