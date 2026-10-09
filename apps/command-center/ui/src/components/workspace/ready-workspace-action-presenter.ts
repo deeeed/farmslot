@@ -163,12 +163,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     window.addEventListener('hashchange', this._boundHashChange);
     window.addEventListener('keydown', this._boundKeydown);
     this._hideTests = readHideTestsPref();
-    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
-      this._hideTests = hide;
-      // A newly hidden test file hands the viewer to the first visible file.
-      const next = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
-      if (next && next !== this._selectedFile) void this._selectFile(next);
-    });
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => this._onHideTestsChanged(hide));
     this._unsubConn = gateway.onConnectionChange((state) => {
       if (!this._initialized) return;
       if (this._usesMockData) return;
@@ -508,7 +503,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         ? compileTestFileMatcher(result.testFilePatterns)
         : DEFAULT_TEST_FILE_MATCHER;
       const selected = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
-      if (selected) this._selectFile(selected);
+      if (selected) {
+        this._selectFile(selected);
+      } else {
+        // Nothing visible: drop the previous selection and its diff so showing
+        // tests fetches this branch's file instead of reusing a stale one.
+        this._selectedFile = '';
+        this._fileDiff = '';
+      }
     } catch (err) {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[ready-workspace] branch diff failed:', err);
@@ -543,6 +545,20 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     return splitDiffFilesByKind(this._diffFiles, this._hideTests, {
       matcher: this._diffTestMatcher,
     });
+  }
+
+  /**
+   * A newly hidden test file hands the viewer to the first visible file; a
+   * selection whose diff is not loaded (dropped while everything was hidden)
+   * is fetched again.
+   */
+  _onHideTestsChanged(hide: boolean): void {
+    this._hideTests = hide;
+    const next = readyVisibleDiffSelection(this._diffSplit().visible, this._selectedFile);
+    if (!next) return;
+    if (next !== this._selectedFile || (!this._fileDiff && !this._fileDiffLoading)) {
+      void this._selectFile(next);
+    }
   }
 
   _toggleHideTests(): void {
