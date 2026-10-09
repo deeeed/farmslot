@@ -219,11 +219,12 @@ export function normalizeEvidenceManifestArtifactPath(
 
 export function evidenceManifestArtifactPaths(
   manifest: EvidenceManifest | null | undefined,
+  options: { mediaOnly?: boolean } = {},
 ): string[] {
   const paths = new Set<string>();
   const add = (value: string | undefined) => {
     if (typeof value !== 'string') return;
-    const normalized = normalizeEvidenceManifestArtifactPath(value);
+    const normalized = normalizeEvidenceManifestArtifactPath(value, options);
     if (normalized) paths.add(normalized);
   };
 

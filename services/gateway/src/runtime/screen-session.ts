@@ -12,6 +12,7 @@ import {
 import type { BrowserContextParams, ResourceRelaunchedPayload } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { SSH_CONNECT_OPTIONS } from '../core/ssh-options.js';
 import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { getActiveResource, onResourceRelaunched } from '../fleet/resource-manager.js';
@@ -119,7 +120,7 @@ function spawnAndroid(
     // Remote: run adb via SSH
     proc = spawn(
       'ssh',
-      ['-o', 'ConnectTimeout=5', ssh, `$HOME/Android/Sdk/platform-tools/adb ${adbArgs.join(' ')}`],
+      [...SSH_CONNECT_OPTIONS, ssh, `$HOME/Android/Sdk/platform-tools/adb ${adbArgs.join(' ')}`],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       },

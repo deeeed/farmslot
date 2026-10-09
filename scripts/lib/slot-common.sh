@@ -156,13 +156,21 @@ is_local() {
   return 1
 }
 
+# ── ssh connect options ────────────────────────────────────────────
+# Every non-interactive ssh, scp and rsync to a slot host: never prompt, and
+# give up on an address that does not answer within 10 s. Without a connect
+# timeout macOS ssh can fail outright on a host name whose first address is a
+# link-local IPv6 one ("Undefined error: 0") instead of trying the next (F56).
+SSH_CONNECT_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
+RSYNC_SSH="ssh ${SSH_CONNECT_OPTS[*]}"
+
 # ── run_on <host> <machine> <ssh_user> <cmd...> ───────────────────
 run_on() {
   local host="$1" machine="$2" ssh_user="$3"; shift 3
   if is_local "$host" "$machine"; then
     bash -c "$*" 2>/dev/null
   else
-    ssh -n -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    ssh -n "${SSH_CONNECT_OPTS[@]}" -o StrictHostKeyChecking=accept-new \
         "${ssh_user}@${host}" "$@" 2>/dev/null
   fi
 }
@@ -173,7 +181,7 @@ remote() {
   if is_local "$HOST" "$MACHINE"; then
     bash -c "$*" 2>/dev/null
   else
-    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${SSH_TARGET}" "$@"
+    ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "${SSH_TARGET}" "$@"
   fi
 }
 
@@ -352,7 +360,7 @@ for s in data.get('slots', []):
       if is_local "$HOST" "$MACHINE"; then
         cp -r "${worker_artifacts}" "${orch_task_dir}/artifacts/" 2>/dev/null || true
       else
-        rsync -az "${SSH_TARGET}:${worker_artifacts}" "${orch_task_dir}/artifacts/" 2>/dev/null || true
+        rsync -az -e "$RSYNC_SSH" "${SSH_TARGET}:${worker_artifacts}" "${orch_task_dir}/artifacts/" 2>/dev/null || true
       fi
       pass "Artifacts collected to ${orch_task_dir}/artifacts/"
     else
