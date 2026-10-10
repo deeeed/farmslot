@@ -588,7 +588,10 @@ export function projectAdd(
   }
 
   const packDir = resolvePackSource(source, ws, childStdio(progress));
-  const { pack, errors } = validatePackDir(packDir);
+  const { pack, errors } = validatePackDir(
+    packDir,
+    process.env.FARMSLOT_POOL_DIR ?? join(ws.farmslotDir, 'pool'),
+  );
   if (!pack) {
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
   }

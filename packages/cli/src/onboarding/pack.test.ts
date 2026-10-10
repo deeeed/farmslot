@@ -117,3 +117,17 @@ test('project add pack admission rejects a private template before registration'
   assert.equal(result.pack, null);
   assert.match(result.errors[0], /^projects\/example-app-farm\/templates\/task.md:2:.*pool\/slot/);
 });
+
+test('pack admission uses the target workspace pool for literal node references', (t) => {
+  const root = writePackDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pool = join(root, 'target-pool');
+  mkdirSync(pool);
+  writeFileSync(
+    join(pool, 'worker.json'),
+    JSON.stringify({ machine: 'worker-z', host: 'worker-z.example' }),
+  );
+  const template = join(root, 'projects/example-app-farm/setup/cli.sh');
+  writeFileSync(template, 'ssh worker-z true');
+  assert.match(validatePackDir(root, pool).errors[0], /setup\/cli.sh:1:.*pool\/slot/);
+});

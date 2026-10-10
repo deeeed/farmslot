@@ -115,7 +115,10 @@ export function validatePackJson(pack: unknown): string[] {
 }
 
 /** Validate the pack directory itself: pack.json parses, project dirs + project.json exist. */
-export function validatePackDir(packDir: string): { pack: PackJson | null; errors: string[] } {
+export function validatePackDir(
+  packDir: string,
+  targetPoolDir = poolDir,
+): { pack: PackJson | null; errors: string[] } {
   const packJsonPath = join(packDir, 'pack.json');
   if (!existsSync(packJsonPath)) {
     return { pack: null, errors: [`no pack.json found at ${packJsonPath}`] };
@@ -131,7 +134,7 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
   }
   const errors = [
     ...validatePackJson(parsed),
-    ...validatePackPortability(packDir, '', packMachineNames(poolDir)),
+    ...validatePackPortability(packDir, '', packMachineNames(targetPoolDir)),
   ];
   if (errors.length > 0) return { pack: null, errors };
   const pack = parsed as PackJson;

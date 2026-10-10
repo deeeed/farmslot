@@ -15,6 +15,7 @@ test('pack policy rejects private paths and fixed nodes with line and fix guidan
     '~/xreview/bin/helper',
     '${HOME}/xreview/a',
     '/Users/operator/dev/app',
+    'file:///Users/operator/dev/app.git',
     '/home/operator/app',
     '/var/root/app',
     'C:\\Users\\operator\\app',
@@ -76,7 +77,7 @@ test('guard instructions, model names and hosted URL paths remain portable', () 
   assert.deepEqual(
     validatePackFilePortability(
       'task.md',
-      'Strip `/Users/` paths. Use gpt-4o-mini and https://example.test/home/docs. Refer to domains/agentic.local/foo and CLAUDE.local.agent.md.',
+      'Strip `/Users/` paths. Use gpt-4o-mini and https://example.test/home/docs. Refer to domains/agentic.local/foo, CLAUDE.local.agent.md and skills.local.',
       ['mini'],
     ),
     [],

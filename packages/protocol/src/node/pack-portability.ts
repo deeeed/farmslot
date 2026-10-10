@@ -5,9 +5,9 @@ import path from 'node:path';
 import { isIgnoredPoolFile } from './slot-by-repo.js';
 
 const PRIVATE_PATH =
-  /(?:^|[\s"'`(=])((?:~|\$HOME|\$\{HOME\})\/xreview(?:\/[^\s"'`)]*)?|\/(?:Users|home)\/[A-Za-z0-9_.-]+(?:\/[^\s"'`)]*)?|\/var\/root(?:\/[^\s"'`)]*)?|[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9_.-]+)/;
+  /(?:^|[\s"'`(=]|file:\/\/)((?:~|\$HOME|\$\{HOME\})\/xreview(?:\/[^\s"'`)]*)?|\/(?:Users|home)\/[A-Za-z0-9_.-]+(?:\/[^\s"'`)]*)?|\/var\/root(?:\/[^\s"'`)]*)?|[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9_.-]+)/;
 const FIXED_HOST =
-  /(?:\b(?:https?|wss?):\/\/[a-z0-9_-]+\.local(?=[/:]|$)|(?<![\w/.-])[a-z0-9_-]+\.local(?![\w./-]))/i;
+  /(?:\b(?:https?|wss?):\/\/|\b(?:ssh|scp|rsync)\s+(?:[a-z0-9_.-]+@)?)[a-z0-9_-]+\.local(?=[/:\s"'`)]|$)/i;
 const RUNTIME_DIRS = new Set(['tasks', 'runs', 'artifacts', 'temp', '.agent', '.sandbox']);
 const quoteRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -40,7 +40,7 @@ export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
     } else if (git.status === 0 || git.status === 128) {
       // A standalone pack, or an untracked pack ignored by its parent repo,
       // still owns its source files. Its top-level runtime state is not source.
-      names = readdirSync(dir).filter((name) => !RUNTIME_DIRS.has(name));
+      names = readdirSync(dir).filter((name) => prefix !== '' || !RUNTIME_DIRS.has(name));
     } else {
       throw new Error('Cannot list pack-owned files for portability validation');
     }
@@ -56,7 +56,8 @@ export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
           throw error;
         }
       }
-      const rel = prefix ? `${prefix}/${name}` : name;
+      const cleanName = name.replace(/\/+$/, '');
+      const rel = prefix ? `${prefix}/${cleanName}` : cleanName;
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
       else if (stat.isDirectory()) walk(full, rel);
@@ -135,15 +136,25 @@ export function validatePackFilePortability(
   });
 }
 
+export function validatePackBytesPortability(
+  file: string,
+  bytes: Buffer,
+  machines: readonly string[] = [],
+): string[] {
+  return bytes.includes(0)
+    ? []
+    : validatePackFilePortability(file, bytes.toString('utf8'), machines);
+}
+
 export function validatePackPortability(
   root: string,
   prefix = '',
   machines: readonly string[] = [],
 ): string[] {
   return listPackOwnedEntries(root).flatMap(({ rel, content }) => {
-    if (typeof content !== 'string' && content.includes(0)) return [];
-    const text =
-      typeof content === 'string' ? content.slice('symlink:'.length) : content.toString('utf8');
-    return validatePackFilePortability(prefix ? `${prefix}/${rel}` : rel, text, machines);
+    const file = prefix ? `${prefix}/${rel}` : rel;
+    return typeof content === 'string'
+      ? validatePackFilePortability(file, content.slice('symlink:'.length), machines)
+      : validatePackBytesPortability(file, content, machines);
   });
 }

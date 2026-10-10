@@ -159,14 +159,15 @@ export async function farmslotUpdate(
   const packs = { ...state.packs };
   for (const [name, packState] of Object.entries(packs)) {
     const packDir = resolvePackSource(packState.source, ws, stdio);
+    const { pack, errors } = validatePackDir(
+      packDir,
+      process.env.FARMSLOT_POOL_DIR ?? join(ws.farmslotDir, 'pool'),
+    );
+    if (!pack) throw new AddError(`pack ${name} is invalid:\n  - ${errors.join('\n  - ')}`);
     const hash = hashPackDir(packDir);
     if (hash === packState.hash) {
       progress.info(`pack ${name} unchanged`);
       continue;
-    }
-    const { pack, errors } = validatePackDir(packDir);
-    if (!pack) {
-      throw new AddError(`pack ${name} changed but is now invalid:\n  - ${errors.join('\n  - ')}`);
     }
     if (pack.hooks?.sync) {
       sh(
