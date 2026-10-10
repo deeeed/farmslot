@@ -9,6 +9,7 @@ import path from 'node:path';
 import { Command, CommanderError } from 'commander';
 
 import type { AdapterRegistry } from '@farmslot/adapter-sdk';
+import { SlotByRepoError } from '@farmslot/protocol/node/slot-by-repo';
 import { RecipeResolutionError, RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { RECIPE_CLI_VERSION } from '../version.js';
@@ -341,6 +342,7 @@ async function loadSelectedAdapter(
           ...(command.hidden ? {} : { positionals: contractPositionals(tokens, command.contract) }),
           adapter,
           load: libraries,
+          strictSlot: !quiet,
           ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
           ...(slotPoolDir ? { slotPoolDir } : {}),
           ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
@@ -383,6 +385,7 @@ async function loadSelectedAdapter(
       error instanceof AdapterPluginError ||
       error instanceof RecipeTrustError ||
       error instanceof RecipeResolutionError ||
+      error instanceof SlotByRepoError ||
       error instanceof AdapterAmbiguousError
     ) {
       return { refused: refusalOut(command.name, argv, error), env: {} };
@@ -447,7 +450,9 @@ function refusalOut(
     code: error.code,
     message: error.message,
     userAction: error.userAction,
-    ...(error instanceof AdapterAmbiguousError ? { candidates: error.candidates } : {}),
+    ...(error instanceof AdapterAmbiguousError || error instanceof SlotByRepoError
+      ? { candidates: error.candidates }
+      : {}),
   };
   if (requested(argv, '--json-stream')) {
     const stream = new JsonStreamWriter(command, true);

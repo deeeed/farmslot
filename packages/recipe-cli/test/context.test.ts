@@ -349,6 +349,32 @@ describe('resolveHarnessContext', () => {
     assert.equal(flagged.adapter, undefined);
   });
 
+  test('refuses ambiguous slot bindings until the operator selects one', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('web'));
+    const pools = poolDir([
+      { id: 'one', repo: checkout, platform: 'web' },
+      { id: 'two', repo: checkout, platform: 'web' },
+    ]);
+    await assert.rejects(resolveHarnessContext({ tokens: [], cwd: checkout, slotPoolDir: pools }), {
+      code: 'SLOT_AMBIGUOUS',
+    });
+    const selected = await resolveHarnessContext({
+      tokens: ['--slot', 'two'],
+      cwd: checkout,
+      slotPoolDir: pools,
+    });
+    assert.equal(selected.slot?.value, 'two');
+    await assert.rejects(
+      resolveHarnessContext({
+        tokens: ['--slot', 'missing'],
+        cwd: checkout,
+        slotPoolDir: pools,
+      }),
+      { code: 'SLOT_NOT_FOUND' },
+    );
+  });
+
   test('a runtime context of another checkout binds nothing here and is reported', async () => {
     const extension = tempRoot();
     const mobile = tempRoot();

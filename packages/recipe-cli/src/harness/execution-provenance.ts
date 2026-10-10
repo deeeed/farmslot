@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
-import { digestRecipeDocument } from '@farmslot/protocol';
+import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
@@ -17,11 +17,7 @@ const gitContexts = new Map<string, { topLevel: string; pathspec: string } | nul
 
 export type ExecutionProvenancePhase = 'start' | 'pre-execute' | 'end';
 
-export interface SourceProvenanceSnapshot {
-  head: string | null;
-  status: string;
-  sourceFingerprint: string;
-}
+export type SourceProvenanceSnapshot = RecipeConformanceSource;
 
 export interface ExecutionProvenanceSnapshot {
   phase: ExecutionProvenancePhase;
@@ -207,7 +203,29 @@ function recipeFileDigest(recipePath: string): string {
   }
 }
 
-function sourceSnapshot(
+/** Include the imported delivery bytes when a checkout's generated modules are ignored by Git. */
+export function providerSourceSnapshot(
+  root: string,
+  module: string,
+  excludedRoots: string[] = [],
+): SourceProvenanceSnapshot {
+  const source = sourceSnapshot(root, undefined, excludedRoots);
+  const deliveryRoot = path.dirname(module);
+  const delivery =
+    path.resolve(deliveryRoot) === path.resolve(root)
+      ? fileFingerprint(module)
+      : sourceSnapshot(deliveryRoot).sourceFingerprint;
+  return {
+    ...source,
+    sourceFingerprint: createHash('sha256')
+      .update(source.sourceFingerprint)
+      .update('\0provider-delivery\0')
+      .update(delivery)
+      .digest('hex'),
+  };
+}
+
+export function sourceSnapshot(
   root: string,
   adapter?: string,
   excludedRoots: string[] = [],
@@ -229,7 +247,18 @@ function sourceSnapshot(
     '--',
     ...pathspecs,
   ]);
-  const head = gitBuffer(git.topLevel, ['rev-parse', 'HEAD']);
+  let head: Buffer;
+  try {
+    head = gitBuffer(git.topLevel, ['rev-parse', '--verify', 'HEAD']);
+  } catch (error) {
+    // A new checkout has no commit yet; its current bytes still bind the report.
+    if ((error as { status?: number }).status !== 128) throw error;
+    return {
+      head: null,
+      status,
+      sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
+    };
+  }
   const platformFingerprint = adapter ? harnessAdapter(adapter).sourceFingerprint : undefined;
   return {
     head: head.toString('utf8').trim() || null,
@@ -390,7 +419,7 @@ function hashDirectory(
   hash.update('\0');
 }
 
-function fileFingerprint(filePath: string): string {
+export function fileFingerprint(filePath: string): string {
   return createHash('sha256').update(readRegularFileNoFollow(filePath)).digest('hex');
 }
 

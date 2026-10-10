@@ -74,6 +74,51 @@ export interface ConsoleClassifier<TAllowlist extends ConsoleAllowlist> {
   libraryRoots(): string[];
 }
 
+/** Conservative defaults: unrecognized nonempty application output needs review. */
+export function createDefaultConsoleClassifier(
+  libraryRoots: readonly string[],
+): ConsoleClassifier<ConsoleAllowlist> {
+  return {
+    records: (text) =>
+      text
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => ({ line, continuation: [] })),
+    classify(record) {
+      let level: unknown;
+      try {
+        const value: unknown = JSON.parse(record.line);
+        if (isRecord(value)) level = value.level ?? value.severity;
+      } catch {
+        // Non-JSON application output uses the level prefix, if present.
+        level = /^\s*\[?(info|debug|trace|warn(?:ing)?|error|exception|fatal)\b/iu.exec(
+          record.line,
+        )?.[1];
+      }
+      const severity = typeof level === 'string' ? level.toLowerCase() : '';
+      if (['info', 'debug', 'trace'].includes(severity)) return null;
+      const message = record.line;
+      const key = { signature: message, continuation: '', first_frame: '' };
+      return {
+        level:
+          severity === 'exception'
+            ? 'exception'
+            : ['error', 'fatal'].includes(severity)
+              ? 'error'
+              : 'warning',
+        source: severity ? 'application' : 'unclassified-application-log',
+        message,
+        firstFrame: null,
+        key,
+      };
+    },
+    signature: (message) => message,
+    loadAllowlist: () => ({ entries: [], problems: [] }),
+    match: () => null,
+    libraryRoots: () => [...libraryRoots],
+  };
+}
+
 export interface RunDiagnosticBaseline {
   source: AdapterLogSource;
   offset: number;

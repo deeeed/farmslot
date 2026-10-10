@@ -1440,6 +1440,31 @@ export const adapter = {
     assert.equal(help.result.exitCode, 0);
   });
 
+  test('slot ambiguity is a structured refusal before dispatch, while help stays readable', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    const pools = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(pools, 'local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        slots: [
+          { id: 'one', repo: checkout },
+          { id: 'two', repo: checkout },
+        ],
+      }),
+    );
+    const cli = createHarnessCli({ ...contextOptions([]), slotPoolDir: () => pools });
+    const refused = await capture(() => cli.main(['status', '--json']));
+    assert.equal(refused.result.exitCode, 2);
+    assert.equal(JSON.parse(refused.stdout).error.code, 'SLOT_AMBIGUOUS');
+    assert.deepEqual(JSON.parse(refused.stdout).error.candidates, ['one', 'two']);
+    assert.deepEqual(calls, []);
+    const help = await capture(() => cli.main(['status', '--help']));
+    assert.equal(help.result.exitCode, 0);
+    assert.match(help.stdout, /status help/u);
+  });
+
   test('status --task and --watch resolve the target and slot only, so an ambiguous checkout is fine', async () => {
     const checkout = terminalCheckout();
     process.chdir(checkout);

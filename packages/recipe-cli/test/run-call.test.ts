@@ -41,6 +41,14 @@ import { callArtifactsLayout, redactCallValue } from '../src/harness/commands/ca
 import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
+  assertConformanceReportCurrent,
+  checkRecipeConformance,
+  conformanceChecksPass,
+  recipeConformanceIdentity,
+  type RecipeConformanceOptions,
+  writeRecipeConformanceReport,
+} from '../src/harness/conformance.js';
+import {
   activateRecipeRuntimeEnvironment,
   type CallCommandOptions,
   configureHarnessAdapters,
@@ -1701,6 +1709,7 @@ describe('run', () => {
         'resolve.artifactsDir',
         'validate.manifest',
         'validate.schema',
+        'preflight.recipe',
         'seed.file',
         'overlay.ensure',
         'launch.app',
@@ -1708,7 +1717,13 @@ describe('run', () => {
       ],
     );
     assert.equal(plan.find((item) => item.step === 'launch.app')?.detail, 'would open the shop');
-    assert.equal(calls.runners.length, 0);
+    assert.equal(calls.runners.length, 1);
+    assert.equal(calls.events.length, 0);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+    assert.match(
+      String((lastJson(web.stdout).executionPlan as { digest: string }).digest),
+      /^sha256:/u,
+    );
 
     const headless = await capture(() =>
       handleRun([recipe, '--plan', '--adapter', 'api', '--target', target], {
@@ -1730,6 +1745,146 @@ describe('run', () => {
       )?.detail,
       'would launch/attach the app + heal transport before executing',
     );
+  });
+
+  test('--plan refuses an untrusted action before any execution or artifact writes', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: {
+        action: 'shop.ping',
+        count: 1,
+        mode: 'fast',
+        next: 'done',
+        intent: 'Read the shop response',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const result = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--plan',
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--source-trust',
+          'untrusted',
+          '--source-kind',
+          'task',
+          '--json',
+        ],
+        runOptions,
+      ),
+    );
+    assert.notEqual(result.value, 0);
+    assert.equal((lastJson(result.stdout).error as { code: string }).code, 'RECIPE_TRUST_REQUIRED');
+    assert.equal(calls.events.length, 0);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+  });
+
+  test('--plan rejects a declared action whose handler is missing', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: {
+        action: 'shop.ping',
+        count: 1,
+        mode: 'fast',
+        next: 'done',
+        intent: 'Read the shop response',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    await assert.rejects(
+      capture(() =>
+        handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], {
+          ...runOptions,
+          engine: {
+            ...engine,
+            createRunner: async (_adapter, manifest) =>
+              createRecipeRunner({
+                actionManifest: manifest,
+                adapters: [],
+              }),
+          },
+        }),
+      ),
+      /adapter|handler/iu,
+    );
+    assert.equal(calls.events.length, 0);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+  });
+
+  test('conformance binds actual source bytes and refuses stale or missing evidence', async () => {
+    const target = checkout();
+    const recipe = recipeFile(engine.bundledLibrary.root, {
+      done: { action: 'end', status: 'pass' },
+    });
+    const options: RecipeConformanceOptions = {
+      project: 'shop',
+      context: {
+        adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+        target: { value: target, source: 'flag', detail: '--target' },
+      },
+      providerRoot: engine.bundledLibrary.root,
+      configurationPaths: [path.join(target, '.gitignore')],
+      librarySources: [{ name: 'shop', root: engine.bundledLibrary.root }],
+      artifactsDir: path.join(target, 'temp', 'checks'),
+      recipes: [{ recipe }],
+    };
+    const report = await checkRecipeConformance(engine, options);
+    assert.equal(report.status, 'pass', JSON.stringify(report.checks));
+    assert.equal(calls.events.length, 0);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+    assert.match(report.identity.checkout.head ?? '', /^[a-f0-9]{40}$/u);
+    assert.equal(report.identity.checkout.dirtyDigest, null);
+    assertConformanceReportCurrent(report, recipeConformanceIdentity(options));
+    await writeRecipeConformanceReport(options.artifactsDir, report);
+    assertConformanceReportCurrent(report, recipeConformanceIdentity(options));
+    assert.throws(
+      () =>
+        assertConformanceReportCurrent(
+          { ...report, checks: report.checks.map((check) => ({ ...check, evidence: undefined })) },
+          report.identity,
+        ),
+      /passing evidence/u,
+    );
+    fs.writeFileSync(path.join(target, 'app.txt'), 'changed\n');
+    const dirty = recipeConformanceIdentity(options);
+    assert.notEqual(dirty.checkout.dirtyDigest, null);
+    assert.throws(() => assertConformanceReportCurrent(report, dirty), /stale/u);
+    const firstDirty = dirty.checkout.dirtyDigest;
+    fs.writeFileSync(path.join(target, 'app.txt'), 'changed again\n');
+    assert.notEqual(recipeConformanceIdentity(options).checkout.dirtyDigest, firstDirty);
+    fs.writeFileSync(path.join(target, '.gitignore'), 'temp/\nother/\n');
+    assert.notDeepEqual(
+      recipeConformanceIdentity(options).configuration,
+      report.identity.configuration,
+    );
+    fs.writeFileSync(
+      path.join(engine.bundledLibrary.root, 'provider.js'),
+      'export const revision = 2;\n',
+    );
+    const changedProvider = recipeConformanceIdentity(options);
+    assert.throws(() => assertConformanceReportCurrent(report, changedProvider), /stale/u);
+    assert.notEqual(
+      changedProvider.provider.sourceFingerprint,
+      report.identity.provider.sourceFingerprint,
+    );
+    assert.notEqual(
+      changedProvider.libraries[0]?.sourceFingerprint,
+      report.identity.libraries[0]?.sourceFingerprint,
+    );
+  });
+
+  test('conformance needs positive evidence for every required check', () => {
+    assert.equal(conformanceChecksPass([]), false);
+    for (const status of ['fail', 'missing', 'skipped', 'unsupported', 'pass'] as const) {
+      assert.equal(
+        conformanceChecksPass([{ id: 'recipe', status, required: true, message: 'No evidence' }]),
+        false,
+      );
+    }
   });
 
   test('--list and --describe read the catalog; --describe refuses --plan', async () => {

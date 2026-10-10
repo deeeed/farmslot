@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Resolve project providers and ordered libraries through one authorized binding, compose the shared SDK engine, and write revision-bound static conformance reports. Plan recipes through the full execution preflight and refuse ambiguous checkout slots.
+
 ## 0.11.4 - 2026-10-10
 
 - Finalize the framed recorder before the completion HUD draws its result. Keep its partial video and bind the timeline to the final trace; stop using cached session screenshots once the stream reports `stream_stopped`. Reports omit unavailable frame counts and media times instead of showing zero as a measurement.

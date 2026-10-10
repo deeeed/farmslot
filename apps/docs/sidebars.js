@@ -86,6 +86,7 @@ const sidebars = {
         'reference/domains',
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',
+        'reference/recipe-concepts',
         'reference/recipe-runner-protocol',
         'reference/recipe-discovery',
         'reference/adapter-sdk',

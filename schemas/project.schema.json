@@ -25,6 +25,104 @@
       "description": "Default git branch for checkouts.",
       "default": "main"
     },
+    "recipe": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "object",
+          "required": ["module"],
+          "properties": {
+            "module": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "export": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "package": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "root": {
+              "$ref": "#/properties/execution_templates/properties/sources/items/properties/root"
+            }
+          },
+          "additionalProperties": false
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "source", "owner"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  },
+                  {
+                    "$ref": "#/properties/execution_templates/properties/sources/items/properties/root"
+                  }
+                ]
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "adapter": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    },
     "prepare": {
       "type": "object",
       "description": "Core prepare plus explicit legacy compatibility profiles. When core is present it is the default unless an operator names a profile.",

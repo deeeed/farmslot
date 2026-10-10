@@ -4,6 +4,9 @@
 // plugin loader.
 import path from 'node:path';
 
+import type { RecipeConformanceSource } from '@farmslot/protocol';
+import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
+
 import { CliError } from './cli-error.js';
 
 /** Where a context value came from, strongest first. */
@@ -13,6 +16,7 @@ export type ContextSource = 'flag' | 'binding' | 'slot' | 'detect' | 'default';
 export type DetectMatch = 'remote' | 'files';
 
 export interface HarnessContext {
+  project?: ResolvedProjectBinding;
   adapter?: {
     value: string;
     source: ContextSource;
@@ -72,6 +76,56 @@ export interface HarnessContext {
       }
     >
   >;
+}
+
+export interface ResolvedProjectLibrary extends RecipeLibrarySource {
+  name: string;
+  owner?: string;
+  revision?: string;
+  identity: RecipeConformanceSource;
+  overriddenSource?: { root: string; owner: string; revision?: string };
+}
+
+export interface ResolvedProjectBinding {
+  name: string;
+  source: ContextSource;
+  root: string;
+  configPath: string;
+  configIdentity: RecipeConformanceSource;
+  checkoutRoot: string;
+  checkoutIdentity: RecipeConformanceSource;
+  app?: string;
+  domain?: string;
+  template?: string;
+  manifest?: string;
+  runtimeDir: string;
+  artifactDir: string;
+  provider: {
+    ref: string;
+    module: string;
+    export: string;
+    package?: string;
+    version?: string;
+    root: string;
+    revision?: string;
+    identity: RecipeConformanceSource;
+    authority: 'configured' | 'installed' | 'discovered';
+  };
+  libraries: ResolvedProjectLibrary[];
+}
+
+export class ProjectBindingError extends CliError {
+  readonly details?: { candidates: readonly string[] };
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly userAction: string,
+    readonly candidates?: readonly string[],
+  ) {
+    super(candidates?.length ? `${message} Candidates: ${candidates.join(', ')}.` : message, 2);
+    this.name = 'ProjectBindingError';
+    if (candidates) this.details = { candidates };
+  }
 }
 
 /** A generic port option a command may take: `--cdp-port`, `--watcher-port`. */

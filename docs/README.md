@@ -4,6 +4,7 @@ This folder holds product scope, architecture decisions, historical snapshots, a
 
 ## Read first
 
+- [Recipe concepts](reference/recipe-concepts.md) explains project runtimes, composed libraries and revision-bound proof.
 - [Docs governance](DOCS-GOVERNANCE.md) — placement rules and maintenance checklist for this folder.
 - [Product PRD](PRD-product.md) — top-level product scope.
 - [Roadmap](ROADMAP.md), [next roadmap](ROADMAP-next.md), and [implemented history](IMPLEMENTED-HISTORY.md) — frozen historical snapshots, not current planning records.

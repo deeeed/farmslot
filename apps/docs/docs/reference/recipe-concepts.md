@@ -1,0 +1,35 @@
+---
+title: Recipe concepts
+---
+
+# Recipe concepts
+
+A project supplies a **ProjectRuntime** for readiness, owned lifecycle, actions and supported capture. Its **ActionCatalog** pairs action declarations with code. The shared **RecipeEngine** resolves the recipe graph and runs its **ActionHandlers**. Recipes compose actions and assertions into retained evidence.
+
+```mermaid
+flowchart LR
+  CLI[farmslot recipe run] --> Binding[Resolved binding]
+  Binding --> Runtime[ProjectRuntime]
+  Runtime --> Engine[RecipeEngine preflight]
+  Engine --> Actions[ActionHandlers]
+  Actions --> Artifacts[Artifact package]
+  Artifacts --> Evidence[Assertions and evidence]
+```
+
+`pack.json` describes onboarding, `project.json` describes behavior, and pool bindings describe machine targets. The binding resolves project, app, domain, runtime, target, libraries, ports and output paths. Flags win over checkout bindings, then pool slots, unique detection and configured defaults. An ambiguous target refuses execution.
+
+Team libraries compose in declaration order. Each keeps its owner, source revision and version requirements. Namespaced references identify the library; bare references must be unique. Preflight checks cross-library dependencies and parameters. Reports name the winning sources and any shadows.
+
+Metadata discovery grants no permission to import code. Runtime sources must be installed or explicitly authorized. Execution checks the complete plan, including action authority. The gateway owns hosted resource leases.
+
+Capabilities are scoped to a project, app, runtime and target, with `declared`, `verified`, `failed` or `unknown` results. `registered` records declaration availability. `recipe-verified` requires current positive evidence. Unsupported operations are explicit.
+
+Conformance reports record code, configuration, target and timestamp. Changed checkout, provider or library bytes make them stale. Static checks prove preflight; live checks prove bounded effects and teardown. Missing required evidence cannot pass. HUD and capture checks apply where supported.
+
+Run `farmslot doctor <checkout> --conformance` to check the provider, catalog and full preflight without launching the app or executing actions. The report records the checked invocation and source digests. It writes `conformance-report.json` under the configured artifact directory. By default it checks every catalog recipe; `--recipe <ref>` and repeatable `--param key=value` select a specific invocation.
+
+Declare `recipe.provider` and an ordered `recipe.libraries` list in `project.json`. Each library has `name`, `source` and `owner`; repository sources also require an exact `revision`. The provider exports `createProvider(context)` and returns its runtime, plus an optional engine. The shared engine is the default. Registered configuration or an installed package authorizes loading. Discovered executable sources require the operator's exact `--authorize-provider <module>` approval.
+
+Executable library sources also need registered project configuration or an explicit `--library name=path`. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata.
+
+Provider `root` and library `source` can reuse portable `{ "env": "EXAMPLE_PACKAGE_ROOT" }` or `{ "projectPath": "recipe-library" }` references. The first reads the operator environment or selected pool/slot env; the second resolves from the checkout. Discovered metadata cannot resolve those references until the project is registered. This supports globally installed provider packages without home-path defaults.

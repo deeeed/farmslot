@@ -566,7 +566,7 @@ export function adapterSelectionFailureOut(
     code: string;
     message: string;
     userAction: string;
-    candidates?: readonly AdapterCandidate[];
+    candidates?: readonly AdapterCandidate[] | readonly string[];
   },
 ): number {
   if (json) {
