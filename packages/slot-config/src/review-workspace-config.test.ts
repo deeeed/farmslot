@@ -124,3 +124,23 @@ test('static review domain and file-only support are validated and detached from
   ])
     assert.throws(() => normalizeRawStaticReview(value, 'project.json'), /project.json:/);
 });
+
+test('support environment may bind {{<key>_repo}} only for declared reference repos', () => {
+  const referenceRepos = {
+    mobile: { repo_url: 'https://example.com/mm.git', local_name: 'mm-ref' },
+  };
+  const support = (value: string) => ({ support: { environment: { REF: value } } });
+  assert.deepEqual(
+    normalizeRawStaticReview(support('{{mobile_repo}}/app'), 'project.json', referenceRepos)
+      ?.support?.environment,
+    { REF: '{{mobile_repo}}/app' },
+  );
+  assert.throws(
+    () => normalizeRawStaticReview(support('{{mobile_repo}}'), 'project.json'),
+    /unsupported support environment binding REF/,
+  );
+  assert.throws(
+    () => normalizeRawStaticReview(support('{{core_repo}}'), 'project.json', referenceRepos),
+    /unsupported support environment binding REF/,
+  );
+});
