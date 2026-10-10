@@ -8,6 +8,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Checkout env files the CLI reads, in order. `.env.ports` is the primary dev-config file. */
+const checkoutGatewayUrls = new WeakMap<NodeJS.ProcessEnv, string>();
+
+export function isCheckoutGatewayUrl(env: NodeJS.ProcessEnv, url: string): boolean {
+  return checkoutGatewayUrls.get(env) === url;
+}
+
 export const CHECKOUT_ENV_FILES = ['.env.ports', '.env'] as const;
 
 /** Parse a minimal `KEY=VALUE`-per-line env file: full-line `#` comments only (no inline
@@ -48,6 +54,7 @@ const FILE_ONLY_KEYS = new Set(['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASS
  * misconfigured checkout can't silently apply the wrong FARMSLOT_HOME / GW_URL.
  */
 export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = process.env): void {
+  const inheritedGatewayUrl = env.GW_URL;
   for (const name of CHECKOUT_ENV_FILES) {
     const path = join(checkoutRoot, name);
     if (!existsSync(path)) continue;
@@ -68,4 +75,5 @@ export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = p
   if (env.GW_URL === undefined && env.GATEWAY_PORT && /^\d+$/.test(env.GATEWAY_PORT)) {
     env.GW_URL = `ws://localhost:${env.GATEWAY_PORT}`;
   }
+  if (inheritedGatewayUrl === undefined && env.GW_URL) checkoutGatewayUrls.set(env, env.GW_URL);
 }

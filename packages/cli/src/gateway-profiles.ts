@@ -8,6 +8,9 @@ import { dirname, join } from 'node:path';
 
 import type { GatewayAuthMode } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
+
+import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
 
 export type { GatewayAuthMode };
 
@@ -150,6 +153,17 @@ export function profileForUrl(
   return name ? { name, profile: profiles.gateways[name] } : undefined;
 }
 
+function targetForMatchedUrl(
+  url: string,
+  source: GatewayTarget['source'],
+  profiles: GatewayProfilesFile,
+): GatewayTarget | undefined {
+  const match = profileForUrl(url, profiles);
+  return match
+    ? { url, credential: profileCredential(match.profile) ?? null, profileName: match.name, source }
+    : undefined;
+}
+
 /**
  * Resolve which gateway a command targets.
  * Precedence: --url > --gateway <name> > GW_URL env (back-compat) >
@@ -168,22 +182,18 @@ export function resolveGatewayTarget(
   const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles();
 
   if (opts.url) {
-    let match: ReturnType<typeof profileForUrl>;
     try {
-      match = profileForUrl(opts.url, getProfiles());
-    } catch {
-      // An explicit URL keeps the raw connection escape hatch available even
-      // with a corrupt profile store. It does not borrow another profile.
-      return { url: opts.url, source: 'url-flag' };
-    }
-    return match
-      ? {
+      return (
+        targetForMatchedUrl(opts.url, 'url-flag', getProfiles()) ?? {
           url: opts.url,
-          credential: profileCredential(match.profile) ?? null,
-          profileName: match.name,
           source: 'url-flag',
         }
-      : { url: opts.url, source: 'url-flag' };
+      );
+    } catch {
+      // The raw URL escape hatch remains available with a corrupt store and
+      // never borrows another profile's credential.
+      return { url: opts.url, source: 'url-flag' };
+    }
   }
 
   if (opts.gateway) {
@@ -205,14 +215,12 @@ export function resolveGatewayTarget(
   if (env.GW_URL) {
     // The gateway sets GW_URL for remote workers to the URL their node dials.
     // A stored profile for that gateway supplies its credential (or none).
-    const match = profileForUrl(env.GW_URL, getProfiles());
-    if (match) {
-      return {
-        url: env.GW_URL,
-        credential: profileCredential(match.profile) ?? null,
-        profileName: match.name,
-        source: 'env',
-      };
+    const target = targetForMatchedUrl(env.GW_URL, 'env', getProfiles());
+    if (target) return target;
+    // Locally derived sandbox URLs may intentionally name an unauthenticated
+    // development gateway. An inherited worker URL never gets this fallback.
+    if (isCheckoutGatewayUrl(env, env.GW_URL) && isLoopbackHost(new URL(env.GW_URL).hostname)) {
+      return { url: env.GW_URL, source: 'env' };
     }
     throw new Error(
       'No stored gateway profile matches GW_URL; add and log in to a profile for the worker gateway URL with farmslot gateway add and farmslot login',

@@ -136,9 +136,9 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
   );
 });
 
-test('resolveGatewayTarget ignores a corrupt store for default targets', () => {
-  // profilesOverride simulating loadProfiles() throwing: --url never calls the
-  // loader, and GW_URL only looks for a matching profile, so corruption is ignored.
+test('explicit URL flags tolerate a corrupt store while worker routing reports it', () => {
+  // A raw URL flag remains a troubleshooting escape hatch; inherited worker
+  // routing must report a corrupt store instead of silently losing its credential.
   let loaderCalls = 0;
   const throwingProfiles: GatewayProfilesFile = {
     get gateways(): Record<string, never> {

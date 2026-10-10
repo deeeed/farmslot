@@ -155,3 +155,21 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('checkout-derived sandbox URLs remain usable without a stored profile, inherited worker URLs refuse', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-env-sandbox-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=8808\n');
+  const local: NodeJS.ProcessEnv = {};
+  loadCheckoutEnv(root, local);
+  assert.deepEqual(resolveGatewayTarget({}, local, { gateways: {} }), {
+    url: 'ws://localhost:8808',
+    source: 'env',
+  });
+  const worker: NodeJS.ProcessEnv = { GW_URL: 'ws://localhost:8808' };
+  loadCheckoutEnv(root, worker);
+  assert.throws(
+    () => resolveGatewayTarget({}, worker, { gateways: {} }),
+    /No stored gateway profile/,
+  );
+});
