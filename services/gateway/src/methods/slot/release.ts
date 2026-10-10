@@ -32,6 +32,7 @@ import {
   type ProjectVars,
   type RawProjectJson,
   readSlotField,
+  readSlotRow,
   resetSlotIf,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
@@ -428,7 +429,6 @@ async function slotReleaseImpl(
   }
   const entryEpoch = mark.epoch ?? 0;
   const assertReleaseClaim = async (): Promise<void> => {
-    const { readSlotRow } = await import('../../core/index.js');
     const row = await readSlotRow(params.slotId);
     const owner = (row?.current_run_id as string | null | undefined) ?? null;
     const refusal = releaseOwnerRefusal(
