@@ -48,6 +48,15 @@ slot reachability, project config loading, device existence checks, prepare
 sentinel locking, tmux session setup, and git origin/default-branch guards when
 git work is required.
 
+Projects may declare a read-only top-level `hooks.prerequisites` command. It runs before
+worker retirement, sentinel acquisition and all prepare phases, including
+bind-only profiles, and appears in `slot.check`. It receives the project and
+pool environment plus `FARMSLOT_MACHINE`. A nonzero exit blocks prepare and
+retains its diagnostic, for example `missing extension checkout on node, set
+TERMINAL_EXTENSION_CHECKOUT`. The hook runs before profile selection. Profile hook overrides and
+`FARMSLOT_PREPARE_PROFILE` do not apply. Keep the check under ten seconds; it
+must not install dependencies or change slot state.
+
 ## Bundled phases
 
 Prepare phases are bundled into the Farmslot flow. A project can select a subset

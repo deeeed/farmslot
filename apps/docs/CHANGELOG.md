@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Explain project runtimes, ordered recipe libraries and static conformance reports in the Concepts reference.
+- Document read-only node prerequisites before prepare and in slot.check.
 
 - Recipe Protocol v1 reference: array indexing in templates (`[n]` or `.n`, a key on an object), and `workflow.invalid_template` for a template that does not parse.
 - Gateway API reference: the generated reference shows protocol 0.35.0.

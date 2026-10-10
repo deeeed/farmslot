@@ -5,6 +5,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 ## Unreleased
 
 - Add checkout-local `doctor --conformance` with authorized provider loading, read-only policy preflight and a report bound to source and selected runtime configuration. Validate recipe declarations when registering packs.
+- Export node pool environment and machine identity when bootstrap loads local slot variables, preserving operator tool paths when resolving remote slots.
 
 - An invalid `gateways.json` error names the file, and the profile for a bad entry, but no longer quotes the file: the JSON parse message echoed part of a stored secret. A profile that is not an object with a string `url` (and a string `secret` and a `token` or `password` `authMode` when set) is now refused by name instead of failing later. `farmslot up` reports the browser open on its own `browser` line instead of claiming on the dashboard line that it connects; without TLS it adds that the HTTPS page needs `farmslot certs setup`.
 - `farmslot up` no longer prints the gateway token. The dashboard link (and `hostedDashboard` in `--json`) lists the gateways without the token, so the Command Center asks for it or reuses a stored one. `--json` also drops its `token` field, which nothing read. `--print-connect-url` prints the auto-connect link with the token (`connectUrl` and `token` in `--json`), including when the gateway is already running. The browser `up` opens still gets the auto-connect link.

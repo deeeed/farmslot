@@ -55,6 +55,7 @@ export {
   buildMachineEnvPrefix,
   buildProjectCommandEnvPrefix,
   withMachineEnv,
+  withProjectMachineEnv,
 } from './project-env.js';
 export { loadPromptTemplate } from './prompt-templates.js';
 export type { LatestValidRecipeRunPointer } from './recipe-artifacts.js';

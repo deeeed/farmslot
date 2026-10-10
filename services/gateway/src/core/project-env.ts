@@ -1,7 +1,8 @@
 import { getNode } from '../fleet/machine-registry.js';
 
-import type { RawProjectJson } from './config.js';
+import type { ProjectVars, RawProjectJson, SlotVars } from './config.js';
 import { isLocal } from './exec.js';
+import { expandTemplate } from './hooks.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const UNRESOLVED_PLACEHOLDER_RE = /\{\{[^{}\n]+\}\}/;
@@ -131,4 +132,26 @@ export function withMachineEnv(
 ): string {
   const prefix = buildMachineEnvPrefix(machineShellEnv(vars));
   return prefix ? `${prefix} && ${command}` : command;
+}
+
+/** Project/domain defaults first, then the selected node's pool environment. */
+export function withProjectMachineEnv(
+  command: string,
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars?: ProjectVars,
+  domain = vars.domain,
+): string {
+  return applyProjectCommandEnv(
+    projectJson,
+    withMachineEnv(command, {
+      ...vars,
+      machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
+    }),
+    {
+      ...(domain ? { domain } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+    },
+  );
 }
