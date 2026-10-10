@@ -2,11 +2,18 @@
 // task's acceptance ledger (artifacts/acceptance-status.json, ADR-060), written by
 // the same code `farmslot-agent ac` uses, so a Farmslot run and a skill run record
 // the same file. A target is `proven` when every node proving it passed, `missing`
-// when one failed or did not run. A target no node proves, and a criterion no
-// target names, stay unrecorded: the run says nothing about them.
+// when one failed or did not run. When the run's recording was interrupted, a
+// `proven` target is recorded `weak` instead: its evidence is incomplete, with the
+// partial video as evidence. A target no node proves, and a criterion no target
+// names, stay unrecorded: the run says nothing about them.
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+
+import {
+  CAPTURE_EVIDENCE_INCOMPLETE,
+  type RecipeRunCaptureInterruption,
+} from '@farmslot/recipe-runner';
 
 import { isRecord } from './parse-args.js';
 
@@ -15,7 +22,13 @@ interface AcceptanceLedgerModule {
   handoffAcceptanceCriteria(taskDir: string): Array<{ id: string; text: string }>;
   setAcceptanceVerdict(
     taskDir: string,
-    input: { id: string; verdict: string; evidence: string[]; recipeNodes: string[] },
+    input: {
+      id: string;
+      verdict: string;
+      evidence: string[];
+      recipeNodes: string[];
+      note?: string;
+    },
   ): unknown;
 }
 
@@ -25,9 +38,10 @@ const ledger =
 
 export interface RecipeAcceptanceVerdict {
   id: string;
-  verdict: 'proven' | 'missing';
+  verdict: 'proven' | 'weak' | 'missing';
   recipeNodes: string[];
   evidence: string[];
+  note?: string;
 }
 
 export interface RecipeAcceptanceRecord {
@@ -45,7 +59,11 @@ export function acceptanceIdForProofTarget(target: string): string | null {
 export function recordRecipeAcceptance(
   taskDir: string,
   target: string,
-  result: { recipePath: string; tracePath: string },
+  result: {
+    recipePath: string;
+    tracePath: string;
+    captureInterruption?: RecipeRunCaptureInterruption;
+  },
 ): RecipeAcceptanceRecord {
   const record: RecipeAcceptanceRecord = { recorded: [], refused: [] };
   if (ledger.handoffAcceptanceCriteria(taskDir).length === 0) return record;
@@ -81,9 +99,13 @@ export function recordRecipeAcceptance(
   const realTaskDir = fs.realpathSync(taskDir);
   for (const [id, recipeNodes] of provers) {
     if (recipeNodes.length === 0) continue;
-    const verdict = recipeNodes.every((nodeId) => outcome.get(nodeId)?.ok === true)
-      ? 'proven'
-      : 'missing';
+    const passed = recipeNodes.every((nodeId) => outcome.get(nodeId)?.ok === true);
+    const interruption = result.captureInterruption;
+    const verdict = !passed ? 'missing' : interruption ? 'weak' : 'proven';
+    const note =
+      passed && interruption
+        ? `${CAPTURE_EVIDENCE_INCOMPLETE}: ${interruption.message}`
+        : undefined;
     const evidence = [
       ...new Set(
         [
@@ -91,14 +113,21 @@ export function recordRecipeAcceptance(
           ...recipeNodes.flatMap((nodeId) =>
             nodeArtifactPaths(outcome.get(nodeId), artifactsDir, target),
           ),
+          ...(interruption ? [path.resolve(artifactsDir, interruption.videoPath)] : []),
         ]
           .map((file) => taskRelative(realTaskDir, file))
           .filter((file): file is string => file !== null),
       ),
     ];
     try {
-      ledger.setAcceptanceVerdict(taskDir, { id, verdict, evidence, recipeNodes });
-      record.recorded.push({ id, verdict, evidence, recipeNodes });
+      ledger.setAcceptanceVerdict(taskDir, {
+        id,
+        verdict,
+        evidence,
+        recipeNodes,
+        ...(note ? { note } : {}),
+      });
+      record.recorded.push({ id, verdict, evidence, recipeNodes, ...(note ? { note } : {}) });
     } catch (error) {
       if (!(error instanceof ledger.AcceptanceRefusal)) throw error;
       record.refused.push(`${id}: ${error.message}`);

@@ -264,6 +264,8 @@ export interface HealBoundViolation {
   userAction?: string;
   // The original failure output, carried verbatim next to the classification.
   originalError?: string;
+  // An infra failure a caller may rerun as is (the run itself is not at fault).
+  retryable?: boolean;
 }
 
 // What a running setup stage is doing right now. The host renders it as one

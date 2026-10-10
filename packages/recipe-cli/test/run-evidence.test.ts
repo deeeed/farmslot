@@ -1228,6 +1228,55 @@ describe('run report', () => {
     });
   });
 
+  test('a run failed only by an interrupted recording reports incomplete evidence and its partial video', () => {
+    const root = tempRoot();
+    const files = runFiles(root);
+    const interrupted = {
+      nodeId: 'recipe-run:video',
+      action: 'record.video',
+      durationMs: 5,
+      ok: false,
+      cause_class: 'environment',
+      error_code: 'CAPTURE_INTERRUPTED',
+      error: 'CAPTURE_INTERRUPTED: the recording stream stopped after 12 frames (0.4 s): -3805.',
+    };
+    const write = (extra: unknown[]) => {
+      const read = { nodeId: 'read', action: 'state_read', durationMs: 20, ok: true };
+      fs.writeFileSync(files.tracePath, JSON.stringify({ entries: [read, ...extra, interrupted] }));
+      fs.writeFileSync(
+        files.summaryPath,
+        JSON.stringify({ status: 'fail', durationMs: 1500, passed: 1, total: 2 + extra.length }),
+      );
+      fs.writeFileSync(
+        files.artifactManifestPath,
+        JSON.stringify({
+          artifacts: [
+            {
+              path: 'videos/recipe-run.mp4',
+              type: 'video',
+              interruption: { frames: 12, mediaTimeMs: 400, cause: 'SCStreamErrorDomain -3805' },
+            },
+          ],
+        }),
+      );
+      return fs.readFileSync(writeRunReport(files).path, 'utf8');
+    };
+    const lone = write([]);
+    assert.match(lone, /\nStatus: evidence incomplete \(capture interrupted\)\n/u);
+    assert.match(
+      lone,
+      /## Evidence\n- INCOMPLETE partial video \[videos\/recipe-run\.mp4\]\(videos\/recipe-run\.mp4\): the recording stopped after 12 frames \(400ms\): SCStreamErrorDomain -3805\n/u,
+    );
+    assert.match(lone, /\n- INCOMPLETE recipe-run:video \(record\.video, 5ms\)/u);
+    // Another failed node is a product failure: the status says so; the video stays linked.
+    const withFailure = write([
+      { nodeId: 'assert', action: 'assert_json', durationMs: 1, ok: false },
+    ]);
+    assert.match(withFailure, /\nStatus: fail\n/u);
+    assert.match(withFailure, /\n- FAIL assert /u);
+    assert.match(withFailure, /- INCOMPLETE partial video /u);
+  });
+
   test('binds the browser to the one CDP port and records what the platform reports', () => {
     interface WebBrowser extends AdapterBrowser {
       version?: string;

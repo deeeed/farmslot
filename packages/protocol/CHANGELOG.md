@@ -9,6 +9,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - `RunEngineState.reviewedInputs` no longer covers the PR description: editing it never makes self-review run again or holds approval. Fingerprints recorded with the description keep matching until HEAD or evidence changes, except that a description edit on such a record re-runs self-review once, after which the new fingerprint is recorded. Doc change only; the shape is unchanged.
 - `ReadyGatePayload.currentDescription` (optional): the title and body Farmslot will publish when they differ from the reviewed package, and after publication the ones it published, with `publishedAt`. Not part of the package hash. Existing stored gates remain readable.
 - `TaskProgressResult.acceptanceEvidenceLinksError` (optional): why the evidence manifest behind the acceptance fallback could not be read, so clients can tell an unreadable manifest from one that covers no criterion. Never a ledger error.
+- Suite verdicts take an optional `evidence_incomplete` (`reason: 'capture_interrupted'`, `detail`, `evidence_path`), valid only on a `fail` verdict: the case failed only because its recording was interrupted, not on product behaviour. The validator and the published `recipe-suite-result-v1` schema accept it (`RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS`, `RecipeSuiteEvidenceIncomplete`).
 
 ## 0.35.1 - 2026-10-09
 

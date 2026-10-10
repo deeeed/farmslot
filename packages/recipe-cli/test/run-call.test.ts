@@ -76,6 +76,7 @@ import { startRunNetworkObservation } from '../src/harness/network-observation.j
 import {
   emitHealViolation,
   executeWithHealBounds,
+  healViolationError,
   prepareHeal,
   runRecipe,
   synthesizeOneNodeRecipe,
@@ -724,6 +725,7 @@ describe('engine door', () => {
       };
     const lone = await executeWithHealBounds(run([captureFailure]), root, newHealState());
     assert.equal(lone.violation?.code, 'CAPTURE_INTERRUPTED');
+    assert.equal(lone.violation?.retryable, true);
     assert.equal(lone.violation?.exitCode, 4);
     assert.equal(lone.violation?.message, message);
     assert.match(lone.violation?.userAction ?? '', /videos\/recipe-run\.mp4/u);
@@ -782,6 +784,62 @@ describe('engine door', () => {
     assert.equal(busy.value, 4);
     assert.match(busy.stderr.join('\n'), /✗ shop-harness: a recipe is currently running/u);
     assert.match(busy.stderr.join('\n'), /shop-harness status --target/u);
+  });
+
+  test('a capture interruption is emitted retryable, in --json and --json-stream, with its report', async () => {
+    const result = {
+      summaryPath: '/tmp/s.json',
+      tracePath: '/tmp/t.json',
+      artifactManifestPath: '/tmp/m.json',
+    };
+    const json = await capture(async () => {
+      emitHealViolation(
+        true,
+        'run',
+        result,
+        { code: 'CAPTURE_INTERRUPTED', exitCode: 4, message: 'm', retryable: true },
+        newHealState(),
+        undefined,
+        [],
+        '/tmp/report.md',
+      );
+      return emitHealViolation(
+        true,
+        'run',
+        result,
+        { code: 'APP_LOGIC_FAILURE', exitCode: 1, message: 'm' },
+        newHealState(),
+      );
+    });
+    assert.deepEqual(
+      json.stdout.map((line) => {
+        const { error } = JSON.parse(line) as { error: { code: string; retryable: boolean } };
+        return [error.code, error.retryable];
+      }),
+      [
+        ['CAPTURE_INTERRUPTED', true],
+        ['APP_LOGIC_FAILURE', false],
+      ],
+    );
+    assert.equal(
+      (JSON.parse(json.stdout[0]!) as { reportPath?: string }).reportPath,
+      '/tmp/report.md',
+    );
+    assert.equal((JSON.parse(json.stdout[1]!) as { reportPath?: string }).reportPath, undefined);
+    // --json-stream reports the same error object.
+    assert.deepEqual(
+      healViolationError(
+        { code: 'CAPTURE_INTERRUPTED', exitCode: 4, message: 'm', retryable: true },
+        'rerun',
+      ),
+      {
+        code: 'CAPTURE_INTERRUPTED',
+        message: 'm',
+        retryable: true,
+        userAction: 'rerun',
+        originalError: null,
+      },
+    );
   });
 
   test('words a heal-bound violation with the platform, then the violation, then the evidence', async () => {

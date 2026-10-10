@@ -6,6 +6,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - A node's `cdp_port` template is read with the recipe template grammar, so `{{ params.port }}` (which the runner does not resolve) is an unresolved port instead of the port's value.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `CAPTURE_INTERRUPTED` is an infra outcome: `run`/`call` emit it with `retryable: true`, `run` still writes report.md (`Status: evidence incomplete (capture interrupted)`, an `INCOMPLETE` step and the partial video linked under `## Evidence`), and the acceptance ledger records a criterion its nodes proved as `weak` with the note `evidence incomplete (capture interrupted): …` and the partial video as evidence. A criterion whose proving node failed stays `missing`.
 
 ## 0.11.2 - 2026-10-09
 

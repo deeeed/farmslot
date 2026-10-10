@@ -50,6 +50,7 @@ import {
   emitHealViolation,
   executeWithHealBounds,
   fallbackMarker,
+  healViolationError,
   persistRunEffects,
   preflightRecipe,
   type PreparedRecipeExecution,
@@ -564,16 +565,26 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         const userAction =
           violation.userAction ??
           `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}; fix the application or recipe failure before retrying`;
-        stream.error({
-          code: violation.code,
-          message: violation.message,
-          userAction,
-          originalError: violation.originalError ?? null,
-        });
+        // A run whose recording was interrupted still reports what it ran and links the
+        // partial video, whatever else failed.
+        const report = result.captureInterruption ? writeRunReport(result) : undefined;
+        stream.error(healViolationError(violation, userAction));
         if (stream.enabled) {
-          stream.complete('fail', violation.exitCode, fallbacks.length > 0 ? { fallbacks } : {});
+          stream.complete('fail', violation.exitCode, {
+            ...(fallbacks.length > 0 ? { fallbacks } : {}),
+            ...(report ? { reportPath: report.path } : {}),
+          });
         }
-        return emitHealViolation(jsonOutput, 'run', result, violation, state, adapter, fallbacks);
+        return emitHealViolation(
+          jsonOutput,
+          'run',
+          result,
+          violation,
+          state,
+          adapter,
+          fallbacks,
+          report?.path,
+        );
       }
       const report = writeRunReport(result);
       // Listed after the report is indexed, so the human list includes it.
@@ -710,7 +721,7 @@ function runTaskDir(target: string): string | null {
 // stands either way: a ledger the run can't write is a warning, not a failure.
 function recordRunAcceptance(
   target: string,
-  result: { recipePath: string; tracePath: string },
+  result: Parameters<typeof recordRecipeAcceptance>[2],
 ): void {
   try {
     const taskDir = runTaskDir(target);
