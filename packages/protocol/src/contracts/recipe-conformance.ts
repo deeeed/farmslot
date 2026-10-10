@@ -13,8 +13,11 @@ export interface RecipeConformanceIdentity {
   domain: string | null;
   adapter: string;
   target: string;
+  trustDigest?: string;
   selection?: {
     slot: string | null;
+    poolSlot?: string | null;
+    adapterTarget?: string | null;
     device: string | null;
     ports: Record<string, number | string>;
     provider: string | null;

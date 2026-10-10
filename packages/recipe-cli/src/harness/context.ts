@@ -28,7 +28,12 @@ import {
 } from '@farmslot/protocol/node/slot-by-repo';
 import { resolveRecipeLibrarySources } from '@farmslot/recipe-runner';
 
-import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './adapter-plugins.js';
+import {
+  type AdapterLibraryOptions,
+  adapterPlugin,
+  declaredAdapters,
+  libraryName,
+} from './adapter-plugins.js';
 import {
   adapterForPlatform,
   adapterPortEnv,
@@ -47,7 +52,7 @@ import {
   type ResolvedProjectBinding,
   type ResolvedProjectLibrary,
 } from './context-state.js';
-import { providerSourceSnapshot, sourceSnapshot } from './execution-provenance.js';
+import { inputSourceSnapshot, providerSourceSnapshot } from './execution-provenance.js';
 import {
   configureHarnessHost,
   type HarnessHostConfig,
@@ -153,7 +158,12 @@ export async function resolveHarnessContext(
         ? // An explicit --runtime-dir scratch runtime names its own slot:
           // identity and ports describe that runtime, the pool's ports filling
           // only what it lacks. The default context keeps the pool's identity.
-          { ...owned, ports: { ...pooledSlot.slot.ports, ...owned.ports } }
+          {
+            ...owned,
+            poolFile: pooledSlot.slot.poolFile,
+            poolSlot: pooledSlot.slot.value,
+            ports: { ...pooledSlot.slot.ports, ...owned.ports },
+          }
         : {
             ...pooledSlot.slot,
             ports: { ...pooledSlot.slot.ports, ...runtimePorts(runtime) },
@@ -663,7 +673,8 @@ export async function resolveProjectContext(
           }>;
         })
       : undefined;
-  const slot = pool?.slots?.find((entry) => entry.id === context.slot?.value);
+  const poolSlot = context.slot?.value ? (context.slot.poolSlot ?? context.slot.value) : undefined;
+  const slot = pool?.slots?.find((entry) => entry.id === poolSlot);
   const projectFlag = optionValues(options.tokens, '--project').at(-1);
   const bindingName = stringField(runtime, 'project');
   const slotName = slot?.project ?? pool?.project;
@@ -827,8 +838,8 @@ export async function resolveProjectContext(
   });
   const libraries: ResolvedProjectLibrary[] = overrides.map((entry) => {
     const libraryRoot = existingSourceRoot(path.resolve(cwd, entry.root));
-    const identity = sourceSnapshot(libraryRoot, undefined, excludedRoots);
-    const name = entry.name ?? path.basename(libraryRoot);
+    const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
+    const name = libraryName({ ...entry, root: libraryRoot });
     return {
       ...entry,
       root: libraryRoot,
@@ -857,7 +868,7 @@ export async function resolveProjectContext(
       typeof entry.source === 'string'
         ? existingSourceRoot(path.resolve(root, entry.source))
         : sourceRoot(entry.source);
-    const identity = sourceSnapshot(libraryRoot, undefined, excludedRoots);
+    const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
     if (identity.head && !entry.revision) {
       throw new ProjectBindingError(
         'SOURCE_REVISION_MISSING',
@@ -1044,6 +1055,7 @@ export async function loadProjectProvider(
   if (!registry.has(result.runtime.id)) registry.register(result.runtime);
   context.adapter = {
     value: result.runtime.id,
+    requested: selection ?? result.runtime.id,
     source: context.adapter?.source ?? 'default',
     detail: context.adapter?.detail ?? 'project provider',
   };

@@ -6,7 +6,11 @@ import type { Command } from 'commander';
 
 import type { RecipeConformanceReport } from '@farmslot/protocol';
 import { resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
-import type { CliOptions, HarnessContext } from '@farmslot/recipe-cli/harness';
+import type {
+  CliOptions,
+  HarnessContext,
+  RecipeConformanceOptions,
+} from '@farmslot/recipe-cli/harness';
 import { loadRecipeLibraries } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
@@ -36,7 +40,7 @@ export function registerDoctorCommand(program: Command): void {
     .option('--slot <id>', 'Select one pool slot')
     .option('--device <id>', 'Select one device')
     .option('--cdp-port <port>', 'Select the CDP transport port')
-    .option('--runtime-dir <path>', 'Checkout-relative runtime directory')
+    .option('--runtime-dir <path>', 'Target-relative recipe runtime directory')
     .option('--artifacts-dir <path>', 'Checkout-relative report directory')
     .option('--library <name=path>', 'Override a recipe library', collect, [])
     .option(
@@ -129,6 +133,13 @@ export async function runProjectConformance(
   options: CliOptions,
 ): Promise<ProjectConformanceResult> {
   const shared = await import('@farmslot/recipe-cli/harness');
+  const selected = shared.optionStrings(options, 'recipe') ?? [];
+  const suppliedParams = shared.optionStrings(options, 'param') ?? [];
+  if (suppliedParams.length && !selected.length) {
+    throw shared.usageError(
+      '--param requires --recipe to select the invocation receiving those parameters.',
+    );
+  }
   const tokens: string[] = [];
   if (checkout) tokens.push('--target', path.resolve(checkout));
   for (const [key, flag] of Object.entries({
@@ -168,7 +179,6 @@ export async function runProjectConformance(
     },
     async ({ context, provider, engine, librarySources: sources, cli }) => {
       const binding = context.project!;
-      const selected = shared.optionStrings(options, 'recipe') ?? [];
       const recipes = selected.length
         ? selected
         : [
@@ -178,31 +188,47 @@ export async function runProjectConformance(
           ]
             .filter((entry) => !entry.aliasFor)
             .map((entry) => entry.ref);
-      const params = parseRecipeParamAssignments(shared.optionStrings(options, 'param') ?? []);
+      const params = parseRecipeParamAssignments(suppliedParams);
       const artifactsDir = path.join(binding.checkoutRoot, binding.artifactDir, 'conformance');
-      const packages = [
-        '@farmslot/recipe-cli',
-        '@farmslot/recipe-runner',
-        '@farmslot/adapter-sdk',
-        '@farmslot/protocol',
-      ];
-      const implementationSources = packages.map((name) => ({
-        name,
-        root: shared.recipePackageRoot(createRequire(import.meta.url).resolve(name)),
-      }));
-      const providerPackage = path.join(binding.provider.root, 'package.json');
-      if (existsSync(providerPackage)) {
-        const metadata = JSON.parse(readFileSync(providerPackage, 'utf8')) as {
+      const implementationSources: NonNullable<RecipeConformanceOptions['implementationSources']> =
+        [];
+      const addDependencies = (packagePath: string, prefix: string): void => {
+        const metadata = JSON.parse(readFileSync(packagePath, 'utf8')) as {
           dependencies?: Record<string, string>;
         };
-        const requireProvider = createRequire(providerPackage);
-        for (const name of packages) {
-          if (!metadata.dependencies?.[name]) continue;
-          const root = shared.recipePackageRoot(requireProvider.resolve(name));
-          if (!implementationSources.some((source) => source.root === root))
-            implementationSources.push({ name: `provider:${name}`, root });
+        const owner = createRequire(packagePath);
+        for (const name of Object.keys(metadata.dependencies ?? {})
+          .filter((name) => name.startsWith('@farmslot/'))
+          .sort()) {
+          addImplementation(name, owner, prefix);
         }
-      }
+      };
+      const addImplementation = (name: string, resolve: NodeRequire, prefix = ''): void => {
+        let entry: string;
+        try {
+          entry = resolve.resolve(name);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED')
+            throw error;
+          // Some SDKs expose only subpaths, plus package.json for metadata discovery.
+          entry = resolve.resolve(`${name}/package.json`);
+        }
+        const root = shared.recipePackageRoot(entry);
+        const module = path.extname(entry) === '.json' ? undefined : entry;
+        if (
+          implementationSources.some((source) => source.root === root && source.module === module)
+        )
+          return;
+        implementationSources.push({
+          name: `${prefix}${name}`,
+          root,
+          ...(module ? { module } : {}),
+        });
+        addDependencies(path.join(root, 'package.json'), prefix);
+      };
+      addImplementation('@farmslot/recipe-cli', createRequire(import.meta.url));
+      const providerPackage = path.join(binding.provider.root, 'package.json');
+      if (existsSync(providerPackage)) addDependencies(providerPackage, 'provider:');
       const runtimeConfig = context.runtimeConfigPath;
       const report = await shared.checkRecipeConformance(engine, {
         project: binding.name,

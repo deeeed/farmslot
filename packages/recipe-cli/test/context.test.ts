@@ -806,6 +806,8 @@ describe('port fill order', () => {
     // Identity and ports describe the same runtime: the scratch one.
     assert.equal(scratch.slot?.value, 'scratch-1');
     assert.equal(scratch.slot?.source, 'binding');
+    assert.equal(scratch.slot?.value && scratch.slot.poolSlot, 'macwork-mmdev-1');
+    assert.ok(scratch.slot?.value && scratch.slot.poolFile);
     assert.deepEqual(contextPorts(scratch, tokens, grammar, {}).env, {
       ...cdpEnv(9222),
       ...watcherEnv(8081),

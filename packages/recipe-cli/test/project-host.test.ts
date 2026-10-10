@@ -8,6 +8,7 @@ import { test, type TestContext } from 'node:test';
 import type { ProjectConfig } from '@farmslot/protocol';
 
 import { harnessAdapters } from '../src/harness/adapters.js';
+import { recipeConformanceIdentity } from '../src/harness/conformance.js';
 import { harnessContext } from '../src/harness/context-state.js';
 import { sourceSnapshot } from '../src/harness/execution-provenance.js';
 import { harnessHost } from '../src/harness/host.js';
@@ -230,4 +231,39 @@ test('checkout library provenance excludes doctor output across repeated hosts',
   await withProjectRecipeHost(invocation, async ({ librarySources }) => {
     assert.deepEqual(librarySources[0]!.provenance, before);
   });
+});
+
+test('normalized provider runtimes retain the selected platform in report identity', async (t) => {
+  const options = fixture(t);
+  const providerFile = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    providerFile,
+    fs
+      .readFileSync(providerFile, 'utf8')
+      .replace(
+        "id: 'headless', sdkVersion: 1, headless: true,",
+        "id: 'headless', sdkVersion: 1, headless: true, targets: ['ios', 'android'],",
+      ),
+  );
+  const targets: string[] = [];
+  for (const selection of ['ios', 'android']) {
+    await withProjectRecipeHost(
+      { ...options, tokens: ['--adapter', selection] },
+      async ({ context, engine, librarySources }) => {
+        assert.equal(context.adapter?.value, 'headless');
+        const identity = await recipeConformanceIdentity(engine, {
+          project: 'example',
+          context,
+          providerRoot: options.cwd,
+          configurationPaths: [],
+          librarySources,
+          artifactsDir: path.join(options.cwd, 'artifacts'),
+          recipes: [],
+        });
+        assert.equal(identity.selection?.adapterTarget, selection);
+        targets.push(JSON.stringify(identity));
+      },
+    );
+  }
+  assert.notEqual(targets[0], targets[1]);
 });

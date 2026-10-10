@@ -25,6 +25,7 @@ import {
 import { indexActions } from '../discovery-index.js';
 import { resolveDiscoveryLibraries } from '../libraries.js';
 
+import { libraryName } from './adapter-plugins.js';
 import { harnessAdapters } from './adapters.js';
 import { color } from './cli-color.js';
 import { isSensitiveKey, redactStructuredValue } from './command-journal.js';
@@ -109,9 +110,7 @@ export function createRuntimeRecipeCatalog({
           );
       const libraries = selected.length
         ? await resolveDiscoveryLibraries({
-            libraries: selected.map(
-              (source) => `${source.name ?? path.basename(source.root)}=${source.root}`,
-            ),
+            libraries: selected.map((source) => `${libraryName(source)}=${source.root}`),
             env: { RECIPE_LIBRARY_PATH: '' },
           })
         : [];
@@ -119,7 +118,7 @@ export function createRuntimeRecipeCatalog({
         const configured = selected.find(
           (source) =>
             path.resolve(source.root) === library.info.root &&
-            (source.name ?? path.basename(source.root)) === library.info.name,
+            libraryName(source) === library.info.name,
         );
         library.source = { ...library.source, ...configured, root: library.info.root };
       }

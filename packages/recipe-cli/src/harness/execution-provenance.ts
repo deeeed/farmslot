@@ -209,12 +209,12 @@ export function providerSourceSnapshot(
   module: string,
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
-  const source = sourceSnapshot(root, undefined, excludedRoots);
+  const source = inputSourceSnapshot(root, excludedRoots);
   const deliveryRoot = path.dirname(module);
   const delivery =
     path.resolve(deliveryRoot) === path.resolve(root)
       ? fileFingerprint(module)
-      : sourceSnapshot(deliveryRoot, undefined, excludedRoots).sourceFingerprint;
+      : inputSourceSnapshot(deliveryRoot, excludedRoots).sourceFingerprint;
   return {
     ...source,
     sourceFingerprint: createHash('sha256')
@@ -227,6 +227,18 @@ export function providerSourceSnapshot(
 
 export function sourceIsDirty(source: SourceProvenanceSnapshot): boolean {
   return source.status !== 'not-a-git-checkout' && source.status.trim().length > 0;
+}
+
+/** Explicit code inputs remain bound even when stored under the task artifact directory. */
+export function inputSourceSnapshot(
+  root: string,
+  excludedRoots: string[] = [],
+): SourceProvenanceSnapshot {
+  const exclusions = excludedRoots.filter((excluded) => {
+    const relative = path.relative(path.resolve(excluded), path.resolve(root));
+    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  });
+  return sourceSnapshot(root, undefined, exclusions);
 }
 
 export function sourceSnapshot(

@@ -9,11 +9,13 @@ import {
 } from '@farmslot/protocol';
 import { loadRecipeLibraries, type RecipeLibrarySource } from '@farmslot/recipe-runner';
 
+import { libraryName } from './adapter-plugins.js';
 import { writeContainedArtifact } from './artifact-files.js';
 import type { RecipeCatalog } from './catalog.js';
 import type { HarnessContext } from './context-state.js';
 import {
   fileFingerprint,
+  inputSourceSnapshot,
   providerSourceSnapshot,
   sourceIsDirty,
   sourceSnapshot,
@@ -28,7 +30,7 @@ import {
   preflightRecipe,
   type RecipeEngine,
 } from './run-engine.js';
-import { recipeRunOptionsFromCli } from './run-options.js';
+import { recipeRunOptionsFromCli, recipeTrustOptionsFromCli } from './run-options.js';
 
 export interface RecipeConformanceOptions {
   project: string;
@@ -40,7 +42,7 @@ export interface RecipeConformanceOptions {
   librarySources: RecipeLibrarySource[];
   artifactsDir: string;
   cli?: CliOptions;
-  implementationSources?: Array<{ name: string; root: string }>;
+  implementationSources?: Array<{ name: string; root: string; module?: string }>;
   recipes: Array<{ recipe: string; params?: Record<string, unknown> }>;
 }
 
@@ -139,15 +141,21 @@ function resolvedConformanceIdentity(
         options.context.project.provider.module,
         excludedRoots,
       )
-    : sourceSnapshot(options.providerRoot, undefined, excludedRoots);
+    : inputSourceSnapshot(options.providerRoot, excludedRoots);
   return {
     project: options.project,
     app: options.app ?? null,
     domain: options.domain ?? null,
     adapter,
     target: options.context.target.value,
+    trustDigest: digestRecipeDocument(recipeTrustOptionsFromCli(options.cli ?? {})),
     selection: {
       slot: options.context.slot?.value ?? null,
+      adapterTarget: options.context.adapter?.requested ?? options.context.adapter?.value ?? null,
+      poolSlot: options.context.slot?.value
+        ? (options.context.slot.poolSlot ??
+          (options.context.slot.source === 'slot' ? options.context.slot.value : null))
+        : null,
       device: typeof options.cli?.device === 'string' ? options.cli.device : null,
       ports: {
         ...(options.context.slot?.value ? options.context.slot.ports : {}),
@@ -164,12 +172,16 @@ function resolvedConformanceIdentity(
     provider: withDirtyDigest(provider),
     implementation: options.implementationSources?.map((source) => ({
       name: source.name,
-      ...withDirtyDigest(sourceSnapshot(source.root, undefined, excludedRoots)),
+      ...withDirtyDigest(
+        source.module
+          ? providerSourceSnapshot(source.root, source.module, excludedRoots)
+          : inputSourceSnapshot(source.root, excludedRoots),
+      ),
     })),
     libraries: inputs.librarySources.map((source) => ({
-      name: source.name ?? path.basename(source.root),
+      name: libraryName(source),
       path: path.resolve(source.root),
-      ...withDirtyDigest(sourceSnapshot(source.root, undefined, excludedRoots)),
+      ...withDirtyDigest(inputSourceSnapshot(source.root, excludedRoots)),
     })),
     invocations: inputs.invocations.map((invocation) => ({
       recipe: invocation.recipe,

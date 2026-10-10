@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Resolve project providers and ordered libraries through one authorized binding, compose the shared SDK engine, and write static conformance reports bound to the complete checkout, selected app runtime, and each invocation's recipe bytes, parameters and effective libraries. Read-only plans check full runner and provider policy without publishing execution claims. Host engines with mutation policy must provide `trustedMutation.preflight` for `run --plan` and conformance, otherwise these commands refuse with an upgrade hint. Recipe state stays separate from farm worker state; ambiguous pool matches refuse while legacy scratch provisioning keeps its slot identity.
+- Resolve project providers and ordered libraries through one authorized binding and compose the shared SDK engine. Static conformance reports bind checkout and SDK code, runtime and pool selection, recipe inputs and trust; task-local code remains bound inside artifact directories. `run --plan` and conformance require mutation providers to expose read-only `trustedMutation.preflight`; missing support refuses with an upgrade hint. Recipe state stays separate from farm state, and legacy scratch-slot identities remain supported.
 
 ## 0.11.4 - 2026-10-10
 

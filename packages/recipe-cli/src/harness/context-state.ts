@@ -21,6 +21,8 @@ export interface HarnessContext {
   runtimeConfigPath?: string;
   adapter?: {
     value: string;
+    /** Selected target alias before provider normalization, such as ios or android. */
+    requested?: string;
     source: ContextSource;
     /**
      * The human label: '--adapter', '--platform' or 'positional' (flag),
@@ -46,6 +48,8 @@ export interface HarnessContext {
         detail: 'slot-config' | 'slot-config (~/farmslot-node/pool)' | 'runtime-context';
         session?: string;
         poolFile?: string;
+        /** Matched pool slot when a scratch runtime supplies a different identity. */
+        poolSlot?: string;
         ports: Record<string, number>;
       }
     | { value: null; source: 'none'; detail: 'no-pool-dir' }

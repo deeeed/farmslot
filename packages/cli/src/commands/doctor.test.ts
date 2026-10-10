@@ -98,6 +98,7 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
     'FARMSLOT_POOL_DIR',
     'FARMSLOT_WORKSPACE',
     'RECIPE_RUNTIME_CONTEXT',
+    'RECIPE_RUNTIME_DIR',
     'RECIPE_LIBRARY_PATH',
   ])
     delete env[name];
@@ -124,6 +125,7 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
     },
   );
   assert.ifError(result.error);
+  assert.equal(result.signal, null, `Doctor child timed out or was interrupted: ${result.signal}`);
   return { status: result.status, envelope: JSON.parse(result.stdout) };
 }
 
@@ -148,7 +150,17 @@ test('public doctor preflights a headless catalog without executing and writes b
     report.identity.provider.sourceFingerprint,
     context.project.provider.identity.sourceFingerprint,
   );
-  assert.equal(report.identity.implementation.length, 4);
+  for (const name of [
+    '@farmslot/recipe-cli',
+    '@farmslot/recipe-runner',
+    '@farmslot/adapter-sdk',
+    '@farmslot/agent-runtime',
+    '@farmslot/protocol',
+  ]) {
+    assert.ok(
+      report.identity.implementation.some((entry: { name: string }) => entry.name === name),
+    );
+  }
   assert.deepEqual(JSON.parse(fs.readFileSync(reportPath, 'utf8')), report);
 });
 
@@ -395,6 +407,62 @@ test('public doctor uses the installed workspace pool', (t) => {
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   assert.equal(result.envelope.data.context.slot.value, 'selected');
   assert.equal(result.envelope.data.context.project.provider.root, external.root);
+});
+
+test('scratch runtime keeps its pool configuration and pool selection in the report', (t) => {
+  const { root, write, external, workspace } = workspaceFixture(t);
+  write('scratch/agentic-runtime.json', {
+    repoRoot: root,
+    slotId: 'scratch-slot',
+    watcherPort: 8123,
+  });
+  const result = run(
+    root,
+    ['--project', 'example', '--slot', 'selected', '--runtime-dir', 'scratch'],
+    { FARMSLOT_WORKSPACE: workspace },
+  );
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  const { context, report } = result.envelope.data;
+  assert.equal(context.slot.value, 'scratch-slot');
+  assert.equal(context.slot.poolSlot, 'selected');
+  assert.equal(context.project.provider.root, external.root);
+  assert.equal(report.identity.selection.poolSlot, 'selected');
+  assert.ok(
+    report.identity.configuration.some(
+      (source: { path: string }) => source.path === context.slot.poolFile,
+    ),
+  );
+});
+
+test('public doctor refuses parameter broadcast before importing a provider', (t) => {
+  const { root } = fixture(t);
+  const result = run(root, ['--param', 'count=2']);
+  assert.match(result.envelope.error.message, /--param requires --recipe/u);
+  assert.equal(fs.existsSync(`${root}.imported`), false);
+});
+
+test('public doctor binds provider dependencies exposing only SDK subpaths', (t) => {
+  const { root, write } = fixture(t);
+  const sdk = path.join(root, 'node_modules/@farmslot/example-sdk');
+  write('package.json', {
+    name: 'example-provider',
+    dependencies: { '@farmslot/example-sdk': '1.0.0' },
+  });
+  write('node_modules/@farmslot/example-sdk/package.json', {
+    name: '@farmslot/example-sdk',
+    version: '1.0.0',
+    exports: { './package.json': './package.json', './action': './action.cjs' },
+  });
+  write('node_modules/@farmslot/example-sdk/action.cjs', 'exports.policy = "original";');
+  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  const source = result.envelope.data.report.identity.implementation.find(
+    (entry: { name: string }) => entry.name === 'provider:@farmslot/example-sdk',
+  );
+  assert.ok(source);
+  assert.equal(source.sourceFingerprint, sourceSnapshot(sdk).sourceFingerprint);
+  write('node_modules/@farmslot/example-sdk/action.cjs', 'exports.policy = "changed";');
+  assert.notEqual(source.sourceFingerprint, sourceSnapshot(sdk).sourceFingerprint);
 });
 
 test('explicit pool selection overrides the installed workspace pool', (t) => {

@@ -1941,54 +1941,67 @@ describe('run', () => {
     }
   });
 
-  test('conformance binds external recipe bytes and its adjacent task library', async () => {
-    const target = checkout();
-    const task = tempRoot('recipe-cli-external-task-');
-    const local = path.join(task, 'recipe-library');
-    const recipes = path.join(local, 'recipes');
-    fs.mkdirSync(recipes, { recursive: true });
-    const child = recipeFile(recipes, { done: { action: 'end', status: 'pass' } });
-    const recipe = recipeFile(task, {
-      child: {
-        action: 'call',
-        ref: 'proof',
-        intent: 'Check the adjacent task dependency.',
-        next: 'done',
-      },
-      done: { action: 'end', status: 'pass' },
+  for (const placement of ['external', 'task-artifacts'])
+    test(`conformance binds ${placement} recipe bytes and its adjacent task library`, async () => {
+      const target = checkout();
+      const task =
+        placement === 'external'
+          ? tempRoot('recipe-cli-external-task-')
+          : path.join(target, '.task/dev/t1/artifacts');
+      fs.mkdirSync(task, { recursive: true });
+      const local = path.join(task, 'recipe-library');
+      const recipes = path.join(local, 'recipes');
+      fs.mkdirSync(recipes, { recursive: true });
+      const child = recipeFile(recipes, { done: { action: 'end', status: 'pass' } });
+      const recipe = recipeFile(task, {
+        child: {
+          action: 'call',
+          ref: 'proof',
+          intent: 'Check the adjacent task dependency.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      });
+      const options: RecipeConformanceOptions = {
+        project: 'shop',
+        context: {
+          adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+          target: { value: target, source: 'flag', detail: '--target' },
+        },
+        providerRoot: engine.bundledLibrary.root,
+        configurationPaths: [],
+        librarySources: [{ name: 'shop', root: engine.bundledLibrary.root }],
+        artifactsDir: path.join(target, '.task'),
+        recipes: [{ recipe }],
+      };
+      const report = await checkRecipeConformance(engine, options);
+      assert.equal(report.status, 'pass', JSON.stringify(report.checks));
+      assert.ok(report.identity.libraries.some((source) => source.path === local));
+      assert.ok(report.resolution?.recipes.some((source) => source.source === 'task-local'));
+      assert.ok(report.identity.configuration.some((source) => source.path === recipe));
+      const changedParams = await recipeConformanceIdentity(engine, {
+        ...options,
+        recipes: [{ recipe, params: { scope: 'different invocation' } }],
+      });
+      assert.throws(() => assertConformanceReportCurrent(report, changedParams), /stale/u);
+      const changedTrust = await recipeConformanceIdentity(engine, {
+        ...options,
+        cli: { sourceTrust: 'untrusted', sourceKind: 'task' },
+      });
+      assert.throws(() => assertConformanceReportCurrent(report, changedTrust), /stale/u);
+      const originalChild = fs.readFileSync(child, 'utf8');
+      fs.writeFileSync(child, originalChild.replace('Shop proof', 'Changed child'));
+      const changedChild = await recipeConformanceIdentity(engine, options);
+      assert.throws(() => assertConformanceReportCurrent(report, changedChild), /stale/u);
+      fs.writeFileSync(child, originalChild);
+      fs.writeFileSync(
+        recipe,
+        fs.readFileSync(recipe, 'utf8').replace('Shop proof', 'Changed root'),
+      );
+      const changedRoot = await recipeConformanceIdentity(engine, options);
+      assert.throws(() => assertConformanceReportCurrent(report, changedRoot), /stale/u);
+      assert.equal(calls.events.length, 0);
     });
-    const options: RecipeConformanceOptions = {
-      project: 'shop',
-      context: {
-        adapter: { value: 'api', source: 'flag', detail: '--adapter' },
-        target: { value: target, source: 'flag', detail: '--target' },
-      },
-      providerRoot: engine.bundledLibrary.root,
-      configurationPaths: [],
-      librarySources: [{ name: 'shop', root: engine.bundledLibrary.root }],
-      artifactsDir: path.join(target, 'temp/checks'),
-      recipes: [{ recipe }],
-    };
-    const report = await checkRecipeConformance(engine, options);
-    assert.equal(report.status, 'pass', JSON.stringify(report.checks));
-    assert.ok(report.identity.libraries.some((source) => source.path === local));
-    assert.ok(report.resolution?.recipes.some((source) => source.source === 'task-local'));
-    assert.ok(report.identity.configuration.some((source) => source.path === recipe));
-    const changedParams = await recipeConformanceIdentity(engine, {
-      ...options,
-      recipes: [{ recipe, params: { scope: 'different invocation' } }],
-    });
-    assert.throws(() => assertConformanceReportCurrent(report, changedParams), /stale/u);
-    const originalChild = fs.readFileSync(child, 'utf8');
-    fs.writeFileSync(child, originalChild.replace('Shop proof', 'Changed child'));
-    const changedChild = await recipeConformanceIdentity(engine, options);
-    assert.throws(() => assertConformanceReportCurrent(report, changedChild), /stale/u);
-    fs.writeFileSync(child, originalChild);
-    fs.writeFileSync(recipe, fs.readFileSync(recipe, 'utf8').replace('Shop proof', 'Changed root'));
-    const changedRoot = await recipeConformanceIdentity(engine, options);
-    assert.throws(() => assertConformanceReportCurrent(report, changedRoot), /stale/u);
-    assert.equal(calls.events.length, 0);
-  });
 
   test('conformance fingerprints native edits even when the runtime freshness hash omits them', async () => {
     const target = checkout();
