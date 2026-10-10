@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { createAdapterRegistry } from '@farmslot/adapter-sdk';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
@@ -66,7 +68,7 @@ export function withProjectRecipeHost<T>(
         target: context.target.value,
         runtimeDir:
           options.options?.runtimeDir ?? process.env.RECIPE_RUNTIME_DIR ?? binding.runtimeDir,
-        artifactsDir: binding.artifactDir,
+        artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir),
         ...(binding.manifest && !options.options?.actionManifest
           ? { actionManifest: binding.manifest }
           : {}),
@@ -103,13 +105,10 @@ export function withProjectRecipeHost<T>(
             providerSourceSnapshot(
               binding.provider.root,
               binding.provider.module,
-              recipeOutputRoots(context.target.value, binding.runtimeDir, binding.artifactDir),
+              recipeOutputRoots(context.target.value, binding),
             ).sourceFingerprint,
         });
-      const librarySources = await resolveLibrarySources(
-        engine,
-        libraries.map((entry) => `${entry.name}=${entry.root}`),
-      );
+      const librarySources = await resolveLibrarySources(engine, undefined, undefined, libraries);
       return await invoke({ context, provider, engine, librarySources, cli });
     } finally {
       try {

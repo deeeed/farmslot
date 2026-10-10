@@ -1875,9 +1875,20 @@ describe('run', () => {
     const report = await checkRecipeConformance(engine, options);
     assert.equal(report.status, 'pass', JSON.stringify(report.checks));
     assert.equal(calls.events.length, 0);
+    const unsupported = await checkRecipeConformance(
+      {
+        ...engine,
+        trustedMutation: { ...engine.trustedMutation!, preflight: undefined },
+      },
+      options,
+    );
+    assert.equal(unsupported.status, 'fail');
+    assert.match(unsupported.checks[0]!.userAction ?? '', /upgrade the provider/u);
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
     assert.match(report.identity.checkout.head ?? '', /^[a-f0-9]{40}$/u);
     assert.equal(report.identity.checkout.dirtyDigest, null);
+    assert.equal(report.identity.provider.head, null);
+    assert.equal(report.identity.provider.dirtyDigest, null);
     assertConformanceReportCurrent(report, recipeConformanceIdentity(options));
     await writeRecipeConformanceReport(options.artifactsDir, report);
     assertConformanceReportCurrent(report, recipeConformanceIdentity(options));

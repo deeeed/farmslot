@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Resolve project providers and ordered libraries through one authorized binding, compose the shared SDK engine, and write revision-bound static conformance reports. Read-only plans check full runner and provider policy without publishing execution claims; ambiguous pool matches refuse while legacy scratch provisioning keeps its slot identity.
+- Resolve project providers and ordered libraries through one authorized binding, compose the shared SDK engine, and write revision-bound static conformance reports. Read-only plans check full runner and provider policy without publishing execution claims. Host engines with mutation policy must provide `trustedMutation.preflight` for `run --plan` and conformance, otherwise these commands refuse with an upgrade hint. Recipe state stays separate from farm worker state; ambiguous pool matches refuse while legacy scratch provisioning keeps its slot identity.
 
 ## 0.11.4 - 2026-10-10
 

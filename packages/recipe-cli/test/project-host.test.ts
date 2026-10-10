@@ -8,7 +8,9 @@ import type { ProjectConfig } from '@farmslot/protocol';
 
 import { harnessAdapters } from '../src/harness/adapters.js';
 import { harnessContext } from '../src/harness/context-state.js';
+import { sourceSnapshot } from '../src/harness/execution-provenance.js';
 import { harnessHost } from '../src/harness/host.js';
+import { recipeOutputRoots } from '../src/harness/paths.js';
 import { withProjectRecipeHost } from '../src/harness/project-host.js';
 
 function fixture(t: TestContext) {
@@ -104,4 +106,71 @@ test('overlapping project hosts wait for the active invocation before changing s
   }
   await Promise.all([first, second]);
   assert.deepEqual(observed, ['first', 'first', 'second']);
+});
+
+test('recipe runtime defaults and overrides stay separate from farm state', async (t) => {
+  const previous = process.env.RECIPE_RUNTIME_DIR;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RECIPE_RUNTIME_DIR;
+    else process.env.RECIPE_RUNTIME_DIR = previous;
+  });
+  for (const [env, flag, expected] of [
+    [undefined, undefined, 'temp/recipe/runtime'],
+    ['env-runtime', undefined, 'env-runtime'],
+    ['env-runtime', 'flag-runtime', 'flag-runtime'],
+  ]) {
+    const options = fixture(t);
+    if (env === undefined) delete process.env.RECIPE_RUNTIME_DIR;
+    else process.env.RECIPE_RUNTIME_DIR = env;
+    const file = path.join(options.cwd, expected!, 'agentic-runtime.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ repoRoot: options.cwd, project: 'example' }));
+    await withProjectRecipeHost(
+      {
+        ...options,
+        tokens: flag ? ['--runtime-dir', flag] : [],
+        options: flag ? { runtimeDir: flag } : {},
+      },
+      async ({ context, cli }) => {
+        assert.equal(context.runtimeConfigPath, file);
+        assert.equal(context.project?.runtimeDir, expected);
+        assert.equal(context.project?.farmRuntimeDir, 'runtime');
+        assert.equal(cli.runtimeDir, expected);
+        assert.equal(process.env.RECIPE_RUNTIME_DIR, expected);
+      },
+    );
+  }
+});
+
+test('app output exclusions use the checkout farm paths and preserve library provenance', async (t) => {
+  const options = fixture(t);
+  const config = options.projects[0]!.config;
+  config.apps = ['apps/ui'];
+  fs.mkdirSync(path.join(options.cwd, 'apps/ui'), { recursive: true });
+  const library = path.join(options.cwd, 'team');
+  fs.mkdirSync(library);
+  config.recipe!.libraries = [{ name: 'team', source: 'team', owner: 'team' }];
+  await withProjectRecipeHost(
+    { ...options, tokens: ['--app', 'apps/ui'] },
+    async ({ context, cli, librarySources }) => {
+      const binding = context.project!;
+      assert.equal(cli.artifactsDir, path.join(binding.checkoutRoot, 'artifacts'));
+      const exclusions = recipeOutputRoots(context.target.value, binding);
+      const before = sourceSnapshot(options.cwd, undefined, exclusions);
+      for (const root of exclusions) {
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(path.join(root, 'state'), 'runtime state');
+      }
+      assert.deepEqual(sourceSnapshot(options.cwd, undefined, exclusions), before);
+      assert.deepEqual(librarySources[0]?.provenance, binding.libraries[0]?.provenance);
+      fs.writeFileSync(
+        path.join(options.cwd, 'implementation.mjs'),
+        'export const changed = true;',
+      );
+      assert.notEqual(
+        sourceSnapshot(options.cwd, undefined, exclusions).sourceFingerprint,
+        before.sourceFingerprint,
+      );
+    },
+  );
 });

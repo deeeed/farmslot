@@ -52,6 +52,7 @@ import {
   type HarnessHostConfig,
   validateRelativeRecipePath,
 } from './host.js';
+import { gitLibraryProvenance } from './library-provenance.js';
 import type { CliOptions } from './parse-args.js';
 import { DEFAULT_RECIPE_RUNTIME_DIR, recipeOutputRoots, recipeRuntimeDir } from './paths.js';
 import type { RecipeEngine } from './run-engine.js';
@@ -756,14 +757,32 @@ export async function resolveProjectContext(
   validateProjectRecipeConfig(recipe);
   const runtimeDir = validateRelativeRecipePath(
     'runtime directory',
-    optionValues(options.tokens, '--runtime-dir').at(-1) ?? config.paths.runtimeDir,
+    optionValues(options.tokens, '--runtime-dir').at(-1) ?? recipeRuntimeDir(),
   );
   const artifactDir = validateRelativeRecipePath(
     'artifact directory',
     optionValues(options.tokens, '--artifacts-dir').at(-1) ?? config.paths.artifactDir,
   );
-  const excludedRoots = recipeOutputRoots(target, runtimeDir, artifactDir);
-  const environment = { ...pool?.env, ...slot?.env, ...(options.load?.env ?? process.env) };
+  const outputPaths = {
+    checkoutRoot,
+    runtimeDir,
+    artifactDir,
+    farmRuntimeDir: validateRelativeRecipePath('farm runtime directory', config.paths.runtimeDir),
+  };
+  const excludedRoots = recipeOutputRoots(target, outputPaths);
+  const environment = { ...pool?.env, ...(options.load?.env ?? process.env) };
+  const existingSourceRoot = (value: string): string => {
+    try {
+      return fs.realpathSync(value);
+    } catch (error) {
+      if (!missing(error)) throw error;
+      throw new ProjectBindingError(
+        'SOURCE_ROOT_MISSING',
+        `Configured source root ${value} does not exist.`,
+        'configure an existing provider or library path in the selected pool or project',
+      );
+    }
+  };
   const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
     if (!configured)
       throw new ProjectBindingError(
@@ -778,16 +797,7 @@ export async function resolveProjectContext(
         `Missing configured source root ${ref.env ?? ref.projectPath}.`,
         `set ${ref.env ?? 'the project path'} in the selected pool/slot configuration`,
       );
-    try {
-      return fs.realpathSync(value);
-    } catch (error) {
-      if (!missing(error)) throw error;
-      throw new ProjectBindingError(
-        'SOURCE_ROOT_MISSING',
-        `Configured source root ${ref.env ?? ref.projectPath} does not exist.`,
-        'configure an existing provider or library path in the selected pool/slot',
-      );
-    }
+    return existingSourceRoot(value);
   };
   const provider = resolveProvider(
     recipe.provider,
@@ -801,12 +811,14 @@ export async function resolveProjectContext(
     ...(options.load?.env ? { env: options.load.env } : {}),
   });
   const libraries: ResolvedProjectLibrary[] = overrides.map((entry) => {
-    const libraryRoot = fs.realpathSync(path.resolve(cwd, entry.root));
+    const libraryRoot = existingSourceRoot(path.resolve(cwd, entry.root));
+    const identity = sourceSnapshot(libraryRoot);
+    const name = entry.name ?? path.basename(libraryRoot);
     return {
       ...entry,
       root: libraryRoot,
-      name: entry.name ?? path.basename(libraryRoot),
-      identity: sourceSnapshot(libraryRoot),
+      name,
+      identity,
     };
   });
   for (const entry of recipe.libraries ?? []) {
@@ -835,7 +847,7 @@ export async function resolveProjectContext(
     }
     const libraryRoot =
       typeof entry.source === 'string'
-        ? fs.realpathSync(path.resolve(root, entry.source))
+        ? existingSourceRoot(path.resolve(root, entry.source))
         : sourceRoot(entry.source);
     const identity = sourceSnapshot(libraryRoot);
     if (identity.head && !entry.revision) {
@@ -852,15 +864,16 @@ export async function resolveProjectContext(
       owner: entry.owner,
       revision: entry.revision,
       identity,
-      provenance: {
-        kind: 'library',
-        trust: 'unknown',
-        name: entry.name,
-        path: libraryRoot,
-        ...(identity.head ? { revision: identity.head } : {}),
-        dirty: identity.status !== '' && identity.status !== 'not-a-git-checkout',
-      },
     });
+  }
+  for (const library of libraries) {
+    library.provenance = {
+      kind: 'library',
+      trust: 'unknown',
+      name: library.name,
+      path: library.root,
+      ...(await gitLibraryProvenance(library.root, library.identity)),
+    };
   }
   context.target = {
     value: target,
@@ -892,13 +905,11 @@ export async function resolveProjectContext(
     source,
     root,
     configPath: path.join(root, 'project.json'),
-    checkoutRoot,
+    ...outputPaths,
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
     ...(recipe.manifest ? { manifest: path.resolve(root, recipe.manifest) } : {}),
-    runtimeDir,
-    artifactDir,
     provider,
     libraries,
   };
@@ -1044,8 +1055,8 @@ function readProject(file: string): ProjectConfig {
     repoUrl: raw.repoUrl ?? raw.repo_url ?? '',
     defaultBranch: raw.defaultBranch ?? raw.default_branch ?? '',
     paths: {
-      runtimeDir: raw.paths?.runtimeDir ?? raw.paths?.runtime_dir ?? '',
-      artifactDir: raw.paths?.artifactDir ?? raw.paths?.artifact_dir ?? '',
+      runtimeDir: raw.paths?.runtimeDir ?? raw.paths?.runtime_dir ?? '.agent',
+      artifactDir: raw.paths?.artifactDir ?? raw.paths?.artifact_dir ?? '.task',
     },
   };
 }

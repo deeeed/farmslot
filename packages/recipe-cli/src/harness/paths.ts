@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import type { ResolvedProjectBinding } from './context-state.js';
 import { harnessHost, hostEnvName, validateRelativeRecipePath } from './host.js';
 
 // The checkout layout every host and shell leaf shares (`temp/recipe/runtime/<adapter>/`).
@@ -47,8 +48,14 @@ export function harnessExecutable(): string {
 /** Runtime state and artifacts do not belong to the provider's implementation identity. */
 export function recipeOutputRoots(
   target: string,
-  runtimeDir: string,
-  artifactDir: string,
+  binding: Pick<
+    ResolvedProjectBinding,
+    'checkoutRoot' | 'runtimeDir' | 'farmRuntimeDir' | 'artifactDir'
+  >,
 ): string[] {
-  return [path.join(target, artifactDir), path.join(target, runtimeDir)];
+  return [
+    path.join(binding.checkoutRoot, binding.artifactDir),
+    path.join(binding.checkoutRoot, binding.farmRuntimeDir),
+    path.join(target, binding.runtimeDir),
+  ];
 }

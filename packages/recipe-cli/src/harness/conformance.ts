@@ -10,7 +10,12 @@ import { loadRecipeLibraries, type RecipeLibrarySource } from '@farmslot/recipe-
 
 import { writeContainedArtifact } from './artifact-files.js';
 import type { HarnessContext } from './context-state.js';
-import { fileFingerprint, providerSourceSnapshot, sourceSnapshot } from './execution-provenance.js';
+import {
+  fileFingerprint,
+  providerSourceSnapshot,
+  sourceIsDirty,
+  sourceSnapshot,
+} from './execution-provenance.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { recipeOutputRoots } from './paths.js';
 import { validateRunRecipeStatic } from './recipe-validation.js';
@@ -53,11 +58,7 @@ export function recipeConformanceIdentity(
   const excludedRoots = [
     options.artifactsDir,
     ...(options.context.project
-      ? recipeOutputRoots(
-          options.context.target.value,
-          options.context.project.runtimeDir,
-          options.context.project.artifactDir,
-        )
+      ? recipeOutputRoots(options.context.target.value, options.context.project)
       : []),
   ];
   const checkout = sourceSnapshot(
@@ -211,6 +212,11 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           status: 'fail',
           required: true,
           message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof Error &&
+          'userAction' in error &&
+          typeof error.userAction === 'string'
+            ? { userAction: error.userAction }
+            : {}),
         });
       }
     }
@@ -258,7 +264,7 @@ function sameConformanceIdentity(
 function withDirtyDigest(source: RecipeConformanceSource): RecipeConformanceSource {
   return {
     ...source,
-    dirtyDigest: source.status.trim() ? source.sourceFingerprint : null,
+    dirtyDigest: sourceIsDirty(source) ? source.sourceFingerprint : null,
   };
 }
 

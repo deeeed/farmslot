@@ -659,7 +659,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     helperPaths: commandHelperPaths(recipeDocument ?? recipe, projectRoot),
     runnerIncludes: engine.runnerIncludes,
   };
-  const startProvenance = await captureExecutionProvenance(provenanceInput, 'start');
+  const provenanceSnapshots = runtimeOptions.readOnly
+    ? []
+    : [await captureExecutionProvenance(provenanceInput, 'start')];
   return {
     readOnly: runtimeOptions.readOnly === true,
     ...(plan ? { plan } : {}),
@@ -668,7 +670,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     useFramedRecording,
     runRequest,
     provenanceInput,
-    provenanceSnapshots: [startProvenance],
+    provenanceSnapshots,
   };
 }
 

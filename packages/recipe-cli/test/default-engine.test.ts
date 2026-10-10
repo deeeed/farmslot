@@ -247,6 +247,7 @@ test('read-only preflight checks provider policy without publishing execution au
     readOnly: true,
   });
   assert.deepEqual(lifecycle, ['policy checked']);
+  assert.deepEqual(execution.provenanceSnapshots, []);
   assert.equal(fs.existsSync(artifacts), false);
   await assert.rejects(
     runRecipe(engine, 'api', document, artifacts, root, undefined, {}, execution),

@@ -308,6 +308,7 @@ test('monorepo report includes shared checkout sources beyond the selected app',
     recipes: [],
   });
   assert.equal(data.report.identity.target, path.join(root, 'apps/ui'));
+  assert.equal(data.reportPath, path.join(root, 'artifacts/conformance/conformance-report.json'));
   assert.notEqual(
     current.checkout.sourceFingerprint,
     data.report.identity.checkout.sourceFingerprint,
@@ -352,7 +353,7 @@ test('public doctor binds the actual runtime configuration selected through the 
   assert.ok(
     report.identity.configuration.some((entry: { path: string }) => entry.path === runtimePath),
   );
-  const excluded = recipeOutputRoots(root, context.project.runtimeDir, context.project.artifactDir);
+  const excluded = recipeOutputRoots(root, context.project);
   const before = sourceSnapshot(root, undefined, excluded);
   write(`${runtimeDir}/agentic-runtime.json`, {
     repoRoot: root,

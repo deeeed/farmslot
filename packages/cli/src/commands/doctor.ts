@@ -179,7 +179,7 @@ export async function runProjectConformance(
             .filter((entry) => !entry.aliasFor)
             .map((entry) => entry.ref);
       const params = parseRecipeParamAssignments(shared.optionStrings(options, 'param') ?? []);
-      const artifactsDir = path.join(context.target.value, binding.artifactDir, 'conformance');
+      const artifactsDir = path.join(binding.checkoutRoot, binding.artifactDir, 'conformance');
       const packages = [
         '@farmslot/recipe-cli',
         '@farmslot/recipe-runner',
@@ -236,10 +236,12 @@ async function renderProjectConformance(checkout: string | undefined, cmd: Comma
     if (isMachineMode(output)) {
       output.writeJson({ ...okEnvelope('doctor', result), exitCode: passed ? 0 : 1 });
     } else {
-      for (const check of result.report.checks)
+      for (const check of result.report.checks) {
         output.write(
           `${check.status === 'pass' ? green('[OK]') : red('[FAIL]')} ${check.id}: ${check.message}\n`,
         );
+        if (check.userAction) output.write(`  ${check.userAction}\n`);
+      }
       output.write(`Report: ${result.reportPath}\n`);
     }
     if (!passed) process.exitCode = 1;

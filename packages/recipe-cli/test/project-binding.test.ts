@@ -481,7 +481,8 @@ test('configured default resolves relative targets and registered projectsDir wi
   assert.equal(context.project?.source, 'default');
   assert.equal(context.target.value, path.join(directory, 'checkout'));
   assert.equal(context.project?.provider.authority, 'configured');
-  assert.equal(context.project?.runtimeDir, '.runtime');
+  assert.equal(context.project?.runtimeDir, 'temp/recipe/runtime');
+  assert.equal(context.project?.farmRuntimeDir, '.runtime');
   assert.equal(context.project?.artifactDir, 'artifacts');
   assert.equal(globals.bindingImports, 0);
 });
@@ -635,6 +636,31 @@ test('discovered environment root references refuse before reading operator valu
     { code: 'SOURCE_UNAUTHORIZED' },
   );
   assert.equal(globals.bindingImports, 0);
+});
+
+test('missing declared and overridden library paths return the same structured refusal', async () => {
+  const directory = root();
+  const config = project(directory);
+  const options = { cwd: directory, projects: [{ config, root: directory }], load: { env: {} } };
+  config.recipe!.libraries = [{ name: 'team', source: 'missing', owner: 'team' }];
+  await assert.rejects(resolveProjectContext({ ...options, tokens: [] }), {
+    code: 'SOURCE_ROOT_MISSING',
+  });
+  config.recipe!.libraries = [];
+  await assert.rejects(
+    resolveProjectContext({ ...options, tokens: ['--library', `team=${directory}/missing`] }),
+    { code: 'SOURCE_ROOT_MISSING' },
+  );
+});
+
+test('project metadata without paths uses the schema defaults for farm state and artifacts', async () => {
+  const directory = root();
+  const config = project(directory);
+  write(directory, 'project.json', JSON.stringify({ ...config, paths: undefined }));
+  const context = await resolveProjectContext({ cwd: directory, tokens: [], load: { env: {} } });
+  assert.equal(context.project?.farmRuntimeDir, '.agent');
+  assert.equal(context.project?.artifactDir, '.task');
+  assert.equal(context.project?.runtimeDir, 'temp/recipe/runtime');
 });
 
 test('ignored compiled provider bytes cannot retain a checked source identity', async () => {

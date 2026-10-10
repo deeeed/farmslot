@@ -225,6 +225,10 @@ export function providerSourceSnapshot(
   };
 }
 
+export function sourceIsDirty(source: SourceProvenanceSnapshot): boolean {
+  return source.status !== 'not-a-git-checkout' && source.status.trim().length > 0;
+}
+
 export function sourceSnapshot(
   root: string,
   adapter?: string,
@@ -403,7 +407,7 @@ function hashDirectory(
     throw error;
   }
   if (stat.isDirectory()) {
-    hash.update(`directory\0${relative}\0`);
+    // Empty parents of excluded output directories carry no source bytes.
     for (const name of fs.readdirSync(absolute).sort()) {
       if (relative === '' && (name === '.git' || name === 'node_modules' || name === 'temp'))
         continue;

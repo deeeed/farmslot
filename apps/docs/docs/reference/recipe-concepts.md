@@ -34,4 +34,6 @@ Declare `recipe.provider` and an ordered `recipe.libraries` list in `project.jso
 
 Executable library sources also need registered project configuration or an explicit `--library name=path`. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata.
 
-Provider `root` and library `source` can reuse portable `{ "env": "EXAMPLE_PACKAGE_ROOT" }` or `{ "projectPath": "recipe-library" }` references. The first reads the operator environment or selected pool/slot env; the second resolves from the checkout. Discovered metadata cannot resolve those references until the project is registered. This supports globally installed provider packages without home-path defaults.
+Provider `root` and library `source` can reuse portable `{ "env": "EXAMPLE_PACKAGE_ROOT" }` or `{ "projectPath": "recipe-library" }` references. The first reads the operator environment or selected pool env; the second resolves from the checkout. Discovered metadata cannot resolve those references until the project is registered. This supports globally installed provider packages without home-path defaults.
+
+Recipe state uses `--runtime-dir`, then `RECIPE_RUNTIME_DIR`, then `temp/recipe/runtime` relative to the target. The farm worker directory in `paths.runtime_dir` is separate. The artifact directory in `paths.artifact_dir` resolves from the checkout root, including when an app is selected.

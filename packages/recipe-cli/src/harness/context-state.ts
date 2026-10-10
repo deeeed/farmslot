@@ -99,6 +99,7 @@ export interface ResolvedProjectBinding {
   template?: string;
   manifest?: string;
   runtimeDir: string;
+  farmRuntimeDir: string;
   artifactDir: string;
   provider: {
     ref: string;

@@ -32,6 +32,7 @@ export interface RecipeConformanceCheck {
   status: 'pass' | 'fail' | 'missing' | 'skipped' | 'unsupported';
   required: boolean;
   message: string;
+  userAction?: string;
   evidence?: { plan: RecipeExecutionPlan };
 }
 

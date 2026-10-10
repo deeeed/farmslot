@@ -3,11 +3,17 @@ import { promisify } from 'node:util';
 
 import type { RecipeSourceProvenance } from '@farmslot/protocol';
 
+import { sourceIsDirty, type SourceProvenanceSnapshot } from './execution-provenance.js';
+
 const execFileAsync = promisify(execFile);
 
 export async function gitLibraryProvenance(
   root: string,
+  snapshot?: SourceProvenanceSnapshot,
 ): Promise<Pick<RecipeSourceProvenance, 'revision' | 'dirty'>> {
+  if (snapshot) {
+    return snapshot.head ? { revision: snapshot.head, dirty: sourceIsDirty(snapshot) } : {};
+  }
   try {
     const { stdout: tracked } = await execFileAsync('git', ['-C', root, 'ls-files', '--', '.'], {
       encoding: 'utf8',
