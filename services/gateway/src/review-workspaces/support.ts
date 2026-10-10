@@ -108,7 +108,7 @@ export interface ReviewWorkspaceSupportDependencies {
     io: SlotLocality,
     argv: string[],
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-  /** Run git on the review's execution node. */
+  /** Run a read-only probe (`test`, `git`) on the review's execution node. */
   git: (run: Run, argv: string[]) => Promise<ExecResult>;
 }
 const defaults: ReviewWorkspaceSupportDependencies = {
@@ -385,12 +385,15 @@ async function readReferences(
       continue;
     }
     const checkout = referenceRepoPath(slot.repo, referenceRepos![name].local_name);
-    const head = await deps.git(run, ['git', '-C', checkout, 'rev-parse', 'HEAD']);
+    const cloned = await deps.git(run, ['test', '-e', path.posix.join(checkout, '.git')]);
     // Expected outcome, not a failure: the reference is not cloned on this machine.
-    if (head.exitCode === 128 && /cannot change to|not a git repository/.test(head.stderr)) {
+    if (cloned.exitCode === 1) {
       references.push({ name, path: checkout, missing: true });
       continue;
     }
+    if (cloned.exitCode !== 0)
+      throw new Error(`Reference ${name} checkout probe failed: ${cloned.stderr}`);
+    const head = await deps.git(run, ['git', '-C', checkout, 'rev-parse', 'HEAD']);
     if (head.exitCode !== 0)
       throw new Error(`Reference ${name} revision read failed: ${head.stderr}`);
     const status = await deps.git(run, ['git', '-C', checkout, 'status', '--porcelain']);
