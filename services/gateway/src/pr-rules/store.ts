@@ -226,7 +226,7 @@ export class PRRuleStore {
     revision: number,
     assertMutable?: (intentId: string) => void,
   ): Promise<PRReviewSubmission> {
-    return this.change((data) => {
+    return this.change(async (data) => {
       const submission = data.submissions?.find(
         (item) => item.id === id && item.ownerId === ownerId,
       );
@@ -243,7 +243,7 @@ export class PRRuleStore {
       for (const intent of data.intents) {
         for (const source of intent.contributions)
           if (source.submissionId === id) source.eligible = false;
-        reconcileReviewIntent(intent, data.teams);
+        await reconcileReviewIntent(intent, data.teams);
       }
       return submission;
     });
@@ -267,7 +267,7 @@ export class PRRuleStore {
     action: 'accept' | 'defer',
     assertMutable?: (intentId: string) => void,
   ): Promise<PRReviewIntent> {
-    return this.change((data) => {
+    return this.change(async (data) => {
       const intent = data.intents.find(
         (item) => item.id === id && item.contributions.some((source) => source.ownerId === ownerId),
       );
@@ -306,7 +306,7 @@ export class PRRuleStore {
         }
       }
       intent.updatedAt = new Date().toISOString();
-      reconcileReviewIntent(intent, data.teams);
+      await reconcileReviewIntent(intent, data.teams);
       return intent;
     });
   }
@@ -336,7 +336,7 @@ export class PRRuleStore {
   ): Promise<PRTeamProfile> {
     assertPRTeamConfig(config);
     const requested = structuredClone(config);
-    return this.change((data) => {
+    return this.change(async (data) => {
       const existing = id
         ? data.teams.find((item) => item.id === id && item.ownerId === ownerId)
         : undefined;
@@ -379,7 +379,7 @@ export class PRRuleStore {
         if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.teamId === team.id) contribution.eligible = false;
-        reconcileReviewIntent(intent, data.teams);
+        await reconcileReviewIntent(intent, data.teams);
       }
       return team;
     });
@@ -393,7 +393,7 @@ export class PRRuleStore {
   ): Promise<PRTriggerRule> {
     assertPRTriggerRuleConfig(config);
     const requested = structuredClone(config);
-    return this.change((data) => {
+    return this.change(async (data) => {
       if (!data.teams.some((item) => item.id === config.teamId && item.ownerId === ownerId))
         throw new Error('Team profile not found');
       const existing = id
@@ -428,7 +428,7 @@ export class PRRuleStore {
         if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.ruleId === rule.id) contribution.eligible = false;
-        reconcileReviewIntent(intent, data.teams);
+        await reconcileReviewIntent(intent, data.teams);
       }
       return rule;
     });
@@ -445,7 +445,7 @@ export class PRRuleStore {
     authorized: () => boolean = () => true,
   ): Promise<PRTriggerRule> {
     const baseline = activationPreview && structuredClone(activationPreview);
-    return this.change((data) => {
+    return this.change(async (data) => {
       if (!authorized())
         throw new Error('Activation authority or source generation changed; preview again');
       const rule = data.rules.find((item) => item.id === id && item.ownerId === ownerId);
@@ -497,7 +497,7 @@ export class PRRuleStore {
           if (intent.status === 'completed' || intent.status === 'failed') continue;
           for (const contribution of intent.contributions)
             if (contribution.ruleId === id) contribution.eligible = false;
-          reconcileReviewIntent(intent, data.teams);
+          await reconcileReviewIntent(intent, data.teams);
         }
       }
       return rule;
@@ -511,7 +511,7 @@ export class PRRuleStore {
     targetPRKey?: string,
   ): Promise<boolean> {
     const preview = structuredClone(input);
-    return this.change((data) => {
+    return this.change(async (data) => {
       const rule = data.rules.find(
         (item) => item.id === preview.ruleId && item.ownerId === ownerId,
       );
@@ -755,7 +755,7 @@ export class PRRuleStore {
         if (!eligible.has(intent.id))
           for (const source of intent.contributions)
             if (source.ruleId === rule.id) source.eligible = false;
-        reconcileReviewIntent(intent, data.teams);
+        await reconcileReviewIntent(intent, data.teams);
       }
       if (targetPRKey) return true;
       rule.scan.subjects = subjects;
@@ -770,11 +770,11 @@ export class PRRuleStore {
     });
   }
 
-  private change<T>(mutate: (data: PRRuleStoreData) => T): Promise<T> {
+  private change<T>(mutate: (data: PRRuleStoreData) => T | Promise<T>): Promise<T> {
     this.writesPending += 1;
     const operation = async () => {
       const draft = structuredClone(this.data);
-      const result = mutate(draft);
+      const result = await mutate(draft);
       decodePRRuleStore(draft);
       await writeAtomicJSON(this.file, draft);
       this.data = draft;

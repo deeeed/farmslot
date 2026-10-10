@@ -263,3 +263,21 @@ test('workspace execution rejects missing owner, other owner, wrong repository a
   assert.deepEqual(implicit.choices, []);
   assert.match(implicit.errors.join('; '), /transport/);
 });
+
+test('automatic portable workspace pools admit only configured machines', async () => {
+  const portable = { ...execution, workspacePolicy: { kind: 'pool' as const } };
+  const resolved = await resolvePRExecution('review', 'owner/repo', [portable], {
+    ownerId: 'review-owner',
+  });
+  assert.equal(resolved.choices.length, 1);
+  assert.equal(resolved.choices[0].machine, 'review-node');
+  assert.equal(resolved.choices[0].model, execution.models[0].model);
+  const denied = await resolvePRExecution(
+    'review',
+    'owner/repo',
+    [{ ...portable, workspacePolicy: { kind: 'exact', machine: 'unregistered' } }],
+    { ownerId: 'review-owner' },
+  );
+  assert.deepEqual(denied.choices, []);
+  assert.match(denied.errors.join('; '), /pool/);
+});

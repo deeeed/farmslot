@@ -36,6 +36,7 @@ import {
   inspectReviewWorkspaceTarget,
   type ReviewWorkspaceAdmission,
 } from './admission.js';
+import { bindPRExecutionProfilesToPool } from './pool-policy.js';
 
 export type DirectWorkflowRequest = ReviewQaDispatchInput &
   Pick<
@@ -98,6 +99,10 @@ export function constrainDirectWorkflowExecution(
       selected.workspacePolicy.kind === 'exact'
         ? [selected.workspacePolicy.machine]
         : selected.workspacePolicy.allowedMachines;
+    if (!allowed)
+      unavailable(
+        'Bind the workspace policy to the configured pool registry before selecting a machine',
+      );
     if (input.reviewWorkspaceTarget) {
       const machine = input.reviewWorkspaceTarget.machine;
       if (!allowed.includes(machine))
@@ -278,7 +283,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   if (!profile) return { params: params as T, reviewQa, sources: defaults.sources };
   if (isPRWorkspaceExecutionProfile(profile) !== (flow === 'review-pr'))
     unavailable('Workflow execution policy uses the wrong resource type');
-  const execution = constrainDirectWorkflowExecution(profile, params);
+  const [boundProfile] = await bindPRExecutionProfilesToPool([profile]);
+  const execution = constrainDirectWorkflowExecution(boundProfile, params);
   if (isPRWorkspaceExecutionProfile(execution)) {
     if (!options.ownerId)
       throw new GatewayMethodError(
@@ -333,7 +339,14 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     return {
       params: params as T,
       reviewQa,
-      execution,
+      execution:
+        options.purpose === 'queue' &&
+        isPRWorkspaceExecutionProfile(profile) &&
+        profile.workspacePolicy.kind === 'pool' &&
+        profile.workspacePolicy.allowedMachines === undefined &&
+        !original.reviewWorkspaceTarget
+          ? { ...execution, workspacePolicy: { kind: 'pool' } }
+          : execution,
       sources: defaults.sources,
       admission: waiting.admission,
     };
