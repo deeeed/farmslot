@@ -5,6 +5,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.6 - 2026-10-10
+
 - The Ready gate PR preview shows the title and body that will be published (`currentDescription`, re-rendered when the gate opens and at approval) instead of the reviewed package's, and the completed card shows the body that was posted.
 - The acceptance panel shows a muted "evidence manifest unreadable" line when the manifest behind the evidence fallback cannot be read, apart from the ledger error.
 - Archive (run detail and bulk) waits up to 5 minutes, like slot actions, since archiving a blocked run can release its slot. Bulk archive no longer stops at the first refused or slow run: it archives the rest, keeps the failed runs selected and lists them with their reasons.

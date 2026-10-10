@@ -1,14 +1,11 @@
 {
-  "version": "0.20.6",
-  "date": "2026-10-09",
+  "version": "0.20.7",
+  "date": "2026-10-10",
   "items": [
-    "Slots can push as the farm's one signed GitHub identity (<FARMSLOT_HOME>/git-identity.json); slot check verifies signing",
-    "Slots whose repo cannot check out the default branch are flagged with the reason and skipped by dispatch",
-    "Published runs free their slot when they end, and blocked runs resume by themselves when the worker continues",
-    "Workers on remote nodes reach the gateway that dispatched them, and Codex reviews launch unattended",
-    "An explicitly chosen slot that is still releasing waits up to 5 minutes instead of failing as busy",
-    "Browser health checks no longer stop running screen recordings on the same Mac",
-    "The publish package keeps evidence, cited media and recipe outputs instead of the whole artifacts folder, and fails fast over 1 GB",
-    "Remote dispatches to hosts like mini.local work again: ssh no longer fails at once with \"Undefined error: 0\""
+    "Approve-publish no longer fails with \"Package changed ... (draft body)\"",
+    "Archiving a settled blocked run releases its slot and keeps its blocked outcome",
+    "Workers find the node's farmslot CLI first on PATH",
+    "QA names cases whose recording was interrupted as incomplete evidence, with their partial videos",
+    "An unreadable evidence manifest is reported instead of looking like one that covers nothing"
   ]
 }
