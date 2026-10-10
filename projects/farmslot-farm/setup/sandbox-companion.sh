@@ -64,6 +64,9 @@ done
 [[ "$GATEWAY_PORT" =~ ^[0-9]+$ && "$METRO_PORT" =~ ^[0-9]+$ ]] || usage
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Use the helper beside this support bundle, even when the slot checkout is older.
+source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 
 echo "[sandbox-companion] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"

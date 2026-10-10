@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Dev and sandbox stacks discard inherited node and gateway credentials before loading checkout-local auth, so an auth-free sandbox cannot reuse its parent gateway token.
+
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.

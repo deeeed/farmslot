@@ -53,6 +53,11 @@ fi
 if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; fi
 if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
 
+# Selecting this stack's ports also selects its credential scope. Parent node
+# credentials must not authenticate the co-launched node to a different gateway.
+source "$FARMSLOT_ROOT/scripts/lib/stack-credentials.sh"
+clear_inherited_gateway_credentials
+
 # Load optional local-only auth secrets. This file is gitignored and should contain
 # FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD when exposing the gateway remotely.
 if [ -f "$AUTH_ENV_FILE" ]; then
