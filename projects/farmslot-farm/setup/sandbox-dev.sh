@@ -120,9 +120,14 @@ read_primary_repo() {
   [[ -f "$project_json" ]] || return 1
   node -e "
     const fs = require('fs');
+    const { execFileSync } = require('node:child_process');
     const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    process.stdout.write(String(project.primary_repo || '').trim());
-  " "$project_json"
+    const configured = String(project.primary_repo || '').trim();
+    const primary = configured || execFileSync('git',
+      ['-C', process.argv[2], 'worktree', 'list', '--porcelain', '-z'],
+      { encoding: 'utf8' }).split('\0')[0].slice('worktree '.length);
+    process.stdout.write(primary);
+  " "$project_json" "$REPO_ROOT"
 }
 
 is_primary_checkout() {
