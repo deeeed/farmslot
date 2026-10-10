@@ -64,7 +64,11 @@ export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
     }
   };
   walk(root, '');
-  return entries.sort((a, b) => a.rel.localeCompare(b.rel));
+  return entries.sort((a, b) => {
+    const left = a.rel.replaceAll('/', '\0');
+    const right = b.rel.replaceAll('/', '\0');
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
 }
 
 /** Machine identities come from pool configuration, never a built-in operator list. */
@@ -125,7 +129,7 @@ export function validatePackFilePortability(
     const match = privatePath?.[1] ?? FIXED_HOST.exec(line)?.[0] ?? machine?.exec(line)?.[0];
     return match
       ? [
-          `${file}:${index + 1}: nonportable reference ${JSON.stringify(match)}; use a relative pack path or a pool/slot {{placeholder}} for node-specific values`,
+          `${file}:${index + 1}: nonportable reference; use a relative pack path or a pool/slot {{placeholder}} for node-specific values`,
         ]
       : [];
   });

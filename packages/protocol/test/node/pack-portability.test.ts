@@ -18,14 +18,14 @@ test('pack policy rejects private paths and fixed nodes with line and fix guidan
     '/home/operator/app',
     '/var/root/app',
     'C:\\Users\\operator\\app',
-    'ssh macpro.local',
-    'macwork',
-    'mini',
+    'ssh worker-a.local',
+    'worker-a',
+    'worker-b',
   ]) {
     const errors = validatePackFilePortability('hooks/project.sh', `#!/bin/sh\n${reference}\n`, [
       'macpro',
-      'macwork',
-      'mini',
+      'worker-a',
+      'worker-b',
     ]);
     assert.equal(errors.length, 1, reference);
     assert.match(errors[0], /^hooks\/project.sh:2: nonportable reference/);
