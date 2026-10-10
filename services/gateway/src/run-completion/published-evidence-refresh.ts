@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import {
@@ -97,8 +96,6 @@ export async function refreshPublishedEvidence(
   }
   const artifactUrls = await uploadArtifacts(run, run.prNumber, expanded, {
     failOnError: true,
-    // A refused body edit must leave every URL in the existing PR untouched.
-    evidenceRevision: randomUUID(),
   });
   assertSelectedEvidencePublished(expanded, artifactUrls);
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {

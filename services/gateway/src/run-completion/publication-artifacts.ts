@@ -132,15 +132,19 @@ async function assertUploadedArtifactUrlsReachable(
   console.warn(`[run-completion] ${message}`);
 }
 
+function evidenceRefsForPaths(paths: Iterable<string>): ArtifactRef[] {
+  return [...new Set(paths)].map((artifactPath) => ({
+    path: artifactPath,
+    purpose: inferArtifactPurpose(artifactPath),
+  }));
+}
+
 function evidenceSelectionSet(
   selectedEvidenceKeys: string[] | undefined,
   availablePaths: Iterable<string>,
 ): Set<string> | null {
   if (!selectedEvidenceKeys) return null;
-  const candidates = [...new Set(availablePaths)].map((artifactPath) => ({
-    path: artifactPath,
-    purpose: 'media',
-  }));
+  const candidates = evidenceRefsForPaths(availablePaths);
   const keys = new Set<string>();
   for (const key of selectedEvidenceKeys) {
     if (typeof key !== 'string' || !key.trim()) continue;
@@ -280,7 +284,7 @@ export async function uploadArtifacts(
   run: Run,
   prNumber: number,
   selectedEvidenceKeys?: string[],
-  options: { failOnError?: boolean; evidenceRevision?: string } = {},
+  options: { failOnError?: boolean } = {},
 ): Promise<Map<string, string>> {
   const urlMap = new Map<string, string>();
   const failOrReturnEmpty = (message: string): Map<string, string> => {
@@ -338,9 +342,8 @@ export async function uploadArtifacts(
 
   const flow = run.flowType === 'review-pr' ? 'review' : run.flowType === 'dev' ? 'feature' : 'fix';
   const flowDir = flow === 'fix' ? 'fixes' : `${flow}s`;
-  const publicationId = options.evidenceRevision
-    ? `${prNumber}-evidence/${options.evidenceRevision}`
-    : String(prNumber);
+  // Never replace media linked by a previous body before the new body is posted.
+  const publicationId = `${prNumber}-evidence/${randomUUID()}`;
   const uploadScript = path.join(farmslotRoot, 'scripts', 'gh-upload-asset.sh');
 
   let uploadDir = artifactsDir;
@@ -390,12 +393,7 @@ export async function uploadArtifacts(
 }
 
 function selectedEvidenceKeyUploaded(key: string, artifactUrls: Map<string, string>): boolean {
-  return Boolean(
-    resolveSelectedEvidenceRef(
-      key,
-      [...artifactUrls.keys()].map((artifactPath) => ({ path: artifactPath, purpose: 'media' })),
-    ),
-  );
+  return Boolean(resolveSelectedEvidenceRef(key, evidenceRefsForPaths(artifactUrls.keys())));
 }
 
 export function assertSelectedEvidencePublished(
@@ -833,10 +831,7 @@ export async function postProcessPRBody(
     if (options.failOnError) {
       assertPublicationEvidenceSelection({
         selectedEvidenceKeys: selectedEvidenceKeys ?? [...(selectedArtifactUrls?.keys() ?? [])],
-        evidenceManifest: [...(selectedArtifactUrls?.keys() ?? [])].map((artifactPath) => ({
-          path: artifactPath,
-          purpose: inferArtifactPurpose(artifactPath),
-        })),
+        evidenceManifest: evidenceRefsForPaths(selectedArtifactUrls?.keys() ?? []),
         trustedEvidenceManifest: rawManifest,
       });
     }

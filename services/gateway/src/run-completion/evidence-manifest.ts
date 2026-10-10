@@ -417,6 +417,10 @@ export function assertCaptionConfidence(manifest: EvidenceManifest): void {
   if (lows.length > 0) throw new EvidenceCaptionError(lows);
 }
 
+export function manifestPrefersVideo(manifest: EvidenceManifest | null | undefined): boolean {
+  return manifest?.preferred_mode === 'video' || manifest?.videos?.preferred === true;
+}
+
 export function buildEvidenceSection(
   manifest: EvidenceManifest,
   artifactUrls: Map<string, string>,
@@ -426,7 +430,7 @@ export function buildEvidenceSection(
 
   const pairs = manifest.before_after_pairs ?? [];
   const standalone = manifest.standalone ?? [];
-  const screenshotsPreferred = manifest.preferred_mode !== 'video';
+  const screenshotsPreferred = !manifestPrefersVideo(manifest);
 
   const fileUsage = new Map<string, number>();
   const bumpUsage = (f?: string) => {

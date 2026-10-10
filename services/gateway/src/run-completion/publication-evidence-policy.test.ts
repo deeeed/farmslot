@@ -120,3 +120,13 @@ test('orientation captures without declared publication evidence may remain unse
     [],
   );
 });
+
+test('a video-only inventory defaults to its recording without a declared manifest', () => {
+  assert.deepEqual(
+    defaultSelectedEvidenceKeysForPublication({
+      evidenceManifest: [{ path: 'artifacts/after.mp4', purpose: 'video-after' }],
+      trustedEvidenceManifest: null,
+    }),
+    ['artifacts/after.mp4'],
+  );
+});
