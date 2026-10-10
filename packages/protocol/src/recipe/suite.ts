@@ -36,12 +36,27 @@ export interface RecipeSuiteScopeDocument {
   cases: RecipeSuiteScopeCase[];
 }
 
+export const RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS = ['capture_interrupted'] as const;
+
+export type RecipeSuiteEvidenceIncompleteReason =
+  (typeof RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS)[number];
+
+/** A failed case whose only failure was an infra event that left its evidence incomplete. */
+export interface RecipeSuiteEvidenceIncomplete {
+  reason: RecipeSuiteEvidenceIncompleteReason;
+  detail: string;
+  /** Case-package-relative path of the partial evidence (e.g. the partial video). */
+  evidence_path: string;
+}
+
 export interface RecipeSuiteVerdictResolution {
   id: string;
   kind: 'verdict';
   status: RecipeSuiteVerdictStatus;
   summary_path: string;
   summary_digest: string;
+  /** Only on a `fail` verdict: the case did not fail on product behaviour. */
+  evidence_incomplete?: RecipeSuiteEvidenceIncomplete;
 }
 
 export interface RecipeSuiteNonExecutionResolution {
@@ -493,7 +508,37 @@ function parseResolution(
     return undefined;
   }
   if (value.kind === 'verdict') {
-    validateExactKeys(ctx, value, ['id', 'kind', 'status', 'summary_path', 'summary_digest'], path);
+    validateExactKeys(
+      ctx,
+      value,
+      ['id', 'kind', 'status', 'summary_path', 'summary_digest', 'evidence_incomplete'],
+      path,
+      ['evidence_incomplete'],
+    );
+    const incomplete = value.evidence_incomplete;
+    if (
+      incomplete !== undefined &&
+      (value.status !== 'fail' ||
+        !isRecord(incomplete) ||
+        !(RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS as readonly unknown[]).includes(
+          incomplete.reason,
+        ) ||
+        !isNonEmptyString(incomplete.detail) ||
+        !isNonEmptyString(incomplete.evidence_path) ||
+        !isRelativeArtifactPath(incomplete.evidence_path) ||
+        Object.keys(incomplete).some(
+          (key) => !['reason', 'detail', 'evidence_path'].includes(key),
+        ))
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe_suite.invalid_evidence_incomplete',
+        `${path}.evidence_incomplete`,
+        'evidence_incomplete is only valid on a fail verdict and needs a known reason, a detail and a safe evidence path.',
+      );
+      return undefined;
+    }
     if (
       !isNonEmptyString(value.id) ||
       typeof value.status !== 'string' ||
@@ -518,6 +563,9 @@ function parseResolution(
       status: value.status as RecipeSuiteVerdictStatus,
       summary_path: value.summary_path,
       summary_digest: value.summary_digest,
+      ...(isRecord(incomplete)
+        ? { evidence_incomplete: structuredClone(incomplete) as unknown as RecipeSuiteEvidenceIncomplete }
+        : {}),
     };
   }
   if (value.kind === 'not_executed') {

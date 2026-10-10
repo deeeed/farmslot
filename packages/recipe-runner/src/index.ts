@@ -121,10 +121,14 @@ export {
   manifestTarget,
 } from './recording/capture-helper.js';
 export {
+  CAPTURE_EVIDENCE_INCOMPLETE,
   CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT,
   CAPTURE_INTERRUPTED,
   type CaptureHelperInterruptionEvent,
+  isCaptureInterruptedEntry,
   keptCaptureInterruption,
+  loneCaptureInterruption,
+  onlyCaptureInterrupted,
   parseCaptureHelperInterruption,
   recordCaptureInterruptionInPackage,
   runCaptureInterruption,

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { type RecipeRecordingInterruption, recipeTraceEntries } from '@farmslot/protocol';
@@ -10,6 +11,43 @@ export const CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT = 3;
 
 /** Typed failure code for a run whose recording stream stopped early; the partial video is kept. */
 export const CAPTURE_INTERRUPTED = 'CAPTURE_INTERRUPTED';
+
+/** How reports and verdicts name a run whose only failure is a capture interruption. */
+export const CAPTURE_EVIDENCE_INCOMPLETE = 'evidence incomplete (capture interrupted)';
+
+/** The trace entry a kept partial recording adds (captureInterruptedTraceEntry). */
+export function isCaptureInterruptedEntry(entry: unknown): boolean {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as { error_code?: unknown }).error_code === CAPTURE_INTERRUPTED
+  );
+}
+
+/**
+ * True when a run failed only because its recording was interrupted: an infra event that left
+ * the evidence incomplete, not a product failure. Any other failed entry makes it a failure.
+ */
+export function onlyCaptureInterrupted(entries: readonly unknown[]): boolean {
+  const failed = entries.filter(
+    (entry) => typeof entry === 'object' && entry !== null && (entry as { ok?: unknown }).ok === false,
+  );
+  return failed.length > 0 && failed.every(isCaptureInterruptedEntry);
+}
+
+/** The run's capture interruption when it is the run's only failure (see onlyCaptureInterrupted). */
+export function loneCaptureInterruption(
+  result: Pick<RecipeRunResult, 'tracePath' | 'captureInterruption'>,
+): RecipeRunCaptureInterruption | undefined {
+  if (!result.captureInterruption) return undefined;
+  let entries: unknown[] | undefined;
+  try {
+    entries = recipeTraceEntries(JSON.parse(readFileSync(result.tracePath, 'utf8')));
+  } catch {
+    return undefined;
+  }
+  return entries && onlyCaptureInterrupted(entries) ? result.captureInterruption : undefined;
+}
 
 /** capture-helper's terminal `stream_interrupted` stderr event. */
 export interface CaptureHelperInterruptionEvent extends RecipeRecordingInterruption {

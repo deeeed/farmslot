@@ -57,9 +57,12 @@ export {
 } from './recording.js';
 export {
   digestRecipeSuiteScope,
+  RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS,
   RECIPE_SUITE_NON_EXECUTION_REASONS,
   RECIPE_SUITE_RESULT_SCHEMA_URL,
   RECIPE_SUITE_SCOPE_SCHEMA_URL,
+  type RecipeSuiteEvidenceIncomplete,
+  type RecipeSuiteEvidenceIncompleteReason,
   type RecipeSuiteNonExecutionReason,
   type RecipeSuiteNonExecutionResolution,
   type RecipeSuitePackageInput,
