@@ -200,6 +200,7 @@ export function captureInterruptedViolation(
     message: interruption.message,
     userAction: `review the partial video at ${interruption.videoPath} (artifacts); rerun the recipe for a full recording`,
     originalError: interruption.message,
+    retryable: true,
   };
 }
 

@@ -11,6 +11,7 @@ import {
 import {
   parseQaResult,
   type QaPackage,
+  requireSuiteCoverage,
   validateQaPackage,
   validateQaScope,
   validateQaSuite,
@@ -337,6 +338,98 @@ test('dynamic suite coverage cannot drop cases, hide nonexecution or substitute 
         envelope.smoke,
       ),
     /QA evidence incomplete/,
+  );
+});
+
+test('a case failed only by an interrupted recording blocks QA as incomplete evidence, naming its video', () => {
+  const scope = {
+    $schema: 'https://farmslot.io/schemas/recipe-suite-scope-v1.schema.json',
+    suite_id: 'changes',
+    cases: [{ id: 'smoke' }, { id: 'changed-case' }],
+  };
+  const failed = {
+    ...(bundle().summary as object),
+    status: 'fail',
+    endedAt: '2026-09-15T01:00:02.000Z',
+  };
+  const summaries = { 'smoke/summary.json': bundle().summary, 'changed/summary.json': failed };
+  const verdict = (id: string, path: string, status: string, extra = {}) => ({
+    id,
+    kind: 'verdict',
+    status,
+    summary_path: path,
+    summary_digest: digestRecipeDocument(summaries[path as keyof typeof summaries]),
+    ...extra,
+  });
+  const incomplete = {
+    evidence_incomplete: {
+      reason: 'capture_interrupted',
+      detail: 'CAPTURE_INTERRUPTED: the recording stream stopped after 12 frames (0.4 s): -3805.',
+      evidence_path: 'videos/recipe-run.mp4',
+    },
+  };
+  const result = {
+    $schema: 'https://farmslot.io/schemas/recipe-suite-result-v1.schema.json',
+    suite_id: 'changes',
+    scope_digest: digestRecipeDocument(scope),
+    totals: { declared: 2, executed: 2, not_executed: 0 },
+    resolutions: [
+      verdict('smoke', 'smoke/summary.json', 'pass'),
+      verdict('changed-case', 'changed/summary.json', 'fail', incomplete),
+    ],
+  };
+  assert.throws(
+    () => validateQaSuite(scope, result, summaries, envelope.smoke),
+    /^BlockedRunError: QA evidence incomplete \(capture interrupted\): rerun those cases\. case changed-case: CAPTURE_INTERRUPTED: .* Partial video: videos\/recipe-run\.mp4$/u,
+  );
+  // Any other failing case keeps the generic block, so incomplete evidence never hides a failure.
+  const smokeFail = { ...failed, endedAt: '2026-09-15T01:00:03.000Z' };
+  const smokeFailed = { 'smoke/summary.json': smokeFail, 'changed/summary.json': failed };
+  assert.throws(
+    () =>
+      validateQaSuite(
+        scope,
+        {
+          ...result,
+          resolutions: [
+            {
+              ...result.resolutions[0],
+              status: 'fail',
+              summary_digest: digestRecipeDocument(smokeFail),
+            },
+            result.resolutions[1],
+          ],
+        },
+        smokeFailed,
+        envelope.smoke,
+      ),
+    /QA evidence incomplete: suite has failing, unknown or unexecuted coverage/u,
+  );
+});
+
+test('the incomplete-evidence block gives each video under its case package', () => {
+  const resolutions = [
+    { id: 'smoke', kind: 'verdict', status: 'pass' },
+    {
+      id: 'changed-case',
+      kind: 'verdict',
+      status: 'fail',
+      evidence_incomplete: {
+        reason: 'capture_interrupted',
+        detail: 'd.',
+        evidence_path: 'videos/recipe-run.mp4',
+      },
+    },
+  ];
+  assert.throws(
+    () =>
+      requireSuiteCoverage(resolutions, { smoke: 'cases/smoke', 'changed-case': 'cases/changed' }),
+    /Partial video: cases\/changed\/videos\/recipe-run\.mp4$/u,
+  );
+  // A marker on anything but a failed verdict is not trusted.
+  assert.throws(
+    () => requireSuiteCoverage([{ ...resolutions[1], status: 'unknown' }]),
+    /suite has failing, unknown or unexecuted coverage/u,
   );
 });
 

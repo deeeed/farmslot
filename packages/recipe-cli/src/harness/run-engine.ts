@@ -12,13 +12,11 @@ import type {
   RecipeNodeEvent,
   RecipeRunOptions,
 } from '@farmslot/adapter-sdk';
+import type { RecipeActionManifestDocument, RecipeExecutionPlan } from '@farmslot/protocol';
 import {
-  type RecipeActionManifestDocument,
-  type RecipeExecutionPlan,
-  recipeTraceEntries,
-} from '@farmslot/protocol';
-import {
-  CAPTURE_INTERRUPTED,
+  isCaptureInterruptedEntry,
+  loneCaptureInterruption,
+  readRunTraceEntries,
   type RecipeLibrarySource,
   type RecipeRunner,
   type RecipeRunRequest,
@@ -816,23 +814,21 @@ export async function prepareHeal(
 
 // Failure text to classify. A capture interruption is reported on its own (captureInterruptedViolation).
 function readRunFailureText(result: RecipeRunResult): string {
-  try {
-    const entries = (recipeTraceEntries(JSON.parse(fs.readFileSync(result.tracePath, 'utf8'))) ??
-      []) as Array<{ ok?: boolean; error?: unknown; error_code?: unknown }>;
-    return entries
-      .filter(
-        (entry) =>
-          entry &&
-          entry.ok === false &&
-          typeof entry.error === 'string' &&
-          entry.error_code !== CAPTURE_INTERRUPTED,
-      )
-      .map((entry) => entry.error as string)
-      .join('\n')
-      .trim();
-  } catch {
-    return '';
-  }
+  const entries = (readRunTraceEntries(result.tracePath) ?? []) as Array<{
+    ok?: boolean;
+    error?: unknown;
+  }>;
+  return entries
+    .filter(
+      (entry) =>
+        entry &&
+        entry.ok === false &&
+        typeof entry.error === 'string' &&
+        !isCaptureInterruptedEntry(entry),
+    )
+    .map((entry) => entry.error as string)
+    .join('\n')
+    .trim();
 }
 
 /** Run once; a failed run is classified against the recovery bounds. */
@@ -843,11 +839,10 @@ export async function executeWithHealBounds<T extends RecipeRunResult>(
 ): Promise<{ result: T; violation: HealBoundViolation | null }> {
   const result = await exec();
   if (result.status === 'pass' || result.status === 'unknown') return { result, violation: null };
-  const failureText = readRunFailureText(result);
-  // Any other failure is classified as usual; a lone capture interruption is typed.
-  if (result.captureInterruption && !failureText)
-    return { result, violation: captureInterruptedViolation(result.captureInterruption) };
-  return { result, violation: checkHealBounds(target, failureText, state) };
+  // A lone capture interruption is typed; any other failure is classified as usual.
+  const interruption = loneCaptureInterruption(result);
+  if (interruption) return { result, violation: captureInterruptedViolation(interruption) };
+  return { result, violation: checkHealBounds(target, readRunFailureText(result), state) };
 }
 
 /** Evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`). */
@@ -864,6 +859,17 @@ export function fallbackMarker(
   return `(fallback from ${fallback.fallbackFrom}${fallback.fallbackReason ? `: ${fallback.fallbackReason}` : ''})`;
 }
 
+/** The error a run or call reports for a heal-bound violation, in --json and --json-stream alike. */
+export function healViolationError(violation: HealBoundViolation, userAction: string) {
+  return {
+    code: violation.code,
+    message: violation.message,
+    retryable: violation.retryable ?? false,
+    userAction,
+    originalError: violation.originalError ?? null,
+  };
+}
+
 export function emitHealViolation(
   json: boolean,
   command: 'run' | 'call',
@@ -872,6 +878,7 @@ export function emitHealViolation(
   state: HealState,
   adapter?: string,
   fallbacks: RunFallbackEvidence[] = [],
+  reportPath?: string,
 ): number {
   const userAction =
     (adapter ? harnessAdapter(adapter).run?.violationUserAction?.(violation) : undefined) ??
@@ -892,15 +899,10 @@ export function emitHealViolation(
           summaryPath: result.summaryPath,
           tracePath: result.tracePath,
           artifactManifestPath: result.artifactManifestPath,
+          ...(reportPath ? { reportPath } : {}),
           ...(fallbacks.length > 0 ? { fallbacks } : {}),
           exitCode: violation.exitCode,
-          error: {
-            code: violation.code,
-            message: violation.message,
-            retryable: false,
-            userAction,
-            originalError: violation.originalError ?? null,
-          },
+          error: healViolationError(violation, userAction),
         },
         null,
         2,

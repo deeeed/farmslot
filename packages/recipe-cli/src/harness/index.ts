@@ -353,6 +353,7 @@ export {
   recipeCdpPorts,
   type RunReport,
   writeRunReport,
+  writeViolationReport,
 } from './run-report.js';
 export {
   type ProofDocument,

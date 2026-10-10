@@ -397,8 +397,8 @@ esac
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
     true,
   );
-  for (const command of ['rsync', 'systemctl'])
-    write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
+  write('bin/rsync', '#!/bin/sh\nexit 0\n', true);
+  write('bin/systemctl', '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\n', true);
   // No bash login profile, as on macpro and mini: the worker prefix alone must
   // put the deployed CLI on PATH.
   if (tmuxServer) write('home/tmux-server', '');
@@ -435,6 +435,18 @@ esac
       shell = '/bin/bash',
       env: extraEnv = {},
     } = {}) => {
+      // rsync is stubbed, so stand in for the synced node: the token check the
+      // deploy runs there, with tsx as the install provides it.
+      const install = path.join(home, `farmslot-node${instance === 'dev' ? '-dev' : ''}`);
+      for (const name of ['check-node-token.ts', 'gateway-credential.ts'])
+        write(
+          path.relative(root, path.join(install, 'src', name)),
+          fs.readFileSync(path.join(repo, 'services/node/src', name)),
+        );
+      if (!fs.existsSync(path.join(install, 'node_modules/tsx'))) {
+        fs.mkdirSync(path.join(install, 'node_modules'), { recursive: true });
+        fs.symlinkSync(path.join(repo, 'node_modules/tsx'), path.join(install, 'node_modules/tsx'));
+      }
       const env = {
         ...process.env,
         // Only the fixture's stubs, node and the system tools: nothing from the
@@ -467,6 +479,7 @@ esac
       );
     },
     calls: () => read('cli-calls.jsonl').map((line) => JSON.parse(line)),
+    systemctl: () => read('systemctl.log'),
     tmuxLaunches: () => read('tmux.log'),
     tmuxKills: () => read('tmux-kills.log'),
     snapshotInstalls: () => read('yarn.log').filter((line) => line.includes(' workspaces focus ')),
@@ -635,6 +648,62 @@ test('deploy-node verifies when the bash login profile never adds ~/.local/bin',
       [['--version'], fs.realpathSync(fixture.entry)],
       [['rpc', 'gateway.status'], fs.realpathSync(fixture.entry)],
     ],
+  );
+});
+
+// The node reads FARMSLOT_NODE_TOKEN from an env file in or above its install
+// dir ahead of the service's own: a stale one there (mini and macwork kept an
+// old ~/farmslot-node/.env.local-auth) left nodes failing auth after a deploy
+// that reported success.
+test('deploy-node fails before the service is reloaded when an env file shadows the node token', (t) => {
+  const fixture = cliFixture(t);
+  const file = path.join(fixture.home, 'farmslot-node/.env.local-auth');
+  fixture.write(
+    'home/farmslot-node/.env.local-auth',
+    'FARMSLOT_NODE_TOKEN=stale-file-credential\n',
+  );
+  assert.throws(fixture.deploy, (error) => {
+    assert.equal(error.status, 1);
+    const stderr = String(error.stderr);
+    assert.ok(
+      stderr.includes(
+        `[deploy] ERROR: ${fs.realpathSync(file)} sets FARMSLOT_NODE_TOKEN, which the node reads instead of the deployed token\n` +
+          '  fix: remove that line (or move the file aside), then redeploy\n',
+      ),
+      stderr,
+    );
+    assert.match(
+      stderr,
+      /node token check failed on fixture-machine; the service was not reloaded/,
+    );
+    assert.doesNotMatch(
+      `${error.stdout}${stderr}`,
+      /stale-file-credential|fixture-node-credential|fixture-operator-secret/,
+    );
+    return true;
+  });
+  assert.deepEqual(fixture.systemctl(), []);
+  assert.equal(
+    fs.existsSync(path.join(fixture.home, '.config/systemd/user/farmslot-node.service')),
+    false,
+  );
+  assert.deepEqual(fixture.calls(), []);
+});
+
+// A local deploy (no ssh, no CLI refresh) runs the same check in the operator's shell.
+test('deploy-node deploys when the env file holds the deployed node token', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write(
+    'home/farmslot-node/.env.local-auth',
+    'FARMSLOT_NODE_TOKEN=fixture-node-credential\n',
+  );
+
+  const output = fixture.deploy({ machine: localMachine() });
+
+  assert.match(output, /checking for an env file that shadows the node token/);
+  assert.ok(
+    fixture.systemctl().some((line) => line.includes('restart farmslot-node')),
+    fixture.systemctl().join('\n'),
   );
 });
 

@@ -2,6 +2,8 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  CAPTURE_EVIDENCE_INCOMPLETE,
+  CAPTURE_INTERRUPTED_REASON,
   digestRecipeDocument,
   normalizeRecipeRef,
   type QaResult,
@@ -39,6 +41,40 @@ function requireProof(condition: unknown, message: string): asserts condition {
   if (!condition)
     throw new BlockedRunError(`QA evidence incomplete: ${message}`, 'qa-runtime-evidence');
 }
+// Every suite case must pass. Cases that failed only because their recording was
+// interrupted are named as incomplete evidence with their partial videos, but only when no
+// case failed or went unexecuted for any other reason, so they never hide a failure.
+// `packages` maps a case to its retained package, to give each video's full path.
+export function requireSuiteCoverage(
+  resolutions: unknown[],
+  packages?: Record<string, unknown>,
+): void {
+  const incomplete: string[] = [];
+  for (const entry of resolutions) {
+    if (record(entry) && entry.kind === 'verdict' && entry.status === 'pass') continue;
+    const evidence =
+      record(entry) &&
+      entry.kind === 'verdict' &&
+      entry.status === 'fail' &&
+      record(entry.evidence_incomplete) &&
+      entry.evidence_incomplete.reason === CAPTURE_INTERRUPTED_REASON
+        ? entry.evidence_incomplete
+        : undefined;
+    requireProof(evidence, 'suite has failing, unknown or unexecuted coverage');
+    const id = String(record(entry) ? entry.id : '');
+    const base = packages && typeof packages[id] === 'string' ? packages[id] : undefined;
+    const video = base
+      ? path.posix.join(base, String(evidence.evidence_path))
+      : String(evidence.evidence_path);
+    incomplete.push(`case ${id}: ${String(evidence.detail)} Partial video: ${video}`);
+  }
+  if (incomplete.length > 0)
+    throw new BlockedRunError(
+      `QA ${CAPTURE_EVIDENCE_INCOMPLETE}: rerun those cases. ${incomplete.join('; ')}`,
+      'qa-runtime-evidence',
+    );
+}
+
 function relative(value: unknown): asserts value is string {
   requireProof(
     typeof value === 'string' &&
@@ -153,11 +189,10 @@ export function validateQaSuite(
     'dynamic recipe scope is empty',
   );
   requireProof(
-    record(result) &&
-      Array.isArray(result.resolutions) &&
-      result.resolutions.every((entry) => entry.kind === 'verdict' && entry.status === 'pass'),
-    'suite has failing, unknown or unexecuted coverage',
+    record(result) && Array.isArray(result.resolutions),
+    'suite result has no resolutions',
   );
+  requireSuiteCoverage(result.resolutions);
   requireProof(
     result.resolutions.some((entry) => entry.id === smoke.caseId),
     'smoke case was not executed',
@@ -410,12 +445,10 @@ async function readQaCompletion(
     Object.keys(result.packages).length === suiteResult.resolutions.length,
     'recipe package locations do not match the suite cases',
   );
+  requireSuiteCoverage(suiteResult.resolutions, result.packages);
   for (const resolution of suiteResult.resolutions) {
     requireProof(
-      record(resolution) &&
-        typeof resolution.id === 'string' &&
-        resolution.kind === 'verdict' &&
-        resolution.status === 'pass',
+      record(resolution) && typeof resolution.id === 'string',
       'suite has failing, unknown or unexecuted coverage',
     );
     relative(resolution.summary_path);
