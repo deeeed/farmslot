@@ -14,6 +14,7 @@ import {
   CAPTURE_EVIDENCE_INCOMPLETE,
   isCaptureInterruptedEntry,
   onlyCaptureInterrupted,
+  type RecipeRunCaptureInterruption,
 } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
@@ -55,7 +56,9 @@ export function writeRunReport(result: {
  * failed, so the partial video is linked; other violations write none.
  */
 export function writeViolationReport(
-  result: Parameters<typeof writeRunReport>[0] & { captureInterruption?: unknown },
+  result: Parameters<typeof writeRunReport>[0] & {
+    captureInterruption?: RecipeRunCaptureInterruption;
+  },
 ): RunReport | undefined {
   return result.captureInterruption ? writeRunReport(result) : undefined;
 }
