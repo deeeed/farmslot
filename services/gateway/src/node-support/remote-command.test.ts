@@ -11,6 +11,7 @@ import {
   resetRemoteFarmCommandCache,
   resolveRemoteFarmCommand,
 } from './remote-command.js';
+import { fakeSupportHomeResult } from './support-test-fixtures.js';
 
 // A real tracked project, so the bundle paths come from a real config.
 const PROJECT = 'farmslot-farm';
@@ -33,6 +34,8 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) => {
       calls.push(`exec:${cmd.slice(0, 20)}`);
+      const homeResult = fakeSupportHomeResult(cmd);
+      if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
         return { exitCode: 0, stdout: '/home/u/farmslot-node/support/.incoming/x\n', stderr: '' };
       }
@@ -134,9 +137,10 @@ test('a hook on a node without the current bundle runs from the bundle it just r
   const resolved = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
 
   assert.ok(node.calls.includes('writeFiles'), 'bundle published before the hook runs');
-  const match = /~\/farmslot-node\/support\/([0-9a-f]{64})\/projects\/farmslot-farm\/setup\//.exec(
-    resolved,
-  );
+  const match =
+    /\/tmp\/node-home\/farmslot-node\/support\/([0-9a-f]{64})\/projects\/farmslot-farm\/setup\//.exec(
+      resolved,
+    );
   assert.ok(match, `hook points at a content-hashed bundle: ${resolved}`);
   assert.match(resolved, /support\/[0-9a-f]{64}\/scripts\/write-runtime-context\.sh/);
   assert.match(resolved, / ~\/farmslot-node\/projects\/other-farm\//, 'uncovered ref untouched');
@@ -217,13 +221,14 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
   const gate = new Promise<void>((resolve) => (release = resolve));
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) =>
-      cmd.includes('mktemp -d')
+      fakeSupportHomeResult(cmd) ??
+      (cmd.includes('mktemp -d')
         ? {
             exitCode: 0,
             stdout: `/h/farmslot-node/support/.incoming/x${uploads.length}\n`,
             stderr: '',
           }
-        : { exitCode: 0, stdout: '', stderr: '' },
+        : { exitCode: 0, stdout: '', stderr: '' }),
     fileExists: async (_vars, file) => manifests.has(file),
     readFile: async (_vars, file) => {
       const body = manifests.get(file) ?? [...manifests.values()].at(-1);
@@ -233,7 +238,7 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
     writeFile: async (_vars, file, data) => {
       // The incoming manifest; the publish moves it to support/<hash>/.
       const hash = (JSON.parse(data) as { hash: string }).hash;
-      manifests.set(`~/farmslot-node/support/${hash}/manifest.json`, data);
+      manifests.set(`/tmp/node-home/farmslot-node/support/${hash}/manifest.json`, data);
     },
     writeFiles: async (_vars, base) => {
       if (!base.includes('.incoming')) return; // the slot's selection record
