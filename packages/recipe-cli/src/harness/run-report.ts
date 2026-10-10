@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 import {
   CAPTURE_EVIDENCE_INCOMPLETE,
+  hasCaptureInterruptionMeasurements,
   isCaptureInterruptedEntry,
   onlyCaptureInterrupted,
   type RecipeRunCaptureInterruption,
@@ -265,10 +266,13 @@ function renderRunReport(
   }
   if (video) {
     const { frames, mediaTimeMs, cause } = video.interruption;
+    const measured = hasCaptureInterruptionMeasurements(video.interruption)
+      ? ` after ${frames} frames (${formatDuration(mediaTimeMs)})`
+      : '';
     lines.push(
       '',
       '## Evidence',
-      `- INCOMPLETE partial video [${video.path}](${video.path}): the recording stopped after ${frames} frames (${formatDuration(mediaTimeMs)}): ${cause}`,
+      `- INCOMPLETE partial video [${video.path}](${video.path}): the recording stopped${measured}: ${cause}`,
     );
   }
   lines.push('', '## Steps');

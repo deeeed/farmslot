@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { RecipeExecutionError } from '../src/core/failure.js';
+import type { ActiveVideoRecording } from '../src/core/types.js';
 import { createAndroidMirrorVideoRecorder } from '../src/recording/android-mirror.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 
@@ -120,58 +122,96 @@ test('exit 3 without the stream_interrupted event is still a failed recording', 
   await assert.rejects(active.stop(), /capture-helper record failed \(exit 3\)/u);
 });
 
-test('loss of the owned mirror after start invalidates recording completion', async (t) => {
-  if (process.platform !== 'darwin') return t.skip('Native capture provider is macOS-only');
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'record-mirror-exit-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const identity = path.join(dir, 'identity.json'),
-    mirror = path.join(dir, 'scrcpy.cjs'),
-    helper = path.join(dir, 'helper.cjs');
-  await writeFile(
-    mirror,
-    `#!/usr/bin/env node
+for (const outcome of ['measured', 'interrupted', 'unmeasured'] as const) {
+  test(`loss of the owned mirror preserves finalized footage: ${outcome}`, async (t) => {
+    if (process.platform !== 'darwin') return t.skip('Native capture provider is macOS-only');
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'record-mirror-exit-'));
+
+    const identity = path.join(dir, 'identity.json'),
+      mirror = path.join(dir, 'scrcpy.cjs'),
+      helper = path.join(dir, 'helper.cjs');
+    await writeFile(
+      mirror,
+      `#!/usr/bin/env node
 if(process.argv.includes('--version')){console.log('test');process.exit(0)}
 require('node:fs').writeFileSync(${JSON.stringify(identity)},JSON.stringify({pid:process.pid,title:process.argv[process.argv.indexOf('--window-title')+1],id:1}));
 setInterval(()=>{},1000);
 `,
-    { mode: 0o755 },
-  );
-  await writeFile(
-    helper,
-    `#!/usr/bin/env node
+      { mode: 0o755 },
+    );
+    await writeFile(
+      helper,
+      `#!/usr/bin/env node
 const fs=require('node:fs');
 if(process.argv[2]==='doctor'){console.log(JSON.stringify({ok:true}));process.exit(0)}
-if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:[]}));process.exit(0)}
+if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:${JSON.stringify(outcome === 'unmeasured' ? [] : ['record_session_timing_v1', 'record_session_snapshot'])}}));process.exit(0)}
 if(process.argv[2]==='list'){console.log(JSON.stringify({windows:fs.existsSync(${JSON.stringify(identity)})?[JSON.parse(fs.readFileSync(${JSON.stringify(identity)},'utf8'))]:[]}));process.exit(0)}
 const out=process.argv[process.argv.indexOf('--output')+1];
-process.on('SIGINT',()=>{fs.writeFileSync(out,'video fixture');process.exit(0)});setInterval(()=>{},1000);
+process.stderr.write(JSON.stringify({type:'record_ready',recording_id:'mirror-test'})+'\\n');
+process.on('SIGINT',()=>{
+ fs.writeFileSync(out,'video fixture');
+ fs.writeFileSync(out+'.timing.json',JSON.stringify({version:1,recording_id:'mirror-test',video_file:require('node:path').basename(out),video_digest:'sha256:'+require('node:crypto').createHash('sha256').update('video fixture').digest('hex'),frames_ms:[0,33,66],duration_ms:100,clock:{source:'measured-fixture',earliest_zero_unix_ms:1000,latest_zero_unix_ms:1001}}));
+ const interrupted=${JSON.stringify(outcome === 'interrupted')};
+ if(interrupted) process.stderr.write(JSON.stringify({type:'error',code:'stream_interrupted',frames:3,media_time_ms:66,cause:'Native stream lost its mirror'})+'\\n');
+ process.exit(interrupted?3:0)
+});setInterval(()=>{},1000);
 `,
-    { mode: 0o755 },
-  );
-  const recorder = createAndroidMirrorVideoRecorder({
-    serial: 'fixture-device',
-    scrcpyPath: mirror,
-    captureHelperPath: helper,
-    fallback: {
-      name: 'unexpected',
-      async start() {
-        throw Error('Unexpected fallback');
+      { mode: 0o755 },
+    );
+    const recorder = createAndroidMirrorVideoRecorder({
+      serial: 'fixture-device',
+      scrcpyPath: mirror,
+      captureHelperPath: helper,
+      fallback: {
+        name: 'unexpected',
+        async start() {
+          throw Error('Unexpected fallback');
+        },
       },
-    },
+    });
+    const active = await recorder.start({
+      target: { kind: 'android-device', serial: 'fixture-device' },
+      outputPath: path.join(dir, 'out.mp4'),
+      nodeId: 'run',
+      record: 'full_run',
+    });
+    t.after(async () => {
+      try {
+        if (outcome === 'unmeasured')
+          await assert.rejects(active.stop(), /mirror exited during recording/u);
+        else await active.stop();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+    const processIdentity = JSON.parse(await readFile(identity, 'utf8'));
+    process.kill(processIdentity.pid, 'SIGTERM');
+    await delay(50);
+    if (outcome === 'unmeasured') {
+      await assert.rejects(active.stop(), /mirror exited during recording/u);
+      return;
+    }
+    await assert.rejects(active.snapshot!(path.join(dir, 'after-mirror-loss.png')), (error) => {
+      return (
+        error instanceof RecipeExecutionError &&
+        error.code === 'CAPTURE_INTERRUPTED' &&
+        error.causeClass === 'environment'
+      );
+    });
+    const result = await active.stop();
+    assert.equal(result.interruption?.frames, 3);
+    assert.equal(result.interruption?.mediaTimeMs, 66);
+    assert.match(
+      result.interruption?.cause ?? '',
+      outcome === 'interrupted'
+        ? /Native stream lost its mirror/u
+        : /mirror exited during recording/u,
+    );
+    assert.equal(result.recorder?.mirrorWindowId, '1');
+    assert.equal(await readFile(path.join(dir, 'out.mp4'), 'utf8'), 'video fixture');
+    assert.throws(() => process.kill(processIdentity.pid, 0), /ESRCH/);
   });
-  const active = await recorder.start({
-    target: { kind: 'android-device', serial: 'fixture-device' },
-    outputPath: path.join(dir, 'out.mp4'),
-    nodeId: 'run',
-    record: 'full_run',
-  });
-  const processIdentity = JSON.parse(await readFile(identity, 'utf8'));
-  process.kill(processIdentity.pid, 'SIGTERM');
-  await delay(50);
-  await assert.rejects(active.stop(), /mirror exited during recording/);
-  assert.throws(() => process.kill(processIdentity.pid, 0), /ESRCH/);
-});
-
+}
 test('capture session snapshots correlate by path and reject duplicate pending output', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'record-session-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -203,6 +243,9 @@ process.on('SIGINT',()=>{fs.writeFileSync(out,'video fixture');process.exit(0)})
     assert.equal(event.media_time_ms, 123);
     assert.equal(await readFile(output, 'utf8'), 'PNG fixture');
     await assert.rejects(active.snapshot!('bad\npath'), /newline/);
+    const stopping = active.stop();
+    await assert.rejects(active.snapshot!(path.join(dir, 'during-stop.png')), /no longer active/u);
+    await stopping;
   } finally {
     await active.stop();
   }
@@ -280,3 +323,94 @@ test('failed fallback readiness cannot be bypassed by retrying the recorder', as
   assert.equal(starts, 0);
   assert.equal(checks, 3);
 });
+
+test('stream_stopped refuses stale session snapshots before the helper exits', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'record-stopped-session-'));
+  const helper = path.join(dir, 'helper.cjs');
+  const commands = path.join(dir, 'commands');
+  await writeFile(
+    helper,
+    `#!/usr/bin/env node
+const fs=require('node:fs');
+const out=process.argv[process.argv.indexOf('--output')+1];
+if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:['record_session_snapshot']}));process.exit(0)}
+if(process.argv[2]==='snapshot'){fs.writeFileSync(out,'fresh standalone');console.log(JSON.stringify({type:'snapshot',output:out}));process.exit(0)}
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ fs.appendFileSync(${JSON.stringify(commands)},line+'\\n');
+ const output=line.slice(9);fs.writeFileSync(output,'stale session');
+ process.stderr.write(JSON.stringify({type:'error',code:'stream_stopped',message:'Window stopped'})+'\\n'+JSON.stringify({type:'snapshot',output,media_time_ms:5})+'\\n');
+ setTimeout(()=>{fs.writeFileSync(out,'partial video');process.stderr.write(JSON.stringify({type:'error',code:'stream_interrupted',frames:2,media_time_ms:33,cause:'Window stopped'})+'\\n',()=>process.exit(3))},20);
+});
+process.on('SIGINT',()=>{fs.writeFileSync(out,'partial video');process.stderr.write(JSON.stringify({type:'error',code:'stream_interrupted',frames:2,media_time_ms:33,cause:'Window stopped'})+'\\n',()=>process.exit(3))});
+`,
+    { mode: 0o755 },
+  );
+  const active = await createCaptureHelperVideoRecorder({ captureHelperPath: helper }).start({
+    target: { kind: 'window-id', windowId: '1' },
+    outputPath: path.join(dir, 'out.mp4'),
+    nodeId: 'run',
+    record: 'full_run',
+  });
+  t.after(async () => {
+    try {
+      await active.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  for (const file of ['in-flight.png', 'after-stop.png']) {
+    const evidence = await active.snapshot!(path.join(dir, file));
+    assert.equal(evidence.fallbackFrom, 'record_session_snapshot');
+    assert.equal(evidence.media_time_ms, undefined);
+    assert.equal(await readFile(path.join(dir, file), 'utf8'), 'fresh standalone');
+  }
+  assert.equal((await readFile(commands, 'utf8')).trim().split('\n').length, 1);
+});
+
+test(
+  'snapshot fallback bounds encoder finalization after stream_stopped',
+  { timeout: 3000 },
+  async (t) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'record-stopped-timeout-'));
+    let active: ActiveVideoRecording | undefined;
+    t.after(async () => {
+      try {
+        if (active) {
+          // This fixture never writes a video. Even if the timeout regression returns,
+          // stop the owned child and accept only its expected missing-output/kill error.
+          await assert.rejects(active.stop(), /SIGKILL|ENOENT/u);
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+    const helper = path.join(dir, 'helper.cjs');
+    await writeFile(
+      helper,
+      `#!/usr/bin/env node
+if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:['record_session_snapshot']}));process.exit(0)}
+if(process.argv[2]==='snapshot'){const output=process.argv[process.argv.indexOf('--output')+1];require('node:fs').writeFileSync(output,'fresh standalone');console.log(JSON.stringify({type:'snapshot',output}));process.exit(0)}
+process.stderr.write(JSON.stringify({type:'error',code:'stream_stopped',message:'Encoder has stopped responding'})+'\\n');
+setInterval(()=>{},1000);
+`,
+      { mode: 0o755 },
+    );
+    active = await createCaptureHelperVideoRecorder({
+      captureHelperPath: helper,
+      stopTimeoutMs: 50,
+    }).start({
+      target: { kind: 'window-id', windowId: '1' },
+      outputPath: path.join(dir, 'out.mp4'),
+      nodeId: 'run',
+      record: 'full_run',
+    });
+    try {
+      await assert.rejects(
+        active.snapshot!(path.join(dir, 'after.png')),
+        /did not finish before the snapshot fallback/u,
+      );
+    } finally {
+      await assert.rejects(active.stop(), /SIGKILL/u);
+    }
+  },
+);

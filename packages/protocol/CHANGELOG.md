@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Validate video interruption metadata in artifact manifests, rejecting invalid frame counts, media times, causes and placement on other artifact types. Preserve a provider's zero count when timing is unavailable.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.0 - 2026-10-10

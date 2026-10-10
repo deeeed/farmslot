@@ -48,6 +48,7 @@ export interface RecipeArtifactRecorderMetadata {
 
 /** The recorder's stream stopped mid-run; the video holds the frames captured until then. */
 export interface RecipeRecordingInterruption {
+  /** Retained frame count, or 0 when the provider cannot measure it. */
   frames: number;
   mediaTimeMs: number;
   /** Recorder-reported cause, e.g. `com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: …`. */

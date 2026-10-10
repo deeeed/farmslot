@@ -1,6 +1,8 @@
 import {
   digestRecipeDocument,
+  type RecipeRecordingMarker,
   type RecipeRecordingTimelineDocument,
+  type RecipeVideoTiming,
   validateRecipeRecordingTimelineDocument,
 } from '@farmslot/protocol';
 
@@ -38,6 +40,26 @@ export function displayedVideoFrameRangeMs(
     else high = middle;
   }
   return [framesMs[low - 1]!, framesMs[low] ?? durationMs];
+}
+
+/** Keep the original clock window, but seek only within measured footage. */
+export function videoMarkerSeekMs(
+  timing: RecipeVideoTiming,
+  marker: RecipeRecordingMarker,
+  phase: 'start' | 'end',
+  mediaDurationMs = timing.durationMs,
+): number | null {
+  const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+  const first = timing.framesMs[0];
+  const last = timing.framesMs.at(-1);
+  if (
+    first === undefined ||
+    last === undefined ||
+    bounds[1] < first ||
+    bounds[0] >= Math.min(timing.durationMs, mediaDurationMs)
+  )
+    return null;
+  return Math.max(first, Math.min(last, (bounds[0] + bounds[1]) / 2));
 }
 
 export async function loadVideoTimeline(

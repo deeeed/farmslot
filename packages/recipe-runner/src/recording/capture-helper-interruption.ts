@@ -61,6 +61,21 @@ export interface CaptureHelperInterruptionEvent extends RecipeRecordingInterrupt
   recordingId?: string;
 }
 
+/** A stopped stream cannot supply fresh session frames while its encoder finalizes. */
+export function captureHelperStreamStopped(
+  event: Record<string, unknown>,
+  interruption: CaptureHelperInterruptionEvent | undefined,
+): boolean {
+  return event.code === 'stream_stopped' || Boolean(interruption);
+}
+
+/** Zero frames is the provider sentinel for unavailable capture measurements. */
+export function hasCaptureInterruptionMeasurements(
+  interruption: RecipeRecordingInterruption,
+): boolean {
+  return interruption.frames > 0;
+}
+
 /** Read capture-helper's terminal `stream_interrupted` stderr event; undefined for any other event. */
 export function parseCaptureHelperInterruption(
   event: Record<string, unknown>,
@@ -98,10 +113,13 @@ export function runCaptureInterruption(
   videoPath: string,
 ): RecipeRunCaptureInterruption {
   const seconds = (interruption.mediaTimeMs / 1000).toFixed(1);
+  const measured = hasCaptureInterruptionMeasurements(interruption)
+    ? ` after ${interruption.frames} frames (${seconds} s)`
+    : '';
   return {
     ...interruption,
     videoPath,
-    message: `${CAPTURE_INTERRUPTED}: the recording stream stopped after ${interruption.frames} frames (${seconds} s): ${interruption.cause}. The partial video is kept at ${videoPath}.`,
+    message: `${CAPTURE_INTERRUPTED}: the recording stream stopped${measured}: ${interruption.cause}. The partial video is kept at ${videoPath}.`,
   };
 }
 

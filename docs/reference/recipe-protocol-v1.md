@@ -216,6 +216,11 @@ artifact-manifest.json
 
 `recipe-resolution.json` is execution provenance, not authored recipe syntax. It records the exact root and dependency digests, selected sources, adapter variants, artifact paths, and call edges. Artifact validation revalidates every recipe and rejects missing, extra, unreachable, or digest-mismatched dependencies.
 
+A retained partial video may carry `interruption` with a nonnegative integer `frames`,
+nonnegative `mediaTimeMs`, and a nonempty `cause`. A provider that cannot measure the
+retained frame count uses `frames: 0`; that value means unavailable, so reports omit
+frame counts and media time rather than presenting zero as a measurement.
+
 ### Optional recording timelines
 
 A video artifact may name `timelinePath`, a package-relative JSON file implementing

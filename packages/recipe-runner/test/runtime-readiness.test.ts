@@ -172,6 +172,28 @@ test('CDP call timeout releases the stalled request and keeps the session usable
   }
 });
 
+for (const closing of ['during-call', 'before-call'] as const) {
+  test(`CDP endpoint loss fails explicitly ${closing}`, { timeout: 500 }, async (t) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    t.after(async () => {
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    server.on('connection', (socket) => socket.on('message', () => socket.close()));
+    const session = await CdpSession.connect(`ws://127.0.0.1:${address.port}`);
+    t.after(() => session.close());
+    if (closing === 'before-call') session.close();
+    await assert.rejects(session.call('Runtime.evaluate'), {
+      causeClass: 'environment',
+      code: 'RUNTIME_CONNECTION_CLOSED',
+      message: 'CDP websocket closed.',
+    });
+  });
+}
+
 test('CDP JSON discovery timeout aborts a stalled HTTP response', async () => {
   const server = createServer(() => undefined);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

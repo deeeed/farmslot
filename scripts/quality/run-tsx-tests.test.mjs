@@ -270,8 +270,8 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
   'src/security/principal-core.test.ts', //           fixed credential-store fixtures
-  'src/tasks/writer-golden.test.ts', //               fixed worker template fixtures
-  'src/tasks/writer-split.test.ts', //                fixed worker template fixtures
+  'src/tasks/writer-golden.test.ts', //               shared .sandbox task directories
+  'src/tasks/writer-split.test.ts', //                shared .sandbox task directories
   'src/tasks/writer.test.ts', //                      fixed-name file in templates/worker/
 ];
 

@@ -8,6 +8,7 @@ import {
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
   type RecipeExecutionPlan,
+  type RecipeVideoTiming,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
@@ -23,6 +24,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 import {
+  CAPTURE_INTERRUPTED,
   captureInterruptedTraceEntry,
   runCaptureInterruption,
 } from '../recording/capture-helper-interruption.js';
@@ -36,7 +38,12 @@ import {
   validateRecipeDependencyParams,
 } from './compose.js';
 import { executeRecipe } from './execution.js';
-import { RecipeExecutionError, recipeFailureCause } from './failure.js';
+import {
+  RecipeExecutionError,
+  recipeFailureCause,
+  recipeFailureTraceFields,
+  RUNTIME_CONNECTION_CLOSED,
+} from './failure.js';
 import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
 import { buildHudNode } from './hud.js';
 import { createRecipeInvocation } from './invocation.js';
@@ -373,6 +380,9 @@ class DefaultRecipeRunner implements RecipeRunner {
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
     let runRecording: RunVideoRecording | undefined;
     let captureInterruption: RecipeRunCaptureInterruption | undefined;
+    let videoTimeline:
+      | { entry: RecipeArtifactManifestEntry; timing: RecipeVideoTiming }
+      | undefined;
     let canExecute = true;
     if (videoRecorder) {
       try {
@@ -452,50 +462,22 @@ class DefaultRecipeRunner implements RecipeRunner {
         label: 'Execution trace',
         category: 'system',
       });
-      if (status === 'pass') {
-        const runHudStartedAt = new Date();
-        try {
-          await this.#publishRunHud(status, {
-            recipe,
-            projectRoot,
-            artifactsDir,
-            env,
-            outputs,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          traceWriter.record({
-            nodeId: 'recipe-complete:hud',
-            action: 'app.hud',
-            startedAt: runHudStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - runHudStartedAt.getTime(),
-            ok: false,
-            cause_class: 'harness',
-            error: message,
-          });
-          this.#logger.error(`app.hud complete update failed: ${message}`);
-          status = 'fail';
-        }
-      }
       if (runRecording) {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const { entry: videoArtifact, interruption } = await this.#stopRunVideoRecording(
+          const {
+            entry: videoArtifact,
+            interruption,
+            timing,
+          } = await this.#stopRunVideoRecording(
             recordingToStop,
             traceWriter,
             artifactWriter,
             startedAt,
           );
           artifactWriter.register(videoArtifact);
-          if (videoArtifact.timelinePath)
-            artifactWriter.register({
-              path: videoArtifact.timelinePath,
-              type: 'json',
-              category: 'system',
-              label: 'Recording frames and action markers',
-            });
+          if (timing) videoTimeline = { entry: videoArtifact, timing };
           if (interruption) {
             // The partial video stays registered as evidence; the run still fails, typed.
             captureInterruption = interruption;
@@ -518,6 +500,87 @@ class DefaultRecipeRunner implements RecipeRunner {
           });
           this.#logger.error(`record.video failed: ${message}`);
           status = 'fail';
+        }
+      }
+      if (request.finalizeRecording) {
+        const recordingStartedAt = new Date();
+        try {
+          const interruption = await request.finalizeRecording();
+          if (interruption) {
+            captureInterruption = interruption;
+            traceWriter.record(captureInterruptedTraceEntry(interruption, startedAt));
+            status = 'fail';
+          }
+        } catch (error) {
+          traceWriter.record({
+            nodeId: 'recipe-run:video',
+            action: 'record.video',
+            startedAt: recordingStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - recordingStartedAt.getTime(),
+            ok: false,
+            cause_class: recipeFailureCause(error, 'harness'),
+            error: errorMessage(error),
+          });
+          status = 'fail';
+        }
+      }
+      if (status === 'pass' || status === 'fail') {
+        const runHudStartedAt = new Date();
+        try {
+          await this.#publishRunHud(status, {
+            recipe,
+            projectRoot,
+            artifactsDir,
+            env,
+            outputs,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const fields = recipeFailureTraceFields(error);
+          const captureEndpointLost =
+            captureInterruption && fields.error_code === RUNTIME_CONNECTION_CLOSED;
+          traceWriter.record({
+            nodeId: 'recipe-complete:hud',
+            action: 'app.hud',
+            startedAt: runHudStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - runHudStartedAt.getTime(),
+            ok: false,
+            cause_class: captureEndpointLost ? 'environment' : recipeFailureCause(error, 'harness'),
+            error: message,
+            ...fields,
+            ...(captureEndpointLost
+              ? {
+                  error_code: CAPTURE_INTERRUPTED,
+                  error_details: { runtime_error_code: fields.error_code },
+                }
+              : {}),
+          });
+          this.#logger.error(`app.hud complete update failed: ${message}`);
+          status = 'fail';
+        }
+      }
+      if (videoTimeline) {
+        const { entry, timing } = videoTimeline;
+        try {
+          entry.timelinePath = await writeRecordingTimeline(
+            artifactsDir,
+            entry.path,
+            timing,
+            traceWriter.list(),
+          );
+          artifactWriter.register(entry);
+          artifactWriter.register({
+            path: entry.timelinePath,
+            type: 'json',
+            category: 'system',
+            label: 'Recording frames and action markers',
+          });
+        } catch (error) {
+          // Valid footage is retained when its optional trace alignment is unavailable.
+          entry.timelineUnavailableReason = errorMessage(error);
+          artifactWriter.register(entry);
         }
       }
     } finally {
@@ -756,14 +819,17 @@ class DefaultRecipeRunner implements RecipeRunner {
     traceWriter: JsonTraceWriter,
     artifactWriter: JsonArtifactWriter,
     runStartedAt: Date,
-  ): Promise<{ entry: RecipeArtifactManifestEntry; interruption?: RecipeRunCaptureInterruption }> {
+  ): Promise<{
+    entry: RecipeArtifactManifestEntry;
+    interruption?: RecipeRunCaptureInterruption;
+    timing?: RecipeVideoTiming;
+  }> {
     const result = await runRecording.recording.stop();
     const interruption = result.interruption
       ? runCaptureInterruption(result.interruption, runRecording.entry.path)
       : undefined;
     // Record the failure before the timeline, which is bound to the final trace.
     if (interruption) traceWriter.record(captureInterruptedTraceEntry(interruption, runStartedAt));
-    const trace = traceWriter.list();
     await assertVideoOutputReady(runRecording.outputPath);
     await copyFileWithinRoots(
       runRecording.stagingRoot,
@@ -792,22 +858,14 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(result.recorder ? { recorder: result.recorder } : {}),
       ...(result.interruption ? { interruption: result.interruption } : {}),
     };
-    if (result.timing) {
-      try {
-        entry.timelinePath = await writeRecordingTimeline(
-          runRecording.artifactsDir,
-          entry.path,
-          result.timing,
-          trace,
-        );
-      } catch (error) {
-        // Video is retained; its optional timing capability failed explicitly.
-        entry.timelineUnavailableReason = errorMessage(error);
-      }
-    } else
+    if (!result.timing)
       entry.timelineUnavailableReason =
         result.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.';
-    return { entry, ...(interruption ? { interruption } : {}) };
+    return {
+      entry,
+      ...(interruption ? { interruption } : {}),
+      ...(result.timing ? { timing: result.timing } : {}),
+    };
   }
 
   #hudAction(): string | undefined {

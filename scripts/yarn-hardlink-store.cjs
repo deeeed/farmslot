@@ -30,7 +30,7 @@ module.exports = {
                 await new Promise((resolve) => setTimeout(resolve, 10));
               if (!ready())
                 throw new Error(
-                  'Yarn hardlink store is incomplete; finish its initial install before retrying.',
+                  `Yarn hardlink store is incomplete at ${target}; stop other installers and move this directory aside before retrying.`,
                 );
             }
           } finally {
