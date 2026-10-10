@@ -658,12 +658,17 @@ async function slotReleaseImpl(
         );
       } catch (error) {
         const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
-        await guardedTeardownWrite({
+        const held = await guardedTeardownWrite({
           lifecycle: 'held',
           phase: 'occupied',
           held_reason: reason,
           [SLOT_RELEASING_SINCE]: null,
         });
+        if (!held) {
+          complete(0);
+          return { released: false };
+        }
+        complete(1);
         throw new Error(reason);
       }
     }

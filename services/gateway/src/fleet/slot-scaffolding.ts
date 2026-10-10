@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import {
   execOnSlot,
-  getProjectField,
   type RawProjectJson,
+  resolveProjectRuntimeDirName,
   resolveProjectTaskDirName,
   type SlotVars,
 } from '../core/index.js';
@@ -36,7 +36,7 @@ function relativeNamespace(value: string): string {
 
 export function slotScaffoldingPaths(projectJson: RawProjectJson) {
   const task = relativeNamespace(resolveProjectTaskDirName(projectJson));
-  const runtime = relativeNamespace(getProjectField(projectJson, 'paths.runtime_dir') || '.agent');
+  const runtime = relativeNamespace(resolveProjectRuntimeDirName(projectJson));
   // Retain the pre-existing exclusions for legacy generated support files.
   return {
     task,
@@ -108,10 +108,12 @@ export async function archiveSlotScaffolding(
   options: SlotScaffoldingArchiveOptions,
 ): Promise<{ directory: string; roots: number }> {
   const { task, runtime } = slotScaffoldingPaths(projectJson);
-  const taskRoots = [...new Set([task, '.task'])].map((root) => {
-    if (runtime !== root && !runtime.startsWith(`${root}/`)) return root;
-    return options.taskRelativeDir ? `${root}/${relativeNamespace(options.taskRelativeDir)}` : null;
-  });
+  // Parked/free-slot runs can still own sibling task directories. Only the
+  // released task is collected; shared task roots keep their existing retention.
+  const taskRelativeDir = options.taskRelativeDir;
+  const taskRoots = taskRelativeDir
+    ? [...new Set([task, '.task'])].map((root) => `${root}/${relativeNamespace(taskRelativeDir)}`)
+    : [];
   const roots = [
     ...new Set(
       [...taskRoots, `${runtime}/.observability`, '.agent/.observability', '.observability'].filter(

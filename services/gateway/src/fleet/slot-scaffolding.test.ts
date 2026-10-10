@@ -120,7 +120,7 @@ test('teardown archives tasks and real observations before removing their compat
     readFileSync(path.join(f.repo, '.agent/browser/profile.json'), 'utf8'),
     'warm resource',
   );
-  assert.equal(existsSync(path.join(f.repo, '.task')), false);
+  assert.equal(existsSync(path.join(f.repo, '.task/qa/example')), false);
   assert.equal(existsSync(path.join(f.repo, '.observability')), false);
 });
 
@@ -244,5 +244,46 @@ test('configured paths also collect scaffolding left in legacy default namespace
   assert.equal(
     readFileSync(path.join(f.repo, '.agent/browser/profile.json'), 'utf8'),
     'warm resource',
+  );
+});
+
+test('releasing one task retains a parked sibling task and its evidence', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  mkdirSync(path.join(f.repo, '.task/qa/parked/artifacts'), { recursive: true });
+  writeFileSync(path.join(f.repo, '.task/qa/parked/TASK.md'), 'parked task');
+  writeFileSync(path.join(f.repo, '.task/qa/parked/artifacts/evidence.txt'), 'parked evidence');
+  const result = await archiveSlotScaffolding(
+    f.vars,
+    {},
+    {
+      destination: f.destination,
+      taskRelativeDir: 'qa/example',
+      beforeRemove: async () => undefined,
+    },
+  );
+  assert.equal(readFileSync(path.join(f.repo, '.task/qa/parked/TASK.md'), 'utf8'), 'parked task');
+  assert.equal(
+    readFileSync(path.join(f.repo, '.task/qa/parked/artifacts/evidence.txt'), 'utf8'),
+    'parked evidence',
+  );
+  assert.equal(existsSync(path.join(f.repo, '.task/qa/example')), false);
+  const contents = execFileSync('tar', ['-tf', path.join(result.directory, 'scaffolding.tar')], {
+    encoding: 'utf8',
+  });
+  assert.doesNotMatch(contents, /qa\/parked/);
+});
+
+test('a release without a task path retains the shared task root', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  await archiveSlotScaffolding(
+    f.vars,
+    {},
+    { destination: f.destination, taskRelativeDir: null, beforeRemove: async () => undefined },
+  );
+  assert.equal(
+    readFileSync(path.join(f.repo, '.task/qa/example/TASK.md'), 'utf8'),
+    'completed task',
   );
 });

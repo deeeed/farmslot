@@ -131,6 +131,9 @@ git(repo, 'commit', '-qm', 'published');
 git(repo, 'push', '-q', '-u', 'origin', 'work-scaffolding');
 mkdirSync(path.join(repo, '.task/qa/proof/artifacts'), { recursive: true });
 writeFileSync(path.join(repo, '.task/qa/proof/TASK.md'), 'completed task');
+mkdirSync(path.join(repo, '.task/qa/parked/artifacts'), { recursive: true });
+writeFileSync(path.join(repo, '.task/qa/parked/TASK.md'), 'parked task');
+writeFileSync(path.join(repo, '.task/qa/parked/artifacts/evidence.txt'), 'parked evidence');
 writeFileSync(path.join(repo, '.task/qa/proof/artifacts/evidence.txt'), 'evidence');
 mkdirSync(path.join(repo, '.agent/.observability'), { recursive: true });
 writeFileSync(path.join(repo, '.agent/.observability/hooks.jsonl'), 'observations');
@@ -215,13 +218,22 @@ try {
   });
   const before = git(repo, 'status', '--porcelain');
   assert.match(before, /observability/);
+  const completionCodes: number[] = [];
   let result;
   let refusal;
   try {
-    result = await client.call('slot.release', { slotId: 'scaffold-slot', expectedRunId: run.id });
+    result = await client.callWithEvents(
+      'slot.release',
+      { slotId: 'scaffold-slot', expectedRunId: run.id },
+      (event) => {
+        if (event.event === 'script.complete')
+          completionCodes.push((event.payload as { exitCode: number }).exitCode);
+      },
+    );
   } catch (error) {
     refusal = String(error);
   }
+  if (mode === 'copy-failure') assert.deepEqual(completionCodes, [1]);
   if (mode !== 'new') {
     assert.match(
       refusal || '',
@@ -236,6 +248,7 @@ try {
       rpc: 'slot.release',
       refusal,
       sourceRetained: true,
+      completionCodes,
       branchRetained: true,
       backendAndGitReal: true,
       tmuxFixtureTransportOnly: true,
@@ -254,7 +267,13 @@ try {
     const contents = execFileSync('tar', ['-tf', archive], { encoding: 'utf8' });
     assert.match(contents, /\.task\/qa\/proof\/TASK.md/);
     assert.match(contents, /\.agent\/\.observability\/hooks.jsonl/);
-    assert.equal(existsSync(path.join(repo, '.task')), false);
+    assert.equal(existsSync(path.join(repo, '.task/qa/proof')), false);
+    assert.equal(readFileSync(path.join(repo, '.task/qa/parked/TASK.md'), 'utf8'), 'parked task');
+    assert.equal(
+      readFileSync(path.join(repo, '.task/qa/parked/artifacts/evidence.txt'), 'utf8'),
+      'parked evidence',
+    );
+    assert.doesNotMatch(contents, /qa\/parked/);
     assert.equal(existsSync(path.join(repo, '.observability')), false);
     assert.equal(readFileSync(path.join(repo, '.agent/browser/profile.json'), 'utf8'), 'warm');
     assert.equal(git(repo, 'branch', '--show-current'), 'main');
@@ -263,9 +282,11 @@ try {
       runId: run.id,
       rpc: 'slot.release',
       released: true,
+      completionCodes,
       archive,
       taskAndObservationsPreserved: true,
       ownedSourcesRemoved: true,
+      parkedSiblingRetained: true,
       warmResourcesPreserved: true,
       gitReturnedToMain: true,
       backendAndGitReal: true,
