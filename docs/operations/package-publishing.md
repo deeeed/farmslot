@@ -66,20 +66,17 @@ yarn release:cut --group npm --from-proposal .release-cut/proposal.json --execut
 
 See [release-process.md](release-process.md) for the full workflow and What's New surfaces.
 
-Publish Recipe Protocol packages in dependency order:
+Publish packages in the `npm` release group's dependency order. Print the current
+workspace order from the package manifests:
 
-1. `@farmslot/protocol`
-2. `@farmslot/agent-runtime`
-3. `@farmslot/capabilities`
-4. `@farmslot/recipe-runner`
-5. `@farmslot/recipe-cli`
-6. `@farmslot/adapter-sdk`
-7. `@farmslot/adapter-node`
-8. `@farmslot/adapter-rn`
-9. `@farmslot/handoff`
-10. `@farmslot/skills`
+```bash
+node --input-type=module -e "import { publishableWorkspaces } from './scripts/release/release-groups.mjs'; console.log(publishableWorkspaces().join('\n'))"
+```
 
-The `npm` release group derives this set from every non-private package under `packages/`, dependency-first; a new public package joins it by not being `private`.
+This places `@farmslot/recipe-cli` after `@farmslot/adapter-sdk` and
+`@farmslot/agent-runtime`, including their dependencies. The group includes every
+non-private package under `packages/`; a new public package joins it by not being
+`private`.
 
 ## Publish command
 
