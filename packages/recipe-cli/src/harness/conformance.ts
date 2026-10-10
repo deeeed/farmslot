@@ -191,6 +191,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           manifestPath,
           {
             ...runtimeOptions,
+            readOnly: true,
             cli,
             params: validated.effectiveParams,
             librarySources: validated.librarySources,

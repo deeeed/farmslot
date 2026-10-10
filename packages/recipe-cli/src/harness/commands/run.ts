@@ -834,7 +834,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
   stream.phase('resolve', { adapter, target, recipe: recipeArg });
   const recording = options.recordVideo === 'full-run' ? recordingUnsupported(adapter) : undefined;
   if (recording) {
-    return emitPlanUsageError(
+    return emitPlanFailure(
       jsonOutput,
       stream,
       adapter,
@@ -853,7 +853,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       adapter,
       validated.recipeFile,
     );
-    return emitPlanUsageError(
+    return emitPlanFailure(
       jsonOutput,
       stream,
       adapter,
@@ -888,13 +888,27 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
         )
       : runPlanProbe(adapter, recipeFile);
   const nodeCount = countRecipeNodes(recipe);
-  const artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
-    fresh: 'runs/planned',
-  });
+  let artifactsDir: string;
+  try {
+    artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
+      fresh: 'runs/planned',
+    });
+  } catch (error) {
+    return emitPlanFailure(
+      jsonOutput,
+      stream,
+      adapter,
+      recipeFile,
+      'ARTIFACT_DIR_INVALID',
+      error instanceof Error ? error.message : String(error),
+      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+    );
+  }
   let execution: PreparedRecipeExecution | undefined;
   if (status === 'pass') {
     const runtimeOptions: RecipeEngineRunOptions = {
       ...recipeRunOptionsFromCli(adapter, options),
+      readOnly: true,
       cli: options,
       params: effectiveParams,
       librarySources,
@@ -911,6 +925,23 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
         optionString(options, 'actionManifest'),
         runtimeOptions,
       );
+    } catch (error) {
+      const failure = recipeTrustFailure(error);
+      if (failure) {
+        stream.error(failure);
+        if (!stream.enabled) reportTrustFailure('run', failure, jsonOutput);
+        return EXIT.validation;
+      }
+      return emitPlanFailure(
+        jsonOutput,
+        stream,
+        adapter,
+        recipeFile,
+        (error as { code?: string }).code ?? 'RECIPE_PREFLIGHT_FAILED',
+        error instanceof Error ? error.message : String(error),
+        runPlanProbe(adapter, recipeFile),
+        EXIT.validation,
+      );
     } finally {
       restoreEnvironment();
     }
@@ -923,7 +954,12 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       step: 'resolve.artifactsDir',
       confidence: 'static',
       status: 'ok',
-      detail: artifactsDir,
+      detail:
+        optionString(options, 'artifactsDir') ||
+        process.env.RECIPE_TASK_DIR ||
+        process.env.FARMSLOT_TASK_DIR
+          ? artifactsDir
+          : 'resolved at run time',
     },
     {
       step: 'validate.manifest',
@@ -1041,7 +1077,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
   return status === 'pass' ? EXIT.ok : EXIT.validation;
 }
 
-function emitPlanUsageError(
+function emitPlanFailure(
   json: boolean,
   stream: JsonStreamWriter,
   adapter: string,
@@ -1049,6 +1085,7 @@ function emitPlanUsageError(
   code: string,
   message: string,
   userAction: string,
+  exitCode: number = EXIT.usage,
 ): number {
   stream.error({ code, message, userAction, mode: 'plan', adapter, recipe: recipeFile });
   if (json) {
@@ -1071,7 +1108,7 @@ function emitPlanUsageError(
   } else {
     console.error(`✗ run --plan: ${message}\n  Next: ${userAction}`);
   }
-  return EXIT.usage;
+  return exitCode;
 }
 
 function emitRunRecipeRunning(json: boolean, stream: JsonStreamWriter, target: string): number {

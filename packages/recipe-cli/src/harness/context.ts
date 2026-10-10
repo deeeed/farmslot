@@ -14,6 +14,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { PlatformAdapter } from '@farmslot/adapter-sdk';
+import { portableRepoIdentity } from '@farmslot/agent-runtime';
 import {
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
@@ -77,6 +78,8 @@ export interface ResolveHarnessContextOptions {
   slotPoolDir?: string;
   /** false for help/completion, which never execute on the selected slot. */
   strictSlot?: boolean;
+  /** Pool selector by default; legacy provision commands use --slot as a new identity. */
+  slotSelection?: 'pool' | 'identity';
   /** The adapter when nothing else decides. */
   defaultAdapter?: string;
 }
@@ -122,7 +125,9 @@ export async function resolveHarnessContext(
         root,
         pool.dir,
         pool.source === 'farmslot-node' ? 'slot-config (~/farmslot-node/pool)' : 'slot-config',
-        optionValues(options.tokens, '--slot').at(-1),
+        options.slotSelection === 'identity'
+          ? undefined
+          : optionValues(options.tokens, '--slot').at(-1),
         options.strictSlot ?? true,
       )
     : 'no-pool-dir';
@@ -169,6 +174,7 @@ export async function resolveHarnessContext(
     target,
     ...(slot ? { slot } : {}),
     ...(binding.ignored ? { ignoredBinding: binding.ignored } : {}),
+    ...(binding.path ? { runtimeConfigPath: binding.path } : {}),
   };
 }
 
@@ -393,7 +399,11 @@ type RuntimeContext = Record<string, unknown>;
 function readBinding(
   root: string,
   runtimeDir: string | undefined,
-): { runtime?: RuntimeContext; ignored?: NonNullable<HarnessContext['ignoredBinding']> } {
+): {
+  runtime?: RuntimeContext;
+  path?: string;
+  ignored?: NonNullable<HarnessContext['ignoredBinding']>;
+} {
   let file: string;
   let value: unknown;
   try {
@@ -416,7 +426,7 @@ function readBinding(
   const runtime = value as RuntimeContext;
   const repoRoot = typeof runtime.repoRoot === 'string' ? runtime.repoRoot : undefined;
   return runtimeContextOwned(root, file, runtime)
-    ? { runtime }
+    ? { runtime, path: file }
     : { ignored: { path: file, repoRoot: repoRoot ?? null } };
 }
 
@@ -758,7 +768,16 @@ export async function resolveProjectContext(
         `Missing configured source root ${ref.env ?? ref.projectPath}.`,
         `set ${ref.env ?? 'the project path'} in the selected pool/slot configuration`,
       );
-    return fs.realpathSync(value);
+    try {
+      return fs.realpathSync(value);
+    } catch (error) {
+      if (!missing(error)) throw error;
+      throw new ProjectBindingError(
+        'SOURCE_ROOT_MISSING',
+        `Configured source root ${ref.env ?? ref.projectPath} does not exist.`,
+        'configure an existing provider or library path in the selected pool/slot',
+      );
+    }
   };
   const provider = resolveProvider(
     recipe.provider,
@@ -1028,8 +1047,8 @@ function stringField(value: RuntimeContext | undefined, key: string): string | u
 }
 
 function repositoryIdentity(value: string): string {
-  const cleanPath = (entry: string): string =>
-    entry.replace(/^\/+|\/+$/gu, '').replace(/\.git$/u, '');
+  const repository = portableRepoIdentity(value);
+  if (!repository) return value;
   const sshHost = (host: string): string => {
     const config = execFileSync('ssh', ['-G', '--', host], {
       encoding: 'utf8',
@@ -1048,10 +1067,26 @@ function repositoryIdentity(value: string): string {
   if (URL.canParse(value)) {
     const url = new URL(value);
     if (['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol))
-      return `${url.protocol === 'ssh:' ? sshHost(url.hostname) : url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ''}/${cleanPath(url.pathname)}`;
+      return `${url.protocol === 'ssh:' ? sshHost(url.hostname) : url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ''}/${repository}`;
   }
   const scp = /^(?:[^/@:]+@)?([^/:]+):(.+)$/u.exec(value);
-  return scp ? `${sshHost(scp[1]!)}/${cleanPath(scp[2]!)}` : cleanPath(value);
+  return scp ? `${sshHost(scp[1]!)}/${repository}` : repository;
+}
+
+/** The package owning a resolved entry, including entries below nested source/dist directories. */
+export function recipePackageRoot(file: string): string {
+  let root = path.dirname(file);
+  while (!fs.existsSync(path.join(root, 'package.json'))) {
+    const parent = path.dirname(root);
+    if (parent === root)
+      throw new ProjectBindingError(
+        'PROVIDER_INVALID',
+        'Provider package metadata is missing.',
+        'install a valid provider package',
+      );
+    root = parent;
+  }
+  return root;
 }
 
 function resolveProvider(
@@ -1075,21 +1110,9 @@ function resolveProvider(
       'install the configured provider or correct recipe.provider.module',
     );
   }
-  let packageRoot = path.dirname(file);
-  if (declaration.package) {
-    while (!fs.existsSync(path.join(packageRoot, 'package.json'))) {
-      const parent = path.dirname(packageRoot);
-      if (parent === packageRoot)
-        throw new ProjectBindingError(
-          'PROVIDER_INVALID',
-          'Provider package metadata is missing.',
-          'install a valid provider package',
-        );
-      packageRoot = parent;
-    }
-  } else {
-    packageRoot = declaredRoot ?? (within(root, file) ? root : path.dirname(file));
-  }
+  const packageRoot = declaration.package
+    ? recipePackageRoot(file)
+    : (declaredRoot ?? (within(root, file) ? root : path.dirname(file)));
   const metadata = declaration.package
     ? (JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')) as {
         name?: string;

@@ -139,6 +139,8 @@ export interface HarnessCliOptions {
    * it exists; none reports the slot as unknown (no pool dir).
    */
   slotPoolDir?(): string | undefined;
+  /** Legacy --slot is a provisioned identity; opt into a registered pool selector where declared. */
+  slotSelection?: 'pool' | 'identity';
 }
 
 export interface HarnessCliResult {
@@ -343,6 +345,7 @@ async function loadSelectedAdapter(
           adapter,
           load: libraries,
           strictSlot: !quiet,
+          slotSelection: options.slotSelection ?? 'identity',
           ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
           ...(slotPoolDir ? { slotPoolDir } : {}),
           ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),

@@ -606,6 +606,16 @@ test('configured pool environment roots bind external provider and library witho
   const provider = await loadProjectProvider(context);
   assert.equal(provider.runtime.headless, true);
   assert.equal(globals.bindingLibraries?.length, 1);
+  await assert.rejects(
+    resolveProjectContext({
+      tokens: [],
+      cwd: checkout,
+      projects: [{ config, root: pack }],
+      slotPoolDir: pool,
+      load: { env: { EXAMPLE_PROVIDER_ROOT: path.join(providerRoot, 'missing') } },
+    }),
+    { code: 'SOURCE_ROOT_MISSING' },
+  );
 });
 
 test('discovered environment root references refuse before reading operator values or importing', async () => {

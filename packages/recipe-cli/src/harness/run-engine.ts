@@ -124,6 +124,8 @@ export interface RecipeEngine<
    * nothing to bind for this plan, and the run executes with no trusted mutation.
    */
   trustedMutation?: {
+    /** Validate provider authorization without claims, ledgers or other writes. */
+    preflight?(input: TrustedMutationLoadInput, plan: RecipeExecutionPlan): Promise<void>;
     load(input: TrustedMutationLoadInput): Promise<TMutation | undefined>;
     authorize(
       base: TMutation,
@@ -354,9 +356,12 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
   cli?: CommandOptions;
+  /** Read-only planning/conformance validates authority without publishing execution claims. */
+  readOnly?: boolean;
 };
 
 export interface PreparedRecipeExecution {
+  readOnly?: boolean;
   plan?: RecipeExecutionPlan;
   runner: RecipeRunner;
   runRequest: RecipeRunRequest;
@@ -390,6 +395,8 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
       actionManifestPath,
       runtimeOptions,
     ));
+  if (execution.readOnly)
+    throw new Error('Read-only preflight cannot execute; resolve an executing plan first.');
   const {
     runner,
     runRequest,
@@ -556,15 +563,15 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   );
   const recipeDocument = runtimeRecipeDocument(recipe, absoluteRecipePath);
   const mutation = engine.trustedMutation;
-  const trustedMutation = mutation
-    ? await mutation.load({
-        adapter,
-        cli: runtimeOptions.cli ?? {},
-        artifactsDir: absoluteArtifactsDir,
-        projectRoot,
-        rootRecipe: recipeDocument,
-      })
-    : undefined;
+  const mutationInput: TrustedMutationLoadInput = {
+    adapter,
+    cli: runtimeOptions.cli ?? {},
+    artifactsDir: absoluteArtifactsDir,
+    projectRoot,
+    rootRecipe: recipeDocument,
+  };
+  const trustedMutation =
+    mutation && !runtimeOptions.readOnly ? await mutation.load(mutationInput) : undefined;
   const surface = harnessAdapter(adapter);
   const suppressAutoHud = surface.run?.autoHud?.() === false;
   const runnerOptions = {
@@ -612,7 +619,17 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     adapter,
     ...(runtimeOptions.params ? { params: runtimeOptions.params } : {}),
   };
-  if (mutation && trustedMutation) {
+  if (mutation && runtimeOptions.readOnly) {
+    const executionPlan = await runner.preflight(runRequest);
+    if (!mutation.preflight)
+      throw Object.assign(
+        new Error('The provider has no read-only mutation authorization preflight.'),
+        {
+          code: 'MUTATION_PREFLIGHT_UNAVAILABLE',
+        },
+      );
+    await mutation.preflight(mutationInput, executionPlan);
+  } else if (mutation && trustedMutation) {
     const executionPlan = await runner.preflight(runRequest);
     const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
       adapter,
@@ -640,6 +657,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   };
   const startProvenance = await captureExecutionProvenance(provenanceInput, 'start');
   return {
+    readOnly: runtimeOptions.readOnly === true,
     runner,
     absoluteArtifactsDir,
     useFramedRecording,

@@ -18,7 +18,11 @@ import { type ActionAdapter, RecipeTrustError } from '@farmslot/recipe-runner';
 import { configureHarnessAdapters } from '../src/harness/adapters.js';
 import { createRuntimeRecipeCatalog } from '../src/harness/catalog.js';
 import { createDefaultConsoleClassifier } from '../src/harness/run-diagnostics.js';
-import { createDefaultRecipeEngine, preflightRecipe } from '../src/harness/run-engine.js';
+import {
+  createDefaultRecipeEngine,
+  preflightRecipe,
+  runRecipe,
+} from '../src/harness/run-engine.js';
 
 const core = JSON.parse(
   fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
@@ -204,6 +208,83 @@ test('missing runtime handler is refused instead of manufacturing app status', a
     engine.createRunner('api', manifest, runnerOptions(actionSources)),
     /app.status has no registered adapter/u,
   );
+});
+
+test('read-only preflight checks provider policy without publishing execution authority', async (t) => {
+  const { root, engine: base } = setup(t, { 'example.read': declaration('example.read') }, [
+    {
+      action: 'example.read',
+      source: { kind: 'bundled', trust: 'trusted', name: 'example', digest: 'sha256:example' },
+      execute: async () => {
+        throw new Error('preflight executed an action');
+      },
+    },
+  ]);
+  const document = recipe({
+    read: { action: 'example.read', intent: 'Read the provider.', next: 'done' },
+    done: { action: 'end', status: 'pass' },
+  });
+  const artifacts = path.join(root, 'artifacts');
+  const lifecycle: string[] = [];
+  const executionHooks = {
+    load: async () => {
+      throw new Error('preflight loaded execution authority');
+    },
+    authorize: async () => {
+      throw new Error('preflight published execution authority');
+    },
+  };
+  const engine = {
+    ...base,
+    trustedMutation: {
+      ...executionHooks,
+      preflight: async () => {
+        lifecycle.push('policy checked');
+      },
+    },
+  };
+  const execution = await preflightRecipe(engine, 'api', document, artifacts, root, undefined, {
+    readOnly: true,
+  });
+  assert.deepEqual(lifecycle, ['policy checked']);
+  assert.equal(fs.existsSync(artifacts), false);
+  await assert.rejects(
+    runRecipe(engine, 'api', document, artifacts, root, undefined, {}, execution),
+    /Read-only preflight cannot execute/u,
+  );
+  await assert.rejects(
+    preflightRecipe(
+      { ...base, trustedMutation: executionHooks },
+      'api',
+      document,
+      artifacts,
+      root,
+      undefined,
+      { readOnly: true },
+    ),
+    { code: 'MUTATION_PREFLIGHT_UNAVAILABLE' },
+  );
+  await assert.rejects(
+    preflightRecipe(
+      {
+        ...engine,
+        trustedMutation: {
+          ...engine.trustedMutation,
+          preflight: async () => {
+            throw new Error('Provider policy refused the plan');
+          },
+        },
+      },
+      'api',
+      document,
+      artifacts,
+      root,
+      undefined,
+      { readOnly: true },
+    ),
+    /Provider policy refused/u,
+  );
+  assert.equal(fs.existsSync(artifacts), false);
 });
 
 test('composed action precedence preserves shadows and actual coded implementation provenance', async (t) => {

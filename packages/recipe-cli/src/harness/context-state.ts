@@ -17,6 +17,8 @@ export type DetectMatch = 'remote' | 'files';
 
 export interface HarnessContext {
   project?: ResolvedProjectBinding;
+  /** The owned binding file actually read, including an explicit runtime-dir environment override. */
+  runtimeConfigPath?: string;
   adapter?: {
     value: string;
     source: ContextSource;

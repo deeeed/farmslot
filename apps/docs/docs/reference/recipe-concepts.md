@@ -6,6 +6,8 @@ title: Recipe concepts
 
 A project supplies a **ProjectRuntime** for readiness, owned lifecycle, actions and supported capture. Its **ActionCatalog** pairs action declarations with code. The shared **RecipeEngine** resolves the recipe graph and runs its **ActionHandlers**. Recipes compose actions and assertions into retained evidence.
 
+Use `farmslot doctor --conformance` to check a binding now. The `recipe run` path below is the next delivery step.
+
 ```mermaid
 flowchart LR
   CLI[farmslot recipe run] --> Binding[Resolved binding]

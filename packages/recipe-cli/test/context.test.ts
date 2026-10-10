@@ -650,7 +650,12 @@ describe('resolveHarnessContext', () => {
       { id: 's-1', repo: checkout, session: 's', approvePlan: 'sha256:def', mainnet: true },
     ]);
     const context = await resolveHarnessContext({ tokens: [], cwd: checkout });
-    assert.deepEqual(Object.keys(context).sort(), ['adapter', 'slot', 'target']);
+    assert.deepEqual(Object.keys(context).sort(), [
+      'adapter',
+      'runtimeConfigPath',
+      'slot',
+      'target',
+    ]);
     assert.deepEqual(Object.keys(context.slot ?? {}).sort(), [
       'detail',
       'poolFile',

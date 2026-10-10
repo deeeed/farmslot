@@ -6,7 +6,12 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { recipeConformanceIdentity } from '@farmslot/recipe-cli/harness';
+import {
+  fileFingerprint,
+  recipeConformanceIdentity,
+  recipeOutputRoots,
+  sourceSnapshot,
+} from '@farmslot/recipe-cli/harness';
 
 const cliConfig = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
 const commandUrl = new URL('./doctor.ts', import.meta.url).href;
@@ -91,7 +96,7 @@ function fixture(t: TestContext, missing = false) {
   return { root, write };
 }
 
-function run(root: string, flags: string[]) {
+function run(root: string, flags: string[], overrides: Record<string, string> = {}) {
   const env = { ...process.env };
   for (const name of [
     'FARMSLOT_ROOT',
@@ -116,7 +121,7 @@ function run(root: string, flags: string[]) {
       ...flags,
     ],
     {
-      env: { ...env, TSX_TSCONFIG_PATH: cliConfig },
+      env: { ...env, ...overrides, TSX_TSCONFIG_PATH: cliConfig },
       cwd: path.dirname(cliConfig),
       encoding: 'utf8',
       timeout: 4900,
@@ -307,4 +312,58 @@ test('monorepo report includes shared checkout sources beyond the selected app',
     data.report.identity.checkout.sourceFingerprint,
   );
   assert.equal(current.provider.sourceFingerprint, data.report.identity.provider.sourceFingerprint);
+});
+
+test('public doctor binds the actual runtime configuration selected through the environment', (t) => {
+  const { root, write } = fixture(t);
+  const runtimeDir = 'scratch-runtime';
+  const runtimePath = path.join(root, runtimeDir, 'agentic-runtime.json');
+  write(`${runtimeDir}/agentic-runtime.json`, {
+    repoRoot: root,
+    slotId: 'scratch-1',
+    watcherPort: 8081,
+  });
+  write('.gitignore', 'scratch-runtime/\n');
+  assert.equal(spawnSync('git', ['init', '-q', root]).status, 0);
+  assert.equal(spawnSync('git', ['-C', root, 'add', '.']).status, 0);
+  assert.equal(
+    spawnSync('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'baseline',
+    ]).status,
+    0,
+  );
+  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')], {
+    RECIPE_RUNTIME_DIR: runtimeDir,
+  });
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  const { context, report } = result.envelope.data;
+  assert.equal(context.runtimeConfigPath, runtimePath);
+  assert.ok(
+    report.identity.configuration.some((entry: { path: string }) => entry.path === runtimePath),
+  );
+  const excluded = recipeOutputRoots(root, context.project.runtimeDir, context.project.artifactDir);
+  const before = sourceSnapshot(root, undefined, excluded);
+  write(`${runtimeDir}/agentic-runtime.json`, {
+    repoRoot: root,
+    slotId: 'scratch-1',
+    watcherPort: 8082,
+  });
+  assert.equal(
+    sourceSnapshot(root, undefined, excluded).sourceFingerprint,
+    before.sourceFingerprint,
+  );
+  const configuration = report.identity.configuration.find(
+    (entry: { path: string }) => entry.path === runtimePath,
+  );
+  assert.notEqual(fileFingerprint(runtimePath), configuration.sourceFingerprint);
 });

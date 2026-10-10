@@ -6,6 +6,8 @@ A project ships one **ProjectRuntime**. It identifies the target, checks readine
 
 A recipe names actions, parameters, assertions and teardown. A passing action call alone does not prove its effect. Assertions and retained artifacts must establish the recipe's claim.
 
+Use `farmslot doctor --conformance` to check a binding now. The `recipe run` path below is the next delivery step.
+
 ```mermaid
 flowchart LR
   CLI[farmslot recipe run] --> Binding[Resolved binding]

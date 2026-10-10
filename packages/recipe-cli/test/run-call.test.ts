@@ -318,6 +318,9 @@ function shopEngine(
       });
     },
     trustedMutation: {
+      preflight: async ({ adapter }) => {
+        calls.mutationHooks.push(`preflight:${adapter}`);
+      },
       load: async ({ cli, adapter }) => {
         calls.mutationHooks.push(`load:${adapter}`);
         return typeof cli.fundingToken === 'string' ? { bound: cli.fundingToken } : undefined;
@@ -1717,6 +1720,11 @@ describe('run', () => {
       ],
     );
     assert.equal(plan.find((item) => item.step === 'launch.app')?.detail, 'would open the shop');
+    assert.equal(
+      plan.find((item) => item.step === 'resolve.artifactsDir')?.detail,
+      'resolved at run time',
+    );
+    assert.deepEqual(calls.mutationHooks, ['preflight:web']);
     assert.equal(calls.runners.length, 1);
     assert.equal(calls.events.length, 0);
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
@@ -1795,23 +1803,37 @@ describe('run', () => {
       },
       done: { action: 'end', status: 'pass' },
     });
-    await assert.rejects(
-      capture(() =>
-        handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], {
-          ...runOptions,
-          engine: {
-            ...engine,
-            createRunner: async (_adapter, manifest) =>
-              createRecipeRunner({
-                actionManifest: manifest,
-                adapters: [],
-              }),
-          },
-        }),
-      ),
-      /adapter|handler/iu,
+    const result = await capture(() =>
+      handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], {
+        ...runOptions,
+        engine: {
+          ...engine,
+          createRunner: async (_adapter, manifest) =>
+            createRecipeRunner({
+              actionManifest: manifest,
+              adapters: [],
+            }),
+        },
+      }),
     );
+    assert.equal(result.value, 5);
+    const failure = lastJson(result.stdout).error as { code: string; message: string };
+    assert.equal(failure.code, 'RECIPE_PREFLIGHT_FAILED');
+    assert.match(failure.message, /adapter|handler/iu);
     assert.equal(calls.events.length, 0);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+  });
+
+  test('--plan reports an outside-checkout task artifact directory in JSON before preflight', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    process.env.RECIPE_TASK_DIR = path.dirname(target);
+    const result = await capture(() =>
+      handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], runOptions),
+    );
+    assert.equal(result.value, 2);
+    assert.equal((lastJson(result.stdout).error as { code: string }).code, 'ARTIFACT_DIR_INVALID');
+    assert.deepEqual(calls.mutationHooks, []);
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
   });
 

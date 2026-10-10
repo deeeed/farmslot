@@ -219,7 +219,7 @@ export async function runProjectConformance(
     ];
     const implementationSources = packages.map((name) => ({
       name,
-      root: path.resolve(path.dirname(createRequire(import.meta.url).resolve(name)), '..'),
+      root: shared.recipePackageRoot(createRequire(import.meta.url).resolve(name)),
     }));
     const providerPackage = path.join(binding.provider.root, 'package.json');
     if (existsSync(providerPackage)) {
@@ -229,14 +229,12 @@ export async function runProjectConformance(
       const requireProvider = createRequire(providerPackage);
       for (const name of packages) {
         if (!metadata.dependencies?.[name]) continue;
-        const root = path.resolve(path.dirname(requireProvider.resolve(name)), '..');
+        const root = shared.recipePackageRoot(requireProvider.resolve(name));
         if (!implementationSources.some((source) => source.root === root))
           implementationSources.push({ name: `provider:${name}`, root });
       }
     }
-    const runtimeConfig =
-      process.env.RECIPE_RUNTIME_CONTEXT ??
-      path.join(binding.checkoutRoot, binding.runtimeDir, 'agentic-runtime.json');
+    const runtimeConfig = context.runtimeConfigPath;
     const report = await shared.checkRecipeConformance(engine, {
       project: binding.name,
       app: binding.app,
@@ -246,7 +244,7 @@ export async function runProjectConformance(
       configurationPaths: [
         binding.configPath,
         ...(binding.manifest ? [binding.manifest] : []),
-        ...(existsSync(runtimeConfig) ? [runtimeConfig] : []),
+        ...(runtimeConfig ? [runtimeConfig] : []),
         ...(context.slot?.value && context.slot.poolFile ? [context.slot.poolFile] : []),
       ],
       librarySources: sources,

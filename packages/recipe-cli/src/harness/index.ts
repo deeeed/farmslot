@@ -162,6 +162,7 @@ export {
   loadProjectProvider,
   type LoadProjectProviderOptions,
   type ProjectProvider,
+  recipePackageRoot,
   resolveHarnessContext,
   type ResolveHarnessContextOptions,
   resolveProjectContext,
