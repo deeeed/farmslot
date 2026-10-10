@@ -26,7 +26,12 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
-import { DEFAULT_GATEWAY_URL, loadProfiles, saveProfiles } from '../gateway-profiles.js';
+import {
+  DEFAULT_GATEWAY_PORT,
+  DEFAULT_GATEWAY_URL,
+  loadProfiles,
+  saveProfiles,
+} from '../gateway-profiles.js';
 import { resolveGatewayTls } from '../gateway-tls.js';
 import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
@@ -34,7 +39,6 @@ import { OutputContext } from '../output.js';
 const LOCAL_PROFILE = 'local';
 const UI_DIST_INDEX = join(repoRoot, 'apps', 'command-center', 'ui', 'dist', 'index.html');
 const HOSTED_COMMAND_CENTER_BASE = 'https://farmslot.io/cc';
-const DEFAULT_UP_PORT = 7777;
 
 interface HostedGatewayCandidate {
   url: string;
@@ -223,7 +227,7 @@ function ensureTokenAuthEnv(): string {
 function registerLocalProfile(port: number, token: string): boolean {
   const profiles = loadProfiles();
   profiles.gateways[LOCAL_PROFILE] = {
-    url: port === DEFAULT_UP_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
+    url: port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
     authMode: 'token',
     secret: token,
   };
@@ -302,6 +306,7 @@ export function writeUpResult(params: {
   openBrowser: boolean;
   printConnectUrl: boolean;
   tlsPort: number | null;
+  open?: (url: string) => boolean;
 }): void {
   // The connect link carries the gateway token, so it only reaches stdout (terminals,
   // agent transcripts, logs) on explicit --print-connect-url; the browser gets it directly.
@@ -326,20 +331,23 @@ export function writeUpResult(params: {
   }
 
   // Open the hosted Command Center by default: its connect link auto-registers this
-  // gateway, so there is nothing local to run. Chrome/Edge treat ws://localhost as a
-  // secure context, so the HTTPS page reaches the local gateway. The local UI (if
-  // built) stays as a printed fallback for browsers that block ws://localhost.
-  const opened = params.openBrowser && openUrl(connectUrl);
+  // gateway, so there is nothing local to run. Opening is not connecting: the HTTPS
+  // page blocks ws:// as mixed content, so without TLS it cannot reach the gateway.
+  // The local UI (if built) stays as a printed fallback.
+  const opened = params.openBrowser && (params.open ?? openUrl)(connectUrl);
   params.output.write(`${green(params.status)} ${dim(`pid ${params.pid}`)}\n`);
-  params.output.write(
-    `  ${dim('dashboard')}      ${cyan(hostedDashboard)}${opened ? dim(' (opened — auto-connects this gateway)') : ''}\n`,
-  );
+  params.output.write(`  ${dim('dashboard')}      ${cyan(hostedDashboard)}\n`);
+  if (opened) {
+    params.output.write(
+      `  ${dim('browser')}        opened the auto-connect link${params.tlsPort ? '' : dim(' (the HTTPS page needs wss:// to connect: farmslot certs setup)')}\n`,
+    );
+  }
   if (params.printConnectUrl) {
     params.output.write(
       `  ${dim('connect url')}    ${cyan(connectUrl)} ${dim('(contains the gateway token)')}\n`,
     );
   } else {
-    const portFlag = params.port === DEFAULT_UP_PORT ? '' : ` --port ${params.port}`;
+    const portFlag = params.port === DEFAULT_GATEWAY_PORT ? '' : ` --port ${params.port}`;
     params.output.write(
       `  ${dim('connect url')}    ${dim(`run \`farmslot up${portFlag} --print-connect-url\` for the auto-connect link (it contains the gateway token)`)}\n`,
     );
@@ -575,7 +583,7 @@ export function registerUpCommand(program: Command): void {
   program
     .command('up')
     .description('Start the local gateway + dashboard as a background service')
-    .option('--port <port>', 'gateway port', String(DEFAULT_UP_PORT))
+    .option('--port <port>', 'gateway port', String(DEFAULT_GATEWAY_PORT))
     .option('--no-open', 'print Command Center URLs without opening a browser')
     .option(
       '--print-connect-url',

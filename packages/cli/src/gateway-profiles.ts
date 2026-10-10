@@ -27,22 +27,27 @@ export interface GatewayProfilesFile {
   gateways: Record<string, GatewayProfile>;
 }
 
-export const DEFAULT_GATEWAY_URL = 'ws://localhost:7777';
+export const DEFAULT_GATEWAY_PORT = 7777;
+export const DEFAULT_GATEWAY_URL = `ws://localhost:${DEFAULT_GATEWAY_PORT}`;
 
 export function profilesPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(farmslotHome(env), 'gateways.json');
 }
 
+// Names the file (and the profile) but never echoes its contents: the store
+// holds credentials, and a JSON.parse message quotes the input around the error.
+function invalidProfilesFile(path: string, detail: string): Error {
+  return new Error(`Invalid gateway profiles file: ${path} — ${detail}; fix or remove it`);
+}
+
 export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile {
   if (!existsSync(path)) return { gateways: {} };
+  const raw = readFileSync(path, 'utf-8');
   let parsed: GatewayProfilesFile;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf-8')) as GatewayProfilesFile;
-  } catch (err) {
-    // Always name the file — a raw SyntaxError with no path is undiagnosable.
-    throw new Error(
-      `Invalid gateway profiles file: ${path} — fix or remove it (${err instanceof Error ? err.message : String(err)})`,
-    );
+    parsed = JSON.parse(raw) as GatewayProfilesFile;
+  } catch {
+    throw invalidProfilesFile(path, 'not valid JSON');
   }
   if (
     typeof parsed !== 'object' ||
@@ -51,7 +56,19 @@ export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile
     parsed.gateways === null ||
     Array.isArray(parsed.gateways)
   ) {
-    throw new Error(`Invalid gateway profiles file: ${path} — fix or remove it`);
+    throw invalidProfilesFile(path, 'expected a "gateways" object');
+  }
+  for (const [name, profile] of Object.entries(parsed.gateways as Record<string, unknown>)) {
+    const p = profile as Partial<Record<keyof GatewayProfile, unknown>> | null;
+    if (
+      typeof p !== 'object' ||
+      p === null ||
+      typeof p.url !== 'string' ||
+      (p.authMode !== undefined && p.authMode !== 'token' && p.authMode !== 'password') ||
+      (p.secret !== undefined && typeof p.secret !== 'string')
+    ) {
+      throw invalidProfilesFile(path, `profile '${name}' is malformed`);
+    }
   }
   return { active: parsed.active, gateways: parsed.gateways ?? {} };
 }
