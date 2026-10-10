@@ -5,7 +5,7 @@
     "Approve-publish no longer fails with \"Package changed ... (draft body)\"",
     "Archiving a settled blocked run releases its slot and keeps its blocked outcome",
     "Workers find the node's farmslot CLI first on PATH",
-    "QA names cases whose recording was interrupted as incomplete evidence, with their partial videos",
+    "QA names cases that failed only because their recording was interrupted as incomplete evidence, with their partial videos",
     "An unreadable evidence manifest is reported instead of looking like one that covers nothing"
   ]
 }
