@@ -22,6 +22,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 - Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates and includes them automatically on completion without an approval gate. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
+- Tmux worker and pane listings report `processRunnerIds`, the runners whose registry process matchers hit the pane command, limited to runners safe to identify without a recorded identity, so a generic `agent` never names Cursor. Each `RunnerDefinition` declares the mobile key profile Companion shows as its runner row.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 

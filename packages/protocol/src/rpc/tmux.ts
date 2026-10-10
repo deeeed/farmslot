@@ -47,6 +47,11 @@ export interface TmuxWorkerSummary {
   title?: string;
   cwd?: string;
   command?: string;
+  /**
+   * Runner ids whose registry process matchers hit `command`, limited to runners
+   * safe to identify without a recorded runner identity. Absent when none match.
+   */
+  processRunnerIds?: string[];
   pid?: number;
   /** Gateway supports ending this unmanaged session with a fresh identity check. */
   canEndSession?: boolean;
