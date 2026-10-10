@@ -57,6 +57,9 @@ mock.module('../core/exec.js', {
       if (command.includes("'#{window_id}'")) {
         return { exitCode: 0, stdout: '@1\n', stderr: '' };
       }
+      if (command.includes('#{pane_current_command}')) {
+        return { exitCode: 0, stdout: `%1|123|${runnerAlive ? 'node' : 'zsh'}`, stderr: '' };
+      }
       if (command.includes('display-message -p -t')) {
         return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };
       }
@@ -759,6 +762,7 @@ test('retained resume accepts a slot-clock prompt hook emitted before respawn-wi
 
 test('retained resume confirms a Codex hooks-review prompt only once', async (t) => {
   commands.length = 0;
+  runnerAlive = true;
   paneCount = 1;
   sessionPathExists = true;
   promptAccepted = false;

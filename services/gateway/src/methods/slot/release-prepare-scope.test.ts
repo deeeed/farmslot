@@ -11,6 +11,10 @@ let slotRow: Record<string, unknown>;
 let events: string[];
 let reapFails: boolean;
 let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
+let claimBeforeMark = false;
+let markerWrites = 0;
+let claimDuringPaneProbe = false;
+const ownerStatuses = new Map<string, 'working' | 'blocked' | 'done'>();
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -21,6 +25,35 @@ const applies = (
   slotRow = { ...slotRow, ...fields };
   return true;
 };
+
+const execForTest = async (_vars: unknown, cmd: string) => {
+  if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
+    if (claimDuringPaneProbe) {
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
+      ownerStatuses.set('incoming', 'working');
+    }
+    return ok('456');
+  }
+  if (cmd.startsWith(`identityfile='${IDENTITY}'`)) {
+    events.push('reap');
+    return reapFails
+      ? { stdout: '', stderr: 'preflight group 4242 survived SIGKILL\n', exitCode: 1 }
+      : ok();
+  }
+  if (cmd.includes('has-session'))
+    return { stdout: '', stderr: '', exitCode: claimDuringPaneProbe ? 0 : 1 };
+  if (cmd.includes('list-panes')) return ok(cmd.includes('pane_pid') ? '%1\t123\n' : '%1\n');
+  if (cmd.includes('send-keys')) events.push('input-sent');
+  return ok();
+};
+const realExec = await import('../../core/exec.js');
+mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });
 
 const realCore = await import('../../core/index.js');
 mock.module('../../core/index.js', {
@@ -41,7 +74,21 @@ mock.module('../../core/index.js', {
       _slotId: string,
       predicate: (slot: Record<string, unknown>) => boolean,
       fields: Record<string, unknown>,
-    ) => ({ applied: applies(predicate, fields), epoch: Number(slotRow.slot_epoch) }),
+    ) => {
+      if (claimBeforeMark) {
+        slotRow = {
+          ...slotRow,
+          current_run_id: 'incoming',
+          lifecycle: 'busy',
+          phase: 'working',
+          slot_epoch: 2,
+        };
+        ownerStatuses.set('incoming', 'working');
+      }
+      const applied = applies(predicate, fields);
+      if (applied) markerWrites += 1;
+      return { applied, epoch: Number(slotRow.slot_epoch) };
+    },
     updateSlotStatusIf: async (
       _slotId: string,
       predicate: (slot: Record<string, unknown>) => boolean,
@@ -51,16 +98,7 @@ mock.module('../../core/index.js', {
       events.push('reset');
       return true;
     },
-    execOnSlot: async (_vars: unknown, cmd: string) => {
-      if (cmd.startsWith(`identityfile='${IDENTITY}'`)) {
-        events.push('reap');
-        return reapFails
-          ? { stdout: '', stderr: 'preflight group 4242 survived SIGKILL\n', exitCode: 1 }
-          : ok();
-      }
-      if (cmd.includes('has-session')) return { stdout: '', stderr: '', exitCode: 1 };
-      return ok();
-    },
+    execOnSlot: execForTest,
   },
 });
 const realTmux = await import('../../core/tmux.js');
@@ -87,6 +125,16 @@ mock.module('../../runners/native/worker.js', {
   namedExports: { ...realNativeWorker, retireNativeWorkersForSlot: async () => undefined },
 });
 
+const realRuns = await import('../../runs/store.js');
+mock.module('../../runs/store.js', {
+  namedExports: {
+    ...realRuns,
+    getRun: (id: string) =>
+      ownerStatuses.has(id) ? { id, status: ownerStatuses.get(id), transport: 'tmux' } : undefined,
+    getAllRunsWithArchived: async () => [...ownerStatuses].map(([id, status]) => ({ id, status })),
+  },
+});
+
 const { slotRelease } = await import('./release.js');
 const { activePrepareAborts } = await import('./shared.js');
 const { slotPrepare } = await import('./prepare.js');
@@ -99,7 +147,96 @@ beforeEach(() => {
   events = [];
   reapFails = false;
   emitted = [];
+  claimBeforeMark = false;
+  markerWrites = 0;
+  claimDuringPaneProbe = false;
+  ownerStatuses.clear();
   activePrepareAborts.clear();
+});
+
+test('ordinary and unnamed force release refuse a non-terminal owner before teardown', async () => {
+  slotRow.current_run_id = 'incoming';
+  ownerStatuses.set('incoming', 'working');
+  for (const forceReset of [false, true])
+    await assert.rejects(
+      slotRelease({ slotId: SLOT_ID, keepWork: true, forceReset }, emit),
+      /non-terminal run incoming/,
+    );
+  assert.equal(markerWrites, 0);
+  assert.equal(
+    emitted.filter((e) => e.event === 'slot.release.step' && e.payload.name === 'agent').length,
+    0,
+  );
+});
+
+test('release CAS refuses a run claimed after preflight', async () => {
+  claimBeforeMark = true;
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /non-terminal run incoming/,
+  );
+  assert.equal(markerWrites, 0);
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(slotRow.phase, 'working');
+});
+
+test('a late claim aborts teardown before agent exit and leaves its fields intact', async () => {
+  const lateClaim = (event: string, payload: unknown) => {
+    emit(event, payload);
+    if (event === 'slot.release.step' && (payload as { name: string }).name === 'capabilities') {
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
+      ownerStatuses.set('incoming', 'working');
+    }
+  };
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, lateClaim),
+    /non-terminal run incoming/,
+  );
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(slotRow.phase, 'working');
+  assert.equal(slotRow.slot_epoch, 2);
+  assert.equal(
+    emitted.filter((e) => e.event === 'slot.release.step' && e.payload.name === 'agent').length,
+    0,
+  );
+});
+
+test('internal blocked-run restart retains its explicitly bound release authority', async () => {
+  slotRow.current_run_id = 'blocked';
+  ownerStatuses.set('blocked', 'blocked');
+  const result = await slotRelease(
+    { slotId: SLOT_ID, keepWork: true, expectedRunId: 'blocked' },
+    emit,
+    { restartRunId: 'blocked' },
+  );
+  assert.equal(result.released, true);
+});
+
+test('a claim during pane scanning refuses the graceful exit before typing', async () => {
+  claimDuringPaneProbe = true;
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /non-terminal run incoming/,
+  );
+  assert.ok(!events.includes('input-sent'));
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(slotRow.slot_epoch, 2);
+});
+
+test('named force release can explicitly discard the named active workspace', async () => {
+  slotRow.current_run_id = 'incoming';
+  ownerStatuses.set('incoming', 'working');
+  const result = await slotRelease(
+    { slotId: SLOT_ID, keepWork: true, forceReset: true, expectedRunId: 'incoming' },
+    emit,
+  );
+  assert.equal(result.released, true);
 });
 
 test('a release stops and joins an in-flight prepare before reaping its scope', async () => {

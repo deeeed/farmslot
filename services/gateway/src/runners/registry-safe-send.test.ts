@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { beforeEach, mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
@@ -52,6 +52,14 @@ let grokActivityReads = 0;
 let grokActivitySequence: RunnerActivity[] = ['idle'];
 let failedPromptSends = 0;
 let failedPromptSendExitCode = 85;
+let foregroundCommand = 'claude';
+let foregroundRunnerPresent = true;
+let exitAfterLiteralSend = false;
+beforeEach(() => {
+  foregroundCommand = 'claude';
+  foregroundRunnerPresent = true;
+  exitAfterLiteralSend = false;
+});
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -170,12 +178,25 @@ mock.module('./grok-observability.js', {
 
 mock.module('../core/exec.js', {
   namedExports: {
+    EXEC_TIMEOUT_EXIT_CODE: 124,
     isLocal: () => true,
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     // Reached transitively via methods/git.ts; kept consistent with execLocal above.
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_slotVars: SlotVars, cmd: string) => {
+      if (cmd.includes('#{pane_current_command}')) {
+        callOrder.push('input:foreground');
+        return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
+      }
+      if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
+        callOrder.push('input:process');
+        return {
+          exitCode: foregroundRunnerPresent ? 0 : 1,
+          stdout: foregroundRunnerPresent ? '456' : '',
+          stderr: '',
+        };
+      }
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
@@ -205,6 +226,7 @@ mock.module('../core/exec.js', {
         // submit-existing in assertions.
         if (cmd.includes(' -l ')) {
           callOrder.push('tmux:send-literal');
+          if (exitAfterLiteralSend) foregroundCommand = 'zsh';
           if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
         } else if (paneTextAfterBareSend !== null) {
           paneText = paneTextAfterBareSend;
@@ -2005,3 +2027,74 @@ for (const acknowledged of [false, true]) {
     );
   });
 }
+
+test('post-launch delivery refuses stale ready text in a bare shell before typing', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  acceptDigestHandoff = false;
+  acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+  handoffProbeCalls = 0;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  foregroundCommand = 'zsh';
+  let mutations = 0;
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        mutations += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          verifyWaitMs: 0,
+          maxAttempts: 3,
+          requirePromptDigest: true,
+          softAcceptOnHandoffAck: false,
+        }),
+    ),
+    /is a shell.*no input was sent/,
+  );
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 0);
+  assert.equal(mutations, 0);
+});
+
+test('post-launch retries recheck the foreground when the runner exits after the first send', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  paneTextAfterLiteralSend = '❯\nctx:12%\n';
+  acceptDigestHandoff = false;
+  acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+  handoffProbeCalls = 0;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  exitAfterLiteralSend = true;
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 3,
+      requirePromptDigest: true,
+      softAcceptOnHandoffAck: false,
+    }),
+    /is a shell.*no input was sent/,
+  );
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.ok(callOrder.filter((entry) => entry === 'input:foreground').length >= 2);
+  paneTextAfterLiteralSend = null;
+});

@@ -9,6 +9,7 @@ import {
   DEFAULT_BRANCH,
   type FlowType,
   isReviewerWindowName,
+  isTerminalRunStatus,
   primaryRoleForFlow,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
@@ -56,6 +57,7 @@ import {
   beginTerminalTeardown,
   endTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
+import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -68,7 +70,7 @@ import {
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
 } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
-import { getRun } from '../../runs/store.js';
+import { getAllRunsWithArchived, getRun } from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
@@ -172,6 +174,7 @@ export interface SlotUnmergedWork {
 export interface SlotReleasePreflight {
   vars: SlotVars;
   boundOwner: string | null;
+  ownerTerminal: boolean;
   projectVars: ProjectVars | undefined;
   projectJson: RawProjectJson;
   defaultBranch: string;
@@ -187,6 +190,7 @@ export interface SlotReleasePreflight {
  */
 export async function slotReleasePreflight(
   params: SlotReleaseParams,
+  restartRunId?: string,
 ): Promise<SlotReleasePreflight | null> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
@@ -232,6 +236,13 @@ export async function slotReleasePreflight(
     }
   }
 
+  const ownerRun = boundOwner
+    ? (getRun(boundOwner) ?? (await getAllRunsWithArchived()).find((run) => run.id === boundOwner))
+    : undefined;
+  const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
+  const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, restartRunId);
+  if (refusal) throw new Error(refusal);
+
   // Release runs idle-reset + the project recycle hook (both can reset --hard
   // the slot repo) — guard so the operator root is never recycled.
   await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
@@ -251,7 +262,28 @@ export async function slotReleasePreflight(
     params.keepWork || forceReset
       ? null
       : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
-  return { vars, boundOwner, projectVars, projectJson, defaultBranch, unmergedWork };
+  return { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, unmergedWork };
+}
+
+function releaseOwnerRefusal(
+  owner: string | null,
+  archivedTerminal: boolean,
+  params: SlotReleaseParams,
+  restartRunId?: string,
+): string | null {
+  if (
+    !owner ||
+    restartRunId === owner ||
+    (params.forceReset === true && params.expectedRunId === owner)
+  )
+    return null;
+  const live = getRun(owner);
+  // Archive already fenced a settled blocked run against replay before invoking
+  // its owner-bound release. An ordinary release cannot borrow that authority.
+  if (params.expectedRunId === owner && live?.status === 'blocked' && isRunArchiving(owner))
+    return null;
+  if (live ? isTerminalRunStatus(live.status) : archivedTerminal) return null;
+  return `Slot ${params.slotId} is held by non-terminal run ${owner}; finish or cancel it before release. Force Reset must explicitly name that run with expectedRunId`;
 }
 
 async function findReleaseUnmergedWork(
@@ -297,12 +329,12 @@ async function slotReleaseImpl(
     prepareStopHeartbeatMs?: number;
   },
 ): Promise<{ released: boolean }> {
-  const preflight = await slotReleasePreflight(params);
+  const preflight = await slotReleasePreflight(params, options?.restartRunId);
   if (!preflight) return { released: false };
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
   if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
-  const { vars, boundOwner, projectVars, projectJson, defaultBranch } = preflight;
+  const { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch } = preflight;
   const forceReset = params.forceReset ?? false;
   const preserveAgents = params.preserveAgents ?? false;
   const keepWarm = params.keepWarm ?? false;
@@ -338,6 +370,8 @@ async function slotReleaseImpl(
   // The owner the releasing fence actually lands on: an unbound release takes
   // whoever holds the slot then, which may be a claim made after the preflight.
   let releasedOwner: string | null = null;
+  let releaseRefusal: string | null = null;
+  let priorFence: Record<string, unknown> = {};
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
@@ -350,14 +384,27 @@ async function slotReleaseImpl(
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
+      releaseRefusal = releaseOwnerRefusal(
+        owner,
+        owner === boundOwner && ownerTerminal,
+        params,
+        options?.restartRunId,
+      );
+      if (releaseRefusal) return false;
       releasedOwner = owner;
+      priorFence = {
+        lifecycle: slot.lifecycle,
+        phase: slot.phase,
+        [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
+      };
       if (params.expectedRunId) return owner === params.expectedRunId;
-      // Unbound (operator) release: releases whoever currently holds the slot.
+      // Unbound release may take only an unowned or terminal workspace.
       return true;
     },
     slotReleasingFenceFields(),
   );
   if (!mark.applied) {
+    if (releaseRefusal) throw new Error(releaseRefusal);
     step(
       'claim',
       `Slot ${params.slotId} was claimed by another run (or is already releasing); leaving it alone`,
@@ -366,6 +413,39 @@ async function slotReleaseImpl(
     return { released: false };
   }
   const entryEpoch = mark.epoch ?? 0;
+  const assertReleaseClaim = async (): Promise<void> => {
+    const { readSlotRow } = await import('../../core/index.js');
+    const row = await readSlotRow(params.slotId);
+    const owner = (row?.current_run_id as string | null | undefined) ?? null;
+    const refusal = releaseOwnerRefusal(
+      owner,
+      owner === boundOwner && ownerTerminal,
+      params,
+      options?.restartRunId,
+    );
+    if (
+      row &&
+      (Number(row.slot_epoch) || 0) === entryEpoch &&
+      row.phase === SLOT_PHASE_RELEASING &&
+      owner === releasedOwner &&
+      !refusal
+    )
+      return;
+    await updateSlotStatusIf(
+      params.slotId,
+      (slot) =>
+        (Number(slot.slot_epoch) || 0) === entryEpoch &&
+        slot.phase === SLOT_PHASE_RELEASING &&
+        (slot.current_run_id ?? null) === releasedOwner,
+      priorFence,
+    );
+    complete(1);
+    throw new Error(
+      refusal ??
+        `Slot ${params.slotId} ownership changed before teardown; remaining release actions refused`,
+    );
+  };
+  await assertReleaseClaim();
 
   // Capability leases are the authoritative ownership boundary for resources
   // acquired after core prepare. Release them before agent/session teardown so
@@ -404,6 +484,7 @@ async function slotReleaseImpl(
     );
   }
 
+  await assertReleaseClaim();
   // Stop TASK.md watching — only after the CAS proves this teardown owns the
   // slot; removing watchers first would strip a rival claim's watchers even
   // when the release is then correctly refused.
@@ -446,13 +527,19 @@ async function slotReleaseImpl(
     // closing it afterward would destroy the slot session.
     step('agent', 'Killing agent...');
     const releasingRunId = params.expectedRunId ?? boundOwner;
+    await assertReleaseClaim();
     if (releasingRunId && getRun(releasingRunId)?.transport === 'native') {
       await cancelNativeRunWorkers(releasingRunId);
     } else {
       await retireNativeWorkersForSlot(params.slotId, releasingRunId ?? undefined);
+      await assertReleaseClaim();
       await closeDevServerLogTailWindow(vars);
-      await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
-      await killAllAgentWindows(vars);
+      await assertReleaseClaim();
+      await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType), {
+        assertClaim: assertReleaseClaim,
+      });
+      await assertReleaseClaim();
+      await killAllAgentWindows(vars, undefined, { assertClaim: assertReleaseClaim });
     }
     step('agent', 'Agent killed');
     // A release during or after preflight would otherwise publish readiness
@@ -553,6 +640,7 @@ async function slotReleaseImpl(
   }
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
+  await assertReleaseClaim();
   if (!keepWork && !forceReset) {
     const unmergedWork = await findReleaseUnmergedWork(
       vars,
@@ -659,6 +747,7 @@ async function slotReleaseImpl(
     }
 
     step('git', `Returning slot to idle baseline...`);
+    await assertReleaseClaim();
     const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
@@ -669,6 +758,7 @@ async function slotReleaseImpl(
       ? expandRecycleCmd(vars)
       : expandHook('recycle', projectJson, vars, projectVars);
     if (recycleCmd) {
+      await assertReleaseClaim();
       await execOnSlot(vars, recycleCmd);
       step('recycle', 'App recycled');
     } else {
@@ -798,7 +888,7 @@ export async function killAgentInSession(
   vars: SlotVars,
   runner?: string,
   role: AgentRole = 'primary',
-  options: { graceful?: boolean } = {},
+  options: { graceful?: boolean; assertClaim?: () => Promise<void> } = {},
 ): Promise<void> {
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
@@ -896,6 +986,7 @@ export async function killAgentInSession(
   // same-runner candidates fail closed instead of interrupting a reviewer.
 
   if (agentPid && options.graceful !== false) {
+    await options.assertClaim?.();
     await execOnSlot(
       vars,
       tmuxSendTextCommand(target, '/exit', {
@@ -916,10 +1007,12 @@ export async function killAgentInSession(
         })
       ).exitCode === 0;
     if (stillAlive) {
+      await options.assertClaim?.();
       await execOnSlot(vars, `kill -TERM ${shellQuote(agentPid)} 2>/dev/null`, {
         timeout: TMUX_CMD_TIMEOUT,
       });
       await new Promise((r) => setTimeout(r, 1000));
+      await options.assertClaim?.();
       await execOnSlot(
         vars,
         `kill -0 ${shellQuote(agentPid)} 2>/dev/null && kill -KILL ${shellQuote(agentPid)} 2>/dev/null`,
@@ -937,20 +1030,24 @@ export async function killAgentInSession(
     ).stdout.trim() === 'yes';
 
   if (shellAlive) {
+    await options.assertClaim?.();
     await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} C-c 2>/dev/null`), {
       timeout: TMUX_CMD_TIMEOUT,
     });
     await new Promise((r) => setTimeout(r, 300));
+    await options.assertClaim?.();
     await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} C-c 2>/dev/null`), {
       timeout: TMUX_CMD_TIMEOUT,
     });
     await new Promise((r) => setTimeout(r, 300));
+    await options.assertClaim?.();
     await execOnSlot(
       vars,
       tmuxSendTextCommand(target, `cd ${vars.remoteRepo}`, { enter: true, suffix: '2>/dev/null' }),
       { timeout: TMUX_CMD_TIMEOUT },
     );
   } else {
+    await options.assertClaim?.();
     await execOnSlot(
       vars,
       tmuxShellSnippet(
@@ -965,7 +1062,7 @@ export async function killAgentInSession(
 export async function killAllAgentWindows(
   vars: SlotVars,
   sessionOverride?: string,
-  options?: { exclude?: ReadonlyArray<AgentRole> },
+  options?: { exclude?: ReadonlyArray<AgentRole>; assertClaim?: () => Promise<void> },
 ): Promise<void> {
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = sessionOverride ?? (await resolveTmuxSession(vars.slotId, vars));
@@ -1035,6 +1132,7 @@ export async function killAllAgentWindows(
       }
       const target = `${session}:${roleWindow.index}`;
       const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
+      await options?.assertClaim?.();
       const killed = await execOnSlot(vars, tmuxShellSnippet(command), {
         timeout: TMUX_CMD_TIMEOUT,
       });

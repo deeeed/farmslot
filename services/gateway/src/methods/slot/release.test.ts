@@ -371,7 +371,7 @@ test('slotRelease refuses to destroy a gate-parked run park record on the freed 
   );
 });
 
-test('slotRelease still releases the new occupant of a slot a gate park freed', async (t) => {
+test('slotRelease refuses the active new occupant of a slot a gate park freed', async (t) => {
   const slotId = 'demo-work-1';
   const parked = createRun({
     flowType: 'dev',
@@ -414,7 +414,7 @@ test('slotRelease still releases the new occupant of a slot a gate park freed', 
       // committed demo pool's `"repo": "."` slot always trips — instead of
       // running a destructive teardown inside this test.
       assert.doesNotMatch(error.message, /park record for gate-parked run/);
-      assert.match(error.message, /operator root/);
+      assert.match(error.message, /non-terminal run/);
       return true;
     },
   );
@@ -484,7 +484,7 @@ test('slotRelease refuses unmerged work before it fences the slot or stops the a
   assert.equal(await readSlotField(slotId, 'agent'), 'working');
 });
 
-test('an operator release detaches the run it released even while that run is in find-slot', async (t) => {
+test('only a named force release detaches an active find-slot owner', async (t) => {
   const { readSlotField } = await import('../../core/index.js');
   const slotId = await fixtureSlot(t, 'owner-detach', 'main');
   // Claimed by its find-slot step, which has not returned yet.
@@ -509,7 +509,12 @@ test('an operator release detaches the run it released even while that run is in
     current_run_id: owner.id,
   });
 
-  const result = await slotRelease({ slotId, keepWork: true }, noopEmit);
+  await assert.rejects(slotRelease({ slotId, keepWork: true }, noopEmit), /non-terminal run/);
+  assert.equal(getRun(owner.id)?.slotId, slotId);
+  const result = await slotRelease(
+    { slotId, keepWork: true, forceReset: true, expectedRunId: owner.id },
+    noopEmit,
+  );
 
   assert.deepEqual(result, { released: true });
   assert.equal(getRun(owner.id)?.slotId, null, 'the released owner lost the slot');

@@ -26,6 +26,7 @@ import {
 } from './prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
+  execRunnerTmuxCommand,
   getRunnerObservability,
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
@@ -492,7 +493,7 @@ async function reactivateRunnerSessionWithPrompt(
           target: options.target,
           logPrefix: 'retained-handoff',
           exec: (tmuxCommand) =>
-            execOnSlot(options.vars, tmuxShellSnippet(tmuxCommand), options.vars.remoteRepo),
+            execRunnerTmuxCommand(options.vars, options.target, runner, tmuxCommand),
           refreshCodexHooks:
             runner === 'codex'
               ? async () => {
