@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.8 - 2026-10-10
+
+- Publish with protocol 0.36.0 and recipe-runner 0.28.4 so consumers share one dependency copy. No code change.
+
 ## 0.19.7 - 2026-10-10
 
 - Publish with protocol 0.35.2 and recipe-runner 0.28.3 so consumers share one protocol and one recipe-runner copy. No code change.

@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.4 - 2026-10-10
+
+- Publish with protocol 0.36.0 so consumers share one dependency copy. No code change.
+
 ## 0.17.3 - 2026-10-10
 
 - Publish with protocol 0.35.2 so consumers share one protocol copy. No code change.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.11.4 - 2026-10-10
+
+- Publish with adapter-sdk 0.8.4, agent-runtime 0.17.4, protocol 0.36.0 and recipe-runner 0.28.4 so consumers share one dependency copy. No code change.
+
 ## 0.11.3 - 2026-10-10
 
 - A node's `cdp_port` template is read with the recipe template grammar, so `{{ params.port }}` (which the runner does not resolve) is an unresolved port instead of the port's value.

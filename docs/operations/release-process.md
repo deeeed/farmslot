@@ -72,6 +72,44 @@ Gateway `releaseNotes` load at gateway process start — restart `farmdev` / `fa
 
 This is separate from the git **update banner** (`commitsBehind` → `farmslot update`).
 
+## Gateway, CLI and node rollout
+
+Deploy from the merged release commit in a dedicated worktree. Keep live gateway
+and slot checkouts on their operator branches; never switch them to a release
+branch. Merge any required installation fixes before installing the release.
+
+1. Finish the hosted and npm cuts, run the package-readiness checks, and publish
+   approved npm versions in [dependency order](package-publishing.md). Keep
+   `workspace:*` in source manifests; packing writes the released dependency ranges.
+2. Drain or finish native work before upgrading its execution host on the node.
+   Upgrade the private CLI and execution nodes before restarting the gateway.
+   From the release worktree, deploy each configured machine and instance:
+
+   ```bash
+   bash scripts/deploy-node.sh <machine> <gateway-host> --instance <dev|prod>
+   ```
+
+   Add `--refresh-cli` for the local machine. Remote deploys refresh the CLI
+   automatically. The immutable CLI snapshot's `DEPLOYED-REVISION.json` must name
+   the merged release SHA. Dev and prod share one CLI per machine, so deploy both
+   from the same revision. Keep native-owner settings and credential-file inputs
+   intact; node service and preflight checks must use the same environment roots.
+
+3. A running host belongs to the node; restarting only the gateway does not upgrade it.
+   Restart the gateway through its existing supervisor after all CLI/node
+   upgrades, so it loads the new gateway version and release notes.
+4. Using the deployment's configured CLI/profile, check `gateway.status` and
+   `farmslot node status --json`: gateway version and release-note version must
+   match the cut. For each dev/prod profile, `gatewayProtocolVersion` must equal
+   the cut protocol, and every expected node must report that `protocolVersion`
+   with `versionMatch: true`. A successful deploy's
+   gateway-unreachable warning is not a successful RPC check.
+5. Refresh downstream farm configurations only after the gateway and nodes can
+   read their support bindings. Retain the previous CLI link and deployment
+   revision until the RPC and review checks pass. Roll back the matching gateway,
+   node and CLI cohort together if those checks fail; preserve credentials and
+   run/task state.
+
 ## Companion EAS release
 
 After a `companion` group cut:

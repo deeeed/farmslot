@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.4 - 2026-10-10
+
+- Publish with protocol 0.36.0 and recipe-runner 0.28.4 so consumers share one dependency copy. No code change.
+
 ## 0.8.3 - 2026-10-10
 
 - `HealBoundViolation.retryable` (optional): an infra failure a caller may rerun as is. recipe-cli emits it as the violation's `retryable`.
