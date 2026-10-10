@@ -81,7 +81,7 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
     ['REMOTE_REPO', vars.remoteRepo],
   ];
   const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;
-  return pairs
+  const slotLines = pairs
     .filter(([key]) => {
       if (validName.test(key)) return true;
       // A resource field that is not a valid shell identifier cannot become an
@@ -92,6 +92,13 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
       return false;
     })
     .map(([key, value]) => `${key}=${shellQuote(value)}`);
+  return [
+    ...Object.entries(vars.machineEnv ?? {}).map(
+      ([key, value]) => `export ${key}=${shellQuote(value)}`,
+    ),
+    ...slotLines,
+    `export FARMSLOT_MACHINE=${shellQuote(vars.machine)}`,
+  ];
 }
 
 /**

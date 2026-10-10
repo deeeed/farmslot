@@ -117,8 +117,9 @@ function ensureOnce(
   projectVars: ProjectVars,
   local: LocalBundle,
   io: NodeSupportIo | undefined,
+  selectSlot: boolean,
 ): Promise<NodeSupportBundleState | null> {
-  const slotKey = `${vars.slotId}\0${local.hash}`;
+  const slotKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
   const existing = pendingEnsures.get(slotKey);
   if (existing) return existing;
   const machineKey = `${vars.machine}\0${local.hash}`;
@@ -137,6 +138,7 @@ function ensureOnce(
         projectVars,
         io,
         collected: local.collected,
+        selectSlot,
       });
     } finally {
       pendingEnsures.delete(slotKey);
@@ -191,6 +193,8 @@ export async function resolveRemoteFarmCommand(
     io?: NodeSupportIo;
     /** Wall-clock the caller gave the whole command; the delivery wait counts against it. */
     budgetMs?: number;
+    /** Preserve the slot support pointer while checking prerequisites. */
+    selectSlot?: boolean;
   } = {},
 ): Promise<string> {
   if (!hasRemoteFarmRef(command)) return command;
@@ -199,17 +203,19 @@ export async function resolveRemoteFarmCommand(
   const projectVars = await loadProjectVarsIfAny(vars.projectName);
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
-  const verifiedAt = verifiedBundles.get(`${vars.slotId}\0${local.hash}`);
+  const selectSlot = options.selectSlot !== false;
+  const cacheKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
+  const verifiedAt = verifiedBundles.get(cacheKey);
   if (verifiedAt !== undefined && Date.now() - verifiedAt < VERIFIED_TTL_MS) {
     return remapRemoteFarmRefs(command, nodeSupportDir(local.hash), local.paths);
   }
   const state = await withinBudget(
-    ensureOnce(vars, projectVars, local, options.io),
+    ensureOnce(vars, projectVars, local, options.io, selectSlot),
     options.budgetMs,
     vars.slotId,
   );
   if (!state?.hash) return command;
-  verifiedBundles.set(`${vars.slotId}\0${state.hash}`, Date.now());
+  verifiedBundles.set(cacheKey, Date.now());
   return remapRemoteFarmRefs(command, state.supportDir, state.paths);
 }
 

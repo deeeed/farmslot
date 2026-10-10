@@ -16,7 +16,6 @@ import {
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
-  applyProjectCommandEnv,
   execOnSlot,
   expandTemplate,
   farmslotRoot,
@@ -32,7 +31,7 @@ import {
   slotReadFile,
   type SlotVars,
   updateSlotStatus,
-  withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -210,18 +209,6 @@ export async function slotPrepare(
     } catch {
       /* no project config: retain default prepare behavior */
     }
-    if (vars.slotEnabled) {
-      const prerequisites = await checkProjectPrerequisites(
-        vars,
-        projectVars?.projectJson ?? {},
-        projectVars,
-        resolveEffectiveDomain(params.domain, vars.domain),
-      );
-      if (prerequisites) {
-        stream.step('prerequisites', prerequisites.detail);
-        if (prerequisites.status === 'fail') throw new Error(prerequisites.detail);
-      }
-    }
     assertNativeSlotReplacementOwner(params.slotId, params.runId);
     const preparingRun = params.runId ? getRun(params.runId) : null;
     if (preparingRun?.transport === 'native') {
@@ -238,6 +225,18 @@ export async function slotPrepare(
           'Stop the owned native worker before preparing its workspace.',
           undefined,
         );
+    }
+    if (vars.slotEnabled) {
+      const prerequisites = await checkProjectPrerequisites(
+        vars,
+        projectVars?.projectJson ?? {},
+        projectVars,
+        resolveEffectiveDomain(params.domain, vars.domain),
+      );
+      if (prerequisites) {
+        stream.step('prerequisites', prerequisites.detail);
+        if (prerequisites.status === 'fail') throw new Error(prerequisites.detail);
+      }
     }
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
@@ -361,16 +360,8 @@ async function slotPrepareInner(
   let branchCreatedFromBase = false;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
-  // Project command_env first, then the machine's pool env: pool overrides
-  // project, the same precedence dispatch applies around the runner launch.
   const applyCommandEnv = (command: string) =>
-    applyProjectCommandEnv(projectJson, withMachineEnv(command, vars), {
-      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, {
-          domain: effectiveDomain ?? '',
-        }),
-    });
+    withProjectMachineEnv(command, vars, projectJson, projectVars, effectiveDomain);
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')

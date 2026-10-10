@@ -56,7 +56,8 @@ test('pool environment overrides project defaults in the real check shell', asyn
     },
     undefined,
     undefined,
-    async (_vars, command) => {
+    async (_vars, command, options) => {
+      assert.equal(typeof options === 'object' && options.selectNodeSupport, false);
       const { stdout, stderr } = await exec('bash', ['-c', command]);
       return { stdout, stderr, exitCode: 0 };
     },

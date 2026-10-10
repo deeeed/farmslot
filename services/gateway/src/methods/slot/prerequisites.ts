@@ -1,12 +1,10 @@
 import {
-  applyProjectCommandEnv,
   execOnSlot,
   expandHook,
-  expandTemplate,
   type ProjectVars,
   type RawProjectJson,
   type SlotVars,
-  withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 
 import type { CheckStep } from './shared.js';
@@ -21,19 +19,8 @@ export async function checkProjectPrerequisites(
 ): Promise<CheckStep | null> {
   const hook = expandHook('prerequisites', projectJson, vars, projectVars);
   if (!hook) return null;
-  const command = applyProjectCommandEnv(
-    projectJson,
-    withMachineEnv(hook, {
-      ...vars,
-      machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
-    }),
-    {
-      ...(domain ? { domain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-    },
-  );
-  const result = await execute(vars, command, { timeout: 10_000 });
+  const command = withProjectMachineEnv(hook, vars, projectJson, projectVars, domain);
+  const result = await execute(vars, command, { timeout: 10_000, selectNodeSupport: false });
   return {
     name: 'prerequisites',
     status: result.exitCode === 0 ? 'pass' : 'fail',

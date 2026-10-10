@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import type { SlotVars } from '@farmslot/slot-config';
@@ -75,6 +76,16 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
     },
   };
 
+  const configured = { ...vars, machineEnv: { CORE_NODE_BIN: "/configured path/with 'quotes'" } };
+  const output = execFileSync(
+    'bash',
+    [
+      '-c',
+      `${slotVarsShellLines(configured).join('\n')}\nbash -c 'printf \"%s\\n\" \"$CORE_NODE_BIN\" \"$FARMSLOT_MACHINE\"'`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.deepEqual(output.trim().split('\n'), [configured.machineEnv.CORE_NODE_BIN, vars.machine]);
   assert.deepEqual(
     slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
     ["METRO_PORT='8878'"],

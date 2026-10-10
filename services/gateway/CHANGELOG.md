@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Check project-declared prerequisites with the node's pool environment before prepare changes and during slot checks, preserving actionable missing-path diagnostics.
+- Check node prerequisites before prepare changes and during slot.check, preserving support selection and missing-path diagnostics. Pool environment reaches slot actions and resource control/health shells.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 
