@@ -226,7 +226,7 @@ export function resolveGatewayTarget(
       if (isLoopbackHost(new URL(env.GW_URL).hostname)) return { url: env.GW_URL, source: 'env' };
     }
     throw new Error(
-      'No stored gateway profile matches GW_URL; add and log in to a profile for the worker gateway URL with farmslot gateway add and farmslot login',
+      'No stored gateway profile matches GW_URL; add and log in to a profile for the gateway URL in GW_URL with farmslot gateway add and farmslot login',
     );
   }
 

@@ -209,6 +209,10 @@ profile. Locally derived loopback sandbox URLs retain local discovery.
 A matching profile without a stored credential sends no credential; use `login`
 to authenticate that profile.
 
+`--url` uses the credential of the profile whose URL matches, regardless of the
+active profile. An unmatched `--url` retains direct credential discovery, so it
+can target an isolated gateway without adding a profile.
+
 ## Check health anytime
 
 ```bash

@@ -250,6 +250,6 @@ test('worker URL flags and env select the matching profile while the active prof
   }
   assert.throws(
     () => resolveGatewayTarget({}, { GW_URL: 'ws://unknown:7801' }, profiles),
-    /add.*log in.*worker gateway/,
+    /add.*log in.*gateway URL in GW_URL/,
   );
 });
