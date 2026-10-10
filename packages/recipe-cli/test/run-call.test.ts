@@ -724,6 +724,7 @@ describe('engine door', () => {
       };
     const lone = await executeWithHealBounds(run([captureFailure]), root, newHealState());
     assert.equal(lone.violation?.code, 'CAPTURE_INTERRUPTED');
+    assert.equal(lone.violation?.retryable, true);
     assert.equal(lone.violation?.exitCode, 4);
     assert.equal(lone.violation?.message, message);
     assert.match(lone.violation?.userAction ?? '', /videos\/recipe-run\.mp4/u);
@@ -782,6 +783,40 @@ describe('engine door', () => {
     assert.equal(busy.value, 4);
     assert.match(busy.stderr.join('\n'), /✗ shop-harness: a recipe is currently running/u);
     assert.match(busy.stderr.join('\n'), /shop-harness status --target/u);
+  });
+
+  test('a capture interruption is emitted retryable; every other violation is not', async () => {
+    const result = {
+      summaryPath: '/tmp/s.json',
+      tracePath: '/tmp/t.json',
+      artifactManifestPath: '/tmp/m.json',
+    };
+    const json = await capture(async () => {
+      emitHealViolation(
+        true,
+        'run',
+        result,
+        { code: 'CAPTURE_INTERRUPTED', exitCode: 4, message: 'm', retryable: true },
+        newHealState(),
+      );
+      return emitHealViolation(
+        true,
+        'run',
+        result,
+        { code: 'APP_LOGIC_FAILURE', exitCode: 1, message: 'm' },
+        newHealState(),
+      );
+    });
+    assert.deepEqual(
+      json.stdout.map((line) => {
+        const { error } = JSON.parse(line) as { error: { code: string; retryable: boolean } };
+        return [error.code, error.retryable];
+      }),
+      [
+        ['CAPTURE_INTERRUPTED', true],
+        ['APP_LOGIC_FAILURE', false],
+      ],
+    );
   });
 
   test('words a heal-bound violation with the platform, then the violation, then the evidence', async () => {

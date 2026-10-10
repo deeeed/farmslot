@@ -12,6 +12,8 @@ import {
   validateRecipeSuiteScopeDocument,
 } from '@farmslot/protocol';
 
+import { loneCaptureInterruption } from '../recording/capture-helper-interruption.js';
+
 import { writeFileWithinRoot } from './path.js';
 import type { RecipeRunResult } from './types.js';
 
@@ -74,12 +76,23 @@ export async function finalizeRecipeSuite(
     const summaryPath = `summaries/${String(++summaryIndex).padStart(4, '0')}.json`;
     summaries[summaryPath] = summary;
     summaryFiles.push({ path: summaryPath, content: `${JSON.stringify(summary, null, 2)}\n` });
+    // A case that failed only because its recording was interrupted is not a product failure.
+    const interruption = loneCaptureInterruption(input.result);
     resolutions.push({
       id: input.id,
       kind: 'verdict',
       status: input.result.status,
       summary_path: summaryPath,
       summary_digest: digestRecipeDocument(summary),
+      ...(interruption
+        ? {
+            evidence_incomplete: {
+              reason: 'capture_interrupted' as const,
+              detail: interruption.message,
+              evidence_path: interruption.videoPath,
+            },
+          }
+        : {}),
     });
   }
 

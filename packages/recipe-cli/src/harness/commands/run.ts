@@ -6,7 +6,11 @@ import path from 'node:path';
 
 import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import type { RecipeValidationFinding } from '@farmslot/protocol';
-import { type RecipeLibrarySource, redactRecipeParams } from '@farmslot/recipe-runner';
+import {
+  CAPTURE_INTERRUPTED,
+  type RecipeLibrarySource,
+  redactRecipeParams,
+} from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
 import { recordRecipeAcceptance } from '../acceptance-ledger.js';
@@ -569,7 +573,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           message: violation.message,
           userAction,
           originalError: violation.originalError ?? null,
+          retryable: violation.retryable ?? false,
         });
+        // The run completed with incomplete evidence: its report still names what it proved.
+        if (violation.code === CAPTURE_INTERRUPTED) writeRunReport(result);
         if (stream.enabled) {
           stream.complete('fail', violation.exitCode, fallbacks.length > 0 ? { fallbacks } : {});
         }
@@ -710,7 +717,7 @@ function runTaskDir(target: string): string | null {
 // stands either way: a ledger the run can't write is a warning, not a failure.
 function recordRunAcceptance(
   target: string,
-  result: { recipePath: string; tracePath: string },
+  result: Parameters<typeof recordRecipeAcceptance>[2],
 ): void {
   try {
     const taskDir = runTaskDir(target);

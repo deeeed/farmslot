@@ -526,9 +526,7 @@ function parseResolution(
         !isNonEmptyString(incomplete.detail) ||
         !isNonEmptyString(incomplete.evidence_path) ||
         !isRelativeArtifactPath(incomplete.evidence_path) ||
-        Object.keys(incomplete).some(
-          (key) => !['reason', 'detail', 'evidence_path'].includes(key),
-        ))
+        Object.keys(incomplete).some((key) => !['reason', 'detail', 'evidence_path'].includes(key)))
     ) {
       addFinding(
         ctx,
@@ -564,7 +562,13 @@ function parseResolution(
       summary_path: value.summary_path,
       summary_digest: value.summary_digest,
       ...(isRecord(incomplete)
-        ? { evidence_incomplete: structuredClone(incomplete) as unknown as RecipeSuiteEvidenceIncomplete }
+        ? {
+            evidence_incomplete: {
+              reason: incomplete.reason as RecipeSuiteEvidenceIncompleteReason,
+              detail: String(incomplete.detail),
+              evidence_path: String(incomplete.evidence_path),
+            },
+          }
         : {}),
     };
   }

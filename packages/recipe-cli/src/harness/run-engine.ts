@@ -18,7 +18,8 @@ import {
   recipeTraceEntries,
 } from '@farmslot/protocol';
 import {
-  CAPTURE_INTERRUPTED,
+  isCaptureInterruptedEntry,
+  loneCaptureInterruption,
   type RecipeLibrarySource,
   type RecipeRunner,
   type RecipeRunRequest,
@@ -825,7 +826,7 @@ function readRunFailureText(result: RecipeRunResult): string {
           entry &&
           entry.ok === false &&
           typeof entry.error === 'string' &&
-          entry.error_code !== CAPTURE_INTERRUPTED,
+          !isCaptureInterruptedEntry(entry),
       )
       .map((entry) => entry.error as string)
       .join('\n')
@@ -843,11 +844,10 @@ export async function executeWithHealBounds<T extends RecipeRunResult>(
 ): Promise<{ result: T; violation: HealBoundViolation | null }> {
   const result = await exec();
   if (result.status === 'pass' || result.status === 'unknown') return { result, violation: null };
-  const failureText = readRunFailureText(result);
-  // Any other failure is classified as usual; a lone capture interruption is typed.
-  if (result.captureInterruption && !failureText)
-    return { result, violation: captureInterruptedViolation(result.captureInterruption) };
-  return { result, violation: checkHealBounds(target, failureText, state) };
+  // A lone capture interruption is typed; any other failure is classified as usual.
+  const interruption = loneCaptureInterruption(result);
+  if (interruption) return { result, violation: captureInterruptedViolation(interruption) };
+  return { result, violation: checkHealBounds(target, readRunFailureText(result), state) };
 }
 
 /** Evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`). */
@@ -897,7 +897,7 @@ export function emitHealViolation(
           error: {
             code: violation.code,
             message: violation.message,
-            retryable: false,
+            retryable: violation.retryable ?? false,
             userAction,
             originalError: violation.originalError ?? null,
           },

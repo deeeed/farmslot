@@ -39,6 +39,26 @@ function requireProof(condition: unknown, message: string): asserts condition {
   if (!condition)
     throw new BlockedRunError(`QA evidence incomplete: ${message}`, 'qa-runtime-evidence');
 }
+// Why the suite does not count as passed. Cases whose only failure was an interrupted
+// recording are named as incomplete evidence with their partial videos, but only when no
+// case failed or went unexecuted for any other reason.
+function suiteCoverageGap(resolutions: unknown[]): string | undefined {
+  const incomplete: string[] = [];
+  for (const entry of resolutions) {
+    if (!record(entry)) return 'suite has failing, unknown or unexecuted coverage';
+    if (entry.kind === 'verdict' && entry.status === 'pass') continue;
+    const evidence = record(entry.evidence_incomplete) ? entry.evidence_incomplete : undefined;
+    if (evidence?.reason !== 'capture_interrupted')
+      return 'suite has failing, unknown or unexecuted coverage';
+    incomplete.push(
+      `case ${String(entry.id)}: ${String(evidence.detail)} Partial video: ${String(evidence.evidence_path)}`,
+    );
+  }
+  return incomplete.length > 0
+    ? `evidence incomplete (capture interrupted; rerun those cases): ${incomplete.join('; ')}`
+    : undefined;
+}
+
 function relative(value: unknown): asserts value is string {
   requireProof(
     typeof value === 'string' &&
@@ -153,11 +173,11 @@ export function validateQaSuite(
     'dynamic recipe scope is empty',
   );
   requireProof(
-    record(result) &&
-      Array.isArray(result.resolutions) &&
-      result.resolutions.every((entry) => entry.kind === 'verdict' && entry.status === 'pass'),
-    'suite has failing, unknown or unexecuted coverage',
+    record(result) && Array.isArray(result.resolutions),
+    'suite result has no resolutions',
   );
+  const gap = suiteCoverageGap(result.resolutions);
+  requireProof(gap === undefined, gap ?? '');
   requireProof(
     result.resolutions.some((entry) => entry.id === smoke.caseId),
     'smoke case was not executed',
@@ -410,12 +430,11 @@ async function readQaCompletion(
     Object.keys(result.packages).length === suiteResult.resolutions.length,
     'recipe package locations do not match the suite cases',
   );
+  const gap = suiteCoverageGap(suiteResult.resolutions);
+  requireProof(gap === undefined, gap ?? '');
   for (const resolution of suiteResult.resolutions) {
     requireProof(
-      record(resolution) &&
-        typeof resolution.id === 'string' &&
-        resolution.kind === 'verdict' &&
-        resolution.status === 'pass',
+      record(resolution) && typeof resolution.id === 'string',
       'suite has failing, unknown or unexecuted coverage',
     );
     relative(resolution.summary_path);

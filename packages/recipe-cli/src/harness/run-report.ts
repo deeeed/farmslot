@@ -5,7 +5,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AdapterBrowser } from '@farmslot/adapter-sdk';
-import { parseRecipeTemplate } from '@farmslot/protocol';
+import {
+  parseRecipeTemplate,
+  type RecipeRecordingInterruption,
+  recipeTraceEntries,
+} from '@farmslot/protocol';
+import {
+  CAPTURE_EVIDENCE_INCOMPLETE,
+  isCaptureInterruptedEntry,
+  onlyCaptureInterrupted,
+} from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
 import { harnessHost } from './host.js';
@@ -27,8 +36,8 @@ export function writeRunReport(result: {
   const artifactsDir = path.dirname(summaryPath);
   const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
   const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
-  const entries = Array.isArray(trace.entries) ? trace.entries : [];
-  const lines = renderRunReport(summary, entries);
+  const entries = recipeTraceEntries(trace) ?? [];
+  const lines = renderRunReport(summary, entries, interruptedVideo(artifactManifestPath));
   const reportPath = path.join(artifactsDir, 'report.md');
   fs.writeFileSync(reportPath, `${lines.join('\n')}\n`);
   indexRunReportArtifact(artifactManifestPath);
@@ -192,11 +201,48 @@ export function executedBrowser(
   return run.launchedBrowser(target, path.dirname(artifactManifestPath), ports[0]);
 }
 
-function renderRunReport(summary: Record<string, unknown>, entries: unknown[]): string[] {
+// The video the recorder kept after its stream stopped, with the interruption.
+function interruptedVideo(
+  artifactManifestPath: string,
+): { path: string; interruption: RecipeRecordingInterruption } | undefined {
+  try {
+    const manifest: unknown = JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8'));
+    const artifacts =
+      isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+    const video = artifacts.find(
+      (artifact) =>
+        isRecord(artifact) && typeof artifact.path === 'string' && isRecord(artifact.interruption),
+    );
+    const interruption =
+      isRecord(video) && isRecord(video.interruption) ? video.interruption : undefined;
+    return isRecord(video) && interruption
+      ? {
+          path: String(video.path),
+          interruption: {
+            frames: Number(interruption.frames),
+            mediaTimeMs: Number(interruption.mediaTimeMs),
+            cause: String(interruption.cause),
+          },
+        }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function renderRunReport(
+  summary: Record<string, unknown>,
+  entries: unknown[],
+  video?: { path: string; interruption: RecipeRecordingInterruption },
+): string[] {
+  // A run that failed only because its recording stopped proved what it ran, with partial video.
+  const status = onlyCaptureInterrupted(entries)
+    ? CAPTURE_EVIDENCE_INCOMPLETE
+    : String(summary.status ?? 'unknown');
   const lines = [
     `# ${harnessHost().product} Recipe Run`,
     '',
-    `Status: ${String(summary.status ?? 'unknown')}`,
+    `Status: ${status}`,
     `Duration: ${formatDuration(Number(summary.durationMs ?? 0))}`,
     `Nodes: ${Number(summary.passed ?? 0)}/${Number(summary.total ?? entries.length)} passed`,
   ];
@@ -211,10 +257,22 @@ function renderRunReport(summary: Record<string, unknown>, entries: unknown[]): 
       `- REVIEW ${sideFindingTotal} distinct application warning/error event(s) (non-blocking; expanded below and stored in diagnostics.json)`,
     );
   }
+  if (video) {
+    const { frames, mediaTimeMs, cause } = video.interruption;
+    lines.push(
+      '',
+      '## Evidence',
+      `- INCOMPLETE partial video [${video.path}](${video.path}): the recording stopped after ${frames} frames (${formatDuration(mediaTimeMs)}): ${cause}`,
+    );
+  }
   lines.push('', '## Steps');
   for (const entry of entries) {
     if (!isRecord(entry)) continue;
-    const mark = entry.ok === false ? 'FAIL' : 'PASS';
+    const mark = isCaptureInterruptedEntry(entry)
+      ? 'INCOMPLETE'
+      : entry.ok === false
+        ? 'FAIL'
+        : 'PASS';
     const nodeId = String(entry.nodeId ?? '(node)');
     const action = String(entry.action ?? '(action)');
     const duration = formatDuration(Number(entry.durationMs ?? 0));

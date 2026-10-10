@@ -356,3 +356,44 @@ test('enforces explicit and truthful non-execution reasons', () => {
   };
   assert.equal(validateRecipeSuitePackage({ ...cycle, result: cyclicResult }).status, 'invalid');
 });
+
+test('evidence_incomplete marks only a failed verdict, in the validator and the published schema', async () => {
+  const input = validPackage();
+  const ajv = new Ajv2020({ strict: true });
+  const validateResult = ajv.compile(
+    JSON.parse(
+      await readFile(
+        path.join(repoRoot, 'packages/protocol/schemas/recipe-suite-result-v1.schema.json'),
+        'utf8',
+      ),
+    ),
+  );
+  const marked = (index: number, evidence: unknown) => ({
+    ...input,
+    result: {
+      ...input.result,
+      resolutions: input.result.resolutions.map((resolution, at) =>
+        at === index ? { ...resolution, evidence_incomplete: evidence } : resolution,
+      ),
+    },
+  });
+  const incomplete = {
+    reason: 'capture_interrupted',
+    detail: 'CAPTURE_INTERRUPTED: the recording stream stopped after 12 frames (0.4 s): -3805.',
+    evidence_path: 'videos/recipe-run.mp4',
+  };
+  const onFail = marked(1, incomplete);
+  assert.equal(validateRecipeSuitePackage(onFail).status, 'valid');
+  assert.equal(validateResult(onFail.result), true, JSON.stringify(validateResult.errors));
+  for (const invalid of [
+    marked(0, incomplete),
+    marked(1, { ...incomplete, reason: 'flaky' }),
+    marked(1, { ...incomplete, evidence_path: '../outside.mp4' }),
+    marked(1, { ...incomplete, extra: true }),
+  ]) {
+    assert.equal(validateRecipeSuitePackage(invalid).status, 'invalid');
+  }
+  // The schema cannot tie the marker to `status: fail`; the validator does.
+  assert.equal(validateResult(marked(1, { ...incomplete, reason: 'flaky' }).result), false);
+  assert.equal(validateResult(marked(1, { ...incomplete, extra: true }).result), false);
+});

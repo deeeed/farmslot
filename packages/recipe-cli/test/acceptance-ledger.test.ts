@@ -124,6 +124,49 @@ describe('recipe acceptance ledger', () => {
     );
   });
 
+  test('an interrupted recording makes a proven target weak, with the partial video and a note', () => {
+    const run = taskRun({
+      proofTargets: ['AC1', 'AC2'],
+      nodes: { 'assert-default': ['AC1'], 'assert-rewards': ['AC2'] },
+      trace: [
+        { nodeId: 'assert-default', ok: true },
+        { nodeId: 'assert-rewards', ok: false },
+      ],
+    });
+    const artifacts = path.dirname(run.result.tracePath);
+    fs.mkdirSync(path.join(artifacts, 'videos'));
+    fs.writeFileSync(path.join(artifacts, 'videos', 'recipe-run.mp4'), 'partial');
+    const message =
+      'CAPTURE_INTERRUPTED: the recording stream stopped after 12 frames (0.4 s): -3805. The partial video is kept at videos/recipe-run.mp4.';
+    const { recorded } = recordRecipeAcceptance(run.taskDir, run.target, {
+      ...run.result,
+      captureInterruption: {
+        frames: 12,
+        mediaTimeMs: 400,
+        cause: '-3805',
+        videoPath: 'videos/recipe-run.mp4',
+        message,
+      },
+    });
+    assert.deepEqual(
+      recorded.map(({ id, verdict, note }) => ({ id, verdict, note })),
+      [
+        {
+          id: 'AC-1',
+          verdict: 'weak',
+          note: `evidence incomplete (capture interrupted): ${message}`,
+        },
+        // A failed prover is a product failure whatever the recording did.
+        { id: 'AC-2', verdict: 'missing', note: undefined },
+      ],
+    );
+    const ledger = readLedger(run.taskDir);
+    assert.deepEqual(shared.validateAcceptanceStatusLedger(ledger), []);
+    const ac1 = ledger.criteria.find((entry) => entry.id === 'AC-1');
+    assert.ok((ac1?.evidence as string[]).includes('artifacts/videos/recipe-run.mp4'));
+    assert.match(String(ac1?.note), /^evidence incomplete \(capture interrupted\)/u);
+  });
+
   test("evidence is the trace plus the proving nodes' artifacts inside the task dir", () => {
     const run = taskRun({
       proofTargets: ['AC1'],
