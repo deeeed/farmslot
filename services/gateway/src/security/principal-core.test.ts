@@ -105,6 +105,13 @@ test('credential store rejects unsupported and node-role records and saves mode 
   );
   assert.throws(() => loadCredentialStore(path), /unsupported schemaVersion 2/u);
 
+  // A JSON.parse message quotes the input around the error; the store's must not.
+  writeFileSync(path, '{"schemaVersion":1,"credentials":[{"secret":{"hash":fake_stored_hash}}]}');
+  assert.throws(
+    () => loadCredentialStore(path),
+    (error: Error) => error.message === `Unable to load credential store ${path}: not valid JSON`,
+  );
+
   writeFileSync(
     path,
     JSON.stringify({

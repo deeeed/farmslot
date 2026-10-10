@@ -206,12 +206,23 @@ elif command.startswith('/usr/bin/plutil -extract '):
             '-lc',
           ]);
           assert.equal(args.length, 3);
-          assert.ok(args[2].startsWith(`exec ${env.FARMSLOT_NODE_PATH} --require `));
+          // Unset after the login shell, so a profile export cannot bring it back.
+          assert.ok(
+            args[2].startsWith(
+              `exec /usr/bin/env -u FARMSLOT_ROOT ${env.FARMSLOT_NODE_PATH} --require `,
+            ),
+          );
           assert.ok(servicePath.includes('/home/node-validation/.npm-global/bin'));
         } else {
-          assert.equal(args[0], env.FARMSLOT_NODE_PATH);
-          assert.equal(args[1], '--require');
-          assert.equal(args.length, 6);
+          // The service runs with FARMSLOT_ROOT unset, as the token check does.
+          assert.deepEqual(args.slice(0, 5), [
+            '/usr/bin/env',
+            '-u',
+            'FARMSLOT_ROOT',
+            env.FARMSLOT_NODE_PATH,
+            '--require',
+          ]);
+          assert.equal(args.length, 9);
         }
       });
     }
@@ -433,6 +444,7 @@ esac
       machine = 'fixture-machine',
       args = [],
       shell = '/bin/bash',
+      nodeTokenFile = true,
       env: extraEnv = {},
     } = {}) => {
       // rsync is stubbed, so stand in for the synced node: the token check the
@@ -459,6 +471,8 @@ esac
         FARMSLOT_NODE_PATH: path.join(nodeBin, 'node'),
         FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
         FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
+        FARMSLOT_NODE_TOKEN: '',
+        FARMSLOT_GATEWAY_PASSWORD: '',
         ...extraEnv,
       };
       for (const name of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
@@ -471,8 +485,7 @@ esac
           '127.0.0.1',
           '--instance',
           instance,
-          '--node-token-file',
-          path.join(root, 'node-token'),
+          ...(nodeTokenFile ? ['--node-token-file', path.join(root, 'node-token')] : []),
           ...args,
         ],
         { env, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 },
@@ -705,6 +718,88 @@ test('deploy-node deploys when the env file holds the deployed node token', (t) 
     fixture.systemctl().some((line) => line.includes('restart farmslot-node')),
     fixture.systemctl().join('\n'),
   );
+});
+
+// A native node runs as `$SHELL -lc 'exec …'`, and so does its check. The login
+// profile may print and may export FARMSLOT_ROOT: here at a decoy whose env file
+// holds the deployed token and, searched first, would hide the stale one.
+test('deploy-node runs the native check through the login shell and still refuses a shadowing file', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/decoy/.env.local-auth', 'FARMSLOT_NODE_TOKEN=fixture-node-credential\n');
+  fixture.write(
+    'home/.bash_profile',
+    'echo "login banner from the profile"\nexport FARMSLOT_ROOT="$HOME/decoy"\n',
+  );
+  fixture.write(
+    'home/farmslot-node/.env.local-auth',
+    'FARMSLOT_NODE_TOKEN=stale-file-credential\n',
+  );
+  assert.throws(
+    () => fixture.deploy({ env: { FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'fixture-owner' } }),
+    (error) => {
+      assert.equal(error.status, 1);
+      assert.match(String(error.stdout), /login banner from the profile/);
+      const stderr = String(error.stderr);
+      assert.ok(
+        stderr.includes(
+          `[deploy] ERROR: ${fs.realpathSync(path.join(fixture.home, 'farmslot-node/.env.local-auth'))} sets FARMSLOT_NODE_TOKEN`,
+        ),
+        stderr,
+      );
+      assert.match(
+        stderr,
+        /node token check failed on fixture-machine; the service was not reloaded/,
+      );
+      assert.doesNotMatch(
+        `${error.stdout}${stderr}`,
+        /stale-file-credential|fixture-node-credential/,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(fixture.systemctl(), []);
+});
+
+// Without --node-token-file the service carries FARMSLOT_GATEWAY_TOKEN as its
+// node token, so that is what an env file must match.
+for (const [held, deploys] of [
+  ['fixture-operator-secret', true],
+  ['fixture-node-credential', false],
+]) {
+  test(`deploy-node checks a gateway-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
+    const fixture = cliFixture(t);
+    fixture.write('home/farmslot-node/.env.local-auth', `FARMSLOT_NODE_TOKEN=${held}\n`);
+    const deploy = () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false });
+    if (deploys) {
+      assert.match(deploy(), /checking for an env file that shadows the node token/);
+      assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));
+      return;
+    }
+    assert.throws(deploy, (error) => {
+      assert.match(String(error.stderr), /sets FARMSLOT_NODE_TOKEN, which the node reads instead/);
+      assert.doesNotMatch(
+        `${error.stdout}${error.stderr}`,
+        /fixture-operator-secret|fixture-node-credential/,
+      );
+      return true;
+    });
+    assert.deepEqual(fixture.systemctl(), []);
+  });
+}
+
+// With no token the service carries none for an env file to shadow.
+test('deploy-node skips the token check when it deploys no token', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/farmslot-node/.env.local-auth', 'FARMSLOT_NODE_TOKEN=file-credential\n');
+
+  const output = fixture.deploy({
+    machine: localMachine(),
+    nodeTokenFile: false,
+    env: { FARMSLOT_GATEWAY_TOKEN: '' },
+  });
+
+  assert.doesNotMatch(output, /shadows the node token/);
+  assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));
 });
 
 // A port on loopback: listening (until the test ends) or, once closed, free.
