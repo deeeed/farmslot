@@ -84,9 +84,30 @@
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$",
           "description": "SHA-256 digest of the canonical retained summary document."
+        },
+        "evidence_incomplete": {
+          "type": "object",
+          "description": "Only on a fail verdict: the case failed only on an infra event that left its evidence incomplete, not on product behaviour.",
+          "required": ["reason", "detail", "evidence_path"],
+          "properties": {
+            "reason": {
+              "enum": ["capture_interrupted"],
+              "description": "Why the evidence is incomplete."
+            },
+            "detail": { "type": "string", "minLength": 1, "description": "Human-readable cause." },
+            "evidence_path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$",
+              "description": "Case-package-relative path of the partial evidence."
+            }
+          },
+          "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": { "properties": { "evidence_incomplete": true }, "required": ["evidence_incomplete"] },
+      "then": { "properties": { "status": { "const": "fail" } } }
     },
     "notExecuted": {
       "type": "object",

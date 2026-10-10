@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { type RecipeRecordingInterruption, recipeTraceEntries } from '@farmslot/protocol';
@@ -10,6 +11,50 @@ export const CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT = 3;
 
 /** Typed failure code for a run whose recording stream stopped early; the partial video is kept. */
 export const CAPTURE_INTERRUPTED = 'CAPTURE_INTERRUPTED';
+
+/** How reports and verdicts name a run whose only failure is a capture interruption. */
+export { CAPTURE_EVIDENCE_INCOMPLETE } from '@farmslot/protocol';
+
+/** The trace entry a kept partial recording adds (captureInterruptedTraceEntry). */
+export function isCaptureInterruptedEntry(entry: unknown): boolean {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as { error_code?: unknown }).error_code === CAPTURE_INTERRUPTED
+  );
+}
+
+/**
+ * True when a run failed only because its recording was interrupted: an infra event that left
+ * the evidence incomplete, not a product failure. Any other failed entry makes it a failure.
+ */
+export function onlyCaptureInterrupted(entries: readonly unknown[]): boolean {
+  const failed = entries.filter(
+    (entry) =>
+      typeof entry === 'object' && entry !== null && (entry as { ok?: unknown }).ok === false,
+  );
+  return failed.length > 0 && failed.every(isCaptureInterruptedEntry);
+}
+
+/** A run's trace.json entries, in either shape; undefined when the file is unreadable or malformed. */
+export function readRunTraceEntries(tracePath: string): unknown[] | undefined {
+  try {
+    return recipeTraceEntries(JSON.parse(readFileSync(tracePath, 'utf8')));
+  } catch {
+    // Callers treat an unreadable trace as "no evidence": classification falls back to failure.
+    return undefined;
+  }
+}
+
+/** The run's capture interruption when it is the run's only failure (see onlyCaptureInterrupted). */
+export function loneCaptureInterruption(
+  result: Pick<RecipeRunResult, 'tracePath' | 'captureInterruption'>,
+): RecipeRunCaptureInterruption | undefined {
+  if (!result.captureInterruption) return undefined;
+  // An unreadable trace is not a lone interruption, so the run is classified as a failure.
+  const entries = readRunTraceEntries(result.tracePath);
+  return entries && onlyCaptureInterrupted(entries) ? result.captureInterruption : undefined;
+}
 
 /** capture-helper's terminal `stream_interrupted` stderr event. */
 export interface CaptureHelperInterruptionEvent extends RecipeRecordingInterruption {

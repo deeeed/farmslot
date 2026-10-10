@@ -9,6 +9,8 @@ test('recipe module exposes only the public recipe protocol surface', async () =
   const facade = await import('../../src/recipe/index.js');
   assert.deepEqual(Object.keys(facade).sort(), [
     'BUILT_IN_UI_OBSERVERS',
+    'CAPTURE_EVIDENCE_INCOMPLETE',
+    'CAPTURE_INTERRUPTED_REASON',
     'DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES',
     'OFFICIAL_RECIPE_ACTIONS',
     'RECIPE_ACTION_MANIFEST_SCHEMA_URL',
@@ -17,6 +19,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'RECIPE_PROTOCOL_SCHEMA_URL',
     'RECIPE_PROTOCOL_SCHEMA_URLS',
     'RECIPE_PROTOCOL_SCHEMA_VERSION',
+    'RECIPE_SUITE_EVIDENCE_INCOMPLETE_REASONS',
     'RECIPE_SUITE_NON_EXECUTION_REASONS',
     'RECIPE_SUITE_RESULT_SCHEMA_URL',
     'RECIPE_SUITE_SCOPE_SCHEMA_URL',

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.3 - 2026-10-10
+
+- Publish with agent-runtime 0.17.3 so consumers share one agent-runtime and one protocol copy. No code change.
+
 ## 0.6.2 - 2026-10-09
 
 - Publish with agent-runtime 0.17.2 so consumers share one agent-runtime and one protocol copy. No code change.
