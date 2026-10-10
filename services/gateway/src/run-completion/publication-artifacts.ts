@@ -280,7 +280,7 @@ export async function uploadArtifacts(
   run: Run,
   prNumber: number,
   selectedEvidenceKeys?: string[],
-  options: { failOnError?: boolean } = {},
+  options: { failOnError?: boolean; evidenceRevision?: string } = {},
 ): Promise<Map<string, string>> {
   const urlMap = new Map<string, string>();
   const failOrReturnEmpty = (message: string): Map<string, string> => {
@@ -338,6 +338,9 @@ export async function uploadArtifacts(
 
   const flow = run.flowType === 'review-pr' ? 'review' : run.flowType === 'dev' ? 'feature' : 'fix';
   const flowDir = flow === 'fix' ? 'fixes' : `${flow}s`;
+  const publicationId = options.evidenceRevision
+    ? `${prNumber}-evidence/${options.evidenceRevision}`
+    : String(prNumber);
   const uploadScript = path.join(farmslotRoot, 'scripts', 'gh-upload-asset.sh');
 
   let uploadDir = artifactsDir;
@@ -361,9 +364,9 @@ export async function uploadArtifacts(
       `[run-completion] uploading ${files.length} artifact(s) to ${artifactsRepo} (${flowDir}/${prNumber})`,
     );
     await execLocal(
-      `bash '${uploadScript}' --dir '${uploadDir}' --artifacts-repo '${artifactsRepo}' --flow '${flow}' --id '${prNumber}'`,
+      `bash '${uploadScript}' --dir '${uploadDir}' --artifacts-repo '${artifactsRepo}' --flow '${flow}' --id '${publicationId}'`,
     );
-    const baseUrl = `https://raw.githubusercontent.com/${artifactsRepo}/main/${flowDir}/${prNumber}`;
+    const baseUrl = `https://raw.githubusercontent.com/${artifactsRepo}/main/${flowDir}/${publicationId}`;
     for (const f of files) {
       const digest = await fileDigestPrefix(path.join(artifactsDir, f));
       urlMap.set(f, `${baseUrl}/${f}?sha=${digest}`);
@@ -798,6 +801,7 @@ export async function postProcessPRBody(
     baseBody?: string;
     evidenceManifest?: EvidenceManifest | null;
     validateBody?: (body: string) => void | Promise<void>;
+    checkAuthorChecklist?: boolean;
   } = {},
 ): Promise<string | null> {
   try {
@@ -880,7 +884,7 @@ export async function postProcessPRBody(
     if (options.failOnError) assertNoLocalPrBodyPathResidues(body);
 
     // Auto-check author checklist boxes (CI may be gated on these)
-    if (body.includes('- [ ]')) {
+    if (options.checkAuthorChecklist !== false && body.includes('- [ ]')) {
       const reviewerMarker = 'reviewer checklist';
       const markerIdx = body.toLowerCase().indexOf(reviewerMarker);
       if (markerIdx > 0) {

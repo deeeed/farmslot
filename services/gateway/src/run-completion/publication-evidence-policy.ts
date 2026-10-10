@@ -1,7 +1,11 @@
 import type { ArtifactRef } from '@farmslot/protocol';
 
 import { isPackageSelectableEvidenceArtifact } from './draft-pr.js';
-import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
+import {
+  EVIDENCE_VIDEO_EXT,
+  type EvidenceManifest,
+  evidenceManifestArtifactPaths,
+} from './evidence-manifest.js';
 import { isUploadableMediaPath, resolveSelectedEvidenceRef } from './evidence-paths.js';
 
 export interface PublicationEvidenceSelection {
@@ -28,8 +32,6 @@ export function selectedEvidenceKeysForPublication(input: PublicationEvidenceSel
   ].sort();
 }
 
-const VIDEO_EXTENSION = /\.(mp4|mov|webm)$/i;
-
 export function defaultSelectedEvidenceKeysForPublication(
   input: Omit<PublicationEvidenceSelection, 'selectedEvidenceKeys'>,
 ): string[] {
@@ -37,11 +39,11 @@ export function defaultSelectedEvidenceKeysForPublication(
   const preferredVideo =
     manifest?.preferred_mode === 'video' || manifest?.videos?.preferred === true;
   const declared = evidenceManifestArtifactPaths(manifest);
-  const videoOnly = declared.length > 0 && declared.every((key) => VIDEO_EXTENSION.test(key));
+  const videoOnly = declared.length > 0 && declared.every((key) => EVIDENCE_VIDEO_EXT.test(key));
   return input.evidenceManifest
     .filter(
       (artifact) =>
-        (!VIDEO_EXTENSION.test(artifact.path) || preferredVideo || videoOnly) &&
+        (!EVIDENCE_VIDEO_EXT.test(artifact.path) || preferredVideo || videoOnly) &&
         isUploadableMediaPath(artifact.path) &&
         isPackageSelectableEvidenceArtifact(artifact, manifest),
     )
@@ -58,8 +60,11 @@ export function assertPublicationEvidenceSelection(input: PublicationEvidenceSel
     }
   }
   const declared = evidenceManifestArtifactPaths(input.trustedEvidenceManifest);
-  const visualInventory = input.evidenceManifest.some((artifact) =>
-    isUploadableMediaPath(artifact.path),
+  const visualInventory = input.evidenceManifest.some(
+    (artifact) =>
+      isUploadableMediaPath(artifact.path) &&
+      (input.trustedEvidenceManifest === undefined ||
+        isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest)),
   );
   if (selected.length === 0 && (visualInventory || declared.length > 0)) {
     throw new Error(
@@ -69,8 +74,8 @@ export function assertPublicationEvidenceSelection(input: PublicationEvidenceSel
   const screenshotsRequired =
     input.trustedEvidenceManifest?.preferred_mode !== 'video' &&
     input.trustedEvidenceManifest?.videos?.preferred !== true &&
-    declared.some((key) => !VIDEO_EXTENSION.test(key));
-  if (screenshotsRequired && !selected.some((key) => !VIDEO_EXTENSION.test(key))) {
+    declared.some((key) => !EVIDENCE_VIDEO_EXT.test(key));
+  if (screenshotsRequired && !selected.some((key) => !EVIDENCE_VIDEO_EXT.test(key))) {
     throw new Error('Publication blocked: the evidence manifest requires screenshots');
   }
   return selected;

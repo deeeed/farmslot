@@ -95,20 +95,3 @@ files plus built import contracts. The
 `farmslot-recipe` bin ships in `@farmslot/recipe-cli` and imports `../dist/cli.js`, so
 local workspace CLI smoke testing requires `yarn workspace @farmslot/recipe-cli build`
 first (it builds `@farmslot/recipe-runner` too).
-
-## Refresh evidence on an existing PR
-
-For a finished, published run whose evidence was not delivered, use the gateway
-that owns the run. The operation uploads media named by its current mirrored
-evidence manifest, rewrites the evidence section through the normal publication
-renderer, and records the posted description for Command Center. It does not
-reopen approval, change code, or restamp historical reviews.
-
-```bash
-farmslot rpc run.refreshPublishedEvidence '{"runId":"<published-run-id>"}'
-```
-
-An optional `selectedEvidenceKeys` array narrows the current manifest selection;
-empty visual selections are rejected. Missing files, repository configuration,
-upload failures, unreachable hosted assets or a concurrent PR change refuse the
-body update. Wait for an active run to finish before refreshing its evidence.

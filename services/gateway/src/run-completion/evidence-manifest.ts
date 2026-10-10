@@ -38,7 +38,7 @@ export interface EvidenceManifest {
 type JsonRecord = Record<string, unknown>;
 
 const EVIDENCE_IMAGE_EXT = /\.(png|jpe?g|gif)$/i;
-const EVIDENCE_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
+export const EVIDENCE_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
 const EVIDENCE_MEDIA_EXT = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
 
 const MANIFEST_KEYS = new Set([

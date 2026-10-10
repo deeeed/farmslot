@@ -979,8 +979,30 @@ export async function runCompletionPipeline(
 
   // 5. Upload artifacts (screenshots, videos) to artifacts repo
   let artifactUrls = new Map<string, string>();
+  let completionEvidenceSelection: string[] | undefined;
   if (!isReviewPR && prNumber && run.taskFile) {
-    artifactUrls = await uploadArtifacts(updatedRun, prNumber, undefined, { failOnError: true });
+    const manifest = await readEvidenceManifest(updatedRun);
+    const inventory = await buildPackageEvidenceManifest(
+      path.dirname(run.taskFile),
+      await scanArtifacts(path.dirname(run.taskFile)),
+      manifest,
+    );
+    completionEvidenceSelection = assertPublicationEvidenceSelection({
+      selectedEvidenceKeys: defaultSelectedEvidenceKeysForPublication({
+        evidenceManifest: inventory,
+        trustedEvidenceManifest: manifest,
+      }),
+      evidenceManifest: inventory,
+      trustedEvidenceManifest: manifest,
+    });
+    completionEvidenceSelection = expandEvidenceSelectionForManifest(
+      manifest,
+      completionEvidenceSelection,
+    );
+    artifactUrls = await uploadArtifacts(updatedRun, prNumber, completionEvidenceSelection, {
+      failOnError: true,
+    });
+    assertSelectedEvidencePublished(completionEvidenceSelection, artifactUrls);
   }
 
   // 6. For flows with ci-watch: rewrite PR body + check author checklist, then mark ready.
@@ -988,9 +1010,16 @@ export async function runCompletionPipeline(
     // Replace local artifact paths with uploaded URLs + auto-check author checklist boxes.
     // Fail-closed and ordered before markPRReady: a sanitization failure must leave the
     // PR in draft rather than publish a body that still exposes local-only paths.
-    await postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls, undefined, {
-      failOnError: true,
-    });
+    await postProcessPRBody(
+      updatedRun,
+      ciRepo,
+      prNumber,
+      artifactUrls,
+      completionEvidenceSelection,
+      {
+        failOnError: true,
+      },
+    );
     if (shouldMarkReadyAfterCompletion(updatedRun)) {
       try {
         await markPRReady(ciRepo, prNumber);

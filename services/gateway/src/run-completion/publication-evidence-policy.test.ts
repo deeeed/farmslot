@@ -109,3 +109,14 @@ test('qualified evidence paths retain scope with optional artifacts prefix while
   );
   assert.equal(resolveSelectedEvidenceRef('before.png', [inventory[0]])?.path, inventory[0].path);
 });
+
+test('orientation captures without declared publication evidence may remain unselected', () => {
+  assert.deepEqual(
+    assertPublicationEvidenceSelection({
+      selectedEvidenceKeys: [],
+      evidenceManifest: [{ path: 'recipe-run/screenshots/orientation.png', purpose: 'screenshot' }],
+      trustedEvidenceManifest: { standalone: [] },
+    }),
+    [],
+  );
+});

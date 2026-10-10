@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import {
@@ -94,11 +95,16 @@ export async function refreshPublishedEvidence(
   if (!run.branch || before.headRefName !== run.branch || before.state === 'CLOSED') {
     throw new Error('Published PR no longer matches the run branch');
   }
-  const artifactUrls = await uploadArtifacts(run, run.prNumber, expanded, { failOnError: true });
+  const artifactUrls = await uploadArtifacts(run, run.prNumber, expanded, {
+    failOnError: true,
+    // A refused body edit must leave every URL in the existing PR untouched.
+    evidenceRevision: randomUUID(),
+  });
   assertSelectedEvidencePublished(expanded, artifactUrls);
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {
     failOnError: true,
     baseBody: before.body,
+    checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {
       await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: inventory }, expanded);
