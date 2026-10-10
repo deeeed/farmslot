@@ -19,7 +19,6 @@ This folder holds product scope, architecture decisions, historical snapshots, a
 - [`operations/`](operations/) — public-safe publishing, deployment, quality, and runtime maintenance procedures.
 - [`archive/`](archive/) — sanitized historical summaries only; not a scratch dump.
 - [`../apps/docs/docs/`](../apps/docs/docs/) — curated Docusaurus website pages; keep public claims consistent with this folder, but prefer concise website explanations over raw planning detail.
-
 - [Refresh published PR evidence](operations/publication-evidence.md) covers uploading and re-rendering evidence for a finished run.
 
 ## Before adding a doc

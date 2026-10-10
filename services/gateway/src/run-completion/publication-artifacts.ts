@@ -28,7 +28,10 @@ import {
   isUploadableMediaPath,
   resolveSelectedEvidenceRef,
 } from './evidence-paths.js';
-import { assertPublicationEvidenceSelection } from './publication-evidence-policy.js';
+import {
+  assertPublicationEvidenceSelection,
+  type PublicationEvidenceSelection,
+} from './publication-evidence-policy.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -411,6 +414,34 @@ export function assertSelectedEvidencePublished(
   throw new Error(
     `Selected evidence was not published (${missing.length}/${selected.length} missing: ${missing.join(', ')}); refresh/fix artifact upload before publishing`,
   );
+}
+
+export interface PublishedEvidence {
+  selectedEvidenceKeys: string[];
+  artifactUrls: Map<string, string>;
+}
+
+export async function publishSelectedEvidence(
+  run: Run,
+  prNumber: number,
+  selection: PublicationEvidenceSelection,
+): Promise<PublishedEvidence> {
+  const selected = assertPublicationEvidenceSelection(selection);
+  const selectedEvidenceKeys =
+    expandEvidenceSelectionForManifest(selection.trustedEvidenceManifest, selected) ?? [];
+  if (selectedEvidenceKeys.length) {
+    const { verifyReadyGateSelectedEvidenceFiles } = await import('./ready-gate-package.js');
+    await verifyReadyGateSelectedEvidenceFiles(
+      run,
+      { evidenceManifest: selection.evidenceManifest },
+      selectedEvidenceKeys,
+    );
+  }
+  const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
+    failOnError: true,
+  });
+  assertSelectedEvidencePublished(selectedEvidenceKeys, artifactUrls);
+  return { selectedEvidenceKeys, artifactUrls };
 }
 
 // ─── PR body post-processing (sanitize + author checklist) ───

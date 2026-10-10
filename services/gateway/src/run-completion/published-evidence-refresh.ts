@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import {
   Events,
   type RunRefreshPublishedEvidenceParams,
@@ -14,16 +12,8 @@ import { getRun } from '../runs/store.js';
 
 import { evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
-import { buildPackageEvidenceManifest } from './package-evidence-manifest.js';
-import {
-  assertSelectedEvidencePublished,
-  expandEvidenceSelectionForManifest,
-  postProcessPRBody,
-  readEvidenceManifest,
-  scanArtifacts,
-  uploadArtifacts,
-} from './publication-artifacts.js';
-import { assertPublicationEvidenceSelection } from './publication-evidence-policy.js';
+import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
+import { postProcessPRBody, publishSelectedEvidence } from './publication-artifacts.js';
 import { sha256Text, verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
 
 interface PublishedPrDescription {
@@ -54,22 +44,13 @@ export async function refreshPublishedEvidence(
   if (payload?.kind !== 'ready' || !payload.prPackage) {
     throw new Error('Published evidence refresh requires the recorded publication package');
   }
-  const manifest = await readEvidenceManifest(run);
+  const { manifest, inventory } = await readCurrentPackageEvidence(run);
   if (!manifest) throw new Error('Published evidence refresh requires a valid evidence manifest');
-  const inventory = await buildPackageEvidenceManifest(
-    path.dirname(run.taskFile),
-    await scanArtifacts(path.dirname(run.taskFile)),
-    manifest,
-  );
-  const selected = assertPublicationEvidenceSelection({
+  const selection = {
     selectedEvidenceKeys: params.selectedEvidenceKeys ?? evidenceManifestArtifactPaths(manifest),
     evidenceManifest: inventory,
     trustedEvidenceManifest: manifest,
-  });
-  const expanded = expandEvidenceSelectionForManifest(manifest, selected) ?? [];
-  if (expanded.length === 0) throw new Error('No local visual evidence is available to refresh');
-  // Use current mirrored evidence without rewriting the historical approved package or review stamps.
-  await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: inventory }, expanded);
+  };
   const vars = await loadProjectVars(run.project);
   const ciRepo = vars.projectJson.ci?.repo;
   if (!ciRepo || !getProjectField(vars.projectJson, 'artifacts_repo')) {
@@ -94,10 +75,12 @@ export async function refreshPublishedEvidence(
   if (!run.branch || before.headRefName !== run.branch || before.state === 'CLOSED') {
     throw new Error('Published PR no longer matches the run branch');
   }
-  const artifactUrls = await uploadArtifacts(run, run.prNumber, expanded, {
-    failOnError: true,
-  });
-  assertSelectedEvidencePublished(expanded, artifactUrls);
+  const { artifactUrls, selectedEvidenceKeys: expanded } = await publishSelectedEvidence(
+    run,
+    run.prNumber,
+    selection,
+  );
+  if (!expanded.length) throw new Error('No local visual evidence is available to refresh');
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {
     failOnError: true,
     baseBody: before.body,

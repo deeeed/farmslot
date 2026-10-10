@@ -3,7 +3,8 @@
 Operator procedure for the run publication pipeline. Keep this page aligned
 with the gateway refresh operation.
 
-For a finished, published run whose evidence was not delivered, use the gateway
+For a finished, published run with a recorded publication package whose evidence
+was not delivered, use the gateway
 that owns the run. The operation uploads media named by its current mirrored
 evidence manifest, rewrites the evidence section through the normal publication
 renderer, and records the posted description for Command Center. It does not

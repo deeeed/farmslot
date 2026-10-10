@@ -7,6 +7,7 @@ import {
   type ArtifactRef,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
+  type Run,
 } from '@farmslot/protocol';
 
 import { isGatewayOwnedArtifactPath } from '../core/artifact-copy-policy.js';
@@ -100,4 +101,23 @@ export async function buildPackageEvidenceManifest(
     });
   }
   return sortArtifactRefsForComparison(entries);
+}
+
+export interface CurrentPackageEvidence {
+  artifacts: ArtifactRef[];
+  manifest: EvidenceManifest | null;
+  inventory: ArtifactRef[];
+}
+
+export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPackageEvidence> {
+  if (!run.taskFile) throw new Error('Publication evidence requires a task directory');
+  const taskDir = path.dirname(run.taskFile);
+  const { scanArtifacts, readEvidenceManifest } = await import('./publication-artifacts.js');
+  const artifacts = await scanArtifacts(taskDir);
+  const manifest = await readEvidenceManifest(run);
+  return {
+    artifacts,
+    manifest,
+    inventory: await buildPackageEvidenceManifest(taskDir, artifacts, manifest),
+  };
 }

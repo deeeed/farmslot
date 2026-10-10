@@ -111,8 +111,8 @@ if [ -n "$FILE" ]; then
   cp "$FILE" "${TARGET}/${FILENAME}"
   echo "Copied ${FILENAME} -> ${FLOW_DIR}/${ID}/" >&2
 elif [ -n "$DIR" ]; then
-  # Copy all contents preserving structure. Existing files must be overwritten:
-  # publication replays may reuse the same PR/id path after screenshots change.
+  # Copy all contents preserving structure. Direct script callers may reuse
+  # their id after screenshots change; gateway publication uses a fresh revision.
   # Directory uploads represent the full artifact set for this id, so remove
   # files that disappeared locally instead of leaving stale publish evidence.
   if command -v rsync >/dev/null 2>&1; then
