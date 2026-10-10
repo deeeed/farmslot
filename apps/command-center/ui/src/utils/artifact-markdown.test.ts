@@ -50,3 +50,32 @@ test('report links resolve against the document directory, never an ambiguous ba
   assert.equal(resolveUrl('missing/trace.json'), null);
   assert.equal(resolveUrl('../TASK.md'), null);
 });
+
+test('frozen previews route explicit screenshot paths absent from the package inventory', () => {
+  const resolveUrl = buildArtifactUrlResolver(
+    [],
+    (file) => `/api/run-artifact?path=${encodeURIComponent(file)}`,
+  );
+  const before = 'artifacts/current/screenshots/before-size-change.png';
+  const rewritten = rewriteMarkdownArtifactUrls(
+    `<img src="${before}" /><img src="${before}" />`,
+    resolveUrl,
+  );
+  assert.equal(
+    rewritten,
+    `<img src="/api/run-artifact?path=${encodeURIComponent(before)}" /><img src="/api/run-artifact?path=${encodeURIComponent(before)}" />`,
+  );
+  assert.equal(resolveUrl('artifacts/../secret.png'), null);
+  assert.equal(resolveUrl('missing/trace.json'), null);
+  assert.equal(resolveUrl('https://example.com/frame.png'), null);
+});
+
+test('repeated artifact records keep a basename unique until another path shares it', () => {
+  const file = 'artifacts/current/before.png';
+  const resolveUrl = buildArtifactUrlResolver([file, file], (path) => `/files/${path}`);
+  assert.equal(resolveUrl('before.png'), `/files/${file}`);
+  assert.equal(
+    buildArtifactUrlResolver([file, 'artifacts/old/before.png'], (path) => path)('before.png'),
+    null,
+  );
+});

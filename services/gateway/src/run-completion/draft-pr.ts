@@ -13,7 +13,7 @@ import {
   type EvidenceManifest,
   evidenceManifestArtifactPaths,
 } from './evidence-manifest.js';
-import { evidenceKeyVariants } from './evidence-paths.js';
+import { exactEvidenceKeys } from './evidence-paths.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
@@ -82,15 +82,6 @@ function groupByBasename(paths: string[]): Map<string, string[]> {
   return groups;
 }
 
-// A manifest path names one artifact exactly, with or without `artifacts/`.
-function exactEvidenceKeys(key: string): string[] {
-  const relative = key
-    .replace(/\\/g, '/')
-    .replace(/^\.?\//, '')
-    .replace(/^artifacts\//, '');
-  return [relative, `artifacts/${relative}`];
-}
-
 /**
  * Manifest paths that match no artifact exactly and whose basename is shared
  * by more than one artifact, with the artifacts they could mean, sorted.
@@ -154,8 +145,8 @@ export function isEvidenceManifestReferencedArtifact(
   artifactPath: string,
   manifest: EvidenceManifest | null | undefined,
 ): boolean {
-  const referenced = new Set(evidenceManifestArtifactPaths(manifest).flatMap(evidenceKeyVariants));
-  return evidenceKeyVariants(artifactPath).some((variant) => referenced.has(variant));
+  const referenced = new Set(evidenceManifestArtifactPaths(manifest).flatMap(exactEvidenceKeys));
+  return exactEvidenceKeys(artifactPath).some((variant) => referenced.has(variant));
 }
 
 export function isPackageSelectableEvidenceArtifact(

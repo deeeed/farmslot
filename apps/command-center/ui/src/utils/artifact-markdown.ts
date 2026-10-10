@@ -19,7 +19,13 @@ export function buildArtifactUrlResolver(
     const normalized = artifactPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
     byPath.set(normalized, artifactPath);
     const basename = normalized.split('/').pop();
-    if (basename) byBasename.set(basename, byBasename.has(basename) ? null : artifactPath);
+    if (basename) {
+      const previous = byBasename.get(basename);
+      byBasename.set(
+        basename,
+        previous === undefined || previous === artifactPath ? artifactPath : null,
+      );
+    }
   }
 
   return (rawUrl: string) => {
@@ -30,7 +36,13 @@ export function buildArtifactUrlResolver(
       (directory ? byPath.get(`${directory}/${candidate}`) : undefined) ??
       byPath.get(candidate) ??
       (!candidate.includes('/') ? byBasename.get(candidate) : undefined);
-    return artifactPath ? toUrl(artifactPath) : null;
+    // Older frozen packages may omit media from their inventory. Explicit task
+    // artifact paths still go through the gateway's authenticated, confined route.
+    return artifactPath
+      ? toUrl(artifactPath)
+      : candidate.startsWith('artifacts/')
+        ? toUrl(candidate)
+        : null;
   };
 }
 

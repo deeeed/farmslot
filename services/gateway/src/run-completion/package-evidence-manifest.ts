@@ -16,7 +16,7 @@ import {
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
-import { evidenceKeyVariants } from './evidence-paths.js';
+import { exactEvidenceKeys } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 
 const PACKAGE_OUTPUT_ARTIFACT_PATHS = new Set([
@@ -29,7 +29,7 @@ function evidenceManifestOmitSet(manifest: EvidenceManifest | null | undefined):
   for (const entry of manifest?.omit ?? []) {
     const key = typeof entry === 'string' ? entry : entry.file;
     if (typeof key !== 'string' || !key.trim()) continue;
-    for (const variant of evidenceKeyVariants(key.trim())) omitted.add(variant);
+    for (const variant of exactEvidenceKeys(key.trim())) omitted.add(variant);
   }
   return omitted;
 }
@@ -42,7 +42,7 @@ function evidenceManifestExplicitPublishEvidenceSet(
   const add = (key: string | undefined) => {
     if (typeof key !== 'string' || !key.trim()) return;
     screenshotRefCount += 1;
-    for (const variant of evidenceKeyVariants(key.trim())) explicit.add(variant);
+    for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
   };
 
   for (const pair of manifest?.before_after_pairs ?? []) {
@@ -63,7 +63,7 @@ function evidenceManifestExplicitPublishEvidenceSet(
       screenshotRefCount === 0);
   if (includeVideos) {
     for (const key of videoRefs) {
-      for (const variant of evidenceKeyVariants(key.trim())) explicit.add(variant);
+      for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
     }
   }
 
@@ -71,11 +71,11 @@ function evidenceManifestExplicitPublishEvidenceSet(
 }
 
 function artifactPathOmitted(artifactPath: string, omitted: Set<string>): boolean {
-  return evidenceKeyVariants(artifactPath).some((variant) => omitted.has(variant));
+  return exactEvidenceKeys(artifactPath).some((variant) => omitted.has(variant));
 }
 
 function artifactPathMatchesEvidenceSet(artifactPath: string, evidenceSet: Set<string>): boolean {
-  return evidenceKeyVariants(artifactPath).some((variant) => evidenceSet.has(variant));
+  return exactEvidenceKeys(artifactPath).some((variant) => evidenceSet.has(variant));
 }
 
 export async function buildPackageEvidenceManifest(
@@ -103,7 +103,6 @@ export async function buildPackageEvidenceManifest(
     if (!publishableEvidence) continue;
     if (
       explicitPublishEvidenceKeys &&
-      !manifestReferenced &&
       !artifactPathMatchesEvidenceSet(artifact.path, explicitPublishEvidenceKeys)
     ) {
       continue;

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.21.0 - 2026-10-10

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.7 - 2026-10-10
