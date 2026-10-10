@@ -8,7 +8,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Exact-plan approval excludes the lifecycle `RECIPE_RUN_OWNER_PID`, so a reviewed plan works in a new CLI process. All substantive environment inputs remain bound; providers validate the owner separately.
 
-- Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.
+- Align the protocol dependency with 0.37.0 so consumers resolve one copy.
 
 ## 0.28.4 - 2026-10-10
 

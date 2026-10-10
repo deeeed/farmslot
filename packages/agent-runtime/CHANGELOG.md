@@ -4,7 +4,7 @@
 
 ## 0.17.5 - 2026-10-11
 
-- Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.
+- Align the protocol dependency with 0.37.0 so consumers resolve one copy.
 
 ## 0.17.4 - 2026-10-10
 
