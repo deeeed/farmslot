@@ -1,0 +1,370 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion terminal runner and custom keys",
+  "description": "Opens real tmux panes in the Companion worker terminal: a pane whose process the gateway matches to a runner shows that runner row, an unmatched pane stays generic, a saved runner choice overrides auto detection until cleared, and a device-level custom key is added, sent, kept across reopening and deleted. Key taps are checked against the bytes the pane received.",
+  "proofTargets": [
+    {
+      "id": "gateway-process-runner",
+      "claim": "The gateway lists processRunnerIds only for a pane whose process matches a runner safe to identify without a recorded identity."
+    },
+    {
+      "id": "runner-row",
+      "claim": "A known-runner pane shows the runner row and a tap sends that key data to the pane."
+    },
+    {
+      "id": "generic-row",
+      "claim": "An unmatched pane shows the generic keys and no runner row."
+    },
+    {
+      "id": "runner-override",
+      "claim": "A saved runner choice for the pane wins over auto detection until cleared."
+    },
+    {
+      "id": "custom-keys",
+      "claim": "A palette key added in the terminal shows in a Yours row, sends its palette data, survives reopening the terminal and is removed by delete."
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs setup",
+        "timeout_ms": 90000,
+        "intent": "Create two byte-recording tmux panes and check that the slot gateway derives a runner only for the one whose process is named like a runner binary.",
+        "proves": ["gateway-process-runner"],
+        "next": "open-known"
+      },
+      "open-known": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs open known",
+        "intent": "Open the runner-named pane in the worker terminal through the app route.",
+        "next": "wait-known-screen"
+      },
+      "wait-known-screen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "The worker terminal is on screen.",
+        "next": "wait-known-profile"
+      },
+      "wait-known-profile": {
+        "action": "ui.wait_for",
+        "text_contains": ["Claude Code · detected"],
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "The key bar names the runner taken from the gateway process match.",
+        "proves": ["runner-row"],
+        "next": "wait-known-row"
+      },
+      "wait-known-row": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-runner-key-1",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The runner row renders below the generic keys.",
+        "proves": ["runner-row"],
+        "next": "capture-known"
+      },
+      "capture-known": {
+        "action": "ui.screenshot",
+        "path": "after-runner-row.png",
+        "label": "Known runner pane with its runner row",
+        "intent": "Record the generic keys, the tmux toggle and the runner row together.",
+        "proves": ["runner-row"],
+        "next": "press-runner-key"
+      },
+      "press-runner-key": {
+        "action": "ui.press",
+        "test_id": "terminal-runner-key-1",
+        "intent": "Send the History shortcut from the runner row to the pane.",
+        "next": "assert-runner-bytes"
+      },
+      "assert-runner-bytes": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs bytes known 12",
+        "intent": "The pane received exactly that key data (0x12) through the worker input call.",
+        "proves": ["runner-row"],
+        "next": "open-unknown"
+      },
+      "open-unknown": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs open unknown",
+        "intent": "Open the pane whose process matches no runner.",
+        "next": "wait-unknown-profile"
+      },
+      "wait-unknown-profile": {
+        "action": "ui.wait_for",
+        "text_contains": ["Runner: none · auto"],
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "With no linked run and no process match the key bar stays generic.",
+        "proves": ["generic-row"],
+        "next": "no-runner-row"
+      },
+      "no-runner-row": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-runner-key-0",
+        "expected": "absent",
+        "timeout_ms": 5000,
+        "intent": "No runner keys render for this pane.",
+        "proves": ["generic-row"],
+        "next": "generic-keys"
+      },
+      "generic-keys": {
+        "action": "ui.wait_for",
+        "text_contains": ["⇧Tab"],
+        "expected": "visible",
+        "timeout_ms": 5000,
+        "intent": "The generic terminal keys stay available.",
+        "proves": ["generic-row"],
+        "next": "no-custom-row-yet"
+      },
+      "no-custom-row-yet": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-custom-key-0",
+        "expected": "absent",
+        "timeout_ms": 5000,
+        "intent": "Start from a device with no saved keys of its own.",
+        "proves": ["custom-keys"],
+        "next": "capture-unknown"
+      },
+      "capture-unknown": {
+        "action": "ui.screenshot",
+        "path": "before-runner-row.png",
+        "label": "Unknown pane: generic keys only",
+        "intent": "Record the generic row without a runner row or a Yours row.",
+        "proves": ["generic-row"],
+        "next": "open-picker"
+      },
+      "open-picker": {
+        "action": "ui.press",
+        "test_id": "terminal-runner-profile",
+        "intent": "Open the runner key picker for this pane.",
+        "next": "pick-pi"
+      },
+      "pick-pi": {
+        "action": "ui.press",
+        "test_id": "terminal-runner-profile-option-pi",
+        "intent": "Save a runner choice for this pane.",
+        "next": "wait-saved-profile"
+      },
+      "wait-saved-profile": {
+        "action": "ui.wait_for",
+        "text_contains": ["Pi · saved"],
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The saved choice wins over auto detection.",
+        "proves": ["runner-override"],
+        "next": "wait-saved-row"
+      },
+      "wait-saved-row": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-runner-key-0",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The chosen runner row renders.",
+        "proves": ["runner-override"],
+        "next": "capture-saved"
+      },
+      "capture-saved": {
+        "action": "ui.screenshot",
+        "path": "after-runner-override.png",
+        "label": "Saved runner choice on the unknown pane",
+        "intent": "Record the row the saved choice selects.",
+        "proves": ["runner-override"],
+        "next": "reopen-picker"
+      },
+      "reopen-picker": {
+        "action": "ui.press",
+        "test_id": "terminal-runner-profile",
+        "intent": "Open the picker again.",
+        "next": "pick-auto"
+      },
+      "pick-auto": {
+        "action": "ui.press",
+        "test_id": "terminal-runner-profile-option-auto",
+        "intent": "Clear the saved choice.",
+        "next": "wait-auto-again"
+      },
+      "wait-auto-again": {
+        "action": "ui.wait_for",
+        "text_contains": ["Runner: none · auto"],
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "Clearing returns the pane to auto detection.",
+        "proves": ["runner-override"],
+        "next": "auto-row-gone"
+      },
+      "auto-row-gone": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-runner-key-0",
+        "expected": "absent",
+        "timeout_ms": 5000,
+        "intent": "The runner row disappears again.",
+        "proves": ["runner-override"],
+        "next": "open-manage"
+      },
+      "open-manage": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-keys-manage",
+        "intent": "Open the editor for keys of your own.",
+        "next": "set-label"
+      },
+      "set-label": {
+        "action": "ui.set_input",
+        "test_id": "terminal-custom-key-label",
+        "value": "Word back",
+        "intent": "Name the new key.",
+        "next": "pick-palette"
+      },
+      "pick-palette": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-key-palette-alt-left",
+        "intent": "Pick a modified arrow from the palette.",
+        "next": "mark-danger"
+      },
+      "mark-danger": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-key-danger",
+        "intent": "Flag the new key as dangerous.",
+        "next": "add-key"
+      },
+      "add-key": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-key-add",
+        "intent": "Save the key.",
+        "next": "close-manage"
+      },
+      "close-manage": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-keys-close",
+        "intent": "Return to the terminal.",
+        "next": "wait-custom-row"
+      },
+      "wait-custom-row": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-custom-key-0",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "A Yours row renders even though this pane has no runner row.",
+        "proves": ["custom-keys"],
+        "next": "wait-custom-label"
+      },
+      "wait-custom-label": {
+        "action": "ui.wait_for",
+        "text_contains": ["Word back"],
+        "expected": "visible",
+        "timeout_ms": 5000,
+        "intent": "The new key carries its trimmed label.",
+        "proves": ["custom-keys"],
+        "next": "capture-custom"
+      },
+      "capture-custom": {
+        "action": "ui.screenshot",
+        "path": "after-custom-key.png",
+        "label": "Yours row with a danger-styled key",
+        "intent": "Record the Yours row and the danger style on the new key.",
+        "proves": ["custom-keys"],
+        "next": "press-custom-key"
+      },
+      "press-custom-key": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-key-0",
+        "intent": "Send the new Alt+Left key from the Yours row to the pane.",
+        "next": "assert-custom-bytes"
+      },
+      "assert-custom-bytes": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs bytes unknown 1b 5b 31 3b 33 44",
+        "intent": "The pane received the palette sequence for Alt+Left through the worker input call.",
+        "proves": ["custom-keys"],
+        "next": "leave"
+      },
+      "leave": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs leave",
+        "intent": "Leave the terminal for the workers tab.",
+        "next": "left-terminal"
+      },
+      "left-terminal": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "expected": "absent",
+        "timeout_ms": 15000,
+        "intent": "No worker terminal is mounted.",
+        "proves": ["custom-keys"],
+        "next": "reopen-unknown"
+      },
+      "reopen-unknown": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs open unknown",
+        "intent": "Open the same pane again.",
+        "next": "wait-custom-kept"
+      },
+      "wait-custom-kept": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-custom-key-0",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "The saved key is still there after reopening.",
+        "proves": ["custom-keys"],
+        "next": "capture-reopened"
+      },
+      "capture-reopened": {
+        "action": "ui.screenshot",
+        "path": "after-custom-key-reopened.png",
+        "label": "Yours row after reopening the terminal",
+        "intent": "Record the key surviving a fresh terminal screen.",
+        "proves": ["custom-keys"],
+        "next": "open-manage-again"
+      },
+      "open-manage-again": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-keys-manage",
+        "intent": "Open the key editor again.",
+        "next": "delete-key"
+      },
+      "delete-key": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-key-delete-0",
+        "intent": "Delete the key.",
+        "next": "close-manage-again"
+      },
+      "close-manage-again": {
+        "action": "ui.press",
+        "test_id": "terminal-custom-keys-close",
+        "intent": "Return to the terminal.",
+        "next": "custom-row-gone"
+      },
+      "custom-row-gone": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-custom-key-0",
+        "expected": "absent",
+        "timeout_ms": 10000,
+        "intent": "The Yours row is gone once its last key is deleted.",
+        "proves": ["custom-keys"],
+        "next": "capture-deleted"
+      },
+      "capture-deleted": {
+        "action": "ui.screenshot",
+        "path": "after-custom-key-deleted.png",
+        "label": "Yours row removed after delete",
+        "intent": "Record the terminal after deleting the key.",
+        "proves": ["custom-keys"],
+        "next": "teardown"
+      },
+      "teardown": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs teardown",
+        "intent": "Remove the two fixture panes.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

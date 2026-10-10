@@ -74,6 +74,7 @@ import {
 } from './components/terminal-history-viewer';
 import { WindowPickerModal, WorkerTmuxShortcutPanel } from './components/worker-terminal-panels';
 import { workerTerminalStyles as styles } from './styles/worker-terminal.styles';
+import { useWorkerTerminalRunnerContext } from './use-worker-runner-context';
 
 const TERMINAL_DATA_EVENT = 'terminal.data';
 const TERMINAL_TAIL_MAX_CHARS = 20_000;
@@ -181,6 +182,13 @@ export default function WorkerTerminalScreen() {
       windowParam,
       workerRefParam,
     ],
+  );
+
+  const runnerContext = useWorkerTerminalRunnerContext(
+    client,
+    status === 'connected',
+    worker,
+    setError,
   );
 
   const title = titleParam || worker?.target || 'Worker terminal';
@@ -825,6 +833,7 @@ export default function WorkerTerminalScreen() {
         <View style={styles.keyBar}>
           <TerminalControlKeyBar
             label={null}
+            runnerContext={runnerContext}
             touchKeyboardEnabled={allowTerminalTouchKeyboard}
             onPress={(control) => sendInput(control.data)}
             onToggleTouchKeyboard={() => setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)}
