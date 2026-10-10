@@ -1,6 +1,51 @@
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
+/** Commits at a ref which no remote-tracking ref contains. Never hide a failed Git check. */
+export async function findUnpushedSlotCommits(
+  vars: SlotVars,
+  ref = 'HEAD',
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<string[]> {
+  const result = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} rev-list --max-count=5 ${shellQuote(ref)} --not --remotes`,
+    { timeout: 15_000 },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot verify unpublished commits on slot ${vars.slotId}; inspect Git refs before preparing or releasing it`,
+    );
+  return result.stdout.trim().split(/\s+/).filter(Boolean);
+}
+
+/** A destructive prepare must stop before losing either the current or requested local branch. */
+export async function assertPrepareCommitsPublished(
+  vars: SlotVars,
+  branch: string,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<void> {
+  const refs = new Set(['HEAD']);
+  if (branch) {
+    const localRef = `refs/heads/${branch}`;
+    const exists = await exec(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} show-ref --verify --quiet ${shellQuote(localRef)}`,
+      { timeout: 15_000 },
+    );
+    if (exists.exitCode === 0) refs.add(localRef);
+    else if (exists.exitCode !== 1)
+      throw new Error(`Cannot inspect local branch ${branch}; prepare left its commits untouched`);
+  }
+  for (const ref of refs) {
+    const commits = await findUnpushedSlotCommits(vars, ref, exec);
+    if (commits.length)
+      throw new Error(
+        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits (${commits.map((sha) => sha.slice(0, 12)).join(', ')}). Push or preserve this branch before retrying; no branch was reset or deleted`,
+      );
+  }
+}
+
 /**
  * Work on the checked-out `branch` that a slot reset would lose, as a detail
  * such as "dirty files + unpushed commits", or null when nothing is at risk.
@@ -21,9 +66,7 @@ export async function findUnmergedSlotWork(
       `${git} status --porcelain 2>/dev/null | grep -v '^\?\? \.omc/' | grep -v '^\?\? \.task/' | grep -v '^\?\? \.claude/CLAUDE\\.local\\.md' | head -5`,
     )
   ).stdout.trim();
-  const unpushed = (
-    await exec(vars, `${git} log --oneline HEAD --not --remotes 2>/dev/null | head -5`)
-  ).stdout.trim();
+  const unpushed = (await findUnpushedSlotCommits(vars, 'HEAD', exec)).length > 0;
   // Edits in the working tree were never published anywhere: always keep them.
   if (dirty) return unpushed ? 'dirty files + unpushed commits' : 'dirty files';
   if (!unpushed) return null;

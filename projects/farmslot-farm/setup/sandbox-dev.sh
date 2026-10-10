@@ -48,11 +48,38 @@ REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
+LAUNCH_FINGERPRINT_FILE="$RUNTIME_DIR/launch-fingerprint"
 SHARED_RUNS_MARKER="$RUNTIME_DIR/shared-runs-dir"
 SHARED_RUNS_MARKER_LOCK="$RUNTIME_DIR/shared-runs-dir.lock.d"
 PORT_ENV="$REPO_ROOT/.env.ports"
 
 mkdir -p "$RUNTIME_DIR"
+
+# Hash only this stack's files and launch inputs. Parent credentials were cleared
+# above, and credential values never leave the hash process or appear in logs.
+stack_launch_fingerprint() {
+  node - "$REPO_ROOT" "$SCRIPT_DIR" "$GATEWAY_PORT" "$VITE_PORT" "${MACHINE_NAME:-farmslot-demo}" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const [root, scriptDir, gatewayPort, vitePort, machine] = process.argv.slice(2);
+const hash = crypto.createHash('sha256');
+hash.update(JSON.stringify({ gatewayPort, vitePort, machine }));
+for (const file of ['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env']) {
+  hash.update(file + '\0');
+  const full = path.join(root, file);
+  hash.update(fs.existsSync(full) ? fs.readFileSync(full) : '<absent>');
+}
+for (const file of [path.join(scriptDir, 'sandbox-dev.sh'), path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh')]) {
+  hash.update(fs.readFileSync(file));
+}
+process.stdout.write(hash.digest('hex'));
+NODE
+}
+
+write_launch_fingerprint() {
+  (umask 077; printf '%s\n' "$1" >"${LAUNCH_FINGERPRINT_FILE}.tmp"; mv "${LAUNCH_FINGERPRINT_FILE}.tmp" "$LAUNCH_FINGERPRINT_FILE")
+}
 
 acquire_shared_runs_marker_lock() {
   local i=0
@@ -208,6 +235,7 @@ stop_sandbox_dev() {
   kill_port_listeners "$GATEWAY_PORT"
   kill_port_listeners "$VITE_PORT"
   clear_shared_runs_marker
+  rm -f "$LAUNCH_FINGERPRINT_FILE"
 }
 
 wait_for_gateway() {
@@ -287,7 +315,9 @@ case "$ACTION" in
 
     resolve_primary_runs_dir
 
-    if gateway_health && ui_health; then
+    launch_fingerprint="$(stack_launch_fingerprint)"
+    previous_launch_fingerprint="$(cat "$LAUNCH_FINGERPRINT_FILE" 2>/dev/null || true)"
+    if gateway_health && ui_health && [[ "$previous_launch_fingerprint" == "$launch_fingerprint" ]]; then
       if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
@@ -305,6 +335,9 @@ case "$ACTION" in
       echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
     fi
 
+    if [[ "$previous_launch_fingerprint" != "$launch_fingerprint" ]]; then
+      echo "[sandbox-dev] restarting stack for changed launch configuration or scripts"
+    fi
     stop_sandbox_dev
 
     echo "[sandbox-dev] starting gateway :${GATEWAY_PORT} ui :${VITE_PORT} (tsx watch)"
@@ -332,6 +365,7 @@ case "$ACTION" in
     echo $! >"$PID_FILE"
 
     if wait_for_gateway 90 && wait_for_ui 90; then
+      write_launch_fingerprint "$launch_fingerprint"
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
         write_shared_runs_marker "$FARMSLOT_RUNS_DIR"
       else

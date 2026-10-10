@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 
-import { findUnmergedSlotWork } from './unmerged-work.js';
+import { assertPrepareCommitsPublished, findUnmergedSlotWork } from './unmerged-work.js';
 
 const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
 
@@ -132,4 +132,37 @@ test('unpushed work stays protected when its remote cannot be asked', async (t) 
   git(repo, 'remote', 'set-url', 'fork', path.join(repo, 'missing.git'));
 
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+});
+
+test('destructive prepare refuses two unpushed linked-worktree commits without moving the branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  commit(repo, 'second-worker-commit.txt');
+  const tip = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', 'main');
+  const linked = path.join(path.dirname(repo), 'linked-slot');
+  git(repo, 'worktree', 'add', '-q', linked, BRANCH);
+  const linkedVars = { ...vars, remoteRepo: linked };
+  await assert.rejects(
+    assertPrepareCommitsPublished(linkedVars, BRANCH, bash),
+    /unpushed commits.*Push or preserve/,
+  );
+  assert.equal(git(linked, 'rev-parse', 'HEAD'), tip);
+  assert.equal(git(repo, 'rev-parse', BRANCH), tip);
+  git(linked, 'push', '-q', 'origin', BRANCH);
+  await assertPrepareCommitsPublished(linkedVars, BRANCH, bash);
+});
+
+test('prepare protects an unchecked-out requested branch and fails closed on unreadable Git', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const tip = git(repo, 'rev-parse', BRANCH);
+  git(repo, 'checkout', '-q', 'main');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /refs\/heads\/.*unpushed commits/,
+  );
+  assert.equal(git(repo, 'rev-parse', BRANCH), tip);
+  await assert.rejects(
+    assertPrepareCommitsPublished({ ...vars, remoteRepo: path.dirname(repo) }, BRANCH, bash),
+    /Cannot inspect local branch/,
+  );
 });

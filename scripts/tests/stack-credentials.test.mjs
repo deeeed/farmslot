@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -177,4 +178,78 @@ test('stack-local ports restore their own bind host and auth mode after clearing
   assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, 'password');
   assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, 'stack-password');
   assert.equal(child.FARMSLOT_NODE_TOKEN, null);
+});
+
+function warmStackFixture(t) {
+  const f = fixture(t);
+  mkdirSync(path.join(f.root, 'primary'));
+  writeFileSync(
+    path.join(f.root, 'projects/farmslot-farm/project.json'),
+    JSON.stringify({ primary_repo: path.join(f.root, 'primary') }),
+  );
+  writeFileSync(path.join(f.root, '.env.ports'), 'GATEWAY_PORT=0\nVITE_PORT=8809\n');
+  writeFileSync(path.join(f.root, 'bin/lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(
+    path.join(f.root, 'bin/yarn'),
+    `#!/usr/bin/env node
+const fs=require('node:fs');const file=process.env.STACK_CREDENTIAL_CAPTURE;
+const prior=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{generation:0};
+fs.writeFileSync(file,JSON.stringify({pid:process.pid,generation:prior.generation+1,nodeToken:process.env.FARMSLOT_NODE_TOKEN??null}));setInterval(()=>{},20);
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    path.join(f.root, 'bin/curl'),
+    `#!/usr/bin/env node
+const fs=require('node:fs');const file=process.env.STACK_CREDENTIAL_CAPTURE;const marker=process.env.FARMSLOT_RUNTIME_DIR+'/sandbox-dev.pid';const deadline=Date.now()+1500;
+if(!fs.existsSync(marker))process.exit(1);
+function ready(){return fs.existsSync(file)&&fs.existsSync(marker)&&JSON.parse(fs.readFileSync(file,'utf8')).pid===Number(fs.readFileSync(marker,'utf8'));}
+function poll(){if(ready())process.exit(0);if(Date.now()>=deadline)process.exit(1);setTimeout(poll,10);}poll();
+`,
+    { mode: 0o755 },
+  );
+  return {
+    ...f,
+    start() {
+      execFileSync(
+        'bash',
+        [
+          path.join(f.root, 'projects/farmslot-farm/setup/sandbox-dev.sh'),
+          'start',
+          '--gateway-port',
+          '0',
+        ],
+        { env: { ...f.env, FARMSLOT_RUNS_DIR: '' }, timeout: 3000, stdio: 'pipe' },
+      );
+      return JSON.parse(readFileSync(f.capture, 'utf8'));
+    },
+    fingerprint: path.join(f.env.FARMSLOT_RUNTIME_DIR, 'launch-fingerprint'),
+  };
+}
+
+test('warm reuse restarts a healthy stack without a launch record and reuses an unchanged launch', (t) => {
+  const f = warmStackFixture(t);
+  const first = f.start();
+  assert.equal(f.start().pid, first.pid);
+  rmSync(f.fingerprint);
+  const restarted = f.start();
+  assert.equal(restarted.generation, first.generation + 1);
+  assert.notEqual(restarted.pid, first.pid);
+  assert.equal(statSync(f.fingerprint).mode & 0o777, 0o600);
+});
+
+test('warm reuse restarts after stack script or own credentials change', (t) => {
+  const f = warmStackFixture(t);
+  const first = f.start();
+  const script = path.join(f.root, 'scripts/dev.sh');
+  writeFileSync(script, readFileSync(script, 'utf8') + '\n# updated launch script\n');
+  assert.equal(f.start().generation, first.generation + 1);
+  writeFileSync(
+    path.join(f.root, '.env.local-auth'),
+    'FARMSLOT_GATEWAY_TOKEN=stack-fresh\nFARMSLOT_NODE_TOKEN=stack-fresh\n',
+  );
+  const refreshed = f.start();
+  assert.equal(refreshed.generation, first.generation + 2);
+  assert.equal(refreshed.nodeToken, 'stack-fresh');
+  assert.ok(!readFileSync(f.fingerprint, 'utf8').includes('stack-fresh'));
 });

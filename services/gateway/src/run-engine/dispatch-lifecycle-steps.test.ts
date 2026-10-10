@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  prepareReusesRunBranch,
   prepareSkipReason,
   safeRecipeToolingProvenance,
   safeReferenceRepoProvenance,
@@ -84,5 +85,24 @@ test('safeReferenceRepoProvenance omits credential-bearing repository URLs', () 
         },
       ],
     },
+  );
+});
+
+test('resource-recovery retry from find-slot keeps the run branch while initial prepare is fresh', () => {
+  assert.equal(prepareReusesRunBranch({}), false);
+  assert.equal(
+    prepareReusesRunBranch({
+      recoveryAttempts: [
+        {
+          id: 'attempt',
+          attempt: 1,
+          stepName: 'find-slot',
+          status: 'started',
+          startedAt: '2026-10-11T00:00:00Z',
+          triggeredBy: 'operator',
+        },
+      ],
+    }),
+    true,
   );
 });

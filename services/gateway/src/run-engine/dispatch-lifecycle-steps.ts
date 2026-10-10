@@ -55,6 +55,10 @@ function copyDefinedKeys(
   return safe;
 }
 
+export function prepareReusesRunBranch(run: Pick<Run, 'recoveryAttempts'>): boolean {
+  return run.recoveryAttempts?.at(-1)?.status === 'started';
+}
+
 export function safeRecipeToolingProvenance(
   provenance: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -348,12 +352,10 @@ export async function executePrepareStep(
   // a slot that cannot launch the selected worker binary.
   assertRunnerLaunchPrerequisites(await loadSlotVars(current.slotId), current.metrics.runner);
 
-  // A new fix-bug/dev run owns a fresh branch. A replay from PREPARE owns the
+  // A new fix-bug/dev run owns a fresh branch. A recovery of that run owns the
   // existing branch instead: recreating it from main discards the very commits
   // and local evidence the operator is trying to recover.
-  const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
-  const isPrepareReplay =
-    activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
+  const isPrepareReplay = prepareReusesRunBranch(current);
   const branchIdentity = current.branch
     ? { slotId: current.slotId, branch: current.branch }
     : undefined;
