@@ -273,6 +273,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.recipeRunsForSlot`                 | admin          |                                                                                    |
 | `run.recoveryProposal`                  | admin          |                                                                                    |
 | `run.refreshMirror`                     | admin          |                                                                                    |
+| `run.refreshPublishedEvidence`          | admin          |                                                                                    |
 | `run.refreshPublishPackage`             | admin          |                                                                                    |
 | `run.refreshReviewGate`                 | admin          |                                                                                    |
 | `run.rehydratePrNumber`                 | admin          |                                                                                    |

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add `run.refreshPublishedEvidence` for refreshing a finished run's existing PR evidence through the upload/render pipeline, with selected keys, hosted URLs and a posted-body receipt.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.0 - 2026-10-10

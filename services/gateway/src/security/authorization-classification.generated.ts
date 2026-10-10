@@ -292,6 +292,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.recipeRunsForSlot': { classification: 'admin' },
   'run.recoveryProposal': { classification: 'admin' },
   'run.refreshMirror': { classification: 'admin' },
+  'run.refreshPublishedEvidence': { classification: 'admin' },
   'run.refreshPublishPackage': { classification: 'admin' },
   'run.refreshReviewGate': { classification: 'admin' },
   'run.rehydratePrNumber': { classification: 'admin' },

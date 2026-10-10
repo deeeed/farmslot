@@ -40,6 +40,7 @@ import {
   type RunRecipeRunsForSlotParams,
   type RunRecoveryProposalParams,
   type RunRefreshMirrorParams,
+  type RunRefreshPublishedEvidenceParams,
   type RunRefreshPublishPackageParams,
   type RunRefreshReviewGateParams,
   type RunRehydratePrNumberParams,
@@ -109,6 +110,7 @@ import { runRereviewLatestHead } from '../methods/run/rereview.js';
 import { runSessionCommand } from '../methods/run/session-command.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
 import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
+import { refreshPublishedEvidence } from '../run-completion/published-evidence-refresh.js';
 
 export interface RouteRunMethodContext {
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
@@ -238,6 +240,8 @@ export async function routeRunMethod(
       return handled(runRereviewLatestHead(p as RunRereviewLatestHeadParams));
     case Methods.RUN_REFRESH_PUBLISH_PACKAGE:
       return handled(runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit));
+    case Methods.RUN_REFRESH_PUBLISHED_EVIDENCE:
+      return handled(refreshPublishedEvidence(p as RunRefreshPublishedEvidenceParams, emit));
     case Methods.RUN_REFRESH_MIRROR:
       return handled(runRefreshMirror(p as RunRefreshMirrorParams, emit));
     case Methods.RUN_REHYDRATE_PR_NUMBER:

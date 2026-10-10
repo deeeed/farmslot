@@ -1055,6 +1055,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.refreshPublishedEvidence": {
+      "surface": "rpc-only",
+      "note": "Repair hosted evidence on a finished published run through farmslot rpc; preserves historical approval and reviews."
+    },
     "run.refreshReviewGate": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

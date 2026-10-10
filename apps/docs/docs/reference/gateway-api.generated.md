@@ -317,6 +317,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.recoveryProposal`                  | run              | bounded-write | —      | —      | Run RecoveryProposal gateway method.                  |
 | `run.refreshMirror`                     | run              | bounded-write | —      | —      | Run RefreshMirror gateway method.                     |
 | `run.refreshPublishPackage`             | run              | bounded-write | —      | —      | Run RefreshPublishPackage gateway method.             |
+| `run.refreshPublishedEvidence`          | run              | bounded-write | —      | —      | Run RefreshPublishedEvidence gateway method.          |
 | `run.refreshReviewGate`                 | run              | bounded-write | —      | —      | Run RefreshReviewGate gateway method.                 |
 | `run.rehydratePrNumber`                 | run              | bounded-write | —      | —      | Run RehydratePrNumber gateway method.                 |
 | `run.replayStep`                        | run              | bounded-write | —      | —      | Run ReplayStep gateway method.                        |

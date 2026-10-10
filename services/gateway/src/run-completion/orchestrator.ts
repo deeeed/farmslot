@@ -64,7 +64,10 @@ import {
   augmentIndependentReviewAttemptsFromArtifacts,
   materializeIndependentReviewArtifacts,
 } from './independent-reviews.js';
-import { buildPackageEvidenceManifest } from './package-evidence-manifest.js';
+import {
+  buildPackageEvidenceManifest,
+  readCurrentPackageEvidence,
+} from './package-evidence-manifest.js';
 import {
   markPRReady,
   postPRComment,
@@ -77,13 +80,15 @@ import {
   readGitHubPrTemplate,
 } from './pr-template.js';
 import {
-  assertSelectedEvidencePublished,
-  expandEvidenceSelectionForManifest,
   postProcessPRBody,
+  publishSelectedEvidence,
   readEvidenceManifest,
   scanArtifacts,
-  uploadArtifacts,
 } from './publication-artifacts.js';
+import {
+  assertPublicationEvidenceSelection,
+  defaultSelectedEvidenceKeysForPublication,
+} from './publication-evidence-policy.js';
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
@@ -94,6 +99,7 @@ import {
   sortArtifactRefsForComparison,
   stableJson,
 } from './ready-gate-package.js';
+
 export {
   defaultReviewDepthPolicy,
   effectiveRequiredReviewCount,
@@ -121,6 +127,10 @@ export {
   EvidenceCaptionError,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
+export {
+  defaultSelectedEvidenceKeysForPublication,
+  selectedEvidenceKeysForPublication,
+} from './publication-evidence-policy.js';
 import {
   createRetrospective,
   initRunCompletionRetrospective,
@@ -445,14 +455,7 @@ export async function assertReadyGatePackageInputsCurrent(
   preparedPackage: ReadyGatePrPackage,
 ): Promise<ReadyGatePrPackage> {
   if (!current.taskFile) throw new Error('Approved package requires a task directory');
-  const taskDir = path.dirname(current.taskFile);
-  const artifacts = await scanArtifacts(taskDir);
-  const currentEvidenceManifest = await readEvidenceManifest(current);
-  const currentManifest = await buildPackageEvidenceManifest(
-    taskDir,
-    artifacts,
-    currentEvidenceManifest,
-  );
+  const { artifacts, inventory: currentManifest } = await readCurrentPackageEvidence(current);
   const validation = await readValidationSummary(current);
   const mismatches: string[] = [];
 
@@ -605,40 +608,6 @@ function preserveSelectedEvidenceKeys(
     }
   }
   return preserved.sort();
-}
-
-export function selectedEvidenceKeysForPublication(input: {
-  selectedEvidenceKeys: readonly string[] | undefined;
-  evidenceManifest: ArtifactRef[];
-  trustedEvidenceManifest: EvidenceManifest | null | undefined;
-}): string[] {
-  return [
-    ...new Set(
-      (input.selectedEvidenceKeys ?? [])
-        .map((key) => resolveSelectedEvidenceRef(key, input.evidenceManifest))
-        .filter((artifact): artifact is ArtifactRef => {
-          if (!artifact) return false;
-          return isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest);
-        })
-        .map((artifact) => artifact.path),
-    ),
-  ].sort();
-}
-
-const LOCAL_PROOF_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
-
-export function defaultSelectedEvidenceKeysForPublication(input: {
-  evidenceManifest: ArtifactRef[];
-  trustedEvidenceManifest: EvidenceManifest | null | undefined;
-}): string[] {
-  return input.evidenceManifest
-    .filter(
-      (artifact) =>
-        !LOCAL_PROOF_VIDEO_EXT.test(artifact.path) &&
-        isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest),
-    )
-    .map((artifact) => artifact.path)
-    .sort();
 }
 
 /**
@@ -1004,14 +973,19 @@ export async function runCompletionPipeline(
 
   // 5. Upload artifacts (screenshots, videos) to artifacts repo
   let artifactUrls = new Map<string, string>();
+  let completionEvidenceSelection: string[] | undefined;
   if (!isReviewPR && prNumber && run.taskFile) {
-    try {
-      artifactUrls = await uploadArtifacts(updatedRun, prNumber);
-    } catch (err) {
-      console.warn(
-        `[run-completion] artifact upload failed (non-fatal): ${(err as Error).message}`,
-      );
-    }
+    const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
+    const published = await publishSelectedEvidence(updatedRun, prNumber, {
+      selectedEvidenceKeys: defaultSelectedEvidenceKeysForPublication({
+        evidenceManifest: inventory,
+        trustedEvidenceManifest: manifest,
+      }),
+      evidenceManifest: inventory,
+      trustedEvidenceManifest: manifest,
+    });
+    artifactUrls = published.artifactUrls;
+    completionEvidenceSelection = published.selectedEvidenceKeys;
   }
 
   // 6. For flows with ci-watch: rewrite PR body + check author checklist, then mark ready.
@@ -1019,9 +993,16 @@ export async function runCompletionPipeline(
     // Replace local artifact paths with uploaded URLs + auto-check author checklist boxes.
     // Fail-closed and ordered before markPRReady: a sanitization failure must leave the
     // PR in draft rather than publish a body that still exposes local-only paths.
-    await postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls, undefined, {
-      failOnError: true,
-    });
+    await postProcessPRBody(
+      updatedRun,
+      ciRepo,
+      prNumber,
+      artifactUrls,
+      completionEvidenceSelection,
+      {
+        failOnError: true,
+      },
+    );
     if (shouldMarkReadyAfterCompletion(updatedRun)) {
       try {
         await markPRReady(ciRepo, prNumber);
@@ -1222,6 +1203,16 @@ export async function publishCompletionPackage(
     };
     reportTemplateDrift(approvedPackage.draftBody, 'approved package');
 
+    const approvedSelectedEvidenceKeys =
+      options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
+    const evidenceManifest = run.taskFile ? await readEvidenceManifest(run) : null;
+    const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
+      selectedEvidenceKeys: approvedSelectedEvidenceKeys,
+      evidenceManifest: approvedPackage.evidenceManifest ?? [],
+      trustedEvidenceManifest: evidenceManifest,
+    });
+    let selectedEvidenceKeys = publishableSelectedEvidenceKeys;
+
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
     if (!prNumber) {
@@ -1263,28 +1254,18 @@ export async function publishCompletionPackage(
       );
     }
 
-    const approvedSelectedEvidenceKeys =
-      options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
-    const evidenceManifest = latestRun.taskFile ? await readEvidenceManifest(latestRun) : null;
-    const publishableSelectedEvidenceKeys = selectedEvidenceKeysForPublication({
-      selectedEvidenceKeys: approvedSelectedEvidenceKeys,
+    emit('substep', {
+      name: 'upload-artifacts',
+      detail: `Uploading ${selectedEvidenceKeys.length} evidence artifact(s)`,
+    });
+    const publishedEvidence = await publishSelectedEvidence(latestRun, prNumber, {
+      selectedEvidenceKeys,
       evidenceManifest: approvedPackage.evidenceManifest ?? [],
       trustedEvidenceManifest: evidenceManifest,
     });
-    const selectedEvidenceKeys =
-      expandEvidenceSelectionForManifest(evidenceManifest, publishableSelectedEvidenceKeys) ?? [];
-    let artifactUrls = new Map<string, string>();
-    if (latestRun.taskFile) {
-      emit('substep', {
-        name: 'upload-artifacts',
-        detail: `Uploading ${selectedEvidenceKeys.length} evidence artifact(s)`,
-      });
-      artifactUrls = await uploadArtifacts(latestRun, prNumber, selectedEvidenceKeys, {
-        failOnError: true,
-      });
-      flags.artifacts = await scanArtifacts(path.dirname(latestRun.taskFile));
-    }
-    assertSelectedEvidencePublished(selectedEvidenceKeys, artifactUrls);
+    const artifactUrls = publishedEvidence.artifactUrls;
+    selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
+    if (latestRun.taskFile) flags.artifacts = await scanArtifacts(path.dirname(latestRun.taskFile));
 
     emit('substep', {
       name: 'post-process-pr-body',
