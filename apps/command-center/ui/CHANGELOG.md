@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.
+
 - Clamp action marker labels and seeks to measured video frames when their clock windows overlap partial footage. Use the loaded media duration if native timing retains a longer tail, and keep markers outside playback disabled as unrecorded.
 
 ## 0.20.6 - 2026-10-10

@@ -53,3 +53,55 @@ test('buildPackageEvidenceManifest keeps only publishable or manifest-referenced
     ['artifacts/recipe-run/ac1.png'],
   );
 });
+
+test('scoped omissions preserve new screenshot pairs sharing one before image', async () => {
+  const names = [
+    'before-size-change.png',
+    'after-loading-placeholder.png',
+    'after-settled-new-fee.png',
+  ];
+  const artifacts: ArtifactRef[] = ['current', 'old'].flatMap((dir) =>
+    names.map((name) => ({ path: `artifacts/${dir}/screenshots/${name}`, purpose: 'screenshot' })),
+  );
+  artifacts.push({ path: 'artifacts/after.mp4', purpose: 'video-after' });
+  const manifest = await buildPackageEvidenceManifest(null, artifacts, {
+    version: 1,
+    preferred_mode: 'screenshots',
+    before_after_pairs: [
+      {
+        label: 'pending',
+        before: 'current/screenshots/before-size-change.png',
+        after: 'current/screenshots/after-loading-placeholder.png',
+      },
+      {
+        label: 'settled',
+        before: 'current/screenshots/before-size-change.png',
+        after: 'current/screenshots/after-settled-new-fee.png',
+      },
+    ],
+    omit: names.map((name) => `old/screenshots/${name}`),
+    videos: { after: 'after.mp4', preferred: false },
+  });
+  assert.deepEqual(
+    manifest.map((artifact) => artifact.path).sort(),
+    names.map((name) => `artifacts/current/screenshots/${name}`).sort(),
+  );
+});
+
+test('a qualified publish reference does not select unrelated same-named media', async () => {
+  const manifest = await buildPackageEvidenceManifest(
+    null,
+    [
+      { path: 'artifacts/current/frame.png', purpose: 'screenshot' },
+      { path: 'artifacts/old/frame.png', purpose: 'screenshot' },
+    ],
+    {
+      version: 1,
+      standalone: [{ label: 'current', file: './artifacts/current/frame.png' }],
+    },
+  );
+  assert.deepEqual(
+    manifest.map((artifact) => artifact.path),
+    ['artifacts/current/frame.png'],
+  );
+});

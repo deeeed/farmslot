@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Static reviews can read consumer repos: `static_review.support.environment` accepts `{{<key>_repo}}` for each `reference_repos` key. When support is bound, the gateway resolves each used reference as `<dirname(project slot repo on the review machine)>/<local_name>`, records `headSha` and `dirty` on the binding (read-only: `git status --no-optional-locks`), lists them in TASK.md, mounts them read-only for native reviewers and binds `''` for a missing one. A reference is `missing` when it is not cloned there, the machine has no slot of the project, or a recovered admission names a key the current `reference_repos` no longer declares; a probe that fails for any other reason stops support. The frozen environment keeps the placeholders, so the support digest is unchanged. The static review completion text now asks for APPROVE or REQUEST_CHANGES: unrun checks are recorded as not verified and do not block APPROVE, evidence the author owes is a finding, and COMMENT is only for a draft PR or an explicitly informational request.
 
