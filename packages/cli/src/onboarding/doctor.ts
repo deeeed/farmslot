@@ -17,6 +17,7 @@ import { loadProfiles, profileCredential, profilesPath } from '../gateway-profil
 
 import { readPool } from './pool-config.js';
 import { checkPrereqs, commandPath, detectRunners, runnerHint } from './prereqs.js';
+import { CLI_DEPENDENCY_BUILD_ARGS } from './update.js';
 import { readState, type Workspace, type WorkspaceState } from './workspace.js';
 
 export interface DoctorCheck {
@@ -295,13 +296,14 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
     hint: depsInstalled ? undefined : `run: yarn --cwd ${root} install`,
   });
   const protocolDist = join(root, 'packages', 'protocol', 'dist', 'index.js');
+  const agentRuntimeDist = join(root, 'packages', 'agent-runtime', 'dist', 'index.js');
   const harnessDist = join(root, 'packages', 'recipe-runner', 'dist', 'index.js');
-  const built = existsSync(protocolDist) && existsSync(harnessDist);
+  const built = [protocolDist, agentRuntimeDist, harnessDist].every((p) => existsSync(p));
   checks.push({
     name: 'workspace packages built',
     ok: built,
-    detail: built ? 'protocol + recipe-runner dist present' : 'missing dist output',
-    hint: built ? undefined : `run: yarn --cwd ${root} workspace @farmslot/recipe-runner build`,
+    detail: built ? 'protocol + agent-runtime + recipe-runner dist present' : 'missing dist output',
+    hint: built ? undefined : `run: yarn --cwd ${root} ${CLI_DEPENDENCY_BUILD_ARGS.join(' ')}`,
   });
   if (depsInstalled) {
     const lock = join(root, 'yarn.lock');

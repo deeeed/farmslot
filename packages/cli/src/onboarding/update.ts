@@ -12,6 +12,23 @@ import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
 import { readState, type Workspace, writeState } from './workspace.js';
 
+// Builds every workspace the CLI depends on, in dependency order. Yarn reads
+// the list from the checkout's own manifests: this process still runs the
+// pre-update code, so a hardcoded package name goes stale on renames. Not
+// --parallel: several builds rebuild protocol's dist. install.sh runs the same
+// command (update.test.ts holds the two together); it must also work on a
+// pinned older checkout, so it is not a root script.
+export const CLI_DEPENDENCY_BUILD_ARGS = [
+  'workspaces',
+  'foreach',
+  '--recursive',
+  '--from',
+  '@farmslot/cli',
+  '--topological',
+  'run',
+  'build',
+] as const;
+
 export interface UpdateProgress {
   step: (label: string, detail?: string) => void;
   info: (msg: string) => void;
@@ -107,8 +124,8 @@ export async function farmslotUpdate(
 
   // 2. Reinstall dependencies + rebuild the CLI's workspace deps.
   sh('yarn', ['install'], clone, {}, stdio);
-  sh('yarn', ['workspace', '@farmslot/recipe-runner', 'build'], clone, {}, stdio);
-  progress.step('dependencies installed and CLI rebuilt');
+  sh('yarn', [...CLI_DEPENDENCY_BUILD_ARGS], clone, {}, stdio);
+  progress.step('dependencies installed and CLI workspace dependencies built');
 
   // 3. Pool schema migrations (versioned, preserve user edits).
   const steps = await loadMigrations(join(clone, 'migrations', 'pool'));

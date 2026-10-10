@@ -8,7 +8,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 - `farmslot project add` refuses a slot repo, existing, freshly cloned or under an unchanged pack, that cannot check out the project's default branch (for example a `--single-branch` clone), naming the fetch refspec or missing ref.
 - `farmslot run get` prints, per step, its queue time, run time and last progress after the run JSON (`find-slot: queued 2m10s · ran 3s`).
 - `farmslot graph add-edge --condition published` adds a stack edge: the target node starts on top of the source node's published PR.
-- `farmslot update` and the onboarding doctor build and check `packages/recipe-runner` (renamed from `recipe-harness`).
+- `farmslot update`, `install.sh` and the onboarding doctor build every workspace the CLI depends on with `yarn workspaces foreach --recursive --from @farmslot/cli --topological run build`, so the list comes from the checkout being built, including an older one pinned with `FARMSLOT_REPO_REF`. Before, update built a hardcoded package: an update from a revision older than the `recipe-harness` → `recipe-runner` rename failed, and `agent-runtime` was never rebuilt. The doctor also checks `agent-runtime`'s build output.
 - Resolve existing task paths against the caller's working directory and send absolute paths. Upgrade the CLI on every node before upgrading the gateway, which rejects new relative task paths. Existing stored runs remain readable.
 
 - Keep raw RPC calls for simulator boot and its Metro dependency open long enough for cold starts.
