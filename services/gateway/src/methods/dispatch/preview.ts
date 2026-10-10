@@ -53,6 +53,7 @@ import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '.
 import { normalizeRunCreateMode } from '../run-create-mode.js';
 import { configuredPrepareProfileNames, resolvePrepareProfile } from '../slot/prepare-profile.js';
 
+import { inspectReleasableBranchHolders } from './branch-checkout.js';
 import {
   capturePressureAdmissionDecisions,
   formatPressureRejection,
@@ -754,6 +755,7 @@ export function candidateIneligibilityReason(
   fleetSlots: readonly SlotStatus[],
   options: {
     isNudgeRow: boolean;
+    releasableBranchHolderIds?: ReadonlySet<string>;
     replaceableWarm?: boolean;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
@@ -764,6 +766,7 @@ export function candidateIneligibilityReason(
   if (!isFreeSlot(slot) && !options.replaceableWarm) return null;
   return validateSlotForDispatch(slot, fleetSlots, {
     targetBranch: options.targetBranch,
+    releasableBranchHolderIds: options.releasableBranchHolderIds,
     requiredPrepareProfile: options.requiredPrepareProfile,
     allowWorking: options.replaceableWarm,
     skipPrepare: options.skipPrepare,
@@ -809,6 +812,15 @@ export async function dispatchCandidates(
 
   const isPrFlow = params.flowType === 'pr-complete' || params.flowType === 'review-pr';
   const scoringByProject = await resolveDispatchScoringByProject(params, fleet.slots, projectSlots);
+  const releasableBranchHolderIds = new Set<string>();
+  for (const [project, scoring] of scoringByProject) {
+    for (const id of await inspectReleasableBranchHolders(
+      fleet.slots,
+      project,
+      scoring.targetBranch,
+    ))
+      releasableBranchHolderIds.add(id);
+  }
   // Explicit prepare only — profile-fit is advisory on dispatch.preview, not candidates.
   const requiredPrepareProfile = params.prepareProfile || null;
   const allRuns = getAllRuns();
@@ -873,6 +885,7 @@ export async function dispatchCandidates(
       const replaceableWarm = isReplaceableWarmSlot(s, activeSlotIds, activeOwnerIds);
       const baseIneligibleReason = candidateIneligibilityReason(s, fleet.slots, {
         isNudgeRow: Boolean(nudge),
+        releasableBranchHolderIds,
         replaceableWarm,
         targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
@@ -1039,6 +1052,11 @@ export async function dispatchPreview(
     logPrefix: 'dispatch.preview',
   });
   const enriched = { ...params, targetBranch: resolvedTargetBranch };
+  const releasableBranchHolderIds = await inspectReleasableBranchHolders(
+    fleet.slots,
+    params.project,
+    resolvedTargetBranch,
+  );
   const projectConfigList = await loadProjectConfigs();
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
   const previewRun = {
@@ -1118,6 +1136,7 @@ export async function dispatchPreview(
     projectConfigs,
     {
       requiredPrepareProfile,
+      releasableBranchHolderIds,
       pressureDecisions,
       replaceableWarmSlotIds,
       // ADR-054: the same exception `dispatchCandidates` applies. Every
@@ -1187,6 +1206,7 @@ export function resolveDispatchPreviewFromFleet(
   projectConfigs?: ReturnType<typeof projectConfigsFromProjects>,
   options?: {
     requiredPrepareProfile?: string | null;
+    releasableBranchHolderIds?: ReadonlySet<string>;
     /** One captured pressure decision per machine (same evidence for every
      * slot on the machine). Automatic selection excludes rejected machines;
      * an explicit slot returns the same rejection on the result. */
@@ -1240,6 +1260,7 @@ export function resolveDispatchPreviewFromFleet(
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
     const err = validateSlotForDispatch(found, slots, {
       targetBranch: params.targetBranch,
+      releasableBranchHolderIds: options?.releasableBranchHolderIds,
       requiredPrepareProfile,
       skipPrepare: params.skipPrepare,
       allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
@@ -1260,6 +1281,7 @@ export function resolveDispatchPreviewFromFleet(
         !pressureRejectedMachines.has(affinitySlot.machine) &&
         !validateSlotForDispatch(affinitySlot, slots, {
           targetBranch: params.targetBranch,
+          releasableBranchHolderIds: options?.releasableBranchHolderIds,
           requiredPrepareProfile,
           skipPrepare: params.skipPrepare,
         })
@@ -1288,6 +1310,7 @@ export function resolveDispatchPreviewFromFleet(
     const best = findBestSlot(slots, params.project, {
       allowedSlots: params.allowedSlots,
       targetBranch: params.targetBranch,
+      releasableBranchHolderIds: options?.releasableBranchHolderIds,
       familyId: params.familyId,
       lane: params.lane,
       variant: params.variant,
@@ -1316,6 +1339,7 @@ export function resolveDispatchPreviewFromFleet(
           (s) =>
             !validateSlotForDispatch(s, slots, {
               targetBranch: params.targetBranch,
+              releasableBranchHolderIds: options?.releasableBranchHolderIds,
               requiredPrepareProfile,
               skipPrepare: params.skipPrepare,
             }),
@@ -1337,6 +1361,7 @@ export function resolveDispatchPreviewFromFleet(
             ? formatPressureRejection(pressureDecision)
             : (validateSlotForDispatch(s, slots, {
                 targetBranch: params.targetBranch,
+                releasableBranchHolderIds: options?.releasableBranchHolderIds,
                 requiredPrepareProfile,
                 skipPrepare: params.skipPrepare,
               }) ?? 'unknown blocker');

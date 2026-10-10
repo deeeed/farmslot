@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Dispatch can release a target branch from an idle linked-worktree holder after checking configured ownership, park records, tracked changes and remote ancestry. It detaches without moving the branch; active, parked, dirty and unpushed work stays protected. Branch conflicts are local to the machine.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
