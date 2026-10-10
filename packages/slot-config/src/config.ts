@@ -811,7 +811,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRuntimeCapabilitiesConfig(projectJson, projectConfig);
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
-  normalizeRawStaticReview(projectJson.static_review, projectConfig);
+  normalizeRawStaticReview(projectJson.static_review, projectConfig, projectJson.reference_repos);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
 
@@ -905,6 +905,7 @@ export function validateCommandEnvConfig(projectJson: RawProjectJson, projectCon
 export function normalizeRawStaticReview(
   raw: unknown,
   projectConfig: string,
+  referenceRepos?: RawProjectJson['reference_repos'],
 ): ProjectConfig['staticReview'] {
   if (raw === undefined) return undefined;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -942,7 +943,8 @@ export function normalizeRawStaticReview(
     (typeof config.domain !== 'string' || !isValidDomainName(config.domain))
   )
     throw new Error(`${projectConfig}: static_review.domain must be a valid domain`);
-  if (config.support !== undefined) validateStaticReviewSupport(config.support, projectConfig);
+  if (config.support !== undefined)
+    validateStaticReviewSupport(config.support, projectConfig, referenceRepos);
   return {
     ...(config.domain !== undefined ? { domain: config.domain as string } : {}),
     ...(config.support !== undefined
@@ -955,9 +957,22 @@ export function normalizeRawStaticReview(
   };
 }
 
+/** Support environment values may bind only {{support}} and {{<key>_repo}} for declared reference repos. */
+export function staticReviewSupportPlaceholdersAllowed(
+  value: string,
+  referenceRepos: RawProjectJson['reference_repos'],
+): boolean {
+  const allowed = ['support', ...Object.keys(referenceRepos ?? {}).map((key) => `${key}_repo`)];
+  return value
+    .split('{{')
+    .slice(1)
+    .every((rest) => allowed.some((name) => rest.startsWith(`${name}}}`)));
+}
+
 export function validateStaticReviewSupport(
   raw: unknown,
   projectConfig: string,
+  referenceRepos?: RawProjectJson['reference_repos'],
 ): asserts raw is ReviewWorkspaceSupportConfig {
   const object = (value: unknown, allowed: string[], field: string): Record<string, unknown> => {
     if (
@@ -1038,7 +1053,7 @@ export function validateStaticReviewSupport(
         ['PATH', 'NODE_OPTIONS', 'NODE_PATH', 'GIT_CEILING_DIRECTORIES'].includes(name) ||
         typeof value !== 'string' ||
         value.includes('\0') ||
-        /{{(?!support}})/.test(value)
+        !staticReviewSupportPlaceholdersAllowed(value, referenceRepos)
       )
         throw new Error(`${projectConfig}: unsupported support environment binding ${name}`);
     }

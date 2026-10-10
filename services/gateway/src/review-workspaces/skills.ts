@@ -7,7 +7,12 @@ import {
   executionTemplateSourceRevision,
   resolveConfiguredExecutionTemplateSources,
 } from '@farmslot/agent-runtime';
-import type { ExecutionTemplateSourceRoot, ReviewWorkspaceSupportConfig } from '@farmslot/protocol';
+import type {
+  ExecutionTemplateSourceRoot,
+  ReviewWorkspaceSupportBinding,
+  ReviewWorkspaceSupportConfig,
+} from '@farmslot/protocol';
+import { type RawProjectJson, staticReviewSupportPlaceholdersAllowed } from '@farmslot/slot-config';
 export type {
   ReviewWorkspaceSupportConfig,
   ReviewWorkspaceSupportEntry,
@@ -157,7 +162,7 @@ async function collectRuntime(root: string, destination: string) {
 
 /** Collect twice and reject drift; the caller persists and transports these exact bytes before launch. */
 export async function collectReviewWorkspaceSupport(
-  project: { projectConfig: string },
+  project: { projectConfig: string; projectJson: Pick<RawProjectJson, 'reference_repos'> },
   config: ReviewWorkspaceSupportConfig,
   options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<FrozenReviewWorkspaceSupport> {
@@ -180,7 +185,7 @@ export async function collectReviewWorkspaceSupport(
       reservedEnvironment.has(name) ||
       typeof value !== 'string' ||
       value.includes('\0') ||
-      /{{(?!support}})/.test(value)
+      !staticReviewSupportPlaceholdersAllowed(value, project.projectJson.reference_repos)
     )
       throw new Error(`Unsupported review support environment binding: ${name}`);
   }
@@ -298,9 +303,23 @@ export async function collectReviewWorkspaceSupport(
   };
 }
 
+/** Bind {{support}} and each recorded {{<key>_repo}}; a missing reference binds to ''. */
+export function bindReviewWorkspaceSupportValue(
+  value: string,
+  support: Pick<ReviewWorkspaceSupportBinding, 'path' | 'references'>,
+): string {
+  let bound = value.replaceAll('{{support}}', support.path);
+  for (const reference of support.references ?? [])
+    bound = bound.replaceAll(`{{${reference.name}_repo}}`, reference.missing ? '' : reference.path);
+  return bound;
+}
+
 /** The native launch policy must grant this sibling root read access only. */
 export function reviewWorkspaceSupportEnvironment(
-  support: { manifest: Pick<FrozenReviewWorkspaceSupport['manifest'], 'environment'> },
+  support: {
+    manifest: Pick<FrozenReviewWorkspaceSupport['manifest'], 'environment'>;
+    references?: ReviewWorkspaceSupportBinding['references'];
+  },
   immutableRoot: string,
   writableRoots: string[],
   inheritedPath: string,
@@ -316,7 +335,10 @@ export function reviewWorkspaceSupportEnvironment(
       ...Object.fromEntries(
         Object.entries(support.manifest.environment).map(([name, value]) => [
           name,
-          value.replaceAll('{{support}}', immutableRoot),
+          bindReviewWorkspaceSupportValue(value, {
+            path: immutableRoot,
+            references: support.references,
+          }),
         ]),
       ),
       PATH: `${immutableRoot}/bin:${inheritedPath}`,

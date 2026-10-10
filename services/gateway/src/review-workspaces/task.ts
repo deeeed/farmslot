@@ -298,6 +298,11 @@ export async function materializeReviewWorkspaceTask(
                   `For commands named ${run.reviewWorkspace.support.runtime.name} in those skills, invoke ${shellQuote(run.reviewWorkspace.support.runtime.path)}. Keep outputs under the task artifacts directory.`,
                 ]
               : []),
+            ...(run.reviewWorkspace.support.references ?? []).map((reference) =>
+              reference.missing
+                ? `Reference ${reference.name}: not available on ${run.reviewWorkspace!.machine}`
+                : `Reference ${reference.name}: ${reference.path} @ ${reference.headSha}${reference.dirty ? ' (uncommitted changes)' : ''}`,
+            ),
           ]
         : []),
       `Source checkout: ${run.reviewWorkspace.checkoutPath}`,

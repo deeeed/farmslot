@@ -383,3 +383,68 @@ test('a concurrent caller cannot skip its own current-authority check', async (t
   assert(await first);
   assert.equal(f.counts.collect, 1);
 });
+
+test('reference checkouts resolve beside a project slot on the execution machine and are recorded once', async (t) => {
+  const f = await fixture(t);
+  f.project.projectJson.reference_repos = {
+    mobile: { repo_url: 'https://example.com/mobile.git', local_name: 'mobile-ref' },
+    core: { repo_url: 'https://example.com/core.git', local_name: 'core-ref' },
+    unused: { repo_url: 'https://example.com/unused.git', local_name: 'unused-ref' },
+  };
+  f.project.projectJson.static_review!.support!.environment = {
+    REF_MOBILE: '{{mobile_repo}}',
+    REF_CORE: '{{core_repo}}',
+  };
+  const slots = path.join(f.root, 'slots');
+  const mobile = path.join(slots, 'mobile-ref');
+  await mkdir(mobile, { recursive: true });
+  for (const argv of [
+    ['init', '--quiet'],
+    ['-c', 'user.name=f', '-c', 'user.email=f@x', 'commit', '--quiet', '--allow-empty', '-m', 'x'],
+  ])
+    assert.equal((await execFileArgv(['git', '-C', mobile, ...argv])).exitCode, 0);
+  const head = (await execFileArgv(['git', '-C', mobile, 'rev-parse', 'HEAD'])).stdout.trim();
+  await writeFile(path.join(mobile, 'local-change.txt'), 'uncommitted\n');
+  f.deps.loadPoolConfigs = async () => [
+    {
+      machine: 'local',
+      host: 'localhost',
+      sshUser: 'fixture',
+      project: 'fixture',
+      slots: [
+        { id: 'other-1', project: 'other', repo: path.join(f.root, 'elsewhere/other-1') },
+        { id: 'fixture-1', project: 'fixture', repo: path.join(slots, 'fixture-1') },
+      ],
+    } as unknown as PoolConfig,
+  ];
+  const run = await f.addRun('review-references');
+  const binding = (await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps))!;
+  assert.deepEqual(binding.references, [
+    { name: 'mobile', path: mobile, headSha: head, dirty: true },
+    { name: 'core', path: path.join(slots, 'core-ref'), missing: true },
+  ]);
+  assert.deepEqual(binding.environment, {
+    REF_MOBILE: '{{mobile_repo}}',
+    REF_CORE: '{{core_repo}}',
+  });
+  await rm(path.join(mobile, 'local-change.txt'));
+  assert.deepEqual(await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps), binding);
+
+  f.deps.loadPoolConfigs = async () => [
+    {
+      machine: 'local',
+      host: 'localhost',
+      sshUser: 'fixture',
+      project: 'other',
+      slots: [],
+    } as unknown as PoolConfig,
+  ];
+  const unplaced = await f.addRun('review-without-slot');
+  assert.deepEqual(
+    (await ensureReviewWorkspaceSupport(unplaced.id, () => {}, f.deps))!.references,
+    [
+      { name: 'mobile', path: '', missing: true },
+      { name: 'core', path: '', missing: true },
+    ],
+  );
+});

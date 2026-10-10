@@ -7,6 +7,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 import {
+  bindReviewWorkspaceSupportValue,
   collectReviewWorkspaceSupport,
   type FrozenReviewWorkspaceSupport,
   type ReviewWorkspaceSupportConfig,
@@ -18,7 +19,7 @@ const exec = promisify(execFile);
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'review-support-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const project = { projectConfig: path.join(root, 'pack/project.json') };
+  const project = { projectConfig: path.join(root, 'pack/project.json'), projectJson: {} };
   await mkdir(path.dirname(project.projectConfig));
   const skill = path.join(root, 'skill');
   const library = path.join(root, 'library');
@@ -256,4 +257,47 @@ test('persisted support detects byte, metadata and environment tampering', async
     /manifest/,
   );
   assert.throws(() => verifyReviewWorkspaceSupport(original, '0'.repeat(64)), /admitted digest/);
+});
+
+test('support environment accepts {{<key>_repo}} only for declared reference repos and freezes it verbatim', async (t) => {
+  const f = await fixture(t);
+  const project = {
+    ...f.project,
+    projectJson: {
+      reference_repos: { mobile: { repo_url: 'https://example.com/mm.git', local_name: 'mm-ref' } },
+    },
+  };
+  const config = { ...f.config, environment: { REF_MOBILE: '{{mobile_repo}}/app' } };
+  const support = await collectReviewWorkspaceSupport(project, config, { env: f.env });
+  assert.equal(support.manifest.environment.REF_MOBILE, '{{mobile_repo}}/app');
+  for (const value of ['{{core_repo}}', '{{mobile_repo}', '{{support}}{{mobile}}'])
+    await assert.rejects(
+      collectReviewWorkspaceSupport(
+        project,
+        { ...f.config, environment: { REF: value } },
+        { env: f.env },
+      ),
+      /environment binding/,
+    );
+  await assert.rejects(
+    collectReviewWorkspaceSupport(f.project, config, { env: f.env }),
+    /environment binding/,
+  );
+});
+
+test('support values bind the frozen root, recorded references, and empty for a missing reference', () => {
+  assert.equal(
+    bindReviewWorkspaceSupportValue('{{support}}/lib:{{mobile_repo}}:{{core_repo}}', {
+      path: '/support',
+      references: [
+        { name: 'mobile', path: '/dev/mobile-ref', headSha: 'a'.repeat(40), dirty: false },
+        { name: 'core', path: '/dev/core-ref', missing: true },
+      ],
+    }),
+    '/support/lib:/dev/mobile-ref:',
+  );
+  assert.equal(
+    bindReviewWorkspaceSupportValue('{{support}}/lib', { path: '/support' }),
+    '/support/lib',
+  );
 });

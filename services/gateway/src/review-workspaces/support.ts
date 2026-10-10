@@ -7,13 +7,15 @@ import { isDeepStrictEqual } from 'node:util';
 import { resolveConfiguredExecutionTemplateSources } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
 import {
+  type ExecResult,
   isTerminalRunStatus,
+  type PoolConfig,
   type ReviewWorkspaceSupportBinding,
   type ReviewWorkspaceSupportConfig,
   type Run,
 } from '@farmslot/protocol';
 
-import { loadProjectVars } from '../core/config.js';
+import { loadProjectVars, type RawProjectJson, referenceRepoPath } from '../core/config.js';
 import { execFileArgv, isLocal } from '../core/exec.js';
 import {
   ORCHESTRATOR_LOCALITY,
@@ -24,7 +26,7 @@ import {
   slotWriteFiles,
 } from '../core/slot-io.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-import { requestNativeNode } from '../runners/native/node.js';
+import { execNativeNodeArgv, requestNativeNode } from '../runners/native/node.js';
 import { getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -39,6 +41,7 @@ import {
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const MAX_BATCH_BYTES = 512 * 1024;
 const MANIFEST = 'manifest.json';
+const REFERENCE_TIMEOUT_MS = 10_000;
 type Manifest = FrozenReviewWorkspaceSupport['manifest'];
 type Admission = { identity: string; fingerprint: string | null; digest: string | null };
 
@@ -105,6 +108,8 @@ export interface ReviewWorkspaceSupportDependencies {
     io: SlotLocality,
     argv: string[],
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  /** Run git on the review's execution node. */
+  git: (run: Run, argv: string[]) => Promise<ExecResult>;
 }
 const defaults: ReviewWorkspaceSupportDependencies = {
   getRun,
@@ -128,6 +133,15 @@ const defaults: ReviewWorkspaceSupportDependencies = {
       stderr: string;
     };
   },
+  git: (run, argv) =>
+    run.reviewWorkspace!.executionNodeId === 'local'
+      ? execFileArgv(argv, { timeout: REFERENCE_TIMEOUT_MS })
+      : execNativeNodeArgv(
+          run.nativeOwnerPrincipalId!,
+          run.reviewWorkspace!.machine,
+          argv,
+          REFERENCE_TIMEOUT_MS,
+        ),
 };
 const pending = new Map<string, Promise<unknown>>();
 function shared<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -350,6 +364,48 @@ function summarize(manifest: Manifest, root: string): ReviewWorkspaceSupportBind
   };
 }
 
+/** Read each reference checkout the support environment binds, once, on the execution node. */
+async function readReferences(
+  run: Run,
+  pool: PoolConfig,
+  environment: Record<string, string>,
+  referenceRepos: RawProjectJson['reference_repos'],
+  deps: ReviewWorkspaceSupportDependencies,
+): Promise<ReviewWorkspaceSupportBinding['references']> {
+  const names = Object.keys(referenceRepos ?? {}).filter((name) =>
+    Object.values(environment).some((value) => value.includes(`{{${name}_repo}}`)),
+  );
+  if (!names.length) return undefined;
+  const slot = pool.slots.find((slot) => (slot.project || pool.project) === run.project);
+  const references: NonNullable<ReviewWorkspaceSupportBinding['references']> = [];
+  for (const name of names) {
+    // Without a slot of this project on the machine there is no sibling checkout to derive.
+    if (!slot) {
+      references.push({ name, path: '', missing: true });
+      continue;
+    }
+    const checkout = referenceRepoPath(slot.repo, referenceRepos![name].local_name);
+    const head = await deps.git(run, ['git', '-C', checkout, 'rev-parse', 'HEAD']);
+    // Expected outcome, not a failure: the reference is not cloned on this machine.
+    if (head.exitCode === 128 && /cannot change to|not a git repository/.test(head.stderr)) {
+      references.push({ name, path: checkout, missing: true });
+      continue;
+    }
+    if (head.exitCode !== 0)
+      throw new Error(`Reference ${name} revision read failed: ${head.stderr}`);
+    const status = await deps.git(run, ['git', '-C', checkout, 'status', '--porcelain']);
+    if (status.exitCode !== 0)
+      throw new Error(`Reference ${name} status read failed: ${status.stderr}`);
+    references.push({
+      name,
+      path: checkout,
+      headSha: head.stdout.trim(),
+      dirty: status.stdout.trim() !== '',
+    });
+  }
+  return references;
+}
+
 export async function ensureReviewWorkspaceSupport(
   runId: string,
   assertCurrent: () => void | Promise<void>,
@@ -483,6 +539,17 @@ export async function ensureReviewWorkspaceSupport(
     const ownerRoot = path.posix.resolve(initial.reviewWorkspace.checkoutPath, '../../..');
     const root = await publishOnNode(io, ownerRoot, manifest, deps);
     const binding = summarize(manifest, root);
+    // Recorded once per review: a recovered binding keeps the revisions it was admitted with.
+    const references = initial.reviewWorkspace.support
+      ? initial.reviewWorkspace.support.references
+      : await readReferences(
+          initial,
+          pool,
+          manifest.environment,
+          (await deps.loadProjectVars(initial.project)).projectJson.reference_repos,
+          deps,
+        );
+    if (references) binding.references = references;
     reviewWorkspaceSupportBindingEnvironment(
       binding,
       [
@@ -549,7 +616,7 @@ export function reviewWorkspaceSupportBindingEnvironment(
   inheritedPath: string,
 ): { set: Record<string, string>; unset: string[] } {
   return reviewWorkspaceSupportEnvironment(
-    { manifest: { environment: binding.environment } },
+    { manifest: { environment: binding.environment }, references: binding.references },
     binding.path,
     writableRoots,
     inheritedPath,

@@ -58,8 +58,16 @@ export interface ReviewWorkspaceSupportBinding {
   }>;
   skills: Array<{ name: string; path: string }>;
   runtime?: { name: string; path: string };
-  /** Literal configuration with {{support}} bound at native launch. Never credentials. */
+  /** Literal configuration with {{support}} and {{<key>_repo}} bound at native launch. Never credentials. */
   environment: Record<string, string>;
+  /** Consumer checkouts read at these revisions on the execution node. */
+  references?: Array<{
+    name: string;
+    path: string;
+    headSha?: string;
+    dirty?: boolean;
+    missing?: true;
+  }>;
 }
 
 /** Operator-selected machine for a static review without a slot. */

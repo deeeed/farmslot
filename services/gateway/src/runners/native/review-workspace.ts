@@ -30,6 +30,7 @@ import { upsertAgentContext } from '../../agents/contexts.js';
 import type { RawProjectJson } from '../../core/config.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
+import { bindReviewWorkspaceSupportValue } from '../../review-workspaces/skills.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
@@ -44,7 +45,13 @@ import { inspectNativeWorkerProfile } from './worker-profile.js';
 const CONTEXT_ID = 'review';
 
 function reviewReadOnlyRoots(workspace: NonNullable<Run['reviewWorkspace']>): string[] {
-  return [workspace.checkoutPath, ...(workspace.support ? [workspace.support.path] : [])];
+  return [
+    workspace.checkoutPath,
+    ...(workspace.support ? [workspace.support.path] : []),
+    ...(workspace.support?.references ?? [])
+      .filter((reference) => !reference.missing)
+      .map((reference) => reference.path),
+  ];
 }
 
 /** Retry only a lost transport, keeping the same session, lease and command identities. */
@@ -285,7 +292,7 @@ export async function launchReviewWorkspaceWorker(input: {
     ? Object.fromEntries(
         Object.entries(workspace.support.environment).map(([name, value]) => [
           name,
-          value.replaceAll('{{support}}', workspace.support!.path),
+          bindReviewWorkspaceSupportValue(value, workspace.support!),
         ]),
       )
     : undefined;

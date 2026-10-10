@@ -151,9 +151,8 @@ function expandTemplateInternal(
   result = result.replaceAll('{{PRIMARY_REPO}}', primaryRepo);
   // Reference repos — derive path from slot repo parent + local_name
   if (projectVars?.projectJson.reference_repos) {
-    const repoParent = path.dirname(slotVars.repo);
     for (const [key, ref] of Object.entries(projectVars.projectJson.reference_repos)) {
-      const refPath = path.join(repoParent, ref.local_name);
+      const refPath = referenceRepoPath(slotVars.repo, ref.local_name);
       const placeholder = `${key}_repo`;
       result = result.replaceAll(`{{${placeholder}}}`, refPath);
       result = result.replaceAll(`{{${placeholder.toUpperCase()}}}`, refPath);
@@ -181,6 +180,11 @@ function expandTemplateInternal(
   }
 
   return result;
+}
+
+/** Reference repos are siblings of the slot checkout: <dirname(slot repo)>/<local_name>. */
+export function referenceRepoPath(slotRepo: string, localName: string): string {
+  return path.join(path.dirname(slotRepo), localName);
 }
 
 export function missingMetroPortMessage(slotVars: SlotVars): string {
