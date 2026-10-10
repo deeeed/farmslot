@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+
 import {
   execOnSlot,
   type RawProjectJson,
@@ -45,7 +47,7 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
       ...new Set([
         task,
         runtime,
-        '.task',
+        DEFAULT_TASK_DIR,
         '.agent',
         '.observability',
         '.omc',
@@ -112,14 +114,17 @@ export async function archiveSlotScaffolding(
   // released task is collected; shared task roots keep their existing retention.
   const taskRelativeDir = options.taskRelativeDir;
   const taskRoots = taskRelativeDir
-    ? [...new Set([task, '.task'])].map((root) => `${root}/${relativeNamespace(taskRelativeDir)}`)
+    ? [...new Set([task, DEFAULT_TASK_DIR])].map(
+        (root) => `${root}/${relativeNamespace(taskRelativeDir)}`,
+      )
     : [];
   const roots = [
-    ...new Set(
-      [...taskRoots, `${runtime}/.observability`, '.agent/.observability', '.observability'].filter(
-        (root): root is string => !!root,
-      ),
-    ),
+    ...new Set([
+      ...taskRoots,
+      `${runtime}/.observability`,
+      '.agent/.observability',
+      '.observability',
+    ]),
   ];
   const repo = await slotRealpath(vars, vars.remoteRepo);
   const sources: Array<{ relative: string; absolute: string; resolved: string }> = [];
