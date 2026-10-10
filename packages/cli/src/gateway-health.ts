@@ -3,6 +3,8 @@ import http from 'node:http';
 import type { GatewayListenInfo } from '@farmslot/protocol';
 import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
+import { DEFAULT_GATEWAY_PORT } from './gateway-profiles.js';
+
 export interface GatewayHealthPayload {
   status?: string;
   uptime?: number;
@@ -66,7 +68,7 @@ export function localGatewayHealthCandidates(): string[] {
       // ignore malformed GW_URL
     }
   }
-  ports.add(7777);
+  ports.add(DEFAULT_GATEWAY_PORT);
   ports.add(7801);
   return [...ports].map((port) => `http://127.0.0.1:${port}/health`);
 }

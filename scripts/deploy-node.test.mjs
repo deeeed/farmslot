@@ -5,14 +5,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// One fixture per test: a checkout copy holding the deploy script, the worker
-// prefix it reads, and the workspace packages the node bundles. It is removed
-// when the test ends, however the test ends.
+// A checkout copy holding the deploy script, the worker prefix it reads, and
+// the workspace packages the node bundles. It is removed when its scope (a test,
+// or the file for a shared one) ends, however that ends.
 const deployFixture = (t, prefix) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -63,6 +63,53 @@ const commitFixture = (root) => {
   git('commit', '-qm', 'fixture');
 };
 
+// Removed once the file's tests are done: fixtures that several tests share.
+const fileCleanups = [];
+after(() => {
+  for (const cleanup of fileCleanups) cleanup();
+});
+const fileScope = { after: (cleanup) => fileCleanups.push(cleanup) };
+
+// ssh [-o option]... host command: keep the documents the deploy streams over
+// stdin and answer its remote probes for the platform and capture mode under test.
+const RENDER_SSH = `#!/bin/bash
+while [ "$1" = -o ]; do shift 2; done
+shift
+command="$*"
+IFS= read -r -d '' body
+case $body in
+  '<?xml'*) printf '%s' "$body" > "$RENDER_ROOT/service.plist" ;;
+  '[Unit]'*) printf '%s' "$body" > "$RENDER_ROOT/service.unit" ;;
+  *) [[ $command != */package.json ]] || printf '%s' "$body" > "$RENDER_ROOT/standalone-package.json" ;;
+esac
+case $command in
+  'uname -s') echo "$RENDER_OS" ;;
+  'echo $HOME') echo /home/node-validation ;;
+  'id -u') echo 501 ;;
+  *'SHELL:-/bin/sh'*) if [ "$RENDER_OS" = Darwin ]; then echo /bin/zsh; else echo /bin/bash; fi ;;
+  *'which yarn'*) echo no ;;
+  'test -d '*) exit 1 ;;
+  'test -f '*.plist*) [[ $RENDER_CAPTURE_MODE =~ ^(retained|missing-key|corrupt)$ ]] ;;
+  '/usr/bin/plutil -lint '*) [ "$RENDER_CAPTURE_MODE" != corrupt ] ;;
+  '/usr/bin/plutil -extract '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
+esac
+`;
+
+// The deploy only reads its checkout, so the render cases share one, built by
+// the first case to run; each case renders into its own directory.
+let renderCheckout;
+const sharedRenderCheckout = () => {
+  if (renderCheckout) return renderCheckout;
+  const { root, write } = deployFixture(fileScope, 'node-deploy-render-');
+  write('bin/ssh', RENDER_SSH, true);
+  // These succeed doing nothing, as the bare binary: no shell to start per call.
+  for (const command of ['rsync', 'yarn', 'sleep'])
+    fs.symlinkSync('/usr/bin/true', path.join(root, 'bin', command));
+  commitFixture(root);
+  renderCheckout = root;
+  return root;
+};
+
 // Execute the actual deployment script with remote side effects replaced by command stubs.
 // This proves generated service documents, not remote installation or runner execution.
 for (const platform of ['Darwin', 'Linux']) {
@@ -71,40 +118,13 @@ for (const platform of ['Darwin', 'Linux']) {
       ? ['bundled', 'retained', 'override', 'missing-key', 'corrupt']
       : ['bundled']) {
       test(`deploy-node renders ${platform} service with native=${native}, capture=${captureMode}`, (t) => {
-        const { root, write } = deployFixture(t, 'node-deploy-render-');
-        write(
-          'bin/ssh',
-          `#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-while args and args[0]=='-o': args=args[2:]
-command=' '.join(args[1:])
-body=sys.stdin.read()
-if body.startswith('<?xml'): Path(os.environ['RENDER_ROOT'],'service.plist').write_text(body)
-elif body.startswith('[Unit]'): Path(os.environ['RENDER_ROOT'],'service.unit').write_text(body)
-elif command.endswith('/package.json'): Path(os.environ['RENDER_ROOT'],'standalone-package.json').write_text(body)
-if command=='uname -s': print(os.environ['RENDER_OS'])
-elif command=='echo $HOME': print('/home/node-validation')
-elif command=='id -u': print('501')
-elif 'SHELL:-/bin/sh' in command: print('/bin/zsh' if os.environ['RENDER_OS']=='Darwin' else '/bin/bash')
-elif 'which yarn' in command: print('no')
-elif command.startswith('test -d '): sys.exit(1)
-elif command.startswith('test -f ') and '.plist' in command: sys.exit(0 if os.environ.get('RENDER_CAPTURE_MODE') in ['retained','missing-key','corrupt'] else 1)
-elif command.startswith('/usr/bin/plutil -lint '): sys.exit(1 if os.environ.get('RENDER_CAPTURE_MODE')=='corrupt' else 0)
-elif command.startswith('/usr/bin/plutil -extract '):
-  if os.environ.get('RENDER_CAPTURE_MODE')=='retained': print('/opt/homebrew/bin/capture-helper')
-  else: sys.exit(1)
-`,
-          true,
-        );
-        for (const command of ['rsync', 'yarn', 'sleep'])
-          write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
-        commitFixture(root);
+        const root = sharedRenderCheckout();
+        const output = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-render-out-'));
+        t.after(() => fs.rmSync(output, { recursive: true, force: true }));
         const env = {
           ...process.env,
           PATH: `${root}/bin:${process.env.PATH}`,
-          RENDER_ROOT: root,
+          RENDER_ROOT: output,
           RENDER_OS: platform,
           RENDER_CAPTURE_MODE: captureMode,
           CAPTURE_HELPER_PATH: captureMode === 'override' ? '/opt/qa & helpers/capture-helper' : '',
@@ -135,7 +155,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
             assert.match(String(error.stderr), /cannot read a valid service plist/);
             return true;
           });
-          assert.equal(fs.existsSync(path.join(root, 'service.plist')), false);
+          assert.equal(fs.existsSync(path.join(output, 'service.plist')), false);
           return;
         }
         deploy();
@@ -148,7 +168,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
               [
                 '-c',
                 'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
-                path.join(root, 'service.plist'),
+                path.join(output, 'service.plist'),
               ],
               { encoding: 'utf8' },
             ),
@@ -168,7 +188,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
             native ? 'fixture-owner' : undefined,
           );
         } else {
-          const unit = fs.readFileSync(path.join(root, 'service.unit'), 'utf8');
+          const unit = fs.readFileSync(path.join(output, 'service.unit'), 'utf8');
           const command = unit
             .split('\n')
             .find((line) => line.startsWith('ExecStart='))
@@ -193,7 +213,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
         // `+match <app>\t<window>` probe as a structured error, so screen probes
         // never start. Only a raised range makes a repeated install upgrade.
         const standalone = JSON.parse(
-          fs.readFileSync(path.join(root, 'standalone-package.json'), 'utf8'),
+          fs.readFileSync(path.join(output, 'standalone-package.json'), 'utf8'),
         );
         assert.equal(
           standalone.dependencies['@siteed/capture-helper'],
@@ -206,12 +226,23 @@ elif command.startswith('/usr/bin/plutil -extract '):
             '-lc',
           ]);
           assert.equal(args.length, 3);
-          assert.ok(args[2].startsWith(`exec ${env.FARMSLOT_NODE_PATH} --require `));
+          // Unset after the login shell, so a profile export cannot bring it back.
+          assert.ok(
+            args[2].startsWith(
+              `exec /usr/bin/env -u FARMSLOT_ROOT ${env.FARMSLOT_NODE_PATH} --require `,
+            ),
+          );
           assert.ok(servicePath.includes('/home/node-validation/.npm-global/bin'));
         } else {
-          assert.equal(args[0], env.FARMSLOT_NODE_PATH);
-          assert.equal(args[1], '--require');
-          assert.equal(args.length, 6);
+          // The service runs with FARMSLOT_ROOT unset, as the token check does.
+          assert.deepEqual(args.slice(0, 5), [
+            '/usr/bin/env',
+            '-u',
+            'FARMSLOT_ROOT',
+            env.FARMSLOT_NODE_PATH,
+            '--require',
+          ]);
+          assert.equal(args.length, 9);
         }
       });
     }
@@ -397,7 +428,7 @@ esac
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
     true,
   );
-  write('bin/rsync', '#!/bin/sh\nexit 0\n', true);
+  fs.symlinkSync('/usr/bin/true', path.join(root, 'bin/rsync'));
   write('bin/systemctl', '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\n', true);
   // No bash login profile, as on macpro and mini: the worker prefix alone must
   // put the deployed CLI on PATH.
@@ -433,6 +464,7 @@ esac
       machine = 'fixture-machine',
       args = [],
       shell = '/bin/bash',
+      nodeTokenFile = true,
       env: extraEnv = {},
     } = {}) => {
       // rsync is stubbed, so stand in for the synced node: the token check the
@@ -459,6 +491,8 @@ esac
         FARMSLOT_NODE_PATH: path.join(nodeBin, 'node'),
         FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: '',
         FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
+        FARMSLOT_NODE_TOKEN: '',
+        FARMSLOT_GATEWAY_PASSWORD: '',
         ...extraEnv,
       };
       for (const name of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
@@ -471,8 +505,7 @@ esac
           '127.0.0.1',
           '--instance',
           instance,
-          '--node-token-file',
-          path.join(root, 'node-token'),
+          ...(nodeTokenFile ? ['--node-token-file', path.join(root, 'node-token')] : []),
           ...args,
         ],
         { env, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 },
@@ -705,6 +738,88 @@ test('deploy-node deploys when the env file holds the deployed node token', (t) 
     fixture.systemctl().some((line) => line.includes('restart farmslot-node')),
     fixture.systemctl().join('\n'),
   );
+});
+
+// A native node runs as `$SHELL -lc 'exec …'`, and so does its check. The login
+// profile may print and may export FARMSLOT_ROOT: here at a decoy whose env file
+// holds the deployed token and, searched first, would hide the stale one.
+test('deploy-node runs the native check through the login shell and still refuses a shadowing file', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/decoy/.env.local-auth', 'FARMSLOT_NODE_TOKEN=fixture-node-credential\n');
+  fixture.write(
+    'home/.bash_profile',
+    'echo "login banner from the profile"\nexport FARMSLOT_ROOT="$HOME/decoy"\n',
+  );
+  fixture.write(
+    'home/farmslot-node/.env.local-auth',
+    'FARMSLOT_NODE_TOKEN=stale-file-credential\n',
+  );
+  assert.throws(
+    () => fixture.deploy({ env: { FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'fixture-owner' } }),
+    (error) => {
+      assert.equal(error.status, 1);
+      assert.match(String(error.stdout), /login banner from the profile/);
+      const stderr = String(error.stderr);
+      assert.ok(
+        stderr.includes(
+          `[deploy] ERROR: ${fs.realpathSync(path.join(fixture.home, 'farmslot-node/.env.local-auth'))} sets FARMSLOT_NODE_TOKEN`,
+        ),
+        stderr,
+      );
+      assert.match(
+        stderr,
+        /node token check failed on fixture-machine; the service was not reloaded/,
+      );
+      assert.doesNotMatch(
+        `${error.stdout}${stderr}`,
+        /stale-file-credential|fixture-node-credential/,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(fixture.systemctl(), []);
+});
+
+// Without --node-token-file the service carries FARMSLOT_GATEWAY_TOKEN as its
+// node token, so that is what an env file must match.
+for (const [held, deploys] of [
+  ['fixture-operator-secret', true],
+  ['fixture-node-credential', false],
+]) {
+  test(`deploy-node checks a gateway-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
+    const fixture = cliFixture(t);
+    fixture.write('home/farmslot-node/.env.local-auth', `FARMSLOT_NODE_TOKEN=${held}\n`);
+    const deploy = () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false });
+    if (deploys) {
+      assert.match(deploy(), /checking for an env file that shadows the node token/);
+      assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));
+      return;
+    }
+    assert.throws(deploy, (error) => {
+      assert.match(String(error.stderr), /sets FARMSLOT_NODE_TOKEN, which the node reads instead/);
+      assert.doesNotMatch(
+        `${error.stdout}${error.stderr}`,
+        /fixture-operator-secret|fixture-node-credential/,
+      );
+      return true;
+    });
+    assert.deepEqual(fixture.systemctl(), []);
+  });
+}
+
+// With no token the service carries none for an env file to shadow.
+test('deploy-node skips the token check when it deploys no token', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/farmslot-node/.env.local-auth', 'FARMSLOT_NODE_TOKEN=file-credential\n');
+
+  const output = fixture.deploy({
+    machine: localMachine(),
+    nodeTokenFile: false,
+    env: { FARMSLOT_GATEWAY_TOKEN: '' },
+  });
+
+  assert.doesNotMatch(output, /shadows the node token/);
+  assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));
 });
 
 // A port on loopback: listening (until the test ends) or, once closed, free.

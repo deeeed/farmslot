@@ -322,7 +322,12 @@ fi
 NODE_DIR=$(dirname "$NODE_PATH")
 echo "[deploy] node: $NODE_PATH"
 
-NODE_TSX_ARGS=("$NODE_PATH" --require "$REMOTE_DIR/node_modules/tsx/dist/preflight.cjs" --import "file://$REMOTE_DIR/node_modules/tsx/dist/loader.mjs")
+# FARMSLOT_ROOT adds an env-file search root to the node's credential lookup.
+# The service runs with it unset whatever launchd/systemd (or, natively, the
+# login shell) would hand down, and so does the token check below, which shares
+# this invocation. Unset rather than set: the node's children inherit its env,
+# and a FARMSLOT_ROOT there would repoint slot scripts and the CLI at the install dir.
+NODE_TSX_ARGS=(/usr/bin/env -u FARMSLOT_ROOT "$NODE_PATH" --require "$REMOTE_DIR/node_modules/tsx/dist/preflight.cjs" --import "file://$REMOTE_DIR/node_modules/tsx/dist/loader.mjs")
 NODE_SERVICE_ARGS=("${NODE_TSX_ARGS[@]}" "$REMOTE_DIR/src/index.ts")
 NODE_TOKEN_CHECK_ARGS=("${NODE_TSX_ARGS[@]}" "$REMOTE_DIR/src/check-node-token.ts")
 NODE_SERVICE_PATH="$NODE_DIR:/usr/local/bin:/usr/bin:/bin"
@@ -344,8 +349,17 @@ if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
 fi
 NODE_SERVICE_PATH=$(python3 -c 'import sys; print(":".join(dict.fromkeys(sys.argv[1].split(":"))))' "$NODE_SERVICE_PATH")
 
+# Escapes stdin as Python's html.escape(quote=True) does, without a process per
+# value. The backslashes keep `&` literal under bash 5.2's patsub_replacement.
 xml_escape() {
-  python3 -c 'import html,sys; print(html.escape(sys.stdin.read().rstrip("\n"), quote=True))'
+  local value
+  IFS= read -r -d '' value || true
+  value=${value//&/\&amp;}
+  value=${value//</\&lt;}
+  value=${value//>/\&gt;}
+  value=${value//\"/\&quot;}
+  value=${value//\'/\&#x27;}
+  printf '%s\n' "$value"
 }
 
 launchd_node_arguments() {
@@ -581,11 +595,11 @@ rsync -a --delete \
 # The node reads FARMSLOT_NODE_TOKEN from a .env.local-auth or .env in or above
 # its install dir ahead of the token the service definition below carries, so a
 # stale file kept nodes failing auth after a deploy that reported success. The
-# synced node answers with the service's own invocation, cwd and FARMSLOT_ROOT
-# (unset), before the service is touched; the token goes over stdin.
+# synced node answers with the service's own invocation (FARMSLOT_ROOT unset
+# included) and cwd, before the service is touched; the token goes over stdin.
 if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
   echo "[deploy] checking for an env file that shadows the node token..."
-  if ! printf '%s' "$DEPLOYED_NODE_TOKEN" | run "cd $(printf '%q' "$REMOTE_DIR") && env -u FARMSLOT_ROOT $(printf '%q ' "${NODE_TOKEN_CHECK_ARGS[@]}")"; then
+  if ! printf '%s' "$DEPLOYED_NODE_TOKEN" | run "cd $(printf '%q' "$REMOTE_DIR") && $(printf '%q ' "${NODE_TOKEN_CHECK_ARGS[@]}")"; then
     echo "[deploy] ERROR: node token check failed on $MACHINE; the service was not reloaded" >&2
     exit 1
   fi

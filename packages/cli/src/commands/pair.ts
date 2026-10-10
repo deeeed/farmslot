@@ -23,6 +23,7 @@ import {
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { DEFAULT_GATEWAY_PORT } from '../gateway-profiles.js';
 import { withProgress } from '../progress.js';
 
 export interface ReachableAddress {
@@ -99,7 +100,7 @@ export function registerPairCommand(program: Command): void {
         emit.fail(error);
         return;
       }
-      const port = new URL(target.url).port || '7777';
+      const port = new URL(target.url).port || String(DEFAULT_GATEWAY_PORT);
       const addresses = reachableAddresses(port);
       if (addresses.length === 0) {
         emit.fail(
