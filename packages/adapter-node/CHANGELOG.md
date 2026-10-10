@@ -6,7 +6,7 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## 0.1.11 - 2026-10-11
 
-- Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.
+- Align the adapter-sdk and recipe-runner dependencies with 0.8.5 and 0.28.5 so consumers resolve one copy.
 
 ## 0.1.10 - 2026-10-10
 
