@@ -70,7 +70,7 @@ import {
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
 } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
-import { getAllRunsWithArchived, getRun } from '../../runs/store.js';
+import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
@@ -236,9 +236,7 @@ export async function slotReleasePreflight(
     }
   }
 
-  const ownerRun = boundOwner
-    ? (getRun(boundOwner) ?? (await getAllRunsWithArchived()).find((run) => run.id === boundOwner))
-    : undefined;
+  const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
   const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
   const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, restartRunId);
   if (refusal) throw new Error(refusal);
@@ -283,7 +281,9 @@ function releaseOwnerRefusal(
   if (params.expectedRunId === owner && live?.status === 'blocked' && isRunArchiving(owner))
     return null;
   if (live ? isTerminalRunStatus(live.status) : archivedTerminal) return null;
-  return `Slot ${params.slotId} is held by non-terminal run ${owner}; finish or cancel it before release. Force Reset must explicitly name that run with expectedRunId`;
+  return live
+    ? `Slot ${params.slotId} is held by non-terminal run ${owner}; finish it or use farmslot run cancel ${owner} before release`
+    : `Slot ${params.slotId} is held by missing run ${owner}; restore its run record or explicitly discard this named workspace through slot.release RPC with forceReset:true and expectedRunId:${owner}`;
 }
 
 async function findReleaseUnmergedWork(
@@ -384,6 +384,7 @@ async function slotReleaseImpl(
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
+      if (params.expectedRunId && owner !== params.expectedRunId) return false;
       releaseRefusal = releaseOwnerRefusal(
         owner,
         owner === boundOwner && ownerTerminal,
@@ -397,7 +398,6 @@ async function slotReleaseImpl(
         phase: slot.phase,
         [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
       };
-      if (params.expectedRunId) return owner === params.expectedRunId;
       // Unbound release may take only an unowned or terminal workspace.
       return true;
     },
@@ -714,14 +714,17 @@ async function slotReleaseImpl(
     }
 
     // Clean task files
+    await assertReleaseClaim();
     if (taskRel) {
       await execOnSlot(
         vars,
         `rm -rf ${shellQuote(`${vars.remoteRepo}/${taskDirName}/${taskRel}`)}`,
+        { noRetry: true },
       );
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
+    await assertReleaseClaim();
     try {
       const storageCleanup = await cleanupSlotStorage(vars, projectJson, {
         // Release keeps warm resources alive, so only prune completed task

@@ -190,6 +190,7 @@ function makeSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
 }
 
 function runnerInputProbe(command: string): ExecResult | null {
+  if (command.includes('send-keys')) return null;
   if (command.includes('#{pane_current_command}'))
     return { exitCode: 0, stdout: '%1|123|cursor-agent', stderr: '' };
   if (command.includes('FARMSLOT_RUNNER_PATTERN='))
@@ -303,10 +304,12 @@ test('initial launch-blocker keys refuse a shell even with the stale trust menu 
       exec: async (_vars, command) => {
         commands.push(command);
         return {
-          exitCode: 0,
+          exitCode: command.includes('FARMSLOT_RUNNER_PATTERN=') ? 1 : 0,
           stdout: command.includes('#{pane_current_command}')
             ? '%1|123|zsh'
-            : cursorWorkspaceTrustPane,
+            : command.includes('FARMSLOT_RUNNER_PATTERN=')
+              ? ''
+              : cursorWorkspaceTrustPane,
           stderr: '',
         };
       },

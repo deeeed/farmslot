@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { beforeEach, mock, test } from 'node:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { after, beforeEach, mock, test } from 'node:test';
+
+const runRoot = mkdtempSync(path.join(tmpdir(), 'release-owner-runs-'));
+process.env.FARMSLOT_RUNS_DIR = runRoot;
+process.env.FARMSLOT_HOME = path.join(runRoot, 'home');
+mkdirSync(process.env.FARMSLOT_HOME);
+after(() => rmSync(runRoot, { recursive: true, force: true }));
 
 // slotRelease is driven through a faked slot exec layer and slot row: no tmux,
 // shell or process is touched. Real namespaces are spread into each mock, and
@@ -14,7 +23,6 @@ let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
 let claimBeforeMark = false;
 let markerWrites = 0;
 let claimDuringPaneProbe = false;
-const ownerStatuses = new Map<string, 'working' | 'blocked' | 'done'>();
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -36,7 +44,6 @@ const execForTest = async (_vars: unknown, cmd: string) => {
         phase: 'working',
         slot_epoch: 2,
       };
-      ownerStatuses.set('incoming', 'working');
     }
     return ok('456');
   }
@@ -83,7 +90,6 @@ mock.module('../../core/index.js', {
           phase: 'working',
           slot_epoch: 2,
         };
-        ownerStatuses.set('incoming', 'working');
       }
       const applied = applies(predicate, fields);
       if (applied) markerWrites += 1;
@@ -126,14 +132,6 @@ mock.module('../../runners/native/worker.js', {
 });
 
 const realRuns = await import('../../runs/store.js');
-mock.module('../../runs/store.js', {
-  namedExports: {
-    ...realRuns,
-    getRun: (id: string) =>
-      ownerStatuses.has(id) ? { id, status: ownerStatuses.get(id), transport: 'tmux' } : undefined,
-    getAllRunsWithArchived: async () => [...ownerStatuses].map(([id, status]) => ({ id, status })),
-  },
-});
 
 const { slotRelease } = await import('./release.js');
 const { activePrepareAborts } = await import('./shared.js');
@@ -142,7 +140,7 @@ const { slotPrepare } = await import('./prepare.js');
 const emit = (event: string, payload: unknown) =>
   emitted.push({ event, payload: payload as Record<string, unknown> });
 
-beforeEach(() => {
+beforeEach(async () => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
   reapFails = false;
@@ -150,13 +148,27 @@ beforeEach(() => {
   claimBeforeMark = false;
   markerWrites = 0;
   claimDuringPaneProbe = false;
-  ownerStatuses.clear();
+
+  for (const [id, status] of [
+    ['incoming', 'monitoring'],
+    ['blocked', 'blocked'],
+    ['finished', 'done'],
+  ] as const) {
+    const run = realRuns.createRun(
+      { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-931-owner' },
+      { deferBackgroundPersist: true },
+    );
+    run.id = id;
+    run.status = status;
+    writeFileSync(path.join(runRoot, id + '.json'), JSON.stringify(run));
+  }
+  await realRuns.loadAllRuns();
   activePrepareAborts.clear();
 });
 
 test('ordinary and unnamed force release refuse a non-terminal owner before teardown', async () => {
   slotRow.current_run_id = 'incoming';
-  ownerStatuses.set('incoming', 'working');
+
   for (const forceReset of [false, true])
     await assert.rejects(
       slotRelease({ slotId: SLOT_ID, keepWork: true, forceReset }, emit),
@@ -191,7 +203,6 @@ test('a late claim aborts teardown before agent exit and leaves its fields intac
         phase: 'working',
         slot_epoch: 2,
       };
-      ownerStatuses.set('incoming', 'working');
     }
   };
   await assert.rejects(
@@ -209,7 +220,7 @@ test('a late claim aborts teardown before agent exit and leaves its fields intac
 
 test('internal blocked-run restart retains its explicitly bound release authority', async () => {
   slotRow.current_run_id = 'blocked';
-  ownerStatuses.set('blocked', 'blocked');
+
   const result = await slotRelease(
     { slotId: SLOT_ID, keepWork: true, expectedRunId: 'blocked' },
     emit,
@@ -231,7 +242,7 @@ test('a claim during pane scanning refuses the graceful exit before typing', asy
 
 test('named force release can explicitly discard the named active workspace', async () => {
   slotRow.current_run_id = 'incoming';
-  ownerStatuses.set('incoming', 'working');
+
   const result = await slotRelease(
     { slotId: SLOT_ID, keepWork: true, forceReset: true, expectedRunId: 'incoming' },
     emit,
@@ -315,4 +326,45 @@ test('a prepare started while the slot is releasing is refused', async () => {
   await assert.rejects(slotPrepare({ slotId: SLOT_ID }, emit), /is being released/);
 
   assert.equal(activePrepareAborts.has(SLOT_ID), false, 'the refused prepare deregisters');
+});
+
+test('a bound release that loses its preflight owner returns not released', async () => {
+  slotRow.current_run_id = 'finished';
+
+  claimBeforeMark = true;
+  assert.deepEqual(
+    await slotRelease({ slotId: SLOT_ID, keepWork: true, expectedRunId: 'finished' }, emit),
+    { released: false },
+  );
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(markerWrites, 0);
+});
+
+test('missing owner records refuse release with explicit named RPC guidance', async () => {
+  slotRow.current_run_id = 'missing';
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /held by missing run missing.*slot.release RPC/,
+  );
+  assert.equal(markerWrites, 0);
+});
+
+test('a claim during artifact collection refuses task deletion and storage cleanup', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  const lateClaim = (event: string, payload: unknown) => {
+    emit(event, payload);
+    if (event === 'slot.release.step' && (payload as { name: string }).name === 'artifacts') {
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
+    }
+  };
+  await assert.rejects(slotRelease({ slotId: SLOT_ID }, lateClaim), /non-terminal run incoming/);
+  assert.ok(!events.includes('task-clean'));
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(slotRow.slot_epoch, 2);
 });

@@ -1353,13 +1353,16 @@ export function keyForClassifierTrustAction(
  * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
  * so tests can pin target, key, and the no-evidence-no-send rule.
  */
+type LaunchBlockerCommand = (
+  command: string,
+) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
+
 export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   runnerId: string | null | undefined;
   target: string;
   logPrefix: string;
-  exec: (
-    tmuxCommand: string,
-  ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
+  exec: LaunchBlockerCommand;
+  sendKeys: LaunchBlockerCommand;
   refreshCodexHooks?: () => Promise<void>;
   logNoFreshEvidence?: boolean;
 }): Promise<{ outcome: 'sent'; key: string } | { outcome: 'no-fresh-evidence' }> {
@@ -1390,9 +1393,7 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
     blocker?.autoAction === 'claude-trust-workspace'
       ? `${shellQuote(key)} ${shellQuote('Enter')}`
       : shellQuote(key);
-  const sent = await opts.exec(
-    `send-keys -t ${shellQuote(opts.target)} ${keySequence} 2>/dev/null`,
-  );
+  const sent = await opts.sendKeys(keySequence);
   if (sent.exitCode !== 0) {
     throw new Error(
       `Failed to apply trust confirmation ${key} in ${opts.target}: ${
@@ -2486,11 +2487,8 @@ export async function execRunnerInput(
   const [paneId, panePid, foreground] = pane.stdout.trim().split('|');
   if (pane.exitCode !== 0 || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''))
     throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
-  const { probeRunnerDescendantPid, isShellProcessCommand } = await import('./session-process.js');
-  if (!foreground || isShellProcessCommand(foreground))
-    throw new Error(
-      `Runner input refused: ${target} is a shell or has no foreground process; no input was sent`,
-    );
+  const { buildRunnerInputHostGuardCommand, probeRunnerDescendantPid, isShellProcessCommand } =
+    await import('./session-process.js');
   const probe = await probeRunnerDescendantPid(
     vars,
     panePid!,
@@ -2500,25 +2498,17 @@ export async function execRunnerInput(
   );
   if (probe.state !== 'present')
     throw new Error(
-      `Runner input refused: no live foreground ${runner} in ${target}; no input was sent`,
+      `Runner input refused: ${probe.state === 'unknown' ? `process check failed: ${probe.reason}` : isShellProcessCommand(foreground ?? '') ? `${target} is a shell without a live foreground ${runner}` : `no live foreground ${runner} in ${target}`}; no input was sent`,
     );
   // A transport resend could reach a shell after the checked runner exited.
   // Only the caller may retry, by entering this guard again.
-  return exec(vars, command(paneId!), { noRetry: true });
-}
-
-/** Dispatch launch-blocker probes read freely; their keystrokes use the same live input guard. */
-export async function execRunnerTmuxCommand(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  runner: string,
-  command: string,
-): Promise<ExecResult> {
-  if (command.startsWith('send-keys '))
-    return execRunnerInput(vars, target, runner, (paneId) =>
-      tmuxShellSnippet(command.replace(shellQuote(target), shellQuote(paneId))),
-    );
-  return execOnSlot(vars, tmuxShellSnippet(command));
+  const hostGuard = buildRunnerInputHostGuardCommand(
+    paneId!,
+    panePid!,
+    runner,
+    PROMPT_TYPE_FAILURE_EXIT_CODE,
+  );
+  return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
 }
 
 async function submitRunnerInstruction(
@@ -3564,7 +3554,11 @@ export async function sendRunnerPostLaunchPrompt(
         runnerId: runner,
         target,
         logPrefix,
-        exec: (tmuxCommand) => execRunnerTmuxCommand(vars, target, runner, tmuxCommand),
+        exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        sendKeys: (keys) =>
+          execRunnerInput(vars, target, runner, (paneId) =>
+            tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${keys} 2>/dev/null`),
+          ),
         refreshCodexHooks: async () => {
           const refreshed = await execOnSlot(
             vars,

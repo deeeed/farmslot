@@ -55,11 +55,15 @@ let failedPromptSendExitCode = 85;
 let foregroundCommand = 'claude';
 let foregroundRunnerPresent = true;
 let exitAfterLiteralSend = false;
+let exitBeforeMutation = false;
+let foregroundProbeUnknown = false;
 const mutationRetryOptions: Array<boolean | undefined> = [];
 beforeEach(() => {
   foregroundCommand = 'claude';
   foregroundRunnerPresent = true;
   exitAfterLiteralSend = false;
+  exitBeforeMutation = false;
+  foregroundProbeUnknown = false;
   mutationRetryOptions.length = 0;
 });
 
@@ -187,15 +191,43 @@ mock.module('../core/exec.js', {
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_slotVars: SlotVars, cmd: string, options?: { noRetry?: boolean }) => {
+      if (cmd.includes('send-keys') || cmd.includes('send-text')) {
+        mutationRetryOptions.push(options?.noRetry);
+        if (cmd.includes('execution-host guard') && !foregroundRunnerPresent)
+          return { exitCode: 85, stdout: '', stderr: 'execution-host input guard refused' };
+        callOrder.push('tmux:send');
+        if (failedPromptSends > 0) {
+          failedPromptSends -= 1;
+          return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
+        }
+        // A literal payload (-l) is the message being TYPED; a bare send is a
+        // key like Enter. The distinction is what separates fresh-send from
+        // submit-existing in assertions.
+        if (cmd.includes(' -l ')) {
+          callOrder.push('tmux:send-literal');
+          if (exitAfterLiteralSend) {
+            foregroundCommand = 'zsh';
+            foregroundRunnerPresent = false;
+          }
+          if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
+        } else if (paneTextAfterBareSend !== null) {
+          paneText = paneTextAfterBareSend;
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
       if (cmd.includes('#{pane_current_command}')) {
         callOrder.push('input:foreground');
         return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
       }
       if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
         callOrder.push('input:process');
+        if (foregroundProbeUnknown)
+          return { exitCode: 124, stdout: '', stderr: 'foreground process snapshot timed out' };
+        const present = foregroundRunnerPresent;
+        if (exitBeforeMutation) foregroundRunnerPresent = false;
         return {
-          exitCode: foregroundRunnerPresent ? 0 : 1,
-          stdout: foregroundRunnerPresent ? '456' : '',
+          exitCode: present ? 0 : 1,
+          stdout: present ? '456' : '',
           stderr: '',
         };
       }
@@ -216,25 +248,6 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('list-windows')) {
         return { exitCode: 0, stdout: '1 rev-codex\n2 self-review\n3 dev\n', stderr: '' };
-      }
-      if (cmd.includes('send-keys') || cmd.includes('send-text')) {
-        mutationRetryOptions.push(options?.noRetry);
-        callOrder.push('tmux:send');
-        if (failedPromptSends > 0) {
-          failedPromptSends -= 1;
-          return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
-        }
-        // A literal payload (-l) is the message being TYPED; a bare send is a
-        // key like Enter. The distinction is what separates fresh-send from
-        // submit-existing in assertions.
-        if (cmd.includes(' -l ')) {
-          callOrder.push('tmux:send-literal');
-          if (exitAfterLiteralSend) foregroundCommand = 'zsh';
-          if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
-        } else if (paneTextAfterBareSend !== null) {
-          paneText = paneTextAfterBareSend;
-        }
-        return { exitCode: 0, stdout: '', stderr: '' };
       }
       if (cmd.includes("python3 - <<'PY'")) {
         callOrder.push('python:write');
@@ -280,6 +293,7 @@ mock.module('./prompt-delivery-evidence.js', {
 
 const {
   PromptDeliveryUncertainError,
+  execRunnerInput,
   resolvePrimaryWorkerTarget,
   runnerHasDurablePromptHandoff,
   runnerSupportsInitialPromptArg,
@@ -2047,6 +2061,7 @@ test('post-launch delivery refuses stale ready text in a bare shell before typin
     observedAt: Date.now(),
   };
   foregroundCommand = 'zsh';
+  foregroundRunnerPresent = false;
   let mutations = 0;
   await assert.rejects(
     withRunnerPromptMutationBoundary(
@@ -2102,4 +2117,40 @@ test('post-launch retries recheck the foreground when the runner exits after the
   assert.ok(callOrder.filter((entry) => entry === 'input:foreground').length >= 2);
   assert.deepEqual(mutationRetryOptions, [true]);
   paneTextAfterLiteralSend = null;
+});
+
+test('a live foreground runner under a bash launch wrapper authorizes input', async () => {
+  callOrder.length = 0;
+  foregroundCommand = 'bash';
+  const result = await execRunnerInput(
+    vars,
+    target,
+    'claude',
+    (paneId) => `tmux send-keys -t '${paneId}' Enter`,
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
+});
+
+test('an execution-host guard refuses a runner that exits while its first mutation waits', async () => {
+  callOrder.length = 0;
+  exitBeforeMutation = true;
+  const result = await execRunnerInput(
+    vars,
+    target,
+    'claude',
+    (paneId) => `tmux send-keys -t '${paneId}' Enter`,
+  );
+  assert.equal(result.exitCode, 85);
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 0);
+});
+
+test('unknown foreground state reports the process failure without sending input', async () => {
+  callOrder.length = 0;
+  foregroundProbeUnknown = true;
+  await assert.rejects(
+    execRunnerInput(vars, target, 'claude', (paneId) => `tmux send-keys -t '${paneId}' Enter`),
+    /process check failed:.*timed out/,
+  );
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 0);
 });

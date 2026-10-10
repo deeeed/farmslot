@@ -24,7 +24,7 @@ import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
 import { contextPaneId, stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
 import { archiveRunnerSessionsForSlotRelease } from '../runners/session-archive.js';
-import { probeRunnerDescendantPid } from '../runners/session-process.js';
+import { isShellProcessCommand, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { listRuns, updateRun } from '../runs/store.js';
 import { unwatchSlot } from '../tasks/watcher.js';
 
@@ -144,12 +144,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   for (const panePid of ownedShells) {
     const root = censusRows.find((row) => row.pid === panePid);
     if (!root) continue; // A preserved dead pane has no process left to classify.
-    if (
-      !['sh', 'bash', 'zsh', 'dash', 'fish', 'ksh', 'csh', 'tcsh'].includes(
-        root.command.split('/').at(-1) ?? '',
-      ) ||
-      censusRows.some((row) => row.parent === panePid)
-    )
+    if (!isShellProcessCommand(root.command) || censusRows.some((row) => row.parent === panePid))
       return `Recorded worker pane process ${panePid} is still occupied; cleanup deferred`;
   }
   const passive = new Set(

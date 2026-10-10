@@ -124,7 +124,7 @@ try:
                     re.fullmatch(pattern, executable_name)
                     or re.fullmatch(pattern, executable)
                 )
-                shell_wrapper = os.path.basename(executable) in {'bash', 'zsh', 'sh', 'fish'}
+                shell_wrapper = bool(re.search(${JSON.stringify(SHELL_PROCESS_PATTERN)}, executable))
                 matches.append((strong, not shell_wrapper, depth, candidate))
             queue.extend((child, depth + 1) for child in children.get(candidate, []))
         if not matches:
@@ -1453,6 +1453,28 @@ export function buildFindRunnerDescendantPidCommand(
   foregroundOnly = false,
 ): string {
   return buildFindRunnerDescendantPidCommandWithRoot(shellQuote(panePid), pattern, foregroundOnly);
+}
+
+/** Revalidate on the execution host after transport waits, before typing. */
+export function buildRunnerInputHostGuardCommand(
+  paneId: string,
+  panePid: string,
+  runnerId: string,
+  refusalExitCode: number,
+): string {
+  const paneProbe = tmuxShellSnippet(`display-message -p -t ${shellQuote(paneId)} '#{pane_pid}'`);
+  const processProbe = buildFindRunnerDescendantPidCommand(
+    panePid,
+    runnerProcessPatternSource(runnerId),
+    true,
+  );
+  return [
+    '# farmslot runner input execution-host guard',
+    `if [ "$( ${paneProbe} )" != ${shellQuote(panePid)} ] || ! ( ${processProbe} ) >/dev/null; then`,
+    `  printf '%s\\n' ${shellQuote(`Runner input refused: no live foreground ${runnerId} on the pinned pane; no input was sent`)} >&2`,
+    `  exit ${refusalExitCode}`,
+    'fi',
+  ].join('\n');
 }
 
 /**

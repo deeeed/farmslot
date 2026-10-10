@@ -54,6 +54,11 @@ mock.module('../core/exec.js', {
         runnerAlive = false;
         runnerLivenessProbes = 0;
       }
+      if (command.includes('send-keys')) {
+        trustSendCount += 1;
+        promptAccepted = true;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
       if (command.includes("'#{window_id}'")) {
         return { exitCode: 0, stdout: '@1\n', stderr: '' };
       }
@@ -79,11 +84,6 @@ mock.module('../core/exec.js', {
       }
       if (command.includes('capture-pane')) {
         return { exitCode: 0, stdout: capturedPane, stderr: '' };
-      }
-      if (command.includes('send-keys')) {
-        trustSendCount += 1;
-        promptAccepted = true;
-        return { exitCode: 0, stdout: '', stderr: '' };
       }
       if (command.includes('PRIOR-TASK-SIGNAL.json')) {
         return { exitCode: 0, stdout: replacementSignalOutput, stderr: '' };
