@@ -45,7 +45,13 @@ import {
   registerSlot,
   writePool,
 } from './pool-config.js';
-import { readState, type Workspace, type WorkspaceState, writeState } from './workspace.js';
+import {
+  readState,
+  type Workspace,
+  workspacePoolDir,
+  type WorkspaceState,
+  writeState,
+} from './workspace.js';
 
 export interface AddStep {
   label: string;
@@ -588,10 +594,7 @@ export function projectAdd(
   }
 
   const packDir = resolvePackSource(source, ws, childStdio(progress));
-  const { pack, errors } = validatePackDir(
-    packDir,
-    process.env.FARMSLOT_POOL_DIR ?? join(ws.farmslotDir, 'pool'),
-  );
+  const { pack, errors } = validatePackDir(packDir, workspacePoolDir(ws, state));
   if (!pack) {
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
   }

@@ -10,7 +10,7 @@ import { AddError, assertProjectOwnership, resolvePackSource, syncPackProjects }
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
-import { readState, type Workspace, writeState } from './workspace.js';
+import { readState, type Workspace, workspacePoolDir, writeState } from './workspace.js';
 
 // Builds every workspace the CLI depends on, in dependency order. Yarn reads
 // the list from the checkout's own manifests: this process still runs the
@@ -159,10 +159,7 @@ export async function farmslotUpdate(
   const packs = { ...state.packs };
   for (const [name, packState] of Object.entries(packs)) {
     const packDir = resolvePackSource(packState.source, ws, stdio);
-    const { pack, errors } = validatePackDir(
-      packDir,
-      process.env.FARMSLOT_POOL_DIR ?? join(ws.farmslotDir, 'pool'),
-    );
+    const { pack, errors } = validatePackDir(packDir, workspacePoolDir(ws, state));
     if (!pack) throw new AddError(`pack ${name} is invalid:\n  - ${errors.join('\n  - ')}`);
     const hash = hashPackDir(packDir);
     if (hash === packState.hash) {

@@ -105,3 +105,8 @@ export function bootstrapFarmslotHome(env: NodeJS.ProcessEnv = process.env): voi
   }
   if (state?.home_dir) env.FARMSLOT_HOME = state.home_dir;
 }
+
+/** Pool ownership follows the selected workspace's installation record. */
+export function workspacePoolDir(ws: Workspace, state: WorkspaceState): string {
+  return process.env.FARMSLOT_POOL_DIR ?? dirname(join(ws.farmslotDir, state.pool_file));
+}
