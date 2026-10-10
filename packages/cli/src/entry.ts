@@ -54,7 +54,7 @@ program
   .version('0.1.0')
   .option(
     '--url <url>',
-    `Gateway WebSocket URL (overrides profiles; default ${DEFAULT_GATEWAY_URL})`,
+    `Gateway WebSocket URL (uses a matching profile's credential; default ${DEFAULT_GATEWAY_URL})`,
   )
   .option('--gateway <name>', 'Gateway profile to target (see: farmslot gateway list)')
   .option('--timeout <ms>', 'Timeout in ms', process.env.GW_TIMEOUT || '30000')
