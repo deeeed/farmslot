@@ -34,6 +34,7 @@ import { OutputContext } from '../output.js';
 const LOCAL_PROFILE = 'local';
 const UI_DIST_INDEX = join(repoRoot, 'apps', 'command-center', 'ui', 'dist', 'index.html');
 const HOSTED_COMMAND_CENTER_BASE = 'https://farmslot.io/cc';
+const DEFAULT_UP_PORT = 7777;
 
 interface HostedGatewayCandidate {
   url: string;
@@ -89,11 +90,17 @@ function hostedGatewayCandidates(port: number, tlsPort: number | null): HostedGa
   );
 }
 
-function hostedCommandCenterUrl(port: number, token: string, tlsPort: number | null): string {
+// Without a token the payload still pre-fills the gateway candidates; the Command
+// Center then reuses a token it already stores or asks for one.
+function hostedCommandCenterUrl(
+  port: number,
+  token: string | null,
+  tlsPort: number | null,
+): string {
   const payload = {
     v: 1,
     gateways: hostedGatewayCandidates(port, tlsPort),
-    token,
+    ...(token ? { token } : {}),
   };
   return `${HOSTED_COMMAND_CENTER_BASE}#doctor?connect=${encodeBase64UrlJson(payload)}`;
 }
@@ -216,7 +223,7 @@ function ensureTokenAuthEnv(): string {
 function registerLocalProfile(port: number, token: string): boolean {
   const profiles = loadProfiles();
   profiles.gateways[LOCAL_PROFILE] = {
-    url: port === 7777 ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
+    url: port === DEFAULT_UP_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
     authMode: 'token',
     secret: token,
   };
@@ -284,7 +291,7 @@ function pairHint(localActive: boolean): string {
   return localActive ? 'farmslot pair' : 'farmslot --gateway local pair';
 }
 
-function writeUpResult(params: {
+export function writeUpResult(params: {
   output: OutputContext;
   status: 'gateway up' | 'gateway already running';
   pid: number;
@@ -293,9 +300,13 @@ function writeUpResult(params: {
   localActive: boolean;
   dashboardBuilt: boolean;
   openBrowser: boolean;
+  printConnectUrl: boolean;
   tlsPort: number | null;
 }): void {
-  const hostedDashboard = hostedCommandCenterUrl(params.port, params.token, params.tlsPort);
+  // The connect link carries the gateway token, so it only reaches stdout (terminals,
+  // agent transcripts, logs) on explicit --print-connect-url; the browser gets it directly.
+  const hostedDashboard = hostedCommandCenterUrl(params.port, null, params.tlsPort);
+  const connectUrl = hostedCommandCenterUrl(params.port, params.token, params.tlsPort);
   const fallbackDashboard = `http://localhost:${params.port}`;
   if (params.output.json) {
     params.output.writeJson({
@@ -303,10 +314,11 @@ function writeUpResult(params: {
       port: params.port,
       url: `ws://localhost:${params.port}`,
       profile: LOCAL_PROFILE,
-      token: params.token,
       pairCommand: pairHint(params.localActive),
       dashboard: params.dashboardBuilt ? fallbackDashboard : null,
       hostedDashboard,
+      // The raw token, like the link that carries it, only on --print-connect-url.
+      ...(params.printConnectUrl ? { token: params.token, connectUrl } : {}),
       fallbackDashboard,
       tlsUrl: params.tlsPort ? `wss://localhost:${params.tlsPort}/ws` : null,
     });
@@ -317,11 +329,21 @@ function writeUpResult(params: {
   // gateway, so there is nothing local to run. Chrome/Edge treat ws://localhost as a
   // secure context, so the HTTPS page reaches the local gateway. The local UI (if
   // built) stays as a printed fallback for browsers that block ws://localhost.
-  const opened = params.openBrowser && openUrl(hostedDashboard);
+  const opened = params.openBrowser && openUrl(connectUrl);
   params.output.write(`${green(params.status)} ${dim(`pid ${params.pid}`)}\n`);
   params.output.write(
     `  ${dim('dashboard')}      ${cyan(hostedDashboard)}${opened ? dim(' (opened — auto-connects this gateway)') : ''}\n`,
   );
+  if (params.printConnectUrl) {
+    params.output.write(
+      `  ${dim('connect url')}    ${cyan(connectUrl)} ${dim('(contains the gateway token)')}\n`,
+    );
+  } else {
+    const portFlag = params.port === DEFAULT_UP_PORT ? '' : ` --port ${params.port}`;
+    params.output.write(
+      `  ${dim('connect url')}    ${dim(`run \`farmslot up${portFlag} --print-connect-url\` for the auto-connect link (it contains the gateway token)`)}\n`,
+    );
+  }
   params.output.write(
     `  ${dim('local ui')}       ${cyan(fallbackDashboard)} ${dim(
       params.dashboardBuilt
@@ -397,6 +419,7 @@ async function up(
   port: number,
   output: OutputContext,
   openBrowser: boolean,
+  printConnectUrl: boolean,
   startNode: boolean,
 ): Promise<void> {
   // TLS is opt-in: present only after `farmslot certs setup`. When it resolves,
@@ -433,6 +456,7 @@ async function up(
         localActive,
         dashboardBuilt: existsSync(UI_DIST_INDEX),
         openBrowser,
+        printConnectUrl,
         tlsPort: tls?.port ?? null,
       });
       return;
@@ -521,6 +545,7 @@ async function up(
     localActive,
     dashboardBuilt: existsSync(UI_DIST_INDEX),
     openBrowser,
+    printConnectUrl,
     tlsPort: tls?.port ?? null,
   });
 }
@@ -550,14 +575,29 @@ export function registerUpCommand(program: Command): void {
   program
     .command('up')
     .description('Start the local gateway + dashboard as a background service')
-    .option('--port <port>', 'gateway port', '7777')
+    .option('--port <port>', 'gateway port', String(DEFAULT_UP_PORT))
     .option('--no-open', 'print Command Center URLs without opening a browser')
+    .option(
+      '--print-connect-url',
+      'also print the auto-connect Command Center link (contains the gateway token)',
+    )
     .option('--no-node', 'do not co-launch the local node (degraded: no device feed/file-watch)')
-    .action(async (opts: { port: string; open?: boolean; node?: boolean }, cmd: Command) => {
-      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const startNode = opts.node !== false && process.env.FARMSLOT_SKIP_LOCAL_NODE !== '1';
-      await up(Number(opts.port), output, opts.open !== false && !output.json, startNode);
-    });
+    .action(
+      async (
+        opts: { port: string; open?: boolean; node?: boolean; printConnectUrl?: boolean },
+        cmd: Command,
+      ) => {
+        const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+        const startNode = opts.node !== false && process.env.FARMSLOT_SKIP_LOCAL_NODE !== '1';
+        await up(
+          Number(opts.port),
+          output,
+          opts.open !== false && !output.json,
+          opts.printConnectUrl === true,
+          startNode,
+        );
+      },
+    );
 
   program
     .command('down')
