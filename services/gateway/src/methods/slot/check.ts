@@ -547,7 +547,7 @@ async function checkDevice(
     };
   }
   try {
-    const result = await execOnSlot(vars, deviceCheck);
+    const result = await execOnSlot(vars, withMachineEnv(deviceCheck, vars));
     if (result.exitCode === 0) {
       const label =
         vars.platform === 'android'
@@ -581,7 +581,7 @@ async function checkDevServer(
 
   if (devCheck) {
     try {
-      const result = await execOnSlot(vars, devCheck);
+      const result = await execOnSlot(vars, withMachineEnv(devCheck, vars));
       if (result.exitCode === 0) {
         const port = vars.resourceVars.port ?? '';
         steps.push({
@@ -743,9 +743,13 @@ export const UNLOCK_HOOK_TIMEOUT_MS = 120_000;
  * re-read health afterwards and report the failure only if health stays down.
  */
 export async function runUnlockHook(vars: SlotVars, unlockHook: string): Promise<string | null> {
-  const result = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, {
-    timeout: UNLOCK_HOOK_TIMEOUT_MS,
-  });
+  const result = await execOnSlot(
+    vars,
+    withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, vars),
+    {
+      timeout: UNLOCK_HOOK_TIMEOUT_MS,
+    },
+  );
   if (result.exitCode === 0) return null;
   const tail = `${result.stdout}\n${result.stderr}`
     .split('\n')
@@ -834,7 +838,7 @@ export async function runHealthCheck(
   try {
     const result = await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+      withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`, vars),
       { timeout: options.timeoutMs },
     );
     const raw = result.stdout.trim();

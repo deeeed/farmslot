@@ -486,3 +486,12 @@ test('checkRunnerLaunch reports an unbuildable worker env once', async (t) => {
   assert.equal(steps[0]!.status, 'fail');
   assert.match(steps[0]!.detail, /^Worker env cannot be built: .*BAD-NAME/);
 });
+
+test('health and unlock hooks receive configured pool tools in real child shells', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'pool-health '));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const vars = { ...makeSlotVars(repo), machineEnv: { AUDIOLAB_NODE_BIN: repo } };
+  const condition = 'test "$AUDIOLAB_NODE_BIN" = "$PWD"';
+  assert.equal(await runHealthCheck(vars, `${condition} && printf OK`, ''), 'OK');
+  assert.equal(await runUnlockHook(vars, condition), null);
+});

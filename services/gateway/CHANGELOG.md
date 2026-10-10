@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Check node prerequisites before prepare changes and during slot.check, preserving support selection and missing-path diagnostics. Pool environment reaches slot actions and resource control/health shells.
+- Check node prerequisites before prepare changes and during slot.check, preserving support selection and missing-path diagnostics. Pool environment reaches recipe project hooks, slot health/unlock probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
