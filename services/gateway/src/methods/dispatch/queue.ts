@@ -93,6 +93,7 @@ export async function dispatchQueueAdd(
       staticReview: normalizeRawStaticReview(
         projectVars.projectJson.static_review,
         projectVars.projectConfig,
+        projectVars.projectJson.reference_repos,
       ),
     },
     {

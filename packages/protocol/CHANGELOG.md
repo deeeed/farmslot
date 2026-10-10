@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `ReviewWorkspaceSupportBinding.references` (optional): consumer checkouts (`name`, `path`, `headSha`, `dirty`, or `missing: true`) a static review reads, recorded once on the execution node. Existing bindings remain readable.
 
 ## 0.35.2 - 2026-10-10
 

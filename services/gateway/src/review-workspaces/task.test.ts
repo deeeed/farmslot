@@ -137,8 +137,31 @@ test('materialization preserves canonical checklist, freezes offline guidance/pr
       ],
       runtime: { name: 'review-tool', path: path.join(f.root, 'support/bin/review-tool') },
       environment: {},
+      references: [
+        { name: 'mobile', path: '/dev/mobile-ref', headSha: 'c'.repeat(40), dirty: true },
+        { name: 'core', path: '/dev/core-ref', missing: true },
+        { name: 'unplaced', path: '', missing: true },
+      ],
     };
     const first = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const task = await readFile(first.taskFile, 'utf8');
+    assert(
+      task.includes(`Reference mobile: /dev/mobile-ref @ ${'c'.repeat(40)} (uncommitted changes)`),
+    );
+    assert(
+      task.includes(
+        `Reference core: not cloned at /dev/core-ref on ${f.run.reviewWorkspace!.machine}`,
+      ),
+    );
+    assert(
+      task.includes(
+        `Reference unplaced: no ${f.run.project} slot on ${f.run.reviewWorkspace!.machine}`,
+      ),
+    );
+    assert(task.includes('end in APPROVE or REQUEST_CHANGES'));
+    assert(
+      task.includes('Use COMMENT only for a draft PR or an explicitly informational request.'),
+    );
     assert.equal(await readFile(path.join(f.task, 'CHECKLIST.md'), 'utf8'), checklist);
     assert.match(await readFile(first.taskFile, 'utf8'), new RegExp(f.subject.headSha));
     assert.deepEqual(

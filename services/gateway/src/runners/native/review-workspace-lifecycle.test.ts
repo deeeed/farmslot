@@ -428,3 +428,36 @@ test('native-profile authority failure is terminal before any reservation', asyn
   assert.equal(run.agentContexts?.length ?? 0, 0);
   assert.equal(calls.length, 0);
 });
+
+test('native launch binds recorded reference paths and keeps them read-only', async () => {
+  reset();
+  run.reviewWorkspace!.support = {
+    path: '/support',
+    sha256: 'a'.repeat(64),
+    sources: [],
+    skills: [],
+    environment: {
+      REF_MOBILE: '{{mobile_repo}}',
+      REF_CORE: '{{core_repo}}',
+      LIBRARY: '{{support}}/libraries/perps',
+    },
+    references: [
+      { name: 'mobile', path: '/dev/mobile-ref', headSha: 'b'.repeat(40), dirty: false },
+      { name: 'core', path: '/dev/core-ref', missing: true },
+    ],
+  };
+  await launch();
+  const ensure = calls.find((call) => call.method === NATIVE_WORKER_ENSURE)!;
+  const launched = ensure.params.launch as {
+    environment: { set: Record<string, string> };
+    filesystemPolicy: { readOnlyRoots: string[] };
+  };
+  assert.equal(launched.environment.set.REF_MOBILE, '/dev/mobile-ref');
+  assert.equal(launched.environment.set.REF_CORE, '');
+  assert.equal(launched.environment.set.LIBRARY, '/support/libraries/perps');
+  assert.deepEqual(launched.filesystemPolicy.readOnlyRoots, [
+    '/source',
+    '/support',
+    '/dev/mobile-ref',
+  ]);
+});

@@ -298,6 +298,11 @@ export async function materializeReviewWorkspaceTask(
                   `For commands named ${run.reviewWorkspace.support.runtime.name} in those skills, invoke ${shellQuote(run.reviewWorkspace.support.runtime.path)}. Keep outputs under the task artifacts directory.`,
                 ]
               : []),
+            ...(run.reviewWorkspace.support.references ?? []).map((reference) =>
+              reference.missing
+                ? `Reference ${reference.name}: ${reference.path ? `not cloned at ${reference.path}` : `no ${run.project} slot`} on ${run.reviewWorkspace!.machine}`
+                : `Reference ${reference.name}: ${reference.path} @ ${reference.headSha}${reference.dirty ? ' (uncommitted changes)' : ''}`,
+            ),
           ]
         : []),
       `Source checkout: ${run.reviewWorkspace.checkoutPath}`,
@@ -328,7 +333,7 @@ export async function materializeReviewWorkspaceTask(
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,
       `Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
       'Each line-comments entry must exactly match the corresponding issue: path=file, body=description, with the same line and severity.',
-      'Complete every checklist item, then run ./mark complete --mark-last. Do not use skip flags or write SIGNAL.json manually. Findings and unavailable comparison evidence still complete a static review: record every criterion outcome, use REQUEST_CHANGES for actionable findings or COMMENT for evidence gaps, complete the child, and finish the parent. Block only when you cannot produce a review report. Never claim unchecked evidence passed.',
+      'Complete every checklist item, then run ./mark complete --mark-last. Do not use skip flags or write SIGNAL.json manually. Findings and unavailable comparison evidence still complete a static review: record every criterion outcome, end in APPROVE or REQUEST_CHANGES, complete the child, and finish the parent. APPROVE needs no blocking findings; non-blocking nits are allowed. A check you could not run is recorded as not verified by this review and does not block APPROVE. Evidence the author owes is a finding with a concrete ask. Use COMMENT only for a draft PR or an explicitly informational request. Block only when you cannot produce a review report. Never claim unchecked evidence passed.',
     ].join('\n');
     const handoff = buildHandoffMetadata({
       attemptId: run.id,
