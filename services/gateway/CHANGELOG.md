@@ -7,6 +7,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
 - Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.
+- Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 
