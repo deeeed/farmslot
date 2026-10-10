@@ -12,11 +12,22 @@ import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
 import { readState, type Workspace, writeState } from './workspace.js';
 
-// Builds every workspace the CLI depends on, in dependency order, through the
-// clone's root `build:cli-deps` script. The list lives in the updated clone's
-// own manifests: this process still runs the pre-update code, so a hardcoded
-// package name goes stale on renames. install.sh runs the same script.
-export const CLI_DEPENDENCY_BUILD_ARGS = ['build:cli-deps'] as const;
+// Builds every workspace the CLI depends on, in dependency order. Yarn reads
+// the list from the checkout's own manifests: this process still runs the
+// pre-update code, so a hardcoded package name goes stale on renames. Not
+// --parallel: several builds rebuild protocol's dist. install.sh runs the same
+// command (update.test.ts holds the two together); it must also work on a
+// pinned older checkout, so it is not a root script.
+export const CLI_DEPENDENCY_BUILD_ARGS = [
+  'workspaces',
+  'foreach',
+  '--recursive',
+  '--from',
+  '@farmslot/cli',
+  '--topological',
+  'run',
+  'build',
+] as const;
 
 export interface UpdateProgress {
   step: (label: string, detail?: string) => void;

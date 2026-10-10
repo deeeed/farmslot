@@ -9,11 +9,8 @@ import { CLI_DEPENDENCY_BUILD_ARGS } from './update.js';
 const CLI_SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = path.resolve(CLI_SRC, '../../..');
 
-function readJson(file: string): { name?: string; scripts?: Record<string, string> } {
-  return JSON.parse(readFileSync(file, 'utf-8')) as {
-    name?: string;
-    scripts?: Record<string, string>;
-  };
+function readJson(file: string): { name?: string } {
+  return JSON.parse(readFileSync(file, 'utf-8')) as { name?: string };
 }
 
 // The release tooling's workspace enumeration (root `workspaces` globs).
@@ -33,15 +30,16 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-test('update and install.sh build through the root script, which names only the CLI', () => {
-  assert.deepEqual(CLI_DEPENDENCY_BUILD_ARGS, ['build:cli-deps']);
-  const script = readJson(path.join(REPO_ROOT, 'package.json')).scripts?.['build:cli-deps'];
-  assert.equal(
-    script,
-    'yarn workspaces foreach --recursive --from @farmslot/cli --topological run build',
-  );
+test('update and install.sh run one build command, which names only the CLI', () => {
+  const named = CLI_DEPENDENCY_BUILD_ARGS.filter((arg) => arg.startsWith('@'));
+  assert.deepEqual(named, ['@farmslot/cli']);
   assert.equal(readJson(path.join(CLI_SRC, '..', 'package.json')).name, '@farmslot/cli');
-  assert.match(readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf-8'), /yarn build:cli-deps/);
+  assert.ok(
+    readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf-8').includes(
+      `yarn ${CLI_DEPENDENCY_BUILD_ARGS.join(' ')}`,
+    ),
+    'install.sh must run the same build command as farmslot update',
+  );
 });
 
 test('every yarn workspace target in CLI source names an existing workspace', async () => {
