@@ -136,31 +136,25 @@ test('remote machine shells target the gateway URL their node dials, never a cre
     'ws://10.0.0.5:7777',
   );
   try {
-    assert.deepEqual(machineShellEnv(remote), {
-      GW_URL: 'ws://10.0.0.5:7777',
-      FARMSLOT_MACHINE: remote.machine,
-    });
+    assert.deepEqual(machineShellEnv(remote), { GW_URL: 'ws://10.0.0.5:7777' });
     assert.equal(
       withMachineEnv('cd /repo && claude', remote),
-      "export GW_URL='ws://10.0.0.5:7777' && export FARMSLOT_MACHINE='fixture-remote-node' && cd /repo && claude",
+      "export GW_URL='ws://10.0.0.5:7777' && cd /repo && claude",
     );
     // An operator-pinned pool value wins over the node's own URL.
     assert.deepEqual(machineShellEnv({ ...remote, machineEnv: { GW_URL: 'wss://pinned' } }), {
       GW_URL: 'wss://pinned',
-      FARMSLOT_MACHINE: remote.machine,
     });
     // Gateway-local slots keep the operator's CLI profile (and its credential).
-    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {
-      FARMSLOT_MACHINE: remote.machine,
-    });
+    assert.deepEqual(machineShellEnv({ machine: remote.machine, host: 'localhost' }), {});
   } finally {
     unregisterByWs(ws);
   }
-  assert.deepEqual(machineShellEnv(remote), { FARMSLOT_MACHINE: remote.machine });
+  assert.deepEqual(machineShellEnv(remote), {});
   for (const unsafe of ['ws://x; id', 'http://gw:7801', 'ws://user:secret@gw:7801']) {
     registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, unsafe);
     try {
-      assert.deepEqual(machineShellEnv(remote), { FARMSLOT_MACHINE: remote.machine });
+      assert.deepEqual(machineShellEnv(remote), {});
     } finally {
       unregisterByWs(ws);
     }
@@ -168,10 +162,7 @@ test('remote machine shells target the gateway URL their node dials, never a cre
   // A URL that parses yet carries shell syntax is exported inert.
   registerNode(remote.machine, 1, ws, undefined, undefined, undefined, undefined, "ws://gw/'$(id)");
   try {
-    assert.equal(
-      withMachineEnv('true', remote),
-      "export GW_URL='ws://gw/'\\''$(id)' && export FARMSLOT_MACHINE='fixture-remote-node' && true",
-    );
+    assert.equal(withMachineEnv('true', remote), "export GW_URL='ws://gw/'\\''$(id)' && true");
   } finally {
     unregisterByWs(ws);
   }

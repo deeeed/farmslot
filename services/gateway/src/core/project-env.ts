@@ -122,11 +122,7 @@ export function machineShellEnv(vars: {
     vars.machine && vars.host && !isLocal(vars.host, vars.machine)
       ? getNode(vars.machine)?.gatewayUrl
       : undefined;
-  return {
-    ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}),
-    ...vars.machineEnv,
-    ...(vars.machine ? { FARMSLOT_MACHINE: vars.machine } : {}),
-  };
+  return { ...(gatewayUrl ? { GW_URL: gatewayUrl } : {}), ...vars.machineEnv };
 }
 
 /** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */
@@ -146,9 +142,16 @@ export function withProjectMachineEnv(
   projectVars?: ProjectVars,
   domain = vars.domain,
 ): string {
-  return applyProjectCommandEnv(projectJson, withMachineEnv(command, vars), {
-    ...(domain ? { domain } : {}),
-    expandDomainValue: (value) =>
-      expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-  });
+  return applyProjectCommandEnv(
+    projectJson,
+    withMachineEnv(command, {
+      ...vars,
+      machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
+    }),
+    {
+      ...(domain ? { domain } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+    },
+  );
 }
