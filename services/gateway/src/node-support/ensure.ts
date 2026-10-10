@@ -140,7 +140,7 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
 }
 
 /** Where a bundle lives on a node. */
-export function nodeSupportDir(hash: string): string {
+function nodeSupportDir(hash: string): string {
   return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
 }
 
@@ -189,7 +189,9 @@ export async function ensureNodeSupportBundle(
   );
   const supportDir = resolved.stdout.trim();
   if (resolved.exitCode !== 0 || !path.posix.isAbsolute(supportDir)) {
-    throw new Error('Node support path did not resolve to an absolute directory');
+    throw new Error(
+      `Node support path did not resolve to an absolute directory (exit ${resolved.exitCode}): ${resolved.stderr}`,
+    );
   }
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 

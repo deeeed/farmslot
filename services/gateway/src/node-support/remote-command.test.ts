@@ -11,6 +11,7 @@ import {
   resetRemoteFarmCommandCache,
   resolveRemoteFarmCommand,
 } from './remote-command.js';
+import { fakeSupportHomeResult } from './support-test-fixtures.js';
 
 // A real tracked project, so the bundle paths come from a real config.
 const PROJECT = 'farmslot-farm';
@@ -33,15 +34,8 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) => {
       calls.push(`exec:${cmd.slice(0, 20)}`);
-      if (cmd.startsWith("printf '%s"))
-        return {
-          exitCode: 0,
-          stdout:
-            '/tmp/node-home/farmslot-node/support/' +
-            /support\/([a-f0-9]{64})/.exec(cmd)![1] +
-            '\n',
-          stderr: '',
-        };
+      const homeResult = fakeSupportHomeResult(cmd);
+      if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
         return { exitCode: 0, stdout: '/home/u/farmslot-node/support/.incoming/x\n', stderr: '' };
       }
@@ -226,22 +220,14 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
   const gate = new Promise<void>((resolve) => (release = resolve));
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) =>
-      cmd.startsWith("printf '%s")
+      fakeSupportHomeResult(cmd) ??
+      (cmd.includes('mktemp -d')
         ? {
             exitCode: 0,
-            stdout:
-              '/tmp/node-home/farmslot-node/support/' +
-              /support\/([a-f0-9]{64})/.exec(cmd)![1] +
-              '\n',
+            stdout: `/h/farmslot-node/support/.incoming/x${uploads.length}\n`,
             stderr: '',
           }
-        : cmd.includes('mktemp -d')
-          ? {
-              exitCode: 0,
-              stdout: `/h/farmslot-node/support/.incoming/x${uploads.length}\n`,
-              stderr: '',
-            }
-          : { exitCode: 0, stdout: '', stderr: '' },
+        : { exitCode: 0, stdout: '', stderr: '' }),
     fileExists: async (_vars, file) => manifests.has(file),
     readFile: async (_vars, file) => {
       const body = manifests.get(file) ?? [...manifests.values()].at(-1);

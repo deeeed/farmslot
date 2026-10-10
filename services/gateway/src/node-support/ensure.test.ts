@@ -10,6 +10,7 @@ import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observabil
 
 import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 import { remapRemoteFarmRefs } from './remote-command.js';
+import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixtures.js';
 
 const projectVars = {
   projectName: 'ensure-test',
@@ -42,15 +43,8 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) => {
       rec.execs.push(cmd);
-      if (cmd.startsWith("printf '%s"))
-        return {
-          exitCode: 0,
-          stdout:
-            '/tmp/node-home/farmslot-node/support/' +
-            /support\/([a-f0-9]{64})/.exec(cmd)![1] +
-            '\n',
-          stderr: '',
-        };
+      const homeResult = fakeSupportHomeResult(cmd);
+      if (homeResult) return homeResult;
       if (cmd.includes('mktemp -d')) {
         return {
           exitCode: 0,
@@ -80,7 +74,7 @@ function fakeIo(opts: { remoteManifestHash: string | null }): {
 }
 
 const kind = (cmd: string) =>
-  cmd.startsWith("printf '%s")
+  isSupportHomeCommand(cmd)
     ? 'resolve-home'
     : cmd.includes('mktemp -d')
       ? 'incoming'
@@ -178,7 +172,7 @@ test('a bundle whose files are gone is reported and never selected', async () =>
   const { io, rec } = fakeIo({ remoteManifestHash: current!.hash });
   const originalExec = io.exec;
   io.exec = async (vars, cmd) =>
-    cmd.startsWith("printf '%s")
+    isSupportHomeCommand(cmd)
       ? originalExec(vars, cmd)
       : { exitCode: 1, stdout: '', stderr: 'missing' };
   await assert.rejects(
@@ -208,7 +202,7 @@ test('a quoted project Node hook resolves from the remote home instead of the sl
   const { io } = fakeIo({ remoteManifestHash: null });
   const fakeExec = io.exec;
   io.exec = async (vars, cmd) => {
-    if (!cmd.startsWith("printf '%s")) return fakeExec(vars, cmd);
+    if (!isSupportHomeCommand(cmd)) return fakeExec(vars, cmd);
     return {
       exitCode: 0,
       stdout: execFileSync('sh', ['-c', cmd.replaceAll('${HOME}', '${TEST_NODE_HOME}')], {
