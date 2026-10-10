@@ -64,7 +64,7 @@ export function registerDoctorCommand(program: Command): void {
         const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
         const error = Object.assign(new Error('Project and recipe checks require --conformance.'), {
           code: 'CONFORMANCE_REQUIRED',
-          userAction: 'farmslot doctor <checkout> --conformance',
+          userAction: 'rerun with --conformance; checkout defaults to the current directory',
         });
         if (isMachineMode(output)) output.writeJson(errorEnvelope('doctor', error));
         else output.failure(error);
