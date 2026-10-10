@@ -5,3 +5,10 @@ clear_inherited_gateway_credentials() {
   unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
   unset GATEWAY_HOST FARMSLOT_GATEWAY_AUTH_MODE
 }
+
+# Sandbox services and their clients must never open the operator credential store.
+isolate_sandbox_home() {
+  mkdir -p "$1/home"
+  export FARMSLOT_SANDBOX_HOME="$(cd "$1/home" && pwd -P)"
+  export FARMSLOT_HOME="$FARMSLOT_SANDBOX_HOME"
+}

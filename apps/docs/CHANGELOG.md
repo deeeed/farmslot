@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document sandbox runtime-home isolation and direct client targeting.
+
 - Document read-only node prerequisites before prepare and in slot.check.
 
 - Recipe Protocol v1 reference: array indexing in templates (`[n]` or `.n`, a key on an object), and `workflow.invalid_template` for a template that does not parse.

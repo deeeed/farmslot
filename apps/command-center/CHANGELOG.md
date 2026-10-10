@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Warm sandbox starts compare stack-local launch configuration and script fingerprints before reuse; stale stacks restart instead of retaining credentials from an older launch.
+- Sandboxes use a private runtime home for gateway, node and child clients instead of the operator credential store. Warm starts compare stack-local launch configuration and script fingerprints before reuse; stale stacks restart.
 - Dev and sandbox stacks discard inherited node/gateway credentials, auth mode and bind host before loading checkout-local configuration, so an auth-free sandbox cannot reuse its parent gateway token. Physical-device LAN sandboxes need their own local-auth configuration.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

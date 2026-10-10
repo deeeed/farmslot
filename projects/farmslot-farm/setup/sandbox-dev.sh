@@ -58,13 +58,13 @@ mkdir -p "$RUNTIME_DIR"
 # Hash only this stack's files and launch inputs. Parent credentials were cleared
 # above, and credential values never leave the hash process or appear in logs.
 stack_launch_fingerprint() {
-  node - "$REPO_ROOT" "$SCRIPT_DIR" "$GATEWAY_PORT" "$VITE_PORT" "${MACHINE_NAME:-farmslot-demo}" <<'NODE'
+  node - "$REPO_ROOT" "$SCRIPT_DIR" "$GATEWAY_PORT" "$VITE_PORT" "${MACHINE_NAME:-farmslot-demo}" "$FARMSLOT_HOME" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const [root, scriptDir, gatewayPort, vitePort, machine] = process.argv.slice(2);
+const [root, scriptDir, gatewayPort, vitePort, machine, home] = process.argv.slice(2);
 const hash = crypto.createHash('sha256');
-hash.update(JSON.stringify({ gatewayPort, vitePort, machine }));
+hash.update(JSON.stringify({ gatewayPort, vitePort, machine, home }));
 for (const file of ['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env']) {
   hash.update(file + '\0');
   const full = path.join(root, file);
@@ -178,6 +178,7 @@ if is_primary_checkout; then
   VITE_PORT="$OPERATOR_VITE_PORT"
 else
   # Worktree sandboxes get isolated ports from their own .env.ports.
+  isolate_sandbox_home "$RUNTIME_DIR"
   GATEWAY_PORT="$SLOT_GATEWAY_PORT"
   VITE_PORT="${VITE_PORT:-}"
   if [[ -z "$VITE_PORT" || "$VITE_PORT" == "5174" ]]; then
