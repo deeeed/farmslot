@@ -153,9 +153,9 @@ function expandTemplateInternal(
   if (projectVars?.projectJson.reference_repos) {
     for (const [key, ref] of Object.entries(projectVars.projectJson.reference_repos)) {
       const refPath = referenceRepoPath(slotVars.repo, ref.local_name);
-      const placeholder = `${key}_repo`;
-      result = result.replaceAll(`{{${placeholder}}}`, refPath);
-      result = result.replaceAll(`{{${placeholder.toUpperCase()}}}`, refPath);
+      const placeholder = referenceRepoPlaceholder(key);
+      result = result.replaceAll(placeholder, refPath);
+      result = result.replaceAll(placeholder.toUpperCase(), refPath);
     }
   }
   if (includeProjectTemplateVars && projectVars?.projectJson.vars) {
@@ -185,6 +185,18 @@ function expandTemplateInternal(
 /** Reference repos are siblings of the slot checkout: <dirname(slot repo)>/<local_name>. */
 export function referenceRepoPath(slotRepo: string, localName: string): string {
   return path.join(path.dirname(slotRepo), localName);
+}
+
+const referenceRepoName = (key: string) => `${key}_repo`;
+
+/** The template placeholder that binds a reference repo key: {{<key>_repo}}. */
+export function referenceRepoPlaceholder(key: string): string {
+  return `{{${referenceRepoName(key)}}}`;
+}
+
+/** Reference keys named by a value's lowercase {{<key>_repo}} placeholders. */
+export function referenceRepoKeysIn(value: string): string[] {
+  return [...new Set([...value.matchAll(/{{([^{}]+)_repo}}/g)].map((match) => match[1]))];
 }
 
 export function missingMetroPortMessage(slotVars: SlotVars): string {
@@ -271,7 +283,7 @@ export function knownTemplatePlaceholders(
   ])
     addTo(nested, key);
   for (const key of Object.keys(projectVars?.projectJson.reference_repos ?? {}))
-    addTo(nested, `${key}_repo`);
+    addTo(nested, referenceRepoName(key));
 
   const known = new Set(nested);
   // Extras are substituted verbatim — same smuggling rule as resources.

@@ -9,13 +9,19 @@ import type { PoolConfig, Run } from '@farmslot/protocol';
 
 import type { ProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
-import { slotWriteFileBuffer, slotWriteFiles } from '../core/slot-io.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  slotMkdir,
+  slotWriteFileBuffer,
+  slotWriteFiles,
+} from '../core/slot-io.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
 
 import { collectReviewWorkspaceSupport } from './skills.js';
 import {
   ensureReviewWorkspaceSupport,
   REVIEW_SUPPORT_NODE_SCRIPT,
+  reviewWorkspaceSupportBindingEnvironment,
   type ReviewWorkspaceSupportDependencies,
 } from './support.js';
 
@@ -446,5 +452,114 @@ test('reference checkouts resolve beside a project slot on the execution machine
       { name: 'mobile', path: '', missing: true },
       { name: 'core', path: '', missing: true },
     ],
+  );
+});
+
+function useReferences(f: Awaited<ReturnType<typeof fixture>>) {
+  f.project.projectJson.reference_repos = {
+    mobile: { repo_url: 'https://example.com/mobile.git', local_name: 'mobile-ref' },
+  };
+  f.project.projectJson.static_review!.support!.environment = { REF_MOBILE: '{{mobile_repo}}' };
+}
+
+test('a remote execution node probes the reference through the run owner and machine', async (t) => {
+  const f = await fixture(t);
+  useReferences(f);
+  f.deps.loadPoolConfigs = async () => [
+    {
+      machine: 'remote-node',
+      host: 'remote-node.invalid',
+      sshUser: 'fixture',
+      project: 'fixture',
+      slots: [{ id: 'fixture-1', project: 'fixture', repo: '/remote/dev/fixture-1' }],
+    } as unknown as PoolConfig,
+  ];
+  // Publication bytes stay on this host; only the reference probe is under test.
+  f.deps.writeFiles = (_io, dir, files) => slotWriteFiles(ORCHESTRATOR_LOCALITY, dir, files);
+  f.deps.writeBuffer = (_io, file, data, options) =>
+    slotWriteFileBuffer(ORCHESTRATOR_LOCALITY, file, data, options);
+  f.deps.mkdir = (_io, dir) => slotMkdir(ORCHESTRATOR_LOCALITY, dir);
+  const probes: Array<{ owner?: string; machine?: string; node?: string; argv: string[] }> = [];
+  f.deps.probe = async (run, argv) => {
+    probes.push({
+      owner: run.nativeOwnerPrincipalId,
+      machine: run.reviewWorkspace?.machine,
+      node: run.reviewWorkspace?.executionNodeId,
+      argv,
+    });
+    return {
+      exitCode: 0,
+      stdout: argv[0] === 'git' && argv[3] === 'rev-parse' ? 'a'.repeat(40) : '',
+      stderr: '',
+    };
+  };
+  const run = await f.addRun('review-remote');
+  run.reviewWorkspaceTarget = { machine: 'remote-node' };
+  run.reviewWorkspace = {
+    ...run.reviewWorkspace!,
+    machine: 'remote-node',
+    executionNodeId: 'remote-node',
+  };
+  const binding = (await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps))!;
+  const checkout = '/remote/dev/mobile-ref';
+  assert.deepEqual(binding.references, [
+    { name: 'mobile', path: checkout, headSha: 'a'.repeat(40), dirty: false },
+  ]);
+  assert.deepEqual(
+    probes,
+    [
+      ['test', '-e', `${checkout}/.git`],
+      ['git', '-C', checkout, 'rev-parse', 'HEAD'],
+      ['git', '--no-optional-locks', '-C', checkout, 'status', '--porcelain'],
+    ].map((argv) => ({
+      owner: 'fixture-owner',
+      machine: 'remote-node',
+      node: 'remote-node',
+      argv,
+    })),
+  );
+});
+
+test('a reference probe that fails with stderr stops support instead of recording it missing', async (t) => {
+  const f = await fixture(t);
+  useReferences(f);
+  f.deps.loadPoolConfigs = async () => [
+    {
+      machine: 'local',
+      host: 'localhost',
+      sshUser: 'fixture',
+      project: 'fixture',
+      slots: [{ id: 'fixture-1', project: 'fixture', repo: path.join(f.root, 'slots/fixture-1') }],
+    } as unknown as PoolConfig,
+  ];
+  f.deps.probe = async () => ({ exitCode: 1, stdout: '', stderr: 'spawn error: ENOENT' });
+  const run = await f.addRun('review-probe-failure');
+  await assert.rejects(
+    ensureReviewWorkspaceSupport(run.id, () => {}, f.deps),
+    /Reference mobile checkout probe failed: spawn error: ENOENT/,
+  );
+  assert.equal(f.runs.get(run.id)?.reviewWorkspace?.support, undefined);
+});
+
+test('recovery after a reference key is removed records it missing and binds it empty', async (t) => {
+  const f = await fixture(t);
+  useReferences(f);
+  const run = await f.addRun('review-reference-removed');
+  f.onExecute((action) => {
+    if (action === 'publish') throw new Error('interrupted publication');
+  });
+  await assert.rejects(
+    ensureReviewWorkspaceSupport(run.id, () => {}, f.deps),
+    /interrupted publication/,
+  );
+  delete f.project.projectJson.reference_repos;
+  f.onExecute(undefined);
+  const recovered = (await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps))!;
+  assert.deepEqual(recovered.references, [{ name: 'mobile', path: '', missing: true }]);
+  assert.equal(recovered.environment.REF_MOBILE, '{{mobile_repo}}');
+  assert.equal(
+    reviewWorkspaceSupportBindingEnvironment(recovered, [run.reviewWorkspace!.taskPath], '').set
+      .REF_MOBILE,
+    '',
   );
 });

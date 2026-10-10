@@ -15,7 +15,12 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { loadProjectVars, type RawProjectJson, referenceRepoPath } from '../core/config.js';
+import {
+  loadProjectVars,
+  type RawProjectJson,
+  referenceRepoKeysIn,
+  referenceRepoPath,
+} from '../core/config.js';
 import { execFileArgv, isLocal } from '../core/exec.js';
 import {
   ORCHESTRATOR_LOCALITY,
@@ -109,7 +114,7 @@ export interface ReviewWorkspaceSupportDependencies {
     argv: string[],
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   /** Run a read-only probe (`test`, `git`) on the review's execution node. */
-  git: (run: Run, argv: string[]) => Promise<ExecResult>;
+  probe: (run: Run, argv: string[]) => Promise<ExecResult>;
 }
 const defaults: ReviewWorkspaceSupportDependencies = {
   getRun,
@@ -133,7 +138,7 @@ const defaults: ReviewWorkspaceSupportDependencies = {
       stderr: string;
     };
   },
-  git: (run, argv) =>
+  probe: (run, argv) =>
     run.reviewWorkspace!.executionNodeId === 'local'
       ? execFileArgv(argv, { timeout: REFERENCE_TIMEOUT_MS })
       : execNativeNodeArgv(
@@ -372,31 +377,40 @@ async function readReferences(
   referenceRepos: RawProjectJson['reference_repos'],
   deps: ReviewWorkspaceSupportDependencies,
 ): Promise<ReviewWorkspaceSupportBinding['references']> {
-  const names = Object.keys(referenceRepos ?? {}).filter((name) =>
-    Object.values(environment).some((value) => value.includes(`{{${name}_repo}}`)),
-  );
+  // Names come from the frozen environment so a recovered admission reads what it froze.
+  const names = [...new Set(Object.values(environment).flatMap(referenceRepoKeysIn))];
   if (!names.length) return undefined;
   const slot = pool.slots.find((slot) => (slot.project || pool.project) === run.project);
   const references: NonNullable<ReviewWorkspaceSupportBinding['references']> = [];
   for (const name of names) {
-    // Without a slot of this project on the machine there is no sibling checkout to derive.
-    if (!slot) {
+    const reference = referenceRepos?.[name];
+    // No slot of this project on the machine, or a key the current config no longer
+    // declares: there is no sibling checkout to derive.
+    if (!slot || !reference) {
       references.push({ name, path: '', missing: true });
       continue;
     }
-    const checkout = referenceRepoPath(slot.repo, referenceRepos![name].local_name);
-    const cloned = await deps.git(run, ['test', '-e', path.posix.join(checkout, '.git')]);
-    // Expected outcome, not a failure: the reference is not cloned on this machine.
-    if (cloned.exitCode === 1) {
+    const checkout = referenceRepoPath(slot.repo, reference.local_name);
+    const cloned = await deps.probe(run, ['test', '-e', path.posix.join(checkout, '.git')]);
+    // Expected outcome, not a failure: the reference is not cloned on this machine. Spawn
+    // errors, signals and maxBuffer also exit 1 but report stderr.
+    if (cloned.exitCode === 1 && !cloned.stderr.trim()) {
       references.push({ name, path: checkout, missing: true });
       continue;
     }
     if (cloned.exitCode !== 0)
       throw new Error(`Reference ${name} checkout probe failed: ${cloned.stderr}`);
-    const head = await deps.git(run, ['git', '-C', checkout, 'rev-parse', 'HEAD']);
+    const head = await deps.probe(run, ['git', '-C', checkout, 'rev-parse', 'HEAD']);
     if (head.exitCode !== 0)
       throw new Error(`Reference ${name} revision read failed: ${head.stderr}`);
-    const status = await deps.git(run, ['git', '-C', checkout, 'status', '--porcelain']);
+    const status = await deps.probe(run, [
+      'git',
+      '--no-optional-locks',
+      '-C',
+      checkout,
+      'status',
+      '--porcelain',
+    ]);
     if (status.exitCode !== 0)
       throw new Error(`Reference ${name} status read failed: ${status.stderr}`);
     references.push({

@@ -35,6 +35,7 @@ import {
 import { findSlotByRepo, isIgnoredPoolFile } from '@farmslot/protocol/node/slot-by-repo';
 
 import { SlotConfigError } from './error.js';
+import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
 import { farmslotRoot } from './repo-root.js';
 
 // FARMSLOT_POOL_DIR / FARMSLOT_PROJECTS_DIR are the historical script-level
@@ -962,11 +963,16 @@ export function staticReviewSupportPlaceholdersAllowed(
   value: string,
   referenceRepos: RawProjectJson['reference_repos'],
 ): boolean {
-  const allowed = ['support', ...Object.keys(referenceRepos ?? {}).map((key) => `${key}_repo`)];
-  return value
-    .split('{{')
-    .slice(1)
-    .every((rest) => allowed.some((name) => rest.startsWith(`${name}}}`)));
+  const keys = referenceRepoKeysIn(value);
+  return (
+    keys.every((key) => Object.hasOwn(referenceRepos ?? {}, key)) &&
+    !keys
+      .reduce(
+        (rest, key) => rest.replaceAll(referenceRepoPlaceholder(key), ''),
+        value.replaceAll('{{support}}', ''),
+      )
+      .includes('{{')
+  );
 }
 
 export function validateStaticReviewSupport(

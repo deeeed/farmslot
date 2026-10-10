@@ -12,7 +12,11 @@ import type {
   ReviewWorkspaceSupportBinding,
   ReviewWorkspaceSupportConfig,
 } from '@farmslot/protocol';
-import { type RawProjectJson, staticReviewSupportPlaceholdersAllowed } from '@farmslot/slot-config';
+import {
+  type RawProjectJson,
+  referenceRepoPlaceholder,
+  staticReviewSupportPlaceholdersAllowed,
+} from '@farmslot/slot-config';
 export type {
   ReviewWorkspaceSupportConfig,
   ReviewWorkspaceSupportEntry,
@@ -310,7 +314,10 @@ export function bindReviewWorkspaceSupportValue(
 ): string {
   let bound = value.replaceAll('{{support}}', support.path);
   for (const reference of support.references ?? [])
-    bound = bound.replaceAll(`{{${reference.name}_repo}}`, reference.missing ? '' : reference.path);
+    bound = bound.replaceAll(
+      referenceRepoPlaceholder(reference.name),
+      reference.missing ? '' : reference.path,
+    );
   return bound;
 }
 

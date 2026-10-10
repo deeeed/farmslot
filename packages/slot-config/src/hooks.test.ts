@@ -10,6 +10,8 @@ import {
   expandTemplate,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
+  referenceRepoKeysIn,
+  referenceRepoPlaceholder,
   resolveEffectiveDomain,
 } from './hooks.js';
 
@@ -805,5 +807,15 @@ test('a device placeholder the slot does not configure still resolves from the l
   assert.equal(
     expandTemplate('{{adb_serial}}', slotVars, undefined, { adb_serial: 'emulator-5554' }),
     'emulator-5554',
+  );
+});
+
+test('reference repo placeholders name keys only in their exact lowercase form', () => {
+  assert.equal(referenceRepoPlaceholder('perps_library'), '{{perps_library_repo}}');
+  assert.deepEqual(
+    referenceRepoKeysIn(
+      '{{mobile_repo}}:{{perps_library_repo}}:{{mobile_repo}}:{{CORE_REPO}}:{{support}}:{{repo}}',
+    ),
+    ['mobile', 'perps_library'],
   );
 });
