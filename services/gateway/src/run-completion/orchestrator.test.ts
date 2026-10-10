@@ -406,6 +406,55 @@ test('sanitizePRBody keeps AC table rows and unlinks task-relative links', () =>
   assert.deepEqual(localPrBodyPathResidues(sanitized), []);
 });
 
+test('sanitizePRBody drops bare evidence filenames left by relative links', () => {
+  const sanitized = sanitizePRBody(
+    [
+      '**Video**',
+      '- After: [after.mp4](artifacts/after.mp4)',
+      'See after.png in the notes.',
+      'inline `evidence-ac1.png` reference',
+      'double ``after.png`` example',
+      '~~~text',
+      'before.png',
+      '~~~',
+      '[after.mp4](https://cdn.example/after.mp4)',
+      '',
+      '```',
+      'after.mp4',
+      '```',
+      'Kept.',
+    ].join('\n'),
+  );
+  assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+  assert.match(sanitized, /inline `evidence-ac1\.png` reference/);
+  assert.match(sanitized, /double ``after\.png`` example/);
+  assert.match(sanitized, /~~~text\nbefore\.png\n~~~/);
+  assert.match(sanitized, /\[after\.mp4\]\(https:\/\/cdn\.example\/after\.mp4\)/);
+  assert.match(sanitized, /```\nafter\.mp4\n```/);
+  assert.doesNotMatch(sanitized, /artifacts\/after\.mp4/);
+  assert.doesNotMatch(sanitized, /^- After:.*after\.mp4/m);
+  assert.doesNotMatch(sanitized, /See after\.png/);
+  assert.match(sanitized, /^Kept\.$/m);
+});
+
+test('sanitizePRBody preserves compact table columns around relative evidence labels', () => {
+  for (const [body, expected] of [
+    [
+      '| AC-1 | Drawer opens | [before.png](artifacts/before.png)|[after.png](artifacts/after.png) |',
+      '| AC-1 | Drawer opens | | |',
+    ],
+    [
+      '|AC-1|Drawer opens|[before.png](before.png)|[after.png](after.png)|',
+      '|AC-1|Drawer opens|||',
+    ],
+  ]) {
+    const sanitized = sanitizePRBody(body);
+    assert.equal(sanitized, expected);
+    assert.equal(sanitized.split('|').length, body.split('|').length);
+    assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+  }
+});
+
 test('sanitizePRBody drops local images from generated captions instead of renaming their src', () => {
   const row =
     '<tr><td align="center"><strong>01 Drawer Open</strong><br/><img src="artifacts/recipe-run/screenshots/recipe/01-drawer-open.png" alt="01 Drawer Open" width="320" /><br/><sub>note</sub></td></tr>';

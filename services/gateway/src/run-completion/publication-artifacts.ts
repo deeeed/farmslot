@@ -398,15 +398,20 @@ export function assertSelectedEvidencePublished(
 
 // ─── PR body post-processing (sanitize + author checklist) ───
 
+const BARE_EVIDENCE_FILENAME_PATTERN =
+  /(^|[\s|(='"])(?:\.\/)?(?:before|after|evidence)[^/\s|)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi;
+const CODE_BLOCK_PATTERN = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+const INLINE_CODE_SPAN_PATTERN = /``[^`\n]+``|`[^`\n]+`/g;
+
 const LOCAL_PR_BODY_PATH_PATTERNS: RegExp[] = [
   /file:\/\/\/[^\s)>'"]+/gi,
   /(^|[\s(='"])`?(?:\/Users|\/home|\/tmp)\/[^\s)>'"`]+/g,
   /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`]+/gi,
-  /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi,
+  BARE_EVIDENCE_FILENAME_PATTERN,
 ];
 
 function stripCodeBlocks(body: string): string {
-  return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
+  return body.replace(CODE_BLOCK_PATTERN, '');
 }
 
 const REMOTE_LINK_PATTERNS = [
@@ -472,7 +477,7 @@ const MEDIA_RESIDUE_RE = /\.(?:png|jpe?g|gif|mp4|mov|webm)$/i;
 
 function extractInlineCodeSpans(body: string): { prose: string; spans: string } {
   const collected: string[] = [];
-  const prose = body.replace(/``[^`\n]+``|`[^`\n]+`/g, (span) => {
+  const prose = body.replace(INLINE_CODE_SPAN_PATTERN, (span) => {
     collected.push(span.replace(/^`+|`+$/g, ''));
     return ' ';
   });
@@ -609,7 +614,29 @@ export function sanitizePRBody(body: string): string {
   );
   // Collapse multiple blank lines left by stripping
   result = result.replace(/\n{3,}/g, '\n\n');
+  // A relative link keeps its label, so `[after.mp4](artifacts/after.mp4)` becomes
+  // the bare name publication rejects. Drop those names in prose. Code spans and
+  // hosted links (still tokens here) stay.
+  result = stripBareEvidenceFilenamesOutsideCode(result);
   return protectedLinks.restore(result);
+}
+
+function stripBareEvidenceNames(prose: string): string {
+  return prose.replace(BARE_EVIDENCE_FILENAME_PATTERN, '$1');
+}
+
+function stripBareEvidenceFilenamesOutsideCode(body: string): string {
+  const code = new RegExp(`${CODE_BLOCK_PATTERN.source}|${INLINE_CODE_SPAN_PATTERN.source}`, 'g');
+  let out = '';
+  let last = 0;
+  for (const match of body.matchAll(code)) {
+    const index = match.index ?? 0;
+    out += stripBareEvidenceNames(body.slice(last, index));
+    out += match[0];
+    last = index + match[0].length;
+  }
+  out += stripBareEvidenceNames(body.slice(last));
+  return out;
 }
 
 function prefixPromotedEvidenceManifestPath(
