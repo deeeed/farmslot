@@ -262,6 +262,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/live-recipe/context.test.ts', //               writes fixtures into the repo pool/
   'src/methods/config.test.ts', //                    real dirs under repo projects/
   'src/methods/filesystem.test.ts', //                writes fixtures into the repo pool/
+  'src/methods/run/archive-blocked-slot.test.ts', //  writes fleet state during archive fixtures
   'src/methods/run/replay-step.test.ts', //           rewrites the root .farm-status.json
   'src/methods/slot/release.test.ts', //              rewrites the root .farm-status.json
   'src/methods/terminal-attachment-target.test.ts', // writes fixtures into the repo pool/
@@ -269,6 +270,8 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
   'src/security/principal-core.test.ts', //           fixed credential-store fixtures
+  'src/tasks/writer-golden.test.ts', //               fixed worker template fixtures
+  'src/tasks/writer-split.test.ts', //                fixed worker template fixtures
   'src/tasks/writer.test.ts', //                      fixed-name file in templates/worker/
 ];
 
@@ -313,6 +316,22 @@ const SHARED_STATE_READ_ONLY = {
     'writes under the real projectsDir but only via mkdtempSync, so every fixture path is unique ' +
     'per call and cannot collide with another lane; it must move to the serial lane if it ever ' +
     'writes a fixed name there',
+  'src/methods/run/blocked-worker-resume.test.ts':
+    'writes only the isolated per-file fleet status supplied by the test runner',
+  'src/node-support/remote-command.test.ts': 'uses process-unique project fixtures with teardown',
+  'src/pr-rules/automatic-qa.test.ts':
+    'redirects root, pool, projects and status to its own mkdtemp fixture',
+  'src/pr-rules/qa-workflow-defaults.test.ts':
+    'redirects root, pool, projects and status to its own mkdtemp fixture',
+  'src/pr-rules/source-review.test.ts':
+    'redirects root, pool, projects and status to its own mkdtemp fixture',
+  'src/review-workspaces/direct-defaults.test.ts':
+    'redirects root, pool, projects and status to its own mkdtemp fixture',
+  'src/run-completion/publish-body-race.test.ts':
+    'uses a process-unique project fixture with teardown',
+  'src/self-review/reviewed-inputs.test.ts':
+    'uses process-unique pool and task fixtures with teardown',
+  'src/self-review/templates.test.ts': 'uses process-unique project fixtures with teardown',
 };
 
 test('each executed test receives an isolated fleet status file', () => {

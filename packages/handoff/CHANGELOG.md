@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Fix the quality check for closeout fixtures with intentionally ignored task metadata fields.
+
 ## 0.3.1 - 2026-07-24
 
 - Expose the Handoff executable through the supported `@farmslot/handoff/cli` subpath.

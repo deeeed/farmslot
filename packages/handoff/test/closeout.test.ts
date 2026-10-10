@@ -91,7 +91,7 @@ function scenario(
       2,
     )}\n`,
   );
-  const metadata: CloseoutMetadata = {
+  const metadata: CloseoutMetadata & Record<string, unknown> = {
     schemaVersion: 1,
     attemptId: 'attempt-1',
     surface: 'skill',
