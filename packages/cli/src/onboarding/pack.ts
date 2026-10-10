@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+import { validatePackPortability } from '@farmslot/protocol/node/pack-portability';
+
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */
   dir: string;
@@ -123,7 +125,7 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       errors: [`pack.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`],
     };
   }
-  const errors = validatePackJson(parsed);
+  const errors = [...validatePackJson(parsed), ...validatePackPortability(packDir)];
   if (errors.length > 0) return { pack: null, errors };
   const pack = parsed as PackJson;
   for (const proj of pack.projects) {

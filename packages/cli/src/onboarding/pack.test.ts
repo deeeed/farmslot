@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -105,4 +105,15 @@ test('expandPackVars substitutes {{workspace}}', () => {
     expandPackVars('{{workspace}}/repos/src and {{workspace}}/runs', { workspace: '/w' }),
     '/w/repos/src and /w/runs',
   );
+});
+
+test('project add pack admission rejects a private template before registration', (t) => {
+  const root = writePackDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const templates = join(root, 'projects/example-app-farm/templates');
+  mkdirSync(templates);
+  writeFileSync(join(templates, 'task.md'), 'Validate task\n~/xreview/private-helper\n');
+  const result = validatePackDir(root);
+  assert.equal(result.pack, null);
+  assert.match(result.errors[0], /^projects\/example-app-farm\/templates\/task.md:2:.*pool\/slot/);
 });

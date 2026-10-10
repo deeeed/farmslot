@@ -13,6 +13,8 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import { validatePackPortability } from '@farmslot/protocol/node/pack-portability';
+
 import { execOnSlot } from '../core/exec.js';
 import {
   farmslotRoot,
@@ -110,6 +112,14 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
 
 /** Read and hash the bundle's files from this gateway's tree. */
 export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
+  const projects = new Set(
+    supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
+  );
+  const portabilityErrors = [...projects].flatMap((name) =>
+    validatePackPortability(path.join(farmslotRoot, 'projects', name), `projects/${name}`),
+  );
+  if (portabilityErrors.length)
+    throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot);
   const files: NodeSupportFile[] = (
     await Promise.all(
