@@ -212,7 +212,8 @@ export function providerSourceSnapshot(
   module: string,
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
-  const source = inputSourceSnapshot(root, excludedRoots);
+  const exclusions = inputSourceExclusions(root, excludedRoots);
+  const source = sourceSnapshot(root, undefined, exclusions);
   const fullDirectory = source.head === null || gitContext(root)?.pathspec !== '.';
   const topDirectory =
     path.relative(path.resolve(root), path.resolve(module)).split(path.sep)[0] ?? '';
@@ -220,7 +221,7 @@ export function providerSourceSnapshot(
     fullDirectory &&
     isPathWithin(root, module) &&
     !DIRECTORY_IGNORED_ROOTS.has(topDirectory) &&
-    !excludedRoots.some((excluded) => isPathWithin(excluded, module))
+    !exclusions.some((excluded) => isPathWithin(excluded, module))
   ) {
     // Nested/installed package snapshots already hash delivery bytes, including ignored builds.
     return source;
@@ -249,8 +250,11 @@ export function inputSourceSnapshot(
   root: string,
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
-  const exclusions = excludedRoots.filter((excluded) => !isPathWithin(excluded, root));
-  return sourceSnapshot(root, undefined, exclusions);
+  return sourceSnapshot(root, undefined, inputSourceExclusions(root, excludedRoots));
+}
+
+function inputSourceExclusions(root: string, excludedRoots: string[]): string[] {
+  return excludedRoots.filter((excluded) => !isPathWithin(excluded, root));
 }
 
 export function sourceSnapshot(

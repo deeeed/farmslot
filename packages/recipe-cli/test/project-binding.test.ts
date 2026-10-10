@@ -10,7 +10,11 @@ import type { ProjectConfig } from '@farmslot/protocol';
 
 import { configureHarnessAdapters, harnessAdapters } from '../src/harness/adapters.js';
 import { loadProjectProvider, resolveProjectContext } from '../src/harness/context.js';
-import { providerSourceSnapshot, sourceSnapshot } from '../src/harness/execution-provenance.js';
+import {
+  inputSourceSnapshot,
+  providerSourceSnapshot,
+  sourceSnapshot,
+} from '../src/harness/execution-provenance.js';
 import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 
 const roots: string[] = [];
@@ -734,4 +738,9 @@ test('nested SDK snapshots retain ignored delivery bytes without duplicate hashi
   assert.equal(before.head, after.head);
   assert.equal(before.status, after.status);
   assert.notEqual(before.sourceFingerprint, after.sourceFingerprint);
+  assert.equal(after.sourceFingerprint, inputSourceSnapshot(sdk).sourceFingerprint);
+  assert.equal(
+    providerSourceSnapshot(sdk, module, [repository]).sourceFingerprint,
+    after.sourceFingerprint,
+  );
 });

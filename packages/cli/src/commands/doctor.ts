@@ -57,9 +57,12 @@ export function registerDoctorCommand(program: Command): void {
         await renderProjectConformance(checkout, cmd);
         return;
       }
-      if (checkout !== undefined) {
+      const conformanceOptions = Object.keys(cmd.opts()).some(
+        (name) => cmd.getOptionValueSource(name) === 'cli',
+      );
+      if (checkout !== undefined || conformanceOptions) {
         const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-        const error = Object.assign(new Error('A checkout requires --conformance.'), {
+        const error = Object.assign(new Error('Project and recipe checks require --conformance.'), {
           code: 'CONFORMANCE_REQUIRED',
           userAction: 'farmslot doctor <checkout> --conformance',
         });

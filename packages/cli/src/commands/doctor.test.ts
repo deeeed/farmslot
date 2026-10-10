@@ -150,6 +150,7 @@ async function run(
   root: string,
   flags: string[],
   overrides: Record<string, string> = {},
+  argv?: string[],
 ) {
   const previousEnv = process.env;
   const previousExitCode = process.exitCode;
@@ -162,7 +163,7 @@ async function run(
   try {
     const program = new Command().name('farmslot').option('--json');
     registerDoctorCommand(program);
-    await program.parseAsync(['--json', 'doctor', root, '--conformance', ...flags], {
+    await program.parseAsync(argv ?? ['--json', 'doctor', root, '--conformance', ...flags], {
       from: 'user',
     });
     return { status: Number(process.exitCode ?? 0), envelope: JSON.parse(output) };
@@ -178,6 +179,21 @@ test('public doctor refuses discovered code before import', async (t) => {
   const result = runProcess(root, []);
   assert.equal(result.status, 1);
   assert.equal(result.envelope.error.code, 'PROVIDER_UNAUTHORIZED');
+  assert.equal(fs.existsSync(`${root}.imported`), false);
+});
+
+test('conformance options without the switch refuse instead of running installation checks', async (t) => {
+  const { root } = fixture(t);
+  const result = await run(t, root, [], {}, [
+    '--json',
+    'doctor',
+    '--project',
+    'example',
+    '--recipe',
+    'smoke',
+  ]);
+  assert.equal(result.status, 1);
+  assert.equal(result.envelope.error.code, 'CONFORMANCE_REQUIRED');
   assert.equal(fs.existsSync(`${root}.imported`), false);
 });
 
