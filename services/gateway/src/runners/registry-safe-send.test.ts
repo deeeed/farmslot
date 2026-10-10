@@ -55,10 +55,12 @@ let failedPromptSendExitCode = 85;
 let foregroundCommand = 'claude';
 let foregroundRunnerPresent = true;
 let exitAfterLiteralSend = false;
+const mutationRetryOptions: Array<boolean | undefined> = [];
 beforeEach(() => {
   foregroundCommand = 'claude';
   foregroundRunnerPresent = true;
   exitAfterLiteralSend = false;
+  mutationRetryOptions.length = 0;
 });
 
 mock.module('./claude-observability.js', {
@@ -184,7 +186,7 @@ mock.module('../core/exec.js', {
     // Reached transitively via methods/git.ts; kept consistent with execLocal above.
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
-    execOnSlot: async (_slotVars: SlotVars, cmd: string) => {
+    execOnSlot: async (_slotVars: SlotVars, cmd: string, options?: { noRetry?: boolean }) => {
       if (cmd.includes('#{pane_current_command}')) {
         callOrder.push('input:foreground');
         return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
@@ -216,6 +218,7 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: '1 rev-codex\n2 self-review\n3 dev\n', stderr: '' };
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
+        mutationRetryOptions.push(options?.noRetry);
         callOrder.push('tmux:send');
         if (failedPromptSends > 0) {
           failedPromptSends -= 1;
@@ -500,6 +503,7 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
   );
 
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.deepEqual(mutationRetryOptions, [true, true]);
   assert.equal(mutationStarts, 2);
   assert.ok(callOrder.indexOf('mutation:start') < callOrder.indexOf('tmux:send-literal'));
   assert.equal(
@@ -2096,5 +2100,6 @@ test('post-launch retries recheck the foreground when the runner exits after the
   );
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
   assert.ok(callOrder.filter((entry) => entry === 'input:foreground').length >= 2);
+  assert.deepEqual(mutationRetryOptions, [true]);
   paneTextAfterLiteralSend = null;
 });

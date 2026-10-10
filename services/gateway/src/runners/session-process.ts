@@ -1576,7 +1576,7 @@ function buildFindRunnerDescendantPidCommandWithRoot(
     `root=${quotedRoot}`,
     `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
     'export FARMSLOT_RUNNER_PATTERN',
-    `snapshot=$(ps -axo pid=,ppid=,state=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
     `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
     `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
   ].join('\n');

@@ -2475,8 +2475,9 @@ export async function execRunnerInput(
   target: string,
   runner: string,
   command: (paneId: string) => string,
+  exec: typeof execOnSlot = execOnSlot,
 ): Promise<ExecResult> {
-  const pane = await execOnSlot(
+  const pane = await exec(
     vars,
     tmuxShellSnippet(
       `display-message -p -t ${shellQuote(target)} '#{pane_id}|#{pane_pid}|#{pane_current_command}'`,
@@ -2485,17 +2486,25 @@ export async function execRunnerInput(
   const [paneId, panePid, foreground] = pane.stdout.trim().split('|');
   if (pane.exitCode !== 0 || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''))
     throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
-  const { findRunnerDescendantPid, isShellProcessCommand } = await import('./session-process.js');
+  const { probeRunnerDescendantPid, isShellProcessCommand } = await import('./session-process.js');
   if (!foreground || isShellProcessCommand(foreground))
     throw new Error(
       `Runner input refused: ${target} is a shell or has no foreground process; no input was sent`,
     );
-  const live = await findRunnerDescendantPid(vars, panePid!, runner, { foregroundOnly: true });
-  if (!live)
+  const probe = await probeRunnerDescendantPid(
+    vars,
+    panePid!,
+    runner,
+    { foregroundOnly: true },
+    { exec },
+  );
+  if (probe.state !== 'present')
     throw new Error(
       `Runner input refused: no live foreground ${runner} in ${target}; no input was sent`,
     );
-  return execOnSlot(vars, command(paneId!));
+  // A transport resend could reach a shell after the checked runner exited.
+  // Only the caller may retry, by entering this guard again.
+  return exec(vars, command(paneId!), { noRetry: true });
 }
 
 /** Dispatch launch-blocker probes read freely; their keystrokes use the same live input guard. */

@@ -5,7 +5,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Release protects non-terminal slot owners and rechecks the claim before teardown. Runner input verifies a live foreground process before every send, so an exited runner cannot leave task text executing in its shell.
-
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 

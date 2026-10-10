@@ -75,6 +75,7 @@ import {
   assertSupportedRunnerSpelling,
   captureRunnerPromptAcceptanceBaseline,
   detectRunnerLaunchBlocker,
+  execRunnerInput,
   normalizeRunner,
   PromptDeliveryUncertainError,
   runnerDefaultModel,
@@ -496,9 +497,13 @@ export async function resolveRunnerLaunchBlockers(
           blocker.autoAction === 'codex-skip-update'
             ? `${shellQuote(key)} ${shellQuote('Enter')}`
             : shellQuote(key);
-        const result = await exec(
+        const result = await execRunnerInput(
           vars,
-          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${keySequence} 2>/dev/null`),
+          target,
+          runner,
+          (paneId) =>
+            tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${keySequence} 2>/dev/null`),
+          exec,
         );
         if (result.exitCode !== 0) {
           throw new Error(

@@ -20,7 +20,9 @@ const { buildFindRunnerDescendantPidCommand } = await import('./session-process.
 function probe(table: string, foregroundOnly: boolean): string {
   writeFileSync(
     path.join(bin, 'ps'),
-    '#!/usr/bin/env node\nprocess.stdout.write(' + JSON.stringify(table) + ');\n',
+    '#!/usr/bin/env node\nif (!process.argv.includes("pid=,ppid=,stat=,command=")) process.exit(2);\nprocess.stdout.write(' +
+      JSON.stringify(table) +
+      ');\n',
     { mode: 0o755 },
   );
   return execFileSync(

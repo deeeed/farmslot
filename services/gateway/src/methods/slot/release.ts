@@ -995,6 +995,7 @@ export async function killAgentInSession(
       }),
       {
         timeout: TMUX_CMD_TIMEOUT,
+        noRetry: true,
       },
     );
     await new Promise((r) => setTimeout(r, 2000));
@@ -1010,13 +1011,14 @@ export async function killAgentInSession(
       await options.assertClaim?.();
       await execOnSlot(vars, `kill -TERM ${shellQuote(agentPid)} 2>/dev/null`, {
         timeout: TMUX_CMD_TIMEOUT,
+        noRetry: true,
       });
       await new Promise((r) => setTimeout(r, 1000));
       await options.assertClaim?.();
       await execOnSlot(
         vars,
         `kill -0 ${shellQuote(agentPid)} 2>/dev/null && kill -KILL ${shellQuote(agentPid)} 2>/dev/null`,
-        { timeout: TMUX_CMD_TIMEOUT },
+        { timeout: TMUX_CMD_TIMEOUT, noRetry: true },
       );
     }
   }
@@ -1033,18 +1035,20 @@ export async function killAgentInSession(
     await options.assertClaim?.();
     await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} C-c 2>/dev/null`), {
       timeout: TMUX_CMD_TIMEOUT,
+      noRetry: true,
     });
     await new Promise((r) => setTimeout(r, 300));
     await options.assertClaim?.();
     await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} C-c 2>/dev/null`), {
       timeout: TMUX_CMD_TIMEOUT,
+      noRetry: true,
     });
     await new Promise((r) => setTimeout(r, 300));
     await options.assertClaim?.();
     await execOnSlot(
       vars,
       tmuxSendTextCommand(target, `cd ${vars.remoteRepo}`, { enter: true, suffix: '2>/dev/null' }),
-      { timeout: TMUX_CMD_TIMEOUT },
+      { timeout: TMUX_CMD_TIMEOUT, noRetry: true },
     );
   } else {
     await options.assertClaim?.();
@@ -1053,7 +1057,7 @@ export async function killAgentInSession(
       tmuxShellSnippet(
         `respawn-pane -k -t ${shellQuote(target)} ${shellQuote(buildDispatchRoleShellCommand(vars.remoteRepo))} 2>/dev/null`,
       ),
-      { timeout: TMUX_CMD_TIMEOUT },
+      { timeout: TMUX_CMD_TIMEOUT, noRetry: true },
     );
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -1135,6 +1139,7 @@ export async function killAllAgentWindows(
       await options?.assertClaim?.();
       const killed = await execOnSlot(vars, tmuxShellSnippet(command), {
         timeout: TMUX_CMD_TIMEOUT,
+        noRetry: true,
       });
       if (killed.exitCode !== 0) {
         throw new Error(
