@@ -145,7 +145,7 @@ test('sandbox dev clears inherited credentials before delegating to an older slo
   writeFileSync(path.join(bin, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(
     path.join(bin, 'curl'),
-    '#!/usr/bin/env node\nconst fs=require("node:fs");if(!fs.existsSync(process.env.FARMSLOT_RUNTIME_DIR+"/sandbox-dev.pid"))process.exit(1);const start=Date.now();while(!fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE)&&Date.now()-start<500){};process.exit(fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE)?0:1);\n',
+    '#!/usr/bin/env node\nconst fs=require("node:fs");if(!fs.existsSync(process.env.FARMSLOT_RUNTIME_DIR+"/sandbox-dev.pid"))process.exit(1);const deadline=Date.now()+1500;function poll(){if(fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE))process.exit(0);if(Date.now()>=deadline)process.exit(1);setTimeout(poll,10);}poll();\n',
     { mode: 0o755 },
   );
   execFileSync(

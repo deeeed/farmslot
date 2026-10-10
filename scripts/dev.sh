@@ -113,7 +113,7 @@ echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"
 echo "[dev] Node:    $GATEWAY_URL (machine: $(hostname -s))"
 if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
-  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing will fail until GATEWAY_HOST=0.0.0.0"
+  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing needs GATEWAY_HOST=0.0.0.0 in this checkout's .env.ports or .env.local-auth"
 fi
 if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]; then
   echo "[dev] Gateway auth: token"

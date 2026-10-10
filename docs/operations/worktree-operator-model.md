@@ -95,6 +95,7 @@ farmslot runs export <candidateRunId> --as-package /tmp/candidate.result-package
 
 Real production history stays on main unless you explicitly import with `--keep-ids --force`.
 
-Dev stacks load auth from their own `.env.local-auth` or `.env`. Inherited
+Dev gateway/node stacks load auth from their own `.env.local-auth` or `.env`.
+The Companion wrapper reads `.env.local-auth`. Inherited
 node/gateway credentials, auth mode and bind host are cleared before checkout
 configuration is loaded; shell-exported credentials do not configure a new stack.
