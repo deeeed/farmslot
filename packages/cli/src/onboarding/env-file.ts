@@ -7,13 +7,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Checkout env files the CLI reads, in order. `.env.ports` is the primary dev-config file. */
 const checkoutGatewayUrls = new WeakMap<NodeJS.ProcessEnv, string>();
 
 export function isCheckoutGatewayUrl(env: NodeJS.ProcessEnv, url: string): boolean {
   return checkoutGatewayUrls.get(env) === url;
 }
 
+/** Checkout env files the CLI reads, in order. `.env.ports` is the primary dev-config file. */
 export const CHECKOUT_ENV_FILES = ['.env.ports', '.env'] as const;
 
 /** Parse a minimal `KEY=VALUE`-per-line env file: full-line `#` comments only (no inline
@@ -41,10 +41,8 @@ export function parseEnvFile(text: string): Record<string, string> {
   return out;
 }
 
-/**
- * Gateway secrets stay in their files. The CLI's credential discovery reads them there for
- * loopback and default targets only; exporting them here would turn a file secret into an
- * explicit env credential sent to any GW_URL, including a remote gateway it was never for.
+/** File secrets stay available for explicit raw/default and local sandbox discovery.
+ * They are not exported as shell credentials that could reach a different gateway.
  */
 const FILE_ONLY_KEYS = new Set(['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD']);
 

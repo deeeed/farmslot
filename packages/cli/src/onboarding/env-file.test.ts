@@ -137,11 +137,10 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
 
     // Loopback targets still discover the same file through the cwd chain.
     process.chdir(root);
-    const local = resolveGatewayTarget(
-      { url: 'ws://localhost:7801' },
-      { ...fileEnv, GW_URL: 'ws://localhost:7801' },
-      { gateways: {} },
-    );
+    writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=7801\n');
+    const sandboxEnv: NodeJS.ProcessEnv = {};
+    loadCheckoutEnv(root, sandboxEnv);
+    const local = resolveGatewayTarget({}, sandboxEnv, { gateways: {} });
     const client = new GatewayClient({
       url: local.url,
       timeout: 1000,
