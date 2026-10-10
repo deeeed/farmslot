@@ -261,6 +261,7 @@ for (const [name, actual, expected] of [
       ciWatchPoke: Methods.RUN_CI_WATCH_POKE,
       refreshReviewGate: Methods.RUN_REFRESH_REVIEW_GATE,
       refreshPublishPackage: Methods.RUN_REFRESH_PUBLISH_PACKAGE,
+      refreshPublishedEvidence: Methods.RUN_REFRESH_PUBLISHED_EVIDENCE,
       refreshMirror: Methods.RUN_REFRESH_MIRROR,
       rehydratePrNumber: Methods.RUN_REHYDRATE_PR_NUMBER,
       interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
