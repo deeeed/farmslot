@@ -51,7 +51,7 @@ function fixture(t, auth = '') {
   const capture = path.join(root, 'capture.json');
   writeFileSync(
     path.join(bin, 'yarn'),
-    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
+    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL","GATEWAY_HOST","FARMSLOT_GATEWAY_AUTH_MODE"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
     { mode: 0o755 },
   );
   const env = {
@@ -60,6 +60,8 @@ function fixture(t, auth = '') {
     GATEWAY_PORT: '0',
     VITE_PORT: '0',
     GATEWAY_URL: 'ws://parent.example:7801',
+    GATEWAY_HOST: '0.0.0.0',
+    FARMSLOT_GATEWAY_AUTH_MODE: 'token',
     FARMSLOT_NODE_TOKEN: 'parent-node',
     FARMSLOT_GATEWAY_TOKEN: 'parent-gateway',
     FARMSLOT_GATEWAY_PASSWORD: 'parent-password',
@@ -83,6 +85,8 @@ test('dev stack drops inherited parent credentials before co-launching its node'
   const child = f.run();
   for (const key of keys) assert.equal(child[key], null, key);
   assert.equal(child.GATEWAY_URL, 'ws://127.0.0.1:0');
+  assert.equal(child.GATEWAY_HOST, '127.0.0.1');
+  assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, null);
 });
 
 test('checkout auth replaces parent node and gateway credentials', (t) => {
@@ -160,4 +164,17 @@ test('sandbox dev clears inherited credentials before delegating to an older slo
   );
   const child = JSON.parse(readFileSync(f.capture, 'utf8'));
   for (const key of keys) assert.equal(child[key], null, key);
+});
+
+test('stack-local ports restore their own bind host and auth mode after clearing parent policy', (t) => {
+  const f = fixture(t, 'FARMSLOT_GATEWAY_PASSWORD=stack-password\n');
+  writeFileSync(
+    path.join(f.root, '.env.ports'),
+    'GATEWAY_PORT=0\nVITE_PORT=0\nGATEWAY_HOST=localhost\nFARMSLOT_GATEWAY_AUTH_MODE=password\n',
+  );
+  const child = f.run();
+  assert.equal(child.GATEWAY_HOST, 'localhost');
+  assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, 'password');
+  assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, 'stack-password');
+  assert.equal(child.FARMSLOT_NODE_TOKEN, null);
 });

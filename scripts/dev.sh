@@ -46,17 +46,17 @@ load_simple_env_file() {
 # Load port overrides. Caller-set GATEWAY_PORT/VITE_PORT (sandbox prepare) win over file values.
 _gateway_override="${GATEWAY_PORT:-}"
 _vite_override="${VITE_PORT:-}"
+# Stack ports select an independent auth and bind scope. Clear inherited
+# credentials, auth mode and bind host before this checkout loads its files.
+source "$FARMSLOT_ROOT/scripts/lib/stack-credentials.sh"
+clear_inherited_gateway_credentials
+
 if [ -f "$PORT_ENV_FILE" ]; then
   load_simple_env_file "$PORT_ENV_FILE"
   echo "[dev] Loaded ports from $PORT_ENV_FILE"
 fi
 if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; fi
 if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
-
-# Selecting this stack's ports also selects its credential scope. Parent node
-# credentials must not authenticate the co-launched node to a different gateway.
-source "$FARMSLOT_ROOT/scripts/lib/stack-credentials.sh"
-clear_inherited_gateway_credentials
 
 # Load optional local-only auth secrets. This file is gitignored and should contain
 # FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD when exposing the gateway remotely.

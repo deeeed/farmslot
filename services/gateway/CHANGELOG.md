@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Dev and sandbox stacks discard inherited node and gateway credentials before loading checkout-local auth, so an auth-free sandbox cannot reuse its parent gateway token.
+- Dev and sandbox stacks discard inherited node/gateway credentials, auth mode and bind host before loading checkout-local configuration, so an auth-free sandbox cannot reuse its parent gateway token.
 
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
