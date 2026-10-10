@@ -60,11 +60,13 @@ export function emptyCredentialStore(): CredentialStore {
 
 export function loadCredentialStore(path = credentialStorePath()): CredentialStore {
   if (!existsSync(path)) return emptyCredentialStore();
+  const raw = readFileSync(path, 'utf8');
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
-  } catch (error) {
-    throw new Error(`Unable to load credential store ${path}: ${(error as Error).message}`);
+    parsed = JSON.parse(raw);
+  } catch {
+    // A JSON.parse message quotes the input around the error: never echo it.
+    throw new Error(`Unable to load credential store ${path}: not valid JSON`);
   }
   validateCredentialStore(parsed, path);
   return parsed;

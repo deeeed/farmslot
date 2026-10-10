@@ -783,7 +783,11 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const configPath = path.join(projectsDir, dir, 'project.json');
         const content = await readFile(configPath, 'utf-8');
         const raw = JSON.parse(content);
-        const staticReview = normalizeRawStaticReview(raw.static_review, configPath);
+        const staticReview = normalizeRawStaticReview(
+          raw.static_review,
+          configPath,
+          raw.reference_repos,
+        );
         const workflowDefaults = normalizeProjectWorkflowDefaults(raw.workflow_defaults);
         if (raw.qa !== undefined) validateQaConfig(raw.qa);
         const ciCheckGroups = normalizeProjectCICheckGroups(raw.ci);

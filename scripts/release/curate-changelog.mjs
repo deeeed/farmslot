@@ -8,22 +8,12 @@ import { parseChangelog } from './parse-changelog.mjs';
 import { resolveReleaseGroup } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const DEFER_PATTERNS = [
-  /\brefactor\b/i,
-  /\binternal\b/i,
-  /\bchore\b/i,
-  /\bci\b/i,
-  /\btest(?:s|ing)?\b/i,
-  /\bdocs?\b/i,
-  /\blint\b/i,
-  /\btyping\b/i,
-  /\bquality gate\b/i,
-  /\bagent template\b/i,
-  /\bplaceholder\b/i,
-];
+// Maintenance must be explicitly labeled. Operator features such as "Hide tests"
+// and CI progress contain these words too, so matching anywhere loses features.
+const MAINTENANCE_PREFIX = /^(?:chore|ci|tests?|docs?|style)(?:\([^)]+\))?:\s/i;
 
 function isOperatorFacing(bullet) {
-  return !DEFER_PATTERNS.some((pattern) => pattern.test(bullet));
+  return !MAINTENANCE_PREFIX.test(bullet);
 }
 
 function rewriteForOperator(bullet) {

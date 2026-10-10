@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -202,4 +202,32 @@ test('loadProfiles rejects null/array gateways shapes', () => {
   assert.throws(() => loadProfiles(path), /Invalid gateway profiles file/);
   writeFileSync(path, 'garbage{');
   assert.throws(() => loadProfiles(path), /Invalid gateway profiles file: .*gateways\.json/);
+});
+
+test('loadProfiles errors name the file and profile, never the stored secret', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'fs-gw-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'gateways.json');
+  const secret = 'fs_fake_secret_7f3a9c';
+  // Node's SyntaxError quotes ~10 chars around the error, so check a fragment.
+  const leaks = (err: Error): boolean => err.message.includes(secret.slice(0, 7));
+  writeFileSync(
+    path,
+    `{"gateways":{"lab":{"url":"ws://l","authMode":"token","secret":${secret}}}}`,
+  );
+  assert.throws(
+    () => loadProfiles(path),
+    (err: Error) => err.message.includes(path) && /not valid JSON/.test(err.message) && !leaks(err),
+  );
+  for (const lab of [
+    { url: 42, secret },
+    { url: 'ws://l', secret: { value: secret } },
+  ]) {
+    writeFileSync(path, JSON.stringify({ gateways: { lab } }));
+    assert.throws(
+      () => loadProfiles(path),
+      (err: Error) =>
+        err.message.includes(path) && err.message.includes("profile 'lab'") && !leaks(err),
+    );
+  }
 });

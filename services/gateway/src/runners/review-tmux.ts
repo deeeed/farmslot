@@ -14,6 +14,7 @@ import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
 import { shellQuote } from '../core/tmux.js';
+import { bindReviewWorkspaceSupportValue } from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -110,7 +111,7 @@ async function reviewEnvironment(run: Run) {
       ? Object.fromEntries(
           Object.entries(w.support.environment).map(([k, v]) => [
             k,
-            v.replaceAll('{{support}}', w.support!.path),
+            bindReviewWorkspaceSupportValue(v, w.support!),
           ]),
         )
       : undefined,

@@ -47,6 +47,52 @@ test('buildProposal stamps every shipped bullet while curating operator summarie
   assert.ok(!companion.operatorSummary.some((bullet) => bullet.includes('Expo SDK 57')));
 });
 
+test('operator summaries retain features that mention maintenance terms', () => {
+  const bullets = [
+    'The cockpit Diff tab has a "Hide tests" toggle.',
+    'Show CI progress on the Runs list.',
+    'feat(internal): expose distinct slot-derived Metro ports.',
+    'Show a loading placeholder while pull requests are fetched.',
+    'Open recipe docs from the operator workspace.',
+  ];
+  const proposal = buildWorkspaceProposal('apps/command-center/ui', bullets);
+  assert.deepEqual(proposal.include, bullets);
+  assert.deepEqual(proposal.defer, []);
+  assert.deepEqual(proposal.operatorSummary, [
+    'The cockpit Diff tab has a "Hide tests" toggle',
+    'View CI progress on the Runs list',
+    'feat(internal): expose distinct slot-derived Metro ports',
+    'View a loading placeholder while pull requests are fetched',
+    'Open recipe docs from the operator workspace',
+  ]);
+});
+
+test('explicit maintenance prefixes stay out of operator summaries but ship in the changelog', () => {
+  const bullets = [
+    'chore(deps): upgrade build dependencies.',
+    'ci: pin the checkout action.',
+    'docs(release): correct package publishing guidance.',
+    'test: cover release proposal parsing.',
+    'style: format the release scripts.',
+  ];
+  const proposal = buildWorkspaceProposal('packages/cli', bullets);
+  assert.deepEqual(proposal.include, bullets);
+  assert.deepEqual(proposal.defer, []);
+  assert.deepEqual(proposal.operatorSummary, []);
+});
+
+test('operator summaries retain refactors and breaking changes that affect commands', () => {
+  const bullets = [
+    'refactor: rename the branch-maintenance flow merge-main to update-branch in the run command.',
+    'chore(cli)!: remove the old branch-maintenance command.',
+  ];
+  const proposal = buildWorkspaceProposal('packages/cli', bullets);
+  assert.deepEqual(
+    proposal.operatorSummary,
+    bullets.map((bullet) => bullet.slice(0, -1)),
+  );
+});
+
 test('cut-release parses values without consuming adjacent flags', () => {
   assert.deepEqual(parseCutArgs(['--group', 'hosted-cc', '--assist', '--execute']), {
     group: 'hosted-cc',

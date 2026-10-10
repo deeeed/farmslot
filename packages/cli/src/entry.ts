@@ -38,6 +38,7 @@ import { registerWorkspaceCommand } from './commands/workspace.js';
 import { loadCheckoutEnv } from './onboarding/env-file.js';
 import { bootstrapFarmslotHome, repoRoot } from './onboarding/workspace.js';
 import { errorEnvelope } from './envelope.js';
+import { DEFAULT_GATEWAY_URL } from './gateway-profiles.js';
 import { OutputContext } from './output.js';
 
 // Load per-checkout .env.ports / .env (FARMSLOT_HOME, GW_URL, ports) before anything reads
@@ -51,7 +52,10 @@ program
   .name('farmslot')
   .description('Farmslot fleet management CLI')
   .version('0.1.0')
-  .option('--url <url>', 'Gateway WebSocket URL (overrides profiles; default ws://localhost:7777)')
+  .option(
+    '--url <url>',
+    `Gateway WebSocket URL (overrides profiles; default ${DEFAULT_GATEWAY_URL})`,
+  )
   .option('--gateway <name>', 'Gateway profile to target (see: farmslot gateway list)')
   .option('--timeout <ms>', 'Timeout in ms', process.env.GW_TIMEOUT || '30000')
   .option('--json', 'Output raw JSON');

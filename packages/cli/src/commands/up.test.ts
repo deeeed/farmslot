@@ -22,6 +22,8 @@ function runUpResult(opts: {
   json?: boolean;
   printConnectUrl?: boolean;
   status?: 'gateway up' | 'gateway already running';
+  open?: (url: string) => boolean;
+  tlsPort?: number;
 }): CaptureOutput {
   const output = new CaptureOutput(opts.json ?? false);
   writeUpResult({
@@ -32,9 +34,10 @@ function runUpResult(opts: {
     token: TOKEN,
     localActive: true,
     dashboardBuilt: false,
-    openBrowser: false,
+    openBrowser: opts.open !== undefined,
     printConnectUrl: opts.printConnectUrl ?? false,
-    tlsPort: null,
+    tlsPort: opts.tlsPort ?? null,
+    open: opts.open,
   });
   return output;
 }
@@ -117,4 +120,25 @@ test('up --json carries no token by default; token and connectUrl only with --pr
   assert.equal(connectPayloads(String(printed.connectUrl))[0].token, TOKEN);
   assert.equal(printed.token, TOKEN);
   assert.equal(connectPayloads(String(printed.hostedDashboard))[0].token, undefined);
+});
+
+test('up reports the browser open on its own line, without promising a connection', () => {
+  const opened: string[] = [];
+  const { text } = runUpResult({
+    open: (url) => {
+      opened.push(url);
+      return true;
+    },
+  });
+  // The browser gets the token-bearing link; stdout still never shows the token.
+  assert.equal(connectPayloads(opened[0])[0].token, TOKEN);
+  assert.ok(!text.includes(TOKEN));
+  const dashboardLine = text.split('\n').find((line) => line.includes('dashboard'));
+  assert.doesNotMatch(String(dashboardLine), /opened|auto-connect/);
+  assert.match(text, /\n {2}browser {8}opened the auto-connect link \(.*farmslot certs setup\)\n/);
+
+  const tls = runUpResult({ open: () => true, tlsPort: 7778 }).text;
+  assert.match(tls, /\n {2}browser {8}opened the auto-connect link\n/);
+
+  assert.doesNotMatch(runUpResult({ open: () => false }).text, /\n {2}browser /);
 });
