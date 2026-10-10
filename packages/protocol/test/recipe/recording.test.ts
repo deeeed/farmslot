@@ -61,3 +61,82 @@ test('timelines reject unbound, ambiguous and malformed timing', () => {
       JSON.stringify(patch),
     );
 });
+
+test('video interruptions accept unavailable counts and measured frames with a zero or fractional media time', () => {
+  for (const [frames, mediaTimeMs] of [
+    [0, 0],
+    [1, 0],
+    [12, 803.5],
+  ]) {
+    assert.equal(
+      validateArtifactManifestDocument({
+        version: 1,
+        artifacts: [
+          {
+            path: 'run.mp4',
+            type: 'video',
+            interruption: { frames, mediaTimeMs, cause: 'The recording stream stopped.' },
+          },
+        ],
+      }).status,
+      'valid',
+    );
+  }
+});
+
+test('interruptions must be objects attached to videos', () => {
+  for (const interruption of [null, 'stopped', false, 1, []]) {
+    const result = validateArtifactManifestDocument({
+      version: 1,
+      artifacts: [{ path: 'run.mp4', type: 'video', interruption }],
+    });
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.findings[0]?.code, 'artifact_manifest.invalid_interruption');
+    assert.equal(result.findings[0]?.path, 'artifacts[0].interruption');
+  }
+  const result = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'screenshot.png',
+        type: 'screenshot',
+        interruption: { frames: 1, mediaTimeMs: 0, cause: 'The recording stream stopped.' },
+      },
+    ],
+  });
+  assert.equal(result.status, 'invalid');
+  assert.equal(result.findings[0]?.path, 'artifacts[0].interruption');
+});
+
+test('interruptions reject malformed frame counts, media times and causes', () => {
+  const validInterruption = { frames: 12, mediaTimeMs: 803.5, cause: 'The stream stopped.' };
+  const invalidValues = {
+    frames: [undefined, '12', -1, 1.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1],
+    mediaTimeMs: [undefined, '803', -1, Number.NaN, Infinity],
+    cause: [undefined, 1, '', '   '],
+  };
+  for (const [field, values] of Object.entries(invalidValues)) {
+    for (const value of values) {
+      const result = validateArtifactManifestDocument({
+        version: 1,
+        artifacts: [
+          {
+            path: 'run.mp4',
+            type: 'video',
+            interruption: { ...validInterruption, [field]: value },
+          },
+        ],
+      });
+      assert.equal(result.status, 'invalid', `${field}: ${String(value)}`);
+      assert.deepEqual(
+        result.findings.map(({ code, path }) => ({ code, path })),
+        [
+          {
+            code: 'artifact_manifest.invalid_interruption_field',
+            path: `artifacts[0].interruption.${field}`,
+          },
+        ],
+      );
+    }
+  }
+});

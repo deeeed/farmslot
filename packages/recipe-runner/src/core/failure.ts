@@ -1,6 +1,7 @@
 import type { RecipeFailureCause } from '@farmslot/protocol';
 
 const RECIPE_EXECUTION_ERROR_BRAND = Symbol.for('@farmslot/recipe-runner/RecipeExecutionError');
+export const RUNTIME_CONNECTION_CLOSED = 'RUNTIME_CONNECTION_CLOSED';
 const FAILURE_CAUSES = new Set<RecipeFailureCause>([
   'subject',
   'harness',

@@ -98,10 +98,12 @@ export function runCaptureInterruption(
   videoPath: string,
 ): RecipeRunCaptureInterruption {
   const seconds = (interruption.mediaTimeMs / 1000).toFixed(1);
+  const measured =
+    interruption.frames > 0 ? ` after ${interruption.frames} frames (${seconds} s)` : '';
   return {
     ...interruption,
     videoPath,
-    message: `${CAPTURE_INTERRUPTED}: the recording stream stopped after ${interruption.frames} frames (${seconds} s): ${interruption.cause}. The partial video is kept at ${videoPath}.`,
+    message: `${CAPTURE_INTERRUPTED}: the recording stream stopped${measured}: ${interruption.cause}. The partial video is kept at ${videoPath}.`,
   };
 }
 

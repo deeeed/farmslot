@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
+import { RecipeExecutionError } from '../core/failure.js';
 import type {
   ActiveVideoRecording,
   VideoRecorder,
@@ -13,6 +14,7 @@ import type {
 } from '../core/types.js';
 
 import { createCaptureHelperVideoRecorder } from './capture-helper.js';
+import { CAPTURE_INTERRUPTED } from './capture-helper-interruption.js';
 
 const exec = promisify(execFile);
 
@@ -94,13 +96,19 @@ export function createAndroidMirrorVideoRecorder(options: {
       });
       child.on('error', (failure) => {
         error = failure;
-        if (!closing) mirrorFailure = failure;
+        if (!closing)
+          mirrorFailure = new RecipeExecutionError('environment', failure.message, {
+            code: CAPTURE_INTERRUPTED,
+            cause: failure,
+          });
       });
       const exited = new Promise<void>((resolve) => {
         child.once('exit', (code, signal) => {
           if (!closing)
-            mirrorFailure = new Error(
+            mirrorFailure = new RecipeExecutionError(
+              'environment',
               `Owned Android mirror exited during recording (${signal ?? code}): ${stderr}`,
+              { code: CAPTURE_INTERRUPTED },
             );
           resolve();
         });
@@ -172,9 +180,21 @@ export function createAndroidMirrorVideoRecorder(options: {
           async stop() {
             try {
               const result = await active.stop();
-              if (mirrorFailure) throw mirrorFailure;
+              let interruption = result.interruption;
+              if (mirrorFailure && !interruption) {
+                // A normal helper stop can race the mirror's exit. Measured, finalized
+                // frames still make this usable partial footage rather than a failed file.
+                const frames = result.timing?.framesMs;
+                if (!frames?.length) throw mirrorFailure;
+                interruption = {
+                  frames: frames.length,
+                  mediaTimeMs: frames[frames.length - 1]!,
+                  cause: mirrorFailure.message,
+                };
+              }
               return {
                 ...result,
+                ...(interruption ? { interruption } : {}),
                 recorder: {
                   ...result.recorder,
                   platform: 'android',

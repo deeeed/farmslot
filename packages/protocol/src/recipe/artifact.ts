@@ -267,6 +267,55 @@ export function validateArtifactManifestDocument(
       );
     }
 
+    if (artifact.interruption !== undefined) {
+      if (artifact.type !== 'video' || !isRecord(artifact.interruption)) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_manifest.invalid_interruption',
+          `${path}.interruption`,
+          'interruption must be an object on a video artifact when present.',
+        );
+      } else {
+        const interruption = artifact.interruption;
+        if (
+          typeof interruption.frames !== 'number' ||
+          !Number.isSafeInteger(interruption.frames) ||
+          interruption.frames < 0
+        ) {
+          addFinding(
+            ctx,
+            'error',
+            'artifact_manifest.invalid_interruption_field',
+            `${path}.interruption.frames`,
+            'interruption.frames must be a non-negative safe integer; 0 means the count is unavailable.',
+          );
+        }
+        if (
+          typeof interruption.mediaTimeMs !== 'number' ||
+          !Number.isFinite(interruption.mediaTimeMs) ||
+          interruption.mediaTimeMs < 0
+        ) {
+          addFinding(
+            ctx,
+            'error',
+            'artifact_manifest.invalid_interruption_field',
+            `${path}.interruption.mediaTimeMs`,
+            'interruption.mediaTimeMs must be a finite non-negative number.',
+          );
+        }
+        if (!isNonEmptyString(interruption.cause)) {
+          addFinding(
+            ctx,
+            'error',
+            'artifact_manifest.invalid_interruption_field',
+            `${path}.interruption.cause`,
+            'interruption.cause must be a non-empty string.',
+          );
+        }
+      }
+    }
+
     if (artifact.recorder != null) {
       if (!isRecord(artifact.recorder)) {
         addFinding(

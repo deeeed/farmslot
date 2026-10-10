@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Clamp action marker labels and seeks to measured video frames when their clock windows overlap partial footage. Use the loaded media duration if native timing retains a longer tail, and keep markers outside playback disabled as unrecorded.
 
 ## 0.20.6 - 2026-10-10
 

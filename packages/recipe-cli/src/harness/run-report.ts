@@ -265,10 +265,11 @@ function renderRunReport(
   }
   if (video) {
     const { frames, mediaTimeMs, cause } = video.interruption;
+    const measured = frames > 0 ? ` after ${frames} frames (${formatDuration(mediaTimeMs)})` : '';
     lines.push(
       '',
       '## Evidence',
-      `- INCOMPLETE partial video [${video.path}](${video.path}): the recording stopped after ${frames} frames (${formatDuration(mediaTimeMs)}): ${cause}`,
+      `- INCOMPLETE partial video [${video.path}](${video.path}): the recording stopped${measured}: ${cause}`,
     );
   }
   lines.push('', '## Steps');

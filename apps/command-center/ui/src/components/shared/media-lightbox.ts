@@ -38,6 +38,7 @@ import {
   adjacentVideoFrameMs,
   displayedVideoFrameRangeMs,
   loadVideoTimeline,
+  videoMarkerSeekMs,
 } from './media-lightbox-video-model.js';
 
 @customElement('media-lightbox')
@@ -458,12 +459,13 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _seekMarker(marker: RecipeRecordingMarker, phase: 'start' | 'end'): void {
-    const range = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+    const timing = this._timelineState()?.data;
     const duration = this._primaryVideo()?.duration;
-    if (!Number.isFinite(duration) || !duration || range[1] < 0 || range[0] >= duration * 1000)
-      return;
+    if (!timing || !Number.isFinite(duration) || !duration) return;
+    const seekMs = videoMarkerSeekMs(timing, marker, phase, duration * 1000);
+    if (seekMs === null) return;
     this._pauseVideoPlayback();
-    this._scrubVideo(String(Math.max(0, Math.min(duration, (range[0] + range[1]) / 2000))));
+    this._scrubVideo(String(seekMs / 1000));
   }
 
   private _appliedVideoMarker = '';
@@ -485,6 +487,11 @@ export class MediaLightbox extends MediaLightboxState {
     if (!state?.data)
       return html`<p class="ml-count">${state?.error ?? 'Loading recording frame index…'}</p>`;
     const timing = state.data;
+    const mediaDuration = this._primaryVideo()?.duration;
+    const mediaDurationMs =
+      Number.isFinite(mediaDuration) && mediaDuration && mediaDuration > 0
+        ? mediaDuration * 1000
+        : timing.durationMs;
     const uncertainty = timing.clock.latestZeroUnixMs - timing.clock.earliestZeroUnixMs;
     return html`<details class="ml-video-markers" data-testid="video-markers">
       <summary>Actions and proof markers (${timing.markers.length})</summary>
@@ -507,12 +514,11 @@ export class MediaLightbox extends MediaLightboxState {
               >
               ${(['start', 'end'] as const).map((phase) => {
                 const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
-                const outside = bounds[1] < 0 || bounds[0] >= timing.durationMs;
-                const frame = displayedVideoFrameRangeMs(
-                  timing.framesMs,
-                  timing.durationMs,
-                  Math.max(0, (bounds[0] + bounds[1]) / 2),
-                );
+                const seekMs = videoMarkerSeekMs(timing, marker, phase, mediaDurationMs);
+                const outside = seekMs === null;
+                const frame = outside
+                  ? null
+                  : displayedVideoFrameRangeMs(timing.framesMs, mediaDurationMs, seekMs);
                 return html`<button
                   class="ml-btn"
                   data-testid="video-marker"
@@ -524,10 +530,7 @@ export class MediaLightbox extends MediaLightboxState {
                     : `Action clock window ${bounds[0].toFixed(1)}–${bounds[1].toFixed(1)} ms. The displayed frame may precede the action result.`}
                   @click=${() => this._seekMarker(marker, phase)}
                 >
-                  ${phase}
-                  ${outside
-                    ? 'unrecorded'
-                    : this._formatVideoTime(Math.max(0, (bounds[0] + bounds[1]) / 2000))}
+                  ${phase} ${outside ? 'unrecorded' : this._formatVideoTime(seekMs / 1000)}
                   ${frame
                     ? html`<small
                         >frame held
