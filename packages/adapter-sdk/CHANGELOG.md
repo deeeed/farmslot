@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `HealBoundViolation.retryable` (optional): an infra failure a caller may rerun as is. recipe-cli emits it as the violation's `retryable`.
 
 ## 0.8.2 - 2026-10-09
 

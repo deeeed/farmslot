@@ -6,6 +6,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Fix: `{{outputs.node.items[0].field}}` resolved to its own text, so an `assert_output` compared the value against the template; `{{outputs.node.items.0.field}}` failed as not defined. Both now index the array. A `{{params.` or `{{outputs.` that does not parse as a template fails resolution with `RECIPE_PARAMS_INVALID`. Resolution errors quote the template as written, name the node (`resolveRecipeValue` option `nodeId`), and report an index past the end of an array as out of range. Needs the protocol release with `parseRecipeTemplate`.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A run whose only failure is an interrupted recording is reported as incomplete evidence, not as a product failure: `finalizeRecipeSuite` marks its verdict `evidence_incomplete` with the partial video. Exports `CAPTURE_EVIDENCE_INCOMPLETE` (from protocol), `isCaptureInterruptedEntry`, `onlyCaptureInterrupted`, `loneCaptureInterruption` and `readRunTraceEntries` (a trace.json's entries in either shape), the one rule every consumer uses.
 
 ## 0.28.2 - 2026-10-09
 

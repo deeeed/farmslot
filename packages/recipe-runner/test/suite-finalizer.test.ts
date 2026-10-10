@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -15,6 +15,7 @@ import {
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import { finalizeRecipeSuite, freezeRecipeSuiteScope } from '../src/core/suite.js';
+import type { VideoRecorder } from '../src/core/types.js';
 
 const actionManifest: RecipeActionManifestDocument = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -189,6 +190,71 @@ test('rejects missing cases and explicit oversight instead of inventing a reason
       }),
       /incomplete_oversight/u,
     );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('a case failed only by an interrupted recording is marked evidence_incomplete; a product failure is not', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-suite-capture-'));
+  try {
+    const interruption = {
+      frames: 12,
+      mediaTimeMs: 400,
+      cause: 'SCStreamErrorDomain -3805: interrupted',
+    };
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      async start(request) {
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'partial mp4');
+            return { interruption };
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest,
+      adapters: createStandardCoreAdapters({ actions: ['command'] }),
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: { resolveRecordingTarget: async () => ({ kind: 'pid', pid: 1 }) },
+      },
+    });
+    const run = (exitCode: number, name: string) =>
+      runner.run({
+        recipeDocument: processRecipe(exitCode),
+        artifactsDir: path.join(tempRoot, name),
+        projectRoot: tempRoot,
+        recordVideo: true,
+      });
+    const interrupted = await run(0, 'interrupted');
+    const alsoFailed = await run(7, 'also-failed');
+    assert.equal(interrupted.status, 'fail');
+    assert.equal(alsoFailed.status, 'fail');
+    const scope = freezeRecipeSuiteScope({
+      $schema: RECIPE_SUITE_SCOPE_SCHEMA_URL,
+      suite_id: 'suite.capture',
+      cases: [{ id: 'interrupted' }, { id: 'also-failed' }],
+    });
+    const finalized = await finalizeRecipeSuite({
+      scope,
+      outputDir: path.join(tempRoot, 'suite'),
+      resolutions: [
+        { id: 'interrupted', kind: 'verdict', result: interrupted },
+        { id: 'also-failed', kind: 'verdict', result: alsoFailed },
+      ],
+    });
+    const [first, second] = finalized.result.resolutions;
+    assert.equal(first?.kind === 'verdict' && first.status, 'fail');
+    assert.deepEqual(first?.kind === 'verdict' ? first.evidence_incomplete : undefined, {
+      reason: 'capture_interrupted',
+      detail: interrupted.captureInterruption?.message,
+      evidence_path: 'videos/recipe-run.mp4',
+    });
+    assert.equal(second?.kind === 'verdict' ? second.evidence_incomplete : 'missing', undefined);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
