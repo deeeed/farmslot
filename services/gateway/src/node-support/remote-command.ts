@@ -17,7 +17,6 @@ import {
   loadProjectVarsIfAny,
   nodeSupportBundlePaths,
   type NodeSupportBundleState,
-  nodeSupportDir,
   type NodeSupportIo,
 } from './ensure.js';
 
@@ -46,7 +45,7 @@ interface LocalBundle {
   collected: CollectedBundle;
 }
 
-const verifiedBundles = new Map<string, number>();
+const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
 /**
  * One ensure per slot and bundle at a time. Keyed by the hash too, so a hook
  * expanded after a fast-forward never joins a publish of the older bundle.
@@ -117,8 +116,9 @@ function ensureOnce(
   projectVars: ProjectVars,
   local: LocalBundle,
   io: NodeSupportIo | undefined,
+  selectSlot: boolean,
 ): Promise<NodeSupportBundleState | null> {
-  const slotKey = `${vars.slotId}\0${local.hash}`;
+  const slotKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
   const existing = pendingEnsures.get(slotKey);
   if (existing) return existing;
   const machineKey = `${vars.machine}\0${local.hash}`;
@@ -137,6 +137,7 @@ function ensureOnce(
         projectVars,
         io,
         collected: local.collected,
+        selectSlot,
       });
     } finally {
       pendingEnsures.delete(slotKey);
@@ -191,6 +192,8 @@ export async function resolveRemoteFarmCommand(
     io?: NodeSupportIo;
     /** Wall-clock the caller gave the whole command; the delivery wait counts against it. */
     budgetMs?: number;
+    /** Preserve the slot support pointer while checking prerequisites. */
+    selectSlot?: boolean;
   } = {},
 ): Promise<string> {
   if (!hasRemoteFarmRef(command)) return command;
@@ -199,17 +202,19 @@ export async function resolveRemoteFarmCommand(
   const projectVars = await loadProjectVarsIfAny(vars.projectName);
   if (!projectVars) return command;
   const local = await currentLocalBundle(vars.projectName, projectVars.projectJson);
-  const verifiedAt = verifiedBundles.get(`${vars.slotId}\0${local.hash}`);
-  if (verifiedAt !== undefined && Date.now() - verifiedAt < VERIFIED_TTL_MS) {
-    return remapRemoteFarmRefs(command, nodeSupportDir(local.hash), local.paths);
+  const selectSlot = options.selectSlot !== false;
+  const cacheKey = `${vars.slotId}\0${local.hash}\0${selectSlot}`;
+  const verified = verifiedBundles.get(cacheKey);
+  if (verified && Date.now() - verified.at < VERIFIED_TTL_MS) {
+    return remapRemoteFarmRefs(command, verified.supportDir, local.paths);
   }
   const state = await withinBudget(
-    ensureOnce(vars, projectVars, local, options.io),
+    ensureOnce(vars, projectVars, local, options.io, selectSlot),
     options.budgetMs,
     vars.slotId,
   );
   if (!state?.hash) return command;
-  verifiedBundles.set(`${vars.slotId}\0${state.hash}`, Date.now());
+  verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
   return remapRemoteFarmRefs(command, state.supportDir, state.paths);
 }
 

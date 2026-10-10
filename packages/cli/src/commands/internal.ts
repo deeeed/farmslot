@@ -36,6 +36,7 @@ import {
 
 import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
+import { isLocalPool } from '../slot-context.js';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -81,7 +82,7 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
     ['REMOTE_REPO', vars.remoteRepo],
   ];
   const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;
-  return pairs
+  const slotLines = pairs
     .filter(([key]) => {
       if (validName.test(key)) return true;
       // A resource field that is not a valid shell identifier cannot become an
@@ -92,6 +93,21 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
       return false;
     })
     .map(([key, value]) => `${key}=${shellQuote(value)}`);
+  // These exports are evaluated by the caller, which may be the operator
+  // syncing a remote slot. Its local CLI must keep the operator tool paths.
+  const local = isLocalPool(vars);
+  const nodeLines = local
+    ? [
+        ...Object.entries(vars.machineEnv ?? {}).map(
+          ([key, value]) => `export ${key}=${shellQuote(value)}`,
+        ),
+      ]
+    : [];
+  return [
+    ...nodeLines,
+    ...slotLines,
+    ...(local ? [`export FARMSLOT_MACHINE=${shellQuote(vars.machine)}`] : []),
+  ];
 }
 
 /**

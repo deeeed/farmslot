@@ -976,6 +976,10 @@
           "default": "yarn install --frozen-lockfile",
           "examples": ["yarn setup"]
         },
+        "prerequisites": {
+          "type": "string",
+          "description": "Read-only configured dependency checks. Runs before any prepare phase, including bind-only, and during slot.check. Failure retains the node's diagnostic and blocks prepare."
+        },
         "preflight": {
           "type": "string",
           "description": "Pre-dispatch checks and setup (build, start dev server, boot device). Run by prepare-slot.sh on the worker.",

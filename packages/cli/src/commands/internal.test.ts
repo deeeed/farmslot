@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '@farmslot/slot-config';
@@ -75,6 +77,20 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
     },
   };
 
+  const configured = {
+    ...vars,
+    host: 'localhost',
+    machineEnv: { CORE_NODE_BIN: "/configured path/with 'quotes'" },
+  };
+  const output = execFileSync(
+    'bash',
+    [
+      '-c',
+      `${slotVarsShellLines(configured).join('\n')}\nbash -c 'printf \"%s\\n\" \"$CORE_NODE_BIN\" \"$FARMSLOT_MACHINE\"'`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.deepEqual(output.trim().split('\n'), [configured.machineEnv.CORE_NODE_BIN, vars.machine]);
   assert.deepEqual(
     slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
     ["METRO_PORT='8878'"],
@@ -146,4 +162,54 @@ test('slotVarsShellLines supports slots without a dev-server resource', () => {
     slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
     ["METRO_PORT=''"],
   );
+});
+
+test('remote slot exports preserve the operator PATH and local CLI while node-local exports reach children', () => {
+  const remote = {
+    slotId: 'remote-cli-1',
+    machine: 'remote-fixture',
+    host: 'remote-fixture.invalid',
+    sshUser: 'fixture',
+    osType: 'linux',
+    platform: 'cli',
+    repo: '/remote/checkout',
+    remoteRepo: '/remote/checkout',
+    session: 'cli-1',
+    projectName: 'fixture-farm',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'fixture@remote-fixture.invalid',
+    resourceVars: {},
+    machineEnv: { PATH: '/remote/node/bin', CORE_NODE_BIN: '/remote/node/bin' },
+  } satisfies SlotVars;
+  const lines = slotVarsShellLines(remote);
+  assert.ok(!lines.some((line) => line.startsWith('export PATH=')));
+  assert.ok(!lines.some((line) => line.startsWith('export CORE_NODE_BIN=')));
+  const output = execFileSync(
+    '/bin/bash',
+    ['-c', `${lines.join('\n')}\nnode -p 'process.execPath'`],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: path.dirname(process.execPath) },
+    },
+  );
+  assert.equal(output.trim(), process.execPath);
+  const local = slotVarsShellLines({
+    ...remote,
+    host: 'localhost',
+    machineEnv: { CORE_NODE_BIN: '/configured node/bin' },
+  });
+  const child = execFileSync(
+    '/bin/bash',
+    ['-c', `${local.join('\n')}\n/bin/bash -c 'printf "%s" "$CORE_NODE_BIN"'`],
+    { encoding: 'utf8' },
+  );
+  assert.equal(child, '/configured node/bin');
 });

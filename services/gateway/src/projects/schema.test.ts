@@ -45,16 +45,31 @@ function validateHooksAgainstSchema(schema: JsonSchema, hooks: Record<string, un
   return errors;
 }
 
+test('project schema accepts only string prerequisite hooks', async () => {
+  const schema = await readProjectSchema();
+  assert.equal(hookSchema(schema, 'prerequisites').type, 'string');
+  assert.deepEqual(
+    validateHooksAgainstSchema(schema, { prerequisites: 'bash check-paths.sh' }),
+    [],
+  );
+  assert.deepEqual(validateHooksAgainstSchema(schema, { prerequisites: { cmd: 'check' } }), [
+    'hooks.prerequisites must be a string command',
+  ]);
+});
+
 test('project schema restricts monitoring.flows keys to the known flow types', async () => {
   const schema = await readProjectSchema();
   const flows = schema.properties?.monitoring?.properties?.flows;
   assert.ok(flows, 'schemas/project.schema.json should define monitoring.flows');
   // A typo'd flow name would otherwise validate and then silently never match
   // at runtime — the enum makes it a schema error instead.
-  assert.deepEqual(
-    [...(flows.propertyNames?.enum ?? [])].sort(),
-    ['dev', 'fix-bug', 'pr-complete', 'review-pr', 'update-branch'],
-  );
+  assert.deepEqual([...(flows.propertyNames?.enum ?? [])].sort(), [
+    'dev',
+    'fix-bug',
+    'pr-complete',
+    'review-pr',
+    'update-branch',
+  ]);
 });
 
 test('project schema accepts per-flow worker terminal acceptance rules', async () => {
@@ -64,7 +79,11 @@ test('project schema accepts per-flow worker terminal acceptance rules', async (
     name: 'schema-test',
     worker_terminal: { flows: { 'fix-bug': { acceptance: rules } } },
   });
-  assert.equal(validate(project({ require: true, allowWeak: false })), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate(project({ require: true, allowWeak: false })),
+    true,
+    JSON.stringify(validate.errors),
+  );
   assert.equal(validate(project({ require: 'yes' })), false);
   assert.equal(validate(project({ require: true, unknown: true })), false);
 });
