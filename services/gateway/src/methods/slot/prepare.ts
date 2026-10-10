@@ -657,7 +657,7 @@ async function slotPrepareInner(
   // path: a slot already on the work branch, a preserved replay branch, or a
   // fresh branch. The dispatch refuses a run without it.
   const resolveRequestedStartRef = async () => {
-    if (!opts?.startRef) return;
+    if (!opts?.startRef || resolvedStartRef) return;
     step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
     resolvedStartRef = await resolveStartRefInRepo({
       repo: vars.remoteRepo,
@@ -782,6 +782,10 @@ async function slotPrepareInner(
           resolvedStackBase?.resolvedSha ??
           `origin/${defaultBranch}`;
       }
+      if (params.flowType === 'qa') {
+        await resolveRequestedStartRef();
+        if (resolvedStartRef) base = resolvedStartRef.resolvedSha;
+      }
       const create = await execOnSlot(
         vars,
         `git -C ${shellQuote(vars.remoteRepo)} checkout -b ${shellQuote(branch)} ${shellQuote(base)}`,
@@ -806,6 +810,13 @@ async function slotPrepareInner(
   }
   if (branch && opts?.preserveBranch) {
     await resolveRequestedStartRef();
+    if (params.flowType === 'qa' && resolvedStartRef) {
+      const head = await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`);
+      if (head.exitCode !== 0 || head.stdout.trim() !== resolvedStartRef.resolvedSha)
+        throw new Error(
+          `QA replay requires frozen head ${resolvedStartRef.resolvedSha} on ${params.slotId}. Restore a matching checkout before retrying; current work was preserved`,
+        );
+    }
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
     if (current === branch && !forceNewBranch) {

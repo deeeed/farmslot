@@ -38,7 +38,6 @@ const git = (repo: string, ...args: string[]) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 const base = path.join(root, 'base');
-const slot = path.join(root, 'slot');
 git(base, 'init', '-b', 'main');
 git(base, 'config', 'user.name', 'Fixture');
 git(base, 'config', 'user.email', 'fixture@example.invalid');
@@ -50,7 +49,6 @@ git(base, 'commit', '-m', 'test: base');
 const baseHead = git(base, 'rev-parse', 'HEAD');
 const remote = path.join(root, 'remote.git');
 execFileSync('git', ['clone', '--bare', base, remote], { stdio: 'ignore' });
-execFileSync('git', ['clone', remote, slot], { stdio: 'ignore' });
 git(base, 'remote', 'add', 'origin', remote);
 git(base, 'checkout', '-b', 'published-work');
 writeFileSync(path.join(base, 'file.txt'), 'published\n');
@@ -66,21 +64,42 @@ writeFileSync(
     prepare: { default_profile: 'git-only', profiles: { 'git-only': { phases: ['git'] } } },
   }),
 );
-writeFileSync(
-  path.join(root, 'pool/local.json'),
-  JSON.stringify({
-    machine: 'fixture',
-    host: 'localhost',
-    project: 'farm',
-    platform: 'cli',
-    slots: [{ id: 'slot', repo: slot, session: 'slot', enabled: true, resources: {} }],
-  }),
-);
+function freshSlot(label: string): string {
+  const slot = path.join(root, label);
+  execFileSync('git', ['clone', remote, slot], { stdio: 'ignore' });
+  git(slot, 'config', 'user.name', 'Fixture');
+  git(slot, 'config', 'user.email', 'fixture@example.invalid');
+  git(slot, 'config', 'commit.gpgsign', 'false');
+  writeFileSync(
+    path.join(root, 'pool/local.json'),
+    JSON.stringify({
+      machine: 'fixture',
+      host: 'localhost',
+      project: 'farm',
+      platform: 'cli',
+      slots: [{ id: 'slot', repo: slot, session: 'slot', enabled: true, resources: {} }],
+    }),
+  );
+  writeFileSync(path.join(root, '.farm-status.json'), JSON.stringify({ slots: [] }));
+  return slot;
+}
+
+function unpublishedSlot(label: string): { slot: string; head: string } {
+  const slot = freshSlot(label);
+  git(slot, 'checkout', '-b', 'comparison-work', baseHead);
+  writeFileSync(path.join(slot, 'file.txt'), 'worker commit\n');
+  git(slot, 'commit', '-am', 'test: unpublished comparison work');
+  const head = git(slot, 'rev-parse', 'HEAD');
+  writeFileSync(path.join(slot, 'file.txt'), 'uncommitted work\n');
+  return { slot, head };
+}
+
 writeFileSync(path.join(root, '.farm-status.json'), JSON.stringify({ slots: [] }));
 const { slotPrepare } = await import('./prepare.js');
 const params = { slotId: 'slot', prepareProfile: 'git-only' };
 
 test('recovery into another clone restores a published branch without overwriting the current branch', async () => {
+  const slot = freshSlot('published-slot');
   assert.throws(() => git(slot, 'show-ref', '--verify', 'refs/heads/published-work'));
   await slotPrepare({ ...params, branch: 'published-work' }, () => {}, undefined, {
     preserveBranch: true,
@@ -90,14 +109,7 @@ test('recovery into another clone restores a published branch without overwritin
 });
 
 test('start-ref recovery preserves unpublished commits and dirty files while recording the frozen base', async () => {
-  git(slot, 'checkout', '-b', 'comparison-work', baseHead);
-  git(slot, 'config', 'user.name', 'Fixture');
-  git(slot, 'config', 'user.email', 'fixture@example.invalid');
-  git(slot, 'config', 'commit.gpgsign', 'false');
-  writeFileSync(path.join(slot, 'file.txt'), 'worker commit\n');
-  git(slot, 'commit', '-am', 'test: unpublished comparison work');
-  const head = git(slot, 'rev-parse', 'HEAD');
-  writeFileSync(path.join(slot, 'file.txt'), 'uncommitted work\n');
+  const { slot, head } = unpublishedSlot('comparison-slot');
   const result = await slotPrepare(
     { ...params, branch: 'comparison-work', flowType: 'dev' },
     () => {},
@@ -113,7 +125,7 @@ test('start-ref recovery preserves unpublished commits and dirty files while rec
 });
 
 test('recovery without a local or published branch fails closed and retains the current work', async () => {
-  const head = git(slot, 'rev-parse', 'HEAD');
+  const { slot, head } = unpublishedSlot('missing-slot');
   await assert.rejects(
     slotPrepare({ ...params, branch: 'missing-work' }, () => {}, undefined, {
       preserveBranch: true,
@@ -122,4 +134,33 @@ test('recovery without a local or published branch fails closed and retains the 
   );
   assert.equal(git(slot, 'rev-parse', 'HEAD'), head);
   assert.equal(readFileSync(path.join(slot, 'file.txt'), 'utf8'), 'uncommitted work\n');
+});
+
+test('QA recovery in a new clone lands on the frozen head even when the published branch moved', async () => {
+  const slot = freshSlot('qa-cold-slot');
+  const result = await slotPrepare(
+    { ...params, branch: 'published-work', flowType: 'qa' },
+    () => {},
+    undefined,
+    {
+      preserveBranch: true,
+      startRef: { requestedRef: baseHead },
+    },
+  );
+  assert.equal(result.startRef?.resolvedSha, baseHead);
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), baseHead);
+  assert.equal(git(slot, 'rev-parse', 'origin/published-work'), publishedHead);
+});
+
+test('QA recovery refuses a mismatched existing branch without moving it', async () => {
+  const slot = freshSlot('qa-existing-slot');
+  git(slot, 'checkout', '-b', 'published-work', 'origin/published-work');
+  await assert.rejects(
+    slotPrepare({ ...params, branch: 'published-work', flowType: 'qa' }, () => {}, undefined, {
+      preserveBranch: true,
+      startRef: { requestedRef: baseHead },
+    }),
+    /QA replay requires frozen head/,
+  );
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), publishedHead);
 });

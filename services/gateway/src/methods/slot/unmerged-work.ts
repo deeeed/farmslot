@@ -38,10 +38,12 @@ export async function assertPrepareCommitsPublished(
       throw new Error(`Cannot inspect local branch ${branch}; prepare left its commits untouched`);
   }
   for (const ref of refs) {
+    // An existing upstream cannot excuse unpublished work: a pushed branch may
+    // have new worker commits. Rewritten histories also require an explicit decision.
     const commits = await findUnpushedSlotCommits(vars, ref, exec);
     if (commits.length)
       throw new Error(
-        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits (${commits.map((sha) => sha.slice(0, 12)).join(', ')}). Push or preserve this branch before retrying; no branch was reset or deleted`,
+        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits (${commits.map((sha) => sha.slice(0, 12)).join(', ')}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, detach its worktree first, then delete that branch with git branch -D <abandoned-branch>`,
       );
   }
 }
