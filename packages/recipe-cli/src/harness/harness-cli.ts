@@ -178,7 +178,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
   // One invocation at a time per process: each sets the process-wide context
   // and port environment for its dispatch, so an overlapping one must wait.
   function main(argv: readonly string[]): Promise<HarnessCliResult> {
-    return serializeInvocation(() => runInvocation(argv));
+    return withHarnessInvocation(() => runInvocation(argv));
   }
 
   async function runInvocation(argv: readonly string[]): Promise<HarnessCliResult> {
@@ -619,7 +619,7 @@ let invocationQueue: Promise<unknown> = Promise.resolve();
 // at once instead of queueing behind itself forever.
 const runningInvocation = new AsyncLocalStorage<true>();
 
-function serializeInvocation<T>(invoke: () => Promise<T>): Promise<T> {
+export function withHarnessInvocation<T>(invoke: () => Promise<T>): Promise<T> {
   if (runningInvocation.getStore())
     return Promise.reject(
       new Error(

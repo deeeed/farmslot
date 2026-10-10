@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Command } from 'commander';
 
 import type { RecipeConformanceReport } from '@farmslot/protocol';
+import { resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 import type { CliOptions, HarnessContext } from '@farmslot/recipe-cli/harness';
 import { loadRecipeLibraries } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
@@ -58,7 +59,8 @@ export function registerDoctorCommand(program: Command): void {
           code: 'CONFORMANCE_REQUIRED',
           userAction: 'farmslot doctor <checkout> --conformance',
         });
-        output.writeJson(errorEnvelope('doctor', error));
+        if (isMachineMode(output)) output.writeJson(errorEnvelope('doctor', error));
+        else output.failure(error);
         process.exitCode = 1;
         return;
       }
@@ -144,122 +146,86 @@ export async function runProjectConformance(
     for (const entry of Array.isArray(value) ? value : typeof value === 'string' ? [value] : [])
       tokens.push(flag, entry);
   }
+  const workspace = resolveWorkspace();
+  const configuredPool = resolveSlotPoolDir();
+  const slotPoolDir =
+    configuredPool && configuredPool.source !== 'farmslot-node'
+      ? configuredPool.dir
+      : workspace
+        ? path.join(workspace.farmslotDir, 'pool')
+        : undefined;
   const registry =
     shared.optionString(options, 'projectsDir') ??
-    path.join(resolveWorkspace()?.farmslotDir ?? process.env.FARMSLOT_ROOT ?? repoRoot, 'projects');
-  const previousHost = shared.harnessHost();
-  const previousContext = shared.harnessContext();
-  const previousAdapters = shared.harnessAdapters();
-  try {
-    const context = await shared.resolveProjectContext({
+    path.join(workspace?.farmslotDir ?? process.env.FARMSLOT_ROOT ?? repoRoot, 'projects');
+  return shared.withProjectRecipeHost(
+    {
       tokens,
       projectsDir: existsSync(registry) ? registry : undefined,
-    });
-    const binding = context.project!;
-    const provider = await shared.loadProjectProvider(context, {
+      slotPoolDir,
       command: 'doctor',
       options,
       authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
-    });
-    context.ports = shared.contextPorts(context, tokens, {
-      '--cdp-port': true,
-      '--watcher-port': true,
-    }).ports;
-    shared.setHarnessContext(context);
-    const libraries = shared.authorizedProjectLibraries(context);
-    if (libraries.length !== binding.libraries.length)
-      throw new shared.ProjectBindingError(
-        'LIBRARY_UNAUTHORIZED',
-        'Discovered recipe libraries are not authorized executable sources.',
-        'register the project or select each library with --library name=path',
-      );
-    const engine =
-      provider.engine ??
-      shared.createDefaultRecipeEngine({
-        runtime: provider.runtime,
-        catalog: shared.createRuntimeRecipeCatalog({
-          runtime: provider.runtime,
-          bundledLibrary: {
-            name: binding.name,
-            root: binding.provider.root,
-            actionNamespace: binding.domain ?? binding.name,
-          },
-        }),
-        runtimeSource: {
-          kind: 'custom-adapter',
-          trust: 'trusted',
-          name: binding.name,
-          path: binding.provider.root,
-          digest: binding.provider.identity.sourceFingerprint,
-        },
-        resolveRuntimeDigest: async () =>
-          shared.providerSourceSnapshot(
-            binding.provider.root,
-            binding.provider.module,
-            shared.recipeOutputRoots(context.target.value, binding.runtimeDir, binding.artifactDir),
-          ).sourceFingerprint,
-      });
-    const sources = await shared.resolveLibrarySources(
-      engine,
-      libraries.map((entry) => `${entry.name}=${entry.root}`),
-    );
-    const selected = shared.optionStrings(options, 'recipe') ?? [];
-    const recipes = selected.length
-      ? selected
-      : [...(await loadRecipeLibraries(sources, { adapter: provider.runtime.id })).recipes.values()]
-          .filter((entry) => !entry.aliasFor)
-          .map((entry) => entry.ref);
-    const params = parseRecipeParamAssignments(shared.optionStrings(options, 'param') ?? []);
-    const artifactsDir = path.join(context.target.value, binding.artifactDir, 'conformance');
-    const packages = [
-      '@farmslot/recipe-cli',
-      '@farmslot/recipe-runner',
-      '@farmslot/adapter-sdk',
-      '@farmslot/protocol',
-    ];
-    const implementationSources = packages.map((name) => ({
-      name,
-      root: shared.recipePackageRoot(createRequire(import.meta.url).resolve(name)),
-    }));
-    const providerPackage = path.join(binding.provider.root, 'package.json');
-    if (existsSync(providerPackage)) {
-      const metadata = JSON.parse(readFileSync(providerPackage, 'utf8')) as {
-        dependencies?: Record<string, string>;
-      };
-      const requireProvider = createRequire(providerPackage);
-      for (const name of packages) {
-        if (!metadata.dependencies?.[name]) continue;
-        const root = shared.recipePackageRoot(requireProvider.resolve(name));
-        if (!implementationSources.some((source) => source.root === root))
-          implementationSources.push({ name: `provider:${name}`, root });
+    },
+    async ({ context, provider, engine, librarySources: sources, cli }) => {
+      const binding = context.project!;
+      const selected = shared.optionStrings(options, 'recipe') ?? [];
+      const recipes = selected.length
+        ? selected
+        : [
+            ...(
+              await loadRecipeLibraries(sources, { adapter: provider.runtime.id })
+            ).recipes.values(),
+          ]
+            .filter((entry) => !entry.aliasFor)
+            .map((entry) => entry.ref);
+      const params = parseRecipeParamAssignments(shared.optionStrings(options, 'param') ?? []);
+      const artifactsDir = path.join(context.target.value, binding.artifactDir, 'conformance');
+      const packages = [
+        '@farmslot/recipe-cli',
+        '@farmslot/recipe-runner',
+        '@farmslot/adapter-sdk',
+        '@farmslot/protocol',
+      ];
+      const implementationSources = packages.map((name) => ({
+        name,
+        root: shared.recipePackageRoot(createRequire(import.meta.url).resolve(name)),
+      }));
+      const providerPackage = path.join(binding.provider.root, 'package.json');
+      if (existsSync(providerPackage)) {
+        const metadata = JSON.parse(readFileSync(providerPackage, 'utf8')) as {
+          dependencies?: Record<string, string>;
+        };
+        const requireProvider = createRequire(providerPackage);
+        for (const name of packages) {
+          if (!metadata.dependencies?.[name]) continue;
+          const root = shared.recipePackageRoot(requireProvider.resolve(name));
+          if (!implementationSources.some((source) => source.root === root))
+            implementationSources.push({ name: `provider:${name}`, root });
+        }
       }
-    }
-    const runtimeConfig = context.runtimeConfigPath;
-    const report = await shared.checkRecipeConformance(engine, {
-      project: binding.name,
-      app: binding.app,
-      domain: binding.domain,
-      context,
-      providerRoot: binding.provider.root,
-      configurationPaths: [
-        binding.configPath,
-        ...(binding.manifest ? [binding.manifest] : []),
-        ...(runtimeConfig ? [runtimeConfig] : []),
-        ...(context.slot?.value && context.slot.poolFile ? [context.slot.poolFile] : []),
-      ],
-      librarySources: sources,
-      implementationSources,
-      artifactsDir,
-      cli: { ...options, ...(binding.manifest ? { actionManifest: binding.manifest } : {}) },
-      recipes: recipes.map((recipe) => ({ recipe, params })),
-    });
-    const reportPath = await shared.writeRecipeConformanceReport(artifactsDir, report);
-    return { context, report, reportPath };
-  } finally {
-    shared.setHarnessContext(previousContext);
-    shared.configureHarnessAdapters(previousAdapters);
-    shared.configureHarnessHost(previousHost);
-  }
+      const runtimeConfig = context.runtimeConfigPath;
+      const report = await shared.checkRecipeConformance(engine, {
+        project: binding.name,
+        app: binding.app,
+        domain: binding.domain,
+        context,
+        providerRoot: binding.provider.root,
+        configurationPaths: [
+          binding.configPath,
+          ...(binding.manifest ? [binding.manifest] : []),
+          ...(runtimeConfig ? [runtimeConfig] : []),
+          ...(context.slot?.value && context.slot.poolFile ? [context.slot.poolFile] : []),
+        ],
+        librarySources: sources,
+        implementationSources,
+        artifactsDir,
+        cli,
+        recipes: recipes.map((recipe) => ({ recipe, params })),
+      });
+      const reportPath = await shared.writeRecipeConformanceReport(artifactsDir, report);
+      return { context, report, reportPath };
+    },
+  );
 }
 
 async function renderProjectConformance(checkout: string | undefined, cmd: Command): Promise<void> {

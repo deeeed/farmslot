@@ -1824,6 +1824,24 @@ describe('run', () => {
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
   });
 
+  test('--plan names a provider upgrade when read-only policy support is missing', async () => {
+    const target = checkout();
+    const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });
+    const legacy = engine.trustedMutation!;
+    const result = await capture(() =>
+      handleRun([recipe, '--plan', '--adapter', 'web', '--target', target, '--json'], {
+        ...runOptions,
+        engine: { ...engine, trustedMutation: { load: legacy.load, authorize: legacy.authorize } },
+      }),
+    );
+    assert.equal(result.value, 2);
+    const error = lastJson(result.stdout).error as { code: string; userAction: string };
+    assert.equal(error.code, 'MUTATION_PREFLIGHT_UNAVAILABLE');
+    assert.match(error.userAction, /upgrade the provider/u);
+    assert.deepEqual(calls.mutationHooks, []);
+    assert.equal(fs.existsSync(path.join(target, 'temp')), false);
+  });
+
   test('--plan reports an outside-checkout task artifact directory in JSON before preflight', async () => {
     const target = checkout();
     const recipe = recipeFile(target, { done: { action: 'end', status: 'pass' } });

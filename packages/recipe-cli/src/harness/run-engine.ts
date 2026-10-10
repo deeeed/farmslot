@@ -40,6 +40,7 @@ import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runt
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
+import { CliError } from './cli-error.js';
 import { harnessContextField } from './context-state.js';
 import {
   captureExecutionProvenance,
@@ -505,7 +506,7 @@ export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllow
     actionManifestPath,
     runtimeOptions,
   );
-  const plan = await execution.runner.preflight(execution.runRequest);
+  const plan = execution.plan ?? (await execution.runner.preflight(execution.runRequest));
   return { ...execution, plan };
 }
 
@@ -619,16 +620,19 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     adapter,
     ...(runtimeOptions.params ? { params: runtimeOptions.params } : {}),
   };
-  if (mutation && runtimeOptions.readOnly) {
-    const executionPlan = await runner.preflight(runRequest);
-    if (!mutation.preflight)
+  let plan: RecipeExecutionPlan | undefined;
+  if (runtimeOptions.readOnly) {
+    plan = await runner.preflight(runRequest);
+    if (mutation && !mutation.preflight)
       throw Object.assign(
-        new Error('The provider has no read-only mutation authorization preflight.'),
+        new CliError('The provider has no read-only mutation authorization preflight.', EXIT.usage),
         {
           code: 'MUTATION_PREFLIGHT_UNAVAILABLE',
+          userAction:
+            'upgrade the provider to support read-only mutation preflight before planning or certification',
         },
       );
-    await mutation.preflight(mutationInput, executionPlan);
+    await mutation?.preflight?.(mutationInput, plan);
   } else if (mutation && trustedMutation) {
     const executionPlan = await runner.preflight(runRequest);
     const authorizedMutation = await mutation.authorize(trustedMutation, executionPlan, {
@@ -658,6 +662,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const startProvenance = await captureExecutionProvenance(provenanceInput, 'start');
   return {
     readOnly: runtimeOptions.readOnly === true,
+    ...(plan ? { plan } : {}),
     runner,
     absoluteArtifactsDir,
     useFramedRecording,

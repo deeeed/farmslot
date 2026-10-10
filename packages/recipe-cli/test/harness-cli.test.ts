@@ -1461,6 +1461,7 @@ export const adapter = {
     const refused = await capture(() => cli.main(['status', '--json']));
     assert.equal(refused.result.exitCode, 2);
     assert.equal(JSON.parse(refused.stdout).error.code, 'SLOT_AMBIGUOUS');
+    assert.match(JSON.parse(refused.stdout).error.userAction, /single pool slot/u);
     assert.deepEqual(JSON.parse(refused.stdout).error.candidates, ['one', 'two']);
     assert.deepEqual(calls, []);
     const help = await capture(() => cli.main(['status', '--help']));

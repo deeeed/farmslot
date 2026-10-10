@@ -93,9 +93,7 @@ export interface ResolvedProjectBinding {
   source: ContextSource;
   root: string;
   configPath: string;
-  configIdentity: RecipeConformanceSource;
   checkoutRoot: string;
-  checkoutIdentity: RecipeConformanceSource;
   app?: string;
   domain?: string;
   template?: string;

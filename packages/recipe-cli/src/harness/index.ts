@@ -307,6 +307,11 @@ export {
   recipeRuntimePath,
 } from './paths.js';
 export {
+  type ProjectRecipeHost,
+  type ProjectRecipeHostOptions,
+  withProjectRecipeHost,
+} from './project-host.js';
+export {
   type DevicePreview,
   type FeatureFlagReport,
   type ReadinessViewOptions,

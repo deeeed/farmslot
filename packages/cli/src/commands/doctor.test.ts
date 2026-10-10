@@ -101,6 +101,7 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
   for (const name of [
     'FARMSLOT_ROOT',
     'FARMSLOT_POOL_DIR',
+    'FARMSLOT_WORKSPACE',
     'RECIPE_RUNTIME_CONTEXT',
     'RECIPE_LIBRARY_PATH',
   ])
@@ -366,4 +367,90 @@ test('public doctor binds the actual runtime configuration selected through the 
     (entry: { path: string }) => entry.path === runtimePath,
   );
   assert.notEqual(fileFingerprint(runtimePath), configuration.sourceFingerprint);
+});
+
+function workspaceFixture(t: TestContext) {
+  const { root, write } = fixture(t);
+  const external = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.recipe.provider = { module: 'provider.mjs', root: { env: 'EXAMPLE_PROVIDER_ROOT' } };
+  write('workspace/farmslot/projects/example/project.json', config);
+  write('workspace/farmslot/pool/local.json', {
+    host: 'localhost',
+    project: 'example',
+    env: { EXAMPLE_PROVIDER_ROOT: external.root },
+    slots: [{ id: 'selected', repo: root }],
+  });
+  fs.rmSync(path.join(root, 'project.json'));
+  return { root, write, external, workspace: path.join(root, 'workspace') };
+}
+
+test('public doctor uses the installed workspace pool', (t) => {
+  const { root, external, workspace } = workspaceFixture(t);
+  const result = run(root, ['--project', 'example', '--slot', 'selected'], {
+    FARMSLOT_WORKSPACE: workspace,
+  });
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(result.envelope.data.context.slot.value, 'selected');
+  assert.equal(result.envelope.data.context.project.provider.root, external.root);
+});
+
+test('explicit pool selection overrides the installed workspace pool', (t) => {
+  const { root, write, external, workspace } = workspaceFixture(t);
+  const pool = {
+    host: 'localhost',
+    project: 'example',
+    env: { EXAMPLE_PROVIDER_ROOT: external.root },
+    slots: [{ id: 'selected', repo: root }],
+  };
+  write('workspace/farmslot/pool/local.json', {
+    ...pool,
+    env: { EXAMPLE_PROVIDER_ROOT: path.join(root, 'missing') },
+  });
+  write('override/local.json', pool);
+  const result = run(root, ['--project', 'example', '--slot', 'selected'], {
+    FARMSLOT_WORKSPACE: workspace,
+    FARMSLOT_POOL_DIR: path.join(root, 'override'),
+  });
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(result.envelope.data.context.slot.poolFile, path.join(root, 'override/local.json'));
+  assert.equal(result.envelope.data.context.project.provider.root, external.root);
+});
+
+test('public doctor applies scratch runtime targeting before provider preflight', (t) => {
+  const { root, write } = fixture(t);
+  write('scratch-runtime/agentic-runtime.json', {
+    repoRoot: root,
+    slotId: 'scratch',
+    watcherPort: 8081,
+    cdpPort: 9181,
+  });
+  const provider = fs
+    .readFileSync(path.join(root, 'provider.mjs'), 'utf8')
+    .replace(
+      'export function createProvider() {',
+      `export function createProvider() {
+      if (process.env.RECIPE_RUNTIME_DIR !== 'scratch-runtime') throw new Error('factory used default runtime');`,
+    )
+    .replace(
+      'adapters: async () => ',
+      `adapters: async () => {
+      if (process.env.RECIPE_WATCHER_PORT !== '8081' || process.env.RECIPE_CDP_PORT !== '9181')
+        throw new Error('preflight used default targeting');
+      return `,
+    )
+    .replace("'doctor executed an action');}}]", "'doctor executed an action');}}]; }");
+  write('provider.mjs', provider);
+  const result = run(root, [
+    '--authorize-provider',
+    path.join(root, 'provider.mjs'),
+    '--runtime-dir',
+    'scratch-runtime',
+  ]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(
+    result.envelope.data.context.runtimeConfigPath,
+    path.join(root, 'scratch-runtime/agentic-runtime.json'),
+  );
+  assert.equal(result.envelope.data.report.identity.selection.ports.cdp, 9181);
 });

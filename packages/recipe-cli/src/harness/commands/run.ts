@@ -939,8 +939,8 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
         recipeFile,
         (error as { code?: string }).code ?? 'RECIPE_PREFLIGHT_FAILED',
         error instanceof Error ? error.message : String(error),
-        runPlanProbe(adapter, recipeFile),
-        EXIT.validation,
+        (error as { userAction?: string }).userAction ?? runPlanProbe(adapter, recipeFile),
+        (error as { exitCode?: number }).exitCode ?? EXIT.validation,
       );
     } finally {
       restoreEnvironment();
@@ -955,9 +955,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       confidence: 'static',
       status: 'ok',
       detail:
-        optionString(options, 'artifactsDir') ||
-        process.env.RECIPE_TASK_DIR ||
-        process.env.FARMSLOT_TASK_DIR
+        optionString(options, 'artifactsDir') || runTaskDir(target)
           ? artifactsDir
           : 'resolved at run time',
     },

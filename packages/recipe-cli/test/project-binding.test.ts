@@ -429,7 +429,10 @@ test('git subdirectories resolve the root and selected monorepo app', async () =
   assert.equal(context.project?.checkoutRoot, directory);
   assert.equal(context.project?.app, 'apps/a');
   assert.equal(context.target.value, path.join(directory, 'apps/a'));
-  assert.match(context.project?.checkoutIdentity.head ?? '', /^[a-f0-9]{40}$/u);
+  const head = execFileSync('git', ['-C', directory, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  assert.match(head, /^[a-f0-9]{40}$/u);
   const explicit = await resolveProjectContext({
     tokens: ['--target', path.join(directory, 'apps/b')],
     cwd: os.tmpdir(),
@@ -446,12 +449,9 @@ test('git subdirectories resolve the root and selected monorepo app', async () =
     load: { env: {} },
   };
   await assert.rejects(resolveProjectContext(options), { code: 'SOURCE_REVISION_MISSING' });
-  config.recipe!.libraries[0]!.revision = context.project!.checkoutIdentity.head!;
+  config.recipe!.libraries[0]!.revision = head;
   const pinned = await resolveProjectContext(options);
-  assert.equal(
-    pinned.project?.libraries[0]?.provenance?.revision,
-    context.project?.checkoutIdentity.head,
-  );
+  assert.equal(pinned.project?.libraries[0]?.provenance?.revision, head);
 });
 
 test('configured default resolves relative targets and registered projectsDir without imports', async () => {

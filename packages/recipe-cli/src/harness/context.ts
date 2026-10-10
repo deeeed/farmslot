@@ -20,7 +20,11 @@ import {
   type ProjectConfig,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
-import { findSlotByRepo, resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
+import {
+  findSlotByRepo,
+  resolveSlotPoolDir,
+  SlotByRepoError,
+} from '@farmslot/protocol/node/slot-by-repo';
 import { resolveRecipeLibrarySources } from '@farmslot/recipe-runner';
 
 import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './adapter-plugins.js';
@@ -129,6 +133,7 @@ export async function resolveHarnessContext(
           ? undefined
           : optionValues(options.tokens, '--slot').at(-1),
         options.strictSlot ?? true,
+        options.slotSelection,
       )
     : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
@@ -507,6 +512,7 @@ async function poolSlot(
   detail: ContextSlot['detail'],
   slotId?: string,
   strict = true,
+  selection?: ResolveHarnessContextOptions['slotSelection'],
 ): Promise<{ slot: ContextSlot; platform?: string } | 'no-pool-dir' | undefined> {
   let real: string;
   try {
@@ -520,6 +526,10 @@ async function poolSlot(
   try {
     match = await findSlotByRepo(poolDir, real, { strict, ...(slotId ? { slotId } : {}) });
   } catch (error) {
+    if (error instanceof SlotByRepoError && selection === 'identity')
+      throw Object.assign(error, {
+        userAction: 'map this checkout to a single pool slot; use --target for a separate checkout',
+      });
     // A pool directory that does not exist is none; one that does not read
     // (EACCES and the like) is a real failure.
     if (missing(error)) return 'no-pool-dir';
@@ -882,9 +892,7 @@ export async function resolveProjectContext(
     source,
     root,
     configPath: path.join(root, 'project.json'),
-    configIdentity: sourceSnapshot(root, undefined, [], ['project.json']),
     checkoutRoot,
-    checkoutIdentity: sourceSnapshot(checkoutRoot),
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
