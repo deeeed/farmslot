@@ -4,11 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Finalize the framed recorder before the completion HUD draws its result. Keep its partial video and bind the timeline to the final trace; stop using cached session screenshots once the stream reports `stream_stopped`. Reports omit unavailable frame counts and media times instead of showing zero as a measurement.
-
 ## 0.11.4 - 2026-10-10
 
-- Publish with adapter-sdk 0.8.4, agent-runtime 0.17.4, protocol 0.36.0 and recipe-runner 0.28.4 so consumers share one dependency copy. No code change.
+- Finalize the framed recorder before the completion HUD draws its result. Keep its partial video and bind the timeline to the final trace; stop using cached session screenshots once the stream reports `stream_stopped`. Reports omit unavailable frame counts and media times instead of showing zero as a measurement.
+
+- Publish with adapter-sdk 0.8.4, agent-runtime 0.17.4, protocol 0.36.0 and recipe-runner 0.28.4 so consumers share one dependency copy.
 
 ## 0.11.3 - 2026-10-10
 

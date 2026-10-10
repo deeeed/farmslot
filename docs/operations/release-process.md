@@ -76,39 +76,62 @@ This is separate from the git **update banner** (`commitsBehind` → `farmslot u
 
 Deploy from the merged release commit in a dedicated worktree. Keep live gateway
 and slot checkouts on their operator branches; never switch them to a release
-branch. Merge any required installation fixes before installing the release.
+branch. Merge required installation fixes before installing the release.
 
 1. Finish the hosted and npm cuts, run the package-readiness checks, and publish
    approved npm versions in [dependency order](package-publishing.md). Keep
    `workspace:*` in source manifests; packing writes the released dependency ranges.
-2. Drain or finish native work before upgrading its execution host on the node.
-   Upgrade the private CLI and execution nodes before restarting the gateway.
-   From the release worktree, deploy each configured machine and instance:
+2. Pause new native admissions and finish/close native sessions. Stop each selected
+   node service so it cannot recreate an old host during the upgrade. For every
+   configured native state directory, verify that the PID in `lock/owner.json`
+   belongs to its native supervisor and that its argv names that directory. Send
+   `SIGTERM` to that verified supervisor:
 
    ```bash
-   bash scripts/deploy-node.sh <machine> <gateway-host> --instance <dev|prod>
+   kill -TERM <verified-supervisor-pid>
    ```
 
-   Add `--refresh-cli` for the local machine. Remote deploys refresh the CLI
-   automatically. The immutable CLI snapshot's `DEPLOYED-REVISION.json` must name
-   the merged release SHA. Dev and prod share one CLI per machine, so deploy both
-   from the same revision. Keep native-owner settings and credential-file inputs
-   intact; node service and preflight checks must use the same environment roots.
+   Wait for its recorded host PID in `worker.json` to exit, `cleanup.json` to
+   report `state: "complete"`, and the ownership lock to disappear. Stop if cleanup
+   remains unknown; never delete locks or session journals to force an upgrade.
+   Nodes use a `nodes/<encoded-machine>` subdirectory beneath their configured
+   native root. Preserve those state directories and native-owner settings.
 
-3. A running host belongs to the node; restarting only the gateway does not upgrade it.
-   Restart the gateway through its existing supervisor after all CLI/node
-   upgrades, so it loads the new gateway version and release notes.
-4. Using the deployment's configured CLI/profile, check `gateway.status` and
+3. Upgrade the private CLI and execution nodes before restarting the gateway.
+   From the release worktree, deploy each remote machine and configured instance
+   with its machine-scoped credential file:
+
+   ```bash
+   bash scripts/deploy-node.sh <machine> <gateway-host> --instance dev --node-token-file <machine-credential-file>
+   ```
+
+   Repeat for `--instance prod` when configured. Add `--refresh-cli` for the local
+   machine; remote deploys refresh the CLI automatically. Verify the immutable
+   CLI snapshot's `DEPLOYED-REVISION.json` names the merged release SHA. Dev and
+   prod share one CLI per machine, so deploy both from that revision. Preserve
+   credential-file inputs; service and preflight checks must use matching
+   environment roots.
+
+4. Stop the gateway's existing watch/supervisor before updating its live checkout,
+   since source changes can otherwise restart it before the node upgrades finish.
+   Advance the clean operator branch to the merged release SHA through its normal
+   update procedure, verify `git rev-parse HEAD`, and install immutable dependencies.
+   Restart through its existing supervisor so the new checkout supplies the gateway
+   version, protocol and release notes. Restarting an unchanged checkout keeps the
+   old gateway. Restarting only the gateway does not upgrade a detached native host.
+5. Using each deployment's configured CLI/profile, check `gateway.status` and
    `farmslot node status --json`: gateway version and release-note version must
    match the cut. For each dev/prod profile, `gatewayProtocolVersion` must equal
    the cut protocol, and every expected node must report that `protocolVersion`
-   with `versionMatch: true`. A successful deploy's
-   gateway-unreachable warning is not a successful RPC check.
-5. Refresh downstream farm configurations only after the gateway and nodes can
-   read their support bindings. Retain the previous CLI link and deployment
-   revision until the RPC and review checks pass. Roll back the matching gateway,
-   node and CLI cohort together if those checks fail; preserve credentials and
-   run/task state.
+   with `versionMatch: true`. A deploy's gateway-unreachable warning still needs
+   a successful RPC check. On the first controlled native request, verify fresh
+   supervisor/host identities from the upgraded node installation and the expected
+   state directory; node protocol and CLI SHA checks alone cannot detect a reused host.
+6. Resume native admissions and refresh downstream farm configurations only after
+   these checks pass. Retain the previous CLI link and deployment revision for
+   rollback. If checks fail, repeat the drain, node-service stop, verified native
+   supervisor stop and cleanup wait before restoring the matching gateway/node/CLI
+   cohort. Verify fresh hosts after rollback too; preserve credentials and run state.
 
 ## Companion EAS release
 

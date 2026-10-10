@@ -4,11 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Keep measured partial footage when the owned Android mirror exits, and report `CAPTURE_INTERRUPTED`. The completion HUD waits for recorder finalization, including caller-owned recordings through `RecipeRunRequest.finalizeRecording`; interrupted or failed finalization draws FAIL. Losing the HUD endpoint with the capture keeps the incomplete-evidence classification; independent HUD and product failures remain failures. CDP calls reject immediately after connection closure. Session screenshots stop using cached frames as soon as the helper reports `stream_stopped`; fresh capture waits for encoder finalization. Interruption messages omit unmeasured frame counts and media times instead of reporting zero as a measurement.
-
 ## 0.28.4 - 2026-10-10
 
-- Publish with protocol 0.36.0 so consumers share one dependency copy. No code change.
+- Keep measured partial footage when the owned Android mirror exits, and report `CAPTURE_INTERRUPTED`. The completion HUD waits for recorder finalization, including caller-owned recordings through `RecipeRunRequest.finalizeRecording`; interrupted or failed finalization draws FAIL. Losing the HUD endpoint with the capture keeps the incomplete-evidence classification; independent HUD and product failures remain failures. CDP calls reject immediately after connection closure. Session screenshots stop using cached frames as soon as the helper reports `stream_stopped`; fresh capture waits for encoder finalization. Interruption messages omit unmeasured frame counts and media times instead of reporting zero as a measurement.
+
+- Publish with protocol 0.36.0 so consumers share one dependency copy.
 
 ## 0.28.3 - 2026-10-10
 
