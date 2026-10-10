@@ -181,7 +181,16 @@ export async function ensureNodeSupportBundle(
     options.collected && options.collected.manifest.paths.join('\0') === supportPaths.join('\0')
       ? options.collected
       : await collectNodeSupportBundle(vars.projectName, supportPaths);
-  const supportDir = nodeSupportDir(manifest.hash);
+  // Resolve on the execution node: quoting a literal ~/ path in a hook
+  // suppresses shell expansion, and the gateway's home belongs to another host.
+  const resolved = await io.exec(
+    vars,
+    `printf '%s\\n' ${shellExpressionForRemotePath(nodeSupportDir(manifest.hash))}`,
+  );
+  const supportDir = resolved.stdout.trim();
+  if (resolved.exitCode !== 0 || !path.posix.isAbsolute(supportDir)) {
+    throw new Error('Node support path did not resolve to an absolute directory');
+  }
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
