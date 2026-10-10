@@ -19,6 +19,7 @@ import {
   renderFixtureTemplate,
   type SlotVars,
   withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
@@ -838,12 +839,22 @@ export async function runHealthCheck(
   vars: SlotVars,
   healthHook: string,
   parseHealthCmd: string,
-  options: { timeoutMs?: number; logPrefix?: string } = {},
+  options: {
+    timeoutMs?: number;
+    logPrefix?: string;
+    projectJson?: RawProjectJson;
+    projectVars?: ProjectVars;
+  } = {},
 ): Promise<string> {
   try {
     const result = await execOnSlot(
       vars,
-      withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`, vars),
+      withProjectMachineEnv(
+        `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+        vars,
+        options.projectJson ?? {},
+        options.projectVars,
+      ),
       { timeout: options.timeoutMs },
     );
     const raw = result.stdout.trim();

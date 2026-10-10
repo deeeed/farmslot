@@ -342,12 +342,11 @@ export async function checkPrepareRequirement(
       const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
       // Same shell environment as the prepare's own health phase: project
       // command_env, then the machine's pool env.
-      const value = await runHealthCheck(
-        vars,
-        withProjectMachineEnv(healthHook, vars, projectJson, projectVars),
-        parseCmd,
-        { logPrefix: 'prepare-profile' },
-      );
+      const value = await runHealthCheck(vars, healthHook, parseCmd, {
+        logPrefix: 'prepare-profile',
+        projectJson,
+        projectVars,
+      });
       if (value && (!readyIndicator || value === readyIndicator)) {
         return { requirement, ok: true, detail: `health ${value}` };
       }

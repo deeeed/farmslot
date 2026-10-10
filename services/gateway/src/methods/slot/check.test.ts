@@ -510,9 +510,11 @@ test('prepare profile artifact and dev-server probes receive pool paths', async 
       hooks: {
         artifact_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD"',
         dev_server_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD"',
+        health_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD" && printf OK',
       },
     },
   };
   assert.equal((await checkPrepareRequirement('artifact_available', context)).ok, true);
   assert.equal((await checkPrepareRequirement('dev_server_up', context)).ok, true);
+  assert.equal((await checkPrepareRequirement('health_ok', context)).ok, true);
 });

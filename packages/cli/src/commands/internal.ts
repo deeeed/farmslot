@@ -36,6 +36,7 @@ import {
 
 import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
+import { isLocalPool } from '../slot-context.js';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -92,12 +93,20 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
       return false;
     })
     .map(([key, value]) => `${key}=${shellQuote(value)}`);
+  // These exports are evaluated by the caller, which may be the operator
+  // syncing a remote slot. Its local CLI must keep the operator tool paths.
+  const local = isLocalPool(vars);
+  const nodeLines = local
+    ? [
+        ...Object.entries(vars.machineEnv ?? {}).map(
+          ([key, value]) => `export ${key}=${shellQuote(value)}`,
+        ),
+      ]
+    : [];
   return [
-    ...Object.entries(vars.machineEnv ?? {}).map(
-      ([key, value]) => `export ${key}=${shellQuote(value)}`,
-    ),
+    ...nodeLines,
     ...slotLines,
-    `export FARMSLOT_MACHINE=${shellQuote(vars.machine)}`,
+    ...(local ? [`export FARMSLOT_MACHINE=${shellQuote(vars.machine)}`] : []),
   ];
 }
 
