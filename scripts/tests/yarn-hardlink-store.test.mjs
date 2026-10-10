@@ -113,10 +113,9 @@ test('concurrent guarded cold-store installs retain every dependency file', asyn
   }
 });
 
-test('a stock client paused after observing no store resumes after a guarded install', async (t) => {
+test('repository guard store differs from stock clients while sharing their archive cache', async (t) => {
   const context = fixture(t);
   const stock = projectAt(context.root, 'stock-dep', false);
-  const guarded = projectAt(context.root, 'guarded-dep');
   const [guardedFolder, stockFolder, guardedCache, stockCache] = await Promise.all([
     context.command(repoRoot, ['config', 'get', 'globalFolder']),
     context.command(stock.cwd, ['config', 'get', 'globalFolder']),
@@ -125,49 +124,69 @@ test('a stock client paused after observing no store resumes after a guarded ins
   ]);
   assert.notEqual(guardedFolder.stdout.trim(), stockFolder.stdout.trim());
   assert.equal(guardedCache.stdout.trim(), stockCache.stdout.trim());
-  const berry = path.join(context.root, 'berry');
-  const store = path.join(berry, 'store/v1');
-  const paused = path.join(context.root, 'paused');
-  const resume = path.join(context.root, 'resume');
-  const preload = path.join(context.root, 'pause-stock.cjs');
-  writeFileSync(
-    preload,
-    `
+});
+
+for (const pauseAt of ['absent-store', 'first-bucket']) {
+  test(`a stock client paused at ${pauseAt} resumes after a guarded install`, async (t) => {
+    const context = fixture(t);
+    const stock = projectAt(context.root, 'stock-dep', false);
+    const guarded = projectAt(context.root, 'guarded-dep');
+    const berry = path.join(context.root, 'berry');
+    const store = path.join(berry, 'store/v1');
+    const paused = path.join(context.root, 'paused');
+    const resume = path.join(context.root, 'resume');
+    const preload = path.join(context.root, 'pause-stock.cjs');
+    writeFileSync(
+      preload,
+      `
 const fs = require('node:fs');
-const original = fs.exists;
+const path = require('node:path');
 let held = false;
-fs.exists = (file, callback) => original(file, exists => {
-  if (String(file) !== process.env.STOCK_STORE || exists || held) return callback(exists);
+const hold = callback => {
   held = true;
   fs.writeFileSync(process.env.STOCK_PAUSED, 'paused');
-  const poll = () => fs.existsSync(process.env.STOCK_RESUME) ? callback(exists) : setTimeout(poll, 10);
+  const poll = () => fs.existsSync(process.env.STOCK_RESUME) ? callback() : setTimeout(poll, 10);
   poll();
-});
+};
+if (process.env.STOCK_PAUSE_AT === 'absent-store') {
+  const original = fs.exists;
+  fs.exists = (file, callback) => original(file, exists => {
+    if (String(file) !== process.env.STOCK_STORE || exists || held) return callback(exists);
+    hold(() => callback(exists));
+  });
+} else {
+  const original = fs.mkdir;
+  fs.mkdir = (file, ...args) => {
+    if (String(file) !== path.join(process.env.STOCK_STORE, '00') || held)
+      return original(file, ...args);
+    hold(() => original(file, ...args));
+  };
+}
 `,
-  );
-  const stockOutcome = context
-    .install(stock, berry, path.join(berry, 'cache'), {
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(preload)}`.trim(),
-      STOCK_STORE: store,
-      STOCK_PAUSED: paused,
-      STOCK_RESUME: resume,
-    })
-    .then(
-      (value) => ({ status: 'fulfilled', value }),
-      (reason) => ({ status: 'rejected', reason }),
     );
-  const deadline = Date.now() + 2000;
-  while (!existsSync(paused) && Date.now() < deadline)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(existsSync(paused), 'the real stock client must reach its absent-store check');
-  await context.install(guarded, path.join(berry, 'farmslot'), path.join(berry, 'cache'));
-  assert.equal(
-    existsSync(store),
-    false,
-    'guarded clients must not publish into the stock namespace',
-  );
-  assert.ok(existsSync(path.join(berry, 'farmslot/store/v1/ff')));
-  writeFileSync(resume, 'resume');
-  assertSucceeded(await stockOutcome);
-  [stock, guarded].forEach(assertInstalled);
-});
+    const stockOutcome = context
+      .install(stock, berry, path.join(berry, 'cache'), {
+        NODE_OPTIONS:
+          `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(preload)}`.trim(),
+        STOCK_STORE: store,
+        STOCK_PAUSED: paused,
+        STOCK_RESUME: resume,
+        STOCK_PAUSE_AT: pauseAt,
+      })
+      .then(
+        (value) => ({ status: 'fulfilled', value }),
+        (reason) => ({ status: 'rejected', reason }),
+      );
+    const deadline = Date.now() + 2000;
+    while (!existsSync(paused) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(existsSync(paused), `the real stock client must reach ${pauseAt}`);
+    await context.install(guarded, path.join(berry, 'farmslot'), path.join(berry, 'cache'));
+    assert.equal(existsSync(store), pauseAt === 'first-bucket');
+    assert.equal(existsSync(path.join(store, 'ff')), false);
+    assert.ok(existsSync(path.join(berry, 'farmslot/store/v1/ff')));
+    writeFileSync(resume, 'resume');
+    assertSucceeded(await stockOutcome);
+    [stock, guarded].forEach(assertInstalled);
+  });
+}
