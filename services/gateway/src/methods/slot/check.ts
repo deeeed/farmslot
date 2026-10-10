@@ -90,7 +90,12 @@ export async function slotCheck(
     checks.push(repoStep);
     emitStep(emit, repoStep);
     if (repoStep.status === 'pass') {
-      const prerequisites = await checkProjectPrerequisites(slotVars, projectJson, projectVars);
+      let prerequisites: CheckStep | null;
+      try {
+        prerequisites = await checkProjectPrerequisites(slotVars, projectJson, projectVars);
+      } catch (err) {
+        prerequisites = { name: 'prerequisites', status: 'fail', detail: (err as Error).message };
+      }
       if (prerequisites) {
         checks.push(prerequisites);
         emitStep(emit, prerequisites);

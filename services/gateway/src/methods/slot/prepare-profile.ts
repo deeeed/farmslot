@@ -3,7 +3,6 @@
 import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@farmslot/protocol';
 
 import {
-  applyProjectCommandEnv,
   execOnSlot,
   expandHook,
   expandTemplate,
@@ -11,7 +10,7 @@ import {
   type ProjectVars,
   type RawProjectJson,
   type SlotVars,
-  withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
@@ -279,7 +278,15 @@ export async function checkPrepareRequirement(
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no dev_server_check hook' };
       }
-      const r = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${hook}`);
+      const r = await execOnSlot(
+        vars,
+        withProjectMachineEnv(
+          `cd ${shellQuote(vars.remoteRepo)} && ${hook}`,
+          vars,
+          projectJson,
+          projectVars,
+        ),
+      );
       return r.exitCode === 0
         ? { requirement, ok: true, detail: 'dev_server_check passed' }
         : { requirement, ok: false, detail: `dev_server_check exited ${r.exitCode}` };
@@ -305,7 +312,15 @@ export async function checkPrepareRequirement(
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no artifact_check hook' };
       }
-      const r = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${hook}`);
+      const r = await execOnSlot(
+        vars,
+        withProjectMachineEnv(
+          `cd ${shellQuote(vars.remoteRepo)} && ${hook}`,
+          vars,
+          projectJson,
+          projectVars,
+        ),
+      );
       if (r.exitCode === 0) {
         return { requirement, ok: true, detail: 'artifact_check passed' };
       }
@@ -329,7 +344,7 @@ export async function checkPrepareRequirement(
       // command_env, then the machine's pool env.
       const value = await runHealthCheck(
         vars,
-        applyProjectCommandEnv(projectJson, withMachineEnv(healthHook, vars)),
+        withProjectMachineEnv(healthHook, vars, projectJson, projectVars),
         parseCmd,
         { logPrefix: 'prepare-profile' },
       );

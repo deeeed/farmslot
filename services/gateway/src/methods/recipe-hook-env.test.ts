@@ -6,6 +6,8 @@ import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
+await import('../runtime/mock-pty.test-support.js');
+
 let repo = '';
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {

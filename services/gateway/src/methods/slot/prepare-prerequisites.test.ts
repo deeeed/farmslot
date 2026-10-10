@@ -3,6 +3,8 @@ import { beforeEach, mock, test } from 'node:test';
 
 import type { ProjectVars, SlotVars } from '../../core/config.js';
 
+await import('../../runtime/mock-pty.test-support.js');
+
 // All execution and lifecycle mutations are stubbed. No filesystem or tmux writes.
 const vars: SlotVars = {
   slotId: 'fixture-slot',
@@ -37,6 +39,7 @@ const project: ProjectVars = {
   projectJson: { hooks: { prerequisites: 'check-configured-paths' } },
 };
 let refused = false;
+let transportFailure = false;
 let calls: string[] = [];
 // Mock before loading the native worker graph, which imports prepare during recovery.
 mock.module('../../runners/native/worker.js', {
@@ -60,6 +63,29 @@ mock.module('../../runners/native/worker.js', {
     },
   },
 });
+const executeOnSlot = async (
+  _vars: SlotVars,
+  command: string,
+  options: { selectNodeSupport?: boolean },
+) => {
+  if (!command.includes('check-configured-paths')) {
+    assert.equal(transportFailure, true, 'unexpected execution outside prerequisites');
+    return { exitCode: 0, stdout: command === 'echo ok' ? 'ok' : '', stderr: '' };
+  }
+  calls.push('prerequisites');
+  if (transportFailure) throw new Error('node support bundle corrupt');
+  assert.match(command, /check-configured-paths/);
+  assert.equal(options.selectNodeSupport, false);
+  return {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'missing extension checkout on fixture-node, set TERMINAL_EXTENSION_CHECKOUT',
+  };
+};
+const execution = await import('../../core/exec.js');
+mock.module('../../core/exec.js', {
+  namedExports: { ...execution, execOnSlot: executeOnSlot },
+});
 const core = await import('../../core/index.js');
 mock.module('../../core/index.js', {
   namedExports: {
@@ -67,20 +93,7 @@ mock.module('../../core/index.js', {
     loadSlotVars: async () => ({ ...vars, resourceVars: {} }),
     loadProjectVars: async () => project,
     readSlotField: async () => null,
-    execOnSlot: async (
-      _vars: SlotVars,
-      command: string,
-      options: { selectNodeSupport?: boolean },
-    ) => {
-      calls.push('prerequisites');
-      assert.match(command, /check-configured-paths/);
-      assert.equal(options.selectNodeSupport, false);
-      return {
-        exitCode: 1,
-        stdout: '',
-        stderr: 'missing extension checkout on fixture-node, set TERMINAL_EXTENSION_CHECKOUT',
-      };
-    },
+    execOnSlot: executeOnSlot,
     slotWriteFiles: async () => {
       throw new Error('unexpected slot write');
     },
@@ -100,10 +113,16 @@ mock.module('./prepare-sentinel.js', {
     },
   },
 });
+const fleet = await import('../../fleet/state.js');
+mock.module('../../fleet/state.js', {
+  namedExports: { ...fleet, loadFleetStatus: async () => ({ slots: [] }) },
+});
 const { slotPrepare } = await import('./prepare.js');
+const { slotCheck } = await import('./check.js');
 beforeEach(() => {
   calls = [];
   refused = false;
+  transportFailure = false;
 });
 
 test('failed prerequisites stop prepare before slot selection, retirement and checkout phases', async () => {
@@ -120,4 +139,20 @@ test('refused ownership never delivers or selects prerequisite support', async (
     /belongs to another native run/,
   );
   assert.deepEqual(calls, ['ownership']);
+});
+
+test('slot.check reports a prerequisite transport failure and completes sibling probes', async () => {
+  transportFailure = true;
+  const events: string[] = [];
+  const result = await slotCheck({ slotId: vars.slotId }, (event) => events.push(event));
+  assert.deepEqual(
+    result.checks.find((step) => step.name === 'prerequisites'),
+    {
+      name: 'prerequisites',
+      status: 'fail',
+      detail: 'node support bundle corrupt',
+    },
+  );
+  assert.ok(result.checks.some((step) => step.name === 'tmux'));
+  assert.ok(events.includes('slot.check.done'));
 });
