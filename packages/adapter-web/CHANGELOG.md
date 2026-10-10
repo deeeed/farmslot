@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.8 - 2026-10-10
+
+- Publish with adapter-sdk 0.8.4 and recipe-runner 0.28.4 so consumers share one dependency copy. No code change.
+
 ## 0.6.7 - 2026-10-10
 
 - Publish with adapter-sdk 0.8.3 and recipe-runner 0.28.3 so consumers share one adapter-sdk and one recipe-runner copy. No code change.

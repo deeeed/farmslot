@@ -1,9 +1,7 @@
 {
-  "version": "0.20.6",
+  "version": "0.20.7",
   "date": "2026-10-10",
   "items": [
-    "The Ready gate preview shows the PR title and body that will be published, and the posted body once published",
-    "The acceptance panel says when the evidence manifest behind its fallback cannot be read",
-    "Archive waits for a slot release, and bulk archive keeps going past a refused run and lists why it failed"
+    "Partial recording timelines keep action markers and seeks within the recorded footage."
   ]
 }
