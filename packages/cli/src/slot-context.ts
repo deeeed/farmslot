@@ -41,7 +41,7 @@ function normalizeLocalName(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\.local$/u, '') : '';
 }
 
-function isLocalPool(pool: PoolConfig): boolean {
+export function isLocalPool(pool: PoolConfig): boolean {
   const hostname = normalizeLocalName(os.hostname());
   const host = normalizeLocalName(pool.host);
   const machine = normalizeLocalName(pool.machine);

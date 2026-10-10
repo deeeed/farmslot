@@ -21,6 +21,7 @@ import {
   resolveSlot,
 } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
+import { withProjectMachineEnv } from '../core/project-env.js';
 import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
@@ -291,7 +292,8 @@ export async function slotActionRun(
     };
   }
 
-  const result = await executeExpandedCommand(params.slotId, expanded, action.timeoutMs);
+  const command = withProjectMachineEnv(expanded, slotVars, projectVars.projectJson, projectVars);
+  const result = await executeExpandedCommand(params.slotId, command, action.timeoutMs);
   if (result.ok && action.summary.refresh.includes('resources')) {
     await pollSlotResources(params.slotId);
   }

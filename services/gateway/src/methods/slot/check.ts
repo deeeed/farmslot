@@ -19,6 +19,7 @@ import {
   renderFixtureTemplate,
   type SlotVars,
   withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
@@ -30,6 +31,7 @@ import {
 import { normalizeRunner } from '../../runners/registry.js';
 
 import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
+import { checkProjectPrerequisites } from './prerequisites.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -89,6 +91,16 @@ export async function slotCheck(
     checks.push(repoStep);
     emitStep(emit, repoStep);
     if (repoStep.status === 'pass') {
+      let prerequisites: CheckStep | null;
+      try {
+        prerequisites = await checkProjectPrerequisites(slotVars, projectJson, projectVars);
+      } catch (err) {
+        prerequisites = { name: 'prerequisites', status: 'fail', detail: (err as Error).message };
+      }
+      if (prerequisites) {
+        checks.push(prerequisites);
+        emitStep(emit, prerequisites);
+      }
       const branchStep = await checkDefaultBranch(
         slotVars,
         getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
@@ -541,7 +553,7 @@ async function checkDevice(
     };
   }
   try {
-    const result = await execOnSlot(vars, deviceCheck);
+    const result = await execOnSlot(vars, withMachineEnv(deviceCheck, vars));
     if (result.exitCode === 0) {
       const label =
         vars.platform === 'android'
@@ -575,7 +587,7 @@ async function checkDevServer(
 
   if (devCheck) {
     try {
-      const result = await execOnSlot(vars, devCheck);
+      const result = await execOnSlot(vars, withMachineEnv(devCheck, vars));
       if (result.exitCode === 0) {
         const port = vars.resourceVars.port ?? '';
         steps.push({
@@ -737,9 +749,13 @@ export const UNLOCK_HOOK_TIMEOUT_MS = 120_000;
  * re-read health afterwards and report the failure only if health stays down.
  */
 export async function runUnlockHook(vars: SlotVars, unlockHook: string): Promise<string | null> {
-  const result = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, {
-    timeout: UNLOCK_HOOK_TIMEOUT_MS,
-  });
+  const result = await execOnSlot(
+    vars,
+    withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, vars),
+    {
+      timeout: UNLOCK_HOOK_TIMEOUT_MS,
+    },
+  );
   if (result.exitCode === 0) return null;
   const tail = `${result.stdout}\n${result.stderr}`
     .split('\n')
@@ -823,12 +839,22 @@ export async function runHealthCheck(
   vars: SlotVars,
   healthHook: string,
   parseHealthCmd: string,
-  options: { timeoutMs?: number; logPrefix?: string } = {},
+  options: {
+    timeoutMs?: number;
+    logPrefix?: string;
+    projectJson?: RawProjectJson;
+    projectVars?: ProjectVars;
+  } = {},
 ): Promise<string> {
   try {
     const result = await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+      withProjectMachineEnv(
+        `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+        vars,
+        options.projectJson ?? {},
+        options.projectVars,
+      ),
       { timeout: options.timeoutMs },
     );
     const raw = result.stdout.trim();

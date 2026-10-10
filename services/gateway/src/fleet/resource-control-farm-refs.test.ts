@@ -95,8 +95,8 @@ test('once delivered, health and shutdown both run from the bundle', async () =>
   const result = await executeResourceControl('mini-p-1', 'probe', 'shutdown');
   assert.equal(result.ok, true);
   assert.deepEqual(sent, [
-    'bash ~/farmslot-node/support/h/projects/p-farm/scripts/health.sh',
-    'bash ~/farmslot-node/support/h/projects/p-farm/scripts/stop.sh',
+    "export FARMSLOT_MACHINE='mini' && bash ~/farmslot-node/support/h/projects/p-farm/scripts/health.sh",
+    "export FARMSLOT_MACHINE='mini' && bash ~/farmslot-node/support/h/projects/p-farm/scripts/stop.sh",
   ]);
 });
 
