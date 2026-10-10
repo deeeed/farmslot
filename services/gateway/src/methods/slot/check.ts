@@ -30,6 +30,7 @@ import {
 import { normalizeRunner } from '../../runners/registry.js';
 
 import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
+import { checkProjectPrerequisites } from './prerequisites.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
 import { probeDefaultBranch } from './slot-tracking.js';
 
@@ -89,6 +90,11 @@ export async function slotCheck(
     checks.push(repoStep);
     emitStep(emit, repoStep);
     if (repoStep.status === 'pass') {
+      const prerequisites = await checkProjectPrerequisites(slotVars, projectJson, projectVars);
+      if (prerequisites) {
+        checks.push(prerequisites);
+        emitStep(emit, prerequisites);
+      }
       const branchStep = await checkDefaultBranch(
         slotVars,
         getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,

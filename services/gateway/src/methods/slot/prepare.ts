@@ -26,7 +26,6 @@ import {
   loadProjectVars,
   loadSlotVars,
   type ProjectVars,
-  type RawProjectJson,
   readSlotField,
   SLOT_PHASE_RELEASING,
   slotFileExists,
@@ -96,6 +95,7 @@ import {
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
+import { checkProjectPrerequisites } from './prerequisites.js';
 import {
   activePrepareAborts,
   activePrepareSessions,
@@ -203,6 +203,25 @@ export async function slotPrepare(
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
     await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
+    const selectedApp = await applySelectedApp(vars, params.app);
+    let projectVars: ProjectVars | undefined;
+    try {
+      projectVars = await loadProjectVars(vars.projectName);
+    } catch {
+      /* no project config: retain default prepare behavior */
+    }
+    if (vars.slotEnabled) {
+      const prerequisites = await checkProjectPrerequisites(
+        vars,
+        projectVars?.projectJson ?? {},
+        projectVars,
+        resolveEffectiveDomain(params.domain, vars.domain),
+      );
+      if (prerequisites) {
+        stream.step('prerequisites', prerequisites.detail);
+        if (prerequisites.status === 'fail') throw new Error(prerequisites.detail);
+      }
+    }
     assertNativeSlotReplacementOwner(params.slotId, params.runId);
     const preparingRun = params.runId ? getRun(params.runId) : null;
     if (preparingRun?.transport === 'native') {
@@ -223,7 +242,13 @@ export async function slotPrepare(
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     await retireNativeWorkersForSlot(params.slotId, params.runId);
-    const result = await slotPrepareInner(params, stream, prepareSignal, opts);
+    const result = await slotPrepareInner(
+      params,
+      { vars, projectVars, selectedApp },
+      stream,
+      prepareSignal,
+      opts,
+    );
     if (!result.prepared) {
       stream.complete(1, `Slot ${params.slotId} is disabled`);
     } else {
@@ -268,14 +293,20 @@ export async function readPrepareLogTailChunk(
   }
 }
 
+interface PrepareProjectContext {
+  vars: SlotVars;
+  projectVars?: ProjectVars;
+  selectedApp: string;
+}
+
 async function slotPrepareInner(
   params: SlotPrepareParams,
+  context: PrepareProjectContext,
   stream: PrepareStream,
   signal?: AbortSignal,
   opts?: SlotPrepareInternalOptions,
 ): Promise<Omit<SlotPrepareResult, 'requestId'>> {
-  const vars = await loadSlotVars(params.slotId);
-  const selectedApp = await applySelectedApp(vars, params.app);
+  const { vars, projectVars, selectedApp } = context;
   const checkAborted = () => {
     if (signal?.aborted) throw new Error('Prepare cancelled');
   };
@@ -284,15 +315,7 @@ async function slotPrepareInner(
     return { prepared: false };
   }
 
-  let projectVars: ProjectVars | undefined;
-  let projectJson: RawProjectJson = {};
-  try {
-    projectVars = await loadProjectVars(vars.projectName);
-    projectJson = projectVars.projectJson;
-  } catch {
-    /* no project config */
-  }
-
+  const projectJson = projectVars?.projectJson ?? {};
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   const devServerName = getProjectField(projectJson, 'health.dev_server_name') || 'DevServer';
   const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
