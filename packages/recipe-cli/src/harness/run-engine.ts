@@ -192,7 +192,10 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   let result: RecipeRunResult | undefined;
   let executionError: unknown;
   try {
-    result = await runner.run(runRequest);
+    result = await runner.run({
+      ...runRequest,
+      ...(recording ? { finalizeRecording: () => stopRecipeRecording(recording) } : {}),
+    });
   } catch (error) {
     executionError = error;
     try {

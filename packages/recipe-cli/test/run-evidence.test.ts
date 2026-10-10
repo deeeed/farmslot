@@ -26,6 +26,7 @@ import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe
 import {
   type ActiveRecipeRecording,
   beginRunDiagnostics,
+  captureActiveRecipeRecordingSnapshot,
   captureExecutionProvenance,
   closest,
   collectRunDiagnostics,
@@ -1059,6 +1060,28 @@ describe('run recording', () => {
     assert.equal(process.env[ACTIVE_PID_ENV], '42');
   });
 
+  test('a recording stopped before the completion HUD publishes once against the final trace', async () => {
+    const f = fixture();
+    await stopRecipeRecording(f.recording);
+    assert.equal(f.artifacts().length, 0);
+    const entry = {
+      nodeId: 'recipe-complete:hud',
+      action: 'app.hud',
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      durationMs: 0,
+      ok: false,
+    };
+    const trace = JSON.parse(fs.readFileSync(f.result!.tracePath, 'utf8'));
+    trace.entries.push(entry);
+    fs.writeFileSync(f.result!.tracePath, JSON.stringify(trace));
+    await stopRecipeRecording(f.recording, f.result);
+    const timeline = JSON.parse(fs.readFileSync(`${f.recording.outputPath}.timeline.json`, 'utf8'));
+    assert.equal(timeline.markers.at(-1).nodeId, 'recipe-complete:hud');
+    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
+    assert.equal(f.artifacts().filter((artifact) => artifact.type === 'video').length, 1);
+  });
+
   for (const mode of ['missing', 'wrong-id', 'wrong-digest'] as const) {
     test(`keeps the video with an explicit gap for ${mode} timing`, async () => {
       const f = fixture();
@@ -1160,6 +1183,56 @@ describe('run recording', () => {
       assert.equal(await startRecipeRecording('web', root, root, { record: true }), undefined);
   });
 
+  test('stream_stopped ignores stale replies and sends no more session snapshot commands', async (t) => {
+    if (process.platform !== 'darwin') return t.skip('Framed recorder is macOS-only');
+    const root = tempRoot('framed-stopped-');
+    const helper = path.join(root, 'helper.cjs');
+    const commands = path.join(root, 'commands');
+    fs.writeFileSync(
+      helper,
+      `#!/usr/bin/env node
+const fs=require('node:fs');
+if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:['record_session_snapshot','record_session_timing_v1']}));process.exit(0)}
+const out=process.argv[process.argv.indexOf('--output')+1];
+process.stderr.write(JSON.stringify({type:'info',msg:'record frames=1'})+'\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ fs.appendFileSync(${JSON.stringify(commands)},line+'\\n');
+ const output=line.slice(9);
+ process.stderr.write(JSON.stringify({type:'error',code:'stream_stopped',message:'Window stopped'})+'\\n');
+ setTimeout(()=>{fs.writeFileSync(output,'stale session');process.stderr.write(JSON.stringify({type:'snapshot',output,media_time_ms:5})+'\\n')},20);
+ setTimeout(()=>{fs.writeFileSync(out,'partial video');process.stderr.write(JSON.stringify({type:'error',code:'stream_interrupted',output:out,frames:2,media_time_ms:33,cause:'Window stopped'})+'\\n',()=>process.exit(3))},40);
+});
+`,
+      { mode: 0o755 },
+    );
+    process.env.CAPTURE_HELPER_PATH = helper;
+    useAdapters(
+      fakeAdapter('web', {
+        recording: {
+          target: async () => ({ kind: 'pid', pid: 4242 }),
+          framed: { browserPid: () => 4242, activePidEnv: ACTIVE_PID_ENV },
+        },
+      }),
+    );
+    const recording = await startRecipeRecording('web', root, root, { record: true });
+    assert.ok(recording);
+    try {
+      const stopped = new Promise<void>((resolve) =>
+        recording.child.stderr.once('data', () => resolve()),
+      );
+      const first = captureActiveRecipeRecordingSnapshot(4242, path.join(root, 'first.png'));
+      await stopped;
+      assert.equal(recording.streamStopped, true);
+      const second = captureActiveRecipeRecordingSnapshot(4242, path.join(root, 'second.png'));
+      assert.equal(await first, undefined);
+      assert.equal(await second, undefined);
+      assert.equal(recording.exited, true);
+      assert.equal(fs.readFileSync(commands, 'utf8').trim().split('\n').length, 1);
+    } finally {
+      await stopRecipeRecording(recording);
+    }
+  });
+
   test('the recording target comes from the platform; a platform without one refuses', async () => {
     useAdapters(
       fakeAdapter('web', { recording: { target: async () => ({ kind: 'pid', pid: 4242 }) } }),
@@ -1241,9 +1314,23 @@ describe('run report', () => {
       error_code: 'CAPTURE_INTERRUPTED',
       error: 'CAPTURE_INTERRUPTED: the recording stream stopped after 12 frames (0.4 s): -3805.',
     };
-    const write = (extra: unknown[]) => {
+    const write = (extra: unknown[], frames = 12) => {
       const read = { nodeId: 'read', action: 'state_read', durationMs: 20, ok: true };
-      fs.writeFileSync(files.tracePath, JSON.stringify({ entries: [read, ...extra, interrupted] }));
+      fs.writeFileSync(
+        files.tracePath,
+        JSON.stringify({
+          entries: [
+            read,
+            ...extra,
+            {
+              ...interrupted,
+              ...(frames === 0
+                ? { error: 'CAPTURE_INTERRUPTED: recorder stopped; timing unavailable' }
+                : {}),
+            },
+          ],
+        }),
+      );
       fs.writeFileSync(
         files.summaryPath,
         JSON.stringify({ status: 'fail', durationMs: 1500, passed: 1, total: 2 + extra.length }),
@@ -1255,7 +1342,14 @@ describe('run report', () => {
             {
               path: 'videos/recipe-run.mp4',
               type: 'video',
-              interruption: { frames: 12, mediaTimeMs: 400, cause: 'SCStreamErrorDomain -3805' },
+              interruption: {
+                frames,
+                mediaTimeMs: frames === 0 ? 0 : 400,
+                cause:
+                  frames === 0
+                    ? 'Android recorder stopped; timing unavailable'
+                    : 'SCStreamErrorDomain -3805',
+              },
             },
           ],
         }),
@@ -1276,6 +1370,13 @@ describe('run report', () => {
     assert.match(withFailure, /\nStatus: fail\n/u);
     assert.match(withFailure, /\n- FAIL assert /u);
     assert.match(withFailure, /- INCOMPLETE partial video /u);
+    const unmeasured = write([], 0);
+    assert.match(unmeasured, /\nStatus: evidence incomplete \(capture interrupted\)\n/u);
+    assert.match(
+      unmeasured,
+      /the recording stopped: Android recorder stopped; timing unavailable\n/u,
+    );
+    assert.doesNotMatch(unmeasured, /stopped after 0 frames/u);
   });
 
   test('a violation writes report.md only when the recording was interrupted, whatever else failed', () => {

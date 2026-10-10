@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Finalize the framed recorder before the completion HUD draws its result. Keep its partial video and bind the timeline to the final trace; stop using cached session screenshots once the stream reports `stream_stopped`. Reports omit unavailable frame counts and media times instead of showing zero as a measurement.
 
 ## 0.11.3 - 2026-10-10
 

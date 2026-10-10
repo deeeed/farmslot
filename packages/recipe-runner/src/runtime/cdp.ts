@@ -14,6 +14,7 @@ import {
   type UiPoint,
 } from '../adapters/gesture.js';
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
+import { RecipeExecutionError, RUNTIME_CONNECTION_CLOSED } from '../core/failure.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
 import { writeFileWithinRoot } from '../core/path.js';
 import {
@@ -71,6 +72,13 @@ interface CdpCallOptions {
 }
 
 class CdpCallTimeoutError extends Error {}
+
+function closedCdpConnection(cause?: Error): RecipeExecutionError {
+  return new RecipeExecutionError('environment', 'CDP websocket closed.', {
+    code: RUNTIME_CONNECTION_CLOSED,
+    ...(cause ? { cause } : {}),
+  });
+}
 
 export async function jsonGet<T = unknown>(url: string, options: JsonGetOptions = {}): Promise<T> {
   const controller = options.timeoutMs === undefined ? undefined : new AbortController();
@@ -154,7 +162,7 @@ export class CdpSession {
     this.#ws = ws;
     ws.on('message', (buffer) => this.#handleMessage(buffer.toString()));
     ws.on('error', (error) => this.#rejectAll(error));
-    ws.on('close', () => this.#rejectAll(new Error('CDP websocket closed.')));
+    ws.on('close', () => this.#rejectAll(closedCdpConnection()));
   }
 
   static async connect(
@@ -197,6 +205,7 @@ export class CdpSession {
     params: Record<string, unknown> = {},
     options: CdpCallOptions = {},
   ): Promise<T> {
+    if (this.#ws.readyState !== WebSocket.OPEN) throw closedCdpConnection();
     const id = ++this.#nextId;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const response = new Promise<T>((resolve, reject) => {
@@ -222,7 +231,14 @@ export class CdpSession {
       }, options.timeoutMs);
     }
     try {
-      this.#ws.send(JSON.stringify({ id, method, params }));
+      this.#ws.send(JSON.stringify({ id, method, params }), (error) => {
+        if (!error) return;
+        const pending = this.#pending.get(id);
+        this.#pending.delete(id);
+        pending?.reject(
+          this.#ws.readyState === WebSocket.OPEN ? error : closedCdpConnection(error),
+        );
+      });
     } catch (error) {
       this.#pending.delete(id);
       if (timeout) clearTimeout(timeout);

@@ -23,6 +23,8 @@ export interface RecipeRunRequest {
   /** Disable ambient process inheritance when the caller supplies the complete execution environment. */
   inheritProcessEnv?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
+  /** Caller-owned recording must finish before the run's completion HUD is drawn. */
+  finalizeRecording?: () => Promise<RecipeRunCaptureInterruption | undefined>;
   /** Provenance assigned by the caller; omitted sources receive unknown trust. */
   source?: RecipeSourceProvenance;
   /** Out-of-band approval bound to the fully resolved execution-plan digest. */

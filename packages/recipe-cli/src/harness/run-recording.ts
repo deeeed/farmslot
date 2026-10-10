@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   type CaptureHelperInterruptionEvent,
+  captureHelperStreamStopped,
   keptCaptureInterruption,
   optionalVideoTiming,
   parseCaptureHelperInterruption,
@@ -43,7 +44,9 @@ export interface ActiveRecipeRecording {
   exited: boolean;
   exitCode: number | null;
   frameReady: boolean;
+  streamStopped?: boolean;
   finalized: boolean;
+  finalizationError?: unknown;
   startedAtUnixMs: number;
   stoppedAtUnixMs?: number;
   nativeTiming: boolean;
@@ -156,7 +159,7 @@ export async function startRecipeRecording(
     recording.exitCode = exitCode;
     activeRecordingsByPid.delete(recording.pid);
     restoreActiveRecordingEnvironment(recording);
-    if (keptCaptureInterruption(exitCode, recording.interruption)) {
+    if (recording.streamStopped || keptCaptureInterruption(exitCode, recording.interruption)) {
       // Snapshots the stream stopped under fall back like any after the recording ended.
       for (const pending of recording.pendingSnapshots.values()) {
         clearTimeout(pending.timer);
@@ -203,6 +206,12 @@ export async function captureActiveRecipeRecordingSnapshot(
 ): Promise<Record<string, unknown> | undefined> {
   const recording = activeRecordingsByPid.get(pid);
   if (!recording || recording.exited) return undefined;
+  if (recording.streamStopped || recording.finalized) {
+    // Wait until no session command can overwrite the fresh standalone image.
+    await waitForRecordingExit(recording, timeoutMs);
+    if (!recording.exited) throw new Error('Stopped recording did not finish before the snapshot.');
+    return undefined;
+  }
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.rmSync(outputPath, { force: true });
   return new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
@@ -229,7 +238,14 @@ export async function stopRecipeRecording(
   recording: ActiveRecipeRecording | undefined,
   result?: RecipeRunResult,
 ): Promise<RecipeRunCaptureInterruption | undefined> {
-  if (!recording || recording.finalized) return undefined;
+  if (!recording) return undefined;
+  if (recording.finalized) {
+    if (recording.finalizationError !== undefined) throw recording.finalizationError;
+    // The runner already stopped this recording before publishing its completion HUD.
+    // Its final trace is now available for the artifact's timeline.
+    if (result) await addRecordingArtifactToManifest(result, recording);
+    return undefined;
+  }
   recording.finalized = true;
   try {
     await stopRecordingProcess(recording);
@@ -252,6 +268,7 @@ export async function stopRecipeRecording(
     if (result) await addRecordingArtifactToManifest(result, recording);
     return interruption;
   } catch (error) {
+    recording.finalizationError = error;
     if (result) removeRecordingArtifactFromManifest(result, recording.relativePath);
     throw error;
   } finally {
@@ -343,6 +360,11 @@ function handleRecordingEventLine(recording: ActiveRecipeRecording, line: string
   }
   if (event.output === recording.stagedPath)
     recording.interruption ??= parseCaptureHelperInterruption(event);
+  if (captureHelperStreamStopped(event, recording.interruption)) {
+    recording.streamStopped = true;
+    // A cached session frame during finalization is stale. Pending commands are
+    // resolved on close, after they can no longer overwrite the standalone image.
+  }
   if (event.type === 'record_complete' && event.output === recording.stagedPath) {
     recording.completedVideo = typeof event.frames === 'number' && event.frames > 0;
     if (typeof event.recording_id === 'string') recording.completedRecordingId = event.recording_id;
@@ -351,6 +373,7 @@ function handleRecordingEventLine(recording: ActiveRecipeRecording, line: string
   if (!output) return;
   const pending = recording.pendingSnapshots.get(output);
   if (!pending) return;
+  if (recording.streamStopped) return;
   if (event.type === 'snapshot') {
     clearTimeout(pending.timer);
     recording.pendingSnapshots.delete(output);
