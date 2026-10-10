@@ -10,7 +10,7 @@ import type { ProjectConfig } from '@farmslot/protocol';
 
 import { configureHarnessAdapters, harnessAdapters } from '../src/harness/adapters.js';
 import { loadProjectProvider, resolveProjectContext } from '../src/harness/context.js';
-import { sourceSnapshot } from '../src/harness/execution-provenance.js';
+import { providerSourceSnapshot, sourceSnapshot } from '../src/harness/execution-provenance.js';
 import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 
 const roots: string[] = [];
@@ -704,4 +704,34 @@ test('ignored compiled provider bytes cannot retain a checked source identity', 
   assert.equal(sourceSnapshot(directory).sourceFingerprint, tracked);
   await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
   assert.equal(globals.bindingImports, 1);
+});
+
+test('nested SDK snapshots retain ignored delivery bytes without duplicate hashing', () => {
+  const repository = root();
+  const sdk = path.join(repository, 'sdk');
+  write(sdk, 'package.json', '{"name":"example-sdk"}');
+  write(repository, '.gitignore', 'sdk/dist/\n');
+  execFileSync('git', ['init', '-q', repository]);
+  execFileSync('git', ['-C', repository, 'add', '.']);
+  execFileSync('git', [
+    '-C',
+    repository,
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-qm',
+    'Fixture',
+  ]);
+  write(sdk, 'dist/index.js', 'export const policy = "original";');
+  const module = path.join(sdk, 'dist/index.js');
+  const before = providerSourceSnapshot(sdk, module);
+  fs.writeFileSync(module, 'export const policy = "changed";');
+  const after = providerSourceSnapshot(sdk, module);
+  assert.equal(before.head, after.head);
+  assert.equal(before.status, after.status);
+  assert.notEqual(before.sourceFingerprint, after.sourceFingerprint);
 });

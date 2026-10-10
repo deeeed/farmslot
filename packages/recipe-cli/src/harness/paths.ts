@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import type { ResolvedProjectBinding } from './context-state.js';
@@ -58,4 +59,19 @@ export function recipeOutputRoots(
     path.join(binding.checkoutRoot, binding.farmRuntimeDir),
     path.join(target, binding.runtimeDir),
   ];
+}
+
+// Whether `inner` is `outer` or inside it, comparing real paths.
+export function isPathWithin(outer: string, inner: string): boolean {
+  try {
+    const relative = path.relative(fs.realpathSync(outer), fs.realpathSync(inner));
+    return !(
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    );
+  } catch {
+    // A path that does not exist owns nothing.
+    return false;
+  }
 }

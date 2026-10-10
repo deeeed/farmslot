@@ -60,7 +60,12 @@ import {
 } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
 import type { CliOptions } from './parse-args.js';
-import { DEFAULT_RECIPE_RUNTIME_DIR, recipeOutputRoots, recipeRuntimeDir } from './paths.js';
+import {
+  DEFAULT_RECIPE_RUNTIME_DIR,
+  isPathWithin as within,
+  recipeOutputRoots,
+  recipeRuntimeDir,
+} from './paths.js';
 import type { RecipeEngine } from './run-engine.js';
 
 export interface ResolveHarnessContextOptions {
@@ -480,21 +485,6 @@ function samePath(left: string, right: string): boolean {
 function homeRelative(dir: string): string {
   const home = os.homedir();
   return dir === home || dir.startsWith(`${home}${path.sep}`) ? `~${dir.slice(home.length)}` : dir;
-}
-
-// Whether `inner` is `outer` or inside it, comparing real paths.
-function within(outer: string, inner: string): boolean {
-  try {
-    const relative = path.relative(fs.realpathSync(outer), fs.realpathSync(inner));
-    return !(
-      relative === '..' ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    );
-  } catch {
-    // A path that does not exist owns nothing.
-    return false;
-  }
 }
 
 const RUNTIME_PORTS = ['watcherPort', 'devServerPort', 'metroPort', 'cdpPort'] as const;

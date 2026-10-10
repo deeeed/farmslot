@@ -12,6 +12,9 @@ import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 import { harnessAdapter } from './adapters.js';
 import { indexArtifactManifest } from './artifact-files.js';
 import { harnessHost } from './host.js';
+import { isPathWithin } from './paths.js';
+
+const DIRECTORY_IGNORED_ROOTS = new Set(['.git', 'node_modules', 'temp']);
 
 const gitContexts = new Map<string, { topLevel: string; pathspec: string } | null>();
 
@@ -210,6 +213,18 @@ export function providerSourceSnapshot(
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
   const source = inputSourceSnapshot(root, excludedRoots);
+  const fullDirectory = source.head === null || gitContext(root)?.pathspec !== '.';
+  const topDirectory =
+    path.relative(path.resolve(root), path.resolve(module)).split(path.sep)[0] ?? '';
+  if (
+    fullDirectory &&
+    isPathWithin(root, module) &&
+    !DIRECTORY_IGNORED_ROOTS.has(topDirectory) &&
+    !excludedRoots.some((excluded) => isPathWithin(excluded, module))
+  ) {
+    // Nested/installed package snapshots already hash delivery bytes, including ignored builds.
+    return source;
+  }
   const deliveryRoot = path.dirname(module);
   const delivery =
     path.resolve(deliveryRoot) === path.resolve(root)
@@ -234,10 +249,7 @@ export function inputSourceSnapshot(
   root: string,
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
-  const exclusions = excludedRoots.filter((excluded) => {
-    const relative = path.relative(path.resolve(excluded), path.resolve(root));
-    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-  });
+  const exclusions = excludedRoots.filter((excluded) => !isPathWithin(excluded, root));
   return sourceSnapshot(root, undefined, exclusions);
 }
 
@@ -421,8 +433,7 @@ function hashDirectory(
   if (stat.isDirectory()) {
     // Directories carry no source bytes; files bind their relative path.
     for (const name of fs.readdirSync(absolute).sort()) {
-      if (relative === '' && (name === '.git' || name === 'node_modules' || name === 'temp'))
-        continue;
+      if (relative === '' && DIRECTORY_IGNORED_ROOTS.has(name)) continue;
       hashDirectory(hash, root, path.join(relative, name), excludedRoots);
     }
     return;

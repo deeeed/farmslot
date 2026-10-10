@@ -6,7 +6,13 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Command } from 'commander';
+
 import { fileFingerprint, recipeOutputRoots, sourceSnapshot } from '@farmslot/recipe-cli/harness';
+
+import { OutputContext } from '../output.js';
+
+import { registerDoctorCommand } from './doctor.js';
 
 const cliConfig = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
 const commandUrl = new URL('./doctor.ts', import.meta.url).href;
@@ -91,7 +97,7 @@ function fixture(t: TestContext, missing = false) {
   return { root, write };
 }
 
-function run(root: string, flags: string[], overrides: Record<string, string> = {}) {
+function environment(root: string, overrides: Record<string, string>) {
   const env = { ...process.env };
   for (const name of [
     'FARMSLOT_ROOT',
@@ -102,6 +108,15 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
     'RECIPE_LIBRARY_PATH',
   ])
     delete env[name];
+  return {
+    ...env,
+    FARMSLOT_HOME: path.join(root, 'operator-home'),
+    ...overrides,
+    TSX_TSCONFIG_PATH: cliConfig,
+  };
+}
+
+function runProcess(root: string, flags: string[], overrides: Record<string, string> = {}) {
   const result = spawnSync(
     process.execPath,
     [
@@ -118,7 +133,7 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
       ...flags,
     ],
     {
-      env: { ...env, ...overrides, TSX_TSCONFIG_PATH: cliConfig },
+      env: environment(root, overrides),
       cwd: path.dirname(cliConfig),
       encoding: 'utf8',
       timeout: 4900,
@@ -129,17 +144,46 @@ function run(root: string, flags: string[], overrides: Record<string, string> = 
   return { status: result.status, envelope: JSON.parse(result.stdout) };
 }
 
-test('public doctor refuses discovered code before import', (t) => {
+/** Exercise the public command parser/handler; one subprocess smoke retains process-level coverage. */
+async function run(
+  t: TestContext,
+  root: string,
+  flags: string[],
+  overrides: Record<string, string> = {},
+) {
+  const previousEnv = process.env;
+  const previousExitCode = process.exitCode;
+  let output = '';
+  const render = t.mock.method(OutputContext.prototype, 'writeJson', (data: unknown) => {
+    output = JSON.stringify(data);
+  });
+  process.env = environment(root, overrides);
+  process.exitCode = 0;
+  try {
+    const program = new Command().name('farmslot').option('--json');
+    registerDoctorCommand(program);
+    await program.parseAsync(['--json', 'doctor', root, '--conformance', ...flags], {
+      from: 'user',
+    });
+    return { status: Number(process.exitCode ?? 0), envelope: JSON.parse(output) };
+  } finally {
+    render.mock.restore();
+    process.env = previousEnv;
+    process.exitCode = previousExitCode;
+  }
+}
+
+test('public doctor refuses discovered code before import', async (t) => {
   const { root } = fixture(t);
-  const result = run(root, []);
+  const result = runProcess(root, []);
   assert.equal(result.status, 1);
   assert.equal(result.envelope.error.code, 'PROVIDER_UNAUTHORIZED');
   assert.equal(fs.existsSync(`${root}.imported`), false);
 });
 
-test('public doctor preflights a headless catalog without executing and writes bound evidence', (t) => {
+test('public doctor preflights a headless catalog without executing and writes bound evidence', async (t) => {
   const { root } = fixture(t);
-  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   const { report, reportPath, context } = result.envelope.data;
   assert.equal(report.status, 'pass');
@@ -164,9 +208,9 @@ test('public doctor preflights a headless catalog without executing and writes b
   assert.deepEqual(JSON.parse(fs.readFileSync(reportPath, 'utf8')), report);
 });
 
-test('public doctor fails for a missing declared handler', (t) => {
+test('public doctor fails for a missing declared handler', async (t) => {
   const { root } = fixture(t, true);
-  const result = run(root, [
+  const result = await run(t, root, [
     '--authorize-provider',
     path.join(root, 'provider.mjs'),
     '--recipe',
@@ -177,7 +221,7 @@ test('public doctor fails for a missing declared handler', (t) => {
   assert.match(result.envelope.data.report.checks[0].message, /no registered adapter/);
 });
 
-test('public doctor does not hide an invalid catalog recipe', (t) => {
+test('public doctor does not hide an invalid catalog recipe', async (t) => {
   const { root, write } = fixture(t);
   write('recipes/headless/invalid.recipe.json', {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -186,15 +230,15 @@ test('public doctor does not hide an invalid catalog recipe', (t) => {
       nodes: { bad: { action: 'missing.action', intent: 'Refuse missing declaration.' } },
     },
   });
-  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
   assert.equal(result.status, 1);
   assert.equal(result.envelope.status, 'error');
   assert.match(result.envelope.error.message, /invalid|missing|workflow/i);
 });
 
-test('public doctor retains recipe authorization after authorizing a provider', (t) => {
+test('public doctor retains recipe authorization after authorizing a provider', async (t) => {
   const { root } = fixture(t);
-  const result = run(root, [
+  const result = await run(t, root, [
     '--authorize-provider',
     path.join(root, 'provider.mjs'),
     '--source-trust',
@@ -207,7 +251,7 @@ test('public doctor retains recipe authorization after authorizing a provider', 
   assert.match(result.envelope.data.report.checks[0].message, /[Uu]ntrusted|authoriz/);
 });
 
-test('public doctor records ordered library winners and shadowed sources', (t) => {
+test('public doctor records ordered library winners and shadowed sources', async (t) => {
   const { root, write } = fixture(t);
   const smoke = fs.readFileSync(path.join(root, 'recipes/headless/smoke.recipe.json'), 'utf8');
   const actionManifest = fs.readFileSync(
@@ -218,7 +262,7 @@ test('public doctor records ordered library winners and shadowed sources', (t) =
     write(`${name}/recipes/headless/smoke.recipe.json`, smoke);
     write(`${name}/manifests/headless.action-manifest.json`, actionManifest);
   }
-  const result = run(root, [
+  const result = await run(t, root, [
     '--authorize-provider',
     path.join(root, 'provider.mjs'),
     '--library',
@@ -239,7 +283,7 @@ test('public doctor records ordered library winners and shadowed sources', (t) =
   assert.ok(action.shadows.includes('later'));
 });
 
-test('public doctor exposes ambiguous project candidates without importing a provider', (t) => {
+test('public doctor exposes ambiguous project candidates without importing a provider', async (t) => {
   const { root, write } = fixture(t);
   const registry = path.join(root, 'registry');
   const provider = path.join(root, 'provider.mjs');
@@ -257,14 +301,14 @@ test('public doctor exposes ambiguous project candidates without importing a pro
       paths: { runtime_dir: '.runtime', artifact_dir: 'artifacts' },
       recipe: { provider: { module: provider }, adapter: 'headless' },
     });
-  const result = run(root, ['--projects-dir', registry]);
+  const result = await run(t, root, ['--projects-dir', registry]);
   assert.equal(result.status, 1);
   assert.equal(result.envelope.error.code, 'PROJECT_AMBIGUOUS');
   assert.deepEqual(result.envelope.error.details.candidates, ['one', 'two']);
   assert.equal(fs.existsSync(`${root}.imported`), false);
 });
 
-test('public doctor carries the configured manifest into complete preflight', (t) => {
+test('public doctor carries the configured manifest into complete preflight', async (t) => {
   const { root, write } = fixture(t);
   const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
   config.recipe.manifest = 'alternate.action-manifest.json';
@@ -279,7 +323,7 @@ test('public doctor carries the configured manifest into complete preflight', (t
   );
   recipe.workflow.nodes.read.value = 'accepted by selected manifest';
   write('recipes/headless/smoke.recipe.json', recipe);
-  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   assert.equal(
     result.envelope.data.report.identity.selection.manifest,
@@ -287,7 +331,7 @@ test('public doctor carries the configured manifest into complete preflight', (t
   );
 });
 
-test('monorepo report includes shared checkout sources beyond the selected app', (t) => {
+test('monorepo report includes shared checkout sources beyond the selected app', async (t) => {
   const { root, write } = fixture(t);
   const external = fixture(t);
   const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
@@ -303,7 +347,7 @@ test('monorepo report includes shared checkout sources beyond the selected app',
     watcherPort: 7331,
   });
   write('packages/shared/value.txt', 'before');
-  const result = run(root, [
+  const result = await run(t, root, [
     '--authorize-provider',
     config.recipe.provider.module,
     '--app',
@@ -329,7 +373,7 @@ test('monorepo report includes shared checkout sources beyond the selected app',
   assert.notEqual(current.sourceFingerprint, data.report.identity.checkout.sourceFingerprint);
 });
 
-test('public doctor binds the actual runtime configuration selected through the environment', (t) => {
+test('public doctor binds the actual runtime configuration selected through the environment', async (t) => {
   const { root, write } = fixture(t);
   const runtimeDir = 'scratch-runtime';
   const runtimePath = path.join(root, runtimeDir, 'agentic-runtime.json');
@@ -357,7 +401,7 @@ test('public doctor binds the actual runtime configuration selected through the 
     ]).status,
     0,
   );
-  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')], {
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')], {
     RECIPE_RUNTIME_DIR: runtimeDir,
   });
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
@@ -399,9 +443,9 @@ function workspaceFixture(t: TestContext) {
   return { root, write, external, workspace: path.join(root, 'workspace') };
 }
 
-test('public doctor uses the installed workspace pool', (t) => {
+test('public doctor uses the installed workspace pool', async (t) => {
   const { root, external, workspace } = workspaceFixture(t);
-  const result = run(root, ['--project', 'example', '--slot', 'selected'], {
+  const result = await run(t, root, ['--project', 'example', '--slot', 'selected'], {
     FARMSLOT_WORKSPACE: workspace,
   });
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
@@ -409,14 +453,15 @@ test('public doctor uses the installed workspace pool', (t) => {
   assert.equal(result.envelope.data.context.project.provider.root, external.root);
 });
 
-test('scratch runtime keeps its pool configuration and pool selection in the report', (t) => {
+test('scratch runtime keeps its pool configuration and pool selection in the report', async (t) => {
   const { root, write, external, workspace } = workspaceFixture(t);
   write('scratch/agentic-runtime.json', {
     repoRoot: root,
     slotId: 'scratch-slot',
     watcherPort: 8123,
   });
-  const result = run(
+  const result = await run(
+    t,
     root,
     ['--project', 'example', '--slot', 'selected', '--runtime-dir', 'scratch'],
     { FARMSLOT_WORKSPACE: workspace },
@@ -434,14 +479,14 @@ test('scratch runtime keeps its pool configuration and pool selection in the rep
   );
 });
 
-test('public doctor refuses parameter broadcast before importing a provider', (t) => {
+test('public doctor refuses parameter broadcast before importing a provider', async (t) => {
   const { root } = fixture(t);
-  const result = run(root, ['--param', 'count=2']);
+  const result = await run(t, root, ['--param', 'count=2']);
   assert.match(result.envelope.error.message, /--param requires --recipe/u);
   assert.equal(fs.existsSync(`${root}.imported`), false);
 });
 
-test('public doctor binds provider dependencies exposing only SDK subpaths', (t) => {
+test('public doctor binds provider dependencies exposing only SDK subpaths', async (t) => {
   const { root, write } = fixture(t);
   const sdk = path.join(root, 'node_modules/@farmslot/example-sdk');
   write('package.json', {
@@ -454,7 +499,7 @@ test('public doctor binds provider dependencies exposing only SDK subpaths', (t)
     exports: { './package.json': './package.json', './action': './action.cjs' },
   });
   write('node_modules/@farmslot/example-sdk/action.cjs', 'exports.policy = "original";');
-  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   const source = result.envelope.data.report.identity.implementation.find(
     (entry: { name: string }) => entry.name === 'provider:@farmslot/example-sdk',
@@ -465,7 +510,7 @@ test('public doctor binds provider dependencies exposing only SDK subpaths', (t)
   assert.notEqual(source.sourceFingerprint, sourceSnapshot(sdk).sourceFingerprint);
 });
 
-test('explicit pool selection overrides the installed workspace pool', (t) => {
+test('explicit pool selection overrides the installed workspace pool', async (t) => {
   const { root, write, external, workspace } = workspaceFixture(t);
   const pool = {
     host: 'localhost',
@@ -478,7 +523,7 @@ test('explicit pool selection overrides the installed workspace pool', (t) => {
     env: { EXAMPLE_PROVIDER_ROOT: path.join(root, 'missing') },
   });
   write('override/local.json', pool);
-  const result = run(root, ['--project', 'example', '--slot', 'selected'], {
+  const result = await run(t, root, ['--project', 'example', '--slot', 'selected'], {
     FARMSLOT_WORKSPACE: workspace,
     FARMSLOT_POOL_DIR: path.join(root, 'override'),
   });
@@ -487,7 +532,7 @@ test('explicit pool selection overrides the installed workspace pool', (t) => {
   assert.equal(result.envelope.data.context.project.provider.root, external.root);
 });
 
-test('public doctor applies scratch runtime targeting before provider preflight', (t) => {
+test('public doctor applies scratch runtime targeting before provider preflight', async (t) => {
   const { root, write } = fixture(t);
   write('scratch-runtime/agentic-runtime.json', {
     repoRoot: root,
@@ -511,7 +556,7 @@ test('public doctor applies scratch runtime targeting before provider preflight'
     )
     .replace("'doctor executed an action');}}]", "'doctor executed an action');}}]; }");
   write('provider.mjs', provider);
-  const result = run(root, [
+  const result = await run(t, root, [
     '--authorize-provider',
     path.join(root, 'provider.mjs'),
     '--runtime-dir',
