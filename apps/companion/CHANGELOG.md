@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Terminal key bars add a runner row and your own keys. Each pane shows the extra keys of its runner, picked from a saved choice, the linked run's runner, or a single matching pane process, and otherwise only the generic keys; you can pick a runner or return to auto per pane. The Yours row holds up to 8 device-wide keys built from a palette of Shift, Alt or Ctrl arrows and Ctrl+A to Ctrl+Z, added and deleted in the terminal. Both rows send through the same terminal input calls as the generic keys.
+
 - The recipe scripts and Metro bridge use `@farmslot/adapter-rn` and its `farmslot-adapter-rn` bin (renamed from `@farmslot/expo-recipe`); `COMPANION_EXPO_RECIPE_BIN` is now `COMPANION_ADAPTER_RN_BIN`.
 
 - The screenshot catalog script imports `@farmslot/recipe-runner/visual-review` (renamed from `@farmslot/recipe-harness`).

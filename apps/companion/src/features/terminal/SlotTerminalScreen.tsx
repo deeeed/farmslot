@@ -81,7 +81,7 @@ import {
   shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
-import type { TerminalControlKey } from '../../lib/terminal-controls';
+import { slotTerminalRunnerContext, type TerminalControlKey } from '../../lib/terminal-controls';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -2074,6 +2074,7 @@ export default function TerminalScreen() {
                 disabled={isSendingControl}
                 touchKeyboardEnabled={allowTerminalTouchKeyboard}
                 onPress={(control) => void sendControlKey(control)}
+                runnerContext={slotTerminalRunnerContext(slot, targetRun, tmuxWindows)}
                 onToggleTouchKeyboard={() =>
                   setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)
                 }
