@@ -6,8 +6,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Document sandbox runtime-home isolation and direct client targeting.
 
+- Gateway onboarding documents URL-matched profile authentication and local sandbox routing.
 - Document read-only node prerequisites before prepare and in slot.check.
-
 - Recipe Protocol v1 reference: array indexing in templates (`[n]` or `.n`, a key on an object), and `workflow.invalid_template` for a template that does not parse.
 - Gateway API reference: the generated reference shows protocol 0.35.0.
 - Web adapter reference: every process that loads the `web-dapp` venue policy refuses imports resolved from the policy's digested files that land outside them (Node.js 22.15 or later).
