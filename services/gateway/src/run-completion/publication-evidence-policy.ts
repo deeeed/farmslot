@@ -15,18 +15,23 @@ export interface PublicationEvidenceSelection {
   trustedEvidenceManifest: EvidenceManifest | null | undefined;
 }
 
+function isEligibleEvidence(
+  artifact: ArtifactRef,
+  manifest: EvidenceManifest | null | undefined,
+): boolean {
+  return (
+    isUploadableMediaPath(artifact.path) &&
+    (manifest === undefined || isPackageSelectableEvidenceArtifact(artifact, manifest))
+  );
+}
+
 export function selectedEvidenceKeysForPublication(input: PublicationEvidenceSelection): string[] {
   return [
     ...new Set(
       (input.selectedEvidenceKeys ?? [])
         .map((key) => resolveSelectedEvidenceRef(key, input.evidenceManifest))
         .filter((artifact): artifact is ArtifactRef =>
-          Boolean(
-            artifact &&
-            isUploadableMediaPath(artifact.path) &&
-            (input.trustedEvidenceManifest === undefined ||
-              isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest)),
-          ),
+          Boolean(artifact && isEligibleEvidence(artifact, input.trustedEvidenceManifest)),
         )
         .map((artifact) => artifact.path),
     ),
@@ -38,20 +43,13 @@ export function defaultSelectedEvidenceKeysForPublication(
 ): string[] {
   const manifest = input.trustedEvidenceManifest;
   const preferredVideo = manifestPrefersVideo(manifest);
-  const candidates = input.evidenceManifest.filter(
-    (artifact) =>
-      isUploadableMediaPath(artifact.path) &&
-      isPackageSelectableEvidenceArtifact(artifact, manifest),
+  const candidates = input.evidenceManifest.filter((artifact) =>
+    isEligibleEvidence(artifact, manifest),
   );
   const videoOnly =
     candidates.length > 0 && candidates.every((artifact) => EVIDENCE_VIDEO_EXT.test(artifact.path));
   return candidates
-    .filter(
-      (artifact) =>
-        (!EVIDENCE_VIDEO_EXT.test(artifact.path) || preferredVideo || videoOnly) &&
-        isUploadableMediaPath(artifact.path) &&
-        isPackageSelectableEvidenceArtifact(artifact, manifest),
-    )
+    .filter((artifact) => !EVIDENCE_VIDEO_EXT.test(artifact.path) || preferredVideo || videoOnly)
     .map((artifact) => artifact.path)
     .sort();
 }
@@ -65,11 +63,8 @@ export function assertPublicationEvidenceSelection(input: PublicationEvidenceSel
     }
   }
   const declared = evidenceManifestArtifactPaths(input.trustedEvidenceManifest);
-  const visualInventory = input.evidenceManifest.some(
-    (artifact) =>
-      isUploadableMediaPath(artifact.path) &&
-      (input.trustedEvidenceManifest === undefined ||
-        isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest)),
+  const visualInventory = input.evidenceManifest.some((artifact) =>
+    isEligibleEvidence(artifact, input.trustedEvidenceManifest),
   );
   if (selected.length === 0 && (visualInventory || declared.length > 0)) {
     throw new Error(
