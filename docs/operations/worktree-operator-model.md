@@ -108,6 +108,13 @@ sandbox CLI probes must set `FARMSLOT_HOME` to that same home and pass the
 sandbox gateway URL. Operator control-plane workers keep their operator profile.
 Warm starts restart when launch configuration or stack scripts change.
 
+The private home also starts with empty LLM configuration, provider accounts,
+Git identity, decision/triage/assessment policies and pressure state. For LLM
+validation, configure models and policies through the sandbox gateway's settings,
+then authenticate a sandbox-specific provider account there. Run any setup CLI
+with the sandbox's home and URL. Seed only the non-secret configuration needed
+for the test; never copy operator tokens, auth profiles or credential stores.
+
 For physical-device LAN mode, each sandbox needs its own token and bind settings
 in `.env.local-auth`; it cannot borrow the operator gateway's credentials.
 A sandbox with no local auth file binds loopback and does not support LAN

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Recovery retains existing work, including unpublished start-ref commits, restores published branches in another clone, and initializes a missing branch when setup has not started. QA recovery verifies its frozen head. Destructive prepare refuses unpushed commits before changing refs. Sandbox gateways retain their private runtime home when reloading checkout configuration.
+- Recovery retains existing work, restores or safely advances published review branches, and initializes a missing branch when setup has not started. QA recovery verifies its frozen head. Destructive prepare refreshes remote refs and refuses unpublished commits before changing branches. Sandbox gateways retain their private runtime home when reloading checkout configuration.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 

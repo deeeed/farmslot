@@ -1,6 +1,21 @@
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
+export async function localBranchExists(
+  vars: SlotVars,
+  branch: string,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<boolean> {
+  const exists = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
+    { timeout: 15_000 },
+  );
+  if (exists.exitCode === 0) return true;
+  if (exists.exitCode === 1) return false;
+  throw new Error(`Cannot inspect local branch ${branch}; prepare left its commits untouched`);
+}
+
 /** Commits at a ref which no remote-tracking ref contains. Never hide a failed Git check. */
 export async function findUnpushedSlotCommits(
   vars: SlotVars,
@@ -26,17 +41,16 @@ export async function assertPrepareCommitsPublished(
   exec: typeof execOnSlot = execOnSlot,
 ): Promise<void> {
   const refs = new Set(['HEAD']);
-  if (branch) {
-    const localRef = `refs/heads/${branch}`;
-    const exists = await exec(
-      vars,
-      `git -C ${shellQuote(vars.remoteRepo)} show-ref --verify --quiet ${shellQuote(localRef)}`,
-      { timeout: 15_000 },
+  if (branch && (await localBranchExists(vars, branch, exec))) refs.add(`refs/heads/${branch}`);
+  // Cached remote refs cannot prove publication after another clone rewrites
+  // or deletes the branch. Refresh every remote used by the publication check.
+  const refreshed = await exec(vars, `git -C ${shellQuote(vars.remoteRepo)} fetch --all --prune`, {
+    timeout: 15_000,
+  });
+  if (refreshed.exitCode !== 0)
+    throw new Error(
+      `Cannot refresh remote refs on ${vars.slotId}; prepare left its commits untouched`,
     );
-    if (exists.exitCode === 0) refs.add(localRef);
-    else if (exists.exitCode !== 1)
-      throw new Error(`Cannot inspect local branch ${branch}; prepare left its commits untouched`);
-  }
   for (const ref of refs) {
     // An existing upstream cannot excuse unpublished work: a pushed branch may
     // have new worker commits. Rewritten histories also require an explicit decision.

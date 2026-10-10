@@ -116,7 +116,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { assertPrepareCommitsPublished } from './unmerged-work.js';
+import { assertPrepareCommitsPublished, localBranchExists } from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -700,6 +700,7 @@ async function slotPrepareInner(
       return r.exitCode === 0 && r.stdout.trim() === `${branch}\n${sha}`;
     };
     if (await atBase()) return;
+    await assertPrepareCommitsPublished(vars, branch);
     await execOnSlot(
       vars,
       `cd ${shellQuote(vars.remoteRepo)} && git checkout -B ${shellQuote(branch)} ${shellQuote(sha)}`,
@@ -726,6 +727,7 @@ async function slotPrepareInner(
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
+    await assertPrepareCommitsPublished(vars, branch);
     const resetR = await execOnSlot(
       vars,
       `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd; }`,
@@ -747,13 +749,7 @@ async function slotPrepareInner(
   };
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
-    const localExists =
-      (
-        await execOnSlot(
-          vars,
-          `cd ${shellQuote(vars.remoteRepo)} && git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
-        )
-      ).exitCode === 0;
+    const localExists = await localBranchExists(vars, branch);
     if (!localExists) {
       // A different clone may not have this published run branch yet. Restore
       // it without reset/clean; Git must refuse any conflicting local work.
@@ -805,6 +801,16 @@ async function slotPrepareInner(
       }
     }
     if (localExists) {
+      if (params.flowType === 'review-pr' || params.flowType === 'pr-complete') {
+        const refresh = await execOnSlot(
+          vars,
+          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(branch))} && git -C ${shellQuote(vars.remoteRepo)} merge --ff-only ${shellQuote(`origin/${branch}`)}`,
+        );
+        if (refresh.exitCode !== 0)
+          throw new Error(
+            `Replay cannot safely update ${branch} from its published head: ${refresh.stderr.slice(-200) || refresh.stdout.slice(-200)}. Local work was preserved; resolve divergence or restore the remote before retrying`,
+          );
+      }
       step('branch', `Replay preserving existing local ${branch} without reset or clean`);
     }
   }
@@ -834,6 +840,7 @@ async function slotPrepareInner(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
+        await assertPrepareCommitsPublished(vars, branch);
         const resetBranchR = await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
@@ -958,6 +965,7 @@ async function slotPrepareInner(
       // Same prefix detects + clears a stale `.git/index.lock` left by a crashed
       // prior git invocation — without this, every retry within ~5min hits
       // "Could not reset index file" until the lock ages out.
+      await assertPrepareCommitsPublished(vars, branch);
       const resetR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
@@ -976,6 +984,7 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
+        await assertPrepareCommitsPublished(vars, branch);
         const ffR = await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
@@ -1002,6 +1011,7 @@ async function slotPrepareInner(
           throw new Error(
             `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`,
           );
+        await assertPrepareCommitsPublished(vars, branch);
         const ffR = await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
@@ -1053,6 +1063,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
+        await assertPrepareCommitsPublished(vars, branch);
         await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1076,6 +1087,7 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
+          await assertPrepareCommitsPublished(vars, branch);
           const coR = await execOnSlot(
             vars,
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
@@ -1108,6 +1120,7 @@ async function slotPrepareInner(
           ).exitCode === 0;
         if (localExists) {
           if (forceNewBranch) {
+            await assertPrepareCommitsPublished(vars, branch);
             if (linkedWorktree) {
               await execOnSlot(
                 vars,
@@ -1157,6 +1170,7 @@ async function slotPrepareInner(
     const softFailIntegration = shouldSoftFailPrepareIntegration(params.flowType);
     const linkedWorktree = await detectLinkedWorktree(vars);
     const resetToOriginBranch = async (detail: string) => {
+      await assertPrepareCommitsPublished(vars, branch);
       await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,

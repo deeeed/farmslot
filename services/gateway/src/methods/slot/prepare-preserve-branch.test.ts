@@ -164,3 +164,68 @@ test('QA recovery refuses a mismatched existing branch without moving it', async
   );
   assert.equal(git(slot, 'rev-parse', 'HEAD'), publishedHead);
 });
+
+for (const forceNewBranch of [false, true])
+  test(`destructive prepare rechecks a cross-clone rewrite before reset, forceNewBranch=${forceNewBranch}`, async () => {
+    const slot = freshSlot('rewritten-slot-' + forceNewBranch);
+    const author = path.join(root, 'rewrite-author-' + forceNewBranch);
+    execFileSync('git', ['clone', remote, author], { stdio: 'ignore' });
+    git(author, 'checkout', '-B', 'rewritten-work', 'origin/published-work');
+    git(author, 'config', 'user.name', 'Fixture');
+    git(author, 'config', 'user.email', 'fixture@example.invalid');
+    git(author, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(path.join(author, 'unique.txt'), 'only on rewritten branch\n');
+    git(author, 'add', 'unique.txt');
+    git(author, 'commit', '-m', 'test: remote-only publication');
+    git(author, 'push', 'origin', 'rewritten-work');
+    git(slot, 'fetch', 'origin');
+    git(slot, 'checkout', '-b', 'rewritten-work', 'origin/rewritten-work');
+    const head = git(slot, 'rev-parse', 'HEAD');
+    await assert.rejects(
+      slotPrepare({ ...params, branch: 'rewritten-work', forceNewBranch }, () => {}, undefined, {
+        beforeBranchSetup: async () => {
+          git(author, 'checkout', '-B', 'rewritten-work', 'origin/main');
+          git(author, 'push', '--force', 'origin', 'rewritten-work');
+        },
+      }),
+      /unpushed commits/,
+    );
+    assert.equal(git(slot, 'rev-parse', 'HEAD'), head);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/rewritten-work'), head);
+  });
+
+test('review recovery fast-forwards a stale published head and preserves local-ahead work', async () => {
+  const slot = freshSlot('review-advance-slot');
+  git(slot, 'checkout', '-b', 'published-work', baseHead);
+  const request = { ...params, branch: 'published-work', flowType: 'review-pr' };
+  await slotPrepare(request, () => {}, undefined, { preserveBranch: true });
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), publishedHead);
+  writeFileSync(path.join(slot, 'ahead.txt'), 'local worker\n');
+  git(slot, 'add', 'ahead.txt');
+  git(slot, 'commit', '-m', 'test: local-ahead work');
+  const ahead = git(slot, 'rev-parse', 'HEAD');
+  await slotPrepare(request, () => {}, undefined, { preserveBranch: true });
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), ahead);
+});
+
+test('review recovery refuses diverged history without discarding commits or dirty files', async () => {
+  const slot = freshSlot('review-diverged-slot');
+  git(slot, 'checkout', '-b', 'published-work', baseHead);
+  writeFileSync(path.join(slot, 'file.txt'), 'local divergent work\n');
+  git(slot, 'commit', '-am', 'test: divergent work');
+  const head = git(slot, 'rev-parse', 'HEAD');
+  writeFileSync(path.join(slot, 'dirty.txt'), 'retain me\n');
+  await assert.rejects(
+    slotPrepare(
+      { ...params, branch: 'published-work', flowType: 'review-pr' },
+      () => {},
+      undefined,
+      {
+        preserveBranch: true,
+      },
+    ),
+    /cannot safely update.*Local work was preserved/s,
+  );
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), head);
+  assert.equal(readFileSync(path.join(slot, 'dirty.txt'), 'utf8'), 'retain me\n');
+});
