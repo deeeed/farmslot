@@ -130,17 +130,15 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
 
     const fileEnv: NodeJS.ProcessEnv = {};
     loadCheckoutEnv(root, fileEnv);
-    const remote = resolveGatewayTarget(
-      {},
-      { ...fileEnv, GW_URL: 'ws://remote:7801' },
-      { gateways: {} },
+    assert.throws(
+      () => resolveGatewayTarget({}, { ...fileEnv, GW_URL: 'ws://remote:7801' }, { gateways: {} }),
+      /No stored gateway profile/,
     );
-    assert.equal(remote.credential, null);
 
     // Loopback targets still discover the same file through the cwd chain.
     process.chdir(root);
     const local = resolveGatewayTarget(
-      {},
+      { url: 'ws://localhost:7801' },
       { ...fileEnv, GW_URL: 'ws://localhost:7801' },
       { gateways: {} },
     );
