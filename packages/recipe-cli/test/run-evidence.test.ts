@@ -54,6 +54,7 @@ import {
   verifyConsoleCapture,
   writeExecutionProvenance,
   writeRunReport,
+  writeViolationReport,
 } from '../src/harness/index.js';
 
 const DEFAULT_HOST = harnessHost();
@@ -1275,6 +1276,40 @@ describe('run report', () => {
     assert.match(withFailure, /\nStatus: fail\n/u);
     assert.match(withFailure, /\n- FAIL assert /u);
     assert.match(withFailure, /- INCOMPLETE partial video /u);
+  });
+
+  test('a violation writes report.md only when the recording was interrupted, whatever else failed', () => {
+    const root = tempRoot();
+    const files = runFiles(root);
+    fs.writeFileSync(
+      files.tracePath,
+      JSON.stringify({
+        entries: [
+          { nodeId: 'assert', action: 'assert_json', durationMs: 1, ok: false },
+          {
+            nodeId: 'recipe-run:video',
+            action: 'record.video',
+            ok: false,
+            error_code: 'CAPTURE_INTERRUPTED',
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(files.summaryPath, JSON.stringify({ status: 'fail', passed: 0, total: 2 }));
+    assert.equal(writeViolationReport(files), undefined);
+    assert.equal(fs.existsSync(path.join(root, 'report.md')), false);
+    const report = writeViolationReport({
+      ...files,
+      captureInterruption: {
+        frames: 1,
+        mediaTimeMs: 1,
+        cause: 'x',
+        videoPath: 'v.mp4',
+        message: 'm',
+      },
+    });
+    assert.equal(report?.path, path.join(root, 'report.md'));
+    assert.match(fs.readFileSync(report!.path, 'utf8'), /\nStatus: fail\n/u);
   });
 
   test('binds the browser to the one CDP port and records what the platform reports', () => {

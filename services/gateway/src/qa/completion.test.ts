@@ -11,6 +11,7 @@ import {
 import {
   parseQaResult,
   type QaPackage,
+  requireSuiteCoverage,
   validateQaPackage,
   validateQaScope,
   validateQaSuite,
@@ -403,6 +404,32 @@ test('a case failed only by an interrupted recording blocks QA as incomplete evi
         envelope.smoke,
       ),
     /QA evidence incomplete: suite has failing, unknown or unexecuted coverage/u,
+  );
+});
+
+test('the incomplete-evidence block gives each video under its case package', () => {
+  const resolutions = [
+    { id: 'smoke', kind: 'verdict', status: 'pass' },
+    {
+      id: 'changed-case',
+      kind: 'verdict',
+      status: 'fail',
+      evidence_incomplete: {
+        reason: 'capture_interrupted',
+        detail: 'd.',
+        evidence_path: 'videos/recipe-run.mp4',
+      },
+    },
+  ];
+  assert.throws(
+    () =>
+      requireSuiteCoverage(resolutions, { smoke: 'cases/smoke', 'changed-case': 'cases/changed' }),
+    /Partial video: cases\/changed\/videos\/recipe-run\.mp4$/u,
+  );
+  // A marker on anything but a failed verdict is not trusted.
+  assert.throws(
+    () => requireSuiteCoverage([{ ...resolutions[1], status: 'unknown' }]),
+    /suite has failing, unknown or unexecuted coverage/u,
   );
 });
 

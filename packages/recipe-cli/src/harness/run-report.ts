@@ -50,6 +50,16 @@ export function writeRunReport(result: {
   };
 }
 
+/**
+ * The report a failed run still writes when its recording was interrupted, whatever else
+ * failed, so the partial video is linked; other violations write none.
+ */
+export function writeViolationReport(
+  result: Parameters<typeof writeRunReport>[0] & { captureInterruption?: unknown },
+): RunReport | undefined {
+  return result.captureInterruption ? writeRunReport(result) : undefined;
+}
+
 // `browser` is the browser the run drove, bound by runRecipe while the run's
 // ports were active (see executedBrowser); it is never re-derived here, after
 // the run environment was restored.

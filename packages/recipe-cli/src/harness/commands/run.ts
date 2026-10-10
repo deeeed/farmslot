@@ -62,7 +62,11 @@ import {
 } from '../run-engine.js';
 import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
-import { indexProductProvenanceArtifact, writeRunReport } from '../run-report.js';
+import {
+  indexProductProvenanceArtifact,
+  writeRunReport,
+  writeViolationReport,
+} from '../run-report.js';
 import { checkoutBusyOut, EXIT, usageOut, writeInteractiveProgress } from '../shared.js';
 import { type RecipeTrustFailure, recipeTrustFailure } from '../trust.js';
 
@@ -565,9 +569,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         const userAction =
           violation.userAction ??
           `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}; fix the application or recipe failure before retrying`;
-        // A run whose recording was interrupted still reports what it ran and links the
-        // partial video, whatever else failed.
-        const report = result.captureInterruption ? writeRunReport(result) : undefined;
+        const report = writeViolationReport(result);
         stream.error(healViolationError(violation, userAction));
         if (stream.enabled) {
           stream.complete('fail', violation.exitCode, {

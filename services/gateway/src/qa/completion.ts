@@ -45,7 +45,10 @@ function requireProof(condition: unknown, message: string): asserts condition {
 // interrupted are named as incomplete evidence with their partial videos, but only when no
 // case failed or went unexecuted for any other reason, so they never hide a failure.
 // `packages` maps a case to its retained package, to give each video's full path.
-function requireSuiteCoverage(resolutions: unknown[], packages?: Record<string, unknown>): void {
+export function requireSuiteCoverage(
+  resolutions: unknown[],
+  packages?: Record<string, unknown>,
+): void {
   const incomplete: string[] = [];
   for (const entry of resolutions) {
     if (record(entry) && entry.kind === 'verdict' && entry.status === 'pass') continue;

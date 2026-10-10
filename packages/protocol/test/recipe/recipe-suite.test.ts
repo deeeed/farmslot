@@ -385,21 +385,15 @@ test('evidence_incomplete marks only a failed verdict, in the validator and the 
   const onFail = marked(1, incomplete);
   assert.equal(validateRecipeSuitePackage(onFail).status, 'valid');
   assert.equal(validateResult(onFail.result), true, JSON.stringify(validateResult.errors));
-  for (const invalid of [
+  const invalidCases = [
     marked(0, incomplete),
     marked(1, { ...incomplete, reason: 'flaky' }),
     marked(1, { ...incomplete, evidence_path: '../outside.mp4' }),
     marked(1, { ...incomplete, extra: true }),
-  ]) {
+  ];
+  // The validator and the published schema enforce the same rules.
+  for (const invalid of invalidCases) {
     assert.equal(validateRecipeSuitePackage(invalid).status, 'invalid');
-  }
-  // The published schema enforces the same rules as the validator.
-  for (const invalid of [
-    marked(0, incomplete),
-    marked(1, { ...incomplete, reason: 'flaky' }),
-    marked(1, { ...incomplete, evidence_path: '../outside.mp4' }),
-    marked(1, { ...incomplete, extra: true }),
-  ]) {
     assert.equal(validateResult(invalid.result), false);
   }
 });
