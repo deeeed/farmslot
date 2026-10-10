@@ -575,7 +575,7 @@ step_cli() {
   # Positional-arg sh -c: $CLONE is passed as "$1", never embedded in the
   # command string, so any path (quotes, spaces) survives intact.
   run_step "yarn install (workspace)" sh -c 'cd "$1" && yarn install' _ "$CLONE"
-  run_step "build recipe-runner" sh -c 'cd "$1" && yarn workspace @farmslot/recipe-runner build' _ "$CLONE"
+  run_step "build CLI workspace dependencies" sh -c 'cd "$1" && yarn build:cli-deps' _ "$CLONE"
   if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
     echo "  dashboard build skipped (FARMSLOT_MINIMAL) — build later: yarn --cwd ${CLONE}/apps/command-center/ui build"
   else

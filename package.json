@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "dev": "yarn --cwd apps/command-center farmdev",
+    "build:cli-deps": "yarn workspaces foreach --recursive --from @farmslot/cli --topological run build",
     "format": "yarn --cwd apps/command-center format",
     "format:check": "yarn --cwd apps/command-center format:check",
     "lint": "node scripts/quality/check-eslint-ratchet.mjs --strict-stale",
