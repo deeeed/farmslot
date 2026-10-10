@@ -51,10 +51,11 @@ test('a live background runner cannot authorize terminal input', () => {
 });
 
 test('a foreground shell whose argv mentions the runner cannot authorize input', () => {
-  assert.throws(
-    () => probe('10 1 Ss+ /bin/zsh -c claude\n', true),
-    (error: unknown) => (error as { status?: number }).status === 1,
-  );
+  for (const shell of ['/bin/zsh', 'bash', '-zsh'])
+    assert.throws(
+      () => probe(`10 1 Ss+ ${shell} -c claude\n`, true),
+      (error: unknown) => (error as { status?: number }).status === 1,
+    );
 });
 
 test('the execution-host guard accepts a runner child under a foreground shell wrapper', () => {

@@ -25,6 +25,7 @@ let markerWrites = 0;
 let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
+let claimAfterReap = false;
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -51,6 +52,14 @@ const execForTest = async (_vars: unknown, cmd: string) => {
   }
   if (cmd.startsWith(`identityfile='${IDENTITY}'`)) {
     events.push('reap');
+    if (claimAfterReap)
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
     return reapFails
       ? { stdout: '', stderr: 'preflight group 4242 survived SIGKILL\n', exitCode: 1 }
       : ok();
@@ -183,6 +192,7 @@ beforeEach(async () => {
   claimDuringPaneProbe = false;
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
+  claimAfterReap = false;
 
   for (const [id, status] of [
     ['incoming', 'monitoring'],
@@ -479,5 +489,23 @@ test('a claim after agent teardown stops release before aborting the new prepare
     /non-terminal run incoming/,
   );
   assert.ok(!events.includes('new-prepare-aborted'));
+  assert.equal(slotRow.current_run_id, 'incoming');
+});
+
+test('a claim during prepare reaping stops attachment cleanup and session archival', async () => {
+  claimAfterReap = true;
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /non-terminal run incoming/,
+  );
+  assert.ok(events.includes('reap'));
+  assert.equal(
+    emitted.filter(
+      (entry) =>
+        entry.event === 'slot.release.step' &&
+        ['attachments', 'session-archive'].includes(String(entry.payload.name)),
+    ).length,
+    0,
+  );
   assert.equal(slotRow.current_run_id, 'incoming');
 });

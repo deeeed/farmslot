@@ -629,6 +629,7 @@ async function slotReleaseImpl(
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
     // without operator images sitting in its runtime dir.
+    await assertReleaseClaim();
     try {
       const cleaned = await terminalAttachmentCleanup({ slotId: params.slotId, scope: 'all' });
       step('attachments', `Removed ${cleaned.removed.length} staged terminal attachment(s)`);
@@ -643,6 +644,7 @@ async function slotReleaseImpl(
       ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
       boundOwner;
     if (archiveRunId) {
+      await assertReleaseClaim();
       try {
         const archive = await archiveRunnerSessionsForSlotRelease({
           vars,
@@ -919,7 +921,8 @@ export async function killAgentInSession(
   options: { graceful?: boolean; assertClaim?: () => Promise<void> } = {},
 ): Promise<void> {
   // Mutations cannot be automatically resent after reconnect: that would skip
-  // the ownership check and could reach a newer claim. A failure needs a fresh release.
+  // the ownership check and could reach a newer claim. A failed mutation leaves
+  // the releasing fence for the stale-fence reconciler to reclaim.
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
   const roleWindow = agentDispatchWindow(role);

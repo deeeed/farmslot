@@ -88,8 +88,8 @@ type Emit = (event: string, payload: unknown) => void;
 export function rollbackReclaimedSlotReleaseOptions(
   status: Run['status'],
   runId: string,
-  epoch?: number,
-): { restartRunId?: string; expectedSlotEpoch?: number } {
+  epoch: number,
+): { restartRunId?: string; expectedSlotEpoch: number } {
   return {
     ...(isTerminalRunStatus(status) ? {} : { restartRunId: runId }),
     expectedSlotEpoch: epoch,
