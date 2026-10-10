@@ -41,7 +41,8 @@ export function parseEnvFile(text: string): Record<string, string> {
   return out;
 }
 
-/** File secrets stay available for explicit raw/default and local sandbox discovery.
+/**
+ * File secrets stay available for explicit raw/default and local sandbox discovery.
  * They are not exported as shell credentials that could reach a different gateway.
  */
 const FILE_ONLY_KEYS = new Set(['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD']);

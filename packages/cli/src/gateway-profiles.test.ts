@@ -118,6 +118,14 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
     ),
     { url: 'ws://localhost:7777', credential: null, profileName: 'bare', source: 'env' },
   );
+  assert.deepEqual(
+    resolveGatewayTarget(
+      { url: 'ws://localhost:7777' },
+      { FARMSLOT_GATEWAY_TOKEN: 'unrelated-credential' },
+      { gateways: { bare: { url: 'ws://localhost:7777' } } },
+    ),
+    { url: 'ws://localhost:7777', credential: null, profileName: 'bare', source: 'url-flag' },
+  );
   assert.deepEqual(resolveGatewayTarget({}, {}, profiles), {
     url: 'ws://home:7777',
     credential: { token: 'h' },
