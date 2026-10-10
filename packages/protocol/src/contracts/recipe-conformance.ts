@@ -23,7 +23,8 @@ export interface RecipeConformanceIdentity {
   checkout: RecipeConformanceSource;
   provider: RecipeConformanceSource;
   implementation?: Array<RecipeConformanceSource & { name: string }>;
-  libraries: Array<RecipeConformanceSource & { name: string }>;
+  libraries: Array<RecipeConformanceSource & { name: string; path?: string }>;
+  invocations?: Array<{ recipe: string; paramsDigest: string }>;
   configuration: Array<{ path: string; sourceFingerprint: string }>;
 }
 
@@ -45,7 +46,7 @@ export interface RecipeConformanceReport {
   capabilities: Array<{ name: string; status: 'declared' | 'verified' | 'failed' | 'unknown' }>;
   checks: RecipeConformanceCheck[];
   resolution?: {
-    recipes: Array<{ ref: string; source: string; shadows: string[] }>;
-    actions: Array<{ action: string; source: string; shadows?: string[] }>;
+    recipes: Array<{ ref: string; source: string; shadows: string[]; invocation?: string }>;
+    actions: Array<{ action: string; source: string; shadows?: string[]; invocation?: string }>;
   };
 }

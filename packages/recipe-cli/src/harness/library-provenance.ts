@@ -11,15 +11,15 @@ export async function gitLibraryProvenance(
   root: string,
   snapshot?: SourceProvenanceSnapshot,
 ): Promise<Pick<RecipeSourceProvenance, 'revision' | 'dirty'>> {
-  if (snapshot) {
-    return snapshot.head ? { revision: snapshot.head, dirty: sourceIsDirty(snapshot) } : {};
-  }
   try {
     const { stdout: tracked } = await execFileAsync('git', ['-C', root, 'ls-files', '--', '.'], {
       encoding: 'utf8',
       timeout: 5_000,
     });
     if (!tracked.trim()) return {};
+    if (snapshot) {
+      return snapshot.head ? { revision: snapshot.head, dirty: sourceIsDirty(snapshot) } : {};
+    }
     const [{ stdout: revision }, { stdout: status }] = await Promise.all([
       execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'], {
         encoding: 'utf8',

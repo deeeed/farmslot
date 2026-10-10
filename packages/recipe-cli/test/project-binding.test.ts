@@ -404,6 +404,7 @@ test('git subdirectories resolve the root and selected monorepo app', async () =
   const config = project(directory, { apps: ['apps/a', 'apps/b'] });
   fs.mkdirSync(path.join(directory, 'apps/a/src'), { recursive: true });
   fs.mkdirSync(path.join(directory, 'apps/b'), { recursive: true });
+  write(directory, 'apps/a/src/index.ts', 'export {};');
   // A fixture-only commit gives sourceSnapshot a real HEAD.
   execFileSync('git', ['-C', directory, 'init', '-q']);
   execFileSync('git', ['-C', directory, 'add', '.']);
@@ -667,6 +668,7 @@ test('ignored compiled provider bytes cannot retain a checked source identity', 
   const directory = root();
   const config = project(directory, {
     recipe: { provider: { module: 'dist/provider.mjs' }, adapter: 'headless' },
+    paths: { runtimeDir: 'dist/runtime', artifactDir: 'artifacts' },
   });
   write(directory, '.gitignore', 'dist/\n');
   write(
@@ -696,8 +698,10 @@ test('ignored compiled provider bytes cannot retain a checked source identity', 
     load: { env: {} },
   });
   const tracked = sourceSnapshot(directory).sourceFingerprint;
+  write(directory, 'dist/runtime/state.json', '{}');
+  await loadProjectProvider(context);
   fs.appendFileSync(path.join(directory, 'dist/provider.mjs'), '\n// Changed delivery bytes.\n');
   assert.equal(sourceSnapshot(directory).sourceFingerprint, tracked);
   await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
-  assert.equal(globals.bindingImports, 0);
+  assert.equal(globals.bindingImports, 1);
 });

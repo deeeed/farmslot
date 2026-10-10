@@ -6,12 +6,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import {
-  fileFingerprint,
-  recipeConformanceIdentity,
-  recipeOutputRoots,
-  sourceSnapshot,
-} from '@farmslot/recipe-cli/harness';
+import { fileFingerprint, recipeOutputRoots, sourceSnapshot } from '@farmslot/recipe-cli/harness';
 
 const cliConfig = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
 const commandUrl = new URL('./doctor.ts', import.meta.url).href;
@@ -288,6 +283,13 @@ test('monorepo report includes shared checkout sources beyond the selected app',
   config.recipe.provider.module = path.join(external.root, 'provider.mjs');
   write('project.json', config);
   write('apps/ui/package.json', {});
+  const appRuntime = 'apps/ui/temp/recipe/runtime/agentic-runtime.json';
+  write(appRuntime, {
+    repoRoot: path.join(root, 'apps/ui'),
+    project: 'example',
+    slotId: 'app-runtime',
+    watcherPort: 7331,
+  });
   write('packages/shared/value.txt', 'before');
   const result = run(root, [
     '--authorize-provider',
@@ -297,23 +299,22 @@ test('monorepo report includes shared checkout sources beyond the selected app',
   ]);
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   const data = result.envelope.data;
+  assert.equal(data.context.runtimeConfigPath, path.join(root, appRuntime));
+  assert.equal(data.report.identity.selection.slot, 'app-runtime');
+  assert.ok(
+    data.report.identity.configuration.some(
+      (source: { path: string }) => source.path === path.join(root, appRuntime),
+    ),
+  );
   write('packages/shared/value.txt', 'after');
-  const current = recipeConformanceIdentity({
-    project: 'example',
-    context: data.context,
-    providerRoot: external.root,
-    configurationPaths: [path.join(root, 'project.json')],
-    librarySources: [{ name: 'example', root: external.root }],
-    artifactsDir: path.dirname(data.reportPath),
-    recipes: [],
-  });
+  const current = sourceSnapshot(
+    root,
+    undefined,
+    recipeOutputRoots(data.context.target.value, data.context.project),
+  );
   assert.equal(data.report.identity.target, path.join(root, 'apps/ui'));
   assert.equal(data.reportPath, path.join(root, 'artifacts/conformance/conformance-report.json'));
-  assert.notEqual(
-    current.checkout.sourceFingerprint,
-    data.report.identity.checkout.sourceFingerprint,
-  );
-  assert.equal(current.provider.sourceFingerprint, data.report.identity.provider.sourceFingerprint);
+  assert.notEqual(current.sourceFingerprint, data.report.identity.checkout.sourceFingerprint);
 });
 
 test('public doctor binds the actual runtime configuration selected through the environment', (t) => {

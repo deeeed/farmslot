@@ -68,7 +68,7 @@ export async function resolveLibrarySources(
   const bundled = catalog.bundledLibrary;
   const cliEntries =
     typeof libraryEntry === 'string' ? [libraryEntry] : libraryEntry ? [...libraryEntry] : [];
-  const sources = resolvedSources
+  let sources = resolvedSources
     ? [...resolvedSources]
     : await resolveRecipeLibrarySources({
         ...(cliEntries.length > 0 ? { cliEntries } : {}),
@@ -83,6 +83,24 @@ export async function resolveLibrarySources(
   }
   if (!sources.some((source) => path.resolve(source.root) === canonicalRoot)) {
     sources.push({ name: bundled.name, root: canonicalRoot });
+  }
+  if (resolvedSources && recipePath) {
+    const bound = sources;
+    sources = (
+      await resolveRecipeLibrarySources({
+        cliEntries: bound.map((source) =>
+          source.name ? `${source.name}=${source.root}` : source.root,
+        ),
+        env: {},
+        recipePath,
+      })
+    ).map(
+      (source) =>
+        bound.find(
+          (entry) =>
+            entry.name === source.name && path.resolve(entry.root) === path.resolve(source.root),
+        ) ?? source,
+    );
   }
   return Promise.all(
     sources.map(async (source): Promise<RecipeLibrarySource> => {

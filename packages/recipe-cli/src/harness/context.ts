@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import type { PlatformAdapter } from '@farmslot/adapter-sdk';
 import { portableRepoIdentity } from '@farmslot/agent-runtime';
 import {
+  DEFAULT_TASK_DIR,
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
   validateProjectRecipeConfig,
@@ -87,6 +88,8 @@ export interface ResolveHarnessContextOptions {
   slotSelection?: 'pool' | 'identity';
   /** The adapter when nothing else decides. */
   defaultAdapter?: string;
+  /** App runtime target; pool lookup remains rooted at the checkout. */
+  runtimeTarget?: string;
 }
 
 type ContextAdapter = NonNullable<HarnessContext['adapter']>;
@@ -120,7 +123,7 @@ export async function resolveHarnessContext(
   // slot and detection read the Git top level.
   const root = targetFlag ? target.value : (gitTopLevel(target.value) ?? target.value);
   const runtimeDir = optionValues(options.tokens, '--runtime-dir').at(-1);
-  const binding = readBinding(root, runtimeDir);
+  const binding = readBinding(options.runtimeTarget ?? root, runtimeDir);
   const runtime = binding.runtime;
   const pool = options.slotPoolDir
     ? { dir: options.slotPoolDir, source: 'option' as const }
@@ -438,7 +441,7 @@ function readBinding(
 
 /**
  * Whether the runtime context read from `file` belongs to the checkout `root`:
- * its `repoRoot` is `root`'s Git top level (real paths), or, without
+ * its `repoRoot` is the selected target or its Git top level (real paths), or, without
  * `repoRoot`, the file sits inside `root`. Anything else is another
  * checkout's (an inherited RECIPE_RUNTIME_CONTEXT) and describes nothing here.
  */
@@ -450,7 +453,7 @@ export function runtimeContextOwned(
   // The checkout itself, not one nested in it: a clone under <checkout>/temp
   // has its own top level and inherits nothing.
   return typeof context.repoRoot === 'string'
-    ? samePath(context.repoRoot, gitTopLevel(root) ?? root)
+    ? samePath(context.repoRoot, root) || samePath(context.repoRoot, gitTopLevel(root) ?? root)
     : within(root, file);
 }
 
@@ -614,7 +617,7 @@ export async function resolveProjectContext(
   }
   const divider = options.tokens.indexOf('--');
   const optionEnd = divider < 0 ? options.tokens.length : divider;
-  const context = await resolveHarnessContext({
+  const contextOptions = {
     ...options,
     tokens: [
       ...options.tokens.slice(0, optionEnd),
@@ -623,8 +626,9 @@ export async function resolveProjectContext(
       ...options.tokens.slice(optionEnd),
     ],
     adapter: false,
-  });
-  const runtime = readBinding(
+  };
+  let context = await resolveHarnessContext(contextOptions);
+  let runtime = readBinding(
     checkoutRoot,
     optionValues(options.tokens, '--runtime-dir').at(-1),
   ).runtime;
@@ -656,7 +660,6 @@ export async function resolveProjectContext(
             project?: string;
             app?: string;
             platform?: string;
-            env?: Record<string, string>;
           }>;
         })
       : undefined;
@@ -676,7 +679,7 @@ export async function resolveProjectContext(
   let candidates = named
     ? entries.filter((entry) => entry.config.name === named)
     : entries.filter((entry) => {
-        if (entry.root === checkoutRoot) return true;
+        if (samePath(entry.root, checkoutRoot)) return true;
         return (
           remote !== undefined &&
           repositoryIdentity(remote) === repositoryIdentity(entry.config.repoUrl)
@@ -742,6 +745,18 @@ export async function resolveProjectContext(
       'select an existing checkout and app',
     );
   }
+  if (target !== checkoutRoot) {
+    context = await resolveHarnessContext({ ...contextOptions, runtimeTarget: target });
+    runtime = readBinding(target, optionValues(options.tokens, '--runtime-dir').at(-1)).runtime;
+    const targetProject = stringField(runtime, 'project');
+    if (targetProject && targetProject !== config.name && !projectFlag) {
+      throw new ProjectBindingError(
+        'PROJECT_INCOMPATIBLE',
+        `App runtime names project ${targetProject}, not ${config.name}.`,
+        'select the intended project explicitly with --project',
+      );
+    }
+  }
   if (
     remote &&
     config.repoUrl &&
@@ -771,14 +786,14 @@ export async function resolveProjectContext(
   };
   const excludedRoots = recipeOutputRoots(target, outputPaths);
   const environment = { ...pool?.env, ...(options.load?.env ?? process.env) };
-  const existingSourceRoot = (value: string): string => {
+  const existingSourceRoot = (value: string, label = value): string => {
     try {
       return fs.realpathSync(value);
     } catch (error) {
       if (!missing(error)) throw error;
       throw new ProjectBindingError(
         'SOURCE_ROOT_MISSING',
-        `Configured source root ${value} does not exist.`,
+        `Configured source root ${label} does not exist.`,
         'configure an existing provider or library path in the selected pool or project',
       );
     }
@@ -795,9 +810,9 @@ export async function resolveProjectContext(
       throw new ProjectBindingError(
         'SOURCE_ROOT_MISSING',
         `Missing configured source root ${ref.env ?? ref.projectPath}.`,
-        `set ${ref.env ?? 'the project path'} in the selected pool/slot configuration`,
+        `set ${ref.env ?? 'the project path'} in the operator environment or selected pool.env`,
       );
-    return existingSourceRoot(value);
+    return existingSourceRoot(value, ref.env ?? ref.projectPath);
   };
   const provider = resolveProvider(
     recipe.provider,
@@ -812,7 +827,7 @@ export async function resolveProjectContext(
   });
   const libraries: ResolvedProjectLibrary[] = overrides.map((entry) => {
     const libraryRoot = existingSourceRoot(path.resolve(cwd, entry.root));
-    const identity = sourceSnapshot(libraryRoot);
+    const identity = sourceSnapshot(libraryRoot, undefined, excludedRoots);
     const name = entry.name ?? path.basename(libraryRoot);
     return {
       ...entry,
@@ -822,13 +837,6 @@ export async function resolveProjectContext(
     };
   });
   for (const entry of recipe.libraries ?? []) {
-    if (!entry.owner?.trim()) {
-      throw new ProjectBindingError(
-        'LIBRARY_OWNER_MISSING',
-        `Library ${entry.name} has no owner.`,
-        'declare the library owner in project.json',
-      );
-    }
     const override = libraries.find((library) => library.name === entry.name);
     if (override) {
       const original =
@@ -849,7 +857,7 @@ export async function resolveProjectContext(
       typeof entry.source === 'string'
         ? existingSourceRoot(path.resolve(root, entry.source))
         : sourceRoot(entry.source);
-    const identity = sourceSnapshot(libraryRoot);
+    const identity = sourceSnapshot(libraryRoot, undefined, excludedRoots);
     if (identity.head && !entry.revision) {
       throw new ProjectBindingError(
         'SOURCE_REVISION_MISSING',
@@ -1055,8 +1063,8 @@ function readProject(file: string): ProjectConfig {
     repoUrl: raw.repoUrl ?? raw.repo_url ?? '',
     defaultBranch: raw.defaultBranch ?? raw.default_branch ?? '',
     paths: {
-      runtimeDir: raw.paths?.runtimeDir ?? raw.paths?.runtime_dir ?? '.agent',
-      artifactDir: raw.paths?.artifactDir ?? raw.paths?.artifact_dir ?? '.task',
+      runtimeDir: raw.paths?.runtimeDir || raw.paths?.runtime_dir || '.agent',
+      artifactDir: raw.paths?.artifactDir || raw.paths?.artifact_dir || DEFAULT_TASK_DIR,
     },
   };
 }

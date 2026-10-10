@@ -66,8 +66,7 @@ export function withProjectRecipeHost<T>(
       const cli: CliOptions = {
         ...options.options,
         target: context.target.value,
-        runtimeDir:
-          options.options?.runtimeDir ?? process.env.RECIPE_RUNTIME_DIR ?? binding.runtimeDir,
+        runtimeDir: binding.runtimeDir,
         artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir),
         ...(binding.manifest && !options.options?.actionManifest
           ? { actionManifest: binding.manifest }

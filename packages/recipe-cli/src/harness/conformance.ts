@@ -1,14 +1,16 @@
 import path from 'node:path';
 
-import type {
-  RecipeConformanceCheck,
-  RecipeConformanceIdentity,
-  RecipeConformanceReport,
-  RecipeConformanceSource,
+import {
+  digestRecipeDocument,
+  type RecipeConformanceCheck,
+  type RecipeConformanceIdentity,
+  type RecipeConformanceReport,
+  type RecipeConformanceSource,
 } from '@farmslot/protocol';
 import { loadRecipeLibraries, type RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { writeContainedArtifact } from './artifact-files.js';
+import type { RecipeCatalog } from './catalog.js';
 import type { HarnessContext } from './context-state.js';
 import {
   fileFingerprint,
@@ -18,6 +20,7 @@ import {
 } from './execution-provenance.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { recipeOutputRoots } from './paths.js';
+import { resolveLibrarySources, resolveRunRecipeArg } from './recipe-library.js';
 import { validateRunRecipeStatic } from './recipe-validation.js';
 import type { ConsoleAllowlist } from './run-diagnostics.js';
 import {
@@ -50,8 +53,72 @@ export function conformanceChecksPass(checks: readonly RecipeConformanceCheck[])
 }
 
 /** Bind static and live claims to the same code, configuration and target identities. */
-export function recipeConformanceIdentity(
+export async function recipeConformanceIdentity(
+  catalog: RecipeCatalog,
   options: RecipeConformanceOptions,
+): Promise<RecipeConformanceIdentity> {
+  return resolvedConformanceIdentity(options, await resolveConformanceInputs(catalog, options));
+}
+
+type ResolvedConformanceInvocation = RecipeConformanceOptions['recipes'][number] & {
+  recipeFile?: string;
+  librarySources: RecipeLibrarySource[];
+};
+
+interface ConformanceInputs {
+  invocations: ResolvedConformanceInvocation[];
+  librarySources: RecipeLibrarySource[];
+  configurationPaths: string[];
+}
+
+async function resolveConformanceInputs(
+  catalog: RecipeCatalog,
+  options: RecipeConformanceOptions,
+): Promise<ConformanceInputs> {
+  const adapter = options.context.adapter?.value;
+  if (!adapter) throw new Error('Conformance requires a resolved adapter.');
+  const invocations = await Promise.all(
+    options.recipes.map(async (invocation) => {
+      const resolved = await resolveRunRecipeArg(
+        catalog,
+        invocation.recipe,
+        adapter,
+        options.librarySources,
+      );
+      const recipeFile = 'recipeFile' in resolved ? resolved.recipeFile : undefined;
+      const librarySources =
+        recipeFile && !('ref' in resolved)
+          ? await resolveLibrarySources(catalog, undefined, recipeFile, options.librarySources)
+          : options.librarySources;
+      return { ...invocation, recipeFile, librarySources };
+    }),
+  );
+  const librarySources = new Map<string, RecipeLibrarySource>();
+  for (const source of [
+    ...options.librarySources,
+    ...invocations.flatMap((invocation) => invocation.librarySources),
+  ]) {
+    librarySources.set(JSON.stringify([source.name, path.resolve(source.root)]), source);
+  }
+  return {
+    invocations,
+    librarySources: [...librarySources.values()],
+    configurationPaths: [
+      ...new Set(
+        [
+          ...options.configurationPaths,
+          ...invocations.flatMap((invocation) =>
+            invocation.recipeFile ? [invocation.recipeFile] : [],
+          ),
+        ].map((file) => path.resolve(file)),
+      ),
+    ],
+  };
+}
+
+function resolvedConformanceIdentity(
+  options: RecipeConformanceOptions,
+  inputs: ConformanceInputs,
 ): RecipeConformanceIdentity {
   const adapter = options.context.adapter?.value;
   if (!adapter) throw new Error('Conformance requires a resolved adapter.');
@@ -63,7 +130,7 @@ export function recipeConformanceIdentity(
   ];
   const checkout = sourceSnapshot(
     options.context.project?.checkoutRoot ?? options.context.target.value,
-    adapter,
+    undefined,
     excludedRoots,
   );
   const provider = options.context.project
@@ -99,11 +166,16 @@ export function recipeConformanceIdentity(
       name: source.name,
       ...withDirtyDigest(sourceSnapshot(source.root, undefined, excludedRoots)),
     })),
-    libraries: options.librarySources.map((source) => ({
+    libraries: inputs.librarySources.map((source) => ({
       name: source.name ?? path.basename(source.root),
+      path: path.resolve(source.root),
       ...withDirtyDigest(sourceSnapshot(source.root, undefined, excludedRoots)),
     })),
-    configuration: options.configurationPaths.map((file) => ({
+    invocations: inputs.invocations.map((invocation) => ({
+      recipe: invocation.recipe,
+      paramsDigest: digestRecipeDocument(invocation.params ?? {}),
+    })),
+    configuration: inputs.configurationPaths.map((file) => ({
       path: path.resolve(file),
       sourceFingerprint: fileFingerprint(file),
     })),
@@ -127,7 +199,8 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
   engine: RecipeEngine<TMutation, TAllowlist>,
   options: RecipeConformanceOptions,
 ): Promise<RecipeConformanceReport> {
-  const identity = recipeConformanceIdentity(options);
+  const inputs = await resolveConformanceInputs(engine, options);
+  const identity = resolvedConformanceIdentity(options, inputs);
   const checks: RecipeConformanceCheck[] = [];
   if (options.recipes.length === 0) {
     checks.push({
@@ -139,38 +212,58 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
   }
   const cli: CliOptions = {
     ...options.cli,
-    library: options.librarySources.map((source) =>
-      source.name ? `${source.name}=${source.root}` : source.root,
-    ),
     artifactsDir: options.artifactsDir,
     target: identity.target,
     adapter: identity.adapter,
   };
   const runtimeOptions = recipeRunOptionsFromCli(identity.adapter, cli);
   const manifestPath = optionString(cli, 'actionManifest');
-  const libraries = await loadRecipeLibraries(options.librarySources, {
-    adapter: identity.adapter,
-  });
-  const manifest = await engine.resolveActionManifest(
-    identity.adapter,
-    manifestPath,
-    options.librarySources,
-  );
+  const resolution: NonNullable<RecipeConformanceReport['resolution']> = {
+    recipes: [],
+    actions: [],
+  };
   const restoreEnvironment = activateRecipeRuntimeEnvironment(
     identity.adapter,
     identity.target,
     runtimeOptions,
   );
   try {
-    for (const invocation of options.recipes) {
+    for (const invocation of inputs.invocations) {
       const id = `recipe.${invocation.recipe}`;
       try {
+        const libraries = await loadRecipeLibraries(invocation.librarySources, {
+          adapter: identity.adapter,
+        });
+        const manifest = await engine.resolveActionManifest(
+          identity.adapter,
+          manifestPath,
+          invocation.librarySources,
+        );
+        resolution.recipes.push(
+          ...[...libraries.recipes.values()]
+            .filter((recipe) => !recipe.aliasFor)
+            .map(({ ref, source, shadows }) => ({
+              ref,
+              source,
+              shadows,
+              invocation: invocation.recipe,
+            })),
+        );
+        resolution.actions.push(
+          ...[...manifest.actionSources].map(([action, source]) => ({
+            action,
+            source: source.name,
+            invocation: invocation.recipe,
+            ...(source.shadows ? { shadows: source.shadows } : {}),
+          })),
+        );
         const validated = await validateRunRecipeStatic(
           engine,
           invocation.recipe,
           identity.adapter,
           cli,
           invocation.params,
+          invocation.librarySources,
         );
         if (validated.usageError || validated.errorCount > 0) {
           checks.push({
@@ -223,7 +316,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
   } finally {
     restoreEnvironment();
   }
-  const current = recipeConformanceIdentity(options);
+  const current = await recipeConformanceIdentity(engine, options);
   if (!sameConformanceIdentity(identity, current)) {
     checks.push({
       id: 'inputs.stable',
@@ -241,16 +334,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
     mode: 'static',
     checks,
     capabilities: [{ name: 'recipe.preflight', status: passed ? 'verified' : 'failed' }],
-    resolution: {
-      recipes: [...libraries.recipes.values()]
-        .filter((recipe) => !recipe.aliasFor)
-        .map(({ ref, source, shadows }) => ({ ref, source, shadows })),
-      actions: [...manifest.actionSources].map(([action, source]) => ({
-        action,
-        source: source.name,
-        ...(source.shadows ? { shadows: source.shadows } : {}),
-      })),
-    },
+    resolution,
   };
 }
 

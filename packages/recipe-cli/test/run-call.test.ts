@@ -1889,9 +1889,9 @@ describe('run', () => {
     assert.equal(report.identity.checkout.dirtyDigest, null);
     assert.equal(report.identity.provider.head, null);
     assert.equal(report.identity.provider.dirtyDigest, null);
-    assertConformanceReportCurrent(report, recipeConformanceIdentity(options));
+    assertConformanceReportCurrent(report, await recipeConformanceIdentity(engine, options));
     await writeRecipeConformanceReport(options.artifactsDir, report);
-    assertConformanceReportCurrent(report, recipeConformanceIdentity(options));
+    assertConformanceReportCurrent(report, await recipeConformanceIdentity(engine, options));
     assert.throws(
       () =>
         assertConformanceReportCurrent(
@@ -1901,22 +1901,25 @@ describe('run', () => {
       /passing evidence/u,
     );
     fs.writeFileSync(path.join(target, 'app.txt'), 'changed\n');
-    const dirty = recipeConformanceIdentity(options);
+    const dirty = await recipeConformanceIdentity(engine, options);
     assert.notEqual(dirty.checkout.dirtyDigest, null);
     assert.throws(() => assertConformanceReportCurrent(report, dirty), /stale/u);
     const firstDirty = dirty.checkout.dirtyDigest;
     fs.writeFileSync(path.join(target, 'app.txt'), 'changed again\n');
-    assert.notEqual(recipeConformanceIdentity(options).checkout.dirtyDigest, firstDirty);
+    assert.notEqual(
+      (await recipeConformanceIdentity(engine, options)).checkout.dirtyDigest,
+      firstDirty,
+    );
     fs.writeFileSync(path.join(target, '.gitignore'), 'temp/\nother/\n');
     assert.notDeepEqual(
-      recipeConformanceIdentity(options).configuration,
+      (await recipeConformanceIdentity(engine, options)).configuration,
       report.identity.configuration,
     );
     fs.writeFileSync(
       path.join(engine.bundledLibrary.root, 'provider.js'),
       'export const revision = 2;\n',
     );
-    const changedProvider = recipeConformanceIdentity(options);
+    const changedProvider = await recipeConformanceIdentity(engine, options);
     assert.throws(() => assertConformanceReportCurrent(report, changedProvider), /stale/u);
     assert.notEqual(
       changedProvider.provider.sourceFingerprint,
@@ -1936,6 +1939,83 @@ describe('run', () => {
         false,
       );
     }
+  });
+
+  test('conformance binds external recipe bytes and its adjacent task library', async () => {
+    const target = checkout();
+    const task = tempRoot('recipe-cli-external-task-');
+    const local = path.join(task, 'recipe-library');
+    const recipes = path.join(local, 'recipes');
+    fs.mkdirSync(recipes, { recursive: true });
+    const child = recipeFile(recipes, { done: { action: 'end', status: 'pass' } });
+    const recipe = recipeFile(task, {
+      child: {
+        action: 'call',
+        ref: 'proof',
+        intent: 'Check the adjacent task dependency.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const options: RecipeConformanceOptions = {
+      project: 'shop',
+      context: {
+        adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+        target: { value: target, source: 'flag', detail: '--target' },
+      },
+      providerRoot: engine.bundledLibrary.root,
+      configurationPaths: [],
+      librarySources: [{ name: 'shop', root: engine.bundledLibrary.root }],
+      artifactsDir: path.join(target, 'temp/checks'),
+      recipes: [{ recipe }],
+    };
+    const report = await checkRecipeConformance(engine, options);
+    assert.equal(report.status, 'pass', JSON.stringify(report.checks));
+    assert.ok(report.identity.libraries.some((source) => source.path === local));
+    assert.ok(report.resolution?.recipes.some((source) => source.source === 'task-local'));
+    assert.ok(report.identity.configuration.some((source) => source.path === recipe));
+    const changedParams = await recipeConformanceIdentity(engine, {
+      ...options,
+      recipes: [{ recipe, params: { scope: 'different invocation' } }],
+    });
+    assert.throws(() => assertConformanceReportCurrent(report, changedParams), /stale/u);
+    const originalChild = fs.readFileSync(child, 'utf8');
+    fs.writeFileSync(child, originalChild.replace('Shop proof', 'Changed child'));
+    const changedChild = await recipeConformanceIdentity(engine, options);
+    assert.throws(() => assertConformanceReportCurrent(report, changedChild), /stale/u);
+    fs.writeFileSync(child, originalChild);
+    fs.writeFileSync(recipe, fs.readFileSync(recipe, 'utf8').replace('Shop proof', 'Changed root'));
+    const changedRoot = await recipeConformanceIdentity(engine, options);
+    assert.throws(() => assertConformanceReportCurrent(report, changedRoot), /stale/u);
+    assert.equal(calls.events.length, 0);
+  });
+
+  test('conformance fingerprints native edits even when the runtime freshness hash omits them', async () => {
+    const target = checkout();
+    const registry = createAdapterRegistry();
+    registry.register({ ...shopAdapter('api', calls), sourceFingerprint: () => 'bundle-only' });
+    configureHarnessAdapters(registry);
+    const native = path.join(target, 'android/app/build.gradle');
+    fs.mkdirSync(path.dirname(native), { recursive: true });
+    fs.writeFileSync(native, 'first native edit');
+    const options: RecipeConformanceOptions = {
+      project: 'shop',
+      context: {
+        adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+        target: { value: target, source: 'flag', detail: '--target' },
+      },
+      providerRoot: engine.bundledLibrary.root,
+      configurationPaths: [],
+      librarySources: [{ name: 'shop', root: engine.bundledLibrary.root }],
+      artifactsDir: path.join(target, 'temp/checks'),
+      recipes: [],
+    };
+    const before = await recipeConformanceIdentity(engine, options);
+    fs.writeFileSync(native, 'second native edit');
+    const after = await recipeConformanceIdentity(engine, options);
+    assert.equal(before.checkout.head, after.checkout.head);
+    assert.equal(before.checkout.status, after.checkout.status);
+    assert.notEqual(before.checkout.sourceFingerprint, after.checkout.sourceFingerprint);
   });
 
   test('--list and --describe read the catalog; --describe refuses --plan', async () => {

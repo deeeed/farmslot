@@ -32,8 +32,10 @@ Run `farmslot doctor <checkout> --conformance` to check the provider, catalog an
 
 Declare `recipe.provider` and an ordered `recipe.libraries` list in `project.json`. Each library has `name`, `source` and `owner`; repository sources also require an exact `revision`. The provider exports `createProvider(context)` and returns its runtime, plus an optional engine. The shared engine is the default. Registered configuration or an installed package authorizes loading. Discovered executable sources require the operator's exact `--authorize-provider <module>` approval.
 
-Executable library sources also need registered project configuration or an explicit `--library name=path`. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata.
+Executable library sources need registered project configuration, `--library name=path`, `RECIPE_LIBRARY_PATH`, or the operator's configured personal library. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata. Engine trust checks still apply to every source.
 
 Provider `root` and library `source` can reuse portable `{ "env": "EXAMPLE_PACKAGE_ROOT" }` or `{ "projectPath": "recipe-library" }` references. The first reads the operator environment or selected pool env; the second resolves from the checkout. Discovered metadata cannot resolve those references until the project is registered. This supports globally installed provider packages without home-path defaults.
 
 Recipe state uses `--runtime-dir`, then `RECIPE_RUNTIME_DIR`, then `temp/recipe/runtime` relative to the target. The farm worker directory in `paths.runtime_dir` is separate. The artifact directory in `paths.artifact_dir` resolves from the checkout root, including when an app is selected.
+
+Reports include native checkout sources as well as application code. A direct recipe file and its adjacent task library are bound to the checked invocation, including its parameters. Changing any of those inputs requires a new check.

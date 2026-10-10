@@ -214,7 +214,7 @@ export function providerSourceSnapshot(
   const delivery =
     path.resolve(deliveryRoot) === path.resolve(root)
       ? fileFingerprint(module)
-      : sourceSnapshot(deliveryRoot).sourceFingerprint;
+      : sourceSnapshot(deliveryRoot, undefined, excludedRoots).sourceFingerprint;
   return {
     ...source,
     sourceFingerprint: createHash('sha256')
@@ -407,7 +407,7 @@ function hashDirectory(
     throw error;
   }
   if (stat.isDirectory()) {
-    // Empty parents of excluded output directories carry no source bytes.
+    // Directories carry no source bytes; files bind their relative path.
     for (const name of fs.readdirSync(absolute).sort()) {
       if (relative === '' && (name === '.git' || name === 'node_modules' || name === 'temp'))
         continue;

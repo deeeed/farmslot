@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,7 @@ import { recipeOutputRoots } from '../src/harness/paths.js';
 import { withProjectRecipeHost } from '../src/harness/project-host.js';
 
 function fixture(t: TestContext) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'project-host-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'project-host-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(
     path.join(root, 'provider.mjs'),
@@ -129,7 +130,7 @@ test('recipe runtime defaults and overrides stay separate from farm state', asyn
       {
         ...options,
         tokens: flag ? ['--runtime-dir', flag] : [],
-        options: flag ? { runtimeDir: flag } : {},
+        options: {},
       },
       async ({ context, cli }) => {
         assert.equal(context.runtimeConfigPath, file);
@@ -173,4 +174,60 @@ test('app output exclusions use the checkout farm paths and preserve library pro
       );
     },
   );
+});
+
+test('app runtime targeting and its config identity come from the selected app', async (t) => {
+  const options = fixture(t);
+  options.projects[0]!.config.apps = ['apps/ui'];
+  execFileSync('git', ['init', '-q', options.cwd]);
+  const app = path.join(options.cwd, 'apps/ui');
+  for (const [root, slotId, watcherPort] of [
+    [options.cwd, 'root-slot', 8111],
+    [app, 'app-slot', 8222],
+  ] as const) {
+    const file = path.join(root, 'temp/recipe/runtime/agentic-runtime.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ repoRoot: root, project: 'example', slotId, watcherPort }),
+    );
+  }
+  await withProjectRecipeHost({ ...options, tokens: ['--app', 'apps/ui'] }, async ({ context }) => {
+    assert.equal(
+      context.runtimeConfigPath,
+      path.join(app, 'temp/recipe/runtime/agentic-runtime.json'),
+    );
+    assert.equal(context.slot?.value, 'app-slot');
+    assert.equal(context.slot?.value && context.slot.ports.watcherPort, 8222);
+  });
+});
+
+test('checkout library provenance excludes doctor output across repeated hosts', async (t) => {
+  const options = fixture(t);
+  execFileSync('git', ['init', '-q', options.cwd]);
+  execFileSync('git', ['-C', options.cwd, 'add', '.']);
+  execFileSync('git', [
+    '-C',
+    options.cwd,
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-qm',
+    'Fixture',
+  ]);
+  const invocation = { ...options, tokens: ['--library', `team=${options.cwd}`] };
+  let before: unknown;
+  await withProjectRecipeHost(invocation, async ({ librarySources, cli }) => {
+    before = librarySources[0]!.provenance;
+    assert.equal(librarySources[0]!.provenance?.dirty, false);
+    fs.mkdirSync(String(cli.artifactsDir), { recursive: true });
+    fs.writeFileSync(path.join(String(cli.artifactsDir), 'conformance-report.json'), '{}');
+  });
+  await withProjectRecipeHost(invocation, async ({ librarySources }) => {
+    assert.deepEqual(librarySources[0]!.provenance, before);
+  });
 });
