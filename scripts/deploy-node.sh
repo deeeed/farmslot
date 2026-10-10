@@ -322,7 +322,9 @@ fi
 NODE_DIR=$(dirname "$NODE_PATH")
 echo "[deploy] node: $NODE_PATH"
 
-NODE_SERVICE_ARGS=("$NODE_PATH" --require "$REMOTE_DIR/node_modules/tsx/dist/preflight.cjs" --import "file://$REMOTE_DIR/node_modules/tsx/dist/loader.mjs" "$REMOTE_DIR/src/index.ts")
+NODE_TSX_ARGS=("$NODE_PATH" --require "$REMOTE_DIR/node_modules/tsx/dist/preflight.cjs" --import "file://$REMOTE_DIR/node_modules/tsx/dist/loader.mjs")
+NODE_SERVICE_ARGS=("${NODE_TSX_ARGS[@]}" "$REMOTE_DIR/src/index.ts")
+NODE_TOKEN_CHECK_ARGS=("${NODE_TSX_ARGS[@]}" "$REMOTE_DIR/src/check-node-token.ts")
 NODE_SERVICE_PATH="$NODE_DIR:/usr/local/bin:/usr/bin:/bin"
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
   NODE_SERVICE_PATH="$REMOTE_DIR/node_modules/.bin:$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin"
@@ -337,6 +339,8 @@ if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
   fi
   NATIVE_COMMAND=$(python3 -c 'import shlex,sys; print("exec " + shlex.join(sys.argv[1:]))' "${NODE_SERVICE_ARGS[@]}")
   NODE_SERVICE_ARGS=("$NATIVE_SHELL" -lc "$NATIVE_COMMAND")
+  NATIVE_COMMAND=$(python3 -c 'import shlex,sys; print("exec " + shlex.join(sys.argv[1:]))' "${NODE_TOKEN_CHECK_ARGS[@]}")
+  NODE_TOKEN_CHECK_ARGS=("$NATIVE_SHELL" -lc "$NATIVE_COMMAND")
   NODE_SERVICE_PATH="$REMOTE_HOME/.local/bin:$REMOTE_HOME/.npm-global/bin:$NODE_SERVICE_PATH"
 fi
 NODE_SERVICE_PATH=$(python3 -c 'import sys; print(":".join(dict.fromkeys(sys.argv[1].split(":"))))' "$NODE_SERVICE_PATH")
@@ -576,6 +580,21 @@ rsync -a --delete \
   --exclude dist \
   "$PACKAGES_DIR/agent-runtime/" \
   "${RSYNC_PREFIX}$REMOTE_DIR/packages/agent-runtime/"
+
+# --- Refuse a deployed node token that an env file would shadow ---
+# The node reads FARMSLOT_NODE_TOKEN from a .env.local-auth or .env in or above
+# its install dir ahead of the token the service definition below carries, so a
+# stale file kept nodes failing auth after a deploy that reported success. The
+# synced node answers with the service's own invocation, cwd and FARMSLOT_ROOT
+# (unset), before the service is touched; the token goes over stdin.
+DEPLOYED_NODE_TOKEN="${FARMSLOT_NODE_TOKEN:-${FARMSLOT_GATEWAY_TOKEN:-}}"
+if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
+  echo "[deploy] checking for an env file that shadows the node token..."
+  if ! printf '%s' "$DEPLOYED_NODE_TOKEN" | run "cd $(printf '%q' "$REMOTE_DIR") && env -u FARMSLOT_ROOT $(printf '%q ' "${NODE_TOKEN_CHECK_ARGS[@]}")"; then
+    echo "[deploy] ERROR: node token check failed on $MACHINE; the service was not reloaded" >&2
+    exit 1
+  fi
+fi
 
 # --- Install service (platform-specific) ---
 

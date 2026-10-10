@@ -7,22 +7,36 @@ export interface GatewayCredential {
   password?: string;
 }
 
+export interface NodeTokenEnvFile {
+  path: string;
+  token: string;
+}
+
 export function resolveGatewayCredential(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): GatewayCredential | null {
-  const fileEnvironments = findGatewayEnvFiles(env, cwd).map(readEnvFile);
-  for (const fileEnv of fileEnvironments) {
-    const nodeToken = nonEmpty(fileEnv.FARMSLOT_NODE_TOKEN);
-    if (nodeToken) return { token: nodeToken };
-  }
+  const nodeTokenFile = findNodeTokenEnvFile(env, cwd);
+  if (nodeTokenFile) return { token: nodeTokenFile.token };
 
   const envCredential = credentialFromEnv(env);
   if (envCredential) return envCredential;
 
-  for (const fileEnv of fileEnvironments) {
-    const credential = credentialFromEnv(fileEnv);
+  for (const file of findGatewayEnvFiles(env, cwd)) {
+    const credential = credentialFromEnv(readEnvFile(file));
     if (credential) return credential;
+  }
+  return null;
+}
+
+/** The env file whose FARMSLOT_NODE_TOKEN the node uses ahead of its own env, if any. */
+export function findNodeTokenEnvFile(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): NodeTokenEnvFile | null {
+  for (const path of findGatewayEnvFiles(env, cwd)) {
+    const token = nonEmpty(readEnvFile(path).FARMSLOT_NODE_TOKEN);
+    if (token) return { path, token };
   }
   return null;
 }
