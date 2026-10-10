@@ -84,12 +84,16 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
-/** A failed blocked replay must not terminally fence the run it will retry. */
+/** Undo only this replay's epoch-pinned reclaim, without terminally fencing its live run. */
 export function rollbackReclaimedSlotReleaseOptions(
   status: Run['status'],
   runId: string,
-): { restartRunId: string } | undefined {
-  return status === 'blocked' ? { restartRunId: runId } : undefined;
+  epoch?: number,
+): { restartRunId?: string; expectedSlotEpoch?: number } {
+  return {
+    ...(isTerminalRunStatus(status) ? {} : { restartRunId: runId }),
+    expectedSlotEpoch: epoch,
+  };
 }
 
 export interface RunReplayStepHooks {
@@ -1863,11 +1867,15 @@ export async function runReplayStep(
             }
           }
         } else {
+          if (reclaimedSlotEpoch === null)
+            throw new Error(
+              `Cannot undo replay reclaim of ${reclaimedSlotId} without its claim epoch`,
+            );
           const { slotRelease } = await import('../slot.js');
           const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
-            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
+            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId, reclaimedSlotEpoch),
           );
           if (!release.released) {
             const current = await readSlotRow(reclaimedSlotId);

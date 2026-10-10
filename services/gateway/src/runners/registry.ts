@@ -2493,7 +2493,7 @@ export async function execRunnerInput(
     vars,
     panePid!,
     runner,
-    { foregroundOnly: true },
+    { foregroundOnly: true, attempts: 2, deadline: Date.now() + 20_000 },
     { exec },
   );
   if (probe.state !== 'present')
@@ -2509,6 +2509,30 @@ export async function execRunnerInput(
     PROMPT_TYPE_FAILURE_EXIT_CODE,
   );
   return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
+}
+
+function runnerKeysCommand(paneId: string, keys: string): string {
+  return tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${keys} 2>/dev/null`);
+}
+
+export function execRunnerKeys(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  keys: string,
+  exec: typeof execOnSlot = execOnSlot,
+  beforeMutation?: () => void,
+): Promise<ExecResult> {
+  return execRunnerInput(
+    vars,
+    target,
+    runner,
+    (paneId) => {
+      beforeMutation?.();
+      return runnerKeysCommand(paneId, keys);
+    },
+    exec,
+  );
 }
 
 async function submitRunnerInstruction(
@@ -2566,10 +2590,9 @@ async function submitRunnerInstruction(
       return 'not-buffered';
     }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
-    const submit = await execRunnerInput(vars, target, runner, (paneId) => {
-      promptMutationStore.getStore()?.started();
-      return tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${submitKey} 2>/dev/null`);
-    });
+    const submit = await execRunnerKeys(vars, target, runner, submitKey, execOnSlot, () =>
+      promptMutationStore.getStore()?.started(),
+    );
     if (submit.exitCode !== 0) {
       promptMutationStore.getStore()?.confirmedUntouched?.();
       return 'stuck';
@@ -2593,9 +2616,7 @@ async function submitRunnerInstruction(
     if (attempt < 5) {
       const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
       console.warn(`[${logPrefix}] instruction appears buffered in ${target}; sending submit key`);
-      await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${submitKey} 2>/dev/null`),
-      );
+      await execRunnerKeys(vars, target, runner, submitKey);
     }
   }
 
@@ -3300,9 +3321,7 @@ export async function sendRunnerPostLaunchPrompt(
         blocker.autoAction === 'claude-trust-workspace'
           ? `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`
           : shellQuote(autoActionKey);
-      const trustResult = await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${trustKeySequence} 2>/dev/null`),
-      );
+      const trustResult = await execRunnerKeys(vars, target, runner, trustKeySequence);
       if (trustResult.exitCode !== 0) {
         throw new Error(
           `Failed to accept ${runner} workspace trust prompt in ${target}: ${
@@ -3324,12 +3343,11 @@ export async function sendRunnerPostLaunchPrompt(
       autoActionKey &&
       codexUpdatePromptAttempts < maxBlockerAutoAttempts
     ) {
-      const skipResult = await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(paneId)} ${shellQuote(autoActionKey)} ${shellQuote(
-            'Enter',
-          )} 2>/dev/null`,
-        ),
+      const skipResult = await execRunnerKeys(
+        vars,
+        target,
+        runner,
+        `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`,
       );
       if (skipResult.exitCode !== 0) {
         throw new Error(
@@ -3350,11 +3368,7 @@ export async function sendRunnerPostLaunchPrompt(
       autoActionKey &&
       grokProjectAttempts < maxBlockerAutoAttempts
     ) {
-      const selectResult = await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(paneId)} ${shellQuote(autoActionKey)} 2>/dev/null`,
-        ),
-      );
+      const selectResult = await execRunnerKeys(vars, target, runner, shellQuote(autoActionKey));
       if (selectResult.exitCode !== 0) {
         throw new Error(
           `Failed to select current Grok project directory in ${target}: ${
@@ -3389,12 +3403,11 @@ export async function sendRunnerPostLaunchPrompt(
           }`,
         );
       }
-      const trustResult = await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(paneId)} ${shellQuote(autoActionKey)} ${shellQuote(
-            'Enter',
-          )} 2>/dev/null`,
-        ),
+      const trustResult = await execRunnerKeys(
+        vars,
+        target,
+        runner,
+        `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`,
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
@@ -3497,9 +3510,7 @@ export async function sendRunnerPostLaunchPrompt(
       console.log(
         `[${logPrefix}] pane classifier suggested ${key} for ${target}: ${classifierForFailure.reason}`,
       );
-      await execRunnerInput(vars, target, runner, (paneId) =>
-        tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${key} 2>/dev/null`),
-      );
+      await execRunnerKeys(vars, target, runner, key);
       const recovered = await waitForPaneAfterClassifierAction(
         vars,
         target,
@@ -3555,10 +3566,7 @@ export async function sendRunnerPostLaunchPrompt(
         target,
         logPrefix,
         exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
-        sendKeys: (keys) =>
-          execRunnerInput(vars, target, runner, (paneId) =>
-            tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${keys} 2>/dev/null`),
-          ),
+        sendKeys: (keys) => execRunnerKeys(vars, target, runner, keys),
         refreshCodexHooks: async () => {
           const refreshed = await execOnSlot(
             vars,
@@ -3792,9 +3800,7 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] recovering buffered instruction in ${target} with submit-only delivery`,
       );
       sendCommand = (paneId) =>
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(paneId)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
-        );
+        runnerKeysCommand(paneId, runnerBufferedInstructionSubmitKey(preSendPane, runner));
     } else {
       try {
         await writeRunnerPromptSentinel(vars, message);

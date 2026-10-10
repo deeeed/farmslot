@@ -106,7 +106,16 @@ export const RELEASE_PREPARE_STOP_TIMEOUT_MS = 3 * 60_000;
 /** Progress while waiting, so a CLI idle timeout does not end the release first. */
 const RELEASE_PREPARE_STOP_HEARTBEAT_MS = 15_000;
 
-function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
+export interface SlotReleaseOptions {
+  restartRunId?: string;
+  expectedSlotEpoch?: number;
+  prepareStopTimeoutMs?: number;
+  prepareStopHeartbeatMs?: number;
+}
+
+class BoundReleaseClaimLostError extends Error {}
+
+function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOptions): string {
   // Only semantically identical requests may share one teardown; a request
   // with different options/owner must wait for the in-flight one and then run
   // itself (it may legitimately become a no-op via the owner/epoch guards).
@@ -118,7 +127,8 @@ function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): s
     forceReset: params.forceReset ?? false,
     preserveAgents: params.preserveAgents ?? false,
     detachRuns: params.detachRuns ?? true,
-    restartRunId: restartRunId ?? null,
+    restartRunId: options?.restartRunId ?? null,
+    expectedSlotEpoch: options?.expectedSlotEpoch ?? null,
   });
 }
 
@@ -127,16 +137,12 @@ export async function slotRelease(
   emit: EventEmitter,
   // A blocked-run restart keeps the same run ID. It must release the slot
   // without fencing that run as terminal before the new attempt can acquire proof.
-  options?: {
-    restartRunId?: string;
-    prepareStopTimeoutMs?: number;
-    prepareStopHeartbeatMs?: number;
-  },
+  options?: SlotReleaseOptions,
 ): Promise<{ released: boolean }> {
   if (options?.restartRunId !== undefined && options.restartRunId !== params.expectedRunId) {
     throw new Error('Restart release must be bound to its run owner');
   }
-  const key = releaseCoalesceKey(params, options?.restartRunId);
+  const key = releaseCoalesceKey(params, options);
   // Re-check the map after every wait: several differing waiters can be woken
   // by the same settled teardown, and only the first to register may run —
   // the rest must queue behind IT, not start parallel teardowns.
@@ -156,12 +162,19 @@ export async function slotRelease(
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
   beginTerminalTeardown(params.slotId);
-  const teardown = slotReleaseImpl(params, emit, options).finally(() => {
-    endTerminalTeardown(params.slotId);
-    if (inflightReleases.get(params.slotId)?.promise === teardown) {
-      inflightReleases.delete(params.slotId);
-    }
-  });
+  const teardown = slotReleaseImpl(params, emit, options)
+    .catch((error: unknown) => {
+      // A bound teardown losing its claim is an expected no-op for archive and
+      // replay rollback. The new owner's workspace has already been left alone.
+      if (error instanceof BoundReleaseClaimLostError) return { released: false };
+      throw error;
+    })
+    .finally(() => {
+      endTerminalTeardown(params.slotId);
+      if (inflightReleases.get(params.slotId)?.promise === teardown) {
+        inflightReleases.delete(params.slotId);
+      }
+    });
   inflightReleases.set(params.slotId, { key, promise: teardown });
   return teardown;
 }
@@ -323,11 +336,7 @@ function unmergedWorkError(work: SlotUnmergedWork): Error {
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
-  options?: {
-    restartRunId?: string;
-    prepareStopTimeoutMs?: number;
-    prepareStopHeartbeatMs?: number;
-  },
+  options?: SlotReleaseOptions,
 ): Promise<{ released: boolean }> {
   const preflight = await slotReleasePreflight(params, options?.restartRunId);
   if (!preflight) return { released: false };
@@ -383,6 +392,11 @@ async function slotReleaseImpl(
       // going after the first publishes `ready`, clobbering whatever claims
       // the slot next. Applies to bound AND unbound entries.
       if (slot.phase === SLOT_PHASE_RELEASING) return false;
+      if (
+        options?.expectedSlotEpoch !== undefined &&
+        (Number(slot.slot_epoch) || 0) !== options.expectedSlotEpoch
+      )
+        return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
       if (params.expectedRunId && owner !== params.expectedRunId) return false;
       releaseRefusal = releaseOwnerRefusal(
@@ -439,6 +453,14 @@ async function slotReleaseImpl(
         (slot.current_run_id ?? null) === releasedOwner,
       priorFence,
     );
+    if (params.expectedRunId && owner !== params.expectedRunId) {
+      step(
+        'claim',
+        `Slot ${params.slotId} moved to another owner; remaining release actions stopped`,
+      );
+      complete(0);
+      throw new BoundReleaseClaimLostError();
+    }
     complete(1);
     throw new Error(
       refusal ??
@@ -552,6 +574,7 @@ async function slotReleaseImpl(
     let holdReason: string | null = null;
     const inflightPrepare = activePrepareAborts.get(params.slotId);
     if (inflightPrepare) {
+      await assertReleaseClaim();
       step('prepare', 'Stopping in-flight prepare...');
       inflightPrepare.abort();
       const stopMs = options?.prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
@@ -575,6 +598,7 @@ async function slotReleaseImpl(
         holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
     }
     if (!holdReason) {
+      await assertReleaseClaim();
       try {
         const stopped = await reapSlotPrepareScope(vars, {
           identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
@@ -783,6 +807,7 @@ async function slotReleaseImpl(
   // torn down because they're tied to a specific PID that's about to
   // change anyway.
   if (!keepWarm) {
+    await assertReleaseClaim();
     killSlotScreenSessions(params.slotId);
   }
 
@@ -893,6 +918,8 @@ export async function killAgentInSession(
   role: AgentRole = 'primary',
   options: { graceful?: boolean; assertClaim?: () => Promise<void> } = {},
 ): Promise<void> {
+  // Mutations cannot be automatically resent after reconnect: that would skip
+  // the ownership check and could reach a newer claim. A failure needs a fresh release.
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
   const roleWindow = agentDispatchWindow(role);

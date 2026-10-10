@@ -23,6 +23,8 @@ let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
 let claimBeforeMark = false;
 let markerWrites = 0;
 let claimDuringPaneProbe = false;
+let claimAfterTaskClean = false;
+let hasMirrorArtifacts = false;
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -57,6 +59,18 @@ const execForTest = async (_vars: unknown, cmd: string) => {
     return { stdout: '', stderr: '', exitCode: claimDuringPaneProbe ? 0 : 1 };
   if (cmd.includes('list-panes')) return ok(cmd.includes('pane_pid') ? '%1\t123\n' : '%1\n');
   if (cmd.includes('send-keys')) events.push('input-sent');
+  if (cmd.startsWith('test -d') && hasMirrorArtifacts) return ok('yes');
+  if (cmd.startsWith('rm -rf')) {
+    events.push('task-clean');
+    if (claimAfterTaskClean)
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
+  }
   return ok();
 };
 const realExec = await import('../../core/exec.js');
@@ -107,6 +121,25 @@ mock.module('../../core/index.js', {
     execOnSlot: execForTest,
   },
 });
+const realCopy = await import('../../core/slot-io.js');
+mock.module('../../core/slot-io.js', {
+  namedExports: {
+    ...realCopy,
+    slotCopyDir: async () => {
+      events.push('mirror-complete');
+    },
+  },
+});
+const realStorage = await import('../../fleet/slot-storage-cleanup.js');
+mock.module('../../fleet/slot-storage-cleanup.js', {
+  namedExports: {
+    ...realStorage,
+    cleanupSlotStorage: async () => {
+      events.push('storage-clean');
+      return { deleted: [], skipped: [] };
+    },
+  },
+});
 const realTmux = await import('../../core/tmux.js');
 mock.module('../../core/tmux.js', {
   namedExports: { ...realTmux, resolveTmuxSession: async () => 'mm-1' },
@@ -148,6 +181,8 @@ beforeEach(async () => {
   claimBeforeMark = false;
   markerWrites = 0;
   claimDuringPaneProbe = false;
+  claimAfterTaskClean = false;
+  hasMirrorArtifacts = false;
 
   for (const [id, status] of [
     ['incoming', 'monitoring'],
@@ -351,9 +386,14 @@ test('missing owner records refuse release with explicit named RPC guidance', as
 
 test('a claim during artifact collection refuses task deletion and storage cleanup', async () => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
+  hasMirrorArtifacts = true;
   const lateClaim = (event: string, payload: unknown) => {
     emit(event, payload);
-    if (event === 'slot.release.step' && (payload as { name: string }).name === 'artifacts') {
+    if (
+      event === 'slot.release.step' &&
+      (payload as { name: string }).name === 'artifacts' &&
+      (payload as { detail: string }).detail.startsWith('Artifacts collected')
+    ) {
       slotRow = {
         ...slotRow,
         current_run_id: 'incoming',
@@ -364,7 +404,80 @@ test('a claim during artifact collection refuses task deletion and storage clean
     }
   };
   await assert.rejects(slotRelease({ slotId: SLOT_ID }, lateClaim), /non-terminal run incoming/);
+  assert.ok(events.includes('mirror-complete'));
   assert.ok(!events.includes('task-clean'));
+  assert.ok(!events.includes('storage-clean'));
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(slotRow.slot_epoch, 2);
+});
+
+test('a claim during task deletion refuses the following storage cleanup', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  hasMirrorArtifacts = true;
+  claimAfterTaskClean = true;
+  await assert.rejects(slotRelease({ slotId: SLOT_ID }, emit), /non-terminal run incoming/);
+  assert.ok(events.includes('mirror-complete'));
+  assert.ok(events.includes('task-clean'));
+  assert.ok(!events.includes('storage-clean'));
+  assert.equal(slotRow.current_run_id, 'incoming');
+});
+
+test('a bound owner change during teardown returns not released and preserves the new claim', async () => {
+  slotRow.current_run_id = 'finished';
+  const lateClaim = (event: string, payload: unknown) => {
+    emit(event, payload);
+    if (event === 'slot.release.step' && (payload as { name: string }).name === 'capabilities')
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'working',
+        slot_epoch: 2,
+      };
+  };
+  assert.deepEqual(
+    await slotRelease({ slotId: SLOT_ID, keepWork: true, expectedRunId: 'finished' }, lateClaim),
+    { released: false },
+  );
+  assert.equal(slotRow.current_run_id, 'incoming');
+  assert.equal(slotRow.phase, 'working');
+  assert.equal(slotRow.slot_epoch, 2);
+});
+
+test('an older replay cannot release a newer claim by the same run', async () => {
+  slotRow.current_run_id = 'incoming';
+  slotRow.slot_epoch = 2;
+  assert.deepEqual(
+    await slotRelease({ slotId: SLOT_ID, keepWork: true, expectedRunId: 'incoming' }, emit, {
+      restartRunId: 'incoming',
+      expectedSlotEpoch: 1,
+    }),
+    { released: false },
+  );
+  assert.equal(markerWrites, 0);
+  assert.equal(slotRow.slot_epoch, 2);
+});
+
+test('a claim after agent teardown stops release before aborting the new prepare', async () => {
+  activePrepareAborts.set(SLOT_ID, {
+    abort: () => events.push('new-prepare-aborted'),
+    settled: Promise.resolve(),
+  });
+  const lateClaim = (event: string, payload: unknown) => {
+    emit(event, payload);
+    if (event === 'slot.release.step' && (payload as { detail: string }).detail === 'Agent killed')
+      slotRow = {
+        ...slotRow,
+        current_run_id: 'incoming',
+        lifecycle: 'busy',
+        phase: 'preparing',
+        slot_epoch: 2,
+      };
+  };
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, lateClaim),
+    /non-terminal run incoming/,
+  );
+  assert.ok(!events.includes('new-prepare-aborted'));
+  assert.equal(slotRow.current_run_id, 'incoming');
 });
