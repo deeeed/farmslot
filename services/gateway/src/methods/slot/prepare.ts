@@ -558,7 +558,7 @@ async function slotPrepareInner(
 
   // Preserve-mode retries keep the branch ref; every path that resets or recreates
   // refs must prove worker commits are remotely backed before its first destructive Git command.
-  if (phaseEnabled('git') && (!opts?.preserveBranch || opts?.startRef)) {
+  if (phaseEnabled('git') && !(branch && opts?.preserveBranch)) {
     await assertPrepareCommitsPublished(vars, branch);
   }
 
@@ -754,34 +754,41 @@ async function slotPrepareInner(
           `cd ${shellQuote(vars.remoteRepo)} && git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
         )
       ).exitCode === 0;
-    if (!localExists && !opts.allowMissingReplayBranch) {
-      throw new Error(
-        `Replay cannot preserve ${branch}: the local branch no longer exists on ${params.slotId}. ` +
-          `Restore the branch before replaying prepare, or replay from find-slot with a published branch.`,
-      );
-    }
     if (!localExists) {
-      // This retry has durable proof branch setup never started. Create without
-      // reset/clean or deleting refs; conflicting local work must stop checkout.
-      const fetch = await execOnSlot(
+      // A different clone may not have this published run branch yet. Restore
+      // it without reset/clean; Git must refuse any conflicting local work.
+      const published = await execOnSlot(
         vars,
-        `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+        `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
       );
-      if (fetch.exitCode !== 0)
-        throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
-      await resolveRequestedStartRef();
-      await resolveStackBase();
-      const base =
-        resolvedStartRef?.resolvedSha ??
-        resolvedStackBase?.resolvedSha ??
-        `origin/${defaultBranch}`;
+      let base = `origin/${branch}`;
+      if (published.exitCode !== 0) {
+        if (!opts.allowMissingReplayBranch)
+          throw new Error(
+            `Replay cannot preserve ${branch}: no local branch or fetchable published branch on ${params.slotId}. ` +
+              `Restore or push the run branch before retrying; no local refs were reset or deleted.`,
+          );
+        // Only durable proof that setup never started permits a fresh base.
+        const fetch = await execOnSlot(
+          vars,
+          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+        );
+        if (fetch.exitCode !== 0)
+          throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
+        await resolveRequestedStartRef();
+        await resolveStackBase();
+        base =
+          resolvedStartRef?.resolvedSha ??
+          resolvedStackBase?.resolvedSha ??
+          `origin/${defaultBranch}`;
+      }
       const create = await execOnSlot(
         vars,
         `git -C ${shellQuote(vars.remoteRepo)} checkout -b ${shellQuote(branch)} ${shellQuote(base)}`,
       );
       if (create.exitCode !== 0)
         throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
-      step('branch', `Created ${branch} after prepare failed before branch setup`);
+      step('branch', `Replay restored ${branch} from ${base} without reset or clean`);
     } else if (current !== branch) {
       const checkoutR = await execOnSlot(
         vars,

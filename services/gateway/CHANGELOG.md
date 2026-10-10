@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Retrying a run from find-slot retains its work branch. Destructive prepare refuses unpushed commits before resetting or recreating local refs, so worker commits survive resource-recovery retries.
+- Retrying a run from find-slot retains its work branch, including unpublished start-ref work, or restores its published branch in another clone. Destructive prepare refuses unpushed commits before resetting or recreating local refs. Sandbox gateways retain their private runtime home when reloading checkout configuration.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 
