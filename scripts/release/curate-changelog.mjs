@@ -10,7 +10,7 @@ import { resolveReleaseGroup } from './release-groups.mjs';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 // Maintenance must be explicitly labeled. Operator features such as "Hide tests"
 // and CI progress contain these words too, so matching anywhere loses features.
-const MAINTENANCE_PREFIX = /^(?:refactor|chore|ci|tests?|docs?|style)(?:\([^)]+\))?!?:\s/i;
+const MAINTENANCE_PREFIX = /^(?:chore|ci|tests?|docs?|style)(?:\([^)]+\))?:\s/i;
 
 function isOperatorFacing(bullet) {
   return !MAINTENANCE_PREFIX.test(bullet);

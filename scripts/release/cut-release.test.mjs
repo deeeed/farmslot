@@ -73,13 +73,24 @@ test('explicit maintenance prefixes stay out of operator summaries but ship in t
     'ci: pin the checkout action.',
     'docs(release): correct package publishing guidance.',
     'test: cover release proposal parsing.',
-    'refactor(release): extract a helper.',
     'style: format the release scripts.',
   ];
   const proposal = buildWorkspaceProposal('packages/cli', bullets);
   assert.deepEqual(proposal.include, bullets);
   assert.deepEqual(proposal.defer, []);
   assert.deepEqual(proposal.operatorSummary, []);
+});
+
+test('operator summaries retain refactors and breaking changes that affect commands', () => {
+  const bullets = [
+    'refactor: rename the branch-maintenance flow merge-main to update-branch in the run command.',
+    'chore(cli)!: remove the old branch-maintenance command.',
+  ];
+  const proposal = buildWorkspaceProposal('packages/cli', bullets);
+  assert.deepEqual(
+    proposal.operatorSummary,
+    bullets.map((bullet) => bullet.slice(0, -1)),
+  );
 });
 
 test('cut-release parses values without consuming adjacent flags', () => {
