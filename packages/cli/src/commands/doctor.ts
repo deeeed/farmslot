@@ -173,10 +173,6 @@ export async function runProjectConformance(
         'Discovered recipe libraries are not authorized executable sources.',
         'register the project or select each library with --library name=path',
       );
-    const library = libraries[0] ?? {
-      name: binding.name,
-      root: binding.provider.root,
-    };
     const engine =
       provider.engine ??
       shared.createDefaultRecipeEngine({
@@ -184,9 +180,9 @@ export async function runProjectConformance(
         catalog: shared.createRuntimeRecipeCatalog({
           runtime: provider.runtime,
           bundledLibrary: {
-            name: library.name,
-            root: library.root,
-            actionNamespace: binding.domain ?? library.name,
+            name: binding.name,
+            root: binding.provider.root,
+            actionNamespace: binding.domain ?? binding.name,
           },
         }),
         runtimeSource: {
@@ -197,10 +193,11 @@ export async function runProjectConformance(
           digest: binding.provider.identity.sourceFingerprint,
         },
         resolveRuntimeDigest: async () =>
-          shared.providerSourceSnapshot(binding.provider.root, binding.provider.module, [
-            path.join(context.target.value, binding.artifactDir),
-            path.join(context.target.value, binding.runtimeDir),
-          ]).sourceFingerprint,
+          shared.providerSourceSnapshot(
+            binding.provider.root,
+            binding.provider.module,
+            shared.recipeOutputRoots(context.target.value, binding.runtimeDir, binding.artifactDir),
+          ).sourceFingerprint,
       });
     const sources = await shared.resolveLibrarySources(
       engine,

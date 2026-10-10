@@ -11,7 +11,8 @@ import { loadRecipeLibraries, type RecipeLibrarySource } from '@farmslot/recipe-
 import { writeContainedArtifact } from './artifact-files.js';
 import type { HarnessContext } from './context-state.js';
 import { fileFingerprint, providerSourceSnapshot, sourceSnapshot } from './execution-provenance.js';
-import type { CliOptions } from './parse-args.js';
+import { type CliOptions, optionString } from './parse-args.js';
+import { recipeOutputRoots } from './paths.js';
 import { validateRunRecipeStatic } from './recipe-validation.js';
 import type { ConsoleAllowlist } from './run-diagnostics.js';
 import {
@@ -52,13 +53,18 @@ export function recipeConformanceIdentity(
   const excludedRoots = [
     options.artifactsDir,
     ...(options.context.project
-      ? [
-          path.join(options.context.target.value, options.context.project.artifactDir),
-          path.join(options.context.target.value, options.context.project.runtimeDir),
-        ]
+      ? recipeOutputRoots(
+          options.context.target.value,
+          options.context.project.runtimeDir,
+          options.context.project.artifactDir,
+        )
       : []),
   ];
-  const checkout = sourceSnapshot(options.context.target.value, adapter, excludedRoots);
+  const checkout = sourceSnapshot(
+    options.context.project?.checkoutRoot ?? options.context.target.value,
+    adapter,
+    excludedRoots,
+  );
   const provider = options.context.project
     ? providerSourceSnapshot(
         options.providerRoot,
@@ -140,12 +146,13 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
     adapter: identity.adapter,
   };
   const runtimeOptions = recipeRunOptionsFromCli(identity.adapter, cli);
+  const manifestPath = optionString(cli, 'actionManifest');
   const libraries = await loadRecipeLibraries(options.librarySources, {
     adapter: identity.adapter,
   });
   const manifest = await engine.resolveActionManifest(
     identity.adapter,
-    typeof cli.actionManifest === 'string' ? cli.actionManifest : undefined,
+    manifestPath,
     options.librarySources,
   );
   const restoreEnvironment = activateRecipeRuntimeEnvironment(
@@ -181,7 +188,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           validated.recipeFile,
           options.artifactsDir,
           identity.target,
-          undefined,
+          manifestPath,
           {
             ...runtimeOptions,
             cli,

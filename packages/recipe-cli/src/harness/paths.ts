@@ -43,3 +43,12 @@ export function harnessExecutable(): string {
     process.env[hostEnvName('EXECUTABLE')] ?? path.join(host.packageRoot, host.bin),
   );
 }
+
+/** Runtime state and artifacts do not belong to the provider's implementation identity. */
+export function recipeOutputRoots(
+  target: string,
+  runtimeDir: string,
+  artifactDir: string,
+): string[] {
+  return [path.join(target, artifactDir), path.join(target, runtimeDir)];
+}

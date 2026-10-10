@@ -18,7 +18,7 @@ flowchart LR
 
 The declaration has three existing parts. `pack.json` describes onboarding, `project.json` describes project behavior, and pool bindings select machine targets, ports and devices. The resolved binding joins project, app, domain, runtime, target, libraries and output paths. Explicit flags take priority, followed by the checkout binding, pool slot, unique detection and configured defaults. Subdirectory lookup starts at the Git root. An ambiguous selection refuses execution.
 
-Projects can compose several team libraries in declaration order. A library keeps its owner, pinned source and version requirements. A namespaced recipe reference selects a library; a bare reference must be unique. Dependency and parameter checks cover cross-library calls. The report records precedence winners and shadows, so a local override is visible.
+Projects can compose several team libraries in declaration order. A library keeps its owner, pinned source and version requirements. A namespaced recipe reference selects a library; the first source wins for a bare reference. Dependency and parameter checks cover cross-library calls. The report records precedence winners and shadows, so a local override is visible.
 
 Discovery can read project metadata without importing code. Runtime loading requires an installed or explicitly authorized source. Engine authorization also checks the resolved execution plan. Funding, reset, profile deletion and publication authority stay explicit. Hosted leases belong to the gateway.
 

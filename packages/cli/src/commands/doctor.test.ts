@@ -6,6 +6,8 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { recipeConformanceIdentity } from '@farmslot/recipe-cli/harness';
+
 const cliConfig = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
 const commandUrl = new URL('./doctor.ts', import.meta.url).href;
 const driver = `
@@ -195,8 +197,14 @@ test('public doctor retains recipe authorization after authorizing a provider', 
 test('public doctor records ordered library winners and shadowed sources', (t) => {
   const { root, write } = fixture(t);
   const smoke = fs.readFileSync(path.join(root, 'recipes/headless/smoke.recipe.json'), 'utf8');
-  for (const name of ['earlier', 'later'])
+  const actionManifest = fs.readFileSync(
+    path.join(root, 'manifests/headless.action-manifest.json'),
+    'utf8',
+  );
+  for (const name of ['earlier', 'later']) {
     write(`${name}/recipes/headless/smoke.recipe.json`, smoke);
+    write(`${name}/manifests/headless.action-manifest.json`, actionManifest);
+  }
   const result = run(root, [
     '--authorize-provider',
     path.join(root, 'provider.mjs'),
@@ -210,7 +218,12 @@ test('public doctor records ordered library winners and shadowed sources', (t) =
     (entry: { ref: string }) => entry.ref === 'smoke',
   );
   assert.equal(selected.source, 'earlier');
-  assert.deepEqual(selected.shadows, ['later']);
+  assert.deepEqual(selected.shadows, ['later', 'example']);
+  const action = result.envelope.data.report.resolution.actions.find(
+    (entry: { action: string }) => entry.action === 'example.read',
+  );
+  assert.equal(action.source, 'earlier');
+  assert.ok(action.shadows.includes('later'));
 });
 
 test('public doctor exposes ambiguous project candidates without importing a provider', (t) => {
@@ -236,4 +249,62 @@ test('public doctor exposes ambiguous project candidates without importing a pro
   assert.equal(result.envelope.error.code, 'PROJECT_AMBIGUOUS');
   assert.deepEqual(result.envelope.error.details.candidates, ['one', 'two']);
   assert.equal(fs.existsSync(`${root}.imported`), false);
+});
+
+test('public doctor carries the configured manifest into complete preflight', (t) => {
+  const { root, write } = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.recipe.manifest = 'alternate.action-manifest.json';
+  write('project.json', config);
+  const alternate = JSON.parse(
+    fs.readFileSync(path.join(root, 'manifests/headless.action-manifest.json'), 'utf8'),
+  );
+  alternate.actions['example.read'].schema.properties = { value: { type: 'string' } };
+  write('alternate.action-manifest.json', alternate);
+  const recipe = JSON.parse(
+    fs.readFileSync(path.join(root, 'recipes/headless/smoke.recipe.json'), 'utf8'),
+  );
+  recipe.workflow.nodes.read.value = 'accepted by selected manifest';
+  write('recipes/headless/smoke.recipe.json', recipe);
+  const result = run(root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(
+    result.envelope.data.report.identity.selection.manifest,
+    path.join(root, 'alternate.action-manifest.json'),
+  );
+});
+
+test('monorepo report includes shared checkout sources beyond the selected app', (t) => {
+  const { root, write } = fixture(t);
+  const external = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.apps = ['apps/ui'];
+  config.recipe.provider.module = path.join(external.root, 'provider.mjs');
+  write('project.json', config);
+  write('apps/ui/package.json', {});
+  write('packages/shared/value.txt', 'before');
+  const result = run(root, [
+    '--authorize-provider',
+    config.recipe.provider.module,
+    '--app',
+    'apps/ui',
+  ]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  const data = result.envelope.data;
+  write('packages/shared/value.txt', 'after');
+  const current = recipeConformanceIdentity({
+    project: 'example',
+    context: data.context,
+    providerRoot: external.root,
+    configurationPaths: [path.join(root, 'project.json')],
+    librarySources: [{ name: 'example', root: external.root }],
+    artifactsDir: path.dirname(data.reportPath),
+    recipes: [],
+  });
+  assert.equal(data.report.identity.target, path.join(root, 'apps/ui'));
+  assert.notEqual(
+    current.checkout.sourceFingerprint,
+    data.report.identity.checkout.sourceFingerprint,
+  );
+  assert.equal(current.provider.sourceFingerprint, data.report.identity.provider.sourceFingerprint);
 });

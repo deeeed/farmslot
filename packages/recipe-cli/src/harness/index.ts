@@ -24,6 +24,7 @@ export {
   adapterFlags,
   adapterForPlatform,
   assertAdapter,
+  checkoutRemote,
   configureHarnessAdapters,
   type DeclaredDetect,
   detectAdapter,
@@ -300,6 +301,7 @@ export {
   PREPARE_PROGRESS_ARTIFACT,
   recipeHarnessPath,
   recipeHarnessRoot,
+  recipeOutputRoots,
   recipeRuntimeDir,
   recipeRuntimePath,
 } from './paths.js';

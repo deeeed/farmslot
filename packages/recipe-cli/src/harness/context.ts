@@ -26,6 +26,7 @@ import { type AdapterLibraryOptions, adapterPlugin, declaredAdapters } from './a
 import {
   adapterForPlatform,
   adapterPortEnv,
+  checkoutRemote,
   type DeclaredDetect,
   detectAdapterMatch,
   harnessAdapters,
@@ -47,7 +48,7 @@ import {
   validateRelativeRecipePath,
 } from './host.js';
 import type { CliOptions } from './parse-args.js';
-import { DEFAULT_RECIPE_RUNTIME_DIR, recipeRuntimeDir } from './paths.js';
+import { DEFAULT_RECIPE_RUNTIME_DIR, recipeOutputRoots, recipeRuntimeDir } from './paths.js';
 import type { RecipeEngine } from './run-engine.js';
 
 export interface ResolveHarnessContextOptions {
@@ -643,7 +644,7 @@ export async function resolveProjectContext(
   const bindingName = stringField(runtime, 'project');
   const slotName = slot?.project ?? pool?.project;
   const named = projectFlag ?? bindingName ?? slotName;
-  const remote = checkoutOrigin(checkoutRoot);
+  const remote = checkoutRemote(checkoutRoot) || undefined;
   let source: ContextSource = projectFlag
     ? 'flag'
     : bindingName
@@ -741,7 +742,7 @@ export async function resolveProjectContext(
     'artifact directory',
     optionValues(options.tokens, '--artifacts-dir').at(-1) ?? config.paths.artifactDir,
   );
-  const excludedRoots = [path.join(target, artifactDir), path.join(target, runtimeDir)];
+  const excludedRoots = recipeOutputRoots(target, runtimeDir, artifactDir);
   const environment = { ...pool?.env, ...slot?.env, ...(options.load?.env ?? process.env) };
   const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
     if (!configured)
@@ -1024,20 +1025,6 @@ function readProject(file: string): ProjectConfig {
 
 function stringField(value: RuntimeContext | undefined, key: string): string | undefined {
   return typeof value?.[key] === 'string' ? (value[key] as string) : undefined;
-}
-
-function checkoutOrigin(root: string): string | undefined {
-  try {
-    return (
-      execFileSync('git', ['-C', root, 'config', '--get', 'remote.origin.url'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim() || undefined
-    );
-  } catch {
-    // Uninitialized checkouts and checkouts with no origin have no remote match.
-    return undefined;
-  }
 }
 
 function repositoryIdentity(value: string): string {

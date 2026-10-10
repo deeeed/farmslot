@@ -215,14 +215,21 @@ test('composed action precedence preserves shadows and actual coded implementati
       name: 'actual-provider',
       digest: 'sha256:actual-provider',
     },
+    resolveSourceDigest: async () => 'sha256:actual-provider',
     capabilities: ['host-read-export'],
     execute: async () => ({ output: { actual: true } }),
   };
-  const { root, runtime, catalog, engine } = setup(
+  const { root, runtime, catalog } = setup(
     t,
     { 'example.read': declaration('example.read', 'Bundled description') },
     [coded],
   );
+  const engine = createDefaultRecipeEngine({
+    runtime,
+    catalog,
+    runtimeSource: { kind: 'custom-adapter', trust: 'trusted', name: 'fallback-provider' },
+    resolveRuntimeDigest: async () => 'sha256:fallback-provider',
+  });
   const team = path.join(root, 'team');
   fs.mkdirSync(path.join(team, 'manifests'), { recursive: true });
   fs.writeFileSync(
@@ -250,7 +257,18 @@ test('composed action precedence preserves shadows and actual coded implementati
   });
   const action = plan.nodes.find((node) => node.action === 'example.read')!;
   assert.equal(action.adapterOrigin?.name, 'actual-provider');
+  assert.equal(action.adapterOrigin?.digest, 'sha256:actual-provider');
   assert.ok(action.capabilities.includes('host-read-export'));
+  const result = await runner.run({
+    projectRoot: root,
+    artifactsDir: path.join(root, 'artifacts'),
+    source: { kind: 'operator', trust: 'trusted' },
+    recipeDocument: recipe({
+      read: { action: 'example.read', intent: 'Read actual provider.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    }),
+  });
+  assert.equal(result.status, 'pass');
 });
 
 test('generic diagnostics treats unclassified application logs as review findings', () => {

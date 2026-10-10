@@ -18,7 +18,7 @@ flowchart LR
 
 `pack.json` describes onboarding, `project.json` describes behavior, and pool bindings describe machine targets. The binding resolves project, app, domain, runtime, target, libraries, ports and output paths. Flags win over checkout bindings, then pool slots, unique detection and configured defaults. An ambiguous target refuses execution.
 
-Team libraries compose in declaration order. Each keeps its owner, source revision and version requirements. Namespaced references identify the library; bare references must be unique. Preflight checks cross-library dependencies and parameters. Reports name the winning sources and any shadows.
+Team libraries compose in declaration order. Each keeps its owner, source revision and version requirements. Namespaced references identify the library; the first source wins for a bare reference. Preflight checks cross-library dependencies and parameters. Reports name the winning sources and any shadows.
 
 Metadata discovery grants no permission to import code. Runtime sources must be installed or explicitly authorized. Execution checks the complete plan, including action authority. The gateway owns hosted resource leases.
 

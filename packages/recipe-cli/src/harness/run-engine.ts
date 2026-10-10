@@ -172,8 +172,8 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
       const bindRuntime = (entries: ActionAdapter[]) =>
         entries.map((entry) => ({
           ...entry,
-          source: options.runtimeSource ?? entry.source ?? runtimeSource,
-          ...(options.resolveRuntimeDigest
+          source: entry.source ?? runtimeSource,
+          ...(!entry.source && !entry.resolveSourceDigest && options.resolveRuntimeDigest
             ? { resolveSourceDigest: options.resolveRuntimeDigest }
             : {}),
         }));
