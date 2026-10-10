@@ -5,14 +5,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// One fixture per test: a checkout copy holding the deploy script, the worker
-// prefix it reads, and the workspace packages the node bundles. It is removed
-// when the test ends, however the test ends.
+// A checkout copy holding the deploy script, the worker prefix it reads, and
+// the workspace packages the node bundles. It is removed when its scope (a test,
+// or the file for a shared one) ends, however that ends.
 const deployFixture = (t, prefix) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -63,6 +63,53 @@ const commitFixture = (root) => {
   git('commit', '-qm', 'fixture');
 };
 
+// Removed once the file's tests are done: fixtures that several tests share.
+const fileCleanups = [];
+after(() => {
+  for (const cleanup of fileCleanups) cleanup();
+});
+const fileScope = { after: (cleanup) => fileCleanups.push(cleanup) };
+
+// ssh [-o option]... host command: keep the documents the deploy streams over
+// stdin and answer its remote probes for the platform and capture mode under test.
+const RENDER_SSH = `#!/bin/bash
+while [ "$1" = -o ]; do shift 2; done
+shift
+command="$*"
+IFS= read -r -d '' body
+case $body in
+  '<?xml'*) printf '%s' "$body" > "$RENDER_ROOT/service.plist" ;;
+  '[Unit]'*) printf '%s' "$body" > "$RENDER_ROOT/service.unit" ;;
+  *) [[ $command != */package.json ]] || printf '%s' "$body" > "$RENDER_ROOT/standalone-package.json" ;;
+esac
+case $command in
+  'uname -s') echo "$RENDER_OS" ;;
+  'echo $HOME') echo /home/node-validation ;;
+  'id -u') echo 501 ;;
+  *'SHELL:-/bin/sh'*) if [ "$RENDER_OS" = Darwin ]; then echo /bin/zsh; else echo /bin/bash; fi ;;
+  *'which yarn'*) echo no ;;
+  'test -d '*) exit 1 ;;
+  'test -f '*.plist*) [[ $RENDER_CAPTURE_MODE =~ ^(retained|missing-key|corrupt)$ ]] ;;
+  '/usr/bin/plutil -lint '*) [ "$RENDER_CAPTURE_MODE" != corrupt ] ;;
+  '/usr/bin/plutil -extract '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
+esac
+`;
+
+// The deploy only reads its checkout, so the render cases share one, built by
+// the first case to run; each case renders into its own directory.
+let renderCheckout;
+const sharedRenderCheckout = () => {
+  if (renderCheckout) return renderCheckout;
+  const { root, write } = deployFixture(fileScope, 'node-deploy-render-');
+  write('bin/ssh', RENDER_SSH, true);
+  // These succeed doing nothing, as the bare binary: no shell to start per call.
+  for (const command of ['rsync', 'yarn', 'sleep'])
+    fs.symlinkSync('/usr/bin/true', path.join(root, 'bin', command));
+  commitFixture(root);
+  renderCheckout = root;
+  return root;
+};
+
 // Execute the actual deployment script with remote side effects replaced by command stubs.
 // This proves generated service documents, not remote installation or runner execution.
 for (const platform of ['Darwin', 'Linux']) {
@@ -71,40 +118,13 @@ for (const platform of ['Darwin', 'Linux']) {
       ? ['bundled', 'retained', 'override', 'missing-key', 'corrupt']
       : ['bundled']) {
       test(`deploy-node renders ${platform} service with native=${native}, capture=${captureMode}`, (t) => {
-        const { root, write } = deployFixture(t, 'node-deploy-render-');
-        write(
-          'bin/ssh',
-          `#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-while args and args[0]=='-o': args=args[2:]
-command=' '.join(args[1:])
-body=sys.stdin.read()
-if body.startswith('<?xml'): Path(os.environ['RENDER_ROOT'],'service.plist').write_text(body)
-elif body.startswith('[Unit]'): Path(os.environ['RENDER_ROOT'],'service.unit').write_text(body)
-elif command.endswith('/package.json'): Path(os.environ['RENDER_ROOT'],'standalone-package.json').write_text(body)
-if command=='uname -s': print(os.environ['RENDER_OS'])
-elif command=='echo $HOME': print('/home/node-validation')
-elif command=='id -u': print('501')
-elif 'SHELL:-/bin/sh' in command: print('/bin/zsh' if os.environ['RENDER_OS']=='Darwin' else '/bin/bash')
-elif 'which yarn' in command: print('no')
-elif command.startswith('test -d '): sys.exit(1)
-elif command.startswith('test -f ') and '.plist' in command: sys.exit(0 if os.environ.get('RENDER_CAPTURE_MODE') in ['retained','missing-key','corrupt'] else 1)
-elif command.startswith('/usr/bin/plutil -lint '): sys.exit(1 if os.environ.get('RENDER_CAPTURE_MODE')=='corrupt' else 0)
-elif command.startswith('/usr/bin/plutil -extract '):
-  if os.environ.get('RENDER_CAPTURE_MODE')=='retained': print('/opt/homebrew/bin/capture-helper')
-  else: sys.exit(1)
-`,
-          true,
-        );
-        for (const command of ['rsync', 'yarn', 'sleep'])
-          write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
-        commitFixture(root);
+        const root = sharedRenderCheckout();
+        const output = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-render-out-'));
+        t.after(() => fs.rmSync(output, { recursive: true, force: true }));
         const env = {
           ...process.env,
           PATH: `${root}/bin:${process.env.PATH}`,
-          RENDER_ROOT: root,
+          RENDER_ROOT: output,
           RENDER_OS: platform,
           RENDER_CAPTURE_MODE: captureMode,
           CAPTURE_HELPER_PATH: captureMode === 'override' ? '/opt/qa & helpers/capture-helper' : '',
@@ -135,7 +155,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
             assert.match(String(error.stderr), /cannot read a valid service plist/);
             return true;
           });
-          assert.equal(fs.existsSync(path.join(root, 'service.plist')), false);
+          assert.equal(fs.existsSync(path.join(output, 'service.plist')), false);
           return;
         }
         deploy();
@@ -148,7 +168,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
               [
                 '-c',
                 'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
-                path.join(root, 'service.plist'),
+                path.join(output, 'service.plist'),
               ],
               { encoding: 'utf8' },
             ),
@@ -168,7 +188,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
             native ? 'fixture-owner' : undefined,
           );
         } else {
-          const unit = fs.readFileSync(path.join(root, 'service.unit'), 'utf8');
+          const unit = fs.readFileSync(path.join(output, 'service.unit'), 'utf8');
           const command = unit
             .split('\n')
             .find((line) => line.startsWith('ExecStart='))
@@ -193,7 +213,7 @@ elif command.startswith('/usr/bin/plutil -extract '):
         // `+match <app>\t<window>` probe as a structured error, so screen probes
         // never start. Only a raised range makes a repeated install upgrade.
         const standalone = JSON.parse(
-          fs.readFileSync(path.join(root, 'standalone-package.json'), 'utf8'),
+          fs.readFileSync(path.join(output, 'standalone-package.json'), 'utf8'),
         );
         assert.equal(
           standalone.dependencies['@siteed/capture-helper'],
@@ -408,7 +428,7 @@ esac
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
     true,
   );
-  write('bin/rsync', '#!/bin/sh\nexit 0\n', true);
+  fs.symlinkSync('/usr/bin/true', path.join(root, 'bin/rsync'));
   write('bin/systemctl', '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\n', true);
   // No bash login profile, as on macpro and mini: the worker prefix alone must
   // put the deployed CLI on PATH.

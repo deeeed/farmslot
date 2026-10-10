@@ -349,8 +349,17 @@ if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
 fi
 NODE_SERVICE_PATH=$(python3 -c 'import sys; print(":".join(dict.fromkeys(sys.argv[1].split(":"))))' "$NODE_SERVICE_PATH")
 
+# Escapes stdin as Python's html.escape(quote=True) does, without a process per
+# value. The backslashes keep `&` literal under bash 5.2's patsub_replacement.
 xml_escape() {
-  python3 -c 'import html,sys; print(html.escape(sys.stdin.read().rstrip("\n"), quote=True))'
+  local value
+  IFS= read -r -d '' value || true
+  value=${value//&/\&amp;}
+  value=${value//</\&lt;}
+  value=${value//>/\&gt;}
+  value=${value//\"/\&quot;}
+  value=${value//\'/\&#x27;}
+  printf '%s\n' "$value"
 }
 
 launchd_node_arguments() {
