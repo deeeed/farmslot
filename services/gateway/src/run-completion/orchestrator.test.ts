@@ -437,6 +437,24 @@ test('sanitizePRBody drops bare evidence filenames left by relative links', () =
   assert.match(sanitized, /^Kept\.$/m);
 });
 
+test('sanitizePRBody preserves compact table columns around relative evidence labels', () => {
+  for (const [body, expected] of [
+    [
+      '| AC-1 | Drawer opens | [before.png](artifacts/before.png)|[after.png](artifacts/after.png) |',
+      '| AC-1 | Drawer opens | | |',
+    ],
+    [
+      '|AC-1|Drawer opens|[before.png](before.png)|[after.png](after.png)|',
+      '|AC-1|Drawer opens|||',
+    ],
+  ]) {
+    const sanitized = sanitizePRBody(body);
+    assert.equal(sanitized, expected);
+    assert.equal(sanitized.split('|').length, body.split('|').length);
+    assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+  }
+});
+
 test('sanitizePRBody drops local images from generated captions instead of renaming their src', () => {
   const row =
     '<tr><td align="center"><strong>01 Drawer Open</strong><br/><img src="artifacts/recipe-run/screenshots/recipe/01-drawer-open.png" alt="01 Drawer Open" width="320" /><br/><sub>note</sub></td></tr>';

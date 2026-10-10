@@ -399,7 +399,7 @@ export function assertSelectedEvidencePublished(
 // ─── PR body post-processing (sanitize + author checklist) ───
 
 const BARE_EVIDENCE_FILENAME_PATTERN =
-  /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi;
+  /(^|[\s|(='"])(?:\.\/)?(?:before|after|evidence)[^/\s|)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi;
 const CODE_BLOCK_PATTERN = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 const INLINE_CODE_SPAN_PATTERN = /``[^`\n]+``|`[^`\n]+`/g;
 
