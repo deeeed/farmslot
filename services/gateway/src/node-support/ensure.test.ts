@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/index.js';
 import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observability.js';
 
 import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
+
+const projectRoot = path.join(farmslotRoot, 'projects', 'ensure-test');
+test.before(() => {
+  mkdirSync(projectRoot, { recursive: true });
+  writeFileSync(path.join(projectRoot, 'project.json'), '{}');
+});
+test.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
 const projectVars = {
   projectName: 'ensure-test',

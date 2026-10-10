@@ -18,6 +18,7 @@ test('gateway pack sync rejects nonportable templates even when only config is b
     collectNodeSupportBundle(name, [`projects/${name}/project.json`]),
     new RegExp(`projects/${name}/templates/task.md:2:.*pool/slot`),
   );
+  await assert.rejects(collectNodeSupportBundle(name, []), /templates\/task.md:2:/);
   await writeFile(path.join(root, 'templates/task.md'), 'Run {{slot_id}} checks using {{repo}}');
   assert.equal(
     (await collectNodeSupportBundle(name, [`projects/${name}/project.json`])).files.length,

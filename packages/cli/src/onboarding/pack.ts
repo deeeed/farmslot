@@ -3,12 +3,16 @@
 //
 // A pack is a directory (local path or git clone) with a pack.json at its root
 // and one or more project dirs in the standard projects/<name>/ layout.
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { validatePackPortability } from '@farmslot/protocol/node/pack-portability';
+import {
+  listPackOwnedEntries,
+  packMachineNames,
+  validatePackPortability,
+} from '@farmslot/protocol/node/pack-portability';
+import { poolDir } from '@farmslot/slot-config';
 
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */
@@ -125,7 +129,10 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       errors: [`pack.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`],
     };
   }
-  const errors = [...validatePackJson(parsed), ...validatePackPortability(packDir)];
+  const errors = [
+    ...validatePackJson(parsed),
+    ...validatePackPortability(packDir, '', packMachineNames(poolDir)),
+  ];
   if (errors.length > 0) return { pack: null, errors };
   const pack = parsed as PackJson;
   for (const proj of pack.projects) {
@@ -178,30 +185,7 @@ export function projectShortName(proj: PackProject): string {
  */
 export function hashPackDir(packDir: string): string {
   const hash = createHash('sha256');
-  const entries: Array<{ rel: string; content: Buffer | string }> = [];
-  const isGitPack = existsSync(join(packDir, '.git'));
-  const isIgnored = (rel: string): boolean => {
-    if (!isGitPack) return false;
-    const result = spawnSync('git', ['-C', packDir, 'check-ignore', '--quiet', '--', rel]);
-    return result.status === 0;
-  };
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir).sort()) {
-      if (entry === '.git' || entry === 'node_modules') continue;
-      const full = join(dir, entry);
-      const rel = relative(packDir, full);
-      if (isIgnored(rel)) continue;
-      const stat = lstatSync(full);
-      if (stat.isSymbolicLink()) {
-        entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
-      } else if (stat.isDirectory()) {
-        walk(full);
-      } else {
-        entries.push({ rel, content: readFileSync(full) });
-      }
-    }
-  };
-  walk(packDir);
+  const entries = listPackOwnedEntries(packDir);
   for (const entry of entries) {
     hash.update(entry.rel);
     hash.update('\0');

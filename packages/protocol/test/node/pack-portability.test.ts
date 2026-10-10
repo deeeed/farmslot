@@ -22,7 +22,11 @@ test('pack policy rejects private paths and fixed nodes with line and fix guidan
     'macwork',
     'mini',
   ]) {
-    const errors = validatePackFilePortability('hooks/project.sh', `#!/bin/sh\n${reference}\n`);
+    const errors = validatePackFilePortability('hooks/project.sh', `#!/bin/sh\n${reference}\n`, [
+      'macpro',
+      'macwork',
+      'mini',
+    ]);
     assert.equal(errors.length, 1, reference);
     assert.match(errors[0], /^hooks\/project.sh:2: nonportable reference/);
     assert.match(errors[0], /pool\/slot \{\{placeholder\}\}/);
@@ -45,7 +49,7 @@ test('pack scan checks templates, hooks, recipes and symlink targets, excluding 
   for (const dir of ['templates', 'scripts', 'recipes', 'node_modules']) mkdirSync(join(root, dir));
   writeFileSync(join(root, 'templates/task.md'), 'Do work\n~/xreview/private\n');
   writeFileSync(join(root, 'scripts/hook.mjs'), "const repo='/Users/operator/repo'\n");
-  writeFileSync(join(root, 'recipes/check.json'), '{"node":"macpro"}');
+  writeFileSync(join(root, 'recipes/check.json'), '{"machine":"worker-box"}');
   writeFileSync(join(root, 'node_modules/ignored.js'), '/Users/operator/dependency');
   writeFileSync(join(root, 'image.png'), Buffer.from([0, 1, 2]));
   symlinkSync('/home/operator/private', join(root, 'private-link'));
@@ -65,5 +69,59 @@ test('pack scan excludes Git-ignored runtime data', (t) => {
   mkdirSync(join(root, 'tasks'));
   writeFileSync(join(root, 'tasks/report.md'), '/Users/operator/runtime');
   writeFileSync(join(root, 'project.json'), '{"repo":"{{repo}}"}');
+  assert.deepEqual(validatePackPortability(root), []);
+});
+
+test('guard instructions, model names and hosted URL paths remain portable', () => {
+  assert.deepEqual(
+    validatePackFilePortability(
+      'task.md',
+      'Strip `/Users/` paths. Use gpt-4o-mini and https://example.test/home/docs. Refer to domains/agentic.local/foo and CLAUDE.local.agent.md.',
+      ['mini'],
+    ),
+    [],
+  );
+});
+
+test('ownership honors a parent index and switches to nested repositories', (t) => {
+  const parent = mkdtempSync(join(tmpdir(), 'pack-owner-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  execFileSync('git', ['init', '--quiet', parent]);
+  const pack = join(parent, 'pack');
+  mkdirSync(pack);
+  writeFileSync(join(pack, '.gitignore'), 'tasks/\n');
+  mkdirSync(join(pack, 'tasks'));
+  writeFileSync(join(pack, 'tasks/report.md'), '/Users/operator/runtime');
+  writeFileSync(join(pack, 'task.md'), 'portable {{repo}}');
+  assert.deepEqual(validatePackPortability(pack), []);
+  const child = join(pack, 'child');
+  execFileSync('git', ['init', '--quiet', child]);
+  writeFileSync(join(child, 'hook.sh'), 'ssh worker-box.local');
+  execFileSync('git', ['-C', child, 'add', 'hook.sh']);
+  execFileSync('git', [
+    '-C',
+    child,
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.invalid',
+    'commit',
+    '--quiet',
+    '-m',
+    'test: fixture',
+  ]);
+  execFileSync('git', ['-C', parent, 'add', 'pack/child']);
+  assert.ok(validatePackPortability(pack).some((e) => e.startsWith('child/hook.sh:1:')));
+});
+
+test('standalone project packs skip runtime tasks while retaining templates', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'pack-standalone-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'tasks'));
+  writeFileSync(join(root, 'tasks/report.md'), '/Users/operator/runtime');
+  mkdirSync(join(root, 'templates'));
+  writeFileSync(join(root, 'templates/task.md'), '{{repo}}');
   assert.deepEqual(validatePackPortability(root), []);
 });
