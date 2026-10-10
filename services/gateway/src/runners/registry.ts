@@ -19,7 +19,9 @@ import {
   isReviewerWindowName,
   normalizeRunner,
   RUNNER_ALIASES,
+  RUNNER_MOBILE_KEY_PROFILES,
   RUNNER_PICKER_MODELS,
+  type RunnerMobileKeyProfile,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -266,6 +268,8 @@ export interface RunnerDefinition {
   observabilityHeartbeatMs?: number | null;
   /** Bounded transcript accounting for the soft run budget, or explicit unsupported. */
   sessionUsageProvider: RunnerSessionUsageProvider | null;
+  /** Extra phone terminal keys from the runner's documented bindings. Null: no runner row. */
+  mobileKeyProfile: RunnerMobileKeyProfile | null;
 }
 
 const UNSAFE_BROAD_PROCESS_MATCHERS = new Set(['.', '.*', 'node', 'bash', 'sh', 'zsh']);
@@ -354,6 +358,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
     sessionUsageProvider: claudeSessionUsageProvider,
+    mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.claude,
   },
   codex: {
     id: 'codex',
@@ -409,6 +414,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
     sessionUsageProvider: codexSessionUsageProvider,
+    mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.codex,
   },
   cursor: {
     id: 'cursor',
@@ -476,6 +482,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'pane-only',
     sessionUsageProvider: null,
+    mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.cursor,
   },
   grok: {
     id: 'grok',
@@ -524,6 +531,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
     sessionUsageProvider: null,
+    mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.grok,
   },
   pi: {
     id: 'pi',
@@ -567,6 +575,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
     sessionUsageProvider: null,
+    mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.pi,
   },
   opencode: {
     id: 'opencode',
@@ -595,6 +604,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: () => true,
     observabilityScope: 'none',
     sessionUsageProvider: null,
+    mobileKeyProfile: null,
   },
   none: {
     id: 'none',
@@ -623,6 +633,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: () => true,
     observabilityScope: 'none',
     sessionUsageProvider: null,
+    mobileKeyProfile: null,
   },
   scripted: {
     id: 'scripted',
@@ -651,6 +662,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: () => true,
     observabilityScope: 'none',
     sessionUsageProvider: null,
+    mobileKeyProfile: null,
   },
 };
 
@@ -1161,6 +1173,19 @@ export function runnerIdsRequiringExplicitTerminationIdentity(): string[] {
   return Object.values(KNOWN_RUNNERS)
     .filter((definition) => definition.requiresExplicitTerminationIdentity)
     .map((definition) => definition.id);
+}
+
+/**
+ * Runners whose process matchers hit a pane's foreground command. Only runners
+ * that can be attributed without a recorded identity qualify, so a generic
+ * `agent` binary never names Cursor. Callers treat more than one id as unknown.
+ */
+export function runnerIdsMatchingPaneCommand(command?: string | null): string[] {
+  const value = command?.trim();
+  if (!value) return [];
+  return runnerIdsSafeForUnattributedTermination().filter((runnerId) =>
+    runnerProcessPattern(runnerId).test(value),
+  );
 }
 
 export function runnerLineLooksWaiting(line: string, runnerId?: string | null): boolean {

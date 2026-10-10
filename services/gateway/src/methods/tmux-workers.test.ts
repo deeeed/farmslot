@@ -422,6 +422,7 @@ test('tmuxWorkerFromNodePane preserves node tmux identity and optional correlati
       title: 'codex',
       cwd: '/repo',
       command: 'codex',
+      processRunnerIds: ['codex'],
       pid: 123,
       canEndSession: false,
       branch: 'feature/mobile',
@@ -441,6 +442,20 @@ test('tmuxWorkerFromNodePane preserves node tmux identity and optional correlati
       },
     },
   );
+});
+
+test('tmuxWorkerFromNodePane lists only runners safe to identify from the pane command', () => {
+  const worker = (command: string) =>
+    tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      observedAt: 1779411227000,
+      pane: { session: 'adhoc', window: '0', pane: '0', target: '%3', command },
+    });
+
+  assert.deepEqual(worker('claude.exe').processRunnerIds, ['claude']);
+  assert.equal(worker('agent').processRunnerIds, undefined);
+  assert.equal(worker('cursor-agent').processRunnerIds, undefined);
+  assert.equal(worker('zsh').processRunnerIds, undefined);
 });
 
 test('active slot correlations prevent stable panes from being misclassified as stale', () => {

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, DEFAULT_PI_MODEL } from '@farmslot/protocol';
+import {
+  DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
+  RUNNER_MOBILE_KEY_PROFILES,
+  type RunnerMobileKeyProfile,
+  runnerMobileKeyProfile,
+} from '@farmslot/protocol';
 
 import {
   buildCodexExecLaunch,
@@ -57,6 +64,7 @@ import {
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
+  runnerIdsMatchingPaneCommand,
   runnerIdsRequiringExplicitTerminationIdentity,
   runnerIdsSafeForUnattributedTermination,
   runnerLaunchBlockerAutoActionKey,
@@ -1369,6 +1377,80 @@ describe('custom runner fallback behavior', () => {
     assert.doesNotMatch('/usr/bin/node', new RegExp(pattern));
     assert.deepEqual(runnerIdsRequiringExplicitTerminationIdentity(), ['cursor']);
     assert.equal(runnerIdsSafeForUnattributedTermination().includes('cursor'), false);
+  });
+});
+
+describe('pane command runner matching', () => {
+  it('names one runner for its own binary and never cursor for a generic agent', () => {
+    assert.deepEqual(runnerIdsMatchingPaneCommand('claude.exe'), ['claude']);
+    assert.deepEqual(runnerIdsMatchingPaneCommand('codex'), ['codex']);
+    assert.deepEqual(runnerIdsMatchingPaneCommand('pi'), ['pi']);
+    assert.deepEqual(runnerIdsMatchingPaneCommand('agent'), []);
+    assert.deepEqual(runnerIdsMatchingPaneCommand('cursor-agent'), []);
+    assert.deepEqual(runnerIdsMatchingPaneCommand('zsh'), []);
+    assert.deepEqual(runnerIdsMatchingPaneCommand(undefined), []);
+  });
+
+  it('reports every hit so callers can treat an ambiguous command as unknown', () => {
+    assert.deepEqual(runnerIdsMatchingPaneCommand('claude-codex'), ['claude', 'codex']);
+  });
+});
+
+describe('mobile key profiles', () => {
+  const interactive = ['claude', 'codex', 'cursor', 'grok', 'pi'] as const;
+  const allKeys = () => interactive.flatMap((id) => [...RUNNER_MOBILE_KEY_PROFILES[id].keys]);
+
+  it('interactive runners reference the shared table; exec runners declare none', () => {
+    for (const id of interactive) {
+      const profile = getRunnerDefinition(id).mobileKeyProfile;
+      assert.equal(profile, RUNNER_MOBILE_KEY_PROFILES[id]);
+      assert.equal(profile?.runnerId, id);
+      assert.equal(runnerMobileKeyProfile(id), profile);
+    }
+    for (const id of ['opencode', 'none', 'scripted']) {
+      assert.equal(getRunnerDefinition(id).mobileKeyProfile, null);
+      assert.equal(runnerMobileKeyProfile(id), null);
+    }
+    assert.deepEqual(
+      Object.keys(KNOWN_RUNNERS).filter((id) => KNOWN_RUNNERS[id].mobileKeyProfile),
+      [...interactive],
+    );
+  });
+
+  it('every shipped key records the CLI version and documented binding it came from', () => {
+    assert.ok(allKeys().length > 0);
+    for (const key of allKeys()) {
+      assert.match(key.source.cliVersion, /\d+\.\d+/, key.label);
+      assert.ok(key.source.reference.trim().length > 0, key.label);
+      assert.ok(key.chord.trim().length > 0, key.label);
+      assert.ok(key.data.length > 0, key.label);
+    }
+    for (const id of interactive) {
+      const labels = RUNNER_MOBILE_KEY_PROFILES[id].keys.map((key) => key.label);
+      assert.equal(new Set(labels).size, labels.length, `${id} labels are unique`);
+      assert.match(RUNNER_MOBILE_KEY_PROFILES[id].inventory.cliVersion, /\d+\.\d+/);
+    }
+  });
+
+  it('ships the seeded Codex skip keys only when its checked sources map them', () => {
+    const codex: RunnerMobileKeyProfile = RUNNER_MOBILE_KEY_PROFILES.codex;
+    // codex-cli 0.162.1 documents no bindings, so Left, Shift+Left and Ctrl+[ stay out.
+    assert.match(codex.inventory.reference, /none lists key bindings/);
+    const seeded = new Set(['\x1b[D', '\x1b[1;2D', '\x1b']);
+    assert.deepEqual(
+      codex.keys.filter((key) => seeded.has(key.data) || key.chord === 'Ctrl+['),
+      [],
+    );
+  });
+
+  it('keeps an action label on keys whose bytes are the generic Esc', () => {
+    const escKeys = allKeys().filter((key) => key.data === '\x1b');
+    assert.ok(escKeys.length > 0);
+    for (const key of escKeys) assert.notEqual(key.label, 'Esc');
+    assert.deepEqual(
+      RUNNER_MOBILE_KEY_PROFILES.cursor.keys.find((key) => key.data === '\x1b')?.label,
+      'Skip',
+    );
   });
 });
 

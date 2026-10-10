@@ -26,7 +26,11 @@ import {
 import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
-import { isRunnerPaneRetired, normalizeRunner } from '../runners/registry.js';
+import {
+  isRunnerPaneRetired,
+  normalizeRunner,
+  runnerIdsMatchingPaneCommand,
+} from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 import { endTmuxSessionArgv } from '../runtime/tmux-session-control.js';
 import { reviewWorkspaceShellSession } from '../runtime/workspace-terminal.js';
@@ -369,6 +373,7 @@ export function tmuxWorkerFromNodePane(params: {
   correlation?: SlotCorrelation;
 }): TmuxWorkerSummary {
   const { nodeId, pane, observedAt, correlation } = params;
+  const processRunnerIds = runnerIdsMatchingPaneCommand(pane.command);
   return {
     ref: {
       nodeId,
@@ -382,6 +387,7 @@ export function tmuxWorkerFromNodePane(params: {
     ...(pane.title ? { title: pane.title } : {}),
     ...(pane.cwd ? { cwd: pane.cwd } : {}),
     ...(pane.command ? { command: pane.command } : {}),
+    ...(processRunnerIds.length > 0 ? { processRunnerIds } : {}),
     ...(pane.pid != null ? { pid: pane.pid } : {}),
     canEndSession:
       !correlation &&

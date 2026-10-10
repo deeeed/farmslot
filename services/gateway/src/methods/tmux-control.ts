@@ -29,6 +29,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { runnerIdsMatchingPaneCommand } from '../runners/registry.js';
 
 const TMUX_LIST_TIMEOUT_MS = 3000;
 const TMUX_LIST_CACHE_TTL_MS = 3000;
@@ -205,6 +206,7 @@ async function listTmuxWindows(
     const panes: TmuxPane[] = [];
     for (const paneLine of paneOut.trim().split('\n').filter(Boolean)) {
       const [pi, pa, pw, ph, pt, pc, pid, ppid] = paneLine.split('|');
+      const processRunnerIds = runnerIdsMatchingPaneCommand(pc);
       panes.push({
         index: parseInt(pi, 10),
         active: pa === '1',
@@ -212,6 +214,7 @@ async function listTmuxWindows(
         height: parseInt(ph, 10),
         title: pt || '',
         ...(pc ? { currentCommand: pc } : {}),
+        ...(processRunnerIds.length > 0 ? { processRunnerIds } : {}),
         ...(pid ? { paneId: pid } : {}),
         ...(ppid ? { panePid: ppid } : {}),
       });

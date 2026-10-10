@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RUNNER_MOBILE_KEY_PROFILES` and `runnerMobileKeyProfile()`: the extra phone terminal keys (the Companion runner row) for claude, codex, cursor, grok and pi, each key recording the CLI version and documented binding it was checked against. `TmuxWorkerSummary.processRunnerIds` and `TmuxPane.processRunnerIds` (optional) list the runners whose process matchers hit the pane command.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.0 - 2026-10-10
