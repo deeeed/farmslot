@@ -172,3 +172,15 @@ test('checkout-derived sandbox URLs remain usable without a stored profile, inhe
     /No stored gateway profile/,
   );
 });
+
+test('malformed checkout-derived gateway URL names the configuration variable', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-env-bad-gateway-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, '.env.ports'), 'GW_URL=not-a-url\n');
+  const local: NodeJS.ProcessEnv = {};
+  loadCheckoutEnv(root, local);
+  assert.throws(
+    () => resolveGatewayTarget({}, local, { gateways: {} }),
+    /Invalid checkout-derived GW_URL/,
+  );
+});

@@ -182,18 +182,17 @@ export function resolveGatewayTarget(
   const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles();
 
   if (opts.url) {
+    let profiles: GatewayProfilesFile;
     try {
-      return (
-        targetForMatchedUrl(opts.url, 'url-flag', getProfiles()) ?? {
-          url: opts.url,
-          source: 'url-flag',
-        }
-      );
+      profiles = getProfiles();
     } catch {
-      // The raw URL escape hatch remains available with a corrupt store and
-      // never borrows another profile's credential.
+      // A raw URL remains available if the store cannot be loaded. Mapping
+      // failures after loading propagate rather than silently losing auth.
       return { url: opts.url, source: 'url-flag' };
     }
+    return (
+      targetForMatchedUrl(opts.url, 'url-flag', profiles) ?? { url: opts.url, source: 'url-flag' }
+    );
   }
 
   if (opts.gateway) {
@@ -219,8 +218,12 @@ export function resolveGatewayTarget(
     if (target) return target;
     // Locally derived sandbox URLs may intentionally name an unauthenticated
     // development gateway. An inherited worker URL never gets this fallback.
-    if (isCheckoutGatewayUrl(env, env.GW_URL) && isLoopbackHost(new URL(env.GW_URL).hostname)) {
-      return { url: env.GW_URL, source: 'env' };
+    if (isCheckoutGatewayUrl(env, env.GW_URL)) {
+      if (!URL.canParse(env.GW_URL))
+        throw new Error(
+          'Invalid checkout-derived GW_URL; correct it in the checkout configuration',
+        );
+      if (isLoopbackHost(new URL(env.GW_URL).hostname)) return { url: env.GW_URL, source: 'env' };
     }
     throw new Error(
       'No stored gateway profile matches GW_URL; add and log in to a profile for the worker gateway URL with farmslot gateway add and farmslot login',

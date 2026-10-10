@@ -136,22 +136,30 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
   );
 });
 
-test('explicit URL flags tolerate a corrupt store while worker routing reports it', () => {
-  // A raw URL flag remains a troubleshooting escape hatch; inherited worker
-  // routing must report a corrupt store instead of silently losing its credential.
-  let loaderCalls = 0;
-  const throwingProfiles: GatewayProfilesFile = {
-    get gateways(): Record<string, never> {
-      loaderCalls += 1;
-      throw new Error('boom');
-    },
-  };
-  assert.deepEqual(resolveGatewayTarget({ url: 'ws://x' }, {}, throwingProfiles), {
+test('explicit URL flags tolerate a corrupt store while worker routing reports it', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-corrupt-gateway-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, 'gateways.json'), '{invalid');
+  assert.deepEqual(resolveGatewayTarget({ url: 'ws://x' }, {}), {
     url: 'ws://x',
     source: 'url-flag',
   });
-  assert.throws(() => resolveGatewayTarget({}, { GW_URL: 'ws://env' }, throwingProfiles), /boom/);
-  assert.equal(loaderCalls, 2);
+  assert.throws(() => resolveGatewayTarget({}, { GW_URL: 'ws://env' }), /not valid JSON/);
+  const throwingProfiles: GatewayProfilesFile = {
+    get gateways(): Record<string, never> {
+      throw new Error('mapping failed');
+    },
+  };
+  assert.throws(
+    () => resolveGatewayTarget({ url: 'ws://x' }, {}, throwingProfiles),
+    /mapping failed/,
+  );
 });
 
 test('profileForUrl is the one URL lookup: normalized, active profile first', () => {
