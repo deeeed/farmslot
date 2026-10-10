@@ -19,9 +19,16 @@ import {
   autoDetectEvidenceManifest,
   buildEvidenceSection,
   type EvidenceManifest,
+  evidenceManifestArtifactPaths,
+  normalizeEvidenceManifestArtifactPath,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
-import { evidenceKeyVariants } from './evidence-paths.js';
+import {
+  exactEvidenceKeys,
+  isUploadableMediaPath,
+  resolveSelectedEvidenceRef,
+} from './evidence-paths.js';
+import { assertPublicationEvidenceSelection } from './publication-evidence-policy.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -94,15 +101,6 @@ ${body}`;
 
 // ─── Artifact upload ───
 
-const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mov', '.webm']);
-
-function isUploadableMediaPath(file: string): boolean {
-  // Publication uploads only PR-renderable media. Logs/JSON stay available in the
-  // task artifact package, but they are not embedded into the PR evidence block.
-  const withoutQuery = file.split(/[?#]/, 1)[0] ?? file;
-  return MEDIA_EXTENSIONS.has(path.extname(withoutQuery).toLowerCase());
-}
-
 async function fileDigestPrefix(filePath: string): Promise<string> {
   return createHash('sha256')
     .update(await readFile(filePath))
@@ -134,12 +132,20 @@ async function assertUploadedArtifactUrlsReachable(
   console.warn(`[run-completion] ${message}`);
 }
 
-function evidenceSelectionSet(selectedEvidenceKeys?: string[]): Set<string> | null {
+function evidenceSelectionSet(
+  selectedEvidenceKeys: string[] | undefined,
+  availablePaths: Iterable<string>,
+): Set<string> | null {
   if (!selectedEvidenceKeys) return null;
+  const candidates = [...new Set(availablePaths)].map((artifactPath) => ({
+    path: artifactPath,
+    purpose: 'media',
+  }));
   const keys = new Set<string>();
   for (const key of selectedEvidenceKeys) {
     if (typeof key !== 'string' || !key.trim()) continue;
-    for (const variant of evidenceKeyVariants(key.trim())) keys.add(variant);
+    const resolved = resolveSelectedEvidenceRef(key.trim(), candidates);
+    for (const variant of exactEvidenceKeys(resolved?.path ?? key.trim())) keys.add(variant);
   }
   return keys;
 }
@@ -147,14 +153,14 @@ function evidenceSelectionSet(selectedEvidenceKeys?: string[]): Set<string> | nu
 function evidencePathSelected(file: string | undefined, selection: Set<string> | null): boolean {
   if (!selection) return true;
   if (!file) return false;
-  return evidenceKeyVariants(file).some((variant) => selection.has(variant));
+  return exactEvidenceKeys(file).some((variant) => selection.has(variant));
 }
 
 export function filterArtifactUrlsByEvidenceSelection(
   artifactUrls: Map<string, string>,
   selectedEvidenceKeys?: string[],
 ): Map<string, string> {
-  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  const selection = evidenceSelectionSet(selectedEvidenceKeys, artifactUrls.keys());
   if (!selection) return artifactUrls;
   const filtered = new Map<string, string>();
   for (const [file, url] of artifactUrls.entries()) {
@@ -168,16 +174,21 @@ export function expandEvidenceSelectionForManifest(
   selectedEvidenceKeys?: string[],
 ): string[] | undefined {
   if (!selectedEvidenceKeys) return undefined;
-  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  const selection = evidenceSelectionSet(
+    selectedEvidenceKeys,
+    evidenceManifestArtifactPaths(manifest),
+  );
   if (!selection || !manifest) return selectedEvidenceKeys;
 
-  const expanded = new Set(selectedEvidenceKeys);
+  const canonical = (key: string) =>
+    normalizeEvidenceManifestArtifactPath(key, { mediaOnly: false }) ?? key;
+  const expanded = new Set(selectedEvidenceKeys.map(canonical));
   const addIfPairSelected = (left?: string, right?: string) => {
     const leftSelected = left ? evidencePathSelected(left, selection) : false;
     const rightSelected = right ? evidencePathSelected(right, selection) : false;
     if (!leftSelected && !rightSelected) return;
-    if (left) expanded.add(left);
-    if (right) expanded.add(right);
+    if (left) expanded.add(canonical(left));
+    if (right) expanded.add(canonical(right));
   };
 
   for (const pair of manifest.before_after_pairs ?? []) {
@@ -194,7 +205,10 @@ export function filterEvidenceManifestBySelection(
   manifest: EvidenceManifest,
   selectedEvidenceKeys?: string[],
 ): EvidenceManifest {
-  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  const selection = evidenceSelectionSet(
+    selectedEvidenceKeys,
+    evidenceManifestArtifactPaths(manifest),
+  );
   if (!selection) return manifest;
 
   const beforeAfterPairs = (manifest.before_after_pairs ?? [])
@@ -248,7 +262,7 @@ export async function collectUploadableMediaFiles(baseDir: string): Promise<stri
         const s = await stat(full);
         if (s.isDirectory()) {
           await walk(full, relativePath);
-        } else if (s.isFile() && MEDIA_EXTENSIONS.has(path.extname(name).toLowerCase())) {
+        } else if (s.isFile() && isUploadableMediaPath(name)) {
           results.push(relativePath);
         }
       } catch (err) {
@@ -314,7 +328,7 @@ export async function uploadArtifacts(
       `artifact upload failed while scanning media: ${(err as Error).message}`,
     );
   }
-  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  const selection = evidenceSelectionSet(selectedEvidenceKeys, files);
   if (selection) files = files.filter((file) => evidencePathSelected(file, selection));
   if (files.length === 0) {
     return hasSelectedEvidence
@@ -373,10 +387,12 @@ export async function uploadArtifacts(
 }
 
 function selectedEvidenceKeyUploaded(key: string, artifactUrls: Map<string, string>): boolean {
-  const uploaded = new Set(
-    [...artifactUrls.keys()].flatMap((urlKey) => evidenceKeyVariants(urlKey)),
+  return Boolean(
+    resolveSelectedEvidenceRef(
+      key,
+      [...artifactUrls.keys()].map((artifactPath) => ({ path: artifactPath, purpose: 'media' })),
+    ),
   );
-  return evidenceKeyVariants(key).some((variant) => uploaded.has(variant));
 }
 
 export function assertSelectedEvidencePublished(
@@ -810,6 +826,16 @@ export async function postProcessPRBody(
       options.evidenceManifest !== undefined
         ? options.evidenceManifest
         : await readEvidenceManifest(run);
+    if (options.failOnError) {
+      assertPublicationEvidenceSelection({
+        selectedEvidenceKeys: selectedEvidenceKeys ?? [...(selectedArtifactUrls?.keys() ?? [])],
+        evidenceManifest: [...(selectedArtifactUrls?.keys() ?? [])].map((artifactPath) => ({
+          path: artifactPath,
+          purpose: inferArtifactPurpose(artifactPath),
+        })),
+        trustedEvidenceManifest: rawManifest,
+      });
+    }
     const manifest = rawManifest
       ? filterEvidenceManifestBySelection(rawManifest, selectedEvidenceKeys)
       : autoDetectEvidenceManifest(selectedArtifactUrls);
@@ -867,7 +893,7 @@ export async function postProcessPRBody(
     }
     await options.validateBody?.(body);
 
-    const tmpFile = `/tmp/farmslot-pr-body-${prNumber}.md`;
+    const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
     const { writeFile: writeF } = await import('node:fs/promises');
     await writeF(tmpFile, body, 'utf-8');
     let editError: unknown = null;

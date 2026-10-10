@@ -330,6 +330,7 @@ export const Methods = {
   RUN_REFRESH_REVIEW_GATE: 'run.refreshReviewGate',
   RUN_REREVIEW_LATEST_HEAD: 'run.rereviewLatestHead',
   RUN_REFRESH_PUBLISH_PACKAGE: 'run.refreshPublishPackage',
+  RUN_REFRESH_PUBLISHED_EVIDENCE: 'run.refreshPublishedEvidence',
   RUN_REFRESH_MIRROR: 'run.refreshMirror',
   RUN_REHYDRATE_PR_NUMBER: 'run.rehydratePrNumber',
   RUN_INTERACTIVE_DEV_RESOLVE: 'run.interactiveDev.resolve',

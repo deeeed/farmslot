@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publication blocks empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps.
+
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 
 - Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.

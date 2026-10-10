@@ -85,6 +85,10 @@ import {
   uploadArtifacts,
 } from './publication-artifacts.js';
 import {
+  assertPublicationEvidenceSelection,
+  defaultSelectedEvidenceKeysForPublication,
+} from './publication-evidence-policy.js';
+import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
   computeReadyGateReviewSubjectHash,
@@ -94,6 +98,7 @@ import {
   sortArtifactRefsForComparison,
   stableJson,
 } from './ready-gate-package.js';
+
 export {
   defaultReviewDepthPolicy,
   effectiveRequiredReviewCount,
@@ -121,6 +126,10 @@ export {
   EvidenceCaptionError,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
+export {
+  defaultSelectedEvidenceKeysForPublication,
+  selectedEvidenceKeysForPublication,
+} from './publication-evidence-policy.js';
 import {
   createRetrospective,
   initRunCompletionRetrospective,
@@ -607,40 +616,6 @@ function preserveSelectedEvidenceKeys(
   return preserved.sort();
 }
 
-export function selectedEvidenceKeysForPublication(input: {
-  selectedEvidenceKeys: readonly string[] | undefined;
-  evidenceManifest: ArtifactRef[];
-  trustedEvidenceManifest: EvidenceManifest | null | undefined;
-}): string[] {
-  return [
-    ...new Set(
-      (input.selectedEvidenceKeys ?? [])
-        .map((key) => resolveSelectedEvidenceRef(key, input.evidenceManifest))
-        .filter((artifact): artifact is ArtifactRef => {
-          if (!artifact) return false;
-          return isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest);
-        })
-        .map((artifact) => artifact.path),
-    ),
-  ].sort();
-}
-
-const LOCAL_PROOF_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
-
-export function defaultSelectedEvidenceKeysForPublication(input: {
-  evidenceManifest: ArtifactRef[];
-  trustedEvidenceManifest: EvidenceManifest | null | undefined;
-}): string[] {
-  return input.evidenceManifest
-    .filter(
-      (artifact) =>
-        !LOCAL_PROOF_VIDEO_EXT.test(artifact.path) &&
-        isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest),
-    )
-    .map((artifact) => artifact.path)
-    .sort();
-}
-
 /**
  * Pre-gate safe completion phase for fix-bug v1. This copies local artifacts,
  * captures branch/session/package metadata, and writes immutable package files.
@@ -1005,13 +980,7 @@ export async function runCompletionPipeline(
   // 5. Upload artifacts (screenshots, videos) to artifacts repo
   let artifactUrls = new Map<string, string>();
   if (!isReviewPR && prNumber && run.taskFile) {
-    try {
-      artifactUrls = await uploadArtifacts(updatedRun, prNumber);
-    } catch (err) {
-      console.warn(
-        `[run-completion] artifact upload failed (non-fatal): ${(err as Error).message}`,
-      );
-    }
+    artifactUrls = await uploadArtifacts(updatedRun, prNumber, undefined, { failOnError: true });
   }
 
   // 6. For flows with ci-watch: rewrite PR body + check author checklist, then mark ready.
@@ -1222,6 +1191,17 @@ export async function publishCompletionPackage(
     };
     reportTemplateDrift(approvedPackage.draftBody, 'approved package');
 
+    const approvedSelectedEvidenceKeys =
+      options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
+    const evidenceManifest = run.taskFile ? await readEvidenceManifest(run) : null;
+    const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
+      selectedEvidenceKeys: approvedSelectedEvidenceKeys,
+      evidenceManifest: approvedPackage.evidenceManifest ?? [],
+      trustedEvidenceManifest: evidenceManifest,
+    });
+    const selectedEvidenceKeys =
+      expandEvidenceSelectionForManifest(evidenceManifest, publishableSelectedEvidenceKeys) ?? [];
+
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
     if (!prNumber) {
@@ -1263,16 +1243,6 @@ export async function publishCompletionPackage(
       );
     }
 
-    const approvedSelectedEvidenceKeys =
-      options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
-    const evidenceManifest = latestRun.taskFile ? await readEvidenceManifest(latestRun) : null;
-    const publishableSelectedEvidenceKeys = selectedEvidenceKeysForPublication({
-      selectedEvidenceKeys: approvedSelectedEvidenceKeys,
-      evidenceManifest: approvedPackage.evidenceManifest ?? [],
-      trustedEvidenceManifest: evidenceManifest,
-    });
-    const selectedEvidenceKeys =
-      expandEvidenceSelectionForManifest(evidenceManifest, publishableSelectedEvidenceKeys) ?? [];
     let artifactUrls = new Map<string, string>();
     if (latestRun.taskFile) {
       emit('substep', {

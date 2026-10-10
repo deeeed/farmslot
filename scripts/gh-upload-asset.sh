@@ -131,7 +131,7 @@ git add "${FLOW_DIR}/${ID}/"
 if git diff --cached --quiet; then
   echo "No changes (files already up to date)" >&2
 else
-  git commit --quiet -m "Add ${FLOW_DIR}/${ID} artifacts"
+  git commit --quiet -m "chore(evidence): publish ${FLOW_DIR}/${ID} artifacts"
   # Independent sparse checkouts may publish concurrently. Retry a bounded
   # number of times; distinct publication paths rebase without sharing locks.
   push_attempt=1

@@ -15,7 +15,7 @@ import {
   isEvidenceManifestReferencedArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
-import type { EvidenceManifest } from './evidence-manifest.js';
+import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { exactEvidenceKeys } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 
@@ -38,33 +38,10 @@ function evidenceManifestExplicitPublishEvidenceSet(
   manifest: EvidenceManifest | null | undefined,
 ): Set<string> | null {
   const explicit = new Set<string>();
-  let screenshotRefCount = 0;
-  const add = (key: string | undefined) => {
-    if (typeof key !== 'string' || !key.trim()) return;
-    screenshotRefCount += 1;
-    for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
-  };
-
-  for (const pair of manifest?.before_after_pairs ?? []) {
-    add(pair.before);
-    add(pair.after);
-  }
-  for (const entry of manifest?.standalone ?? []) {
-    add(entry.file);
-  }
-
-  const videoRefs = [manifest?.videos?.before, manifest?.videos?.after].filter(
-    (key): key is string => typeof key === 'string' && key.trim().length > 0,
-  );
-  const includeVideos =
-    videoRefs.length > 0 &&
-    (manifest?.preferred_mode === 'video' ||
-      manifest?.videos?.preferred === true ||
-      screenshotRefCount === 0);
-  if (includeVideos) {
-    for (const key of videoRefs) {
-      for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
-    }
+  // Inventory and operator selection are distinct. A declared recording must
+  // remain selectable even when screenshots are the preferred publication mode.
+  for (const key of evidenceManifestArtifactPaths(manifest)) {
+    for (const variant of exactEvidenceKeys(key)) explicit.add(variant);
   }
 
   return explicit.size > 0 ? explicit : null;
