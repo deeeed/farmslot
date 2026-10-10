@@ -125,6 +125,8 @@ export {
   CAPTURE_HELPER_STREAM_INTERRUPTED_EXIT,
   CAPTURE_INTERRUPTED,
   type CaptureHelperInterruptionEvent,
+  captureHelperStreamStopped,
+  hasCaptureInterruptionMeasurements,
   isCaptureInterruptedEntry,
   keptCaptureInterruption,
   loneCaptureInterruption,

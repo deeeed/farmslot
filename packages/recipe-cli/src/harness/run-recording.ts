@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   type CaptureHelperInterruptionEvent,
+  captureHelperStreamStopped,
   keptCaptureInterruption,
   optionalVideoTiming,
   parseCaptureHelperInterruption,
@@ -359,7 +360,7 @@ function handleRecordingEventLine(recording: ActiveRecipeRecording, line: string
   }
   if (event.output === recording.stagedPath)
     recording.interruption ??= parseCaptureHelperInterruption(event);
-  if (event.code === 'stream_stopped' || recording.interruption) {
+  if (captureHelperStreamStopped(event, recording.interruption)) {
     recording.streamStopped = true;
     // A cached session frame during finalization is stale. Pending commands are
     // resolved on close, after they can no longer overwrite the standalone image.

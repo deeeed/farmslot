@@ -15,6 +15,7 @@ import type {
 
 import {
   type CaptureHelperInterruptionEvent,
+  captureHelperStreamStopped,
   keptCaptureInterruption,
   parseCaptureHelperInterruption,
 } from './capture-helper-interruption.js';
@@ -172,7 +173,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           ready = true;
         }
         interruption ??= parseCaptureHelperInterruption(event);
-        if (event.code === 'stream_stopped' || interruption) {
+        if (captureHelperStreamStopped(event, interruption)) {
           const cause =
             interruption?.cause ??
             (typeof event.message === 'string' ? event.message : 'Recording stream stopped.');
