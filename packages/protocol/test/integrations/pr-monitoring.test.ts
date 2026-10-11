@@ -11,6 +11,7 @@ import {
   assertPRMonitorConfig,
   assertPRMonitorPolicy,
   assertPRSlotExecutionProfile,
+  bindPRExecutionProfileToPool,
   intersectPRExecutionProfiles,
   isPRWorkspaceExecutionChoice,
   isPRWorkspaceExecutionProfile,
@@ -311,5 +312,46 @@ test('rule monitor actions require slot authority even when review actions allow
         ],
       }),
     /must use a slot policy/,
+  );
+});
+
+test('portable workspace pools bind only configured registry machines and retain model defaults', () => {
+  const portable: PRWorkspaceExecutionProfile = {
+    ...workspaceProfile,
+    workspacePolicy: { kind: 'pool' },
+  };
+  assert.doesNotThrow(() => assertPRExecutionProfile(portable));
+  assert.throws(() => prExecutionChoices(portable), /configured pool registry/);
+  const bound = bindPRExecutionProfileToPool(portable, ['node-b', 'node-c']);
+  assert.deepEqual(bound.workspacePolicy, { kind: 'pool', allowedMachines: ['node-b', 'node-c'] });
+  assert.deepEqual(bound.models, portable.models);
+  assert.deepEqual(portable.workspacePolicy, { kind: 'pool' });
+  assert.deepEqual(
+    intersectPRExecutionProfiles([bound, workspaceProfile]),
+    prExecutionChoices(workspaceProfile).filter((choice) => choice.machine === 'node-b'),
+  );
+  const narrowed = bindPRExecutionProfileToPool(
+    {
+      ...portable,
+      models: [{ ...portable.models[0], allowedMachines: ['node-b', 'unregistered'] }],
+    },
+    ['node-b', 'node-c'],
+  );
+  assert.ok(prExecutionChoices(narrowed).every((choice) => choice.machine === 'node-b'));
+  assert.throws(() => bindPRExecutionProfileToPool(portable, []), /configured pool registry/);
+  assert.deepEqual(
+    intersectPRExecutionProfiles([
+      bound,
+      {
+        ...portable,
+        workspacePolicy: { kind: 'exact', machine: 'unregistered' },
+        models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+      },
+    ]),
+    [],
+  );
+  assert.throws(
+    () => assertPRExecutionProfile({ ...profile, slotPolicy: { kind: 'pool' } }),
+    /allowedSlots/,
   );
 });

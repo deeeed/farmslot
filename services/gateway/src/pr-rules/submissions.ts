@@ -70,14 +70,14 @@ export function createReviewSubmission(
 }
 
 /** Updates the same intent collection used by rules; submission receipts retain replay identity. */
-export function applyReviewSubmission(
+export async function applyReviewSubmission(
   data: PRRuleStoreData,
   ownerId: string,
   id: string,
   revision: number,
   teamRevision: number,
   result: { item: PRRulePreviewItem } | { error: string },
-): PRReviewSubmission {
+): Promise<PRReviewSubmission> {
   const submission = data.submissions?.find(
     (entry) => entry.id === id && entry.ownerId === ownerId,
   );
@@ -192,6 +192,6 @@ export function applyReviewSubmission(
       submission.intentId = intent.id;
     }
   }
-  for (const intent of data.intents) reconcileReviewIntent(intent, data.teams);
+  for (const intent of data.intents) await reconcileReviewIntent(intent, data.teams);
   return submission;
 }

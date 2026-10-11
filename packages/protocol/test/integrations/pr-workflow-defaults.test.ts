@@ -239,3 +239,9 @@ test('publication gate defaults inherit independently and explicit hold wins', (
   );
   assert.equal(resolvePRWorkflowDefaults({}).review.autoFinish, undefined);
 });
+
+test('portable farm pool defaults preserve runner model and effort without machine literals', () => {
+  const portable = { ...reviewExecution, workspacePolicy: { kind: 'pool' as const } };
+  const resolved = resolvePRWorkflowDefaults({ farm: { 'review-pr': { execution: portable } } });
+  assert.deepEqual(resolved.execution, portable);
+});

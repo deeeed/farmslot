@@ -472,3 +472,50 @@ test('queued QA pool selection stays unpinned while explicit slot requests survi
   });
   assert.equal(preview.params.slotId, 'runtime');
 });
+
+test('direct portable pools bind before explicit machine narrowing and keep defaults', async () => {
+  const portable = { ...execution, workspacePolicy: { kind: 'pool' as const } };
+  const config = await loadProjectConfig('farm');
+  const resolved = await resolveDirectWorkflowDefaults(
+    { ...request, reviewWorkspaceTarget: { machine: 'two' } },
+    config,
+    { purpose: 'preview', ownerId: 'owner', execution: portable },
+  );
+  assert.equal(resolved.params.reviewWorkspaceTarget?.machine, 'two');
+  assert.equal(resolved.params.runner, execution.models[0].runner);
+  assert.equal(resolved.params.model, execution.models[0].model);
+  assert.equal(resolved.params.effort, execution.models[0].effort);
+  await assert.rejects(
+    resolveDirectWorkflowDefaults(
+      { ...request, reviewWorkspaceTarget: { machine: 'unregistered' } },
+      config,
+      { purpose: 'preview', ownerId: 'owner', execution: portable },
+    ),
+    /outside.*policy/,
+  );
+});
+
+test('queued portable defaults retain registry binding until dispatch', async () => {
+  const portable = { ...execution, workspacePolicy: { kind: 'pool' as const } };
+  const resolved = await resolveDirectWorkflowDefaults(request, await loadProjectConfig('farm'), {
+    purpose: 'queue',
+    ownerId: 'owner',
+    execution: portable,
+  });
+  assert.deepEqual(resolved.execution?.workspacePolicy, { kind: 'pool' });
+  assert.equal(resolved.params.model, execution.models[0].model);
+});
+
+test('queued portable policies retain model alternatives for future registry admission', async () => {
+  const portable = {
+    ...execution,
+    workspacePolicy: { kind: 'pool' as const },
+    models: [{ ...execution.models[0], allowedMachines: ['later'] }, ...execution.models],
+  };
+  const resolved = await resolveDirectWorkflowDefaults(request, await loadProjectConfig('farm'), {
+    purpose: 'queue',
+    ownerId: 'owner',
+    execution: portable,
+  });
+  assert.deepEqual(resolved.execution, portable);
+});

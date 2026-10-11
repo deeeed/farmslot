@@ -76,7 +76,9 @@ export interface PRSlotExecutionProfile {
 }
 
 export interface PRWorkspaceExecutionProfile {
-  workspacePolicy: { kind: 'exact'; machine: string } | { kind: 'pool'; allowedMachines: string[] };
+  workspacePolicy:
+    | { kind: 'exact'; machine: string }
+    | { kind: 'pool'; allowedMachines?: string[] };
   slotPolicy?: never;
   /** Ordered alternatives for static review without a device slot. */
   models: PRExecutionModel[];

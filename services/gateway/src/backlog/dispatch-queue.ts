@@ -47,6 +47,7 @@ import {
   inspectReviewWorkspaceTarget,
 } from '../review-workspaces/admission.js';
 import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
+import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
 import { normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 import {
@@ -1409,9 +1410,23 @@ async function tryDispatchNextOnce(): Promise<void> {
       }
       if (liveQueuedItem(item.id) !== item) continue;
     }
-    let prChoices: PRExecutionChoice[] | undefined = item.workflowExecution
-      ? prExecutionChoices(item.workflowExecution)
-      : undefined;
+    let prChoices: PRExecutionChoice[] | undefined;
+    if (item.workflowExecution) {
+      try {
+        const [bound] = await bindPRExecutionProfilesToPool([item.workflowExecution]);
+        if (liveQueuedItem(item.id) !== item) continue;
+        prChoices = prExecutionChoices(bound);
+      } catch (error) {
+        if (!(error instanceof GatewayMethodError)) throw error;
+        if (liveQueuedItem(item.id) !== item) continue;
+        if (item.waitingReason !== error.message) {
+          item.waitingReason = error.message;
+          schedulePersist('workflow-pool-configuration');
+          broadcastQueue();
+        }
+        continue;
+      }
+    }
     if (item.prWork) {
       const admission = await preparePRQueueAdmission(item);
       if (!liveQueuedItem(item.id)) continue;

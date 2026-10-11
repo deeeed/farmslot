@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { readdir, readFile, realpath } from 'node:fs/promises';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import path from 'node:path';
 
@@ -81,6 +81,35 @@ export function resolveSlotPoolDir(
   return existsSync(nodePool) ? { dir: nodePool, source: 'farmslot-node' } : undefined;
 }
 
+export interface PoolFileEntry<P> {
+  file: string;
+  pool: P;
+}
+
+/** Configured pool readers skip malformed files without echoing parser input. */
+export function readPoolFiles<P = SlotPoolFile>(poolDir: string): PoolFileEntry<P>[] {
+  return readdirSync(poolDir)
+    .filter((file) => !isIgnoredPoolFile(file))
+    .sort()
+    .flatMap((file) => {
+      const fullPath = path.join(poolDir, file);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(fullPath, 'utf8'));
+      } catch (error) {
+        // A half-written/removed pool file is not authority. Other I/O failures are actionable.
+        if (
+          error instanceof SyntaxError ||
+          ['ENOENT', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+        )
+          return [];
+        throw error;
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+      return [{ file: fullPath, pool: parsed as P }];
+    });
+}
+
 /**
  * The slot whose `repo` is `realTarget` (already a real path), or null.
  * Prefers a slot on this machine when several pools map the same path; skips
@@ -91,21 +120,12 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
   realTarget: string,
   options: SlotByRepoOptions = {},
 ): Promise<SlotByRepoMatch<P> | null> {
-  const files = await readdir(poolDir);
   const localHost = hostname().replace(/\.local$/u, '');
   const isLocalHost = (host: string) =>
     host === 'localhost' || host === '127.0.0.1' || host.replace(/\.local$/u, '') === localHost;
   const local: SlotByRepoMatch<P>[] = [];
   const remote: SlotByRepoMatch<P>[] = [];
-  for (const file of [...files].sort()) {
-    if (isIgnoredPoolFile(file)) continue;
-    let pool: P;
-    try {
-      pool = JSON.parse(await readFile(path.join(poolDir, file), 'utf-8')) as P;
-    } catch {
-      // Invalid pool files are skipped, as every pool loader skips them.
-      continue;
-    }
+  for (const { file, pool } of readPoolFiles<P>(poolDir)) {
     for (const slot of Array.isArray(pool.slots) ? pool.slots : []) {
       if (options.slotId && slot.id !== options.slotId) continue;
       const repo = slot.repo ?? '';
@@ -118,7 +138,7 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
         throw err;
       });
       if (real !== realTarget) continue;
-      const match: SlotByRepoMatch<P> = { pool, slot, poolFile: path.join(poolDir, file) };
+      const match: SlotByRepoMatch<P> = { pool, slot, poolFile: file };
       if (isLocalHost(pool.host ?? '') || pool.machine === localHost) {
         if (!options.strict) return match;
         local.push(match);

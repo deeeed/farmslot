@@ -368,6 +368,11 @@
       "types": "./dist/surfaces/view-links.d.ts",
       "import": "./dist/surfaces/view-links.js",
       "default": "./dist/surfaces/view-links.js"
+    },
+    "./node/pack-portability": {
+      "types": "./dist/node/pack-portability.d.ts",
+      "import": "./dist/node/pack-portability.js",
+      "default": "./dist/node/pack-portability.js"
     }
   },
   "scripts": {

@@ -15,6 +15,9 @@ import {
   samePRReviewOptions,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
+import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
+
 import { hasPublicationAuthorityConflict } from './publication-policy.js';
 
 export function reviewIntentId(item: PRRulePreviewItem, round = 1): string {
@@ -84,10 +87,10 @@ export function contributionBlockedReason(
   return undefined;
 }
 
-export function reconcileReviewIntent(
+export async function reconcileReviewIntent(
   intent: PRReviewIntent,
   teams: readonly PRTeamProfile[],
-): void {
+): Promise<void> {
   if (intent.status === 'running' || intent.status === 'completed' || intent.status === 'failed')
     return;
   const contributors = intent.contributions.filter((item) => item.eligible);
@@ -129,7 +132,17 @@ export function reconcileReviewIntent(
     return;
   }
   const profiles = contributors.flatMap((item) => (item.execution ? [item.execution] : []));
-  if (!intersectPRExecutionProfiles(profiles).length) {
+  let hasCommonChoice: boolean;
+  try {
+    hasCommonChoice =
+      intersectPRExecutionProfiles(await bindPRExecutionProfilesToPool(profiles)).length > 0;
+  } catch (error) {
+    if (!(error instanceof GatewayMethodError)) throw error;
+    intent.status = 'needs-configuration';
+    intent.waitingReason = error.message;
+    return;
+  }
+  if (!hasCommonChoice) {
     intent.status = 'needs-configuration';
     intent.waitingReason = 'Matching rules have incompatible slot/model/effort constraints';
     return;

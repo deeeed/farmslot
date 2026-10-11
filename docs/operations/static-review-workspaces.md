@@ -112,3 +112,5 @@ yarn farmslot run create --project example --flow-type review-pr --ticket exampl
 is inferred. Ambiguous configured publication policies require an explicit team;
 opt-out needs no account. Omitted publication flags inherit policy. The gateway freezes
 the selection, rejects client-forged authority and revalidates it before publication.
+
+A portable farm may use `workspacePolicy: { kind: "pool" }`. Admission binds it to the configured pool registry; an empty registry refuses. Explicit and model machine lists still narrow that registry. Pool files use stable filename order, and an explicit list keeps its declared order.

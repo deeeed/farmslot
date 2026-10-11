@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
+
+- Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.
 - Release ignores untracked task/runtime scaffolding, protects tracked edits and unpublished commits, and collects owned files into private run archives before cleanup. Prepare keeps those namespaces in the repository Git exclude file.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.

@@ -10,6 +10,7 @@
 // gateway (slot.prepare RPC) and onboarding must work before any gateway runs.
 // Slot readiness is proven by the project preflight hook + preflight-slot.sh.
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   chmodSync,
   cpSync,
@@ -18,13 +19,21 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
+import {
+  listPackOwnedEntries,
+  packEntryLinkTarget,
+} from '@farmslot/protocol/node/pack-portability';
 
 import {
   decideAddAction,
@@ -45,7 +54,14 @@ import {
   registerSlot,
   writePool,
 } from './pool-config.js';
-import { readState, type Workspace, type WorkspaceState, writeState } from './workspace.js';
+import {
+  readState,
+  type Workspace,
+  workspacePoolDir,
+  workspacePoolFile,
+  type WorkspaceState,
+  writeState,
+} from './workspace.js';
 
 export interface AddStep {
   label: string;
@@ -295,6 +311,58 @@ export function operatorAddedFiles(dest: string, src: string): string[] {
   return candidates.filter((rel) => ignored.has(rel));
 }
 
+function projectPaths(proj: PackProject, packDir: string, ws: Workspace) {
+  const name = projectName(proj);
+  return { name, src: join(packDir, proj.dir), dest: join(ws.farmslotDir, 'projects', name) };
+}
+
+/** Restore only links that match Node's old conversion of this pack's relative links. */
+export function repairRegisteredProjectLinks(
+  proj: PackProject,
+  packDir: string,
+  ws: Workspace,
+  state: WorkspaceState,
+  packName: string,
+): number {
+  const { name, src, dest } = projectPaths(proj, packDir, ws);
+  if (!existsSync(dest) || !state.packs[packName]?.projects.includes(name)) return 0;
+  assertProjectOwnership(name, packName, state, dest);
+  const root = realpathSync(dest);
+  let repaired = 0;
+  for (const entry of listPackOwnedEntries(src)) {
+    const relative = packEntryLinkTarget(entry);
+    if (relative === undefined || isAbsolute(relative)) continue;
+    const target = join(dest, entry.rel);
+    let installed: string;
+    try {
+      installed = readlinkSync(target);
+    } catch (error) {
+      if (['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+      throw error;
+    }
+    const sourceParent = dirname(join(src, entry.rel));
+    if (
+      installed !== resolve(sourceParent, relative) &&
+      installed !== resolve(realpathSync(sourceParent), relative)
+    )
+      continue;
+    const parent = realpathSync(dirname(target));
+    if (parent !== root && !parent.startsWith(root + sep))
+      throw new AddError(`Cannot repair pack link outside project: ${entry.rel}`);
+    const temporary = target + '.relative-pack-link-' + randomUUID();
+    try {
+      symlinkSync(relative, temporary);
+      // An operator may have changed the link since the ownership scan.
+      if (readlinkSync(target) !== installed) continue;
+      renameSync(temporary, target);
+      repaired++;
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  }
+  return repaired;
+}
+
 export function registerProject(
   proj: PackProject,
   packDir: string,
@@ -303,9 +371,7 @@ export function registerProject(
   packName: string,
   progress: AddProgress,
 ): RegisteredProject {
-  const name = projectName(proj);
-  const src = join(packDir, proj.dir);
-  const dest = join(ws.farmslotDir, 'projects', name);
+  const { name, src, dest } = projectPaths(proj, packDir, ws);
   assertProjectOwnership(name, packName, state, dest);
   // Snapshot operator-added files (filled fixture secrets etc.) — the pack
   // ships only .sample templates, so the real files exist only here and would
@@ -318,7 +384,7 @@ export function registerProject(
   // Full replace: packs own their project dirs — files deleted from the pack
   // must disappear here too, not survive as stale hooks/fixtures.
   rmSync(dest, { recursive: true, force: true });
-  cpSync(src, dest, { recursive: true });
+  cpSync(src, dest, { recursive: true, verbatimSymlinks: true });
   // Restore preserved operator files on top of the fresh pack copy.
   for (const file of preserved) {
     const target = join(dest, file.rel);
@@ -588,7 +654,7 @@ export function projectAdd(
   }
 
   const packDir = resolvePackSource(source, ws, childStdio(progress));
-  const { pack, errors } = validatePackDir(packDir);
+  const { pack, errors } = validatePackDir(packDir, workspacePoolDir(ws, state));
   if (!pack) {
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
   }
@@ -596,7 +662,7 @@ export function projectAdd(
   const hash = hashPackDir(packDir);
   let action = decideAddAction(state.packs[pack.name]?.hash, hash);
 
-  const poolPath = join(ws.farmslotDir, state.pool_file);
+  const poolPath = workspacePoolFile(ws, state);
   const pool = readPool(poolPath);
 
   // An unchanged pack is verify-only — one-time setup must not rerun. Anything
@@ -679,6 +745,10 @@ export function projectAdd(
   for (const proj of selectedPack.projects) {
     const projName = projectName(proj);
     try {
+      if (!mutate) {
+        const repaired = repairRegisteredProjectLinks(proj, packDir, ws, state, pack.name);
+        if (repaired) progress.info(`restored ${repaired} relative pack link(s) in ${projName}`);
+      }
       const registered = mutate
         ? registerProject(proj, packDir, ws, claimedState, pack.name, progress)
         : readRegisteredProject(proj, ws);

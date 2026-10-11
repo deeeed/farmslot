@@ -15,6 +15,7 @@ import {
   type PRTeamProfile,
   resolvePRWorkflowDefaults,
   type SlotStatus,
+  workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
 
 import '../shared/choice-picker.js';
@@ -121,9 +122,7 @@ export class PRReviewRequestForm extends LitElement {
     const execution = this.overrideExecution ? this.execution : resolved.execution;
     const target = execution
       ? isPRWorkspaceExecutionProfile(execution)
-        ? execution.workspacePolicy.kind === 'exact'
-          ? execution.workspacePolicy.machine
-          : execution.workspacePolicy.allowedMachines.join(', ')
+        ? workspacePolicyTargetLabel(execution.workspacePolicy)
         : execution.slotPolicy.kind === 'exact'
           ? execution.slotPolicy.slotId
           : execution.slotPolicy.allowedSlots.join(', ')

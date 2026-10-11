@@ -7,7 +7,7 @@
 //   <workspace>/state.json  — onboarding state (source, packs, migrations)
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Absolute path to the farmslot repo root that this CLI runs from. */
@@ -104,4 +104,15 @@ export function bootstrapFarmslotHome(env: NodeJS.ProcessEnv = process.env): voi
     return;
   }
   if (state?.home_dir) env.FARMSLOT_HOME = state.home_dir;
+}
+
+/** Pool ownership follows the selected workspace's installation record. */
+export function workspacePoolDir(ws: Workspace, state: WorkspaceState): string {
+  const configured = process.env.FARMSLOT_POOL_DIR?.trim();
+  return configured ? resolve(configured) : dirname(join(ws.farmslotDir, state.pool_file));
+}
+
+/** Validation and registration must read and write the same configured pool. */
+export function workspacePoolFile(ws: Workspace, state: WorkspaceState): string {
+  return join(workspacePoolDir(ws, state), basename(state.pool_file));
 }

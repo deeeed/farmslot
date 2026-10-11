@@ -10,9 +10,13 @@ import {
   hashPackDir,
   projectName,
   projectShortName,
-  validatePackDir,
+  validatePackDir as validateInstalledPackDir,
   validatePackJson,
 } from './pack.js';
+
+// Admission fixtures must not inherit the operator's configured pool.
+const validatePackDir = (dir: string, pool = join(dir, '.test-pool')) =>
+  validateInstalledPackDir(dir, pool);
 
 const VALID_PACK = {
   name: 'example-app',
@@ -105,6 +109,31 @@ test('expandPackVars substitutes {{workspace}}', () => {
     expandPackVars('{{workspace}}/repos/src and {{workspace}}/runs', { workspace: '/w' }),
     '/w/repos/src and /w/runs',
   );
+});
+
+test('project add pack admission rejects a private template before registration', (t) => {
+  const root = writePackDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const templates = join(root, 'projects/example-app-farm/templates');
+  mkdirSync(templates);
+  writeFileSync(join(templates, 'task.md'), 'Validate task\n~/xreview/private-helper\n');
+  const result = validatePackDir(root);
+  assert.equal(result.pack, null);
+  assert.match(result.errors[0], /^projects\/example-app-farm\/templates\/task.md:2:.*pool\/slot/);
+});
+
+test('pack admission uses the target workspace pool for literal node references', (t) => {
+  const root = writePackDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pool = join(root, 'target-pool');
+  mkdirSync(pool);
+  writeFileSync(
+    join(pool, 'worker.json'),
+    JSON.stringify({ machine: 'worker-z', host: 'worker-z.example' }),
+  );
+  const template = join(root, 'projects/example-app-farm/setup/cli.sh');
+  writeFileSync(template, 'ssh worker-z true');
+  assert.match(validatePackDir(root, pool).errors[0], /setup\/cli.sh:1:.*pool\/slot/);
 });
 
 test('pack validation refuses malformed recipe sources before any provider import', (t) => {
