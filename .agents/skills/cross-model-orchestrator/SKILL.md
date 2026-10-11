@@ -22,7 +22,8 @@ All lane input goes through [tmux-model-driver](../tmux-model-driver/SKILL.md).
 Use `launch <lane>`, `lanes-status`, `send <lane> --file <message>`, and `restore`.
 Launch syntax, resume, hooks, and acceptance evidence come from the shared runner adapter.
 Submit with named Enter. Never queue with Tab, resend buffered text, or send a model prompt to
-a shell. A send succeeds only with structured exact-prompt acceptance evidence.
+a shell. A send reports exact native acceptance or explicit pending queued input with a retained
+receipt. Queued input does not claim delivery or a new turn.
 
 Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
 phases accept steering with exact native proof, or report queued input with its
