@@ -65,13 +65,14 @@ const crypto = require('node:crypto');
 const [root, scriptDir, gatewayPort, vitePort, machine, home] = process.argv.slice(2);
 const hash = crypto.createHash('sha256');
 hash.update(JSON.stringify({ gatewayPort, vitePort, machine, home }));
-for (const file of ['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env']) {
+const files = [
+  ...['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env'].map(file => path.join(root, file)),
+  path.join(scriptDir, 'sandbox-dev.sh'),
+  path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh'),
+];
+for (const file of new Set(files.map(file => path.resolve(file)))) {
   hash.update(file + '\0');
-  const full = path.join(root, file);
-  hash.update(fs.existsSync(full) ? fs.readFileSync(full) : '<absent>');
-}
-for (const file of [path.join(scriptDir, 'sandbox-dev.sh'), path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh')]) {
-  hash.update(fs.readFileSync(file));
+  hash.update(fs.existsSync(file) ? fs.readFileSync(file) : '<absent>');
 }
 process.stdout.write(hash.digest('hex'));
 NODE

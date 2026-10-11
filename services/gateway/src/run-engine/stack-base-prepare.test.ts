@@ -91,13 +91,14 @@ async function stackFixture(
   const mainHead = await git(otherSlot, 'rev-parse', 'HEAD');
   if (options.linkedWorktreeOn) {
     // The slot is a linked worktree of another clone, still on the branch a
-    // previous run used, with a stale commit of its own.
+    // previous run used, with a published stale commit of its own.
     const primary = path.join(fixtureRoot, 'primary');
     await execFileAsync('git', ['clone', originRepo, primary]);
     await git(primary, 'worktree', 'add', '-b', options.linkedWorktreeOn, slotRepo, 'origin/main');
     await writeFile(path.join(slotRepo, 'stale.txt'), 'stale\n');
     await git(slotRepo, 'add', 'stale.txt');
     await git(slotRepo, 'commit', '-m', 'stale work from an earlier run');
+    await git(slotRepo, 'push', 'origin', options.linkedWorktreeOn);
   } else {
     await execFileAsync('git', ['clone', originRepo, slotRepo]);
   }

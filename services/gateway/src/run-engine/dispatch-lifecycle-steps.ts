@@ -29,6 +29,7 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { recordInitialPrepareBranchState } from './prepare-branch-state.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
@@ -314,20 +315,7 @@ export async function executePrepareStep(
   const branchIdentity = current.branch
     ? { slotId: current.slotId, branch: current.branch }
     : undefined;
-  if (branchIdentity && !current.engineState?.prepareBranch) {
-    await persistRunNow(
-      updateRun(runId, {
-        engineState: {
-          ...getRun(runId)?.engineState,
-          prepareBranch: {
-            ...branchIdentity,
-            started: false,
-          },
-        },
-      }),
-      'prepare branch intent',
-    );
-  }
+  await recordInitialPrepareBranchState(runId);
   const branchState = getRun(runId)?.engineState?.prepareBranch;
   const allowMissingReplayBranch =
     isRecoveryPrepare && branchState?.started === false && branchState.branch === current.branch;

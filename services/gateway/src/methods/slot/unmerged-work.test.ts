@@ -166,3 +166,48 @@ test('prepare protects an unchecked-out requested branch and fails closed on unr
     /Cannot inspect local branch/,
   );
 });
+
+test('a deleted branch cached outside a narrow fetch refspec cannot vouch for worker commits', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  const remote = git(repo, 'remote', 'get-url', 'origin');
+  git(repo, '--git-dir=' + remote, 'update-ref', '-d', 'refs/heads/' + BRANCH);
+  assert.equal(git(repo, 'rev-parse', 'origin/' + BRANCH), head);
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'rev-parse', BRANCH), head);
+  assert.throws(() => git(repo, 'rev-parse', '--verify', 'origin/' + BRANCH));
+});
+
+test('prepare fetches only possible backing refs and keeps timeout diagnostics', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const commands: string[] = [];
+  await assertPrepareCommitsPublished(vars, BRANCH, async (slot, command) => {
+    commands.push(command);
+    return bash(slot, command);
+  });
+  assert.ok(
+    commands.some((command) => command.includes('fetch') && command.includes('refs/heads/')),
+  );
+  assert.ok(commands.every((command) => !command.includes('--all')));
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
+      if (command.includes('show-ref'))
+        return { exitCode: 124, stdout: '', stderr: 'fixture Git probe timed out' };
+      return bash(vars, command);
+    }),
+    /timeout 124.*fixture Git probe timed out/,
+  );
+});
+
+test('review refresh preserves an unpublished old tip in a durable ref before reset', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const tip = git(repo, 'rev-parse', 'HEAD');
+  await assertPrepareCommitsPublished(vars, BRANCH, bash, 'main', true);
+  assert.equal(git(repo, 'rev-parse', 'refs/farmslot/preserved/' + tip), tip);
+  git(repo, 'reset', '--hard', 'origin/main');
+  assert.equal(git(repo, 'show', 'refs/farmslot/preserved/' + tip + ':fix.txt'), 'fix.txt');
+});

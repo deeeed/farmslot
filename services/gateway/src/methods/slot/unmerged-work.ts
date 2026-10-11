@@ -1,5 +1,14 @@
+import { DEFAULT_BRANCH, type ExecResult, remoteBranchRefspec } from '@farmslot/protocol';
+
+import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import { execOnSlot, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+
+function prepareGitFailure(message: string, result: ExecResult): Error {
+  return new Error(
+    `${message} (${result.exitCode === EXEC_TIMEOUT_EXIT_CODE ? 'timeout' : 'exit'} ${result.exitCode}): ${(result.stderr || result.stdout).slice(-200)}`,
+  );
+}
 
 export async function localBranchExists(
   vars: SlotVars,
@@ -13,7 +22,10 @@ export async function localBranchExists(
   );
   if (exists.exitCode === 0) return true;
   if (exists.exitCode === 1) return false;
-  throw new Error(`Cannot inspect local branch ${branch}; prepare left its commits untouched`);
+  throw prepareGitFailure(
+    `Cannot inspect local branch ${branch}; prepare left its commits untouched`,
+    exists,
+  );
 }
 
 /** Commits at a ref which no remote-tracking ref contains. Never hide a failed Git check. */
@@ -39,26 +51,104 @@ export async function assertPrepareCommitsPublished(
   vars: SlotVars,
   branch: string,
   exec: typeof execOnSlot = execOnSlot,
+  defaultBranch = DEFAULT_BRANCH,
+  preserveUnpublished = false,
 ): Promise<void> {
   const refs = new Set(['HEAD']);
   if (branch && (await localBranchExists(vars, branch, exec))) refs.add(`refs/heads/${branch}`);
-  // Cached remote refs cannot prove publication after another clone rewrites
-  // or deletes the branch. Refresh every remote used by the publication check.
-  const refreshed = await exec(vars, `git -C ${shellQuote(vars.remoteRepo)} fetch --all --prune`, {
-    timeout: 15_000,
-  });
-  if (refreshed.exitCode !== 0)
-    throw new Error(
-      `Cannot refresh remote refs on ${vars.slotId}; prepare left its commits untouched`,
-    );
+  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const remoteResult = await exec(vars, `${git} remote`);
+  if (remoteResult.exitCode !== 0)
+    throw prepareGitFailure('Cannot inspect Git remotes', remoteResult);
+  const remotes = remoteResult.stdout
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const currentResult = await exec(vars, `${git} symbolic-ref --quiet --short HEAD`);
+  if (currentResult.exitCode !== 0 && currentResult.exitCode !== 1)
+    throw prepareGitFailure('Cannot inspect current branch', currentResult);
+  const currentBranch = currentResult.stdout.trim();
+  const refreshed = new Set<string>();
+  const protectedTips = new Set<string>();
   for (const ref of refs) {
-    // An existing upstream cannot excuse unpublished work: a pushed branch may
-    // have new worker commits. Rewritten histories also require an explicit decision.
-    const commits = await findUnpushedSlotCommits(vars, ref, exec);
-    if (commits.length)
-      throw new Error(
-        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits (${commits.map((sha) => sha.slice(0, 12)).join(', ')}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, detach its worktree first, then delete that branch with git branch -D <abandoned-branch>`,
+    const tipResult = await exec(vars, `${git} rev-parse ${shellQuote(ref)}`);
+    if (tipResult.exitCode !== 0) throw prepareGitFailure(`Cannot inspect ${ref}`, tipResult);
+    const tip = tipResult.stdout.trim();
+    if (protectedTips.has(tip)) continue;
+    const candidates = new Set<string>();
+    for (const name of [currentBranch, branch, defaultBranch])
+      if (name) for (const remote of remotes) candidates.add(`refs/remotes/${remote}/${name}`);
+    // Cached refs are candidate names only. They never count as publication
+    // evidence until that exact ref has been refreshed, including narrow clones.
+    const containing = await exec(
+      vars,
+      `${git} for-each-ref --contains=${shellQuote(tip)} --format='%(refname)' refs/remotes`,
+    );
+    if (containing.exitCode !== 0)
+      throw prepareGitFailure('Cannot inspect publication candidates', containing);
+    for (const candidate of containing.stdout.trim().split(/\s+/).filter(Boolean))
+      candidates.add(candidate);
+    let published = false;
+    for (const candidate of candidates) {
+      const remote = remotes.find((name) => candidate.startsWith(`refs/remotes/${name}/`));
+      if (!remote) continue;
+      const name = candidate.slice(`refs/remotes/${remote}/`.length);
+      if (name === 'HEAD') continue;
+      if (!refreshed.has(candidate)) {
+        // Fetch only possible backing refs. A full fetch on MetaMask's thousands
+        // of branches can take minutes and is unnecessary for this proof.
+        const fetch = await exec(
+          vars,
+          `${git} fetch ${shellQuote(remote)} ${shellQuote(remoteBranchRefspec(name, remote))}`,
+        );
+        if (fetch.exitCode !== 0) {
+          const exists = await exec(
+            vars,
+            `${git} ls-remote --exit-code --heads ${shellQuote(remote)} ${shellQuote(`refs/heads/${name}`)}`,
+          );
+          if (exists.exitCode !== 2)
+            throw prepareGitFailure(
+              `Cannot verify publication ref ${candidate}; current work preserved`,
+              fetch,
+            );
+          const prune = await exec(vars, `${git} update-ref -d ${shellQuote(candidate)}`);
+          if (prune.exitCode !== 0)
+            throw prepareGitFailure(`Cannot remove stale publication ref ${candidate}`, prune);
+          continue;
+        }
+        refreshed.add(candidate);
+      }
+      const contains = await exec(
+        vars,
+        `${git} merge-base --is-ancestor ${shellQuote(tip)} ${shellQuote(candidate)}`,
       );
+      if (contains.exitCode === 0) {
+        published = true;
+        break;
+      }
+      if (contains.exitCode !== 1)
+        throw prepareGitFailure(`Cannot verify commits against ${candidate}`, contains);
+    }
+    if (!published && preserveUnpublished) {
+      const preserved = `refs/farmslot/preserved/${tip}`;
+      const backup = await exec(
+        vars,
+        `${git} update-ref ${shellQuote(preserved)} ${shellQuote(tip)}`,
+      );
+      if (backup.exitCode !== 0)
+        throw prepareGitFailure(`Cannot preserve ${ref}; current work untouched`, backup);
+      console.log(
+        `[prepare] preserved ${ref} at ${preserved} before refreshing the review workspace`,
+      );
+      protectedTips.add(tip);
+      continue;
+    }
+    if (!published)
+      throw new Error(
+        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits or an unverified tip (${tip.slice(0, 12)}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, detach its worktree first, then delete that branch with git branch -D <abandoned-branch>`,
+      );
+    protectedTips.add(tip);
   }
 }
 
