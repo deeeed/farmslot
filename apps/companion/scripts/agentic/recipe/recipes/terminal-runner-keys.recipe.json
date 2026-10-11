@@ -8,6 +8,10 @@
       "claim": "The gateway lists processRunnerIds only for a pane whose process matches a runner safe to identify without a recorded identity."
     },
     {
+      "id": "gateway-linked-runner",
+      "claim": "For a run dispatched to a slot, the gateway lists linkedRunner on the worker pane dispatch recorded, and not on a split sibling or another window of the same session."
+    },
+    {
       "id": "runner-row",
       "claim": "A known-runner pane shows the runner row and a tap sends that key data to the pane."
     },
@@ -32,6 +36,14 @@
         "action": "command",
         "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs terminals",
         "intent": "Start from the Terminals tab so no terminal from an earlier run is still open.",
+        "next": "linked-runner-live"
+      },
+      "linked-runner-live": {
+        "action": "command",
+        "cmd": "../../node_modules/.bin/tsx ../../scripts/runner-validation/gateway/linked-runner-pane.mts",
+        "timeout_ms": 180000,
+        "intent": "On an isolated gateway, dispatch a scripted dev run through run.create and check tmux.worker.list: the worker pane dispatch recorded names the scripted runner, a split sibling and a second window name none.",
+        "proves": ["gateway-linked-runner"],
         "next": "setup"
       },
       "setup": {

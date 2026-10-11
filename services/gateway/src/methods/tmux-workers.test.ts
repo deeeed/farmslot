@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import type { FleetStatus, NodeTmuxPane, PoolConfig, Run } from '@farmslot/protocol';
 
+import { parseCapturedAgentPaneTarget } from './dispatch/role-target.js';
 import {
   buildSessionCorrelation,
   tmuxWorkerAllowedByConfig,
@@ -486,6 +487,62 @@ test('tmuxWorkerFromNodePane names the linked runner only on the worker pane', (
   // A shell window in the same session belongs to the run but not to its runner.
   const shell = summary('%43', '4');
   assert.deepEqual([shell.linkedRunId, shell.linkedRunner], ['run-active', undefined]);
+});
+
+test('a dispatched worker pane captured by dispatch names its linked runner', () => {
+  // Dispatch captures `session:window.pane|window name|pane id`, so the %N lives in paneId and
+  // pane holds the index.
+  const target = parseCapturedAgentPaneTarget('ff-1', 'ff-1:1.0|worker|%42');
+  const pools = [
+    {
+      machine: 'runner-local',
+      host: 'localhost',
+      slots: [{ id: 'ff-1', session: 'ff-1' }],
+    },
+  ] as unknown as PoolConfig[];
+  const fleetStatus = {
+    slots: [{ slot: 'ff-1', lifecycle: 'busy', currentRunId: 'run-1' }],
+  } as unknown as FleetStatus;
+  const correlation = buildSessionCorrelation(pools, fleetStatus, [
+    {
+      id: 'run-1',
+      status: 'monitoring',
+      slotId: 'ff-1',
+      flowType: 'dev',
+      metrics: { runner: 'claude' },
+      agentContexts: [{ id: 'ctx-dev', role: 'dev', runId: 'run-1', target }],
+    } as unknown as Run,
+  ])
+    .get('runner-local')
+    ?.get('ff-1');
+  assert.equal(correlation?.workerPaneId, '%42');
+
+  const observedAt = 2_000_000_000_000;
+  const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
+  const summary = (paneId: string, pane: string) =>
+    tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      observedAt,
+      correlation,
+      pane: {
+        session: 'ff-1',
+        window: '1',
+        windowName: 'worker',
+        pane,
+        paneId,
+        target: paneId,
+        command: 'node',
+        signals: stale,
+      },
+    });
+
+  const worker = summary('%42', '0');
+  assert.deepEqual([worker.linkedRunId, worker.linkedRunner], ['run-1', 'claude']);
+  assert.equal(worker.status.attentionReason, 'observability-degraded');
+  // A split sibling in the worker window keeps the run link but not the runner.
+  const sibling = summary('%43', '1');
+  assert.deepEqual([sibling.linkedRunId, sibling.linkedRunner], ['run-1', undefined]);
+  assert.notEqual(sibling.status.attentionReason, 'observability-degraded');
 });
 
 test('tmuxWorkerFromNodePane names no linked runner without an exact pane locator', () => {

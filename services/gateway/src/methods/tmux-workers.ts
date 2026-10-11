@@ -348,6 +348,12 @@ export function buildSessionCorrelation(
       const workerTargetCtx = correlatedRun?.agentContexts?.find(
         (ctx) => ctx.role === primaryFlowRole || ctx.role === 'primary',
       )?.target;
+      // Only a true tmux pane ID (%N) can be compared against node inventory pane ids. Dispatch
+      // records it in `paneId` (`pane` holds the index); numeric indexes fall back to window
+      // matching in paneIsWorkerContext.
+      const workerPaneId = [workerTargetCtx?.paneId, workerTargetCtx?.pane].find((id) =>
+        id?.startsWith('%'),
+      );
       machineSessions.set(session, {
         slotId: slot.id,
         ...(runId ? { runId } : {}),
@@ -356,9 +362,7 @@ export function buildSessionCorrelation(
         ...(runner ? { runner } : {}),
         ...(workerTargetCtx?.target ? { workerTarget: workerTargetCtx.target } : {}),
         ...(workerTargetCtx?.window ? { workerWindow: workerTargetCtx.window } : {}),
-        // Only a true tmux pane ID (%N) can be compared against node inventory pane ids;
-        // numeric indexes fall back to window matching in paneIsWorkerContext.
-        ...(workerTargetCtx?.pane?.startsWith('%') ? { workerPaneId: workerTargetCtx.pane } : {}),
+        ...(workerPaneId ? { workerPaneId } : {}),
       });
     }
   }
