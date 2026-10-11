@@ -4,11 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+## 0.38.0 - 2026-10-11
+
 - Declare connection-scoped node execution and cancellation support.
 
 - Add `run.refreshPublishedEvidence` for refreshing a finished run's existing PR evidence through the upload/render pipeline, with selected keys, hosted URLs and a posted-body receipt.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
 
 - Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.
