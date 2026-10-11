@@ -1,0 +1,653 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion publish gate review",
+  "description": "Opens two runs parked at a publish gate on a private fixture gateway. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, and passing reviewers: run detail and the decision workspace both reach the gate review, publish approval is disabled with its reason on both while hold and review requests stay enabled, the criterion's evidence opens in the artifact viewer and swipes within that criterion, and holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings and the gateway's bypass action, which stays disabled with the review as its reason. Requires the leased iOS simulator and the dev client with the recipe bridge.",
+  "proofTargets": [
+    {
+      "id": "gate-review-screen",
+      "claim": "A gate review screen for an engine_human_gate decision shows the package summary, each reviewer's latest verdict, the acceptance criteria, an evidence strip and the decision's actions, reached from run detail and the decision workspace."
+    },
+    {
+      "id": "approve-guard",
+      "claim": "Every publish approval is disabled with a visible reason while a registered criterion has no verdict or a reviewer's latest verdict is not an approval, on the gate review and the decision workspace; hold and review requests stay enabled."
+    },
+    {
+      "id": "ac-evidence-viewer",
+      "claim": "Tapping a criterion's evidence opens the artifact viewer on that file with the criterion's verdict, proof mode and recipe node, and swiping stays within that criterion's evidence."
+    },
+    {
+      "id": "gate-resolve",
+      "claim": "Gate actions resolve through the existing decision-resolve call: holding the gate resolves the decision on the gateway."
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs setup",
+        "timeout_ms": 120000,
+        "intent": "Start a private fixture gateway holding one run parked at a publish gate.",
+        "next": "fixture-url"
+      },
+      "fixture-url": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs gateway-url",
+        "intent": "Read the fixture gateway address for the connection form.",
+        "next": "fixture-token"
+      },
+      "fixture-token": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs token",
+        "intent": "Read the fixture gateway credential for the connection form.",
+        "next": "relaunch"
+      },
+      "relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs relaunch",
+        "intent": "Restart the Companion so no earlier screen can take this run's input.",
+        "next": "app-ready"
+      },
+      "app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and accepts deep links.",
+        "next": "open-connection"
+      },
+      "open-connection": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs open-connection",
+        "intent": "Open Companion connection settings on the leased simulator.",
+        "next": "wait-connection"
+      },
+      "wait-connection": {
+        "action": "ui.wait_for",
+        "test_id": "companion-connection-manual-toggle",
+        "timeout_ms": 30000,
+        "intent": "The connection screen is ready for a manual gateway profile.",
+        "next": "open-manual"
+      },
+      "open-manual": {
+        "action": "ui.press",
+        "test_id": "companion-connection-manual-toggle",
+        "intent": "Open the manual gateway form.",
+        "next": "focus-url"
+      },
+      "focus-url": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-url",
+        "intent": "Focus the gateway URL field so the keyboard opens.",
+        "next": "reveal-url"
+      },
+      "reveal-url": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Bring the focused gateway URL field above the keyboard.",
+        "next": "profile-url"
+      },
+      "profile-url": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-url",
+        "value": "{{outputs.fixture-url.stdout}}",
+        "intent": "Point the profile at the private fixture gateway.",
+        "next": "reveal-auth"
+      },
+      "reveal-auth": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Reveal the token authentication option above the keyboard.",
+        "next": "auth-token"
+      },
+      "auth-token": {
+        "action": "ui.press",
+        "test_id": "companion-native-auth-token",
+        "intent": "Use token authentication.",
+        "next": "focus-secret"
+      },
+      "focus-secret": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-secret",
+        "intent": "Focus the gateway credential field.",
+        "next": "reveal-secret"
+      },
+      "reveal-secret": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Bring the focused credential field above the keyboard.",
+        "next": "profile-secret"
+      },
+      "profile-secret": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-secret",
+        "value": "{{outputs.fixture-token.stdout}}",
+        "intent": "Enter the fixture gateway credential.",
+        "next": "reveal-save"
+      },
+      "reveal-save": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Reveal the save button above the keyboard.",
+        "next": "save-profile"
+      },
+      "save-profile": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-save",
+        "intent": "Save and connect to the fixture gateway.",
+        "next": "connected"
+      },
+      "connected": {
+        "action": "ui.wait_for",
+        "text_contains": ["connected"],
+        "timeout_ms": 30000,
+        "intent": "The Companion reports it is connected to the fixture gateway.",
+        "next": "open-run"
+      },
+      "open-run": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs open-run",
+        "intent": "Open the gated fixture run's detail through a deep link.",
+        "next": "wait-run"
+      },
+      "wait-run": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-detail",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "Run detail is loaded for the gated run.",
+        "next": "wait-run-header"
+      },
+      "wait-run-header": {
+        "action": "ui.wait_for",
+        "text": "FIXTURE-GATE-REVIEW",
+        "timeout_ms": 30000,
+        "intent": "Run detail shows the gated run's ticket.",
+        "next": "hud-run-entry"
+      },
+      "hud-run-entry": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Run detail links its open publish gate to the gate review.",
+        "next": "capture-run-entry"
+      },
+      "capture-run-entry": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-run-detail-gate-entry.png",
+        "label": "Run detail with the gate review entry",
+        "covers": ["gate-review-screen"],
+        "intent": "Record run detail with its gate review entry.",
+        "next": "wait-gate-entry"
+      },
+      "wait-gate-entry": {
+        "action": "ui.wait_for",
+        "test_id": "companion-open-gate-review",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "Run detail offers the gate review because the run has an open human gate.",
+        "proves": ["gate-review-screen"],
+        "next": "open-gate-tab"
+      },
+      "open-gate-tab": {
+        "action": "ui.press",
+        "test_id": "companion-run-tab-gate",
+        "intent": "Go to the run's Gate tab, the decision workspace for this gate.",
+        "next": "wait-decision-workspace"
+      },
+      "wait-decision-workspace": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-decision-workspace",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The decision workspace for the gate is loaded.",
+        "next": "wait-decision-entry"
+      },
+      "wait-decision-entry": {
+        "action": "ui.wait_for",
+        "test_id": "companion-decision-open-gate-review",
+        "expected": "visible",
+        "timeout_ms": 15000,
+        "intent": "The decision workspace offers the gate review too.",
+        "proves": ["gate-review-screen"],
+        "next": "scroll-decision-actions"
+      },
+      "scroll-decision-actions": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 2400,
+        "intent": "Show the decision workspace's own gate actions.",
+        "next": "assert-decision-guard"
+      },
+      "assert-decision-guard": {
+        "action": "ui.wait_for",
+        "test_id": "companion-decision-publish-guard",
+        "text_contains": ["Publish approval is disabled", "AC-2 has no verdict"],
+        "timeout_ms": 15000,
+        "intent": "The decision workspace withholds publish approval for the same reason.",
+        "proves": ["approve-guard"],
+        "next": "hud-decision-guard"
+      },
+      "hud-decision-guard": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "The Gate tab applies the same publish guard.",
+        "next": "capture-decision-guard"
+      },
+      "capture-decision-guard": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-decision-workspace-guard.png",
+        "label": "Decision workspace with publish approval withheld",
+        "covers": ["approve-guard"],
+        "intent": "Record the decision workspace's guarded actions.",
+        "next": "scroll-decision-top"
+      },
+      "scroll-decision-top": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 3000,
+        "intent": "Return to the gate review entry at the top of the decision workspace.",
+        "next": "open-gate-review"
+      },
+      "open-gate-review": {
+        "action": "ui.press",
+        "test_id": "companion-decision-open-gate-review",
+        "intent": "Open the gate review from the decision workspace.",
+        "next": "wait-summary"
+      },
+      "wait-summary": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-summary",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The gate review shows the package summary first.",
+        "next": "assert-summary"
+      },
+      "assert-summary": {
+        "action": "ui.wait_for",
+        "text_contains": [
+          "feat(companion): fixture gate review package",
+          "feat/fixture-gate-review",
+          "+312"
+        ],
+        "timeout_ms": 10000,
+        "intent": "The summary carries the package title, branch and line counts.",
+        "proves": ["gate-review-screen"],
+        "next": "assert-verdicts"
+      },
+      "assert-verdicts": {
+        "action": "ui.wait_for",
+        "text_contains": ["codex", "claude", "gpt-5.5", "opus"],
+        "timeout_ms": 10000,
+        "intent": "Both reviewers' latest verdicts are listed.",
+        "proves": ["gate-review-screen"],
+        "next": "hud-summary"
+      },
+      "hud-summary": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Package summary and both reviewers' latest verdicts.",
+        "next": "capture-summary"
+      },
+      "capture-summary": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-summary.png",
+        "label": "Gate review summary and verdicts",
+        "covers": ["gate-review-screen"],
+        "intent": "Record the gate summary and review verdicts.",
+        "next": "assert-counts"
+      },
+      "assert-counts": {
+        "action": "ui.wait_for",
+        "text_contains": ["1/2 assessed · 1 proven"],
+        "timeout_ms": 15000,
+        "intent": "The criteria header counts assessed and proven criteria.",
+        "proves": ["gate-review-screen", "approve-guard"],
+        "next": "scroll-criteria"
+      },
+      "scroll-criteria": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 320,
+        "intent": "Show the acceptance criteria and evidence strip below the summary.",
+        "next": "wait-strip"
+      },
+      "wait-strip": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-evidence-0",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The evidence strip lists the proven criterion's files.",
+        "proves": ["gate-review-screen"],
+        "next": "assert-unassessed"
+      },
+      "assert-unassessed": {
+        "action": "ui.wait_for",
+        "test_id": "companion-ac-row-AC-2",
+        "text_contains": ["not assessed"],
+        "timeout_ms": 10000,
+        "intent": "The second criterion is listed without a verdict.",
+        "proves": ["approve-guard"],
+        "next": "hud-criteria"
+      },
+      "hud-criteria": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "One criterion proven, one awaiting a verdict, evidence strip below.",
+        "next": "capture-criteria"
+      },
+      "capture-criteria": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-criteria.png",
+        "label": "Acceptance criteria and evidence strip",
+        "covers": ["gate-review-screen", "approve-guard"],
+        "intent": "Record the criteria panel and evidence strip.",
+        "next": "open-evidence"
+      },
+      "open-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-ac-evidence-AC-1-0",
+        "intent": "Open the proven criterion's screenshot evidence.",
+        "next": "wait-viewer"
+      },
+      "wait-viewer": {
+        "action": "ui.wait_for",
+        "test_id": "companion-ac-evidence-viewer-detail",
+        "text": "AC-1 · proven · visual · node capture-recipes",
+        "timeout_ms": 30000,
+        "intent": "The artifact viewer opens on the evidence with the criterion's verdict on its header.",
+        "proves": ["ac-evidence-viewer"],
+        "next": "assert-first-item"
+      },
+      "assert-first-item": {
+        "action": "ui.wait_for",
+        "test_id": "companion-ac-evidence-viewer-index",
+        "text": "1/2",
+        "timeout_ms": 10000,
+        "intent": "The viewer holds only this criterion's two files, opened on the first.",
+        "proves": ["ac-evidence-viewer"],
+        "next": "hud-viewer"
+      },
+      "hud-viewer": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Criterion evidence opened in the artifact viewer.",
+        "next": "capture-viewer"
+      },
+      "capture-viewer": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-ac-evidence-viewer.png",
+        "label": "Criterion screenshot in the artifact viewer",
+        "covers": ["ac-evidence-viewer"],
+        "intent": "Record the viewer with the criterion header.",
+        "next": "swipe-viewer"
+      },
+      "swipe-viewer": {
+        "action": "ui.swipe",
+        "target": "companion-ac-evidence-viewer",
+        "direction": "left",
+        "distance": 260,
+        "duration_ms": 250,
+        "intent": "Swipe to the criterion's next evidence file.",
+        "next": "assert-second-item"
+      },
+      "assert-second-item": {
+        "action": "ui.wait_for",
+        "test_id": "companion-ac-evidence-viewer-index",
+        "text": "2/2",
+        "timeout_ms": 10000,
+        "intent": "The swipe moved to the criterion's second file.",
+        "proves": ["ac-evidence-viewer"],
+        "next": "assert-text-evidence"
+      },
+      "assert-text-evidence": {
+        "action": "ui.wait_for",
+        "text_contains": ["recipe list rendered with 4 rows"],
+        "timeout_ms": 15000,
+        "intent": "The text evidence renders inside the same viewer.",
+        "proves": ["ac-evidence-viewer"],
+        "next": "hud-viewer-text"
+      },
+      "hud-viewer-text": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Swiped to the criterion's text evidence.",
+        "next": "capture-viewer-text"
+      },
+      "capture-viewer-text": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-ac-evidence-text.png",
+        "label": "Criterion text evidence after a swipe",
+        "covers": ["ac-evidence-viewer"],
+        "intent": "Record the second evidence file after the swipe.",
+        "next": "close-viewer"
+      },
+      "close-viewer": {
+        "action": "ui.press",
+        "test_id": "companion-ac-evidence-viewer-close",
+        "intent": "Close the viewer and return to the gate review.",
+        "next": "wait-back"
+      },
+      "wait-back": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-gate-review",
+        "expected": "visible",
+        "timeout_ms": 15000,
+        "intent": "Closing the viewer returns to the gate review.",
+        "next": "scroll-actions"
+      },
+      "scroll-actions": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the gate actions below the evidence.",
+        "next": "assert-reason"
+      },
+      "assert-reason": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-approve-reason",
+        "text_contains": ["Publish approval is disabled", "AC-2 has no verdict"],
+        "timeout_ms": 10000,
+        "intent": "The reason publish approval is withheld is shown above the actions.",
+        "proves": ["approve-guard"],
+        "next": "hud-actions"
+      },
+      "hud-actions": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Approve withheld with its reason; hold and review requests available.",
+        "next": "capture-actions"
+      },
+      "capture-actions": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-approve-disabled.png",
+        "label": "Approve disabled with its reason",
+        "covers": ["approve-guard"],
+        "intent": "Record the disabled approve action and its reason.",
+        "next": "press-approve"
+      },
+      "press-approve": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-approve-publish\" enabled=false",
+        "intent": "The operator tries approve-publish, which matches only while it is disabled.",
+        "proves": ["approve-guard"],
+        "next": "no-approve-confirm"
+      },
+      "no-approve-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "Pressing the disabled approve opens no confirmation.",
+        "proves": ["approve-guard"],
+        "next": "verify-pending"
+      },
+      "verify-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-pending",
+        "intent": "The gateway still holds the gate open after the approve press.",
+        "proves": ["approve-guard"],
+        "next": "press-extra-review"
+      },
+      "press-extra-review": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-request-extra-review\" enabled=true",
+        "intent": "The operator asks for another review, which matches only while it is enabled.",
+        "proves": ["approve-guard"],
+        "next": "extra-review-confirm"
+      },
+      "extra-review-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "intent": "An enabled review request asks for confirmation.",
+        "proves": ["approve-guard"],
+        "next": "cancel-extra-review"
+      },
+      "cancel-extra-review": {
+        "action": "ui.press",
+        "text": "Cancel",
+        "intent": "Cancel so no review is launched against the fixture.",
+        "next": "press-hold"
+      },
+      "press-hold": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-hold\" enabled=true",
+        "intent": "The operator holds the gate, which matches only while hold is enabled.",
+        "proves": ["approve-guard", "gate-resolve"],
+        "next": "hold-confirm"
+      },
+      "hold-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "intent": "Hold asks for confirmation before resolving the gate.",
+        "next": "send-hold"
+      },
+      "send-hold": {
+        "action": "ui.press",
+        "text": "Send",
+        "intent": "Send hold through the decision-resolve call.",
+        "proves": ["gate-resolve"],
+        "next": "wait-resolved"
+      },
+      "wait-resolved": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-resolved",
+        "text_contains": ["Resolved: hold"],
+        "timeout_ms": 20000,
+        "intent": "The gate review shows the gate resolved by hold.",
+        "proves": ["gate-resolve"],
+        "next": "verify-hold"
+      },
+      "verify-hold": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-hold",
+        "intent": "Read the gate back from the gateway: it resolved with hold.",
+        "proves": ["gate-resolve"],
+        "next": "hud-resolved"
+      },
+      "hud-resolved": {
+        "action": "app.hud",
+        "status": "pass",
+        "intent": "Gate held through the decision-resolve call.",
+        "next": "capture-resolved"
+      },
+      "capture-resolved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-held.png",
+        "label": "Gate resolved by hold",
+        "covers": ["gate-resolve"],
+        "intent": "Record the resolved gate.",
+        "next": "open-issues-gate"
+      },
+      "open-issues-gate": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs open-issues-gate",
+        "intent": "Open the second gate, whose claude review has open findings.",
+        "next": "wait-issues-summary"
+      },
+      "wait-issues-summary": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-summary",
+        "text_contains": ["feat(companion): fixture review findings package"],
+        "timeout_ms": 30000,
+        "intent": "The second gate's package is on screen.",
+        "next": "assert-issues-counts"
+      },
+      "assert-issues-counts": {
+        "action": "ui.wait_for",
+        "text_contains": ["2/2 assessed · 2 proven"],
+        "timeout_ms": 15000,
+        "intent": "Every criterion of the second gate is proven.",
+        "proves": ["approve-guard"],
+        "next": "scroll-issues-actions"
+      },
+      "scroll-issues-actions": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the second gate's actions below its evidence.",
+        "next": "assert-issues-reason"
+      },
+      "assert-issues-reason": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-approve-reason",
+        "text_contains": ["Latest claude review is issues · 2 unresolved"],
+        "timeout_ms": 10000,
+        "intent": "The review with open findings is the reason publish approval is withheld.",
+        "proves": ["approve-guard"],
+        "next": "hud-issues"
+      },
+      "hud-issues": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Bypass withheld while the latest claude review has open findings.",
+        "next": "capture-issues"
+      },
+      "capture-issues": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-review-findings.png",
+        "label": "Bypass withheld for open review findings",
+        "covers": ["approve-guard"],
+        "intent": "Record the withheld bypass and its review reason.",
+        "next": "press-bypass"
+      },
+      "press-bypass": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-approve-publish-unresolved\" enabled=false",
+        "intent": "The operator tries the review bypass, which matches only while it is disabled.",
+        "proves": ["approve-guard"],
+        "next": "no-bypass-confirm"
+      },
+      "no-bypass-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "The withheld bypass opens no confirmation.",
+        "proves": ["approve-guard"],
+        "next": "verify-issues-pending"
+      },
+      "verify-issues-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-issues-pending",
+        "intent": "The gateway still holds the second gate open.",
+        "proves": ["approve-guard"],
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs cleanup",
+        "intent": "Stop the fixture gateway and remove its files.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
