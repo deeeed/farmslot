@@ -27,10 +27,15 @@ import {
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
+import { gatewayFetch } from '../lib/gateway-http-auth';
+import { fonts } from '../lib/theme';
 
 export interface MediaViewerItem {
   uri: string;
   title?: string;
+  /** Second caption line, e.g. the verdict of the criterion this evidence proves. */
+  detail?: string;
+  /** `document` renders the file as text. */
   mediaType?: ArtifactMediaType;
   authHeaders?: ArtifactHttpHeaders;
 }
@@ -117,10 +122,23 @@ export function MediaViewer({
             ))}
           </ScrollView>
           <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
-            <Text style={styles.captionText} numberOfLines={1}>
+            <Text
+              style={styles.captionText}
+              numberOfLines={1}
+              testID={testID ? `${testID}-title` : undefined}
+            >
               {current?.title ?? 'Evidence'}
             </Text>
-            <Text style={styles.indexText}>
+            {current?.detail ? (
+              <Text
+                style={styles.detailText}
+                numberOfLines={2}
+                testID={testID ? `${testID}-detail` : undefined}
+              >
+                {current.detail}
+              </Text>
+            ) : null}
+            <Text style={styles.indexText} testID={testID ? `${testID}-index` : undefined}>
               {currentIndex + 1}/{viewerItems.length}
             </Text>
           </View>
@@ -174,6 +192,11 @@ function MediaSlide({
   onZoomChange?: (zoomed: boolean) => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
+  if (mediaType === 'document') {
+    return (
+      <TextSlide uri={item.uri} width={width} height={height} authHeaders={item.authHeaders} />
+    );
+  }
   if (mediaType === 'video') {
     return (
       <FullscreenVideo
@@ -347,6 +370,63 @@ function FullscreenVideo({
   );
 }
 
+/** A text slide renders at most this many characters, so a large log cannot stall the JS thread. */
+const TEXT_SLIDE_MAX_CHARS = 200_000;
+
+interface TextSlideProps {
+  uri: string;
+  width: number;
+  height: number;
+  authHeaders?: ArtifactHttpHeaders;
+}
+
+type TextSlideContent = { body: string; truncated: boolean } | { error: string };
+
+function TextSlide({ uri, width, height, authHeaders }: TextSlideProps) {
+  const [content, setContent] = useState<TextSlideContent | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setContent(null);
+    gatewayFetch(uri, authHeaders, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((text) =>
+        setContent({
+          body: text.slice(0, TEXT_SLIDE_MAX_CHARS),
+          truncated: text.length > TEXT_SLIDE_MAX_CHARS,
+        }),
+      )
+      .catch((err: Error) => {
+        // Abort is the expected cleanup when the slide unmounts mid-fetch.
+        if (err.name === 'AbortError') return;
+        setContent({ error: err.message });
+      });
+    return () => controller.abort();
+  }, [authHeaders, uri]);
+  const failed = content !== null && 'error' in content;
+  return (
+    <ScrollView
+      style={[styles.textSlide, { width, height }]}
+      contentContainerStyle={styles.textContent}
+    >
+      <Text selectable style={failed ? styles.textError : styles.textBody}>
+        {content === null
+          ? 'Loading…'
+          : 'error' in content
+            ? `Failed to load: ${content.error}`
+            : content.body}
+      </Text>
+      {content && 'truncated' in content && content.truncated ? (
+        <Text style={styles.textError}>
+          Showing the first {TEXT_SLIDE_MAX_CHARS.toLocaleString()} characters.
+        </Text>
+      ) : null}
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
   modalRoot: {
     flex: 1,
@@ -376,8 +456,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  detailText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   indexText: {
     color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+  },
+  textSlide: {
+    flexGrow: 0,
+    backgroundColor: '#0b0b10',
+  },
+  textContent: {
+    padding: 16,
+  },
+  textBody: {
+    color: '#e6e6f0',
+    fontSize: 12,
+    fontFamily: fonts.mono,
+  },
+  textError: {
+    color: '#ff6b6b',
     fontSize: 12,
   },
   navBar: {

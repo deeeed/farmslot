@@ -65,6 +65,7 @@ import {
   routeParamString,
 } from './components/artifact-viewer-panels';
 import { artifactViewerStyles as styles } from './styles/artifact-viewer.styles';
+import { useAcceptanceEvidenceViewer } from './use-acceptance-evidence-viewer';
 
 const ARTIFACT_FILTERS: Array<{ id: ArtifactWorkspaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
@@ -83,14 +84,18 @@ const ARTIFACT_STICKY_NAV_MAX_THRESHOLD = 32;
 const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
 
 export default function ArtifactViewerScreen() {
-  const { runId, recipeRun, artifact, filter, workspace, decisionKind } = useLocalSearchParams<{
-    runId: string;
-    recipeRun?: string;
-    artifact?: string | string[];
-    filter?: string | string[];
-    workspace?: string | string[];
-    decisionKind?: string | string[];
-  }>();
+  const { runId, recipeRun, artifact, filter, workspace, decisionKind, ac, evidence } =
+    useLocalSearchParams<{
+      runId: string;
+      recipeRun?: string;
+      artifact?: string | string[];
+      filter?: string | string[];
+      workspace?: string | string[];
+      decisionKind?: string | string[];
+      /** Acceptance criterion whose evidence the viewer opens on (with `evidence`). */
+      ac?: string | string[];
+      evidence?: string | string[];
+    }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
@@ -124,6 +129,14 @@ export default function ArtifactViewerScreen() {
   const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
+  const acceptanceViewer = useAcceptanceEvidenceViewer({
+    client,
+    run,
+    criterionId: routeParamString(ac).trim(),
+    evidencePath: routeParamString(evidence).trim(),
+    gatewayUrl,
+    authHeaders: artifactAuthHeaders,
+  });
 
   useEffect(() => {
     return () => {
@@ -650,9 +663,9 @@ export default function ArtifactViewerScreen() {
           <Text style={styles.emptyText}>No files match the current filter.</Text>
         }
       />
-      {error && (
+      {(error ?? acceptanceViewer.error) && (
         <Text style={[styles.errorText, { paddingBottom: spacing.lg + insets.bottom }]}>
-          {error}
+          {error ?? acceptanceViewer.error}
         </Text>
       )}
       <MediaViewer
@@ -663,6 +676,15 @@ export default function ArtifactViewerScreen() {
         authHeaders={artifactAuthHeaders}
         initialIndex={viewerIndex}
         onClose={() => setViewerUri(null)}
+      />
+      <MediaViewer
+        testID="companion-ac-evidence-viewer"
+        visible={acceptanceViewer.visible}
+        uri={null}
+        items={acceptanceViewer.items}
+        authHeaders={artifactAuthHeaders}
+        initialIndex={acceptanceViewer.initialIndex}
+        onClose={acceptanceViewer.close}
       />
       <DocumentViewer
         visible={!!documentViewer}

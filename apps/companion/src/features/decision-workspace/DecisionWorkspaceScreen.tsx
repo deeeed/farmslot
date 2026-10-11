@@ -6,7 +6,6 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  buildRunResolveDecisionParams,
   type DecisionListResult,
   Events,
   liveGateParkView,
@@ -30,6 +29,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
   type ArtifactManifestEntry,
@@ -42,8 +42,10 @@ import {
 } from '../../lib/artifact-url';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
+import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import {
@@ -91,6 +93,10 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import {
+  GateReviewEntryCard,
+  PublishGuardNotice,
+} from '../gate-review/components/gate-review-panels';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
 
@@ -251,6 +257,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     sourceRun?.updatedAt ?? '',
   );
   const runPosture = runPostureStatus.state?.posture;
+  // The gate review's publish guard applies here too: this tab sends the same actions.
+  const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const withheldActions = useMemo(
+    () =>
+      new Map(
+        (humanGate?.actions ?? []).flatMap((action) =>
+          action.disabledReason ? [[action.id, action.disabledReason] as const] : [],
+        ),
+      ),
+    [humanGate],
+  );
+  const withheldActionsRef = useRef(withheldActions);
+  withheldActionsRef.current = withheldActions;
   // Only `run.resolveDecision` carries a typed `resourcePosture`. A decision
   // reached through the route or `context.runId` alone resolves through
   // `decision.resolve`, which has nowhere to put a choice, so the choices must
@@ -522,22 +541,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       // Re-derived here rather than trusting the effect to have run: a decision
       // that cannot carry a choice, or a run that has left the wait, must not be
       // blocked by a verdict about a choice that no longer applies to it.
+      const withheld = withheldActionsRef.current.get(actionId);
+      if (withheld) {
+        Alert.alert('Publish approval is disabled', withheld);
+        return;
+      }
       const gate = runPostureGateForContext(postureGate, { gateKey, ...postureAvailability });
       const postureBlock = postureResolveBlock(gate, postureAvailability);
       if (!canResolveWithPostureChoice(gate, postureAvailability)) {
         Alert.alert('Resource posture', postureBlock.message);
         return;
       }
-      const method = decision.runMeta ? 'run.resolveDecision' : 'decision.resolve';
       const resourcePosture = postureChoiceForResolve(gate, postureAvailability);
-      const params = decision.runMeta
-        ? buildRunResolveDecisionParams({
-            runId: decision.runMeta.runId,
-            decision,
-            actionId,
-            ...(resourcePosture ? { resourcePosture } : {}),
-          })
-        : { decisionId: decision.id, actionId };
+      const { method, params } = decisionResolveRequest(decision, actionId, resourcePosture);
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -553,6 +569,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         {
           text: 'Send',
           onPress: () => {
+            // The guard may have changed while the confirmation was open.
+            const withheldNow = withheldActionsRef.current.get(actionId);
+            if (withheldNow) {
+              Alert.alert('Publish approval is disabled', withheldNow);
+              return;
+            }
             client
               .request(method, params)
               .then(() => {
@@ -877,6 +899,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             </View>
           ) : null}
         </View>
+
+        {decision.type === HUMAN_GATE_DECISION_TYPE && !decision.resolvedAt && sourceRunId ? (
+          <GateReviewEntryCard
+            testID="companion-decision-open-gate-review"
+            onOpen={() => router.push(gateReviewHref(sourceRunId, decision.id))}
+          />
+        ) : null}
 
         {!embedded && requestedArtifactPath ? (
           <DecisionFocusedArtifactCard
@@ -1516,22 +1545,35 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               </Text>
             </View>
           ) : (
-            presentation.actions.map((action) => (
-              <Pressable
-                key={action.id}
-                style={[
-                  styles.actionButton,
-                  action.style === 'primary' && { backgroundColor: colors.accent },
-                  action.style === 'danger' && { backgroundColor: colors.statusFail },
-                ]}
-                onPress={() => resolveAction(action.id)}
-              >
-                <Text style={styles.actionText}>{action.label}</Text>
-                {action.description && (
-                  <Text style={styles.actionDescription}>{action.description}</Text>
-                )}
-              </Pressable>
-            ))
+            <>
+              {humanGate ? (
+                <PublishGuardNotice
+                  guard={humanGate.guard}
+                  actions={humanGate.actions}
+                  testID="companion-decision-publish-guard"
+                />
+              ) : null}
+              {presentation.actions.map((action) => (
+                <Pressable
+                  key={action.id}
+                  testID={`companion-decision-action-${action.id}`}
+                  disabled={withheldActions.has(action.id)}
+                  accessibilityState={{ disabled: withheldActions.has(action.id) }}
+                  style={[
+                    styles.actionButton,
+                    action.style === 'primary' && { backgroundColor: colors.accent },
+                    action.style === 'danger' && { backgroundColor: colors.statusFail },
+                    withheldActions.has(action.id) && styles.actionButtonDisabled,
+                  ]}
+                  onPress={() => resolveAction(action.id)}
+                >
+                  <Text style={styles.actionText}>{action.label}</Text>
+                  {action.description && (
+                    <Text style={styles.actionDescription}>{action.description}</Text>
+                  )}
+                </Pressable>
+              ))}
+            </>
           )}
           <View
             testID="companion-screen-decision-workspace-end"
