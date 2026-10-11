@@ -84,7 +84,7 @@ test('scoped omissions preserve new screenshot pairs sharing one before image', 
   });
   assert.deepEqual(
     manifest.map((artifact) => artifact.path).sort(),
-    names.map((name) => `artifacts/current/screenshots/${name}`).sort(),
+    [...names.map((name) => `artifacts/current/screenshots/${name}`), 'artifacts/after.mp4'].sort(),
   );
 });
 

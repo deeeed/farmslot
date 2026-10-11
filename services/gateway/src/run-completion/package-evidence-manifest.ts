@@ -7,6 +7,7 @@ import {
   type ArtifactRef,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
+  type Run,
 } from '@farmslot/protocol';
 
 import { isGatewayOwnedArtifactPath } from '../core/artifact-copy-policy.js';
@@ -15,7 +16,7 @@ import {
   isEvidenceManifestReferencedArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
-import type { EvidenceManifest } from './evidence-manifest.js';
+import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { exactEvidenceKeys } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 
@@ -34,48 +35,8 @@ function evidenceManifestOmitSet(manifest: EvidenceManifest | null | undefined):
   return omitted;
 }
 
-function evidenceManifestExplicitPublishEvidenceSet(
-  manifest: EvidenceManifest | null | undefined,
-): Set<string> | null {
-  const explicit = new Set<string>();
-  let screenshotRefCount = 0;
-  const add = (key: string | undefined) => {
-    if (typeof key !== 'string' || !key.trim()) return;
-    screenshotRefCount += 1;
-    for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
-  };
-
-  for (const pair of manifest?.before_after_pairs ?? []) {
-    add(pair.before);
-    add(pair.after);
-  }
-  for (const entry of manifest?.standalone ?? []) {
-    add(entry.file);
-  }
-
-  const videoRefs = [manifest?.videos?.before, manifest?.videos?.after].filter(
-    (key): key is string => typeof key === 'string' && key.trim().length > 0,
-  );
-  const includeVideos =
-    videoRefs.length > 0 &&
-    (manifest?.preferred_mode === 'video' ||
-      manifest?.videos?.preferred === true ||
-      screenshotRefCount === 0);
-  if (includeVideos) {
-    for (const key of videoRefs) {
-      for (const variant of exactEvidenceKeys(key.trim())) explicit.add(variant);
-    }
-  }
-
-  return explicit.size > 0 ? explicit : null;
-}
-
 function artifactPathOmitted(artifactPath: string, omitted: Set<string>): boolean {
   return exactEvidenceKeys(artifactPath).some((variant) => omitted.has(variant));
-}
-
-function artifactPathMatchesEvidenceSet(artifactPath: string, evidenceSet: Set<string>): boolean {
-  return exactEvidenceKeys(artifactPath).some((variant) => evidenceSet.has(variant));
 }
 
 export async function buildPackageEvidenceManifest(
@@ -84,7 +45,7 @@ export async function buildPackageEvidenceManifest(
   evidenceManifest: EvidenceManifest | null | undefined,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
-  const explicitPublishEvidenceKeys = evidenceManifestExplicitPublishEvidenceSet(evidenceManifest);
+  const hasDeclaredEvidence = evidenceManifestArtifactPaths(evidenceManifest).length > 0;
   const trustedArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, evidenceManifest);
   const entries: ArtifactRef[] = [];
   for (const artifact of trustedArtifacts) {
@@ -99,14 +60,7 @@ export async function buildPackageEvidenceManifest(
       artifactPathOmitted(artifact.path, omittedEvidenceKeys)
     )
       continue;
-    const publishableEvidence = isPublishEvidenceArtifact(artifact) || manifestReferenced;
-    if (!publishableEvidence) continue;
-    if (
-      explicitPublishEvidenceKeys &&
-      !artifactPathMatchesEvidenceSet(artifact.path, explicitPublishEvidenceKeys)
-    ) {
-      continue;
-    }
+    if (!(hasDeclaredEvidence ? manifestReferenced : isPublishEvidenceArtifact(artifact))) continue;
     let digest: string | undefined;
     if (taskDir) {
       const artifactPath = path.resolve(taskDir, artifact.path);
@@ -123,4 +77,23 @@ export async function buildPackageEvidenceManifest(
     });
   }
   return sortArtifactRefsForComparison(entries);
+}
+
+export interface CurrentPackageEvidence {
+  artifacts: ArtifactRef[];
+  manifest: EvidenceManifest | null;
+  inventory: ArtifactRef[];
+}
+
+export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPackageEvidence> {
+  if (!run.taskFile) throw new Error('Publication evidence requires a task directory');
+  const taskDir = path.dirname(run.taskFile);
+  const { scanArtifacts, readEvidenceManifest } = await import('./publication-artifacts.js');
+  const artifacts = await scanArtifacts(taskDir);
+  const manifest = await readEvidenceManifest(run);
+  return {
+    artifacts,
+    manifest,
+    inventory: await buildPackageEvidenceManifest(taskDir, artifacts, manifest),
+  };
 }
