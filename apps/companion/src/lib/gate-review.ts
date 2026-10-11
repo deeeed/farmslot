@@ -40,6 +40,20 @@ const REVIEW_OVERRIDE_ACTIONS: ReadonlySet<string> = new Set([
 /** What the gate model reads from a decision, whether it came with its run or from `decision.list`. */
 export type GateDecision = Pick<RunDecision, 'title' | 'payload'>;
 
+export type HumanGateGuardDecision = GateDecision & Pick<RunDecision, 'actions'>;
+
+export interface HumanGateGuardState {
+  reviews: GateReviewVerdict[];
+  guard: ApprovePublishGuard;
+  actions: GateReviewAction[];
+}
+
+/** The criteria the guard reads; null view with no error means still loading. */
+export interface GateAcceptanceInput {
+  view: Pick<AcceptanceLedgerView, 'rows'> | null;
+  error: string | null;
+}
+
 export interface GateReviewSummary {
   title: string;
   target: string | null;
@@ -243,4 +257,25 @@ export function gateReviewActions(
       : [...guard.acceptanceReasons, ...guard.reviewReasons];
     return { ...action, disabledReason: reasons.length > 0 ? reasons.join(' · ') : null };
   });
+}
+
+/**
+ * The publish guard for one human gate of a run: each reviewer's latest verdict
+ * and the gate's actions with the withheld approvals marked. Without its run the
+ * gate has no criteria to read, which withholds approval rather than reading as
+ * "loading".
+ */
+export function humanGateGuard(
+  run: Pick<Run, 'engineState'> | null,
+  decision: HumanGateGuardDecision,
+  acceptance: GateAcceptanceInput,
+): HumanGateGuardState {
+  const reviews = latestReviewVerdicts(gateIndependentReviews(run, decision));
+  const guard = approvePublishGuard({
+    acceptance: acceptance.view,
+    acceptanceError: run ? acceptance.error : "the gate's run is not loaded",
+    reviews,
+    requiredReviews: gateRequiredReviewCount(decision),
+  });
+  return { reviews, guard, actions: gateReviewActions(decision.actions, guard) };
 }

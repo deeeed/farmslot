@@ -10,47 +10,28 @@ import { useMemo } from 'react';
 import type { Run, RunDecision } from '@farmslot/protocol';
 
 import {
-  type ApprovePublishGuard,
-  approvePublishGuard,
-  type GateDecision,
-  gateIndependentReviews,
-  gateRequiredReviewCount,
-  type GateReviewAction,
-  gateReviewActions,
-  type GateReviewVerdict,
   HUMAN_GATE_DECISION_TYPE,
-  latestReviewVerdicts,
+  humanGateGuard,
+  type HumanGateGuardDecision,
+  type HumanGateGuardState,
 } from '../lib/gate-review';
 import type { GatewayClient } from '../lib/gateway-client';
 
 import { type RunAcceptance, useRunAcceptance } from './useRunAcceptance';
 
-export interface HumanGateGuard {
+export interface HumanGateGuard extends HumanGateGuardState {
   acceptance: RunAcceptance;
-  reviews: GateReviewVerdict[];
-  guard: ApprovePublishGuard;
-  actions: GateReviewAction[];
 }
-
-export type HumanGateGuardDecision = GateDecision & Pick<RunDecision, 'type' | 'actions'>;
 
 export function useHumanGateGuard(
   client: GatewayClient | null,
   run: Run | null,
-  decision: HumanGateGuardDecision | null,
+  decision: (HumanGateGuardDecision & Pick<RunDecision, 'type'>) | null,
 ): HumanGateGuard | null {
   const gate = decision?.type === HUMAN_GATE_DECISION_TYPE ? decision : null;
   const acceptance = useRunAcceptance(client, gate ? run : null);
-  return useMemo(() => {
-    if (!gate) return null;
-    const reviews = latestReviewVerdicts(gateIndependentReviews(run, gate));
-    const guard = approvePublishGuard({
-      acceptance: acceptance.view,
-      // Without its run the gate has no criteria to read; say so rather than "loading".
-      acceptanceError: run ? acceptance.error : "the gate's run is not loaded",
-      reviews,
-      requiredReviews: gateRequiredReviewCount(gate),
-    });
-    return { acceptance, reviews, guard, actions: gateReviewActions(gate.actions, guard) };
-  }, [acceptance, gate, run]);
+  return useMemo(
+    () => (gate ? { acceptance, ...humanGateGuard(run, gate, acceptance) } : null),
+    [acceptance, gate, run],
+  );
 }

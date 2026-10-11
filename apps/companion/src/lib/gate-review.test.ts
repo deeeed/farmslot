@@ -19,6 +19,7 @@ import {
   gateReviewActions,
   gateReviewHref,
   gateReviewSummary,
+  humanGateGuard,
   latestReviewVerdicts,
   openHumanGateDecision,
 } from './gate-review';
@@ -345,4 +346,20 @@ test('criteria that are loading or unavailable cannot clear the guard', () => {
     }).acceptanceReasons,
     ['Acceptance criteria unavailable: bad json'],
   );
+});
+
+test('a gate is guarded with its own review requirement and the run it belongs to', () => {
+  const judged = { view: acceptance(['AC-1', 'AC-2']), error: null };
+  const run = { engineState: { publishGate: { independentReviews: [] } } } as never;
+  // A publication gate needs a review; with none live or in its snapshot, approve is withheld.
+  const payload = gateDecision().payload as ReadyGatePayload;
+  const unreviewed = gateDecision({ payload: { ...payload, independentReviews: [] } });
+  assert.equal(
+    humanGateGuard(run, unreviewed, judged).actions[0].disabledReason,
+    'No independent review verdict yet',
+  );
+  // Without its run the gate cannot show its criteria, so approval is withheld.
+  assert.deepEqual(humanGateGuard(null, gateDecision(), judged).guard.acceptanceReasons, [
+    "Acceptance criteria unavailable: the gate's run is not loaded",
+  ]);
 });

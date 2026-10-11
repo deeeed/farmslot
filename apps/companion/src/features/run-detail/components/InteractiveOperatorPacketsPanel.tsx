@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -19,13 +19,17 @@ import {
   validateInteractiveOperatorPacket,
 } from '@farmslot/protocol';
 
-import { useHumanGateGuard } from '../../../hooks/useHumanGateGuard';
+import { useRunAcceptance } from '../../../hooks/useRunAcceptance';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactUrl,
 } from '../../../lib/artifact-url';
-import { openHumanGateDecision } from '../../../lib/gate-review';
+import {
+  HUMAN_GATE_DECISION_TYPE,
+  humanGateGuard,
+  openHumanGateDecision,
+} from '../../../lib/gate-review';
 import type { GatewayClient } from '../../../lib/gateway-client';
 import { gatewayFetch } from '../../../lib/gateway-http-auth';
 import {
@@ -59,12 +63,30 @@ export function InteractiveOperatorPacketsPanel({
   const [packets, setPackets] = useState<LoadedInteractivePacket[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  // A packet may name the run's publish gate; the gate review's guard applies to it too.
-  const humanGate = useHumanGateGuard(
+  // A packet may name one of the run's publish gates; the gate review's guard applies to it too.
+  const acceptance = useRunAcceptance(
     client,
-    run,
-    packetArtifacts.length ? openHumanGateDecision(run) : null,
+    packetArtifacts.length && openHumanGateDecision(run) ? run : null,
   );
+  // Read at press time and again after the confirmation, so a guard that changed
+  // while the dialog was open still applies.
+  const latestRef = useRef({ run, acceptance });
+  latestRef.current = { run, acceptance };
+  const withheldReason = (decisionId: string, actionId: string): string | null => {
+    const latest = latestRef.current;
+    const gate = latest.run.decisions.find(
+      (decision) =>
+        decision.id === decisionId &&
+        decision.type === HUMAN_GATE_DECISION_TYPE &&
+        !decision.resolvedAt,
+    );
+    if (!gate) return null;
+    return (
+      humanGateGuard(latest.run, gate, latest.acceptance).actions.find(
+        (candidate) => candidate.id === actionId,
+      )?.disabledReason ?? null
+    );
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -126,12 +148,13 @@ export function InteractiveOperatorPacketsPanel({
       setFeedback(`Action "${action.label}" is missing required payload fields.`);
       return;
     }
-    const withheld =
-      request.kind === 'decision.resolve' && request.decisionId === openHumanGateDecision(run)?.id
-        ? humanGate?.actions.find((candidate) => candidate.id === request.actionId)?.disabledReason
+    const withheld = () =>
+      request.kind === 'decision.resolve'
+        ? withheldReason(request.decisionId, request.actionId)
         : null;
-    if (withheld) {
-      setFeedback(`Publish approval is disabled: ${withheld}`);
+    const before = withheld();
+    if (before) {
+      setFeedback(`Publish approval is disabled: ${before}`);
       return;
     }
     const requiresConfirmation =
@@ -139,6 +162,11 @@ export function InteractiveOperatorPacketsPanel({
       request.kind === 'terminal.send' ||
       request.kind === 'decision.resolve';
     if (requiresConfirmation && !(await confirmAction(action.label, packet.title))) return;
+    const after = withheld();
+    if (after) {
+      setFeedback(`Publish approval is disabled: ${after}`);
+      return;
+    }
     try {
       if (request.kind === 'copy') {
         const shareResult = await Share.share({ message: request.text });
