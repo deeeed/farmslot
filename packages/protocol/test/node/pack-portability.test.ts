@@ -164,7 +164,20 @@ test('pack pool identities skip malformed JSON without echoing its contents', (t
     join(root, 'configured.json'),
     JSON.stringify({ machine: 'registered', host: 'registered.local', slots: [] }),
   );
-  assert.deepEqual(packMachineNames(root), ['registered', 'registered.local']);
+  writeFileSync(
+    join(root, 'loopback.json'),
+    JSON.stringify({ machine: 'loopback-worker', host: '127.0.1.1', slots: [] }),
+  );
+  writeFileSync(
+    join(root, 'uppercase.json'),
+    JSON.stringify({ machine: 'other-worker', host: 'LOCALHOST', slots: [] }),
+  );
+  assert.deepEqual(packMachineNames(root), [
+    'registered',
+    'registered.local',
+    'loopback-worker',
+    'other-worker',
+  ]);
 });
 
 test('ordinary pool hostnames do not turn branch, mode or tool names into fixed selectors', () => {

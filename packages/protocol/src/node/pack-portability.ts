@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { isLoopbackHost } from './loopback-host.js';
 import { readPoolFiles } from './slot-by-repo.js';
 
 const PRIVATE_PATH =
@@ -29,6 +30,8 @@ export interface PackOwnedEntry {
 }
 
 /** The owned-entry encoding belongs beside its producer and validators. */
+export function packEntryLinkTarget(entry: PackOwnedEntry & { content: string }): string;
+export function packEntryLinkTarget(entry: PackOwnedEntry): string | undefined;
 export function packEntryLinkTarget(entry: PackOwnedEntry): string | undefined {
   return typeof entry.content === 'string' ? entry.content.slice('symlink:'.length) : undefined;
 }
@@ -124,8 +127,7 @@ export function packMachineNames(poolDir: string): string[] {
     ...new Set(
       readPoolFiles<{ machine?: string; host?: string }>(poolDir).flatMap(({ pool }) =>
         [pool.machine, pool.host].filter(
-          (v): v is string =>
-            typeof v === 'string' && !['localhost', '127.0.0.1', '::1'].includes(v),
+          (v): v is string => typeof v === 'string' && !isLoopbackHost(v),
         ),
       ),
     ),
@@ -208,13 +210,8 @@ export function validatePackPortability(
 ): string[] {
   return listPackOwnedEntries(root).flatMap(({ rel, content }) => {
     const file = prefix ? `${prefix}/${rel}` : rel;
-    const target = packEntryLinkTarget({ rel, content });
-    return target !== undefined
-      ? validatePackFilePortability(file, target, machines)
-      : validatePackBytesPortability(
-          file,
-          typeof content === 'string' ? Buffer.from(content) : content,
-          machines,
-        );
+    return typeof content === 'string'
+      ? validatePackFilePortability(file, packEntryLinkTarget({ rel, content }), machines)
+      : validatePackBytesPortability(file, content, machines);
   });
 }

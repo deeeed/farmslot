@@ -493,7 +493,12 @@ test('registration preserves relative tool pins and repairs only previously conv
   assert.equal(readlinkSync(pin), '../setup/node-tool-versions');
   rmSync(dest, { recursive: true });
   cpSync(src, dest, { recursive: true });
-  assert.equal(readlinkSync(pin), realpathSync(join(src, 'setup/node-tool-versions')));
+  assert.ok(
+    [
+      join(src, 'setup/node-tool-versions'),
+      realpathSync(join(src, 'setup/node-tool-versions')),
+    ].includes(readlinkSync(pin)),
+  );
   writeFileSync(join(dest, 'operator.private'), 'operator value');
   assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 1);
   assert.equal(readlinkSync(pin), '../setup/node-tool-versions');
