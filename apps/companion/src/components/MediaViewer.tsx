@@ -1,6 +1,7 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Image,
   Modal,
   Platform,
@@ -31,6 +32,7 @@ import { gatewayFetch } from '../lib/gateway-http-auth';
 import {
   TEXT_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_RANGE,
+  textPreviewChunks,
   textPreviewTotalBytes,
 } from '../lib/text-preview';
 import { fonts } from '../lib/theme';
@@ -416,26 +418,35 @@ function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps
       });
     return () => controller.abort();
   }, [authHeaders, load, uri]);
-  const failed = content !== null && 'error' in content;
+  const chunks = useMemo(
+    () => (content && 'body' in content ? textPreviewChunks(content.body) : []),
+    [content],
+  );
   return (
-    <ScrollView
+    <FlatList
       style={[styles.textSlide, { width, height }]}
       contentContainerStyle={styles.textContent}
-    >
-      {content && 'totalBytes' in content && content.totalBytes > TEXT_PREVIEW_MAX_BYTES ? (
-        <Text style={styles.textError}>
-          Showing the first {TEXT_PREVIEW_MAX_BYTES.toLocaleString()} of{' '}
-          {content.totalBytes.toLocaleString()} bytes.
+      data={chunks}
+      keyExtractor={(_, index) => String(index)}
+      ListHeaderComponent={
+        content === null ? (
+          <Text style={styles.textBody}>Loading…</Text>
+        ) : 'error' in content ? (
+          <Text style={styles.textError}>Failed to load: {content.error}</Text>
+        ) : content.totalBytes > TEXT_PREVIEW_MAX_BYTES ? (
+          <Text style={styles.textError}>
+            Showing the first {TEXT_PREVIEW_MAX_BYTES.toLocaleString()} of{' '}
+            {content.totalBytes.toLocaleString()} bytes.
+          </Text>
+        ) : null
+      }
+      renderItem={({ item }) => (
+        // Blocks follow one another, so the newline that ends a block is not drawn twice.
+        <Text selectable style={styles.textBody}>
+          {item.endsWith('\n') ? item.slice(0, -1) : item}
         </Text>
-      ) : null}
-      <Text selectable style={failed ? styles.textError : styles.textBody}>
-        {content === null
-          ? 'Loading…'
-          : 'error' in content
-            ? `Failed to load: ${content.error}`
-            : content.body}
-      </Text>
-    </ScrollView>
+      )}
+    />
   );
 }
 
