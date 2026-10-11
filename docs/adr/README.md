@@ -1,8 +1,8 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-17
-**Stale by:** 2026-10-17
+**Last updated:** 2026-10-12
+**Stale by:** 2026-11-12
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
@@ -67,3 +67,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |
 | [059](059-pi-tui-model-agnostic-runner.md)               | PI TUI as a model-agnostic Farmslot worker                              | Accepted |
 | [060](060-sub-task-observability.md)                     | Sub-task observability through child checklist units                    | Accepted |
+| [061](061-structured-assessment-providers.md)            | Structured assessment providers                                         | Accepted |
+| [062](062-recorded-run-evidence.md)                      | Recorded run evidence                                                   | Accepted |
+| [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Accepted |
+| [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks before publication                       | Accepted |

@@ -1,28 +1,62 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, type StyleProp, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { TERMINAL_CONTROL_KEYS, type TerminalControlKey } from '../lib/terminal-controls';
+import { usePaneRunnerContext } from '../hooks/usePaneRunnerContext';
+import {
+  resolveRunnerKeyProfile,
+  runnerKeyProfileSummary,
+  TERMINAL_CONTROL_KEYS,
+  type TerminalControlKey,
+  terminalExtraKeyRows,
+  type TerminalRunnerPane,
+} from '../lib/terminal-controls';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+import { useTerminalPrefsStore } from '../store/terminal-prefs';
+
+import { CustomTerminalKeysModal, RunnerKeyProfilePicker } from './TerminalKeyModals';
 
 export type TerminalControlKeyBarProps = {
   activeLabel?: string | null;
   disabled?: boolean;
   label?: string | null;
+  /** Adds the runner row, the Yours row and their pickers for the pane this bar drives. */
+  runnerPane?: TerminalRunnerPane | null;
   touchKeyboardEnabled?: boolean;
   onPress: (control: TerminalControlKey) => void;
   onToggleTouchKeyboard?: () => void;
   style?: StyleProp<ViewStyle>;
 };
 
+type RenderKey = (control: TerminalControlKey, testID?: string) => React.ReactNode;
+
 export function TerminalControlKeyBar({
   activeLabel = null,
   disabled = false,
   label = 'Terminal keys · arrows / Tab / Esc / ^C / ^D',
+  runnerPane,
   touchKeyboardEnabled,
   onPress,
   onToggleTouchKeyboard,
   style,
 }: TerminalControlKeyBarProps) {
+  const renderKey: RenderKey = (control, testID) => (
+    <Pressable
+      key={control.label}
+      testID={testID}
+      accessibilityRole="button"
+      style={[
+        styles.button,
+        control.danger && styles.dangerButton,
+        disabled && styles.disabledButton,
+      ]}
+      onPress={() => onPress(control)}
+      disabled={disabled}
+    >
+      <Text style={[styles.buttonText, control.danger && styles.dangerText]}>
+        {activeLabel === control.label ? '…' : control.label}
+      </Text>
+    </Pressable>
+  );
   return (
     <View style={[styles.panel, style]}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
@@ -42,24 +76,71 @@ export function TerminalControlKeyBar({
             </Text>
           </Pressable>
         ) : null}
-        {TERMINAL_CONTROL_KEYS.map((control) => (
-          <Pressable
-            key={control.label}
-            style={[
-              styles.button,
-              control.danger && styles.dangerButton,
-              disabled && styles.disabledButton,
-            ]}
-            onPress={() => onPress(control)}
-            disabled={disabled}
-          >
-            <Text style={[styles.buttonText, control.danger && styles.dangerText]}>
-              {activeLabel === control.label ? '…' : control.label}
-            </Text>
-          </Pressable>
-        ))}
+        {TERMINAL_CONTROL_KEYS.map((control) => renderKey(control))}
       </View>
+      {runnerPane !== undefined ? <RunnerKeyRows pane={runnerPane} renderKey={renderKey} /> : null}
     </View>
+  );
+}
+
+function RunnerKeyRows({
+  pane,
+  renderKey,
+}: {
+  pane: TerminalRunnerPane | null;
+  renderKey: RenderKey;
+}) {
+  const { context, error } = usePaneRunnerContext(pane);
+  const overrides = useTerminalPrefsStore((s) => s.runnerKeyOverrides);
+  const customKeys = useTerminalPrefsStore((s) => s.customKeys);
+  const setRunnerKeyOverride = useTerminalPrefsStore((s) => s.setRunnerKeyOverride);
+  const [openModal, setOpenModal] = useState<'profile' | 'custom' | null>(null);
+  const resolved = resolveRunnerKeyProfile(context, overrides);
+  const { paneKey } = context;
+  return (
+    <>
+      <View style={styles.extraRow}>
+        <Pressable
+          testID="terminal-runner-profile"
+          accessibilityRole="button"
+          style={[styles.chip, !paneKey && styles.disabledButton]}
+          disabled={!paneKey}
+          onPress={() => setOpenModal('profile')}
+        >
+          <Text style={styles.chipText}>{runnerKeyProfileSummary(resolved)}</Text>
+        </Pressable>
+        <Pressable
+          testID="terminal-custom-keys-manage"
+          accessibilityRole="button"
+          style={styles.chip}
+          onPress={() => setOpenModal('custom')}
+        >
+          <Text style={styles.chipText}>＋ Your keys</Text>
+        </Pressable>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+      {terminalExtraKeyRows(resolved.profile, customKeys).map((row) => (
+        <View key={row.id} testID={`terminal-${row.id}-keys-row`} style={styles.extraRow}>
+          <Text style={styles.rowTitle}>{row.title}</Text>
+          {row.keys.map((control, index) => renderKey(control, `terminal-${row.id}-key-${index}`))}
+        </View>
+      ))}
+      {paneKey ? (
+        <RunnerKeyProfilePicker
+          visible={openModal === 'profile'}
+          resolved={resolved}
+          onClose={() => setOpenModal(null)}
+          onSelect={(runnerId) => {
+            setRunnerKeyOverride(paneKey, runnerId);
+            setOpenModal(null);
+          }}
+        />
+      ) : null}
+      {/* Mounted only while open, so a closed editor keeps no draft. */}
+      {openModal === 'custom' ? (
+        <CustomTerminalKeysModal visible onClose={() => setOpenModal(null)} />
+      ) : null}
+    </>
   );
 }
 
@@ -79,6 +160,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+  },
+  extraRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  rowTitle: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '700',
+    marginRight: spacing.xs,
+  },
+  chip: {
+    borderColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  chipText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '700',
   },
   button: {
     alignItems: 'center',
@@ -111,4 +216,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   dangerText: { color: colors.statusFail },
+  errorText: { color: colors.statusFail, fontSize: fonts.sizeXs },
 });

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Successful task completion requires verdicts for every registered acceptance criterion, including older contracts without an acceptance opt-in. Missing or unreadable ledgers fail closed; no-change and review outcomes retain their existing contracts.
+
 ## 0.17.5 - 2026-10-11
 
 - Align the protocol dependency with 0.37.0 so consumers resolve one copy.

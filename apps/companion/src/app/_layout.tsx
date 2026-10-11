@@ -186,6 +186,20 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="evidence/[runId]"
+              options={{
+                title: 'Evidence',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
+              }}
+            />
+            <Stack.Screen
+              name="gate-review/[decisionId]"
+              options={{
+                title: 'Gate review',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/inbox" />,
+              }}
+            />
+            <Stack.Screen
               name="visual-review/[runId]"
               options={{
                 title: 'Visual review',

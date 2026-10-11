@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish-approval action ids and review-depth counting come from `@farmslot/protocol`, shared with the clients' publish guards; gate behavior is unchanged.
+- PR-producing worker templates record acceptance verdicts and derive recipe coverage before completion, including development and interactive sessions.
+
 - Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
 - Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
 - Run replay and startup recovery reuse the run branch. New-work prepare refuses to replace a published branch with commits outside the default branch or recorded start ref, and reports those commits before resetting or deleting any branch.
@@ -26,6 +29,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
 - Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates and includes them automatically on completion without an approval gate. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
+- Tmux worker listings report `processRunnerIds`, the runners whose registry process matchers hit the pane command, limited to runners safe to identify without a recorded identity, so a generic `agent` never names Cursor, and `linkedRunner`, the linked run's runner, only on the worker's own pane, located by the `%N` pane id dispatch records (or an exact target); review sessions and other session-only correlations name none. That pane id also scopes a slot worker's pane-retirement status to its own pane instead of every pane in its window. Each `RunnerDefinition` declares the mobile key profile Companion shows as its runner row.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 
