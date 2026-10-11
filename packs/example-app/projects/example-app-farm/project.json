@@ -45,7 +45,13 @@
     }
   },
   "node_support": {
-    "paths": ["projects/example-app-farm"]
+    "paths": [
+      "projects/example-app-farm/provider.mjs",
+      "projects/example-app-farm/recipe-library.json",
+      "projects/example-app-farm/manifests",
+      "projects/example-app-farm/recipes",
+      "projects/example-app-farm/scripts"
+    ]
   },
   "execution_templates": {
     "sources": [],

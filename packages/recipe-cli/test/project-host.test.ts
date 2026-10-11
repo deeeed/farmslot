@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ProjectConfig } from '@farmslot/protocol';
 
@@ -73,6 +73,40 @@ const invocationContract: CommandContract = {
   positionals: [{ label: 'recipe' }],
   minimumPositionals: 1,
 };
+
+test('project host matches file URLs and absolute local repository origins', async (t) => {
+  const options = fixture(t);
+  execFileSync('git', ['init', '--quiet', options.cwd]);
+  const origin = path.join(options.cwd, 'origin with spaces.git');
+  const url = pathToFileURL(origin).href;
+  execFileSync('git', ['-C', options.cwd, 'remote', 'add', 'origin', url]);
+  for (const [remote, declared] of [
+    [url, origin],
+    [origin, url],
+  ]) {
+    execFileSync('git', ['-C', options.cwd, 'remote', 'set-url', 'origin', remote!]);
+    options.projects[0]!.config.repoUrl = declared!;
+    await withProjectRecipeHost(options, async () => {
+      assert.equal(harnessContext()?.project?.name, 'example');
+    });
+  }
+});
+
+test('project host refuses different local repository origins before provider effects', async (t) => {
+  const options = fixture(t);
+  execFileSync('git', ['init', '--quiet', options.cwd]);
+  const origin = path.join(options.cwd, 'origin.git');
+  execFileSync('git', ['-C', options.cwd, 'remote', 'add', 'origin', pathToFileURL(origin).href]);
+  options.projects[0]!.config.repoUrl = path.join(options.cwd, 'different.git');
+  const factoryLog = path.join(options.cwd, 'factory.jsonl');
+  await assert.rejects(
+    withProjectRecipeHost({ ...options, options: { factoryLog } }, async () => {
+      assert.fail('Mismatched repository reached the handler');
+    }),
+    { code: 'PROJECT_INCOMPATIBLE' },
+  );
+  assert.equal(fs.existsSync(factoryLog), false);
+});
 
 test('project recovery hints survive the declared provider host configuration', async (t) => {
   const options = fixture(t);

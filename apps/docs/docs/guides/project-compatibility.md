@@ -105,17 +105,22 @@ FARMSLOT_MINIMAL=1 FARMSLOT_SKIP_CAPTURE_HELPER=1 FARMSLOT_NO_STAR_PROMPT=1 \
 export FARMSLOT_ROOT="$FARMSLOT_WORKSPACE/farmslot"
 export FARMSLOT_POOL_DIR="$FARMSLOT_ROOT/pool"
 tutorial_cli="$FARMSLOT_ROOT/packages/cli/bin/farmslot.mjs"
+node "$tutorial_cli" up --port 17877 --no-open --no-node
+tutorial_machine="$(node -p 'require("node:os").hostname().replace(/\.local$/, "")')"
+node "$tutorial_cli" --gateway local credential issue \
+  --principal "$tutorial_machine" --subject node --machine "$tutorial_machine" \
+  --write-node-env --json
 node "$tutorial_cli" up --port 17877 --no-open
 node "$tutorial_cli" --gateway local gateway status
 ```
 
-Use the installed CLI for the rest of this section so the gateway, node and registered pack use the same disposable workspace. `up` starts the local gateway and node and records the authenticated `local` profile. `FARMSLOT_WORKSPACE` selects installation files; it does not select the gateway for RPC calls. Use `--gateway local` below, and confirm the installer reports the disposable workspace and gateway status reports the chosen port and connected local node. If port 17877 is occupied, choose another unused port.
+Use the installed CLI for the rest of this section so the gateway, node and registered pack use the same disposable workspace. The first `up` starts only the gateway and records the authenticated `local` profile. Issue its local node credential once, then run `up` again to start the node. `--write-node-env` stores the credential in the installed checkout; `--json` returns credential metadata without printing the secret. `FARMSLOT_WORKSPACE` selects installation files; it does not select the gateway for RPC calls. Use `--gateway local` below, and confirm the installer reports the disposable workspace and gateway status reports the chosen port and connected local node. If port 17877 is occupied, choose another unused port.
 
 Register the pack and create a run:
 
 ```sh
 node "$tutorial_cli" project add "$tutorial_pack"
-node "$tutorial_cli" --gateway local fleet status
+node "$tutorial_cli" --gateway local fleet status --force-refresh
 node "$tutorial_cli" --gateway local run create \
   --project example-app-farm --flow-type qa --qa-profile smoke \
   --ticket "Example recipe smoke" --mode validation \
@@ -123,6 +128,8 @@ node "$tutorial_cli" --gateway local run create \
 run_id="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).data.run.id' "$tutorial_root/run.json")"
 node "$tutorial_cli" --gateway local run get "$run_id"
 ```
+
+Confirm the refreshed fleet lists the new `example-app` slot as ready before creating the run. `fleet status --force-refresh` probes the newly registered pool instead of returning the earlier empty snapshot.
 
 The `smoke` QA preset selects `qa/recipe-smoke`. Its frontmatter declares `recipe_checks: [smoke]` and `recipe_actions: [example.note]`. Preview checks that selected flow; dispatch rechecks after prepare. The declared scripted command runs the real recipe and writes the usual run signal and command artifacts. Use `run get` to inspect its status and steps until it reaches its gate. Check the scripted command result and retained recipe trace for both assertions. Command Center can inspect the same run on this gateway.
 

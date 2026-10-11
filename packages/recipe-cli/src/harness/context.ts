@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { PlatformAdapter } from '@farmslot/adapter-sdk';
 import { portableRepoIdentity } from '@farmslot/agent-runtime';
@@ -1113,6 +1113,8 @@ function stringField(value: RuntimeContext | undefined, key: string): string | u
 }
 
 function repositoryIdentity(value: string): string {
+  if (path.isAbsolute(value)) return pathToFileURL(value).href;
+  if (value.startsWith('file:')) return pathToFileURL(fileURLToPath(value)).href;
   const repository = portableRepoIdentity(value);
   if (!repository) return value;
   const sshHost = (host: string): string => {
