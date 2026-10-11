@@ -231,7 +231,8 @@ for (const ownerExits of [false, true]) {
       const result = await runOwnedRecipeProcess(process.execPath, ['-e', source], {
         cwd: os.tmpdir(),
         ownProcessGroup: false,
-        timeoutMs: 250,
+        // Both Node processes must start before this foreground timeout is exercised.
+        timeoutMs: 750,
         onSpawn(pid) {
           owner = pid;
           return undefined;

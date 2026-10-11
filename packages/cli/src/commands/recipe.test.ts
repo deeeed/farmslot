@@ -260,9 +260,8 @@ for (const { signal, standalone } of [
     async (t) => {
       const root = callFixture(t, false);
       const ready = path.join(root, 'artifacts/child.json');
-      const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const childScript = `require('node:fs').writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid:process.pid}));setInterval(()=>{},50)`;
-      const cmd = `exec ${quote(process.execPath)} -e ${quote(childScript)}`;
+      const cmd = `exec ${shellQuote(process.execPath)} -e ${shellQuote(childScript)}`;
       let command = publicCall(root, ['command', `cmd=${cmd}`]);
       if (standalone) {
         const file = path.join(root, 'interrupt.recipe.json');
@@ -448,47 +447,59 @@ for (const operation of ['run', 'call'] as const) {
   });
 }
 
-test('public-bin failure diagnostics name the registered doctor command with valid project options', (t) => {
-  const { root, file } = runFixture(t);
-  const provider = path.join(root, 'projects/example/provider.mjs');
-  const source = fs.readFileSync(provider, 'utf8');
-  const marker = 'actions: {manifestPath:';
-  assert.ok(source.includes(marker));
-  fs.writeFileSync(
-    provider,
-    source.replace(
-      marker,
-      "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
-    ),
-  );
-  const invocation = publicCall(root, [file, '--json-stream', '--finalize-fail'], 'run');
-  const args = invocation.args.slice(invocation.args.indexOf('--') + 1);
-  const result = spawnSync(
-    process.execPath,
-    [path.join(packageRoot, 'bin/farmslot.mjs'), ...args],
-    { ...invocation.options, timeout: 4900 },
-  );
-  assert.ifError(result.error);
-  assert.notEqual(result.status, 0);
-  const diagnostic = result.stderr
-    .split('\n')
-    .filter((line) => line.startsWith('{"code":'))
-    .map((line) => JSON.parse(line))
-    .find((entry) => entry.message === 'adapter construction failed');
-  assert.ok(diagnostic, result.stderr);
-  assert.match(diagnostic.userAction, /^farmslot doctor --conformance /u);
-  const program = new Command('farmslot').option('--json');
-  registerDoctorCommand(program);
-  const doctor = program.commands.find((command) => command.name() === 'doctor');
-  assert.ok(doctor);
-  const supported = new Set([...doctor.options, ...program.options].map((option) => option.long));
-  for (const flag of diagnostic.userAction.match(/--[a-z-]+/gu))
-    assert.ok(supported.has(flag), flag);
-  assert.ok(diagnostic.userAction.includes(root));
-  assert.ok(diagnostic.userAction.includes('--project example'));
-  assert.ok(diagnostic.userAction.includes('--projects-dir'));
-  assert.doesNotMatch(diagnostic.userAction, /--target|--fix|recipe doctor/u);
-});
+for (const finalizeFail of [false, true]) {
+  test(`public-bin failure diagnostics name the registered doctor command after ${finalizeFail ? 'failing' : 'successful'} cleanup`, (t) => {
+    const { root, file } = runFixture(t);
+    const provider = path.join(root, 'projects/example/provider.mjs');
+    const source = fs.readFileSync(provider, 'utf8');
+    const marker = 'actions: {manifestPath:';
+    assert.ok(source.includes(marker));
+    fs.writeFileSync(
+      provider,
+      source.replace(
+        marker,
+        "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
+      ),
+    );
+    const invocation = publicCall(
+      root,
+      [file, '--json-stream', ...(finalizeFail ? ['--finalize-fail'] : [])],
+      'run',
+    );
+    const args = invocation.args.slice(invocation.args.indexOf('--') + 1);
+    const result = spawnSync(
+      process.execPath,
+      [path.join(packageRoot, 'bin/farmslot.mjs'), ...args],
+      { ...invocation.options, timeout: 4900 },
+    );
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    const diagnostic = finalizeFail
+      ? result.stderr
+          .split('\n')
+          .filter((line) => line.startsWith('{"code":'))
+          .map((line) => JSON.parse(line))
+          .find((entry) => entry.message === 'adapter construction failed')
+      : result.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .find((event) => event.event === 'error')?.error;
+    assert.ok(diagnostic, result.stderr);
+    assert.match(diagnostic.userAction, /^farmslot doctor --conformance /u);
+    const program = new Command('farmslot').option('--json');
+    registerDoctorCommand(program);
+    const doctor = program.commands.find((command) => command.name() === 'doctor');
+    assert.ok(doctor);
+    const supported = new Set([...doctor.options, ...program.options].map((option) => option.long));
+    for (const flag of diagnostic.userAction.match(/--[a-z-]+/gu))
+      assert.ok(supported.has(flag), flag);
+    assert.ok(diagnostic.userAction.includes(root));
+    assert.ok(diagnostic.userAction.includes('--project example'));
+    assert.ok(diagnostic.userAction.includes('--projects-dir'));
+    assert.doesNotMatch(diagnostic.userAction, /--target|--fix|recipe doctor/u);
+  });
+}
 
 test('public run refuses proof without plan before provider construction', (t) => {
   const { root, file } = runFixture(t);

@@ -135,9 +135,9 @@ export class JsonStreamWriter implements CommandEventStream {
     if (this.completed) return;
     if (this.deferredResult) {
       const prior = this.deferredResult.error;
-      if (prior && (prior.code !== error.code || prior.message !== error.message))
-        console.error(JSON.stringify(prior));
-      this.deferredResult.error = error;
+      const sameFailure = prior && prior.code === error.code && prior.message === error.message;
+      if (prior && !sameFailure) console.error(JSON.stringify(prior));
+      this.deferredResult.error = sameFailure ? { ...prior, ...error } : error;
       delete this.deferredResult.completion;
       return;
     }
