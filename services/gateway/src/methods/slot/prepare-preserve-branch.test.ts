@@ -50,6 +50,8 @@ const baseHead = git(base, 'rev-parse', 'HEAD');
 const remote = path.join(root, 'remote.git');
 execFileSync('git', ['clone', '--bare', base, remote], { stdio: 'ignore' });
 git(base, 'remote', 'add', 'origin', remote);
+git(base, 'fetch', 'origin', 'main');
+git(base, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
 git(base, 'checkout', '-b', 'published-work');
 writeFileSync(path.join(base, 'file.txt'), 'published\n');
 git(base, 'commit', '-am', 'test: published work');
@@ -64,9 +66,10 @@ writeFileSync(
     prepare: { default_profile: 'git-only', profiles: { 'git-only': { phases: ['git'] } } },
   }),
 );
-function freshSlot(label: string): string {
+function freshSlot(label: string, linkedBranch?: string): string {
   const slot = path.join(root, label);
-  execFileSync('git', ['clone', remote, slot], { stdio: 'ignore' });
+  if (linkedBranch) git(base, 'worktree', 'add', '-b', linkedBranch, slot, baseHead);
+  else execFileSync('git', ['clone', remote, slot], { stdio: 'ignore' });
   git(slot, 'config', 'user.name', 'Fixture');
   git(slot, 'config', 'user.email', 'fixture@example.invalid');
   git(slot, 'config', 'commit.gpgsign', 'false');
@@ -109,8 +112,7 @@ test('recovery into another clone restores a published branch without overwritin
 });
 
 test('fresh dev prepare reuses detached parked work without moving its unpublished branch', async () => {
-  const slot = freshSlot('parked-slot');
-  git(slot, 'checkout', '-b', 'parked-work', baseHead);
+  const slot = freshSlot('parked-slot', 'parked-work');
   writeFileSync(path.join(slot, 'file.txt'), 'parked worker commit\n');
   git(slot, 'commit', '-am', 'test: parked work');
   const parkedHead = git(slot, 'rev-parse', 'HEAD');

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Support targeted publication checks against any configured Git remote.
+- Support targeted Git publication checks and initial branch intent before slot binding.
 
 ## 0.37.0 - 2026-10-11
 

@@ -41,8 +41,9 @@ export async function findUnpushedSlotCommits(
     { timeout: 15_000 },
   );
   if (result.exitCode !== 0)
-    throw new Error(
+    throw prepareGitFailure(
       `Cannot verify unpublished commits on slot ${vars.slotId}; inspect Git refs before preparing or releasing it`,
+      result,
     );
   return result.stdout.trim().split(/\s+/).filter(Boolean);
 }
@@ -70,6 +71,9 @@ export async function assertPrepareCommitsPublished(
   if (currentResult.exitCode !== 0 && currentResult.exitCode !== 1)
     throw prepareGitFailure('Cannot inspect current branch', currentResult);
   const currentBranch = currentResult.stdout.trim();
+  const probeRemotes = remotes.includes('origin')
+    ? ['origin', ...remotes.filter((name) => name !== 'origin')]
+    : remotes;
   const containingRefs = async (tip: string, roots: string[]) => {
     const result = await exec(
       vars,
@@ -100,12 +104,14 @@ export async function assertPrepareCommitsPublished(
       }
     }
     const candidates = new Set<string>();
-    for (const name of [currentBranch, branch, defaultBranch])
-      if (name) for (const remote of remotes) candidates.add(`refs/remotes/${remote}/${name}`);
+    for (const remote of probeRemotes)
+      for (const name of [currentBranch, branch, defaultBranch])
+        if (name) candidates.add(`refs/remotes/${remote}/${name}`);
     // Cached refs are candidate names only. They never count as publication
     // evidence until that exact ref has been refreshed, including narrow clones.
     for (const candidate of await containingRefs(tip, ['refs/remotes'])) candidates.add(candidate);
     let published = false;
+    let firstFailure: Error | undefined;
     for (const candidate of candidates) {
       const remote = remotes.find((name) => candidate.startsWith(`refs/remotes/${name}/`));
       if (!remote) continue;
@@ -123,11 +129,13 @@ export async function assertPrepareCommitsPublished(
             vars,
             `${git} ls-remote --exit-code --heads ${shellQuote(remote)} ${shellQuote(`refs/heads/${name}`)}`,
           );
-          if (exists.exitCode !== 2)
-            throw prepareGitFailure(
+          if (exists.exitCode !== 2) {
+            firstFailure ??= prepareGitFailure(
               `Cannot verify publication ref ${candidate}; current work preserved`,
               fetch,
             );
+            continue;
+          }
           const prune = await exec(vars, `${git} update-ref -d ${shellQuote(candidate)}`);
           if (prune.exitCode !== 0)
             throw prepareGitFailure(`Cannot remove stale publication ref ${candidate}`, prune);
@@ -160,6 +168,7 @@ export async function assertPrepareCommitsPublished(
       protectedTips.add(tip);
       continue;
     }
+    if (!published && firstFailure && !preserveUnpublished) throw firstFailure;
     if (!published)
       throw new Error(
         `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits or an unverified tip (${tip.slice(0, 12)}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, check out the slot's idle branch before deleting the abandoned branch with git branch -D <abandoned-branch>`,

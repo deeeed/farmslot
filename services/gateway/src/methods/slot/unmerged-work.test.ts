@@ -7,7 +7,11 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 
-import { assertPrepareCommitsPublished, findUnmergedSlotWork } from './unmerged-work.js';
+import {
+  assertPrepareCommitsPublished,
+  findUnmergedSlotWork,
+  findUnpushedSlotCommits,
+} from './unmerged-work.js';
 
 const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
 
@@ -225,6 +229,33 @@ for (const backing of ['requested', 'default', 'none'])
     );
     assert.equal(git(repo, 'rev-parse', 'HEAD'), tip);
   });
+
+test('an unreachable upstream cannot override fresh origin publication proof', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  git(repo, 'remote', 'add', 'upstream', path.join(repo, 'deleted-fork.git'));
+  await assertPrepareCommitsPublished(vars, BRANCH, bash);
+  const failures = async (_vars: SlotVars, command: string) =>
+    command.includes('rev-list')
+      ? { exitCode: 124, stdout: '', stderr: 'fixture revision walk timed out' }
+      : bash(vars, command);
+  await assert.rejects(
+    findUnpushedSlotCommits(vars, 'HEAD', failures),
+    /timeout 124.*revision walk timed out/,
+  );
+});
+
+test('a failed candidate cannot hide fresh publication proof from another remote', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin', 'upstream']);
+  git(repo, 'push', '-q', '-u', 'upstream', BRANCH);
+  git(repo, 'remote', 'set-url', 'origin', path.join(repo, 'unavailable-origin.git'));
+  await assertPrepareCommitsPublished(vars, BRANCH, bash);
+  git(repo, 'remote', 'set-url', 'upstream', path.join(repo, 'unavailable-upstream.git'));
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /Cannot verify publication ref.*exit 128.*repository/,
+  );
+});
 
 test('owned task and observability scaffolding does not block a published slot', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);

@@ -15,4 +15,7 @@ isolate_sandbox_home() {
   mkdir -p "$1/home"
   export FARMSLOT_SANDBOX_HOME="$(cd "$1/home" && pwd -P)"
   export FARMSLOT_HOME="$FARMSLOT_SANDBOX_HOME"
+  local home_guard
+  home_guard="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sandbox-home.cjs"
+  export NODE_OPTIONS="--require \"$home_guard\"${NODE_OPTIONS:+ $NODE_OPTIONS}"
 }

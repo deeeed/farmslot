@@ -69,6 +69,7 @@ const files = [
   ...['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env'].map(file => path.join(root, file)),
   path.join(scriptDir, 'sandbox-dev.sh'),
   path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh'),
+  path.join(scriptDir, '../../../scripts/lib/sandbox-home.cjs'),
 ];
 for (const file of new Set(files.map(file => path.resolve(file)))) {
   hash.update(file + '\0');

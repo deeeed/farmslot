@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-/** Reload checkout configuration while retaining the sandbox wrapper's credential-store scope. */
+/** Reload checkout configuration, with local authentication applied last. */
 export function loadGatewayEnvFiles(root: string, env: NodeJS.ProcessEnv = process.env): void {
   // Force-override checkout values for tsx watch reloads, with local auth last.
-  const sandboxHome = env.FARMSLOT_SANDBOX_HOME;
   for (const name of ['.env', '.env.local-auth']) {
     const envPath = resolve(root, name);
     try {
@@ -28,7 +27,4 @@ export function loadGatewayEnvFiles(root: string, env: NodeJS.ProcessEnv = proce
       }
     }
   }
-
-  // Checkout reloads cannot redirect a sandbox to the operator credential store.
-  if (sandboxHome) env.FARMSLOT_HOME = sandboxHome;
 }

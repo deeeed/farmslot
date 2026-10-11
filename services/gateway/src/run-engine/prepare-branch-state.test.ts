@@ -9,7 +9,8 @@ process.env.FARMSLOT_RUNS_DIR = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 after(() => rmSync(root, { recursive: true, force: true }));
 const { createRun, getRun, persistRunNow, updateRun } = await import('../runs/store.js');
-const { recordInitialPrepareBranchState } = await import('./prepare-branch-state.js');
+const { recordInitialPrepareBranchState, updateRunSummaryAndBranch } =
+  await import('./prepare-branch-state.js');
 
 test('original slot binding records intent before an early recovery can begin', async () => {
   const run = createRun(
@@ -104,4 +105,48 @@ test('an original branchless claim can record intent when its branch is assigned
     branch: 'late-work',
     started: false,
   });
+});
+
+test('first branch assignment records intent atomically on recovery before slot binding', async () => {
+  const run = createRun(
+    { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-930' },
+    { deferBackgroundPersist: true },
+  );
+  updateRun(run.id, {
+    recoveryAttempts: [
+      {
+        id: 'retry',
+        attempt: 1,
+        stepName: 'find-slot',
+        status: 'started',
+        triggeredBy: 'operator',
+        startedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await updateRunSummaryAndBranch(run.id, { branch: 'first-work', summary: 'Recovered intake' });
+  assert.equal(getRun(run.id)?.branch, 'first-work');
+  assert.deepEqual(getRun(run.id)?.engineState?.prepareBranch, {
+    slotId: undefined,
+    branch: 'first-work',
+    started: false,
+  });
+});
+
+test('existing historical branches and skipped setup cannot gain first-assignment authority', async () => {
+  for (const skipPrepare of [false, true]) {
+    const run = createRun(
+      {
+        flowType: 'dev',
+        project: 'fixture',
+        ticketOrPr: 'TEST-930',
+        ...(skipPrepare ? {} : { branch: 'existing-work' }),
+        engineState: { flags: { skipPrepare } },
+      },
+      { deferBackgroundPersist: true },
+    );
+    await updateRunSummaryAndBranch(run.id, { branch: 'work', summary: 'Update' });
+    assert.equal(getRun(run.id)?.engineState?.prepareBranch, undefined);
+    await persistRunNow(getRun(run.id)!, 'fixture cleanup');
+  }
 });

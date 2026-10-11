@@ -38,6 +38,7 @@ function fixture(t, auth = '') {
   for (const relative of [
     'scripts/dev.sh',
     'scripts/lib/stack-credentials.sh',
+    'scripts/lib/sandbox-home.cjs',
     'projects/farmslot-farm/setup/sandbox-dev.sh',
     'projects/farmslot-farm/setup/sandbox-companion.sh',
   ]) {
