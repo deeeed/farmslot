@@ -220,10 +220,10 @@ export function writeSentinel(obsDir, payload, sentAt) {
 
 export function queuedPrompt(meta, runner, receipt) {
   // A queue is pending input, never terminal native acceptance. Retain its receipt.
+  if (!receipt || !supportsMidTurnPrompt(runner)) return null;
   if (
     receipt.submitted_at &&
     receipt.pane_identity === paneIdentity(meta) &&
-    supportsMidTurnPrompt(runner) &&
     runnerPaneHasQueuedInstruction(meta.tail || '', receipt.payload, true)
   )
     return {

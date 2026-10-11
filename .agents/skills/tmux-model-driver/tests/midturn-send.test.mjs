@@ -90,4 +90,22 @@ test('unknown Codex submits Enter once and verifies the full new queue without a
   process.env.TMUX_PANE_STATE_CURRENT_COMMAND = 'zsh';
   assert.equal((await send('%1', 'codex', 'shell')).verification, 'wrong_runner');
   assert.equal(keys.length, noMoreKeys);
+
+  process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'shell');
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '$';
+  process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS = '100';
+  const exists = fs.existsSync;
+  let shellPolls = 0;
+  t.mock.method(fs, 'existsSync', (file) => {
+    if (String(file).endsWith('/started')) return ++shellPolls > 1;
+    return exists(file);
+  });
+  const shell = await send('%1', 'shell', 'true');
+  assert.equal(shell.submitted, true);
+  assert.equal(shell.evidence.source, 'shell-sentinel');
+  assert.equal(
+    shellPolls,
+    2,
+    'a delayed shell start polls instead of dereferencing a model receipt',
+  );
 });
