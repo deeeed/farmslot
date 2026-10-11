@@ -894,6 +894,39 @@ test('an operation log link resolves to the worker command log of an active run'
   assert.equal(artifacts[lookup.index]!.source, 'task-artifact');
 });
 
+test('CI detail hydration restores context without a payload and only clears restored markers', () => {
+  const full = makeRun({
+    decisions: [
+      {
+        id: 'ci',
+        type: 'ci_ci_timeout',
+        title: 'CI',
+        description: '',
+        actions: [],
+        createdAt: 'now',
+        context: { checkSnapshot: { checks: [] } },
+      },
+    ],
+  });
+  const shared = {
+    ...full,
+    decisions: [
+      {
+        ...full.decisions[0],
+        context: { repo: 'owner/repo' },
+        payloadTrimmed: ['context.checkSnapshot', 'reviewMd'],
+      },
+    ],
+  };
+  const hydrated = mergeTrimmedRunDetail(shared, full);
+  assert.deepEqual(hydrated.decisions[0].context, {
+    repo: 'owner/repo',
+    checkSnapshot: { checks: [] },
+  });
+  assert.deepEqual(hydrated.decisions[0].payloadTrimmed, ['reviewMd']);
+  assert.deepEqual(shared.decisions[0].payloadTrimmed, ['context.checkSnapshot', 'reviewMd']);
+});
+
 test('an artifact link that cannot open says why instead of doing nothing', async () => {
   const { artifactSelectionFromRunDetailHash } = await import('./run-detail-url-state.js');
   const { artifact } = artifactSelectionFromRunDetailHash(OPERATION_LOG_HASH);

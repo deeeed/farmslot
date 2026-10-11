@@ -5,6 +5,7 @@ import { marked } from 'marked';
 
 import {
   type BranchAffinityNudgePayload,
+  ciDecisionCheckView,
   DEFAULT_BRANCH,
   interactiveHandoffAllowsExtend,
   isDispatchScoreStale,
@@ -455,6 +456,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                                   )}
                                 </div>
                               `}
+                        ${renderCIDecisionChecks(pending, run, context)}
                         ${isCollision
                           ? renderCollisionPriorRuns(pending, context.allRuns)
                           : isReviewContinuation
@@ -516,6 +518,56 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   `;
 }
 
+function renderCIDecisionChecks(
+  decision: RunDecision,
+  run: Run,
+  context: RunDecisionRenderContext,
+) {
+  const timeout = decision.type === 'ci_ci_timeout';
+  const view = ciDecisionCheckView({
+    decision,
+    pr: run.prNumber,
+    current: timeout ? context.liveTimeoutPrStatus : null,
+    currentState: !timeout
+      ? 'not-requested'
+      : context.liveTimeoutPrStatusRefreshing
+        ? 'loading'
+        : context.liveTimeoutPrStatusFailed
+          ? 'error'
+          : context.liveTimeoutPrStatus
+            ? 'ready'
+            : 'loading',
+  });
+  if (!view) return nothing;
+  return html`<div class="gate-description" data-testid="decision-ci-context">
+    ${[view.snapshot, view.current].map((group) =>
+      group
+        ? html`<section>
+            <strong>${group.label}</strong>
+            <p>Fetched: ${group.age}${group.note ? ` · ${group.note}` : ''}</p>
+            ${group.state === 'available' && !group.rows.length
+              ? html`<p>No checks reported.</p>`
+              : nothing}
+            ${group.rows.map(
+              (check) =>
+                html`<p>
+                  <strong>${check.name}</strong><br />
+                  Status: ${check.status} · Conclusion: ${check.conclusion} · Check activity:
+                  ${check.age}
+                  ${check.detailsUrl
+                    ? html` ·
+                        <a href=${check.detailsUrl} target="_blank" rel="noopener noreferrer"
+                          >Open check</a
+                        >`
+                    : ' · Link: Not recorded'}
+                </p>`,
+            )}
+          </section>`
+        : nothing,
+    )}
+  </div>`;
+}
+
 function renderCITimeoutDecisionDescription(
   decision: RunDecision,
   context: RunDecisionRenderContext,
@@ -560,7 +612,7 @@ function renderCITimeoutDecisionDescription(
           <div
             style="color:${colors.textMuted}; font-size:${fonts.sizeXs}; text-transform:uppercase; margin-bottom:4px"
           >
-            Timeout snapshot
+            Monitor reason
           </div>
           <pre style="white-space:pre-wrap; margin:0">${description}</pre>
         </div>

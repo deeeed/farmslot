@@ -1,0 +1,200 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion CI decision check context",
+  "description": "Real GitHub checks on an open PR, a timeout raised by the production CI monitor on a private gateway, in-place phone refresh and a historical gate. Set CI_CONTEXT_PROOF_REPO, CI_CONTEXT_PROOF_PR, IOS_SIMULATOR and METRO_PORT. Start the owned Metro with the recipe bridge. Always run ci-context-proof.mjs stop in the caller teardown. No worker dispatch or GitHub writes.",
+  "proofTargets": [
+    {
+      "id": "snapshot-context",
+      "claim": "A pending CI decision displays frozen snapshot and current check metadata together."
+    },
+    {
+      "id": "read-only-refresh",
+      "claim": "Phone refresh reloads GitHub metadata without changing the gate snapshot, actions or unresolved state."
+    },
+    {
+      "id": "list-detail",
+      "claim": "run.list omits check rows while run.get retains the frozen snapshot."
+    },
+    {
+      "id": "legacy-context",
+      "claim": "Historical snapshots with no metadata stay explicitly unrecorded while current checks load."
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs setup",
+        "timeout_ms": 120000,
+        "intent": "Raise a real CI timeout on an open PR through a private gateway.",
+        "next": "relaunch"
+      },
+      "relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs relaunch",
+        "intent": "Launch Companion on the private gateway profile.",
+        "next": "app-ready"
+      },
+      "app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The connected Companion accepts decision links.",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs open",
+        "intent": "Open the real pending CI decision.",
+        "next": "wait-context"
+      },
+      "wait-context": {
+        "action": "ui.wait_for",
+        "test_id": "decision-ci-context",
+        "timeout_ms": 30000,
+        "intent": "The decision contains its CI comparison.",
+        "next": "scroll-context"
+      },
+      "scroll-context": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 340,
+        "intent": "The two check histories fit together on the phone.",
+        "next": "current-ready"
+      },
+      "current-ready": {
+        "action": "ui.wait_for",
+        "text": "Open check",
+        "timeout_ms": 45000,
+        "intent": "Current GitHub metadata has loaded with check links.",
+        "next": "before"
+      },
+      "before": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs before",
+        "intent": "Record the frozen decision and cached current GitHub read.",
+        "proves": ["snapshot-context"],
+        "next": "hud-before"
+      },
+      "hud-before": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Gate snapshot and current GitHub checks appear together.",
+        "next": "capture-before"
+      },
+      "capture-before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/before-ci-refresh.png",
+        "label": "CI snapshot and current checks before refresh",
+        "intent": "Snapshot and current checks have separate labels and source ages.",
+        "covers": ["snapshot-context"],
+        "next": "refresh"
+      },
+      "refresh": {
+        "action": "ui.press",
+        "test_id": "decision-ci-refresh",
+        "intent": "Refresh current checks without leaving the decision.",
+        "next": "refresh-finished"
+      },
+      "refresh-finished": {
+        "action": "ui.wait_for",
+        "text": "Refresh checks",
+        "timeout_ms": 45000,
+        "intent": "The refresh finishes and remains available in place.",
+        "next": "after"
+      },
+      "after": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs after",
+        "intent": "Verify a newer GitHub read and the unchanged unresolved gate.",
+        "proves": ["read-only-refresh", "list-detail"],
+        "next": "no-refresh-error"
+      },
+      "no-refresh-error": {
+        "action": "ui.wait_for",
+        "text": "Refresh failed",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "The CI comparison has loaded without an error banner.",
+        "next": "no-missing-current"
+      },
+      "no-missing-current": {
+        "action": "ui.wait_for",
+        "text": "Current check details are unavailable.",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "The CI comparison has loaded without an error banner.",
+        "next": "no-loading"
+      },
+      "no-loading": {
+        "action": "ui.wait_for",
+        "text": "Loading current checks\u2026",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "The CI comparison has loaded without an error banner.",
+        "next": "hud-after"
+      },
+      "hud-after": {
+        "action": "app.hud",
+        "status": "pass",
+        "intent": "Refresh reloads current checks and leaves the gate unresolved.",
+        "next": "capture-after"
+      },
+      "capture-after": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-ci-refresh.png",
+        "label": "Read-only refresh complete",
+        "intent": "Current metadata reflects the new read while the snapshot stays frozen.",
+        "covers": ["read-only-refresh"],
+        "next": "legacy"
+      },
+      "legacy": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs open-legacy",
+        "intent": "Open a historical decision without a recorded snapshot.",
+        "next": "legacy-ready"
+      },
+      "legacy-ready": {
+        "action": "ui.wait_for",
+        "text": "Check metadata was not recorded.",
+        "timeout_ms": 30000,
+        "intent": "The historical gate explicitly labels its missing metadata.",
+        "proves": ["legacy-context"],
+        "next": "legacy-scroll"
+      },
+      "legacy-scroll": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 180,
+        "intent": "Show unrecorded snapshot beside current PR checks.",
+        "next": "legacy-current"
+      },
+      "legacy-current": {
+        "action": "ui.wait_for",
+        "text": "Open check",
+        "timeout_ms": 45000,
+        "intent": "Current checks load independently of the missing snapshot.",
+        "next": "hud-legacy"
+      },
+      "hud-legacy": {
+        "action": "app.hud",
+        "status": "pass",
+        "intent": "Historical check metadata stays unrecorded after current checks load.",
+        "next": "capture-legacy"
+      },
+      "capture-legacy": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-ci-legacy.png",
+        "label": "Legacy snapshot remains unrecorded",
+        "intent": "The old gate keeps unknown metadata beside fresh current checks.",
+        "covers": ["legacy-context"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

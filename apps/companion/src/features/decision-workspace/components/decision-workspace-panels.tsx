@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
+  type CIDecisionCheckView,
   type PendingDecision,
   type RecipeRunArtifactGroup,
   type Run,
@@ -291,6 +292,12 @@ export function DecisionBeforeAfterPriorityPanel({
   );
 }
 export function DecisionWorkspaceCockpit({
+  ci,
+  ciBusy,
+  ciError,
+  onRefreshCI,
+  onOpenCILink,
+  compact,
   presentation,
   currentDecisionId,
   readyDecisionId,
@@ -316,6 +323,12 @@ export function DecisionWorkspaceCockpit({
   onJumpTerminal,
   onJumpActions,
 }: {
+  ci?: CIDecisionCheckView | null;
+  ciBusy?: boolean;
+  ciError?: string | null;
+  onRefreshCI?: () => void;
+  onOpenCILink?: (url: string) => void;
+  compact?: boolean;
   presentation: DecisionPresentation;
   currentDecisionId: string;
   readyDecisionId: string | null;
@@ -342,7 +355,7 @@ export function DecisionWorkspaceCockpit({
   onJumpActions: () => void;
 }) {
   const router = useRouter();
-  if (!presentation.runId) return null;
+  if (!presentation.runId && !ci) return null;
   const diffRouteContext = targetWorkspaceRouteContextParams(
     'diff',
     decisionRouteContext.decisionKind,
@@ -483,7 +496,60 @@ export function DecisionWorkspaceCockpit({
   };
   return (
     <View style={styles.workspaceCockpitPanel}>
-      <View style={styles.workspaceCockpitHeader}>
+      {ci ? (
+        <View testID="decision-ci-context" style={styles.ciContext}>
+          <View style={styles.workspaceCockpitHeader}>
+            <Text style={styles.workspaceCockpitTitle}>CI check context</Text>
+            <DecisionCockpitAction
+              label={ciBusy ? 'Refreshing…' : 'Refresh checks'}
+              testID="decision-ci-refresh"
+              onPress={() => onRefreshCI?.()}
+              disabled={ciBusy}
+            />
+          </View>
+          <View style={styles.ciComparison}>
+            {[ci.snapshot, ci.current].map((group, index) =>
+              group ? (
+                <View
+                  key={group.label}
+                  testID={index === 0 ? 'ci-snapshot' : 'ci-current'}
+                  style={styles.ciGroup}
+                >
+                  <Text style={styles.metaValue}>{group.label}</Text>
+                  <Text style={styles.workspaceCockpitMeta}>Fetched: {group.age}</Text>
+                  {group.note ? (
+                    <Text style={styles.workspaceCockpitMeta}>{group.note}</Text>
+                  ) : null}
+                  {group.state === 'available' && group.rows.length === 0 ? (
+                    <Text style={styles.workspaceCockpitMeta}>No checks reported.</Text>
+                  ) : null}
+                  {group.rows.map((check, row) => (
+                    <View key={`${check.name}:${row}`} style={styles.ciCheck}>
+                      <Text style={styles.metaValue}>{check.name}</Text>
+                      <Text style={styles.workspaceCockpitMeta}>
+                        Status: {check.status} · Conclusion: {check.conclusion}
+                      </Text>
+                      <View style={styles.ciContext}>
+                        <Text style={styles.workspaceCockpitMeta}>Check activity: {check.age}</Text>
+                        {check.detailsUrl ? (
+                          <DecisionCockpitAction
+                            label="Open check"
+                            onPress={() => onOpenCILink?.(check.detailsUrl!)}
+                          />
+                        ) : (
+                          <Text style={styles.workspaceCockpitMeta}>Link: Not recorded</Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : null,
+            )}
+          </View>
+          {ciError ? <Text style={styles.errorText}>{ciError}</Text> : null}
+        </View>
+      ) : null}
+      <View style={[styles.workspaceCockpitHeader, compact && styles.hidden]}>
         <View style={styles.workspaceCockpitTitleBlock}>
           <Text style={styles.workspaceCockpitTitle}>
             {presentation.kind === 'retrospective'
@@ -517,6 +583,7 @@ export function DecisionWorkspaceCockpit({
         />
       </View>
       <ScrollView
+        style={compact ? styles.hidden : undefined}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.workspaceCockpitRail}
@@ -819,11 +886,13 @@ export function DecisionCockpitTile({
   );
 }
 export function DecisionCockpitAction({
+  testID,
   label,
   onPress,
   disabled,
   primary,
 }: {
+  testID?: string;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -831,6 +900,8 @@ export function DecisionCockpitAction({
 }) {
   return (
     <Pressable
+      testID={testID}
+      accessibilityRole="button"
       style={[
         styles.workspaceCockpitAction,
         primary && styles.workspaceCockpitActionPrimary,

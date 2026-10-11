@@ -124,6 +124,7 @@ import {
   RunGateParkNotice,
 } from './components/ResourcePostureGatePanel';
 import { decisionWorkspaceStyles as styles } from './styles/decision-workspace.styles';
+import { useDecisionCIContext } from './use-decision-ci-context';
 
 const TONE_COLORS = {
   ok: colors.statusOk,
@@ -251,6 +252,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const presentation = useMemo(
     () => (decisionWithRunContext ? presentDecision(decisionWithRunContext) : null),
     [decisionWithRunContext],
+  );
+  const ciContext = useDecisionCIContext(
+    decisionWithRunContext,
+    presentation?.prNumber ?? null,
+    sourceRun?.project ?? presentation?.project ?? null,
+    presentation?.repo ?? null,
   );
   const slotPicker = useMemo(
     () =>
@@ -1251,8 +1258,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           />
         ) : null}
 
-        {!embedded ? (
+        {!embedded || ciContext.view ? (
           <DecisionWorkspaceCockpit
+            ci={ciContext.view}
+            ciBusy={ciContext.busy}
+            ciError={ciContext.error}
+            onRefreshCI={ciContext.refresh}
+            onOpenCILink={ciContext.openLink}
+            compact={embedded}
             presentation={presentation}
             currentDecisionId={decision.id}
             readyDecisionId={readyDecisionId}
