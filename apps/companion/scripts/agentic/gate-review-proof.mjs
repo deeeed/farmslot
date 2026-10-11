@@ -7,8 +7,8 @@
 // gateway's own policy functions. The recipe drives the Companion UI; these phases only own the
 // fixture gateway and read its persisted state.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,6 +99,47 @@ const openUrl = (route) => {
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
   execFileSync('xcrun', ['simctl', 'openurl', simulator, `farmslot-development://${route}`]);
 };
+
+/**
+ * Forget the gateways earlier runs saved, so the manual form sits where a fresh
+ * install has it. Setup-time only: the app is stopped, and the recipe still adds
+ * and connects the fixture gateway through the real connection screen. Uses the
+ * React Native AsyncStorage iOS layout: small values in manifest.json, large ones
+ * in a file named by the key's MD5.
+ */
+function forgetSavedGateways() {
+  const terminated = spawnSync('xcrun', ['simctl', 'terminate', simulator, bundleId], {
+    encoding: 'utf8',
+  });
+  // simctl reports "found nothing to terminate" when the app is not running, which is the goal.
+  if (terminated.status !== 0 && !/found nothing to terminate/i.test(terminated.stderr)) {
+    throw new Error(`simctl terminate failed: ${terminated.stderr.trim()}`);
+  }
+  const data = execFileSync('xcrun', ['simctl', 'get_app_container', simulator, bundleId, 'data'], {
+    encoding: 'utf8',
+  }).trim();
+  const storage = path.join(
+    data,
+    'Library/Application Support',
+    bundleId,
+    'RCTAsyncLocalStorage_V1',
+  );
+  const manifestPath = path.join(storage, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return;
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  for (const key of [
+    '@farmslot:gatewayProfiles',
+    '@farmslot:activeGatewayProfileId',
+    '@farmslot:gatewayUrl',
+  ]) {
+    if (!(key in manifest)) continue;
+    if (manifest[key] === null) {
+      fs.rmSync(path.join(storage, createHash('md5').update(key).digest('hex')), { force: true });
+    }
+    delete manifest[key];
+  }
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+}
 
 function stopFixture() {
   if (!fs.existsSync(statePath)) return;
@@ -327,6 +368,7 @@ if (phase === 'setup') {
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
+  forgetSavedGateways();
   execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', simulator, bundleId]);
 } else if (phase === 'open-connection') {
   openUrl('/connection');

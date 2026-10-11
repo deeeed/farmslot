@@ -66,6 +66,13 @@
         "test_id": "companion-connection-manual-toggle",
         "timeout_ms": 30000,
         "intent": "The connection screen is ready for a manual gateway profile.",
+        "next": "reveal-manual"
+      },
+      "reveal-manual": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 3000,
+        "intent": "Show the manual setup toggle below any gateways saved by earlier runs.",
         "next": "open-manual"
       },
       "open-manual": {
@@ -77,7 +84,7 @@
       "reveal-form": {
         "action": "ui.scroll",
         "direction": "down",
-        "pixels": 900,
+        "pixels": 3000,
         "intent": "Show the manual gateway form below any saved gateways.",
         "next": "focus-url"
       },
