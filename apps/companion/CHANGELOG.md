@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Review a publish gate on the phone: one screen, reached from run detail and the decision workspace, shows the package, each reviewer's latest verdict, the acceptance criteria with their evidence, and the gate's actions. Approve-publish stays disabled, with the reason, while a criterion has no verdict or a latest review is not an approval, here, on the Gate tab and for worker packets; an unjudged criterion also withholds the review overrides. Hold and review requests stay available. Criterion evidence opens in the artifact viewer and swipes through that criterion's files, and the criteria header turns red while any criterion is unassessed. An action is sent for the package you confirmed and refused if the package changed meanwhile; the gate re-reads after the app reconnects, and text evidence loads at most its first 200,000 bytes.
+- Choose an available candidate before using a slot decision; improvement Apply writes and validates the proposal and keeps refused changes pending.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - The recipe scripts and Metro bridge use `@farmslot/adapter-rn` and its `farmslot-adapter-rn` bin (renamed from `@farmslot/expo-recipe`); `COMPANION_EXPO_RECIPE_BIN` is now `COMPANION_ADAPTER_RN_BIN`.
 

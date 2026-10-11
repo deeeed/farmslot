@@ -1,6 +1,65 @@
 import type { ResourcePostureGateChoice } from '../contracts/resource-posture.js';
-import type { PublicationTarget, ReadyGatePayload, RunDecision } from '../contracts/runs.js';
+import type {
+  PublicationTarget,
+  ReadyGatePayload,
+  RunDecision,
+  SlotPickerPayload,
+} from '../contracts/runs.js';
+import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/intelligence.js';
+import { Methods } from '../rpc/registry.js';
 import type { RunResolveDecisionParams } from '../rpc/run.js';
+
+/** Candidate selection shared by the desktop and native decision renderers. */
+export function slotPickerViewModel(payload: SlotPickerPayload, selectedSlotId?: string | null) {
+  const candidates = payload.candidates.filter((candidate) => candidate.score >= 0);
+  return {
+    candidates,
+    unavailableCount: payload.candidates.length - candidates.length,
+    selectedSlotId: candidates.some((candidate) => candidate.slotId === selectedSlotId)
+      ? (selectedSlotId ?? null)
+      : null,
+  };
+}
+
+export interface RunDecisionActionInput {
+  runId: string;
+  decision: Pick<RunDecision, 'id' | 'payload'> & Partial<Pick<RunDecision, 'type'>>;
+  actionId: string;
+  selectionData?: Record<string, unknown>;
+  resourcePosture?: ResourcePostureGateChoice;
+}
+
+export type RunDecisionActionRequest =
+  | { method: typeof Methods.IMPROVEMENT_APPLY; params: ImprovementApplyParams }
+  | { method: typeof Methods.RUN_RESOLVE_DECISION; params: RunResolveDecisionParams };
+
+/** Applying a proposal must write and validate it before resolving the decision. */
+export function buildRunDecisionActionRequest(
+  input: RunDecisionActionInput,
+): RunDecisionActionRequest {
+  if (input.decision.type === 'improvement' && input.actionId === 'apply') {
+    return {
+      method: Methods.IMPROVEMENT_APPLY,
+      params: { runId: input.runId, decisionId: input.decision.id },
+    };
+  }
+  return { method: Methods.RUN_RESOLVE_DECISION, params: buildRunResolveDecisionParams(input) };
+}
+
+/** A refusal or failed validation keeps the improvement card pending in both clients. */
+export function improvementApplyOutcome(result: ImprovementApplyResult) {
+  const refusals = result.refused ?? [];
+  const passed = result.validationPassed && refusals.length === 0;
+  const message = !result.validationPassed
+    ? `Applied but validation FAILED:\n${(result.validationOutput ?? '').slice(0, 300)}`
+    : refusals.length > 0
+      ? `Applied ${result.applied.length}, refused ${refusals.length} change(s) — card stays pending:\n${refusals
+          .map((refusal) => `${refusal.filePath}: ${refusal.reason}`)
+          .join('\n')
+          .slice(0, 300)}\nRefine the card so it re-reads the current file, then re-apply.`
+      : `Applied ${result.applied.length} file(s). Validation passed.`;
+  return { passed, message };
+}
 
 /**
  * Bind a ready-gate resolution to the exact package the operator reviewed.

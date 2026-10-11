@@ -1,36 +1,38 @@
 import {
-  buildRunResolveDecisionParams,
+  buildRunDecisionActionRequest,
   type DecisionResolveParams,
   Methods,
   type PendingDecision,
   type ResourcePostureGateChoice,
-  type RunResolveDecisionParams,
+  type RunDecisionActionRequest,
 } from '@farmslot/protocol';
 
 export type DecisionResolveRequest =
-  | { method: typeof Methods.RUN_RESOLVE_DECISION; params: RunResolveDecisionParams }
+  | RunDecisionActionRequest
   | { method: typeof Methods.DECISION_RESOLVE; params: DecisionResolveParams };
 
 /**
- * The resolve call every Companion gate surface sends. A decision known with its
- * run resolves through `run.resolveDecision`, bound to the package on screen; any
- * other through `decision.resolve`, which has nowhere to carry a posture choice.
+ * The resolve call every Companion decision surface sends. A decision known with
+ * its run goes through the shared run action request: bound to the package on
+ * screen, with an improvement's Apply routed to `improvement.apply`. Any other
+ * resolves through `decision.resolve`, which has nowhere to carry a posture
+ * choice or a selection.
  */
 export function decisionResolveRequest(
-  decision: Pick<PendingDecision, 'id' | 'payload' | 'runMeta'>,
+  decision: Pick<PendingDecision, 'id' | 'payload' | 'runMeta'> &
+    Partial<Pick<PendingDecision, 'type'>>,
   actionId: string,
   resourcePosture?: ResourcePostureGateChoice | null,
+  selectionData?: Record<string, unknown>,
 ): DecisionResolveRequest {
   if (!decision.runMeta) {
     return { method: Methods.DECISION_RESOLVE, params: { decisionId: decision.id, actionId } };
   }
-  return {
-    method: Methods.RUN_RESOLVE_DECISION,
-    params: buildRunResolveDecisionParams({
-      runId: decision.runMeta.runId,
-      decision,
-      actionId,
-      ...(resourcePosture ? { resourcePosture } : {}),
-    }),
-  };
+  return buildRunDecisionActionRequest({
+    runId: decision.runMeta.runId,
+    decision,
+    actionId,
+    ...(selectionData ? { selectionData } : {}),
+    ...(resourcePosture ? { resourcePosture } : {}),
+  });
 }

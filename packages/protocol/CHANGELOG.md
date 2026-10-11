@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Export the publish-approval action set (`PUBLISH_APPROVAL_ACTIONS`, `isPublishApprovalAction`) and the review-depth helpers (`defaultReviewDepthPolicy`, `effectiveRequiredReviewCount`, `isQualifyingIndependentReview`) so clients guard publish gates with the gateway's own rules.
+- Share candidate slot selection, improvement Apply routing and validation outcomes between operator clients.
 
 ## 0.38.0 - 2026-10-11
 

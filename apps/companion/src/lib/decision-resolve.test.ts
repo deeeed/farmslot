@@ -57,3 +57,34 @@ test('a decision without its run resolves through decision.resolve', () => {
     params: { decisionId: 'gate-1', actionId: 'hold' },
   });
 });
+
+test('a slot pick carries the chosen candidate on run.resolveDecision', () => {
+  const request = decisionResolveRequest(
+    { id: 'pick-1', runMeta: { runId: 'run-1' } as never },
+    'pick',
+    null,
+    { slotId: 'slot-2' },
+  );
+  assert.deepEqual(request, {
+    method: Methods.RUN_RESOLVE_DECISION,
+    params: {
+      runId: 'run-1',
+      decisionId: 'pick-1',
+      actionId: 'pick',
+      selectionData: { slotId: 'slot-2' },
+    },
+  });
+});
+
+test("an improvement's Apply writes and validates through improvement.apply", () => {
+  assert.deepEqual(
+    decisionResolveRequest(
+      { id: 'improve-1', type: 'improvement', runMeta: { runId: 'run-1' } as never },
+      'apply',
+    ),
+    {
+      method: Methods.IMPROVEMENT_APPLY,
+      params: { runId: 'run-1', decisionId: 'improve-1' },
+    },
+  );
+});
