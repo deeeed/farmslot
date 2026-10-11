@@ -2,25 +2,39 @@
 
 import { WebSocket } from 'ws';
 
-import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
+import {
+  type ExecResult,
+  NODE_EXEC_CLOSEOUT_MS,
+  type NodeExecParams,
+  observeNodeExecAbort,
+} from '@farmslot/protocol';
 
 import { isLocal, loadSlotVars } from '../core/index.js';
 
 import { type ConnectedNode, getNode } from './machine-registry.js';
 
 let reqSeq = 0;
-const pending = new Map<
-  string,
-  {
-    resolve: (v: unknown) => void;
-    reject: (e: Error) => void;
-    timer?: ReturnType<typeof setTimeout>;
-    responseSocket?: WebSocket;
-  }
->();
+interface PendingNodeRequest {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
+  responseSocket?: WebSocket;
+  cleanup?(): void;
+}
+const pending = new Map<string, PendingNodeRequest>();
 
 // Per-request output listeners for streaming exec output
 const outputListeners = new Map<string, (stream: string, data: string) => void>();
+
+function takePendingRequest(id: string): PendingNodeRequest | undefined {
+  const request = pending.get(id);
+  if (!request) return;
+  pending.delete(id);
+  outputListeners.delete(id);
+  if (request.timer) clearTimeout(request.timer);
+  request.cleanup?.();
+  return request;
+}
 
 /**
  * Handle an incoming response frame from a node WebSocket.
@@ -38,9 +52,7 @@ export function handleNodeResponse(
   if (!entry) return;
   // Native mutations cannot accept replies from another node or a replacement connection.
   if (entry.responseSocket && entry.responseSocket !== source) return;
-  pending.delete(id);
-  outputListeners.delete(id);
-  if (entry.timer) clearTimeout(entry.timer);
+  takePendingRequest(id);
   if (ok) {
     entry.resolve(payload);
   } else {
@@ -53,7 +65,14 @@ export function handleNodeResponse(
 /**
  * Route a node.exec.output event to the registered listener for that request.
  */
-export function handleNodeExecOutput(requestId: string, stream: string, data: string): void {
+export function handleNodeExecOutput(
+  requestId: string,
+  stream: string,
+  data: string,
+  source?: WebSocket,
+): void {
+  const owner = pending.get(requestId)?.responseSocket;
+  if (owner && owner !== source) return;
   const listener = outputListeners.get(requestId);
   if (listener) listener(stream, data);
 }
@@ -106,6 +125,22 @@ export class NodeRpcTimeoutError extends NodeTransportUnavailableError {
   }
 }
 
+/** The command was sent, but its original connection did not confirm process closeout. */
+export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
+  constructor(
+    machine: string,
+    readonly requestId: string,
+    reason: NodeTransportUnavailableReason,
+  ) {
+    super(
+      machine,
+      reason,
+      `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.`,
+    );
+    this.name = 'NodeExecUnconfirmedError';
+  }
+}
+
 /**
  * Send an RPC request to a connected node and await the response.
  */
@@ -128,8 +163,7 @@ export function sendNodeRequest(
     const id = `gw-${++reqSeq}-${Date.now()}`;
     const TIMEOUT = opts?.timeout ?? 30_000;
     const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new NodeRpcTimeoutError(node.machine, TIMEOUT));
+      takePendingRequest(id)?.reject(new NodeRpcTimeoutError(node.machine, TIMEOUT));
     }, TIMEOUT);
     pending.set(id, {
       resolve,
@@ -160,13 +194,21 @@ const DEFAULT_STREAMING_TIMEOUT_MS = 120_000;
  * Send an RPC request with optional timeout and optional streaming output callback.
  * Used by nodeExec for exec commands that may be long-running.
  */
+interface StreamingRequestOptions {
+  timeout?: number;
+  onOutput?: (stream: string, data: string) => void;
+  signal?: AbortSignal;
+  closeoutTimeoutMs?: number;
+}
+
 function sendNodeRequestStreaming(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onOutput?: (stream: string, data: string) => void },
+  opts?: StreamingRequestOptions,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    if (opts?.signal?.aborted) return reject(new Error('Remote execution cancelled before send.'));
     if (node.ws.readyState !== WebSocket.OPEN) {
       return reject(
         new NodeTransportUnavailableError(
@@ -178,35 +220,105 @@ function sendNodeRequestStreaming(
     }
     const id = `gw-${++reqSeq}-${Date.now()}`;
     const effectiveTimeout = opts?.timeout ?? DEFAULT_STREAMING_TIMEOUT_MS;
-
+    let cancelling = false;
+    let stopObservingAbort = () => {};
+    const fail = (reason: NodeTransportUnavailableReason) => {
+      takePendingRequest(id)?.reject(new NodeExecUnconfirmedError(node.machine, id, reason));
+    };
+    const cancel = () => {
+      const request = pending.get(id);
+      if (!request || cancelling) return;
+      cancelling = true;
+      if (node.ws.readyState !== WebSocket.OPEN) return fail('disconnected');
+      if (request.timer) clearTimeout(request.timer);
+      request.timer = setTimeout(
+        () => fail('timeout'),
+        (opts?.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) + NODE_EXEC_TRANSPORT_GRACE_MS,
+      );
+      // The acknowledgement is not completion; only the original exec result settles this request.
+      try {
+        node.ws.send(
+          JSON.stringify({
+            type: 'req',
+            id: `cancel-${id}`,
+            method: 'exec.cancel',
+            params: { requestId: id },
+          }),
+          (error) => {
+            if (error) fail('disconnected');
+          },
+        );
+      } catch {
+        fail('disconnected');
+      }
+    };
+    const onClose = () => fail('disconnected');
     const timer = setTimeout(() => {
-      pending.delete(id);
-      outputListeners.delete(id);
-      const usedDefault = opts?.timeout == null;
-      const suffix = usedDefault
-        ? ' (default — caller should pass explicit timeout for long ops)'
-        : '';
-      reject(new NodeRpcTimeoutError(node.machine, effectiveTimeout, suffix));
+      if (opts?.signal) cancel();
+      else {
+        const suffix =
+          opts?.timeout == null
+            ? ' (default — caller should pass explicit timeout for long ops)'
+            : '';
+        takePendingRequest(id)?.reject(
+          new NodeRpcTimeoutError(node.machine, effectiveTimeout, suffix),
+        );
+      }
     }, effectiveTimeout);
-
-    if (opts?.onOutput) {
-      outputListeners.set(id, opts.onOutput);
+    if (opts?.onOutput) outputListeners.set(id, opts.onOutput);
+    pending.set(id, {
+      resolve,
+      reject,
+      timer,
+      ...(opts?.signal
+        ? {
+            responseSocket: node.ws,
+            cleanup: () => {
+              stopObservingAbort();
+              node.ws.off('close', onClose);
+            },
+          }
+        : {}),
+    });
+    if (opts?.signal) {
+      node.ws.once('close', onClose);
+      stopObservingAbort = observeNodeExecAbort(opts.signal, cancel);
     }
-
-    pending.set(id, { resolve, reject, timer });
-    node.ws.send(JSON.stringify({ type: 'req', id, method, params }));
+    const sendFailed = (error: Error) => {
+      if (opts?.signal) fail('disconnected');
+      else
+        takePendingRequest(id)?.reject(
+          new NodeTransportUnavailableError(
+            node.machine,
+            'disconnected',
+            `Node ${node.machine} send failed: ${error.message}`,
+          ),
+        );
+    };
+    try {
+      node.ws.send(JSON.stringify({ type: 'req', id, method, params }), (error) => {
+        if (error) sendFailed(error);
+      });
+    } catch (error) {
+      sendFailed(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
 /**
- * Wait for a node to (re)connect, polling every second.
+ * Wait for a node to connect, allowing cancellation before any command is sent.
  */
-async function waitForNode(machine: string, timeoutMs = 15_000): Promise<ConnectedNode> {
+async function waitForNode(
+  machine: string,
+  timeoutMs = 15_000,
+  signal?: AbortSignal,
+): Promise<ConnectedNode> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error('Remote execution cancelled before connecting.');
     const node = getNode(machine);
     if (node && node.ws.readyState === WebSocket.OPEN) return node;
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 100));
   }
   throw new NodeTransportUnavailableError(
     machine,
@@ -228,6 +340,9 @@ async function waitForNode(machine: string, timeoutMs = 15_000): Promise<Connect
 const NODE_EXEC_TRANSPORT_GRACE_MS = 10_000;
 
 export interface NodeExecOpts {
+  /** Scope the request to its original node connection and wait for closeout on abort. */
+  signal?: AbortSignal;
+  closeoutTimeoutMs?: number;
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
   maxBuffer?: number;
@@ -263,22 +378,39 @@ async function nodeExecRequest(
   opts?: NodeExecOpts,
 ): Promise<ExecResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const node = await waitForNode(machine);
+    const node = await waitForNode(machine, 15_000, opts?.signal);
+    if (opts?.signal?.aborted) throw new Error('Remote execution cancelled before send.');
+    if (opts?.signal && !node.execCancellation) {
+      throw new Error(`Node ${machine} needs an update before it can run cancellable commands.`);
+    }
     try {
       return (await sendNodeRequestStreaming(
         node,
         'exec',
         {
           ...request,
+          ...(opts?.signal
+            ? {
+                requestScoped: true,
+                closeoutTimeoutMs: opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS,
+              }
+            : {}),
           ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
           ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
         },
         {
           // Deliberately NOT the command budget: see NODE_EXEC_TRANSPORT_GRACE_MS.
           ...(opts?.timeout != null
-            ? { timeout: opts.timeout + NODE_EXEC_TRANSPORT_GRACE_MS }
+            ? {
+                timeout:
+                  opts.timeout +
+                  NODE_EXEC_TRANSPORT_GRACE_MS +
+                  (opts.signal ? (opts.closeoutTimeoutMs ?? NODE_EXEC_CLOSEOUT_MS) : 0),
+              }
             : {}),
           onOutput: opts?.onOutput,
+          signal: opts?.signal,
+          closeoutTimeoutMs: opts?.closeoutTimeoutMs,
         },
       )) as ExecResult;
     } catch (err) {
@@ -286,6 +418,7 @@ async function nodeExecRequest(
       if (
         attempt === 0 &&
         !opts?.noRetry &&
+        !opts?.signal &&
         (msg.includes('not open') || err instanceof NodeRpcTimeoutError)
       ) {
         console.log(`[node-rpc] exec retry for ${machine}: ${msg}`);
