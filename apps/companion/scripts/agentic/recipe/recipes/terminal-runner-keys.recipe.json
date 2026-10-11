@@ -25,9 +25,15 @@
     }
   ],
   "workflow": {
-    "entry": "setup",
+    "entry": "start-on-terminals",
     "teardown": "teardown",
     "nodes": {
+      "start-on-terminals": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs terminals",
+        "intent": "Start from the Terminals tab so no terminal from an earlier run is still open.",
+        "next": "setup"
+      },
       "setup": {
         "action": "command",
         "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs setup",
@@ -81,12 +87,6 @@
         "timeout_ms": 20000,
         "intent": "The key bar names the runner taken from the gateway process match.",
         "proves": ["runner-row"],
-        "next": "hide-hud-known"
-      },
-      "hide-hud-known": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-known-row"
       },
       "wait-known-row": {
@@ -148,12 +148,6 @@
         "timeout_ms": 10000,
         "intent": "The saved choice wins over the process match.",
         "proves": ["runner-override"],
-        "next": "hide-hud-saved"
-      },
-      "hide-hud-saved": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-saved-row"
       },
       "wait-saved-row": {
@@ -257,12 +251,6 @@
         "timeout_ms": 5000,
         "intent": "The generic terminal keys stay available.",
         "proves": ["generic-row"],
-        "next": "hide-hud-unknown"
-      },
-      "hide-hud-unknown": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "no-custom-row-yet"
       },
       "no-custom-row-yet": {
@@ -337,12 +325,6 @@
         "timeout_ms": 10000,
         "intent": "A Yours row renders even though this pane has no runner row.",
         "proves": ["custom-keys"],
-        "next": "hide-hud-custom"
-      },
-      "hide-hud-custom": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-custom-label"
       },
       "wait-custom-label": {
@@ -410,14 +392,8 @@
       "press-unknown-row-again": {
         "action": "ui.press",
         "intent": "Open the same pane again.",
-        "next": "hide-hud-reopened",
+        "next": "wait-custom-kept",
         "text": "{{outputs.unknown-row-again.stdout}}"
-      },
-      "hide-hud-reopened": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
-        "next": "wait-custom-kept"
       },
       "wait-custom-kept": {
         "action": "ui.wait_for",
@@ -458,12 +434,6 @@
         "action": "ui.press",
         "test_id": "terminal-custom-keys-close",
         "intent": "Return to the terminal.",
-        "next": "hide-hud-deleted"
-      },
-      "hide-hud-deleted": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "custom-row-gone"
       },
       "custom-row-gone": {
@@ -481,6 +451,12 @@
         "label": "Yours row removed after delete",
         "intent": "Record the terminal after deleting the key.",
         "proves": ["custom-keys"],
+        "next": "back-to-terminals"
+      },
+      "back-to-terminals": {
+        "action": "command",
+        "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs back",
+        "intent": "Return to the Terminals tab before the fixture panes are removed.",
         "next": "hud-pass"
       },
       "hud-pass": {
