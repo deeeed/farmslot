@@ -260,9 +260,18 @@ test('a hook expanded after a fast-forward never joins the older publish', async
   const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
 
   const before = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  t.after(() => node.release());
+  const started = performance.now();
+  while (node.uploads.length < 1) {
+    assert.ok(
+      performance.now() - started < 2_000,
+      'first bundle must finish reading before the edit',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   farm.editScript('echo v2\n');
-  await new Promise((resolve) => setTimeout(resolve, 2_100)); // past the local re-hash window
+  const now = Date.now() + 2_100;
+  t.mock.method(Date, 'now', () => now); // expire the cache without a fixed wait
   const after = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io: node.io });
   // Hold the first upload until the second has started its own (or clearly
   // never will), so the second call meets the first still in flight.

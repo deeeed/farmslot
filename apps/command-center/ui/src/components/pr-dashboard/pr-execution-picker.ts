@@ -10,6 +10,7 @@ import {
   type PRSlotExecutionProfile,
   type PRWorkspaceExecutionProfile,
   type SlotStatus,
+  workspacePolicyMachines,
 } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
@@ -135,7 +136,7 @@ export class PRExecutionPicker extends LitElement {
     if (isPRWorkspaceExecutionProfile(this.value)) {
       const policy = this.value.workspacePolicy;
       const value = this.value;
-      const selected = policy.kind === 'exact' ? [policy.machine] : policy.allowedMachines;
+
       const pools = this.pools.filter(
         (pool) =>
           pool.reviewWorkspaces &&
@@ -143,6 +144,7 @@ export class PRExecutionPicker extends LitElement {
             pool.project === this.project ||
             pool.slots.some((slot) => slot.project === this.project)),
       );
+      const selected = workspacePolicyMachines(policy) ?? pools.map((pool) => pool.machine);
       const toggle = (machine: string, checked: boolean) => {
         const machines = checked
           ? [...new Set([...selected, machine])]
