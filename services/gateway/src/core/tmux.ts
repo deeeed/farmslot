@@ -581,7 +581,7 @@ export async function resolveTmuxPaneIdentity(
   target: string,
   options: { currentCommand?: boolean; exec?: typeof execOnSlot } = {},
 ): Promise<TmuxPaneIdentity | null> {
-  const separator = options.currentCommand ? '|' : '\t';
+  const separator = '\t';
   const format = [
     '#{pane_id}',
     '#{pane_pid}',

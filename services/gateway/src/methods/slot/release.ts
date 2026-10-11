@@ -243,8 +243,8 @@ export async function slotReleasePreflight(
   // A gate-parked run (ADR-054 `free-slot`) gave the slot up but keeps a park
   // record whose restore target is this workspace. Releasing destroys it, so
   // refuse — but only when this release is aimed at the parked run itself.
-  // Once another run claims the freed slot, ITS release must still work, which
-  // is the whole point of freeing the slot. `preserveAgents` does not bypass:
+  // A new occupant is not blocked by this park record, but still must pass
+  // the owner guard below. `preserveAgents` does not bypass this park guard:
   // there are no agents left to preserve, and the record dies either way.
   const gateParkedRun = findGateParkedRunForSlot(params.slotId);
   if (gateParkedRun && !forceReset) {
@@ -970,9 +970,8 @@ export async function killAgentInSession(
   role: AgentRole = 'primary',
   options: { graceful?: boolean; assertClaim?: () => Promise<void> } = {},
 ): Promise<void> {
-  // Mutations cannot be automatically resent after reconnect: that would skip
-  // the ownership check and could reach a newer claim. A failed mutation leaves
-  // the releasing fence for the stale-fence reconciler to reclaim.
+  // Release and dispatch must not resend teardown after reconnect: the runner
+  // may have exited, so a resend could type /exit into a shell or signal a recycled PID.
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
   const roleWindow = agentDispatchWindow(role);

@@ -2487,7 +2487,7 @@ export async function execRunnerInput(
     await import('./session-process.js');
   const probe = await probeRunnerDescendantPid(
     vars,
-    panePid!,
+    panePid,
     runner,
     { foregroundOnly: true, attempts: 2, deadline: Date.now() + 20_000 },
     { exec },
@@ -2499,12 +2499,12 @@ export async function execRunnerInput(
   // A transport resend could reach a shell after the checked runner exited.
   // Only the caller may retry, by entering this guard again.
   const hostGuard = buildRunnerInputHostGuardCommand(
-    paneId!,
-    panePid!,
+    paneId,
+    panePid,
     runner,
     PROMPT_TYPE_FAILURE_EXIT_CODE,
   );
-  return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
+  return exec(vars, `${hostGuard}\n${command(paneId)}`, { noRetry: true });
 }
 
 function runnerKeysCommand(paneId: string, keys: string): string {
