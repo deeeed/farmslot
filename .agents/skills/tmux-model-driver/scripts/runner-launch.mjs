@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withMachineEnv } from '../../../../services/gateway/src/core/project-env.ts';
 import {
   buildCodexHomeSetup,
   buildInteractiveRefinementRunnerCommand,
@@ -64,7 +65,10 @@ export function runnerLaunch(lane) {
       workspaceTrust: 'trusted',
       skipUpdateCheck: true,
     });
-    command = `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, relativeRuntime)} && ${buildCodexHomeSetup(cwd, relativeRuntime)} && ${launch}`;
+    command = withMachineEnv(
+      `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, relativeRuntime, { accountLabel: lane.account_label })} && ${buildCodexHomeSetup(cwd, relativeRuntime)} && ${launch}`,
+      vars,
+    );
   } else {
     command = buildLaunchCommand(vars, lane.runner, lane.model, '', opts);
   }

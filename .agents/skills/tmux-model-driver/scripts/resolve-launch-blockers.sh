@@ -10,15 +10,20 @@ pane_id="$1"
 runner_id="$2"
 timeout_seconds="${3:-60}"
 skill_dir="$(cd "$(dirname "$0")/.." && pwd)"
+pane_state_script="${TMUX_MODEL_DRIVER_PANE_STATE_SCRIPT:-$skill_dir/scripts/pane-state.sh}"
 deadline=$((SECONDS + timeout_seconds))
 trust_answered=false
 project_selected=false
 
 while [ "$SECONDS" -lt "$deadline" ]; do
-  state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id" "$runner_id")"
+  state_json="$("$pane_state_script" "$pane_id" "$runner_id")"
   actual_runner="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["state"])' "$state_json")"
   if [ "$actual_runner" != "$runner_id" ]; then
-    printf '%s\n' "$state_json"
+    if [ "$actual_runner" = shell ] || [ "$actual_runner" = unknown ]; then
+      sleep 0.05
+      continue
+    fi
+    python3 -c 'import json,sys; state=json.loads(sys.argv[1]); state.update(resolved=False,error="different runner owns pane"); print(json.dumps(state))' "$state_json"
     exit 2
   fi
   blocker_kind="$(python3 - <<'PY' "$state_json"
@@ -83,7 +88,7 @@ PY
   exit 0
 done
 
-state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id" "$runner_id")"
+state_json="$("$pane_state_script" "$pane_id" "$runner_id")"
 python3 - <<'PY' "$state_json" "$runner_id" "$trust_answered" "$project_selected"
 import json, sys
 state = json.loads(sys.argv[1])

@@ -6,6 +6,8 @@ description: Send to a model in tmux with process identity checks, native turn p
 # Tmux model driver
 
 Use this transport for lane messages. Submission always uses named `Enter`.
+The shell entry points resolve their TypeScript loader from the owning Farmslot checkout,
+so they also work when invoked from another checkout or a temporary directory.
 
 ## Send and inspect
 
@@ -56,7 +58,10 @@ input attempt; it does not claim the runner started a turn. Read native state
 again before continuing. Historical screen questions never authorize a response.
 
 An unverified send retains a private receipt. A later send refuses to append or
-repeat its prompt. Once native evidence proves acceptance, the receipt clears.
+repeat its prompt. Native acceptance remains recorded across inspections. Ordinary sends refuse
+`acceptance_unacknowledged` until the owner records completion of the handoff in its registry
+and calls `scripts/ack-acceptance.sh <pane> <runner> <receipt_id>`. The lane CLI performs this
+acknowledgement after persisting its state. Inspection alone never consumes the receipt.
 
 ```bash
 cat original-prompt.txt | scripts/flush-queued.sh <pane> <runner> [trace.jsonl]

@@ -150,6 +150,27 @@ class LaneTests(unittest.TestCase):
         self.assertTrue(all("kill-server" not in argv and "select-pane" not in argv and
                             "send-keys" not in argv for argv, _ in calls))
 
+    def test_accepted_goal_is_persisted_before_owner_acknowledges(self):
+        goal = "/goal Complete the approved task"
+        lanes._update(self.config, "one", {"goal_payload": goal, "goal_submitted": False})
+        calls = []
+        def command(argv, **kwargs):
+            calls.append(argv)
+            if "list-panes" in argv:
+                return result("%1\n")
+            if Path(argv[1]).name == "ack-acceptance.sh":
+                record = lanes._record(self.config, "one")
+                self.assertTrue(record["goal_submitted"])
+                self.assertEqual(record["last_delivery"]["receipt_id"], "accepted-goal")
+                return result(json.dumps({"acknowledged": True}))
+            self.assertEqual(Path(argv[1]).name, "pane-state.sh")
+            return result(json.dumps({"state": "codex", "phase": "idle", "accepted": {
+                "receipt_id": "accepted-goal", "payload_hash": hashlib.sha256(goal.encode()).hexdigest()}}))
+        with patch.object(lanes, "run", side_effect=command):
+            output = lanes.launch(self.config, "one")
+        self.assertEqual(output["status"], "existing")
+        self.assertEqual(sum(Path(argv[1]).name == "ack-acceptance.sh" for argv in calls), 1)
+
     def test_late_goal_acceptance_prevents_duplicate_retry(self):
         goal = "/goal Complete the approved task"
         lanes._update(self.config, "one", {"goal_payload": goal, "goal_submitted": False})

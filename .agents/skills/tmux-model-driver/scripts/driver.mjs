@@ -132,9 +132,13 @@ export function paneSafety(tail, runner) {
     /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
       active,
     );
-  const queued = /(?:\d+\s+queued messages?|message queued|queued message|queued input)/i.test(
-    tail,
-  );
+  const queued = lines
+    .slice(-5)
+    .some((line) =>
+      /^\s*[│┃║]?\s*(?:\d+\s+queued messages?|message queued|queued messages?)\s*[│┃║]?\s*$/i.test(
+        line,
+      ),
+    );
   const busy = /tab to queue message/i.test(tail);
   const blocker = readPaneStateFromCapture(tail, runner);
   return {
@@ -175,13 +179,16 @@ export function paneState(pane, expectedRunner) {
     : { phase: state === 'shell' ? 'idle' : 'unknown', source: 'process', question: null };
   const rawReceipt = readOptional(receiptPath);
   let receipt = rawReceipt ? JSON.parse(rawReceipt) : null;
-  let accepted = null;
+  let accepted = receipt?.accepted || null;
   if (receipt && runners.has(state)) {
-    accepted = acceptedPrompt(meta, state, obs, receipt);
-    if (accepted) {
-      accepted.payload_hash = receipt.payload_hash;
-      fs.unlinkSync(receiptPath);
-      receipt = null;
+    if (!accepted) {
+      accepted = acceptedPrompt(meta, state, obs, receipt);
+      if (accepted) {
+        accepted.payload_hash = receipt.payload_hash;
+        accepted.receipt_id = receipt.receipt_id || hash(JSON.stringify(receipt));
+        receipt.accepted = accepted;
+        fs.writeFileSync(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
+      }
     }
   }
   const question = native.question || safety.question;
@@ -197,7 +204,7 @@ export function paneState(pane, expectedRunner) {
         }),
       )
     : null;
-  const queued = safety.queued || Boolean(receipt);
+  const queued = safety.queued || Boolean(receipt && !accepted);
   const phase = safety.launch_blocker
     ? 'launch-blocker'
     : question
@@ -216,7 +223,7 @@ export function paneState(pane, expectedRunner) {
     question,
     question_fingerprint: questionFingerprint,
     queued,
-    queue_kind: safety.queued ? 'runner-queue' : receipt ? 'driver-buffer' : null,
+    queue_kind: safety.queued ? 'runner-queue' : receipt && !accepted ? 'driver-buffer' : null,
     delivery_phase: native.phase,
     evidence_source: native.source,
     session_id: native.session_id || null,
@@ -234,7 +241,51 @@ export function paneState(pane, expectedRunner) {
         : 'Runner identity comes from process metadata',
       `Readiness evidence: ${native.source}`,
     ],
-    buffered_digest: receipt?.payload_hash || null,
+    buffered_digest: receipt && !accepted ? receipt.payload_hash : null,
+  };
+}
+
+export function acknowledgeAcceptance(pane, runner, receiptId) {
+  const before = paneState(pane, runner);
+  let verification =
+    before.state !== runner
+      ? 'wrong_runner'
+      : !before.accepted
+        ? 'no_accepted_receipt'
+        : before.accepted.receipt_id !== receiptId
+          ? 'receipt_mismatch'
+          : null;
+  const files = paths(before);
+  let locked = false;
+  try {
+    if (!verification) {
+      try {
+        fs.mkdirSync(files.lock, { mode: 0o700 });
+        locked = true;
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        verification = 'driver_busy';
+      }
+    }
+    if (!verification) {
+      const current = paneState(pane, runner);
+      if (current.state !== runner || current.accepted?.receipt_id !== receiptId)
+        verification = 'receipt_mismatch';
+      else {
+        fs.unlinkSync(files.receipt);
+        verification = 'acceptance_acknowledged';
+      }
+    }
+  } finally {
+    if (locked) fs.rmdirSync(files.lock);
+  }
+  return {
+    pane_id: pane,
+    action_kind: runner,
+    receipt_id: receiptId,
+    verification,
+    acknowledged: verification === 'acceptance_acknowledged',
+    accepted: before.accepted,
   };
 }
 
@@ -327,6 +378,7 @@ export function refusal(before, runner, flush = false) {
   if (before.confidence !== 'high') return 'unknown';
   if (before.pending_question) return 'pending_question';
   if (before.launch_blocker) return 'launch_blocker';
+  if (before.accepted) return 'acceptance_unacknowledged';
   if (before.delivery_phase === 'busy' || before.phase === 'busy') return 'busy';
   if (before.delivery_phase !== 'idle') return 'observability_unavailable';
   if (flush) return before.queue_kind === 'driver-buffer' ? null : 'queue_not_owned';
@@ -371,6 +423,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         if (!verification && runner !== 'shell') {
           const sentAt = Date.now();
           receipt = {
+            receipt_id: randomUUID(),
             payload,
             payload_hash: hash(payload),
             digest: writeSentinel(files.obs, payload, sentAt),
@@ -474,21 +527,23 @@ async function main() {
   const result =
     operation === 'state'
       ? paneState(pane, runner)
-      : operation === 'answer'
-        ? await answerQuestion(
-            pane,
-            runner,
-            tracePath,
-            JSON.parse(fs.readFileSync(0, 'utf8')),
-            answerTrace,
-          )
-        : await send(
-            pane,
-            runner,
-            fs.readFileSync(0, 'utf8').replace(/\n$/, ''),
-            tracePath,
-            operation === 'flush',
-          );
+      : operation === 'ack'
+        ? acknowledgeAcceptance(pane, runner, tracePath)
+        : operation === 'answer'
+          ? await answerQuestion(
+              pane,
+              runner,
+              tracePath,
+              JSON.parse(fs.readFileSync(0, 'utf8')),
+              answerTrace,
+            )
+          : await send(
+              pane,
+              runner,
+              fs.readFileSync(0, 'utf8').replace(/\n$/, ''),
+              tracePath,
+              operation === 'flush',
+            );
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (operation !== 'state' && !result.submitted && !result.acknowledged) process.exitCode = 2;
 }

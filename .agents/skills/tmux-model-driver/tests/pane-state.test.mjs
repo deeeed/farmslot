@@ -33,6 +33,15 @@ test('identity comes from process metadata, never rendered runner text', () => {
 test('question, queue and launch screens only provide fail-closed vetoes', () => {
   assert.equal(paneSafety('Do you want to continue? [y/n]', 'codex').pending_question, true);
   assert.equal(paneSafety('1 queued message', 'codex').queued, true);
+  assert.equal(
+    paneSafety('The queued input guard prevents duplicate delivery.', 'codex').queued,
+    false,
+  );
+  assert.equal(
+    paneSafety('Review queue behavior: queued messages should wait.', 'claude').queued,
+    false,
+  );
+  assert.equal(paneSafety('1 queued message\n1\n2\n3\n4\n5\nready', 'codex').queued, false);
   assert.equal(paneSafety('tab to queue message', 'codex').busy, true);
   assert.equal(
     paneSafety('[a] trust this workspace\n[q] quit\nuse arrow keys to navigate', 'cursor')

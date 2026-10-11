@@ -5,7 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 
-import { answerQuestion, paneState, send, tmux } from '../scripts/driver.mjs';
+import {
+  acknowledgeAcceptance,
+  answerQuestion,
+  paneState,
+  send,
+  tmux,
+} from '../scripts/driver.mjs';
 
 let dir, pane, socket;
 const originalEnv = { ...process.env };
@@ -59,7 +65,8 @@ readline.createInterface({input:process.stdin}).on('line', line=> {
     `stty -echo; exec node '${fixture}' '${dir}'`,
   ]);
   pane = tmux(['display-message', '-p', '-t', 'fixture', '#{pane_id}']).trim();
-  for (let i = 0; i < 40 && !fs.existsSync(path.join(dir, 'ready')); i++) await pause(10);
+  const startupDeadline = Date.now() + 3000;
+  while (!fs.existsSync(path.join(dir, 'ready')) && Date.now() < startupDeadline) await pause(10);
   assert.ok(fs.existsSync(path.join(dir, 'ready')));
 });
 
@@ -128,6 +135,66 @@ test('exact hook digest and new native turn prove one submitted prompt', async (
   assert.ok(result.evidence.turn_token);
   assert.deepEqual(received(), ['one prompt']);
   assert.equal(paneState(pane, 'claude').phase, 'busy');
+  assert.ok(result.evidence.receipt_id);
+  assert.equal(
+    acknowledgeAcceptance(pane, 'claude', result.evidence.receipt_id).acknowledged,
+    true,
+  );
+  assert.equal(paneState(pane, 'claude').accepted, null);
+});
+
+test('late acceptance survives repeated inspection until the lane owner acknowledges it', async () => {
+  reset('drop');
+  assert.equal((await send(pane, 'claude', 'late accepted prompt')).verification, 'unverified');
+  const receiptFile = path.join(
+    dir,
+    'state',
+    fs.readdirSync(path.join(dir, 'state')).find((file) => file.endsWith('.json')),
+  );
+  const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  const now = Date.now();
+  const hook = {
+    runner: 'claude',
+    tmuxPane: pane,
+    session_id: 'fixture',
+    rootSessionId: 'fixture',
+    hook_event_name: 'UserPromptSubmit',
+    observedAt: now,
+    turnStartedAt: now,
+    turnActive: true,
+    runnerPromptDigest: receipt.digest,
+  };
+  fs.appendFileSync(path.join(dir, 'hooks.jsonl'), `${JSON.stringify(hook)}\n`);
+  fs.writeFileSync(
+    path.join(dir, 'panes', `${encodeURIComponent(pane)}.json`),
+    JSON.stringify(hook),
+  );
+  const first = paneState(pane, 'claude');
+  const second = paneState(pane, 'claude');
+  assert.equal(first.accepted.receipt_id, receipt.receipt_id);
+  assert.deepEqual(first.accepted, second.accepted);
+  assert.equal(second.queued, false);
+  assert.equal(
+    (await send(pane, 'claude', 'late accepted prompt')).verification,
+    'acceptance_unacknowledged',
+  );
+  assert.equal(
+    acknowledgeAcceptance(pane, 'claude', 'a-different-receipt').verification,
+    'receipt_mismatch',
+  );
+  assert.equal(
+    acknowledgeAcceptance(pane, 'codex', receipt.receipt_id).verification,
+    'wrong_runner',
+  );
+  // Acceptance remains durable even after the rotating source hook log no longer contains it.
+  fs.writeFileSync(path.join(dir, 'hooks.jsonl'), '');
+  assert.deepEqual(paneState(pane, 'claude').accepted, first.accepted);
+  assert.equal(
+    acknowledgeAcceptance(pane, 'claude', receipt.receipt_id).verification,
+    'acceptance_acknowledged',
+  );
+  assert.equal(paneState(pane, 'claude').accepted, null);
+  assert.deepEqual(received(), ['late accepted prompt']);
 });
 
 test('explicit question answer requires the captured fingerprint and expected runner', async () => {

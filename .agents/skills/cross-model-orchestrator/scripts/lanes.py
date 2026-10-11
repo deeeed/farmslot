@@ -126,7 +126,14 @@ def _observe(config, lane, pane, record):
     goal = record.get("goal_payload")
     if goal and accepted.get("payload_hash") == hashlib.sha256(goal.encode()).hexdigest():
         observed["goal_submitted"] = True
+    if accepted:
+        observed["last_delivery"] = accepted
     _update(config, lane["id"], {"pane_id": pane, **observed})
+    if accepted.get("receipt_id"):
+        result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
+                      accepted["receipt_id"]], env=_env(config, lane, _record(config, lane["id"])))
+        if not json.loads(result.stdout).get("acknowledged"):
+            raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed")
     return observation
 
 

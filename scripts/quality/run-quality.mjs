@@ -44,8 +44,13 @@ export const STEPS = [
       '.agents/skills/tmux-model-driver/tests/pane-state.test.mjs',
       '.agents/skills/tmux-model-driver/tests/send-and-verify.test.mjs',
       '.agents/skills/tmux-model-driver/tests/native-evidence.test.mjs',
+      '.agents/skills/tmux-model-driver/tests/wrappers.test.mjs',
       '.agents/skills/tmux-model-driver/tests/runner-launch.test.mjs',
     ],
+  ],
+  [
+    'model startup gate regression tests',
+    ['bash', '.agents/skills/tmux-model-driver/tests/resolve-launch-blockers.test.sh'],
   ],
   [
     'review artifact migration tests',
