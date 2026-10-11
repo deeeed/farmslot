@@ -101,7 +101,7 @@ export function assertPRExecutionProfile(value: unknown): asserts value is PRExe
   record(policy, policyPath);
   const exactField = workspace ? 'machine' : 'slotId';
   const poolField = workspace ? 'allowedMachines' : 'allowedSlots';
-  let targets: string[];
+  let targets: string[] | undefined;
   if (policy.kind === 'exact') {
     fields(policy, ['kind', exactField], policyPath);
     const target = policy[exactField];
@@ -110,8 +110,10 @@ export function assertPRExecutionProfile(value: unknown): asserts value is PRExe
   } else if (policy.kind === 'pool') {
     fields(policy, ['kind', poolField], policyPath);
     const allowed = policy[poolField];
-    strings(allowed, `${policyPath}.${poolField}`);
-    targets = allowed;
+    if (!workspace || allowed !== undefined) {
+      strings(allowed, `${policyPath}.${poolField}`);
+      targets = allowed;
+    }
   } else {
     throw new Error(`${policyPath}.kind must be exact or pool`);
   }
@@ -130,7 +132,7 @@ export function assertPRExecutionProfile(value: unknown): asserts value is PRExe
     const allowed = model[poolField];
     if (allowed !== undefined) {
       strings(allowed, `model.${poolField}`);
-      if (allowed.some((target) => !targets.includes(target))) {
+      if (targets && allowed.some((target) => !targets.includes(target))) {
         throw new Error(`model.${poolField} must be within ${policyPath}`);
       }
     }
@@ -196,6 +198,56 @@ export function assertPRMonitorConfig(value: unknown): asserts value is PRMonito
   integer(value.cooldownMs, 60_000, 86_400_000, 'monitor.cooldownMs');
 }
 
+export function isUnboundWorkspacePool(
+  profile: PRExecutionProfile,
+): profile is PRWorkspaceExecutionProfile {
+  return (
+    isPRWorkspaceExecutionProfile(profile) &&
+    profile.workspacePolicy.kind === 'pool' &&
+    profile.workspacePolicy.allowedMachines === undefined
+  );
+}
+
+export function workspacePolicyMachines(
+  policy: PRWorkspaceExecutionProfile['workspacePolicy'],
+): string[] | undefined {
+  return policy.kind === 'exact' ? [policy.machine] : policy.allowedMachines;
+}
+
+export function workspacePolicyTargetLabel(
+  policy: PRWorkspaceExecutionProfile['workspacePolicy'],
+): string {
+  return workspacePolicyMachines(policy)?.join(', ') ?? 'Configured pool';
+}
+
+/** Pool authority comes only from the configured registry, never node discovery or a pack. */
+export function bindPRExecutionProfileToPool<T extends PRExecutionProfile>(
+  profile: T,
+  registeredMachines: readonly string[],
+): T {
+  assertPRExecutionProfile(profile);
+  if (!isPRWorkspaceExecutionProfile(profile)) return profile;
+  const registered = new Set(registeredMachines.filter((machine) => machine.trim()));
+  const declared = workspacePolicyMachines(profile.workspacePolicy) ?? [...registered];
+  const machines = declared.filter((machine) => registered.has(machine));
+  if (!machines.length)
+    throw new Error('Workspace execution has no machines in the configured pool registry');
+  const bound = structuredClone(profile);
+  bound.workspacePolicy =
+    profile.workspacePolicy.kind === 'exact'
+      ? { ...profile.workspacePolicy }
+      : { kind: 'pool', allowedMachines: machines };
+  bound.models = profile.models.flatMap((model) => {
+    if (!model.allowedMachines) return [{ ...model }];
+    const allowedMachines = model.allowedMachines.filter((machine) => machines.includes(machine));
+    return allowedMachines.length ? [{ ...model, allowedMachines }] : [];
+  });
+  if (!bound.models.length)
+    throw new Error('Workspace models have no machines in the configured pool registry');
+  assertPRExecutionProfile(bound);
+  return bound;
+}
+
 /** Preserve declared preference order; the queue still owns availability and admission. */
 export function prExecutionChoices(profile: PRSlotExecutionProfile): PRSlotExecutionChoice[];
 export function prExecutionChoices(
@@ -205,10 +257,9 @@ export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoi
 export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoice[] {
   assertPRExecutionProfile(profile);
   if (isPRWorkspaceExecutionProfile(profile)) {
-    const machines =
-      profile.workspacePolicy.kind === 'exact'
-        ? [profile.workspacePolicy.machine]
-        : profile.workspacePolicy.allowedMachines;
+    const machines = workspacePolicyMachines(profile.workspacePolicy);
+    if (!machines)
+      throw new Error('Workspace pool execution must be bound to the configured pool registry');
     return profile.models.flatMap((model) =>
       machines
         .filter((machine) => !model.allowedMachines || model.allowedMachines.includes(machine))

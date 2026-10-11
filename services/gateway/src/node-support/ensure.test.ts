@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,13 @@ import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observabil
 import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 import { remapRemoteFarmRefs } from './remote-command.js';
 import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixtures.js';
+
+const projectRoot = path.join(farmslotRoot, 'projects', 'ensure-test');
+test.before(() => {
+  mkdirSync(projectRoot, { recursive: true });
+  writeFileSync(path.join(projectRoot, 'project.json'), '{}');
+});
+test.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
 const projectVars = {
   projectName: 'ensure-test',
