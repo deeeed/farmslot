@@ -10,6 +10,7 @@ import {
   latestReview,
   PipelineSteps,
   type ReadyGatePrPackage,
+  reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
   type Run,
@@ -26,7 +27,6 @@ import {
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
-import { reviewPolicySatisfied } from '../quality/review-policy.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { executeReview } from '../review/orchestrator.js';
 import {

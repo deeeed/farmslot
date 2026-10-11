@@ -1,4 +1,4 @@
-import type { ReviewPolicy, ReviewStatus } from '@farmslot/protocol';
+import type { ReviewPolicy, ReviewStatus } from '../contracts/runs.js';
 
 export function defaultReviewPolicy(existing?: ReviewPolicy | null): ReviewPolicy {
   return {

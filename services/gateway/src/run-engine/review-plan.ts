@@ -2,7 +2,10 @@ import path from 'node:path';
 
 import {
   type AgentContext,
+  effectiveRequiredReviewCount,
+  isQualifyingReview,
   parseGitHubRef,
+  qualifyingPassingReviews,
   type ReviewPolicy,
   type ReviewSelection,
   type ReviewSequence,
@@ -20,11 +23,6 @@ import {
   reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
 
-import {
-  effectiveRequiredReviewCount,
-  isQualifyingReview,
-  qualifyingPassingReviews,
-} from '../quality/review-policy.js';
 import {
   resolveWarmReviewerSession,
   reviewPRIdentity,

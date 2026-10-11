@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReviewSelection, ReviewStatus, RunDecision } from '@farmslot/protocol';
-
-import { reviewPolicySatisfied } from '../quality/review-policy.js';
+import {
+  reviewPolicySatisfied,
+  type ReviewSelection,
+  type ReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   automaticPublicationReviewPlan,

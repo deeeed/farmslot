@@ -5,7 +5,7 @@ export function assertCurrentReviewConfiguration(value: unknown, label: string):
   for (const key of [
     'reviewDepth',
     'pendingReviewPlan',
-    'independentReviews',
+    'reviews',
     'reviewScope',
     'crossRunner',
     'requireCrossRunner',

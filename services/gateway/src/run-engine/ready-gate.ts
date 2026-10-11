@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  effectiveRequiredReviewCount,
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
@@ -18,6 +19,7 @@ import {
   type ReadyGatePrPackage,
   reviewFixRetriesExhausted,
   type ReviewPolicy,
+  reviewPolicySatisfied,
   type ReviewRequestContext,
   reviewRetryCapReason,
   reviewRetryCount,
@@ -42,7 +44,6 @@ import {
 } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { formatReviewMarkdown } from '../quality/review-artifacts.js';
-import { effectiveRequiredReviewCount, reviewPolicySatisfied } from '../quality/review-policy.js';
 import {
   inferReviewSourceKind,
   REQUESTED_REVIEW_SOURCE,

@@ -323,7 +323,7 @@
         "action": "ui.press",
         "test_id": "companion-backlog-review-effort-1-high",
         "intent": "Preserve high effort on the second row.",
-        "next": "reveal-second-mode"
+        "next": "create-second-warm"
       },
       "create-second-warm": {
         "action": "ui.press",
@@ -388,9 +388,9 @@
       },
       "reveal-cold-recovery": {
         "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 400,
-        "intent": "Return to the review mode controls after the refused save.",
+        "direction": "down",
+        "pixels": 1000,
+        "intent": "Return to publication review choices after the refused form returned to its first field.",
         "next": "create-second-cold"
       },
       "reveal-create-model": {
@@ -406,13 +406,6 @@
         "pixels": 250,
         "intent": "The next review model choices fit above the bottom bar so their labels can be read.",
         "next": "create-second-model"
-      },
-      "reveal-second-mode": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 200,
-        "intent": "The publication review mode choices fit above the bottom bar so their labels can be read.",
-        "next": "create-second-cold"
       }
     }
   }

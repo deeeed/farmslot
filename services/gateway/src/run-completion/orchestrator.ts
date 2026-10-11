@@ -9,6 +9,7 @@ import {
   type ArtifactRef,
   DEFAULT_BRANCH,
   type DiffStat,
+  effectiveRequiredReviewCount,
   type GatePolicy,
   modelsMatch,
   type PublicationStatus,
@@ -30,7 +31,6 @@ import {
   persistRunPrNumber,
   recordRunPRPublication,
 } from '../integrations/pr-linkage.js';
-import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
@@ -96,11 +96,6 @@ import {
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
-  defaultReviewPolicy,
-  effectiveRequiredReviewCount,
-  reviewPolicySatisfied,
-} from '../quality/review-policy.js';
-export {
   ciRequiresPublishedPr,
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
@@ -126,6 +121,11 @@ export {
   defaultSelectedEvidenceKeysForPublication,
   selectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
+export {
+  defaultReviewPolicy,
+  effectiveRequiredReviewCount,
+  reviewPolicySatisfied,
+} from '@farmslot/protocol';
 import {
   createRetrospective,
   initRunCompletionRetrospective,

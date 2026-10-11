@@ -1,11 +1,13 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
+  effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  reviewPolicySatisfied,
   reviewRetryCapReason,
   type ReviewStatus,
   type Run,
@@ -13,7 +15,6 @@ import {
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
-import { effectiveRequiredReviewCount, reviewPolicySatisfied } from '../quality/review-policy.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {

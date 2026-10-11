@@ -47,6 +47,7 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 ---
 
 | [063](../adr/063-review-modes-warm-cold.md) | Review modes WARM/COLD | Accepted | In progress | Shared picker and complete protocol/consumer migration; not shipped |
+| [064](../adr/064-deterministic-checklist-checks.md) | Deterministic checklist checks | Accepted | Not started | Implement command receipts and publication enforcement in the existing task directory contract |
 
 ## ADR-026 — Self-Improvement Recursive Loop (Proposed)
 
