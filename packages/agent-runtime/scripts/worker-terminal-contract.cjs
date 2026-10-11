@@ -512,6 +512,22 @@ function deterministicInputHash(checkout, taskDir) {
   );
   if (result.status !== 0)
     throw new Error('Cannot enumerate publishable inputs for deterministic checks');
+  const indexed = spawnSync('git', ['ls-files', '--stage', '-z'], {
+    cwd: checkout,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (indexed.status !== 0)
+    throw new Error('Cannot enumerate tracked submodules for deterministic checks');
+  const gitlinks = new Map();
+  for (const entry of indexed.stdout.split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t');
+    const [mode, commit, stage] = entry.slice(0, tab).split(' ');
+    if (mode !== '160000') continue;
+    const name = entry.slice(tab + 1);
+    if (stage !== '0') throw new Error(`Resolve submodule conflict ${name} before CI parity`);
+    gitlinks.set(name, commit);
+  }
   const hash = createHash('sha256');
   const task = fs.realpathSync(taskDir);
   for (const name of [...new Set(result.stdout.split('\0').filter(Boolean))].sort()) {
@@ -522,8 +538,36 @@ function deterministicInputHash(checkout, taskDir) {
       stat = fs.lstatSync(file);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
+    }
+    if (gitlinks.has(name)) {
+      let commit = gitlinks.get(name);
+      if (stat) {
+        if (!stat.isDirectory()) throw new Error(`Tracked submodule ${name} is not a directory`);
+        const top = spawnSync('git', ['-C', file, 'rev-parse', '--show-toplevel'], {
+          encoding: 'utf8',
+        });
+        if (top.status !== 0) throw new Error(`Cannot inspect tracked submodule ${name}`);
+        // Uninitialized submodule directories resolve to the parent checkout.
+        if (fs.realpathSync(top.stdout.trim()) === fs.realpathSync(file)) {
+          const head = spawnSync('git', ['-C', file, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+          const dirty = spawnSync(
+            'git',
+            ['-C', file, 'status', '--porcelain=v1', '--untracked-files=all'],
+            { encoding: 'utf8' },
+          );
+          if (head.status !== 0 || dirty.status !== 0)
+            throw new Error(`Cannot fingerprint tracked submodule ${name}`);
+          if (dirty.stdout.trim())
+            throw new Error(
+              `Submodule ${name} has uncommitted work; commit its changes, then rerun CI parity`,
+            );
+          commit = head.stdout.trim();
+        }
+      }
+      hash.update(name + '\0gitlink\0' + commit + '\0');
       continue;
     }
+    if (!stat) continue;
     hash.update(name + '\0');
     hash.update(String(stat.mode & 0o777) + '\0');
     if (stat.isSymbolicLink()) hash.update(fs.readlinkSync(file));
