@@ -83,7 +83,7 @@
   "scripted": {
     "commands": {
       "recipe-smoke": {
-        "command": "bash \"{{farmslot_dir}}/projects/example-app-farm/scripts/recipe-smoke.sh\" \"{{farmslot_dir}}\" \"{{repo}}\" \"{{slot_id}}\"",
+        "command": "bash \"$FARMSLOT_ROOT/projects/example-app-farm/scripts/recipe-smoke.sh\" \"$FARMSLOT_ROOT\" \"$PWD\"",
         "timeout_ms": 60000
       }
     }

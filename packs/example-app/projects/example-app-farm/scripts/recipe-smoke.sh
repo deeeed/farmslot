@@ -2,6 +2,5 @@
 set -euo pipefail
 farm_dir="${1:?Farmslot directory required}"
 checkout="${2:?Checkout required}"
-slot_id="${3:?Slot required}"
 source "$farm_dir/scripts/lib/resolve-farmslot-cli.sh"
-exec "$FARMSLOT_CLI" recipe run smoke --project example-app-farm --target "$checkout" --slot "$slot_id" --json
+exec "$FARMSLOT_CLI" recipe run smoke --project example-app-farm --target "$checkout" --json
