@@ -240,6 +240,7 @@ Options:
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")
   --record-video [mode]          Record evidence (choices: "full-run", "off")
+  --recording-reason <text>      Explain an explicit recording opt-out
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind
   --source-name <name>           Recipe source name
@@ -415,6 +416,7 @@ Options:
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")
   --record-video [mode]          Record evidence (choices: "full-run", "off")
+  --recording-reason <text>      Explain an explicit recording opt-out
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind
   --source-name <name>           Recipe source name

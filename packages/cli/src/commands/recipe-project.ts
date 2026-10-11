@@ -98,6 +98,7 @@ export function registerProjectExecutionCommand(
     )
     .addOption(new Option('--hud <mode>', 'Evidence HUD').choices(['show', 'hide']))
     .addOption(new Option('--record-video [mode]', 'Record evidence').choices(['full-run', 'off']))
+    .option('--recording-reason <text>', 'Explain an explicit recording opt-out')
     .option('--source-trust <trust>', 'Explicit recipe source trust')
     .option('--source-kind <kind>', 'Explicit recipe source kind')
     .option('--source-name <name>', 'Recipe source name')

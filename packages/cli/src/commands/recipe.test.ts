@@ -1022,3 +1022,18 @@ test('public logs without a compact hook defaults to 20 bounded raw lines', (t) 
     Array.from({ length: 20 }, (_, index) => `line-${index + 11}`),
   );
 });
+
+test('public checkout commands forward an explicit recording opt-out reason', (t) => {
+  const root = callFixture(t);
+  const result = callPublic(root, [
+    'command',
+    'cmd=printf inspected',
+    '--record-video=off',
+    '--recording-reason',
+    'performance baseline',
+  ]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const options = JSON.parse(fs.readFileSync(path.join(root, 'artifacts/factory.json'), 'utf8'));
+  assert.equal(options.recordVideo, false);
+  assert.equal(options.recordingReason, 'performance baseline');
+});
