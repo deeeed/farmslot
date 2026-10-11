@@ -1548,7 +1548,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <>
               {humanGate ? (
                 <PublishGuardNotice
-                  guard={humanGate.guard}
                   actions={humanGate.actions}
                   testID="companion-decision-publish-guard"
                 />

@@ -1,10 +1,13 @@
 /**
  * Gate review for an open `engine_human_gate` decision: the package summary, the
  * latest verdict of each independent reviewer, and the client-side guard that
- * keeps every publish approval disabled while the evidence is not complete. The
- * guard only withholds buttons; the gateway's own publish checks are unchanged.
+ * withholds publish approval while the evidence is not complete. The guard only
+ * withholds buttons; the gateway's own publish checks are unchanged.
  */
 import {
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
   defaultReviewDepthPolicy,
   effectiveRequiredReviewCount,
@@ -22,6 +25,17 @@ import { colors } from '@farmslot/theme';
 import type { AcceptanceLedgerView } from './task-progress-view';
 
 export const HUMAN_GATE_DECISION_TYPE = 'engine_human_gate';
+
+/**
+ * Publish approvals the gateway offers precisely because the reviews are failing,
+ * stale or unrecordable. The review half of the guard does not apply to them, or
+ * they could never be sent; the criteria half does.
+ */
+const REVIEW_OVERRIDE_ACTIONS: ReadonlySet<string> = new Set([
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+]);
 
 /** What the gate model reads from a decision, whether it came with its run or from `decision.list`. */
 export type GateDecision = Pick<RunDecision, 'title' | 'payload'>;
@@ -48,8 +62,10 @@ export interface GateReviewVerdict {
 }
 
 export interface ApprovePublishGuard {
-  blocked: boolean;
-  reasons: string[];
+  /** Why no publish approval, override or not, may be sent: criteria unjudged or unreadable. */
+  acceptanceReasons: string[];
+  /** Why a plain publish approval may not be sent: a reviewer's latest verdict. */
+  reviewReasons: string[];
 }
 
 export interface ApprovePublishGuardInput {
@@ -184,43 +200,47 @@ export function latestReviewVerdicts(
  * they withhold approval too.
  */
 export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePublishGuard {
-  const reasons: string[] = [];
+  const acceptanceReasons: string[] = [];
   if (input.acceptanceError) {
-    reasons.push(`Acceptance criteria unavailable: ${input.acceptanceError}`);
+    acceptanceReasons.push(`Acceptance criteria unavailable: ${input.acceptanceError}`);
   } else if (!input.acceptance) {
-    reasons.push('Acceptance criteria are still loading');
+    acceptanceReasons.push('Acceptance criteria are still loading');
   } else {
     const unassessed = input.acceptance.rows
       .filter((row) => row.verdict === null)
       .map((row) => row.criterion.id);
     if (unassessed.length > 0) {
-      reasons.push(
+      acceptanceReasons.push(
         `${unassessed.join(', ')} ${unassessed.length === 1 ? 'has' : 'have'} no verdict`,
       );
     }
   }
+  const reviewReasons: string[] = [];
   if (input.reviews.length === 0 && input.requiredReviews > 0) {
-    reasons.push('No independent review verdict yet');
+    reviewReasons.push('No independent review verdict yet');
   }
   for (const review of input.reviews) {
-    if (!review.approved) reasons.push(`Latest ${review.runner} review is ${review.label}`);
+    if (!review.approved) reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
   }
-  return { blocked: reasons.length > 0, reasons };
+  return { acceptanceReasons, reviewReasons };
 }
 
 /**
- * The decision's own actions. Every publish approval is withheld while the guard
- * blocks, overrides included: the phone approves only a complete gate, and the
- * overrides stay available where the full review context is (Command Center).
- * Hold and review requests are never withheld.
+ * The decision's own actions with the publish approvals the guard withholds.
+ * Unjudged criteria withhold every publish approval, overrides included; a
+ * latest review that is not an approval withholds the plain approvals, while the
+ * review overrides stay as the gateway offers them. Hold and review requests are
+ * never withheld.
  */
 export function gateReviewActions(
   actions: ReadonlyArray<DecisionAction>,
   guard: ApprovePublishGuard,
 ): GateReviewAction[] {
-  return actions.map((action) => ({
-    ...action,
-    disabledReason:
-      isPublishApprovalAction(action.id) && guard.blocked ? guard.reasons.join(' · ') : null,
-  }));
+  return actions.map((action) => {
+    if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
+    const reasons = REVIEW_OVERRIDE_ACTIONS.has(action.id)
+      ? guard.acceptanceReasons
+      : [...guard.acceptanceReasons, ...guard.reviewReasons];
+    return { ...action, disabledReason: reasons.length > 0 ? reasons.join(' · ') : null };
+  });
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion publish gate review",
-  "description": "Opens two runs parked at a publish gate on a private fixture gateway. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, and passing reviewers: run detail and the decision workspace both reach the gate review, publish approval is disabled with its reason on both while hold and review requests stay enabled, the criterion's evidence opens in the artifact viewer and swipes within that criterion, and holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings and the gateway's bypass action, which stays disabled with the review as its reason. Requires the leased iOS simulator and the dev client with the recipe bridge.",
+  "description": "Opens two runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, and passing reviewers: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on both while hold and review requests stay enabled, the criterion's evidence opens in the artifact viewer and swipes within that criterion, and holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish, and the gate review keeps it disabled with the review as its reason. Requires the leased iOS simulator and the dev client with the recipe bridge.",
   "proofTargets": [
     {
       "id": "gate-review-screen",
@@ -9,7 +9,7 @@
     },
     {
       "id": "approve-guard",
-      "claim": "Every publish approval is disabled with a visible reason while a registered criterion has no verdict or a reviewer's latest verdict is not an approval, on the gate review and the decision workspace; hold and review requests stay enabled."
+      "claim": "Approve-publish is disabled with a visible reason while a registered criterion has no verdict or a reviewer's latest verdict is not an approval, on the gate review and the decision workspace; hold and review requests stay enabled."
     },
     {
       "id": "ac-evidence-viewer",
@@ -242,6 +242,22 @@
         "label": "Decision workspace with publish approval withheld",
         "covers": ["approve-guard"],
         "intent": "Record the decision workspace's guarded actions.",
+        "next": "press-decision-approve"
+      },
+      "press-decision-approve": {
+        "action": "ui.press",
+        "selector": "id=\"companion-decision-action-approve-publish\" enabled=false",
+        "intent": "The operator tries approve on the Gate tab, which matches only while it is disabled.",
+        "proves": ["approve-guard"],
+        "next": "no-decision-confirm"
+      },
+      "no-decision-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "The Gate tab's disabled approve opens no confirmation.",
+        "proves": ["approve-guard"],
         "next": "scroll-decision-top"
       },
       "scroll-decision-top": {
@@ -597,37 +613,37 @@
         "test_id": "companion-gate-review-approve-reason",
         "text_contains": ["Latest claude review is issues · 2 unresolved"],
         "timeout_ms": 10000,
-        "intent": "The review with open findings is the reason publish approval is withheld.",
+        "intent": "The review with open findings is the reason approve-publish is withheld.",
         "proves": ["approve-guard"],
         "next": "hud-issues"
       },
       "hud-issues": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Bypass withheld while the latest claude review has open findings.",
+        "intent": "Approve withheld while the latest claude review has open findings.",
         "next": "capture-issues"
       },
       "capture-issues": {
         "action": "ui.screenshot",
         "path": "screenshots/after-gate-review-review-findings.png",
-        "label": "Bypass withheld for open review findings",
+        "label": "Approve withheld for open review findings",
         "covers": ["approve-guard"],
-        "intent": "Record the withheld bypass and its review reason.",
-        "next": "press-bypass"
+        "intent": "Record the withheld approve and its review reason.",
+        "next": "press-issues-approve"
       },
-      "press-bypass": {
+      "press-issues-approve": {
         "action": "ui.press",
-        "selector": "id=\"companion-gate-review-action-approve-publish-unresolved\" enabled=false",
-        "intent": "The operator tries the review bypass, which matches only while it is disabled.",
+        "selector": "id=\"companion-gate-review-action-approve-publish\" enabled=false",
+        "intent": "The operator tries approve-publish, which the gateway offers but the review findings withhold.",
         "proves": ["approve-guard"],
-        "next": "no-bypass-confirm"
+        "next": "no-issues-confirm"
       },
-      "no-bypass-confirm": {
+      "no-issues-confirm": {
         "action": "ui.wait_for",
         "text": "Confirm action",
         "expected": "absent",
         "timeout_ms": 3000,
-        "intent": "The withheld bypass opens no confirmation.",
+        "intent": "The withheld approve opens no confirmation.",
         "proves": ["approve-guard"],
         "next": "verify-issues-pending"
       },

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Native proof for the Companion gate review: a private fixture gateway holds two runs parked at a
-// publish gate. On the first, one criterion is proven with a screenshot and a text check, one has
-// no verdict, and both reviewers passed. On the second, every criterion is proven but the latest
-// claude review has open findings, so the gate carries the gateway's actions for an unsatisfied
-// review policy (bypass instead of approve). The recipe drives the Companion UI; these phases only
-// own the fixture gateway and read its persisted state.
+// publish gate under a one-review policy. On the first, one criterion is proven with a screenshot
+// and a text check, one has no verdict, and both reviewers passed. On the second, every criterion
+// is proven and codex passed, but the latest claude review has open findings: the gateway still
+// counts the policy satisfied and offers approve-publish. Each gate's actions come from the
+// gateway's own policy functions. The recipe drives the Companion UI; these phases only own the
+// fixture gateway and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -27,31 +28,30 @@ const CRITERIA = [
   'The fixture screen renders its recipe list',
   'The fixture publish note is reviewed by a human',
 ];
-/** Hold and the review requests; the publish approval depends on the review policy. */
-const REVIEW_ACTIONS = [
-  { id: 'hold', label: 'Hold', style: 'secondary' },
-  { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
-  {
-    id: 'request-cross-runner-review',
-    label: 'Request Independent Review (runner diversity)',
-    style: 'secondary',
-  },
-];
-// The ids, order and labels the gateway's `publicationGateDecisionActions` produces.
-const SATISFIED_ACTIONS = [
-  { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
-  ...REVIEW_ACTIONS,
-];
-const UNSATISFIED_ACTIONS = [
-  ...REVIEW_ACTIONS,
-  {
-    id: 'approve-publish-unresolved',
-    label: 'Bypass Review (dangerous)',
-    style: 'danger',
-    description:
-      'Publish this package despite missing, failed, or stale reviews. Package and source freshness checks still apply.',
-  },
-];
+const REVIEW_DEPTH = {
+  minimumIndependentReviews: 1,
+  requireCrossRunner: false,
+  extraLoopsRequested: 0,
+  requestedBy: 'dispatch',
+};
+
+/** The actions the gateway's publish gate offers for these reviews under REVIEW_DEPTH. */
+function gatewayGateActions(independentReviews) {
+  const script = `
+    import { publicationGateDecisionActions } from './services/gateway/src/run-engine/gate-policy.ts';
+    import { independentReviewPolicySatisfied } from './services/gateway/src/quality/review-policy.ts';
+    const { policy, reviews } = JSON.parse(process.argv[1]);
+    const reviewSatisfied = independentReviewPolicySatisfied(policy, reviews);
+    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, independentReviews: reviews })));
+  `;
+  return JSON.parse(
+    execFileSync(
+      path.join(root, 'node_modules/.bin/tsx'),
+      ['-e', script, JSON.stringify({ policy: REVIEW_DEPTH, reviews: independentReviews })],
+      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
+  );
+}
 
 const readState = () => JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -145,7 +145,7 @@ function seedTask(fixture, name, provenCount) {
   return path.join(taskDir, 'TASK.md');
 }
 
-function seedRun(fixture, { id, gateId, taskFile, title, claude, actions }) {
+function seedRun(fixture, { id, gateId, taskFile, title, claude }) {
   const now = new Date().toISOString();
   // Ids follow the gateway's independent-review source: `independent-review-<loop>`.
   const review = (runner, model, loopNumber, overrides = {}) => ({
@@ -162,6 +162,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, claude, actions }) {
     ...overrides,
   });
   const independentReviews = [review('codex', 'gpt-5.5', 1), review('claude', 'opus', 2, claude)];
+  const actions = gatewayGateActions(independentReviews);
   const diffStat = { files: 7, additions: 312, deletions: 41 };
   writeJson(path.join(fixture, 'runs', `${id}.json`), {
     id,
@@ -213,6 +214,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, claude, actions }) {
             draftTitle: title,
             draftBody: 'Fixture package body.',
             reviewArtifactIds: [],
+            reviewDepth: REVIEW_DEPTH,
             gatePolicy: {
               owner: 'human',
               publishAuthority: 'human',
@@ -253,7 +255,6 @@ if (phase === 'setup') {
     taskFile: seedTask(fixture, 'gate-review-fixture', 1),
     title: 'feat(companion): fixture gate review package',
     claude: {},
-    actions: SATISFIED_ACTIONS,
   });
   seedRun(fixture, {
     id: issuesRunId,
@@ -261,7 +262,6 @@ if (phase === 'setup') {
     taskFile: seedTask(fixture, 'gate-review-fixture-issues', 2),
     title: 'feat(companion): fixture review findings package',
     claude: { verdict: 'issues', unresolvedCount: 2 },
-    actions: UNSATISFIED_ACTIONS,
   });
   const log = fs.openSync(path.join(proofDir, 'gateway.log'), 'a', 0o600);
   const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
@@ -312,10 +312,12 @@ if (phase === 'setup') {
     'only AC-1 has a verdict',
   );
   const issues = gate(issuesRunId, issuesDecisionId);
-  assert.deepEqual(
-    issues?.actions.map((action) => action.id),
-    UNSATISFIED_ACTIONS.map((action) => action.id),
-  );
+  for (const seededGate of [seeded, issues]) {
+    assert.ok(
+      seededGate?.actions.some((action) => action.id === 'approve-publish'),
+      'one passing review satisfies the policy, so the gateway offers approve-publish',
+    );
+  }
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
 } else if (phase === 'gateway-url') {

@@ -235,45 +235,47 @@ test('a publication gate requires the reviews its frozen policy counts', () => {
   assert.equal(gateRequiredReviewCount(gateDecision({ payload: undefined })), 0);
 });
 
+const OVERRIDES: DecisionAction[] = [
+  { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Bypass Review (dangerous)', style: 'danger' },
+  { id: APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, label: 'Approve (refresh)', style: 'primary' },
+  { id: 'ready', label: 'Mark Ready', style: 'primary' },
+  { id: 'hold', label: 'Hold', style: 'secondary' },
+];
+
+const withheld = (actions: DecisionAction[], guard: ReturnType<typeof approvePublishGuard>) =>
+  gateReviewActions(actions, guard).map((action) => [action.id, action.disabledReason]);
+
 test('approve-publish is withheld while a criterion has no verdict; hold and review requests stay', () => {
   const guard = approvePublishGuard({
     acceptance: acceptance(['AC-1']),
     reviews: approvals,
     requiredReviews: 1,
   });
-  assert.deepEqual(guard, { blocked: true, reasons: ['AC-2 has no verdict'] });
-  const actions = gateReviewActions(GATE_ACTIONS, guard);
-  assert.equal(actions[0].id, APPROVE_PUBLISH_ACTION);
-  assert.equal(actions[0].disabledReason, 'AC-2 has no verdict');
-  assert.deepEqual(
-    actions.slice(1).map((action) => [action.id, action.disabledReason]),
-    [
-      ['hold', null],
-      ['request-extra-review', null],
-      ['request-cross-runner-review', null],
-    ],
-  );
+  assert.deepEqual(guard, { acceptanceReasons: ['AC-2 has no verdict'], reviewReasons: [] });
+  assert.equal(GATE_ACTIONS[0].id, APPROVE_PUBLISH_ACTION);
+  assert.deepEqual(withheld(GATE_ACTIONS, guard), [
+    ['approve-publish', 'AC-2 has no verdict'],
+    ['hold', null],
+    ['request-extra-review', null],
+    ['request-cross-runner-review', null],
+  ]);
 });
 
-test('every publish approval is withheld, overrides included', () => {
+test('an unjudged criterion withholds every publish approval, overrides included', () => {
   const guard = approvePublishGuard({
     acceptance: acceptance(['AC-1']),
     reviews: approvals,
     requiredReviews: 1,
   });
-  const overrides: DecisionAction[] = [
-    { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Bypass Review (dangerous)', style: 'danger' },
-    { id: APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, label: 'Approve (refresh)', style: 'primary' },
-    { id: 'ready', label: 'Mark Ready', style: 'primary' },
-    { id: 'hold', label: 'Hold', style: 'secondary' },
-  ];
-  assert.deepEqual(
-    gateReviewActions(overrides, guard).map((action) => Boolean(action.disabledReason)),
-    [true, true, true, false],
-  );
+  assert.deepEqual(withheld(OVERRIDES, guard), [
+    [APPROVE_PUBLISH_UNRESOLVED_ACTION, 'AC-2 has no verdict'],
+    [APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, 'AC-2 has no verdict'],
+    ['ready', 'AC-2 has no verdict'],
+    ['hold', null],
+  ]);
 });
 
-test('approve-publish is withheld while a latest reviewer verdict is not an approval', () => {
+test('a latest verdict that is not an approval withholds plain approvals, not the review overrides', () => {
   const reviews = latestReviewVerdicts([
     review({ runner: 'codex' }),
     review({ runner: 'claude', verdict: 'issues', unresolvedCount: 1 }),
@@ -283,13 +285,27 @@ test('approve-publish is withheld while a latest reviewer verdict is not an appr
     reviews,
     requiredReviews: 1,
   });
-  assert.deepEqual(guard.reasons, ['Latest claude review is issues · 1 unresolved']);
+  assert.deepEqual(guard, {
+    acceptanceReasons: [],
+    reviewReasons: ['Latest claude review is issues · 1 unresolved'],
+  });
+  assert.deepEqual(withheld(GATE_ACTIONS, guard)[0], [
+    'approve-publish',
+    'Latest claude review is issues · 1 unresolved',
+  ]);
+  // The overrides exist for exactly this state; withholding them would remove them.
+  assert.deepEqual(withheld(OVERRIDES, guard), [
+    [APPROVE_PUBLISH_UNRESOLVED_ACTION, null],
+    [APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, null],
+    ['ready', 'Latest claude review is issues · 1 unresolved'],
+    ['hold', null],
+  ]);
   assert.deepEqual(
     approvePublishGuard({
       acceptance: acceptance(['AC-1', 'AC-2']),
       reviews: [],
       requiredReviews: 1,
-    }).reasons,
+    }).reviewReasons,
     ['No independent review verdict yet'],
   );
 });
@@ -301,7 +317,7 @@ test('a gate whose policy requires no review is not blocked for having none', ()
       reviews: [],
       requiredReviews: 0,
     }),
-    { blocked: false, reasons: [] },
+    { acceptanceReasons: [], reviewReasons: [] },
   );
 });
 
@@ -311,13 +327,13 @@ test('approve-publish is sendable once every criterion is judged and every revie
     reviews: approvals,
     requiredReviews: 1,
   });
-  assert.deepEqual(guard, { blocked: false, reasons: [] });
   assert.ok(gateReviewActions(GATE_ACTIONS, guard).every((action) => !action.disabledReason));
 });
 
 test('criteria that are loading or unavailable cannot clear the guard', () => {
   assert.deepEqual(
-    approvePublishGuard({ acceptance: null, reviews: approvals, requiredReviews: 1 }).reasons,
+    approvePublishGuard({ acceptance: null, reviews: approvals, requiredReviews: 1 })
+      .acceptanceReasons,
     ['Acceptance criteria are still loading'],
   );
   assert.deepEqual(
@@ -326,7 +342,7 @@ test('criteria that are loading or unavailable cannot clear the guard', () => {
       acceptanceError: 'bad json',
       reviews: approvals,
       requiredReviews: 1,
-    }).reasons,
+    }).acceptanceReasons,
     ['Acceptance criteria unavailable: bad json'],
   );
 });

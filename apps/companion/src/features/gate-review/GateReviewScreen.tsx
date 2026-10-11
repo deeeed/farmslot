@@ -81,7 +81,6 @@ export function GateReviewScreen({
         <GateActions
           decision={viewModel.decision}
           actions={viewModel.actions}
-          guard={viewModel.guard}
           sendingActionId={viewModel.sendingActionId}
           onResolve={actions.resolve}
         />

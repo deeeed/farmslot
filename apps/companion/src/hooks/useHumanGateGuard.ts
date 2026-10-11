@@ -46,7 +46,8 @@ export function useHumanGateGuard(
     const reviews = latestReviewVerdicts(gateIndependentReviews(run, gate));
     const guard = approvePublishGuard({
       acceptance: acceptance.view,
-      acceptanceError: acceptance.error,
+      // Without its run the gate has no criteria to read; say so rather than "loading".
+      acceptanceError: run ? acceptance.error : "the gate's run is not loaded",
       reviews,
       requiredReviews: gateRequiredReviewCount(gate),
     });

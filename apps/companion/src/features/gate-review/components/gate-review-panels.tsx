@@ -4,7 +4,6 @@ import type { RunDecision } from '@farmslot/protocol';
 
 import { type ArtifactHttpHeaders, artifactSource } from '../../../lib/artifact-url';
 import type {
-  ApprovePublishGuard,
   GateReviewAction,
   GateReviewSummary,
   GateReviewVerdict,
@@ -143,23 +142,22 @@ export function GateEvidenceStrip({
   );
 }
 
-/** Why the gate's publish approvals are withheld; nothing when none is. */
+/** Which publish approvals are withheld and why; nothing when none is. */
 export function PublishGuardNotice({
-  guard,
   actions,
   testID,
 }: {
-  guard: ApprovePublishGuard;
   actions: GateReviewAction[];
   testID: string;
 }) {
-  if (!actions.some((action) => action.disabledReason)) return null;
+  const withheld = actions.filter((action) => action.disabledReason);
+  if (withheld.length === 0) return null;
   return (
     <View style={styles.guardCard} testID={testID}>
       <Text style={styles.guardTitle}>Publish approval is disabled</Text>
-      {guard.reasons.map((reason) => (
-        <Text key={reason} style={styles.guardText}>
-          • {reason}
+      {withheld.map((action) => (
+        <Text key={action.id} style={styles.guardText}>
+          • {action.label}: {action.disabledReason}
         </Text>
       ))}
     </View>
@@ -169,13 +167,11 @@ export function PublishGuardNotice({
 export function GateActions({
   decision,
   actions,
-  guard,
   sendingActionId,
   onResolve,
 }: {
   decision: RunDecision;
   actions: GateReviewAction[];
-  guard: ApprovePublishGuard;
   sendingActionId: string | null;
   onResolve: (action: GateReviewAction) => void;
 }) {
@@ -191,11 +187,7 @@ export function GateActions({
   }
   return (
     <View testID="companion-gate-review-actions">
-      <PublishGuardNotice
-        guard={guard}
-        actions={actions}
-        testID="companion-gate-review-approve-reason"
-      />
+      <PublishGuardNotice actions={actions} testID="companion-gate-review-approve-reason" />
       {actions.map((action) => {
         const disabled = Boolean(action.disabledReason) || sendingActionId !== null;
         return (
