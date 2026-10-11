@@ -11,7 +11,7 @@ await import('../runtime/mock-pty.test-support.js');
 let repo = '';
 let declared = false;
 let cli = '';
-let row: Record<string, unknown> = { current_run_id: null, slot_epoch: 1 };
+let row: Record<string, unknown> | null = { current_run_id: null, slot_epoch: 1 };
 let throwAtExec: (() => never) | undefined;
 let resetTracking: (slotId: string) => void;
 const state = await import('../core/state.js');
@@ -21,13 +21,23 @@ mock.module('../core/state.js', {
     onSlotReset: (listener: typeof resetTracking) => {
       resetTracking = listener;
     },
-    readSlotRow: async () => ({ ...row }),
+    readSlotRow: async () => (row ? { ...row } : null),
+    claimSlotStatusIf: async (
+      slotId: string,
+      predicate: (value: Record<string, unknown>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      const candidate = row ?? { slot: slotId, slot_epoch: 0 };
+      if (!predicate(candidate)) return { claimed: false, epoch: null };
+      row = { ...candidate, ...fields, slot_epoch: Number(candidate.slot_epoch) + 1 };
+      return { claimed: true, epoch: row.slot_epoch };
+    },
     updateSlotStatusIf: async (
       _slotId: string,
       predicate: (value: Record<string, unknown>) => boolean,
       fields: Record<string, unknown>,
     ) => {
-      if (!predicate(row)) return false;
+      if (!row || !predicate(row)) return false;
       Object.assign(row, fields);
       return true;
     },
@@ -188,3 +198,27 @@ for (const changedOwner of [false, true]) {
     if (!changedOwner) await assert.rejects(recipeProjectHookRun(params), /closeout unconfirmed/);
   });
 }
+
+test('a fresh slot retains unconfirmed closeout after its in-memory tracking is cleared', async (t) => {
+  row = null;
+  throwAtExec = () => {
+    throw new NodeExecUnconfirmedError('fixture-node', 'first-request', 'disconnected');
+  };
+  t.after(() => {
+    throwAtExec = undefined;
+    resetTracking('recipe-env');
+    row = { current_run_id: null, slot_epoch: 1 };
+  });
+  const params = {
+    slotId: 'recipe-env',
+    project: 'fixture-project',
+    hook: 'recipe_doctor' as const,
+  };
+  await assert.rejects(recipeProjectHookRun(params), NodeExecUnconfirmedError);
+  const stored = (() => row as Record<string, unknown> | null)();
+  assert(stored);
+  assert.equal(stored.slot_epoch, 1);
+  assert.equal(stored.lifecycle, 'held');
+  resetTracking('recipe-env');
+  await assert.rejects(recipeProjectHookRun(params), /closeout unconfirmed/);
+});

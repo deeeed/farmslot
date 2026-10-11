@@ -59,6 +59,7 @@ import {
 } from '../core/remote-paths.js';
 import { slotRealpath } from '../core/slot-io.js';
 import {
+  claimSlotStatusIf,
   onSlotReset,
   readSlotRow,
   SLOT_PHASE_RELEASING,
@@ -122,6 +123,7 @@ async function holdUnconfirmedRecipe(
 ): Promise<void> {
   active.unconfirmed = true;
   const reason = `${UNCONFIRMED_RECIPE_CLOSEOUT}${error.message}`;
+  const held = { lifecycle: 'held', phase: 'occupied', held_reason: reason };
   if (before) {
     await updateSlotStatusIf(
       slotId,
@@ -130,11 +132,23 @@ async function holdUnconfirmedRecipe(
         row.slot_epoch === before.slot_epoch &&
         row.handoff_run_id === before.handoff_run_id &&
         row.phase !== SLOT_PHASE_RELEASING,
-      { lifecycle: 'held', phase: 'occupied', held_reason: reason },
+      held,
     );
     if (typeof before.current_run_id === 'string' && getRun(before.current_run_id)) {
       updateRun(before.current_run_id, { slotTeardownSkipped: reason });
     }
+  } else {
+    // A newly configured slot may not have been written by the first fleet refresh yet.
+    // The atomic claim creates that row, but cannot replace a concurrent owner.
+    await claimSlotStatusIf(
+      slotId,
+      (row) =>
+        row.slot_epoch === 0 &&
+        !row.current_run_id &&
+        !row.handoff_run_id &&
+        row.phase !== SLOT_PHASE_RELEASING,
+      held,
+    );
   }
 }
 
