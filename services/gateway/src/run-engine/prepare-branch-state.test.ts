@@ -9,8 +9,12 @@ import type { Run } from '@farmslot/protocol';
 const root = mkdtempSync(path.join(tmpdir(), 'prepare-intent-'));
 process.env.FARMSLOT_RUNS_DIR = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
-after(() => rmSync(root, { recursive: true, force: true }));
-const { createRun, getRun, persistRunNow, updateRun } = await import('../runs/store.js');
+after(async () => {
+  for (const run of getAllRuns()) await persistRunNow(run, 'fixture teardown');
+  rmSync(root, { recursive: true, force: true });
+});
+const { createRun, getAllRuns, getRun, persistRunNow, updateRun } =
+  await import('../runs/store.js');
 const { recordInitialPrepareBranchState, updateRunSummaryAndBranch } =
   await import('./prepare-branch-state.js');
 
