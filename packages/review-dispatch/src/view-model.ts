@@ -157,7 +157,12 @@ export class ReviewDispatchViewModel {
         runner,
         model: values.model ?? null,
         effort: values.effort ?? null,
-        mode: values.mode ?? DEFAULT_REVIEW_MODE,
+        mode:
+          values.mode === 'warm' &&
+          patch.mode === undefined &&
+          !this.contextForRow(this.currentRows.length)
+            ? DEFAULT_REVIEW_MODE
+            : (values.mode ?? DEFAULT_REVIEW_MODE),
       },
       { catalog: this.catalog },
     );

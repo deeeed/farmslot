@@ -328,16 +328,7 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
       negativeFailed = true;
     }
     assert.ok(negativeFailed, 'Disabling production recovery must break this proof');
-    // Retire only the fixture reviewer and restore the completed first generation before positive replay.
-    const negativeRun = JSON.parse(fs.readFileSync(runFile));
-    const reviewer = negativeRun.agentContexts.find((context) => context.role === 'review');
-    if (
-      reviewer?.target?.target &&
-      tmux(['list-windows', '-t', session, '-F', '#{window_id}'])
-        .split('\n')
-        .includes(reviewer.target.target)
-    )
-      execFileSync('tmux', ['kill-window', '-t', reviewer.target.target]);
+    // The refused request must leave the retained first reviewer intact.
     fs.writeFileSync(runFile, priorRun);
     process.stdout.write(execute('second'));
     const first = JSON.parse(fs.readFileSync(path.join(fixture, 'first.json')));

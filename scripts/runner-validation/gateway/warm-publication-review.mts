@@ -74,6 +74,7 @@ if (process.env.FARMSLOT_WARM_PROOF_GATEWAY === '1') {
     })),
   });
   await prepareCompletionPackage(runId, {
+    stampReviews: false,
     reviewPolicy: {
       minimumReviews: 1,
       requestedBy: 'human-gate',
@@ -209,7 +210,8 @@ if (phase === 'first') {
   assert.equal(context.reviewId, priorReviewScope);
   assert.equal(result.mode, 'warm');
   assert.equal(result.session?.reviewId, priorReviewScope);
-  assert.equal(result.reviewSnapshot?.baseSha, result.session?.lastReviewedHeadSha);
+  const first = JSON.parse(await readFile(path.join(fixture, 'first.json'), 'utf8'));
+  assert.equal(result.reviewSnapshot?.baseSha, first.result.reviewSnapshot.headSha);
   assert.notEqual(result.reviewSnapshot?.baseSha, result.reviewSnapshot?.headSha);
   assert.equal(after.engineState!.publishGate!.publicationStatus, 'not_published');
   assert.ok(prior?.runnerSessionId);
@@ -262,7 +264,9 @@ await writeFile(
     2,
   ),
 );
-if (context.target?.target) execFileSync('tmux', ['kill-window', '-t', context.target.target]);
+// Keep the completed first reviewer available for the WARM phase.
+if (phase !== 'first' && context.target?.target)
+  execFileSync('tmux', ['kill-window', '-t', context.target.target]);
 console.log(
   JSON.stringify({
     phase,

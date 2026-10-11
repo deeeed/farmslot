@@ -384,3 +384,14 @@ test('QA execution does not validate or serialize dormant static-review lineage'
     /cannot request a static review/,
   );
 });
+
+test('a project WARM default starts COLD without lineage, while explicit WARM stays refused', () => {
+  const vm = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'], defaults: { mode: 'warm' } },
+  });
+  assert.equal(vm.selection?.mode, 'cold');
+  assert.equal(vm.valid, true);
+  vm.setMode(vm.rows[0].id, 'warm');
+  assert.equal(vm.selection?.mode, 'warm');
+  assert.equal(vm.canInvoke('request-review'), false);
+});

@@ -303,7 +303,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
           {
             reviewerSessionId: 'fixture-session-' + 'review-2',
             mode: 'cold' as const,
-            id: 'review-2',
+            id: 'pipeline-review-2',
             source: 'pipeline',
             loopNumber: 2,
             verdict: 'pass',

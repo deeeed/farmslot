@@ -2,7 +2,6 @@
 // Spawns a second runner session in a new tmux window on the same slot.
 // The review agent has full codebase access — can read files, run tsc, execute recipe.
 // Writes review-feedback.md; if issues found, feeds back to worker for a fix pass.
-
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -24,6 +23,7 @@ import {
   type RunnerSessionUsage,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import {
   markAgentContextStatus,
@@ -269,7 +269,7 @@ async function executeOwnedReview(
   if (!run) throw new Error('Run not found');
 
   const config = await getReviewConfig(run.project);
-  const effort = options.effort === undefined ? (config.effort ?? null) : options.effort;
+  const requestedEffort = options.effort === undefined ? (config.effort ?? null) : options.effort;
   if (shouldSkipForDisabledReviewConfig(config, options)) {
     debugReviewLog(`[review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`);
     return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
@@ -290,6 +290,12 @@ async function executeOwnedReview(
     throw new Error(`Review for run ${runId} requires an explicit validation depth`);
   const artifactScope = options.artifactScope ?? null;
   const mode = options.mode ?? config.mode ?? 'cold';
+  const effort = executionModelFromSelection({
+    runner: reviewRunner,
+    model,
+    effort: requestedEffort ?? null,
+    mode,
+  }).effort;
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId =
     options.reviewId ??
