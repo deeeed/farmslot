@@ -369,6 +369,11 @@
       "import": "./dist/surfaces/view-links.js",
       "default": "./dist/surfaces/view-links.js"
     },
+    "./node/pack-portability": {
+      "types": "./dist/node/pack-portability.d.ts",
+      "import": "./dist/node/pack-portability.js",
+      "default": "./dist/node/pack-portability.js"
+    },
     "./node/farm-support": {
       "types": "./dist/node/farm-support.d.ts",
       "import": "./dist/node/farm-support.js",

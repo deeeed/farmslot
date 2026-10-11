@@ -80,11 +80,13 @@ test('primary checkout is recognized without a configured personal path', async 
   assert.match(await f.health(f.primary), /primary checkout.*operator gateway/);
 });
 
-test('linked worktree retains its isolated gateway classification', async (t) => {
+test('linked worktree health requires launch provenance without the operator exemption', async (t) => {
   const f = await fixture(t);
-  const output = await f.health(f.linked);
-  assert.match(output, /gateway healthy on/);
-  assert.doesNotMatch(output, /primary checkout/);
+  await assert.rejects(f.health(f.linked), (error) => {
+    assert.match(error.stderr, /stack launch is stale/);
+    assert.doesNotMatch(error.stdout + error.stderr, /primary checkout/);
+    return true;
+  });
 });
 
 test('an explicit primary_repo still overrides Git discovery', async (t) => {

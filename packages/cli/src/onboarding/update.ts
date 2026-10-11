@@ -6,11 +6,23 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { AddError, assertProjectOwnership, resolvePackSource, syncPackProjects } from './add.js';
+import {
+  AddError,
+  assertProjectOwnership,
+  repairRegisteredProjectLinks,
+  resolvePackSource,
+  syncPackProjects,
+} from './add.js';
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
-import { readState, type Workspace, writeState } from './workspace.js';
+import {
+  readState,
+  type Workspace,
+  workspacePoolDir,
+  workspacePoolFile,
+  writeState,
+} from './workspace.js';
 
 // Builds every workspace the CLI depends on, in dependency order. Yarn reads
 // the list from the checkout's own manifests: this process still runs the
@@ -129,7 +141,7 @@ export async function farmslotUpdate(
 
   // 3. Pool schema migrations (versioned, preserve user edits).
   const steps = await loadMigrations(join(clone, 'migrations', 'pool'));
-  const poolPath = join(clone, state.pool_file);
+  const poolPath = workspacePoolFile(ws, state);
   const pool = readPool(poolPath);
   const previousMetroPorts = new Map(
     pool.slots.map((slot) => [slot.id, slot.resources?.['dev-server']?.metro_port]),
@@ -159,14 +171,17 @@ export async function farmslotUpdate(
   const packs = { ...state.packs };
   for (const [name, packState] of Object.entries(packs)) {
     const packDir = resolvePackSource(packState.source, ws, stdio);
+    const { pack, errors } = validatePackDir(packDir, workspacePoolDir(ws, state));
+    if (!pack) throw new AddError(`pack ${name} is invalid:\n  - ${errors.join('\n  - ')}`);
     const hash = hashPackDir(packDir);
     if (hash === packState.hash) {
+      for (const proj of pack.projects) {
+        const repaired = repairRegisteredProjectLinks(proj, packDir, ws, state, name);
+        if (repaired)
+          progress.info(`restored ${repaired} relative pack link(s) in ${projectName(proj)}`);
+      }
       progress.info(`pack ${name} unchanged`);
       continue;
-    }
-    const { pack, errors } = validatePackDir(packDir);
-    if (!pack) {
-      throw new AddError(`pack ${name} changed but is now invalid:\n  - ${errors.join('\n  - ')}`);
     }
     if (pack.hooks?.sync) {
       sh(

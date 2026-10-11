@@ -8,6 +8,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Persist worker-launch history independently of replay step timestamps so recovery can safely distinguish first initialization from missing worker work.
 
 - Support targeted Git publication checks and initial branch intent before slot binding.
+- Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
+
+- Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.
 
 ## 0.37.0 - 2026-10-11
 
