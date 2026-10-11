@@ -44,6 +44,9 @@ credentials, artifacts, session archives or orchestrator verdict/review state.
    recovery and replay. Inspect the original JSON directly for historical
    provenance. Active runs, terminal runs without a recorded completion time,
    and project/backlog/queue configuration still refuse unmappable fields.
+   Pending output cleanup, backlog reconciliation, review-workspace/native
+   worker ownership and dispatching queue references also prevent an envelope;
+   finish those obligations through normal runtime recovery before conversion.
    Dry-run reports the proposed envelope without writing it. Apply retains a
    byte-exact backup; subsequent conversions leave the envelope unchanged.
 

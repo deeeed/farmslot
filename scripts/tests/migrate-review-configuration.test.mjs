@@ -287,6 +287,61 @@ test('active or undated records still refuse unmappable provenance', () => {
   }
 });
 
+test('terminal closeout and native ownership obligations keep unmappable runs admitted', () => {
+  for (const [pending, at] of [
+    [
+      { output: { closedAt: '2026-05-01T09:00:00.000Z', cleanupPending: true } },
+      'output.cleanupPending',
+    ],
+    [{ output: { closeError: 'release failed' } }, 'output.closeError'],
+    [{ backlogReconcilePending: true }, 'backlogReconcilePending'],
+    [{ reviewWorkspace: { checkoutId: 'owned-checkout' } }, 'reviewWorkspace'],
+    [{ agentContexts: [{ nativeSession: { sessionId: 'owned-session' } }] }, 'agentContexts'],
+  ]) {
+    const original = { ...historicalRun(), ...pending };
+    const converted = convertReviewConfiguration(original, 'run');
+    assert(converted.unresolved.includes(at));
+    assert(!('legacy' in converted.value));
+    assert(parseRunRecordFile(`${original.id}.json`, JSON.stringify(converted.value)));
+  }
+  const settled = convertReviewConfiguration(
+    {
+      ...historicalRun(),
+      output: { cleanupPending: false },
+      backlogReconcilePending: false,
+      reviewWorkspace: { cleanedAt: '2026-05-01T09:00:00.000Z' },
+      agentContexts: [
+        { nativeSession: { sessionId: 'closed-session', closedAt: '2026-05-01T09:00:00.000Z' } },
+      ],
+    },
+    'run',
+  );
+  assert.equal(settled.value.conversionStatus, 'unconvertible-historical');
+});
+
+test('a dispatching queue handoff refuses the batch before its historical run becomes invisible', async (t) => {
+  const options = await fixture(t);
+  const file = path.join(options.runs, 'historical-run.json');
+  await write(file, historicalRun());
+  await write(options.queue, [{ id: 'handoff', status: 'dispatching', runId: 'historical-run' }]);
+  const before = await readFile(file, 'utf8');
+  for (const apply of [false, true]) {
+    const refused = await migrateReviewConfiguration({ ...options, apply });
+    assert.equal(refused.applied, 0);
+    assert(
+      refused.items
+        .find((item) => item.itemId === 'historical-run')
+        .unresolved.includes('dispatchQueue.runId'),
+    );
+    assert.equal(await readFile(file, 'utf8'), before);
+    await assert.rejects(stat(file + '.adr063-original'), { code: 'ENOENT' });
+  }
+  await write(options.queue, [{ id: 'handoff', status: 'cancelled', runId: 'historical-run' }]);
+  const settled = await migrateReviewConfiguration(options);
+  assert.equal(settled.unresolved, 0);
+  assert.equal(settled.items[0].conversionStatus, 'unconvertible-historical');
+});
+
 test('historical envelopes are byte-preserving in dry run, backed up on apply and idempotent', async (t) => {
   const options = await fixture(t);
   const file = path.join(options.runs, 'historical-run.json');

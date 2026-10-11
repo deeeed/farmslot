@@ -29,6 +29,10 @@ const { isTerminalRunStatus } = await tsImport(
   '../packages/protocol/src/contracts/runs.ts',
   import.meta.url,
 );
+const { nativeWorkerBindingIsHeld } = await tsImport(
+  '../packages/protocol/src/contracts/agents.ts',
+  import.meta.url,
+);
 
 const RENAMES = {
   reviewDepth: 'reviewPolicy',
@@ -49,7 +53,7 @@ const object = (value) => value !== null && typeof value === 'object' && !Array.
 const field = (parent, key) => (parent ? `${parent}.${key}` : key);
 
 /** Returns a proposed document and paths only; never creates reviewer lineage or proof. */
-export function convertReviewConfiguration(document, kind) {
+export function convertReviewConfiguration(document, kind, { queuedRunIds = new Set() } = {}) {
   // A legacy envelope has no runtime run shape. Its original must never be visited again.
   if (kind === 'run' && document.conversionStatus === 'unconvertible-historical')
     return { value: document, fields: [], unresolved: [] };
@@ -383,6 +387,24 @@ export function convertReviewConfiguration(document, kind) {
     typeof document.completedAt === 'string' &&
     Number.isFinite(Date.parse(document.completedAt))
   ) {
+    // Terminal status can precede closeout. Keep the run visible to its owners until settled.
+    const obligations = [
+      ['output.cleanupPending', document.output?.cleanupPending],
+      ['output.closeError', document.output?.closeError],
+      ['backlogReconcilePending', document.backlogReconcilePending],
+      ['reviewWorkspace', document.reviewWorkspace && !document.reviewWorkspace.cleanedAt],
+      [
+        'agentContexts',
+        document.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)),
+      ],
+      ['dispatchQueue.runId', queuedRunIds.has(document.id)],
+    ].filter(([, pending]) => pending);
+    if (obligations.length)
+      return {
+        value,
+        fields: [...changes].sort(),
+        unresolved: [...unresolved, ...obligations.map(([at]) => at)].sort(),
+      };
     // Preserve facts instead of guessing policy. Omitting status/steps/createdAt keeps
     // this envelope out of the shared run loader and all recovery/replay paths.
     return {
@@ -443,6 +465,7 @@ async function optionalRead(file) {
 export async function migrateReviewConfiguration(options) {
   const report = { scanned: 0, changed: 0, unresolved: 0, applied: 0, items: [] };
   const proposals = [];
+  const queuedRunIds = new Set();
   async function inspect(file, kind, array = false) {
     const original = await optionalRead(file);
     if (original === null) return;
@@ -461,8 +484,12 @@ export async function migrateReviewConfiguration(options) {
       return;
     }
     const records = array ? parsed : [parsed];
+    if (kind === 'queue')
+      for (const item of records)
+        if (item?.status === 'dispatching' && typeof item.runId === 'string')
+          queuedRunIds.add(item.runId);
     const converted = records.map((item, index) => {
-      const conversion = convertReviewConfiguration(item, kind);
+      const conversion = convertReviewConfiguration(item, kind, { queuedRunIds });
       if (conversion.fields.length || conversion.unresolved.length) {
         const groups = new Map();
         for (const category of ['fields', 'unresolved'])
