@@ -457,6 +457,14 @@
         "action": "command",
         "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs back",
         "intent": "Return to the Terminals tab before the fixture panes are removed.",
+        "next": "terminal-closed"
+      },
+      "terminal-closed": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "expected": "absent",
+        "timeout_ms": 15000,
+        "intent": "The terminal is closed before the fixture panes are removed.",
         "next": "hud-pass"
       },
       "hud-pass": {
