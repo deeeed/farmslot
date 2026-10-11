@@ -4,6 +4,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share selected support-bundle paths and remote hook remapping with gateway-free lifecycle commands.
+- Persist worker-launch history independently of replay step timestamps so recovery can safely distinguish first initialization from missing worker work.
+
 - Support targeted Git publication checks and initial branch intent before slot binding.
 
 ## 0.37.0 - 2026-10-11

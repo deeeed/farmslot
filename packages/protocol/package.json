@@ -368,6 +368,11 @@
       "types": "./dist/surfaces/view-links.d.ts",
       "import": "./dist/surfaces/view-links.js",
       "default": "./dist/surfaces/view-links.js"
+    },
+    "./node/farm-support": {
+      "types": "./dist/node/farm-support.d.ts",
+      "import": "./dist/node/farm-support.js",
+      "default": "./dist/node/farm-support.js"
     }
   },
   "scripts": {

@@ -895,7 +895,7 @@ export function createRun(
         ? (params.reviewValidationDepth ?? 'static-code')
         : undefined,
     safetyTier: resolvedTier,
-    engineState,
+    engineState: { workerLaunchStarted: false, ...engineState },
     ticketData: params.ticketData,
     ...(normalizeRunTags(params.tags).length > 0 ? { tags: normalizeRunTags(params.tags) } : {}),
     createdAt: now,

@@ -80,6 +80,12 @@ process.stdout.write(hash.digest('hex'));
 NODE
 }
 
+launch_is_current() {
+  local previous_launch_fingerprint
+  previous_launch_fingerprint="$(cat "$LAUNCH_FINGERPRINT_FILE" 2>/dev/null || true)"
+  [[ "$previous_launch_fingerprint" == "$(stack_launch_fingerprint)" ]]
+}
+
 write_launch_fingerprint() {
   (umask 077; printf '%s\n' "$1" >"${LAUNCH_FINGERPRINT_FILE}.tmp"; mv "${LAUNCH_FINGERPRINT_FILE}.tmp" "$LAUNCH_FINGERPRINT_FILE")
 }
@@ -262,9 +268,12 @@ case "$ACTION" in
       fi
       exit 1
     fi
-    if gateway_health && ui_health; then
+    if gateway_health && ui_health && launch_is_current; then
       echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}, UI on :${VITE_PORT}"
       exit 0
+    fi
+    if ! launch_is_current; then
+      echo "[sandbox-dev] stack launch is stale; prepare sandbox to apply current credentials and scripts" >&2
     fi
     if ! gateway_health; then
       echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2

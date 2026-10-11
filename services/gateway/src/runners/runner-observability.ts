@@ -1,6 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
 
+import { NODE_SUPPORT_HASH_FILENAME } from '@farmslot/protocol/node/farm-support';
+
 import type { loadSlotVars } from '../core/config.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
@@ -21,7 +23,7 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   'scripts/lib/toml-scan.mjs',
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
 ] as const;
-export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
+export { NODE_SUPPORT_HASH_FILENAME } from '@farmslot/protocol/node/farm-support';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {

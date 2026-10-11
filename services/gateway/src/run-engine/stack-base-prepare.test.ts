@@ -1,4 +1,3 @@
-// mock.module(...) in the shared fixture needs the test runner module-mock flag.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

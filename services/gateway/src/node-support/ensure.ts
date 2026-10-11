@@ -9,9 +9,13 @@
 // slot prepared earlier on a bundle that could not launch the runner. Every
 // launch path now calls ensureNodeSupportBundle first, which is a no-op when the
 // slot already points at the current bundle.
-
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
+
+import {
+  NODE_SUPPORT_ROOT as REMOTE_SUPPORT_ROOT,
+  nodeSupportDir,
+} from '@farmslot/protocol/node/farm-support';
 
 import { execOnSlot } from '../core/exec.js';
 import {
@@ -38,8 +42,6 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
-
-const REMOTE_SUPPORT_ROOT = '~/farmslot-node/support';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -137,11 +139,6 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
     })),
   };
   return { files, manifest };
-}
-
-/** Where a bundle lives on a node. */
-function nodeSupportDir(hash: string): string {
-  return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
 }
 
 /**

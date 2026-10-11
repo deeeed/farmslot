@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
+import { fetchRemoteBranch, probeRemoteBranch } from '../../core/git-remote.js';
 import {
   execOnSlot,
   expandTemplate,
@@ -88,6 +89,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
+import { recoveryBranchAction } from './prepare-recovery.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -111,17 +113,12 @@ import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
   isSlotIdleBranch,
-  remoteBranchRefspec,
   resolvePrepareMergeMainStrategy,
   resolveSlotTrackingBranchFromProject,
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import {
-  assertPrepareCommitsPublished,
-  localBranchExists,
-  probeRemoteBranch,
-} from './unmerged-work.js';
+import { assertPrepareCommitsPublished, localBranchExists } from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -628,9 +625,11 @@ async function slotPrepareInner(
           `Slot is on '${current}', expected ${expected}. Run 'farmslot slot release' first.`,
         );
       }
-      const fetchDefaultR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch --no-tags origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      const fetchDefaultR = await fetchRemoteBranch(
+        vars.remoteRepo,
+        'origin',
+        defaultBranch,
+        (command) => execOnSlot(vars, command),
       );
       if (fetchDefaultR.exitCode !== 0) {
         throw new Error(
@@ -789,32 +788,60 @@ async function slotPrepareInner(
     }
     step('branch', `${branch} reset to requested start ref ${resolvedStartRef.resolvedSha}`);
   };
+  if (
+    branch &&
+    opts?.preserveBranch &&
+    opts.recoverySourceSlotId &&
+    opts.recoverySourceSlotId !== vars.slotId
+  ) {
+    const source = await loadSlotVars(opts.recoverySourceSlotId);
+    const status = await execOnSlot(
+      source,
+      `git -C ${shellQuote(source.remoteRepo)} status --porcelain -z --untracked-files=all`,
+    );
+    recoveryBranchAction({
+      branch,
+      presence: 'local',
+      workerNeverStarted: opts.allowMissingReplayBranch === true,
+      sourceWorkSafe: status.exitCode === 0 && !hasUserSlotChanges(status.stdout, projectJson),
+    });
+    // Refresh remote backing on the original node. A destination clone's clean
+    // branch says nothing about unpublished work left in the original clone.
+    await assertPrepareCommitsPublished(source, branch, execOnSlot, defaultBranch);
+  }
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
     const localExists = await localBranchExists(vars, branch);
     if (!localExists) {
       // A different clone may not have this published run branch yet. Restore
       // it without reset/clean; Git must refuse any conflicting local work.
-      const published = await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} fetch --no-tags origin ${shellQuote(remoteBranchRefspec(branch))}`,
+      const published = await fetchRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+        execOnSlot(vars, command),
       );
       let base = `origin/${branch}`;
       if (published.exitCode !== 0) {
-        const presence = await probeRemoteBranch(vars, 'origin', branch);
         if (!opts.allowMissingReplayBranch)
           throw new Error(
             `Replay cannot preserve ${branch}: no local branch or fetchable published branch on ${params.slotId}. ` +
               `Restore or push the run branch before retrying; no local refs were reset or deleted. ${published.stderr.slice(-800) || published.stdout.slice(-800)}`,
           );
+        const presence = await probeRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+          execOnSlot(vars, command),
+        );
         if (presence.presence !== 'missing')
           throw new Error(
             `Replay cannot initialize ${branch}: remote absence is unconfirmed after fetch failed (exit ${published.exitCode}): ${published.stderr.slice(-800) || published.stdout.slice(-800)}. ${presence.result.stderr.slice(-200)} No local refs were reset or deleted.`,
           );
-        // Only durable proof that setup never started permits a fresh base.
-        const fetch = await execOnSlot(
-          vars,
-          `git -C ${shellQuote(vars.remoteRepo)} fetch --no-tags origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+        recoveryBranchAction({
+          branch,
+          presence: 'missing',
+          workerNeverStarted: opts.allowMissingReplayBranch === true,
+          sourceWorkSafe: true,
+        });
+        // Durable proof the worker never launched permits a fresh base, even
+        // when branch setup finished before a later prepare phase failed.
+        const fetch = await fetchRemoteBranch(vars.remoteRepo, 'origin', defaultBranch, (command) =>
+          execOnSlot(vars, command),
         );
         if (fetch.exitCode !== 0)
           throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
@@ -829,6 +856,7 @@ async function slotPrepareInner(
         await resolveRequestedStartRef();
         if (resolvedStartRef) base = resolvedStartRef.resolvedSha;
       }
+      await protectPrepareWork(false);
       const create = await execOnSlot(
         vars,
         `git -C ${shellQuote(vars.remoteRepo)} checkout -b ${shellQuote(branch)} ${shellQuote(base)}`,
@@ -849,9 +877,8 @@ async function slotPrepareInner(
     }
     if (localExists) {
       if (reviewRefreshFlow) {
-        const fetch = await execOnSlot(
-          vars,
-          `git -C ${shellQuote(vars.remoteRepo)} fetch --no-tags origin ${shellQuote(remoteBranchRefspec(branch))}`,
+        const fetch = await fetchRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+          execOnSlot(vars, command),
         );
         if (fetch.exitCode !== 0)
           throw new Error(
@@ -878,9 +905,8 @@ async function slotPrepareInner(
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
     if (current === branch && !forceNewBranch) {
-      const fetchBranchR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch --no-tags origin ${shellQuote(remoteBranchRefspec(branch))}`,
+      const fetchBranchR = await fetchRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+        execOnSlot(vars, command),
       );
       if (fetchBranchR.exitCode === 0) {
         const refreshCurrentBranchR = await execOnSlot(
@@ -950,9 +976,11 @@ async function slotPrepareInner(
         await resetBranchToStartRef();
       }
     } else {
-      const fetchDefaultR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch --no-tags origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      const fetchDefaultR = await fetchRemoteBranch(
+        vars.remoteRepo,
+        'origin',
+        defaultBranch,
+        (command) => execOnSlot(vars, command),
       );
       if (fetchDefaultR.exitCode !== 0)
         throw new Error(
@@ -960,9 +988,8 @@ async function slotPrepareInner(
         );
       await resolveRequestedStartRef();
       await resolveStackBase();
-      const fetchBranchR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch --no-tags origin ${shellQuote(remoteBranchRefspec(branch))}`,
+      const fetchBranchR = await fetchRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+        execOnSlot(vars, command),
       );
       if (fetchBranchR.exitCode !== 0) {
         const fetchErr = `${fetchBranchR.stderr}\n${fetchBranchR.stdout}`;
@@ -1017,7 +1044,6 @@ async function slotPrepareInner(
       // Same prefix detects + clears a stale `.git/index.lock` left by a crashed
       // prior git invocation — without this, every retry within ~5min hits
       // "Could not reset index file" until the lock ages out.
-      await protectPrepareWork();
       const resetR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
@@ -1055,6 +1081,9 @@ async function slotPrepareInner(
         }
         step('branch', `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`);
       } else {
+        // Even a non-destructive checkout changes the active run workspace.
+        // Refuse unbacked requested work before leaving its checked-out branch.
+        await protectPrepareWork();
         const coDefaultR = await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
@@ -1086,7 +1115,9 @@ async function slotPrepareInner(
         );
       }
       // Check if branch exists on remote
-      const remote = await probeRemoteBranch(vars, 'origin', branch);
+      const remote = await probeRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+        execOnSlot(vars, command),
+      );
       if (remote.presence === 'unknown')
         throw new Error(
           `Cannot inspect remote branch ${branch}; current work preserved: ${remote.result.stderr || remote.result.stdout}`,
@@ -1229,9 +1260,11 @@ async function slotPrepareInner(
       step('merge', detail);
     };
     step('merge', `Fetching origin/${defaultBranch} before integrate-main...`);
-    const fetchDefaultR = await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git fetch --no-tags origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    const fetchDefaultR = await fetchRemoteBranch(
+      vars.remoteRepo,
+      'origin',
+      defaultBranch,
+      (command) => execOnSlot(vars, command),
     );
     if (fetchDefaultR.exitCode !== 0) {
       const fetchErr =

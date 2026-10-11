@@ -367,3 +367,27 @@ test('configured sandbox lifecycle hooks select current support over an older ch
     assert.ok(result.endsWith(' ' + f.root));
   }
 });
+
+test('sandbox health refuses a healthy stack with missing or changed launch provenance', (t) => {
+  const f = warmStackFixture(t);
+  f.start();
+  const health = () =>
+    execFileSync(
+      'bash',
+      [
+        path.join(f.root, 'projects/farmslot-farm/setup/sandbox-dev.sh'),
+        'health',
+        '--gateway-port',
+        '0',
+      ],
+      { env: { ...f.env, FARMSLOT_RUNS_DIR: '' }, stdio: 'pipe' },
+    );
+  health();
+  const saved = readFileSync(f.fingerprint, 'utf8');
+  rmSync(f.fingerprint);
+  assert.throws(health, /stale/);
+  writeFileSync(f.fingerprint, saved);
+  const script = path.join(f.root, 'scripts/dev.sh');
+  writeFileSync(script, readFileSync(script, 'utf8') + '\n# changed launch\n');
+  assert.throws(health, /stale/);
+});

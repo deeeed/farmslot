@@ -139,6 +139,7 @@ test('worker count defaults to serial and rejects invalid values', () => {
 
 test('classification keys off module mocks and the serial pragma', () => {
   assert.equal(classifyTest('const x = 1;'), 'parallel');
+  assert.equal(classifyTest("import './stack-base-prepare.test-support.js';"), 'module-mock');
   assert.equal(
     classifyTest("await import('../../runtime/mock-pty.test-support.js');"),
     'module-mock',
@@ -317,6 +318,8 @@ export function reachesSharedState(source) {
 // accessors above must be serial, which is why the guard matches the accessor
 // rather than the write.
 const SHARED_STATE_READ_ONLY = {
+  'src/methods/slot/prepare-preserve-branch.test.ts':
+    'redirects root, pool, projects, runs, home and fleet status to its process-unique mkdtemp fixture before dynamic imports',
   'src/backlog/store.test.ts':
     'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
   'src/intelligence/improvement-apply.test.ts':

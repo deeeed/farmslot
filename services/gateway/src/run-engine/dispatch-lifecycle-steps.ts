@@ -29,7 +29,12 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
-import { recordInitialPrepareBranchState } from './prepare-branch-state.js';
+import {
+  prepareReusesRunBranch,
+  recordInitialPrepareBranchState,
+  recordWorkerLaunchStarting,
+  recoveryMayInitializeBranch,
+} from './prepare-branch-state.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
@@ -56,12 +61,7 @@ function copyDefinedKeys(
   return safe;
 }
 
-/** Recovery continues worker-owned work in every flow. Non-review flows,
- * including update-branch, retain the local tip; integration uses mergeMain or
- * the worker's workflow. Review/QA prepare can refresh a clean tree safely. */
-export function prepareReusesRunBranch(run: Pick<Run, 'recoveryAttempts'>): boolean {
-  return run.recoveryAttempts?.at(-1)?.status === 'started';
-}
+export { prepareReusesRunBranch } from './prepare-branch-state.js';
 
 export function safeRecipeToolingProvenance(
   provenance: Record<string, unknown>,
@@ -320,8 +320,7 @@ export async function executePrepareStep(
     : undefined;
   await recordInitialPrepareBranchState(runId);
   const branchState = getRun(runId)?.engineState?.prepareBranch;
-  const allowMissingReplayBranch =
-    isRecoveryPrepare && branchState?.started === false && branchState.branch === current.branch;
+  const allowMissingReplayBranch = isRecoveryPrepare && recoveryMayInitializeBranch(getRun(runId)!);
   const forceNewBranch =
     !isRecoveryPrepare && (current.flowType === 'fix-bug' || current.flowType === 'dev');
 
@@ -401,6 +400,7 @@ export async function executePrepareStep(
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isRecoveryPrepare ? { preserveBranch: true } : {}),
         allowMissingReplayBranch,
+        recoverySourceSlotId: isRecoveryPrepare ? branchState?.slotId : undefined,
         beforeBranchSetup: branchIdentity
           ? async () => {
               const latest = getRun(runId);
@@ -573,6 +573,7 @@ export async function executeDispatchStep(
     } else {
       const collector = createSubStepCollector();
       const dispatchStart = Date.now();
+      await recordWorkerLaunchStarting(runId);
       const result = await warmSessionHandoffDispatch(
         {
           slotId: current.slotId,
@@ -660,6 +661,7 @@ export async function executeDispatchStep(
     }
     const collector = createSubStepCollector();
     const dispatchStart = Date.now();
+    await recordWorkerLaunchStarting(runId);
     if (current.transport === 'native') {
       const result = await nudgeNativeWorker(runId, collector.emit);
       updateRun(runId, { activeTaskFile: result.taskFile ?? undefined });
@@ -782,6 +784,7 @@ export async function executeDispatchStep(
   for (;;) {
     if (forcedLabel) triedLabels.push(forcedLabel);
     try {
+      await recordWorkerLaunchStarting(runId);
       dispatchResult = await dispatchExecute(
         {
           slotId: current.slotId,

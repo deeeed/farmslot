@@ -14,6 +14,17 @@ import {
 
 const exec = promisify(execCb);
 
+test('start ref resolution never treats an unreachable remote head as missing', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-unreachable-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await sh('git init -b main', root);
+  await sh(`git remote add origin ${path.join(root, 'unavailable.git')}`, root);
+  await assert.rejects(
+    resolveStartRefInRepo({ repo: root, requestedRef: 'feature/work', exec: shResult }),
+    /Cannot inspect startRef remote head refs\/heads\/feature\/work/,
+  );
+});
+
 async function sh(command: string, cwd?: string) {
   const { stdout, stderr } = await exec(command, { cwd });
   return { stdout, stderr, exitCode: 0 };
