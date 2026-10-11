@@ -96,3 +96,26 @@ test('a noRetry exec is not resent after a lost reply; the default still retries
   await assert.rejects(nodeExec('noretry-fixture', 'true'), /not open/);
   assert.equal(sends, 2);
 });
+
+test('cancellable exec refuses an older node before sending and respects pre-cancellation', async (t) => {
+  let sends = 0;
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send() {
+      sends += 1;
+    },
+  } as unknown as WebSocket;
+  registerNode('old-exec-fixture', 1, ws);
+  t.after(() => unregisterByWs(ws));
+  const controller = new AbortController();
+  await assert.rejects(
+    nodeExec('old-exec-fixture', 'true', undefined, { signal: controller.signal }),
+    /needs an update/,
+  );
+  controller.abort();
+  await assert.rejects(
+    nodeExec('old-exec-fixture', 'true', undefined, { signal: controller.signal }),
+    /cancelled before/,
+  );
+  assert.equal(sends, 0);
+});

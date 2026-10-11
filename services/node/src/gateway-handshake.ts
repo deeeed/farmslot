@@ -186,6 +186,7 @@ export interface NodeRegisterOptions {
   pid: number;
   capabilities: RecipeRuntimeCapabilityDeclaration[];
   nativeSessions?: NativeExecutionNodeDeclaration;
+  execCancellation?: boolean;
   /** The URL this node dials; the gateway hands it to workers on this machine. */
   gatewayUrl?: string;
   timeoutMs?: number;
@@ -212,6 +213,7 @@ export function registerNode(
       pid: options.pid,
       protocolVersion: PROTOCOL_VERSION,
       capabilities: options.capabilities,
+      ...(options.execCancellation ? { execCancellation: true } : {}),
       ...(options.nativeSessions ? { nativeSessions: options.nativeSessions } : {}),
       ...(options.gatewayUrl ? { gatewayUrl: options.gatewayUrl } : {}),
     },

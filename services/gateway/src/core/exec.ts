@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ExecResult } from '@farmslot/protocol';
+import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
 
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
@@ -56,6 +56,7 @@ export interface ExecOptions {
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
   signal?: AbortSignal;
+  closeoutTimeoutMs?: number;
   maxBuffer?: number;
   /** Remote only: fail instead of resending a command whose reply was lost. */
   noRetry?: boolean;
@@ -74,6 +75,12 @@ export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecRe
 }
 
 function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+  if (opts?.signal?.aborted)
+    return Promise.resolve({
+      stdout: '',
+      stderr: 'Command cancelled before execution.',
+      exitCode: 130,
+    });
   return new Promise((resolve) => {
     const useProcessGroup = opts?.signal != null || opts?.timeout != null;
     const proc = spawn(executable, argv, {
@@ -88,8 +95,8 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
     let outputBytes = 0;
     let maxBufferExceeded = false;
     let timedOut = false;
+    let aborted = false;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-    let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
 
     const killProcessTree = (sig: NodeJS.Signals) => {
       if (useProcessGroup && proc.pid) {
@@ -110,11 +117,8 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
       }
       proc.kill(sig);
     };
-    const terminateWithEscalation = () => {
-      killProcessTree('SIGTERM');
-      timeoutEscalation = setTimeout(() => killProcessTree('SIGKILL'), 5000);
-      timeoutEscalation.unref();
-    };
+    const closeout = createNodeExecCloseout(killProcessTree, opts?.closeoutTimeoutMs);
+    const terminateWithEscalation = closeout.terminate;
     const appendOutput = (stream: 'stdout' | 'stderr', data: Buffer) => {
       const next = outputBytes + data.byteLength;
       let chunk = data;
@@ -145,11 +149,17 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
       if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (timeoutEscalation) clearTimeout(timeoutEscalation);
+      closeout.dispose();
       resolve({
         stdout,
         stderr,
-        exitCode: timedOut ? EXEC_TIMEOUT_EXIT_CODE : maxBufferExceeded ? 1 : exitCode,
+        exitCode: timedOut
+          ? EXEC_TIMEOUT_EXIT_CODE
+          : aborted
+            ? 130
+            : maxBufferExceeded
+              ? 1
+              : exitCode,
       });
     };
     const closeStream = (stream: 'stdout' | 'stderr') => {
@@ -179,7 +189,7 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
     proc.on('error', (err) => {
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (timeoutEscalation) clearTimeout(timeoutEscalation);
+      closeout.dispose();
       resolve({ stdout, stderr: `${stderr}\nspawn error: ${err.message}`, exitCode: 1 });
     });
     if (opts?.timeout != null) {
@@ -190,12 +200,12 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
       }, opts.timeout);
       timeoutTimer.unref();
     }
-    if (opts?.signal) {
-      const onAbort = () => terminateWithEscalation();
-      if (opts.signal.aborted) onAbort();
-      else opts.signal.addEventListener('abort', onAbort, { once: true });
-      proc.on('close', () => opts.signal?.removeEventListener('abort', onAbort));
-    }
+    const stopObservingAbort = observeNodeExecAbort(opts?.signal, () => {
+      aborted = true;
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      terminateWithEscalation();
+    });
+    proc.on('close', stopObservingAbort);
   });
 }
 
@@ -226,14 +236,10 @@ export async function execOnSlot(
       timeout: opts.timeout,
       onOutput: opts.onOutput,
       signal: opts.signal,
+      closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
     });
   }
-  // Note: signal is only supported for local execution. Remote cancellation
-  // requires the node agent to support abort, which is not yet implemented.
-  // For now, aborting a remote exec clears the activeReruns tracking but the
-  // remote process may continue until its timeout expires.
-  //
   // Every remote command that calls a farm script runs it from the support
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
@@ -260,6 +266,8 @@ export async function execOnSlot(
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
     noRetry: opts.noRetry,
+    signal: opts.signal,
+    closeoutTimeoutMs: opts.closeoutTimeoutMs,
   });
 }
 
@@ -276,5 +284,8 @@ export async function execArgvOnSlot(
     timeout: opts.timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
+    noRetry: opts.noRetry,
+    signal: opts.signal,
+    closeoutTimeoutMs: opts.closeoutTimeoutMs,
   });
 }

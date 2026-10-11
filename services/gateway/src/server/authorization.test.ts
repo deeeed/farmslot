@@ -23,10 +23,40 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
-import { pairingCreate } from '../fleet/pairing.js';
-import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
-import { broadcastEvent, createWebSocketServer } from '../server.js';
-import { resolveWebhookWorkOriginator } from '../webhook.js';
+await import('../runtime/mock-pty.test-support.js');
+const { getNode } = await import('../fleet/machine-registry.js');
+const { pairingCreate } = await import('../fleet/pairing.js');
+const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
+const { broadcastEvent, createWebSocketServer } = await import('../server.js');
+const { resolveWebhookWorkOriginator } = await import('../webhook.js');
+
+test('only an authenticated node can advertise exec cancellation', { timeout: 4000 }, async () => {
+  const runtime = isolatedRuntime();
+  const harness = await startServer(runtime);
+  const machine = 'exec-cancel-auth-fixture';
+  try {
+    const ui = await connect(harness.url);
+    await request(ui, Methods.AUTH_CONNECT, { clientKind: 'ui' });
+    const denied = await request(ui, 'node.connect', { machine, pid: 1, execCancellation: true });
+    assert.equal(denied.ok, false);
+    assert.equal(getNode(machine), undefined);
+    ui.close();
+    await onceClose(ui);
+    const node = await connect(harness.url);
+    await request(node, Methods.AUTH_CONNECT, { clientKind: 'node' });
+    const registered = await request(node, 'node.connect', {
+      machine,
+      pid: 1,
+      execCancellation: true,
+    });
+    assert.equal(registered.ok, true);
+    assert.equal(getNode(machine)?.execCancellation, true);
+    node.close();
+    await onceClose(node);
+  } finally {
+    await harness.close();
+  }
+});
 
 test('authorization denial survives the response frame with a teaching Next action', async () => {
   const runtime = isolatedRuntime();

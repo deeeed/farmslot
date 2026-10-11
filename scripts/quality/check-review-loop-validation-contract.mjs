@@ -26,13 +26,18 @@ export const REQUIRED_ANCHORS = [
   },
   {
     id: 'final',
-    text: 'Final round: run the full `yarn quality` once on the final committed SHA.',
-    why: 'the canonical gate stays mandatory exactly once, on the SHA that ships',
+    text: 'Final round: run the full `yarn quality` once on the final committed SHA when lane rules permit it.',
+    why: 'the final gate runs on the shipping SHA when the lane may execute it',
+  },
+  {
+    id: 'tmux-exception',
+    text: 'If full local quality needs a real or private tmux server that the lane may not start, accept focused local gates plus green CI on the final committed SHA.',
+    why: 'the server restriction must not force a lane to start prohibited tmux tests',
   },
   {
     id: 'stop-criteria',
-    text: 'the full `yarn quality` has been run once on the final committed SHA',
-    why: 'the loop may not stop clean before the canonical gate has run',
+    text: 'the final validation rule is satisfied',
+    why: 'the loop stops only after the permitted final validation path completes',
   },
 ];
 

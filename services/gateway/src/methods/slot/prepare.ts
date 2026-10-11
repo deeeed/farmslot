@@ -117,7 +117,10 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { assertPrepareCommitsPublished } from './unmerged-work.js';
+import {
+  assertPrepareCommitsPublished,
+  assertPublishedPrepareBranchContained,
+} from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -897,6 +900,14 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Remote branch ${branch} not found; will create locally if needed`);
+      }
+      // Linked worktrees reset their current branch below, before branch deletion.
+      // Check the freshly fetched published tip before either mutation.
+      if (forceNewBranch && fetchBranchR.exitCode === 0) {
+        await assertPublishedPrepareBranchContained(vars, branch, [
+          `origin/${defaultBranch}`,
+          ...(resolvedStartRef ? [resolvedStartRef.resolvedSha] : []),
+        ]);
       }
       // Clear any skip-worktree / assume-unchanged flags inherited from a prior
       // fixture run. Legacy sync-fixtures.sh used `--skip-worktree` to hide

@@ -70,7 +70,9 @@ python3 .agents/skills/cross-model-orchestrator/scripts/orchestrate.py --config 
 ```
 
 Intermediate rounds run affected tests and `yarn prepush:quality`. The final committed
-SHA gets one `yarn quality`. Both approvals freeze the head. Once CI passes, the lead
+SHA gets one `yarn quality` when lane rules permit it. If the suite needs a real or private
+tmux server the lane may not start, use focused local gates plus green CI for that SHA and record
+the exception evidence. Both approvals freeze the head. Once CI passes, the lead
 checks readiness and inspects the merge dry run:
 
 ```bash
@@ -86,6 +88,17 @@ rollout proof. If the project already authorizes an admin merge after these gate
 Round 4 writes `ESCALATE`; round 5 writes `STOPPED` and requires a lead decision.
 
 ## Cut over an existing lead
+
+Set `reviews.legacy_root` to the existing canonical verdict root; do not migrate historical review
+state. Add any extra report paths/globs to `reports`. Configure project `required_workflows`,
+`ci.no_ci_repos`, and workflow skip policy. Configure `portability_exclusions` for guard code, tests
+and examples. New PRs use the new review loop; existing PRs finish with their legacy verdicts.
+
+Add machine script names to project `heartbeat_hooks` and mutating names to
+`mutating_heartbeat_hooks`. Configure a read-only legacy `attention_seen_file` to preserve reported
+ID|status pairs. Compare `heartbeat --read-only`, `lanes-status`, `merge-watch` without --execute,
+and `attention <repo>` before replacing the lead loop. Mutating hooks remain skipped in that
+comparison. The lead owns execution, recovery and retirement of private scripts.
 
 | Existing responsibility                      | Replacement                                                                |
 | -------------------------------------------- | -------------------------------------------------------------------------- |

@@ -17,6 +17,14 @@ import review
 
 
 class ReviewTests(unittest.TestCase):
+    def test_existing_legacy_pr_cannot_restart_new_rounds(self):
+        legacy = self.root / 'legacy' / 'project-12'
+        legacy.mkdir(parents=True)
+        self.config['reviews'] = {'legacy_root': str(legacy.parent)}
+        with self.assertRaisesRegex(RuntimeError, 'legacy verdict'):
+            review.review(self.config, self.args)
+        self.assertFalse(review.review_state_path(self.config, self.args.repo, self.args.pr).exists())
+
     def setUp(self):
         self.started = time.monotonic()
         self.temporary = tempfile.TemporaryDirectory()
