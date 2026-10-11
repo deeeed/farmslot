@@ -242,8 +242,9 @@ export {
   hostEnvName,
   recipeEnvName,
   validateRelativeRecipePath,
+  withRecipeSignals,
 } from './host.js';
-export { JsonStreamWriter } from './json-stream.js';
+export { failStream, JsonStreamWriter } from './json-stream.js';
 export {
   leafStartFailureMessage,
   missingShellLeafMessage,
@@ -306,6 +307,11 @@ export {
   recipeRuntimeDir,
   recipeRuntimePath,
 } from './paths.js';
+export {
+  isRecipeExecution,
+  parseProjectInvocation,
+  type ProjectCommandInvocation,
+} from './project-command.js';
 export {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,

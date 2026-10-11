@@ -375,6 +375,26 @@ describe('resolveHarnessContext', () => {
     );
   });
 
+  for (const state of ['absent', 'missing', 'empty'] as const) {
+    test(`an explicit slot requires a pool match with ${state} pool configuration`, async () => {
+      const checkout = tempRoot();
+      useAdapters(adapter('web'));
+      const slotPoolDir =
+        state === 'absent'
+          ? undefined
+          : state === 'empty'
+            ? tempRoot()
+            : path.join(tempRoot(), 'missing');
+      runtimeContext(checkout, { repoRoot: checkout, slotId: 'runtime-slot', platform: 'web' });
+      const options = { tokens: ['--slot', 'missing'], cwd: checkout, slotPoolDir };
+      await assert.rejects(resolveHarnessContext(options), { code: 'SLOT_NOT_FOUND' });
+      const nonStrict = await resolveHarnessContext({ ...options, strictSlot: false });
+      assert.equal(nonStrict.slot?.value, 'runtime-slot');
+      const identity = await resolveHarnessContext({ ...options, slotSelection: 'identity' });
+      assert.equal(identity.slot?.value, 'runtime-slot');
+    });
+  }
+
   test('a runtime context of another checkout binds nothing here and is reported', async () => {
     const extension = tempRoot();
     const mobile = tempRoot();

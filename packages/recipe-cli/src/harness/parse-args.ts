@@ -13,6 +13,7 @@ import {
   undetectedAdapterMessage,
 } from './adapters.js';
 import { CliError } from './cli-error.js';
+import type { OptionSpec } from './command-contract.js';
 import { contextAdapter } from './context-state.js';
 import { EXIT } from './shared.js';
 
@@ -34,6 +35,7 @@ export function usageError(message: string): CliError {
 export interface ParseArgsOptions {
   // `--record` is a plain flag instead of `--record-video=full-run`.
   recordIsFlag?: boolean;
+  optionSpecs?: Readonly<Record<string, OptionSpec>>;
 }
 
 export function parseArgs(argv: string[], parse: ParseArgsOptions = {}): ParsedArgs {
@@ -75,6 +77,7 @@ export function parseArgs(argv: string[], parse: ParseArgsOptions = {}): ParsedA
     const rawKey = equalsIndex === -1 ? body : body.slice(0, equalsIndex);
     const inlineValue = equalsIndex === -1 ? undefined : body.slice(equalsIndex + 1);
     const key = normalizeOptionKey(rawKey);
+    const spec = parse.optionSpecs?.[`--${rawKey}`];
     if (key === 'recordVideo') {
       options.recordVideo = parseRecordVideoMode(inlineValue);
       continue;
@@ -91,7 +94,11 @@ export function parseArgs(argv: string[], parse: ParseArgsOptions = {}): ParsedA
       options.recordVideo = 'full-run';
       continue;
     }
-    if (booleanOptions.has(key)) {
+    if (
+      spec
+        ? spec.kind === 'boolean' || (spec.kind === 'optional-value' && inlineValue === undefined)
+        : booleanOptions.has(key)
+    ) {
       options[key] = true;
       continue;
     }
