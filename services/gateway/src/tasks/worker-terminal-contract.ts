@@ -24,6 +24,7 @@ import {
   resolveProjectTaskDirName,
   resolveRemoteRepo,
   resolveTaskRelDir,
+  SlotConfigError,
 } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
@@ -388,7 +389,14 @@ export async function validateDeterministicChecksForRun(
   const input = checklist
     ? terminalContractInputForChecklist(checklist)
     : WORKER_TERMINAL_CONTRACT_INPUT;
-  const vars = run.slotId ? await loadSlotVars(run.slotId) : null;
+  let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
+  try {
+    if (run.slotId) vars = await loadSlotVars(run.slotId);
+  } catch (error) {
+    if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
+    // Released legacy tasks can refresh from retained metadata. Any declaration
+    // below still requires its selected checkout and therefore fails closed.
+  }
   const projectVars = vars ? await loadProjectVars(run.project) : null;
   const taskDir =
     vars && projectVars
@@ -421,10 +429,12 @@ export async function validateDeterministicChecksForRun(
     }
     return [];
   }
-  if (!run.slotId)
-    throw new Error('Deterministic CI checks require the run checkout; slot is missing');
+  if (!vars)
+    throw new Error(
+      'Deterministic CI checks require the run checkout; slot is missing or unavailable',
+    );
   const result = await validateTerminalSignalArtifacts(
-    run.slotId,
+    vars.slotId,
     `${taskDir}/SIGNAL.json`,
     {
       status: 'complete',

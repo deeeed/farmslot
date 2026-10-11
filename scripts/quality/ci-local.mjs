@@ -19,9 +19,11 @@ export const CI_PARITY_STEPS = [
   ['project hook conformance', ['yarn', 'test:project-hooks']],
 ];
 
-/** Scope Prettier to actual changed files; global invariant guards remain global. */
+/** Scope only the directory and ignore rules used by the CI format guard. */
 export function ciParitySteps(files, cwd) {
-  const formatFiles = files?.filter((file) => existsSync(path.join(cwd, file)));
+  const formatFiles = files?.filter(
+    (file) => file.startsWith('apps/command-center/') && existsSync(path.join(cwd, file)),
+  );
   const format = formatFiles?.length
     ? [
         'yarn',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -108,4 +109,31 @@ test('restoring an interactive parent preserves its initialized TASK.md command'
   );
   assert.equal(role.deterministicChecks[0].checklist, 'SELF-REVIEW-FIX.md');
   assert.equal(role.deterministicChecks[0].command, 'yarn ci:local');
+});
+
+test('a removed slot preserves legacy refresh but refuses retained deterministic declarations', async (t) => {
+  const { root, run } = await task(t);
+  const pool = path.join(root, 'empty-pool');
+  await mkdir(pool);
+  const script = `
+    import assert from 'node:assert/strict';
+    import { writeFile } from 'node:fs/promises';
+    import { validateDeterministicChecksForRun } from ${JSON.stringify(new URL('./worker-terminal-contract.ts', import.meta.url).href)};
+    const run = ${JSON.stringify({ ...run, slotId: 'removed-ci-fixture' })};
+    assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+    await writeFile(${JSON.stringify(path.join(root, 'inputs/worker-terminal-contract.json'))}, JSON.stringify({ deterministicChecks: [{ checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'ci.local_check', command: 'true' }] }));
+    await assert.rejects(validateDeterministicChecksForRun(run), /slot is missing or unavailable/);
+    console.log('Removed-slot legacy refresh passes; declared checks fail closed');
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', '--input-type=module', '-e', script],
+    {
+      env: { ...process.env, FARMSLOT_POOL_DIR: pool },
+      encoding: 'utf8',
+      timeout: 5000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /declared checks fail closed/);
 });
