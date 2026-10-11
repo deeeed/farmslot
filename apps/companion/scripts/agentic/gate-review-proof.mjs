@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
 const statePath = path.join(proofDir, 'state.json');
+const gatewayLogPath = path.join(proofDir, 'gateway.log');
 const project = 'companion-proof';
 // One registered slot per fixture run: a slot's task is its active run's.
 const SLOTS = {
@@ -33,6 +34,7 @@ const bypassRunId = 'gate-review-fixture-bypass-run';
 const bypassDecisionId = 'gate-review-fixture-bypass-gate';
 const PACKET_PATH = 'artifacts/gate-approve.packet.json';
 const FIXTURE_PROFILE_ID = 'gate-review-fixture';
+const SWAPPED_PACKAGE = { id: 'fixture-package-refreshed', packageHash: 'fixture-package-hash-2' };
 const phase = process.argv[2];
 // The recipe runner passes the slot's device as SIMULATOR and the app as FARMSLOT_RECIPE_APP_ID.
 const simulator = process.env.IOS_SIMULATOR || process.env.SIMULATOR;
@@ -169,6 +171,84 @@ function stopFixture() {
   }
 }
 
+/** Polls `read` until it returns a value; failures repeat until the deadline, then throw. */
+async function waitFor(what, read, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const value = read();
+      if (value) return value;
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting until ${what}`);
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+    }
+    await sleep(250);
+  }
+}
+
+function groupAlive(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** Starts the fixture gateway in its own process group and records it in the proof state. */
+function startGateway(fixture, port) {
+  const log = fs.openSync(gatewayLogPath, 'a', 0o600);
+  const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
+    cwd: root,
+    detached: true,
+    stdio: ['ignore', log, log],
+    env: {
+      ...process.env,
+      FARMSLOT_ROOT: fixture,
+      FARMSLOT_HOME: path.join(fixture, 'home'),
+      FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+      FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+      FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
+      FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+      FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
+      // Loopback-only and unauthenticated, so the app's seeded profile needs no credential.
+      GATEWAY_HOST: '127.0.0.1',
+      GATEWAY_PORT: String(port),
+      FARMSLOT_GATEWAY_TOKEN: '',
+      FARMSLOT_GATEWAY_PASSWORD: '',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_DISABLE_ORCHESTRATION: '1',
+      FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
+    },
+  });
+  gateway.unref();
+  writeJson(statePath, { fixture, port, pid: gateway.pid });
+}
+
+/** How many times the Companion has authenticated to the fixture gateway, from the gateway's log. */
+const companionAuthCount = () =>
+  fs.readFileSync(gatewayLogPath, 'utf8').split('[auth] companion authenticated').length - 1;
+
+/** Whether the app process holds an open socket to the fixture gateway. */
+function appConnected() {
+  const app = execFileSync('xcrun', ['simctl', 'get_app_container', simulator, bundleId, 'app'], {
+    encoding: 'utf8',
+  }).trim();
+  const pids = spawnSync('pgrep', ['-f', `${app}/`], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(pids, 'the Companion process is running');
+  const { port } = readState();
+  // lsof exits 1 when the process has no matching socket.
+  const sockets = spawnSync('lsof', [
+    '-a',
+    '-nP',
+    `-p${pids.split('\n').join(',')}`,
+    `-iTCP:${port}`,
+    '-sTCP:ESTABLISHED',
+  ]);
+  return sockets.status === 0;
+}
+
 /** A task dir whose ledger records `proven` for the first `provenCount` criteria only. */
 function seedTask(fixture, name, provenCount) {
   const taskDir = path.join(fixture, 'projects', project, 'tasks/dev', name);
@@ -183,9 +263,10 @@ function seedTask(fixture, name, provenCount) {
     path.join(root, 'apps/companion/store-assets/raw/ios-phone/02_recipes.png'),
     path.join(taskDir, 'artifacts/after-gate-fixture.png'),
   );
+  // 278,576 bytes, more than the viewer's 200,000-byte text preview reads.
   fs.writeFileSync(
     path.join(taskDir, 'artifacts/gate-fixture-check.txt'),
-    'fixture check: recipe list rendered with 4 rows\n',
+    'fixture check: recipe list rendered with 4 rows\n' + 'fixture log line\n'.repeat(16_384),
   );
   writeJson(path.join(taskDir, 'artifacts/acceptance-status.json'), {
     schemaVersion: 1,
@@ -368,43 +449,8 @@ if (phase === 'setup') {
     codex: { verdict: 'issues', unresolvedCount: 1 },
     claude: { verdict: 'issues', unresolvedCount: 2 },
   });
-  const log = fs.openSync(path.join(proofDir, 'gateway.log'), 'a', 0o600);
-  const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
-    cwd: root,
-    detached: true,
-    stdio: ['ignore', log, log],
-    env: {
-      ...process.env,
-      FARMSLOT_ROOT: fixture,
-      FARMSLOT_HOME: path.join(fixture, 'home'),
-      FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-      FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-      FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-      FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-      FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
-      // Loopback-only and unauthenticated, so the app's seeded profile needs no credential.
-      GATEWAY_HOST: '127.0.0.1',
-      GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_TOKEN: '',
-      FARMSLOT_GATEWAY_PASSWORD: '',
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
-      FARMSLOT_DISABLE_ORCHESTRATION: '1',
-      FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    },
-  });
-  gateway.unref();
-  writeJson(statePath, { fixture, port, pid: gateway.pid });
-  const deadline = Date.now() + 60000;
-  let seeded;
-  while (!seeded && Date.now() < deadline) {
-    try {
-      seeded = gate();
-    } catch (error) {
-      // The owned gateway is still booting; any other failure repeats until the deadline.
-      if (Date.now() + 250 >= deadline) throw error;
-      await sleep(250);
-    }
-  }
+  startGateway(fixture, port);
+  const seeded = await waitFor('the fixture gateway serves the gate', () => gate(), 60000);
   assert.equal(seeded?.type, 'engine_human_gate');
   assert.equal(seeded.resolvedAt, undefined);
   const progress = rpc('task.progress', { slotId: SLOTS[runId], runId });
@@ -447,7 +493,8 @@ if (phase === 'setup') {
 } else if (
   phase === 'verify-pending' ||
   phase === 'verify-issues-pending' ||
-  phase === 'verify-bypass-pending'
+  phase === 'verify-bypass-pending' ||
+  phase === 'verify-bypass-swap-pending'
 ) {
   // A withheld approval, or a confirmation the operator cancelled, must not reach the gateway.
   const pending =
@@ -458,6 +505,103 @@ if (phase === 'setup') {
         : gate(bypassRunId, bypassDecisionId);
   evidence(`gate-after-approval-press-${phase}`, pending);
   assert.equal(pending.resolvedAt, undefined, 'the gate is still open after the approval press');
+  if (phase === 'verify-bypass-swap-pending') {
+    assert.equal(
+      pending.payload.prPackage.packageHash,
+      SWAPPED_PACKAGE.packageHash,
+      'the open gate carries the replacement package',
+    );
+  }
+} else if (phase === 'swap-bypass-package') {
+  // Replace the third gate's package while its confirmation is open, as a package refresh does.
+  // The gateway keeps runs in memory, so it is restarted on the edited run file.
+  const { fixture, port, pid } = readState();
+  const before = gate(bypassRunId, bypassDecisionId).payload.prPackage;
+  const authsBefore = companionAuthCount();
+  stopFixture();
+  await waitFor('the fixture gateway exits', () => !groupAlive(pid), 15000);
+  const runFile = path.join(fixture, 'runs', `${bypassRunId}.json`);
+  const stored = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  const stale = stored.decisions.find((decision) => decision.id === bypassDecisionId);
+  Object.assign(stale.payload.prPackage, SWAPPED_PACKAGE);
+  writeJson(runFile, stored);
+  startGateway(fixture, port);
+  const after = await waitFor(
+    'the restarted gateway serves the replacement package',
+    () => gate(bypassRunId, bypassDecisionId)?.payload.prPackage,
+    60000,
+  );
+  assert.equal(after.packageHash, SWAPPED_PACKAGE.packageHash);
+  assert.notEqual(after.packageHash, before.packageHash);
+  // The open confirmation must see the replacement before Send, so wait for the app's reconnect.
+  await waitFor(
+    'the Companion signs in to the restarted gateway',
+    () => companionAuthCount() > authsBefore,
+    90000,
+  );
+  // Its re-read of the run follows sign-in on loopback.
+  await sleep(750);
+  evidence('gate-package-swap', { before, after });
+} else if (phase === 'background-app') {
+  // Another app in front backgrounds the Companion, which closes its gateway socket.
+  assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
+  execFileSync('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences']);
+  await waitFor('the Companion closes its gateway socket', () => !appConnected(), 15000);
+} else if (phase === 'unjudge-bypass-criterion') {
+  // While the app is away, the third run's ledger loses AC-2's verdict. No run field changes.
+  const { fixture } = readState();
+  const ledgerFile = path.join(
+    fixture,
+    'projects',
+    project,
+    'tasks/dev/gate-review-fixture-bypass/artifacts/acceptance-status.json',
+  );
+  const ledger = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
+  ledger.criteria = ledger.criteria.filter((criterion) => criterion.id !== 'AC-2');
+  writeJson(ledgerFile, ledger);
+  const progress = rpc('task.progress', { slotId: SLOTS[bypassRunId], runId: bypassRunId });
+  assert.deepEqual(
+    progress.acceptanceStatus?.criteria.map((criterion) => [criterion.id, criterion.verdict]),
+    [['AC-1', 'proven']],
+    'the gateway reads the ledger without AC-2',
+  );
+  evidence('bypass-ledger-unjudged', progress.acceptanceStatus);
+} else if (phase === 'hold-bypass-gate') {
+  // While the app is away, the third gate is held through the gateway, bound to its package.
+  const open = gate(bypassRunId, bypassDecisionId);
+  const prPackage = open.payload.prPackage;
+  rpc('run.resolveDecision', {
+    runId: bypassRunId,
+    decisionId: bypassDecisionId,
+    actionId: 'hold',
+    selectionData: {
+      publicationTarget: open.payload.publicationTarget,
+      selectedEvidenceKeys: prPackage.selectedEvidenceKeys ?? [],
+      packageId: prPackage.id,
+      packageHash: prPackage.packageHash,
+      packageHeadSha: prPackage.headSha,
+    },
+  });
+  const held = await waitFor(
+    'the third gate resolves with hold',
+    () => {
+      const current = gate(bypassRunId, bypassDecisionId);
+      return current?.resolvedAt ? current : null;
+    },
+    10000,
+  );
+  assert.equal(held.resolvedAction, 'hold');
+  evidence('bypass-gate-held-while-away', held);
+} else if (phase === 'foreground-app') {
+  // Launching the running app brings it back without a restart; it signs in again on a new socket.
+  assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
+  const authsBefore = companionAuthCount();
+  execFileSync('xcrun', ['simctl', 'launch', simulator, bundleId]);
+  await waitFor(
+    'the Companion signs in to the fixture gateway again',
+    () => companionAuthCount() > authsBefore,
+    30000,
+  );
 } else if (phase === 'verify-hold') {
   let resolved;
   for (let attempt = 0; attempt < 40; attempt++) {

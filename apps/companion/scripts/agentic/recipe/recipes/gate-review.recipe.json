@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion publish gate review",
-  "description": "Opens three runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, passing reviewers and a worker packet asking to approve: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on the gate review, the Gate tab and for the packet, while hold and review requests stay enabled; the criterion's evidence opens in the artifact viewer and swipes within that criterion; holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish and the gate review withholds it. The third has every criterion proven and no passing review: the gateway's review bypass stays enabled. Requires the leased iOS simulator and the dev client with the recipe bridge; the relaunch step starts the app on a saved profile for the fixture gateway, replacing the profiles saved before the run.",
+  "description": "Opens three runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, passing reviewers and a worker packet asking to approve: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on the gate review, the Gate tab and for the packet, while hold and review requests stay enabled; the criterion's evidence opens in the artifact viewer and swipes within that criterion; holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish and the gate review withholds it. The third has every criterion proven and no passing review: the gateway's review bypass stays enabled; a package replaced while its hold confirmation is open is refused at Send; and after trips to the background the gate review shows a ledger change and a hold made while the app was away. The text evidence is larger than the viewer's 200,000-byte preview, which says so. Requires the leased iOS simulator and the dev client with the recipe bridge; the relaunch step starts the app on a saved profile for the fixture gateway, replacing the profiles saved before the run.",
   "proofTargets": [
     {
       "id": "gate-review-screen",
@@ -18,6 +18,18 @@
     {
       "id": "gate-resolve",
       "claim": "Gate actions resolve through the existing decision-resolve call: holding the gate resolves the decision on the gateway."
+    },
+    {
+      "id": "bounded-text-evidence",
+      "claim": "Text evidence downloads through one byte range of at most 200,000 bytes, with a note giving the file's full size when it is cut."
+    },
+    {
+      "id": "confirmed-package",
+      "claim": "Send acts on the package the operator confirmed: a package replaced while the confirmation is open is refused and the gate stays open."
+    },
+    {
+      "id": "reconnect-refresh",
+      "claim": "When the app returns from the background, the gate review re-reads the run and its acceptance ledger, so a ledger change and a resolution made while it was away are shown."
     }
   ],
   "workflow": {
@@ -389,6 +401,14 @@
         "timeout_ms": 15000,
         "intent": "The text evidence renders inside the same viewer.",
         "proves": ["ac-evidence-viewer"],
+        "next": "assert-text-bounded"
+      },
+      "assert-text-bounded": {
+        "action": "ui.wait_for",
+        "text_contains": ["Showing the first 200,000 of 278,576 bytes."],
+        "timeout_ms": 10000,
+        "intent": "The 278,576-byte text evidence is read through a 200,000-byte range and says so.",
+        "proves": ["bounded-text-evidence"],
         "next": "hud-viewer-text"
       },
       "hud-viewer-text": {
@@ -697,6 +717,154 @@
         "cmd": "node scripts/agentic/gate-review-proof.mjs verify-bypass-pending",
         "intent": "The gateway still holds the third gate open after the cancel.",
         "proves": ["approve-guard"],
+        "next": "press-swap-hold"
+      },
+      "press-swap-hold": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-hold\" enabled=true",
+        "intent": "The operator holds the third gate, which asks for confirmation.",
+        "next": "swap-hold-confirm"
+      },
+      "swap-hold-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "intent": "The hold confirmation is open.",
+        "next": "swap-package"
+      },
+      "swap-package": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs swap-bypass-package",
+        "timeout_ms": 180000,
+        "intent": "While the confirmation is open, the gateway replaces the gate's package and the app reconnects.",
+        "next": "send-swapped-hold"
+      },
+      "send-swapped-hold": {
+        "action": "ui.press",
+        "text": "Send",
+        "intent": "The operator sends the hold they confirmed for the earlier package.",
+        "proves": ["confirmed-package"],
+        "next": "wait-package-changed"
+      },
+      "wait-package-changed": {
+        "action": "ui.wait_for",
+        "text_contains": ["The publish package changed; review it again."],
+        "timeout_ms": 10000,
+        "intent": "Send is refused because the package is no longer the one confirmed.",
+        "proves": ["confirmed-package"],
+        "next": "hud-package-changed"
+      },
+      "hud-package-changed": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Replaced package refused at Send.",
+        "next": "capture-package-changed"
+      },
+      "capture-package-changed": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-package-changed.png",
+        "label": "Send refused after the package changed",
+        "covers": ["confirmed-package"],
+        "intent": "Record the refusal.",
+        "next": "dismiss-package-changed"
+      },
+      "dismiss-package-changed": {
+        "action": "ui.press",
+        "text": "OK",
+        "intent": "Dismiss the refusal.",
+        "next": "verify-bypass-swap-pending"
+      },
+      "verify-bypass-swap-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-bypass-swap-pending",
+        "intent": "The gateway still holds the gate open, now on the replacement package.",
+        "proves": ["confirmed-package"],
+        "next": "background-for-ledger"
+      },
+      "background-for-ledger": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs background-app",
+        "timeout_ms": 30000,
+        "intent": "Send the Companion to the background; its gateway socket closes.",
+        "next": "unjudge-criterion"
+      },
+      "unjudge-criterion": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs unjudge-bypass-criterion",
+        "intent": "While the app is away, AC-2 loses its verdict in the ledger; the run itself is unchanged.",
+        "next": "foreground-for-ledger"
+      },
+      "foreground-for-ledger": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs foreground-app",
+        "timeout_ms": 60000,
+        "intent": "Bring the Companion back; it signs in to the gateway again.",
+        "next": "wait-ledger-reread"
+      },
+      "wait-ledger-reread": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-approve-reason",
+        "text_contains": ["AC-2 has no verdict"],
+        "timeout_ms": 20000,
+        "intent": "The gate review re-read the ledger on reconnect and withholds approval again.",
+        "proves": ["reconnect-refresh", "approve-guard"],
+        "next": "hud-ledger-reread"
+      },
+      "hud-ledger-reread": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Ledger re-read after returning.",
+        "next": "capture-ledger-reread"
+      },
+      "capture-ledger-reread": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-reconnect-ledger.png",
+        "label": "Ledger change made while away, shown after return",
+        "covers": ["reconnect-refresh"],
+        "intent": "Record the re-read guard.",
+        "next": "background-for-hold"
+      },
+      "background-for-hold": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs background-app",
+        "timeout_ms": 30000,
+        "intent": "Send the Companion to the background again.",
+        "next": "hold-while-away"
+      },
+      "hold-while-away": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs hold-bypass-gate",
+        "intent": "While the app is away, the gateway holds the third gate; the app misses the broadcast.",
+        "next": "foreground-for-hold"
+      },
+      "foreground-for-hold": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs foreground-app",
+        "timeout_ms": 60000,
+        "intent": "Bring the Companion back.",
+        "next": "wait-reconnect-resolved"
+      },
+      "wait-reconnect-resolved": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-resolved",
+        "text_contains": ["Resolved: hold"],
+        "timeout_ms": 20000,
+        "intent": "The gate review re-read the run on reconnect and shows the hold.",
+        "proves": ["reconnect-refresh"],
+        "next": "hud-reconnect-resolved"
+      },
+      "hud-reconnect-resolved": {
+        "action": "app.hud",
+        "status": "pass",
+        "intent": "Hold made while away is shown.",
+        "next": "capture-reconnect-resolved"
+      },
+      "capture-reconnect-resolved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-reconnect-resolved.png",
+        "label": "Resolution made while away, shown after return",
+        "covers": ["reconnect-refresh"],
+        "intent": "Record the re-read gate.",
         "next": "cleanup"
       },
       "cleanup": {

@@ -29,6 +29,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
@@ -153,6 +154,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const connection = useConnectedTransport();
   const storeDecision = useDecisionStore((s) =>
     s.decisions.find((d) => d.id === resolvedDecisionId),
   );
@@ -447,8 +449,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       setSourceRun(null);
       return;
     }
-    void refreshSourceRun('initial load');
-  }, [refreshSourceRun, sourceRunId]);
+    // Each reconnect re-reads: the publish guard judges this run's reviews.
+    if (connection === null) return;
+    void refreshSourceRun('connect');
+  }, [connection, refreshSourceRun, sourceRunId]);
 
   useEffect(() => {
     if (!sourceRunId) {

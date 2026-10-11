@@ -28,6 +28,11 @@ import {
   classifyArtifact,
 } from '../lib/artifact-url';
 import { gatewayFetch } from '../lib/gateway-http-auth';
+import {
+  TEXT_PREVIEW_MAX_BYTES,
+  TEXT_PREVIEW_RANGE,
+  textPreviewTotalBytes,
+} from '../lib/text-preview';
 import { fonts } from '../lib/theme';
 
 export interface MediaViewerItem {
@@ -194,7 +199,13 @@ function MediaSlide({
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'document') {
     return (
-      <TextSlide uri={item.uri} width={width} height={height} authHeaders={item.authHeaders} />
+      <TextSlide
+        uri={item.uri}
+        width={width}
+        height={height}
+        authHeaders={item.authHeaders}
+        isActive={isActive}
+      />
     );
   }
   if (mediaType === 'video') {
@@ -370,47 +381,53 @@ function FullscreenVideo({
   );
 }
 
-/** A text slide renders at most this many characters, so a large log cannot stall the JS thread. */
-const TEXT_SLIDE_MAX_CHARS = 200_000;
-
 interface TextSlideProps {
   uri: string;
   width: number;
   height: number;
   authHeaders?: ArtifactHttpHeaders;
+  isActive: boolean;
 }
 
-type TextSlideContent = { body: string; truncated: boolean } | { error: string };
+type TextSlideContent = { body: string; totalBytes: number } | { error: string };
 
-function TextSlide({ uri, width, height, authHeaders }: TextSlideProps) {
+function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps) {
   const [content, setContent] = useState<TextSlideContent | null>(null);
   useEffect(() => {
-    const controller = new AbortController();
     setContent(null);
-    gatewayFetch(uri, authHeaders, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.text();
+  }, [authHeaders, uri]);
+  // The viewer mounts every slide; only the one on screen downloads.
+  const load = isActive && content === null;
+  useEffect(() => {
+    if (!load) return;
+    const controller = new AbortController();
+    gatewayFetch(uri, authHeaders, {
+      signal: controller.signal,
+      headers: { Range: TEXT_PREVIEW_RANGE },
+    })
+      .then(async (res) => {
+        const totalBytes = textPreviewTotalBytes(res.status, res.headers.get('Content-Range'));
+        setContent({ body: totalBytes ? await res.text() : '', totalBytes });
       })
-      .then((text) =>
-        setContent({
-          body: text.slice(0, TEXT_SLIDE_MAX_CHARS),
-          truncated: text.length > TEXT_SLIDE_MAX_CHARS,
-        }),
-      )
       .catch((err: Error) => {
-        // Abort is the expected cleanup when the slide unmounts mid-fetch.
+        // Abort is the expected cleanup when the slide leaves the screen mid-fetch.
         if (err.name === 'AbortError') return;
         setContent({ error: err.message });
       });
     return () => controller.abort();
-  }, [authHeaders, uri]);
+  }, [authHeaders, load, uri]);
   const failed = content !== null && 'error' in content;
   return (
     <ScrollView
       style={[styles.textSlide, { width, height }]}
       contentContainerStyle={styles.textContent}
     >
+      {content && 'totalBytes' in content && content.totalBytes > TEXT_PREVIEW_MAX_BYTES ? (
+        <Text style={styles.textError}>
+          Showing the first {TEXT_PREVIEW_MAX_BYTES.toLocaleString()} of{' '}
+          {content.totalBytes.toLocaleString()} bytes.
+        </Text>
+      ) : null}
       <Text selectable style={failed ? styles.textError : styles.textBody}>
         {content === null
           ? 'Loading…'
@@ -418,11 +435,6 @@ function TextSlide({ uri, width, height, authHeaders }: TextSlideProps) {
             ? `Failed to load: ${content.error}`
             : content.body}
       </Text>
-      {content && 'truncated' in content && content.truncated ? (
-        <Text style={styles.textError}>
-          Showing the first {TEXT_SLIDE_MAX_CHARS.toLocaleString()} characters.
-        </Text>
-      ) : null}
     </ScrollView>
   );
 }

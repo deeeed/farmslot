@@ -5,6 +5,7 @@ import { Alert } from 'react-native';
 
 import { Events, type Run, type RunDecision, type RunGetResult } from '@farmslot/protocol';
 
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import type { RunAcceptance } from '../../hooks/useRunAcceptance';
 import {
@@ -70,6 +71,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const authHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  const connection = useConnectedTransport();
   const removeDecision = useDecisionStore((s) => s.removeDecision);
   // The store's run comes from `run.list`, which trims gate payloads, so the
   // screen reads its own full copy through `run.get`.
@@ -102,10 +105,21 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     [client, runId],
   );
 
+  // Another run, gateway or principal makes the copy on screen someone else's
+  // answer: drop it along with any read still in flight.
   useEffect(() => {
+    requestRef.current += 1;
     setRun(null);
-    void refresh('initial load');
-  }, [refresh]);
+    setLoadError(null);
+  }, [authorityEpoch, gatewayUrl, refresh]);
+
+  useEffect(() => {
+    if (connection === null) {
+      requestRef.current += 1;
+      return;
+    }
+    void refresh('connect');
+  }, [connection, refresh]);
 
   useEffect(() => {
     if (!client || !runId) return;
@@ -126,8 +140,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
 
   const decision = run?.decisions.find((candidate) => candidate.id === decisionId) ?? null;
   const gate = useHumanGateGuard(client, run, decision);
-  // What the Send button acts on: the gate as it is when the operator confirms,
-  // not as it was when the confirmation opened.
+  // Send re-checks the gate as it is when the operator confirms, not as it was
+  // when the confirmation opened.
   const latestRef = useRef({ run, decision, gate });
   latestRef.current = { run, decision, gate };
 
@@ -161,12 +175,14 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
 
   const resolve = useCallback(
     (action: GateReviewAction) => {
-      if (!client || !decision || decision.resolvedAt) return;
+      if (!client || !run || !decision || decision.resolvedAt) return;
       if (action.disabledReason) {
         // The button is disabled; this only guards a stale press racing a re-render.
         Alert.alert(action.label, action.disabledReason);
         return;
       }
+      // Bound to the package on screen now, the one the operator is confirming.
+      const confirmed = decisionResolveRequest(decisionDetailFromRun(run, decision), action.id);
       Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -182,13 +198,19 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               Alert.alert(action.label, current.disabledReason);
               return;
             }
-            const { method, params } = decisionResolveRequest(
+            // A package refreshed while the confirmation was open is not the one
+            // the operator reviewed.
+            const now = decisionResolveRequest(
               decisionDetailFromRun(latest.run, latest.decision),
               action.id,
             );
+            if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
+              Alert.alert(action.label, 'The publish package changed; review it again.');
+              return;
+            }
             setSendingActionId(action.id);
             client
-              .request(method, params)
+              .request(confirmed.method, confirmed.params)
               .then(() => {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 removeDecision(decision.id);
@@ -200,7 +222,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         },
       ]);
     },
-    [client, decision, refresh, removeDecision],
+    [client, decision, refresh, removeDecision, run],
   );
 
   const state = gateReviewScreenState({ run, decision, viewModel, loadError, sendingActionId });

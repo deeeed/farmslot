@@ -26,6 +26,7 @@ import {
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
@@ -117,6 +118,7 @@ export default function RunDetailScreen() {
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
   const connectionStatus = useConnectionStore((s) => s.status);
+  const connection = useConnectedTransport();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
@@ -219,8 +221,10 @@ export default function RunDetailScreen() {
   }, [client, resolvedRunId]);
 
   useEffect(() => {
+    // Each reconnect re-reads: the operator packets' publish guard judges this run.
+    if (connection === null) return;
     void loadRun();
-  }, [loadRun]);
+  }, [connection, loadRun]);
 
   const noteRecipeRunsUnavailable = useCallback((err: Error) => {
     if (isGatewayBackgroundPauseError(err)) {

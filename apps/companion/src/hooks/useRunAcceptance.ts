@@ -4,7 +4,8 @@
  * whether or not the worker is active: a run parked at a gate is exactly when
  * the ledger is reviewed. A progress broadcast for the run triggers a re-read
  * rather than replacing the data, so an update that carries no acceptance
- * fields can never empty the criteria.
+ * fields can never empty the criteria. Each reconnect re-reads too, since
+ * broadcasts sent while disconnected never arrive.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -23,6 +24,9 @@ import type { GatewayClient } from '../lib/gateway-client';
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
 import { taskProgressRequestForRun, taskProgressUpdateTargetsRun } from '../lib/task-progress';
 import { type AcceptanceLedgerView, acceptanceLedgerView } from '../lib/task-progress-view';
+import { useConnectionStore } from '../store/connection';
+
+import { useConnectedTransport } from './useConnectedTransport';
 
 export interface RunAcceptance {
   acceptanceStatus: AcceptanceStatusLedger | null;
@@ -60,15 +64,23 @@ export function useRunAcceptance(
   const updatedAt = run?.updatedAt;
   const target = taskProgressRequestForRun(run);
   const noSurface = Boolean(run) && !target;
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  const connection = useConnectedTransport();
 
+  // Another gateway or principal makes the ledger on screen someone else's answer.
   useEffect(() => {
     requestRef.current += 1;
     setData(null);
     setRequestError(null);
-  }, [runId, slotId, workspaceId]);
+  }, [authorityEpoch, runId, slotId, workspaceId]);
 
   useEffect(() => {
     if (!client || !target) return;
+    if (connection === null) {
+      // Drop reads in flight; the next connected transport re-reads.
+      requestRef.current += 1;
+      return;
+    }
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     client
@@ -89,7 +101,7 @@ export function useRunAcceptance(
         setRequestError(`Acceptance criteria unavailable: ${err.message}`);
       });
     // `target` is derived from the run fields listed here.
-  }, [broadcasts, client, runId, slotId, workspaceId, updatedAt]);
+  }, [broadcasts, client, connection, runId, slotId, workspaceId, updatedAt]);
 
   useEffect(() => {
     if (!client || !run) return;
