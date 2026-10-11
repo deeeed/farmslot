@@ -29,6 +29,7 @@ import {
   recipeRuntimePath,
   recordCommandEvidence,
   redactCommandArgs,
+  sourceSnapshot,
   stripAnsi,
   trackCheckoutChild,
   withCommandJournal,
@@ -479,6 +480,7 @@ describe('library provenance', () => {
     fs.mkdirSync(library, { recursive: true });
     fs.writeFileSync(path.join(library, 'library.json'), '{}\n');
     assert.deepEqual(await gitLibraryProvenance(library), {});
+    assert.deepEqual(await gitLibraryProvenance(library, sourceSnapshot(library)), {});
   });
 });
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -225,3 +225,37 @@ for (const backing of ['requested', 'default', 'none'])
     );
     assert.equal(git(repo, 'rev-parse', 'HEAD'), tip);
   });
+
+test('owned task and observability scaffolding does not block a published slot', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  mkdirSync(path.join(repo, '.task/qa'), { recursive: true });
+  writeFileSync(path.join(repo, '.task/qa/TASK.md'), 'completed task');
+  mkdirSync(path.join(repo, '.agent/.observability'), { recursive: true });
+  writeFileSync(path.join(repo, '.agent/.observability/hooks.jsonl'), '{}');
+  symlinkSync('.agent/.observability', path.join(repo, '.observability'));
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), null);
+  writeFileSync(path.join(repo, 'new-feature.ts'), 'user work');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files');
+});
+
+test('configured namespaces with spaces are owned but adjacent user paths are protected', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const project = { task_dir: 'support/tasks with spaces', paths: { runtime_dir: '.runtime' } };
+  mkdirSync(path.join(repo, project.task_dir), { recursive: true });
+  writeFileSync(path.join(repo, project.task_dir, 'TASK.md'), 'scaffold');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash, project), null);
+  mkdirSync(path.join(repo, 'support/tasks with spaces-extra'));
+  writeFileSync(path.join(repo, 'support/tasks with spaces-extra/user.md'), 'user work');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash, project), 'dirty files');
+});
+
+test('tracked edits inside a reserved namespace remain protected', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  mkdirSync(path.join(repo, '.task'));
+  commit(repo, '.task/tracked.md');
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  writeFileSync(path.join(repo, '.task/tracked.md'), 'user edit');
+  assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files');
+});

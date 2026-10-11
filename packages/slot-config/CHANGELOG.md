@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Runtime namespace resolution stays consistent between project loading and slot cleanup.
 - `static_review.support.environment` accepts `{{<key>_repo}}` for each declared `reference_repos` key (`normalizeRawStaticReview` takes the project's `reference_repos`); any other placeholder is still rejected. `referenceRepoPath(slotRepo, localName)` exports the sibling-checkout rule slot templates use.
 - `resolveSlotByRepo` and `isIgnoredPoolFile` use `@farmslot/protocol/node/slot-by-repo`, the lookup recipe-cli's context resolver shares. Its errors are unchanged. A pool file whose `slots` is missing or not an array is now skipped like an unparsable one; it used to throw a TypeError.
 

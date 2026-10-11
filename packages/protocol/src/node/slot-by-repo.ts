@@ -24,6 +24,30 @@ export interface SlotByRepoMatch<P extends SlotPoolFile = SlotPoolFile> {
   poolFile: string;
 }
 
+export interface SlotByRepoOptions {
+  strict?: boolean;
+  slotId?: string;
+}
+
+export class SlotByRepoError extends Error {
+  readonly code: 'SLOT_AMBIGUOUS' | 'SLOT_NOT_FOUND';
+  readonly exitCode = 2;
+  readonly userAction: string;
+  constructor(
+    readonly candidates: string[],
+    selected?: string,
+  ) {
+    super(
+      selected
+        ? `Slot ${selected} does not map this checkout.`
+        : `More than one slot maps this checkout: ${candidates.join(', ')}`,
+    );
+    this.name = 'SlotByRepoError';
+    this.code = selected ? 'SLOT_NOT_FOUND' : 'SLOT_AMBIGUOUS';
+    this.userAction = 'select one matching slot with --slot <id>';
+  }
+}
+
 /**
  * Pool files every loader skips: non-JSON, the committed template, and the
  * repo's own demo pool (the self-integration example) unless FARMSLOT_DEMO_POOL=1
@@ -65,12 +89,14 @@ export function resolveSlotPoolDir(
 export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
   poolDir: string,
   realTarget: string,
+  options: SlotByRepoOptions = {},
 ): Promise<SlotByRepoMatch<P> | null> {
   const files = await readdir(poolDir);
   const localHost = hostname().replace(/\.local$/u, '');
   const isLocalHost = (host: string) =>
     host === 'localhost' || host === '127.0.0.1' || host.replace(/\.local$/u, '') === localHost;
-  let fallback: SlotByRepoMatch<P> | null = null;
+  const local: SlotByRepoMatch<P>[] = [];
+  const remote: SlotByRepoMatch<P>[] = [];
   for (const file of [...files].sort()) {
     if (isIgnoredPoolFile(file)) continue;
     let pool: P;
@@ -81,6 +107,7 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
       continue;
     }
     for (const slot of Array.isArray(pool.slots) ? pool.slots : []) {
+      if (options.slotId && slot.id !== options.slotId) continue;
       const repo = slot.repo ?? '';
       if (!repo) continue;
       const expanded = repo.startsWith('~/') ? path.join(homedir(), repo.slice(2)) : repo;
@@ -92,9 +119,19 @@ export async function findSlotByRepo<P extends SlotPoolFile = SlotPoolFile>(
       });
       if (real !== realTarget) continue;
       const match: SlotByRepoMatch<P> = { pool, slot, poolFile: path.join(poolDir, file) };
-      if (isLocalHost(pool.host ?? '') || pool.machine === localHost) return match;
-      fallback = fallback ?? match;
+      if (isLocalHost(pool.host ?? '') || pool.machine === localHost) {
+        if (!options.strict) return match;
+        local.push(match);
+      } else {
+        remote.push(match);
+      }
     }
   }
-  return fallback;
+  const candidates = local.length > 0 ? local : remote;
+  if (options.strict && candidates.length > 1) {
+    throw new SlotByRepoError(candidates.map((match) => match.slot.id));
+  }
+  if (options.strict && options.slotId && candidates.length === 0)
+    throw new SlotByRepoError([], options.slotId);
+  return candidates[0] ?? null;
 }
