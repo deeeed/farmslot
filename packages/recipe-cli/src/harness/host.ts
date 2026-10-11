@@ -1,6 +1,16 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  RECIPE_PROCESS_SIGNALS,
+  withRecipeExecutionSignal,
+} from '@farmslot/recipe-runner/adapters/core';
+
+export {
+  recipeExecutionSignal,
+  withRecipeExecutionSignal,
+} from '@farmslot/recipe-runner/adapters/core';
+
 /**
  * Who is running the generic harness commands. A product harness (`mm-harness`)
  * configures this once at startup, so every message and environment variable
@@ -28,6 +38,10 @@ export interface HarnessHost {
   bin: string;
   /** Commands the resumability journal records. */
   journaledCommands: readonly string[];
+  /** A complete diagnostic command when the host exposes different doctor syntax. */
+  doctorHint?: string;
+  /** False when failures should point to evidence instead of a journal `last` command. */
+  supportsLast?: boolean;
 }
 
 const defaultHost: HarnessHost = {
@@ -43,6 +57,30 @@ const defaultHost: HarnessHost = {
 };
 
 let current: HarnessHost = defaultHost;
+
+/** Cleanup keeps host signal ownership but cannot inherit an already aborted action signal. */
+export function withRecipeCleanup<T>(invoke: () => T): T {
+  return withRecipeExecutionSignal(new AbortController().signal, invoke);
+}
+
+/** Keep process signal ownership until the invocation has finished cleanup. */
+export async function withRecipeSignals<T>(
+  invoke: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const scoped = signal ?? controller.signal;
+  const handlers = (signal ? [] : RECIPE_PROCESS_SIGNALS).map((name) => {
+    const handler = (): void => controller.abort(name);
+    process.on(name, handler);
+    return { name, handler };
+  });
+  try {
+    return await invoke(scoped);
+  } finally {
+    for (const { name, handler } of handlers) process.removeListener(name, handler);
+  }
+}
 
 /** A host's identity; it journals nothing unless it lists commands. */
 export type HarnessHostConfig = Omit<HarnessHost, 'journaledCommands'> & {
@@ -66,6 +104,10 @@ export function configureHarnessHost(host: HarnessHostConfig): HarnessHost {
 
 export function harnessHost(): HarnessHost {
   return current;
+}
+
+export function harnessDoctorHint(fallback: string): string {
+  return current.doctorHint ?? fallback;
 }
 
 /** The host-owned environment variable `<envPrefix>_<suffix>`. */

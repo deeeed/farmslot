@@ -6,7 +6,11 @@ import path from 'node:path';
 
 import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import type { RecipeValidationFinding } from '@farmslot/protocol';
-import { type RecipeLibrarySource, redactRecipeParams } from '@farmslot/recipe-runner';
+import {
+  type RecipeLibrarySource,
+  type RecipeRunResult,
+  redactRecipeParams,
+} from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
 import { recordRecipeAcceptance } from '../acceptance-ledger.js';
@@ -22,7 +26,7 @@ import { recordCommandEvidence } from '../command-journal.js';
 import { harnessContextField } from '../context-state.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
-import { harnessHost } from '../host.js';
+import { harnessDoctorHint, harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
 import {
   applyRuntimeDirOption,
@@ -31,6 +35,7 @@ import {
   optionFlag,
   optionString,
   parseArgs,
+  type ParsedArgs,
   parseRecipeParamAssignments,
   resolveAdapter,
   shellQuote,
@@ -89,8 +94,23 @@ export interface RunPlanStep {
   detail: string;
 }
 
+/** A host without the journal command still exposes the retained run evidence. */
+export function runFailureUserAction(target: string, result: RecipeRunResult): string {
+  const host = harnessHost();
+  return host.supportsLast === false
+    ? `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}`
+    : `${host.name} last --target ${shellQuote(target)} --json`;
+}
+
 export interface RunCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
+  /** Already checked against the bound provider's command grammar. */
+  parsed?: ParsedArgs;
+  librarySources?: RecipeLibrarySource[];
+  /** Shared with the outer host so binding and finalization failures use the same terminal. */
+  stream?: JsonStreamWriter;
+  signal?: AbortSignal;
+  beforeResult?(): Promise<void>;
   targetDevice?: DeviceTargeting;
   // `run --plan`: the host's own static steps after validation, and how it
   // words the app launch a non-headless run performs.
@@ -138,18 +158,21 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
   argv: string[],
   commandOptions: RunCommandOptions<TMutation, TAllowlist>,
 ): Promise<number> {
-  const parsed = parseArgs(argv);
+  const parsed = commandOptions.parsed ?? parseArgs(argv);
   const host = harnessHost().name;
-  const stream = new JsonStreamWriter('run', optionFlag(parsed.options, 'jsonStream'));
+  const stream =
+    commandOptions.stream ?? new JsonStreamWriter('run', optionFlag(parsed.options, 'jsonStream'));
   const restoreStdout = stream.isolateStdout();
   const target = targetPath(parsed.options);
+  let resultReady: Promise<void> | undefined;
+  const beforeResult = () =>
+    (resultReady ??= Promise.resolve().then(() => commandOptions.beforeResult?.()));
   try {
-    const exitCode = await handleRunInner(
-      parsed.positional,
-      parsed.options,
-      stream,
-      commandOptions,
-    );
+    const exitCode = await handleRunInner(parsed.positional, parsed.options, stream, {
+      ...commandOptions,
+      beforeResult,
+    });
+    await beforeResult();
     stream.complete(exitCode === EXIT.ok ? 'pass' : 'fail', exitCode);
     return exitCode;
   } catch (error) {
@@ -157,6 +180,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       const failure = provenanceFailure(error);
       if (stream.enabled) {
         stream.error(failure);
+        await beforeResult();
         stream.complete('fail', error.exitCode);
       } else if (optionFlag(parsed.options, 'json')) {
         console.log(
@@ -183,6 +207,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     if (trustFailure) {
       if (stream.enabled) {
         stream.error(trustFailure);
+        await beforeResult();
         stream.complete('fail', EXIT.validation);
       } else {
         reportTrustFailure('run', trustFailure, optionFlag(parsed.options, 'json'));
@@ -196,12 +221,16 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       typeof (error as { exitCode?: unknown }).exitCode === 'number'
         ? (error as { exitCode: number }).exitCode
         : EXIT.runtime;
-    stream.error({
-      code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
-      message: error instanceof Error ? error.message : String(error),
-      userAction: `${host} doctor --target ${shellQuote(target)} --json`,
-    });
+    stream.error(
+      {
+        code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+        userAction: harnessDoctorHint(`${host} doctor --target ${shellQuote(target)} --json`),
+      },
+      error,
+    );
     stream.complete('fail', exitCode);
+    // The owning host finalizes after a throw and retains both failure causes.
     throw error;
   } finally {
     restoreStdout();
@@ -299,7 +328,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return handleListExecutables('run', options, { catalog: engine });
+    return handleListExecutables('run', options, {
+      catalog: engine,
+      librarySources: commandOptions.librarySources,
+    });
   }
   const targetRecipe = positional[0];
   if (!targetRecipe) throw usageError('run requires <recipe.json>.');
@@ -319,7 +351,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return handleDescribeRecipe(targetRecipe, options, { catalog: engine });
+    return handleDescribeRecipe(targetRecipe, options, {
+      catalog: engine,
+      librarySources: commandOptions.librarySources,
+    });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
   // The runtime directory names where the slot's context and the run's runtime
@@ -375,7 +410,14 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   if (recipeRunning(target)) return emitRunRecipeRunning(jsonOutput, stream, target);
 
   stream.phase('validate');
-  const validated = await validateRunRecipeStatic(engine, targetRecipe, adapter, options, params);
+  const validated = await validateRunRecipeStatic(
+    engine,
+    targetRecipe,
+    adapter,
+    options,
+    params,
+    commandOptions.librarySources,
+  );
   if (validated.usageError) {
     const userAction = runUsageRecovery(
       validated.usageError.code,
@@ -453,6 +495,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   const librarySources = validated.librarySources;
   let observers: RunObservers | undefined;
   const runtimeOptions: RecipeEngineRunOptions = {
+    signal: commandOptions.signal,
     ...recipeRunOptionsFromCli(adapter, options),
     cli: options,
     params,
@@ -496,7 +539,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         stream.error({
           code: 'RUN_PREPARE_FAILED',
           message: 'runtime preparation failed; inspect stderr for the exact probe',
-          userAction: `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
+          userAction: harnessDoctorHint(
+            `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
+          ),
         });
         return prepared;
       }
@@ -545,6 +590,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       const { result, violation } = executionResult;
       await started.finalize(result.artifactManifestPath);
       observers = undefined;
+      await commandOptions.beforeResult?.();
       for (const mutation of state.mutations) stream.mutation(mutation);
       for (const recovery of state.recovered) stream.recovery(recovery);
       persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
@@ -592,7 +638,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       // Listed after the report is indexed, so the human list includes it.
       const artifacts = runArtifactInventory(result.artifactManifestPath);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
-      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+      const failureUserAction = runFailureUserAction(target, result);
       if (stream.enabled) {
         if (result.status === 'fail') {
           stream.error({
@@ -845,7 +891,14 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
     );
   }
   stream.phase('validate');
-  const validated = await validateRunRecipeStatic(engine, recipeArg, adapter, options, params);
+  const validated = await validateRunRecipeStatic(
+    engine,
+    recipeArg,
+    adapter,
+    options,
+    params,
+    commandOptions.librarySources,
+  );
   if (validated.usageError) {
     const userAction = runUsageRecovery(
       validated.usageError.code,
@@ -1022,6 +1075,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
     },
   ];
 
+  await commandOptions.beforeResult?.();
   const payload: Record<string, unknown> = {
     schemaVersion: 1,
     command: 'run',
