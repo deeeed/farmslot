@@ -256,40 +256,13 @@ jobs:
       - name: Install workspace dependencies
         run: yarn install --immutable
 
-      - name: Format check
-        run: yarn format:check
-
-      - name: ESLint ratchet and stale baseline check
-        run: yarn lint
-
-      - name: Workspace structure guard
-        run: yarn quality:structure
-
-      - name: Workspace changelog guard
-        run: yarn quality:changelogs
-
-      - name: Protocol method matrix guard
-        run: yarn quality:method-matrix
-
-      - name: Authorization conformance guard
-        run: yarn quality:authorization
-
-      - name: Retired-scripts guard
-        run: yarn quality:retired-scripts
-
-      - name: Import boundary guard
-        run: yarn quality:imports
+      - name: Local CI parity
+        run: yarn ci:local
 
       - name: CommonJS/ESM export parity
         run: |
           node --test scripts/quality/check-cjs-esm-exports.test.mjs
           node scripts/quality/check-cjs-esm-exports.mjs
-
-      - name: Large-file warning
-        run: yarn quality:large-files
-
-      - name: Project hook conformance tests
-        run: yarn test:project-hooks
 
       - name: Runner observability installer tests
         run: node --test scripts/install-runner-observability.test.mjs

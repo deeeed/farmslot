@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Compare CI decision snapshots with current PR checks and refresh without leaving the decision.
+- Show local CI commands, exit codes and execution logs in gate review using the existing file viewer.
 
 - Configure gate requests, backlog reviews, and PR execution with runner, model, effort, and WARM/COLD choices. Review sequences preserve selections and lineage; missing or ambiguous WARM context blocks submission without changing mode.
 - Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.

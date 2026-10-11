@@ -566,6 +566,7 @@ async function writeCIFixTask(
       ? pv.projectJson.default_branch.trim()
       : 'main';
   const ciReplacements: Record<string, string> = {
+    CI_PARITY_CHECKLIST: CI_FIX_CHECKLIST_TARGET.checklist,
     TASK_DIR: taskDir,
     PR_NUMBER: String(prNumber),
     GH_REPO: ciRepo,

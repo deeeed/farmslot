@@ -101,6 +101,38 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 | `report`                  | the terminal contract's `complete.report` (`artifacts/pr-description.md` for dev / fix-bug) | `artifacts/pr-description.md` (dev / fix-bug) |
 | `learnings`               | `artifacts/learnings.md`                                                                    | `artifacts/learnings.md`                      |
 
+## Deterministic checklist checks
+
+[ADR-064](../adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
+
+### Public surface
+
+`project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
+
+PR-producing worker templates reference one `{{CI_PARITY_STEP}}` part. It materializes when a local command is configured. Projects without that field retain their existing checklist. A template can also declare a step explicitly:
+
+```markdown
+- [ ] CI parity [DETERMINISTIC: ci.local_check]
+```
+
+The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
+
+### Mark and receipt rules
+
+1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
+2. Mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
+3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
+4. Publishable inputs are Git's tracked and nonignored untracked file inventory, paths, file permissions, file bytes or symlink targets, including tracked deletions. The task directory's owned inputs/outputs are excluded. Commit metadata is excluded, so committing identical checked content preserves a pass. Failure to identify the checkout or inputs fails closed.
+5. The artifact checker MUST reject absent, failed, interrupted or stale receipts, changed commands, and missing/changed logs, independently of checkbox state. The active role's frozen declarations apply; role initialization freezes its own materialized checklist through the same writer.
+
+Lightweight interactive development keeps the operator plan in `CHECKLIST.md`. Its generated CI-parity step is frozen in `TASK.md` and the shared part gives the existing `mark --checklist TASK.md N` invocation. The operator plan cannot waive its receipt.
+
+### Publication and display
+
+Package preparation and publication MUST validate receipts on the selected checkout. An older node checker that cannot return verified records fails closed. The package carries one optional `deterministicChecks` projection with command, state, exit code and log path; Command Center and Companion render it and open logs through their existing artifact viewers. After role cleanup, the last completed source-fix checklist supplies the final receipt. Read-only review checklists do not replace it. Restoring the parent MUST retain its initialized command declarations. Source or receipt changes after review require package refresh. Evidence-only refreshes of already published packages retain their archived source proof.
+
+Receipts prevent skipped checks; they are not an attestation against a worker forging its task files. The existing trusted task initialization, artifact boundaries and publication authority still apply. Harnesses invoke the same mark/checker behavior and consume the same versioned records instead of implementing another checker.
+
 ## Outcome file: one name on both surfaces
 
 dev and fix-bug workers finish with `artifacts/pr-description.md` whether Farmslot dispatched the run or an engineer ran the skill. It is the PR body in the repository's PR-template shape and carries the proof summary (what changed, root cause, validation, evidence paths). Most runs want a PR, and the file is usable before anyone decides to open one.

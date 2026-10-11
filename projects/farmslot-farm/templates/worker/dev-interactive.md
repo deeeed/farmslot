@@ -1,6 +1,7 @@
 ---
 checklist: none
 ---
+
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
@@ -39,7 +40,7 @@ SLOT: {{SLOT}}
 
 ## Checklist
 
-These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to *this* task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
+These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to _this_ task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
 
 {{INTERACTIVE_CHECKLIST}}
 
@@ -79,6 +80,10 @@ bash {{recipe_validate_wrapper}} \
 - For visual work, promoted `artifacts/before-*.png`, `artifacts/after-*.png`, and `artifacts/after.mp4` feed the created PR via `evidence-manifest.json`.
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
+
+## CI parity
+
+{{CI_PARITY_STEP}}
 
 ## Completion signal
 

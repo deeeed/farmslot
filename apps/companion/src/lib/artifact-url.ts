@@ -90,6 +90,16 @@ export function extractArtifactManifest(run: Run): ArtifactManifestEntry[] {
     if (payload?.kind === 'ready') {
       entries.push(...(payload.artifactManifest ?? []));
       entries.push(...(payload.prPackage?.evidenceManifest ?? []));
+      for (const check of payload.prPackage?.deterministicChecks ?? []) {
+        if (check.logPath) {
+          entries.push({
+            path: check.logPath,
+            purpose: 'ci-parity-log',
+            type: 'log',
+            label: `${check.reference} · ${check.status}`,
+          });
+        }
+      }
     } else if (payload?.kind === 'review') {
       entries.push(...(payload.artifactManifest ?? []));
       entries.push(...artifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
@@ -140,7 +150,7 @@ function wsToHttpBase(wsUrl: string): string {
 }
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
-const DOC_EXTS = /\.(md|txt|json)$/i;
+const DOC_EXTS = /\.(md|txt|json|log)$/i;
 const NEUTRAL_VISUAL_PURPOSES = new Set([
   'image',
   'screenshot',
@@ -248,7 +258,7 @@ function looksLikeArtifactPath(value: string): boolean {
   return (
     IMAGE_EXTS.test(value) ||
     isRunEvidenceVideoArtifact({ path: value }) ||
-    /\.(md|json|txt|diff|patch)$/i.test(value)
+    /\.(md|json|txt|log|diff|patch)$/i.test(value)
   );
 }
 

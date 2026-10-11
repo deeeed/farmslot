@@ -57,13 +57,14 @@ test('ready workspace lightbox source scopes artifacts by path', () => {
   );
 });
 
-test('ready workspace lightbox items include media, markdown, and json only', () => {
+test('ready workspace lightbox items include media, documents, and execution logs', () => {
   const items = readyWorkspaceLightboxItems(
     [
       artifact('artifacts/after.png'),
       artifact('artifacts/report.md', 'markdown'),
       artifact('artifacts/debug.json', 'json'),
       artifact('artifacts/stdout.txt', 'log'),
+      artifact('artifacts/deterministic-checks/CHECKLIST.md/1.log', 'ci-parity-log'),
     ],
     (entry) => `url:${entry.path}`,
   );
@@ -74,6 +75,10 @@ test('ready workspace lightbox items include media, markdown, and json only', ()
       ['artifacts/after.png', 'url:artifacts/after.png'],
       ['artifacts/report.md', 'url:artifacts/report.md'],
       ['artifacts/debug.json', 'url:artifacts/debug.json'],
+      [
+        'artifacts/deterministic-checks/CHECKLIST.md/1.log',
+        'url:artifacts/deterministic-checks/CHECKLIST.md/1.log',
+      ],
     ],
   );
   assert.equal(readyWorkspaceOpensInLightbox(artifact('artifacts/stdout.txt')), false);

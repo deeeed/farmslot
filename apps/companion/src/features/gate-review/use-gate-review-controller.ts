@@ -194,6 +194,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     [router, runId],
   );
 
+  const openLog = useCallback(
+    (artifact: string) => {
+      router.push({
+        pathname: '/workspace/run/[runId]/files',
+        params: { runId, artifact, recipeRun: 'decision-evidence' },
+      });
+    },
+    [router, runId],
+  );
+
   const resolve = useCallback(
     (action: GateReviewAction, selectionData?: Record<string, unknown>) => {
       if (!client || !run || !decision || decision.resolvedAt) return;
@@ -260,6 +270,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     actions: {
       refresh: () => void refresh('manual refresh'),
       openEvidence,
+      openLog,
       resolve,
     },
   };

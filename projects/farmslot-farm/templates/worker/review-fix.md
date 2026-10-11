@@ -45,21 +45,25 @@ TICKET: {{TICKET}}
 - [ ] **1. Start** — run the explicit checklist/signal marker with `start`, followed by `1`.
 - [ ] **2. Read the review feedback** — `{{TASK_DIR}}/artifacts/review-feedback.md` has the full analysis. Understand each issue.
 - [ ] **3. Fix each issue:**
-  For each issue above:
+      For each issue above:
   - Open the file, make the smallest possible fix
   - Diff discipline: only the lines required by the issue. Nothing more.
 
 ### Verify (steps 4-5)
 
 - [ ] **4. Run focused validation** — per touched workspace, from `{{REPO}}`:
+
   ```bash
   # For each workspace you changed (packages/*, services/*, apps/command-center):
   yarn --cwd <workspace> format > /dev/null 2>&1 && yarn --cwd <workspace> quality
   ```
+
   Every touched workspace's `quality` must exit 0. Do NOT run repo-wide `tsc -b`
   (some packages emit into source paths); use each workspace's own scripts.
   If you touched `scripts/*.sh`, run `bash -n` on each edited script and
   `yarn test:project-hooks` from the repo root.
+  {{CI_PARITY_STEP}}
+
 - [ ] **5. Artifact contract gate:**
   ```bash
   cd {{REPO}}
@@ -70,13 +74,17 @@ TICKET: {{TICKET}}
 ### Update artifacts (steps 6-8)
 
 - [ ] **6. Append to report.md** — add a "Review Fixes" section to `{{TASK_DIR}}/artifacts/report.md`:
+
   ```markdown
   ## Review Fixes
+
   - <file:line> — <what you fixed>
   ```
+
 - [ ] **7. Refresh the PR description** — if the fixes changed behavior, tests, or
-  validation evidence, update `{{TASK_DIR}}/artifacts/pr-description.md` to match
-  (local artifact only; the pipeline owns publication).
+      validation evidence, update `{{TASK_DIR}}/artifacts/pr-description.md` to match
+      (local artifact only; the pipeline owns publication).
+
 - [ ] **8. Commit and push:**
   ```bash
   cd {{REPO}}
@@ -91,7 +99,7 @@ Long fix/review loops leave the feature branch behind `origin/main`. Surface tha
 **before** signaling re-review ready so merge pain is not deferred to CI.
 
 - [ ] **9. Behind-main + merge-tree conflict probe** — after each must-fix commit and
-  before signaling re-review ready:
+      before signaling re-review ready:
   ```bash
   cd {{REPO}}
   # Fail closed on fetch: do not trust a stale origin/main tracking ref.

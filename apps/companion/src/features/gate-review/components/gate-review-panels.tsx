@@ -43,11 +43,36 @@ function Meta({ label, value, testID }: { label: string; value: string; testID?:
   );
 }
 
-export function GateSummaryCard({ summary }: { summary: GateReviewSummary }) {
+export function GateSummaryCard({
+  summary,
+  onOpenLog,
+}: {
+  summary: GateReviewSummary;
+  onOpenLog: (path: string) => void;
+}) {
   return (
     <View style={styles.summaryCard} testID="companion-gate-review-summary">
       <Text style={styles.kind}>Publish gate</Text>
       <Text style={styles.title}>{summary.title}</Text>
+      {(summary.deterministicChecks ?? []).map((check) => (
+        <View key={`${check.checklist}:${check.stepNumber}`} testID="companion-ci-parity-record">
+          <Text style={styles.sectionTitle}>CI parity</Text>
+          <Text style={styles.metaValue}>{check.command ?? check.reference}</Text>
+          <Text style={styles.metaValue}>
+            {check.status} · exit {check.exitCode ?? '-'}
+          </Text>
+          {check.message ? <Text style={styles.muted}>{check.message}</Text> : null}
+          {check.logPath ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="View CI parity log"
+              onPress={() => onOpenLog(check.logPath!)}
+            >
+              <Text style={styles.metaValue}>View log</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ))}
       <View style={styles.metaGrid}>
         <Meta label="Target" value={summary.target ?? '-'} />
         <Meta label="Branch" value={summary.branch ?? '-'} />

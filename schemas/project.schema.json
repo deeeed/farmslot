@@ -1806,6 +1806,11 @@
       "type": "object",
       "description": "CI/CD monitoring configuration for watching PR checks and bot comments.",
       "properties": {
+        "local_check": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Portable local CI command executed by declared deterministic CI-parity checklist steps."
+        },
         "enabled": {
           "type": "boolean",
           "description": "Whether CI monitoring is active.",

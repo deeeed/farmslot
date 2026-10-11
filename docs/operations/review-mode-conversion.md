@@ -35,6 +35,21 @@ credentials, artifacts, session archives or orchestrator verdict/review state.
    requires a separate QA configuration. Existing WARM rows require their
    already recorded lineage context; the converter never creates one.
 
+   Completed terminal runs whose review configuration cannot be mapped become
+   read-only legacy envelopes, per [ADR-065](../adr/065-fail-closed-run-lifecycle.md).
+   The envelope retains the complete original under `legacy`, records the
+   unmappable paths in `legacyUnresolvedFields`, and marks
+   `conversionStatus: "unconvertible-historical"`. Its outer object has no
+   runtime run shape, so the shared run loader excludes it from execution,
+   recovery and replay. Inspect the original JSON directly for historical
+   provenance. Active runs, terminal runs without a recorded completion time,
+   and project/backlog/queue configuration still refuse unmappable fields.
+   Pending output cleanup, backlog reconciliation, review-workspace/native
+   worker ownership and dispatching queue references also prevent an envelope;
+   finish those obligations through normal runtime recovery before conversion.
+   Dry-run reports the proposed envelope without writing it. Apply retains a
+   byte-exact backup; subsequent conversions leave the envelope unchanged.
+
 3. Stop gateway processes that write these stores through the project's normal
    deployment procedure. Re-run the same dry-run against the stopped stores.
    Continue only when `unresolved` is zero, then apply explicitly:

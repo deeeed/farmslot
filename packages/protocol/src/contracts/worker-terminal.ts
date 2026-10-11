@@ -55,6 +55,26 @@ export interface WorkerTerminalContractDocument {
   whenPresent: WorkerTerminalWhenPresentRule[];
   resolvedAt: string;
   source: 'builtin' | 'project';
+  /** Commands frozen when this execution checklist is initialized, ADR-064. */
+  deterministicChecks?: Array<{
+    checklist: string;
+    stepNumber: number;
+    reference: string;
+    command: string;
+  }>;
+}
+
+/** Shared gate projection of a task-owned command execution receipt. */
+export interface DeterministicChecklistCheck {
+  checklist: string;
+  stepNumber: number;
+  reference: string;
+  command: string | null;
+  status: 'passed' | 'failed' | 'missing' | 'stale' | 'interrupted';
+  exitCode: number | null;
+  logPath: string | null;
+  inputHash: string;
+  message: string;
 }
 
 export const WORKER_TERMINAL_CONTRACT_INPUT = 'inputs/worker-terminal-contract.json';
