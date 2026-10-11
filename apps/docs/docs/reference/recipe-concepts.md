@@ -6,7 +6,7 @@ title: Recipe concepts
 
 A project supplies a **ProjectRuntime** for readiness, owned lifecycle, actions and supported capture. Its **ActionCatalog** pairs action declarations with code. The shared **RecipeEngine** resolves the recipe graph and runs its **ActionHandlers**. Recipes compose actions and assertions into retained evidence.
 
-Use `farmslot doctor --conformance` to check a binding now. The `recipe run` path below is the next delivery step.
+Use `farmslot doctor --conformance` to check a binding and `farmslot recipe actions` to inspect its action catalog. `--action <name>` shows one action's inputs. `recipe call <action> [key=value ...]` and `recipe run <ref|file> [key=value ...]` execute through the same authorized provider. `run --plan` checks the complete plan without executing actions.
 
 ```mermaid
 flowchart LR
@@ -17,6 +17,8 @@ flowchart LR
   Actions --> Artifacts[Artifact package]
   Artifacts --> Evidence[Assertions and evidence]
 ```
+
+The [browser provider example](https://github.com/deeeed/farmslot/tree/main/docs/examples/projects/browser-example) attaches the shared UI transport to an explicitly selected existing page. Its recipe presses a control, asserts the resulting URL and retains HUD evidence.
 
 `pack.json` describes onboarding, `project.json` describes behavior, and pool bindings describe machine targets. The binding resolves project, app, domain, runtime, target, libraries, ports and output paths. Flags win over checkout bindings, then pool slots, unique detection and configured defaults. An ambiguous target refuses execution.
 
@@ -35,6 +37,8 @@ Declare `recipe.provider` and an ordered `recipe.libraries` list in `project.jso
 Executable library sources need registered project configuration, `--library name=path`, `RECIPE_LIBRARY_PATH`, or the operator's configured personal library. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata. Engine trust checks still apply to every source.
 
 Provider `root` and library `source` can reuse portable `{ "env": "EXAMPLE_PACKAGE_ROOT" }` or `{ "projectPath": "recipe-library" }` references. The first reads the operator environment or selected pool env; the second resolves from the checkout. Discovered metadata cannot resolve those references until the project is registered. This supports globally installed provider packages without home-path defaults.
+
+The original standalone invocation with `--action-manifest` and `--artifacts-dir` retains core-only execution and its optional `--project-root`. Adding project options such as `--target` selects the provider path; explicit `--project-root` selects standalone execution. Its `--library-source` and exact-plan trust options keep their prior behavior while callers migrate. It refuses the project-only preview flags; use a registered provider with `--target` and `--library name=path` for those operations.
 
 Recipe state uses `--runtime-dir`, then `RECIPE_RUNTIME_DIR`, then `temp/recipe/runtime` relative to the target. The farm worker directory in `paths.runtime_dir` is separate. The artifact directory in `paths.artifact_dir` resolves from the checkout root, including when an app is selected.
 

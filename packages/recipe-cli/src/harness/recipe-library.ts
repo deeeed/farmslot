@@ -152,13 +152,20 @@ function isRecipeFile(p: string): boolean {
   }
 }
 
+export type ResolvedRecipeArgument = { recipeFile: string; ref?: string } | { notFound: string };
+
+export interface ResolvedRecipeInvocation {
+  resolved: ResolvedRecipeArgument;
+  librarySources: RecipeLibrarySource[];
+}
+
 /** A recipe file path, or a library recipe name the sources resolve for the adapter. */
 export async function resolveRunRecipeArg(
   catalog: RecipeCatalog,
   recipeArg: string,
   adapter: string,
   librarySources?: RecipeLibrarySource[],
-): Promise<{ recipeFile: string; ref?: string } | { notFound: string }> {
+): Promise<ResolvedRecipeArgument> {
   const direct = path.resolve(recipeArg);
   if (isRecipeFile(direct)) return { recipeFile: direct };
   const sources = effectiveLibrarySources(catalog, librarySources);
@@ -178,6 +185,23 @@ export async function resolveRunRecipeArg(
       ? ` Library recipes for ${adapter}: ${available.join(', ')} (${harnessHost().name} run <name>).`
       : ` The packaged library has no recipes for ${adapter}.`;
   return { notFound: notFoundCore + suffix };
+}
+
+/** Resolve the recipe and compose adjacent task sources without replacing bound provenance. */
+export async function resolveRecipeInvocation(
+  catalog: RecipeCatalog,
+  recipeArg: string,
+  adapter: string,
+  libraryEntry?: string | readonly string[],
+  resolvedSources?: RecipeLibrarySource[],
+): Promise<ResolvedRecipeInvocation> {
+  const sources = resolvedSources ?? (await resolveLibrarySources(catalog, libraryEntry));
+  const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, sources);
+  const librarySources =
+    'recipeFile' in resolved && !resolved.ref
+      ? await resolveLibrarySources(catalog, libraryEntry, resolved.recipeFile, sources)
+      : sources;
+  return { resolved, librarySources };
 }
 
 function effectiveLibrarySources(
@@ -223,8 +247,10 @@ export async function describeRunnableRecipe(
   recipeArg: string,
   adapter: string,
   librarySources?: RecipeLibrarySource[],
+  resolvedRecipe?: ResolvedRecipeArgument,
 ): Promise<{ recipe: RunnableRecipeDetail } | { notFound: string } | { unreadable: string }> {
-  const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, librarySources);
+  const resolved =
+    resolvedRecipe ?? (await resolveRunRecipeArg(catalog, recipeArg, adapter, librarySources));
   if ('notFound' in resolved) return resolved;
 
   let document: unknown;

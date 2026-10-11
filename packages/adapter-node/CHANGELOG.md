@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## Unreleased
 
+## 0.1.12 - 2026-10-11
+
+- Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.
+
 ## 0.1.11 - 2026-10-11
 
 - Align the adapter-sdk and recipe-runner dependencies with 0.8.5 and 0.28.5 so consumers resolve one copy.

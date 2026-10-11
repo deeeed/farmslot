@@ -132,6 +132,34 @@ test('commander usage errors emit a USAGE_ERROR envelope in machine mode', () =>
   }
 });
 
+for (const args of [
+  ['smoke', '--json-stream', '--heal', 'bad'],
+  ['smoke', '--heal', 'bad', '--json-stream'],
+  ['smoke', '--json-stream', '--target'],
+]) {
+  test(`recipe JSONL frames Commander refusal for ${args.join(' ')}`, () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-stream-usage-'));
+    try {
+      const result = spawnCli(['recipe', 'run', ...args], home);
+      assert.ifError(result.error);
+      assert.notEqual(result.status, 0);
+      const events = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.event),
+        ['error', 'complete'],
+      );
+      assert.equal(events[0].error.code, 'USAGE_ERROR');
+      assert.equal(events[1].status, 'fail');
+      assert.equal(events[1].exitCode, result.status);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
 test('wired command validation errors emit envelopes with fallback userAction', () => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-envelope-validate-'));
   try {
