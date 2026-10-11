@@ -6,11 +6,17 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { tsImport } from 'tsx/esm/api';
+
 import {
   convertReviewConfiguration,
   migrateReviewConfiguration,
 } from '../migrate-review-configuration.mjs';
 
+const { parseRunRecordFile } = await tsImport(
+  '../../packages/run-bundle/src/collect.ts',
+  import.meta.url,
+);
 const script = fileURLToPath(new URL('../migrate-review-configuration.mjs', import.meta.url));
 const policy = {
   minimumIndependentReviews: 1,
@@ -216,6 +222,106 @@ test('same resolves only from the recorded worker and keeps every review row', (
     assert.equal(result.value.reviewSequence.length, plan.length);
     assert.equal(result.value.reviewSequence[0].runner, 'same');
   }
+});
+
+const historicalRun = () => ({
+  id: 'historical-run',
+  status: 'done',
+  createdAt: '2026-05-01T08:00:00.000Z',
+  completedAt: '2026-05-01T09:00:00.000Z',
+  steps: [{ name: 'publish', status: 'done', outputs: { artifact: 'review.md' } }],
+  decisions: [
+    {
+      id: 'historical-decision',
+      resolvedAt: '2026-05-01T08:59:00.000Z',
+      payload: { reviewDepth: { ...policy, requestedBy: 'manual-bypass' } },
+    },
+  ],
+  engineState: {
+    publishGate: {
+      reviewDepth: { ...policy, requestedBy: 'manual-bypass' },
+      independentReviews: [{ id: 'historical-review', verdict: 'pass', crossRunner: false }],
+    },
+  },
+});
+
+test('unmappable completed runs retain their entire original outside runtime admission', () => {
+  for (const status of ['done', 'failed', 'cancelled']) {
+    const original = { ...historicalRun(), status };
+    const before = structuredClone(original);
+    assert(parseRunRecordFile(`${original.id}.json`, JSON.stringify(original)));
+    const converted = convertReviewConfiguration(original, 'run');
+    assert.deepEqual(converted.unresolved, []);
+    assert.equal(converted.value.conversionStatus, 'unconvertible-historical');
+    assert.equal(converted.value.readOnly, true);
+    assert.equal(converted.value.id, original.id);
+    assert.deepEqual(converted.value.legacy, before);
+    assert.deepEqual(converted.value.legacyUnresolvedFields, [
+      'decisions[0].payload.reviewDepth.requestedBy',
+      'engineState.publishGate.reviewDepth.requestedBy',
+    ]);
+    assert.equal(parseRunRecordFile(`${original.id}.json`, JSON.stringify(converted.value)), null);
+    assert.deepEqual(original, before);
+    assert.deepEqual(convertReviewConfiguration(converted.value, 'run'), {
+      value: converted.value,
+      fields: [],
+      unresolved: [],
+    });
+  }
+});
+
+test('active or undated records still refuse unmappable provenance', () => {
+  for (const status of ['monitoring', 'human-gating', 'paused', 'blocked']) {
+    const converted = convertReviewConfiguration({ ...historicalRun(), status }, 'run');
+    assert.equal(converted.unresolved.length, 2);
+    assert(!('legacy' in converted.value));
+  }
+  for (const completedAt of [undefined, null, 'unknown']) {
+    const converted = convertReviewConfiguration({ ...historicalRun(), completedAt }, 'run');
+    assert.equal(converted.unresolved.length, 2);
+  }
+  for (const kind of ['backlog', 'queue', 'project']) {
+    const converted = convertReviewConfiguration(historicalRun(), kind);
+    assert.equal(converted.unresolved.length, 2);
+    assert(!('legacy' in converted.value));
+  }
+});
+
+test('historical envelopes are byte-preserving in dry run, backed up on apply and idempotent', async (t) => {
+  const options = await fixture(t);
+  const file = path.join(options.runs, 'historical-run.json');
+  const original = historicalRun();
+  await write(file, original);
+  const before = await readFile(file, 'utf8');
+  const mtime = (await stat(file)).mtimeMs;
+  const dry = await migrateReviewConfiguration(options);
+  assert.equal(dry.unresolved, 0);
+  assert.equal(dry.changed, 1);
+  assert.equal(dry.applied, 0);
+  assert.equal(dry.items[0].conversionStatus, 'unconvertible-historical');
+  assert.equal(await readFile(file, 'utf8'), before);
+  assert.equal((await stat(file)).mtimeMs, mtime);
+  await assert.rejects(stat(file + '.adr063-original'), { code: 'ENOENT' });
+
+  await write(options.queue, [
+    { id: 'active-item', reviewDepth: { ...policy, requestedBy: 'unknown' } },
+  ]);
+  const refused = await migrateReviewConfiguration({ ...options, apply: true });
+  assert.equal(refused.unresolved, 1);
+  assert.equal(refused.applied, 0);
+  assert.equal(await readFile(file, 'utf8'), before);
+  await assert.rejects(stat(file + '.adr063-original'), { code: 'ENOENT' });
+
+  await write(options.queue, [{ id: 'active-item', reviewDepth: policy }]);
+  const applied = await migrateReviewConfiguration({ ...options, apply: true });
+  assert.equal(applied.unresolved, 0);
+  assert.equal(applied.applied, 2);
+  assert.deepEqual((await read(file)).legacy, original);
+  assert.equal(await readFile(file + '.adr063-original', 'utf8'), before);
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  const rerun = await migrateReviewConfiguration({ ...options, apply: true });
+  assert.equal(rerun.changed, 0);
+  assert.equal(rerun.applied, 0);
 });
 
 test('project defaults migrate without mapping same or manufacturing a retained review', () => {

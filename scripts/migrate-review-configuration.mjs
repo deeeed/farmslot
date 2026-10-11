@@ -25,6 +25,10 @@ const { assertReviewSequence, assertWarmReviewContext } = await tsImport(
     ),
   },
 );
+const { isTerminalRunStatus } = await tsImport(
+  '../packages/protocol/src/contracts/runs.ts',
+  import.meta.url,
+);
 
 const RENAMES = {
   reviewDepth: 'reviewPolicy',
@@ -46,6 +50,9 @@ const field = (parent, key) => (parent ? `${parent}.${key}` : key);
 
 /** Returns a proposed document and paths only; never creates reviewer lineage or proof. */
 export function convertReviewConfiguration(document, kind) {
+  // A legacy envelope has no runtime run shape. Its original must never be visited again.
+  if (kind === 'run' && document.conversionStatus === 'unconvertible-historical')
+    return { value: document, fields: [], unresolved: [] };
   const changes = new Set();
   const unresolved = new Set();
   const changed = (at) => changes.add(at || '$');
@@ -369,6 +376,27 @@ export function convertReviewConfiguration(document, kind) {
   }
 
   const value = visit(document);
+  if (
+    kind === 'run' &&
+    unresolved.size &&
+    isTerminalRunStatus(document.status) &&
+    typeof document.completedAt === 'string' &&
+    Number.isFinite(Date.parse(document.completedAt))
+  ) {
+    // Preserve facts instead of guessing policy. Omitting status/steps/createdAt keeps
+    // this envelope out of the shared run loader and all recovery/replay paths.
+    return {
+      value: {
+        id: document.id,
+        conversionStatus: 'unconvertible-historical',
+        readOnly: true,
+        legacy: document,
+        legacyUnresolvedFields: [...unresolved].sort(),
+      },
+      fields: ['conversionStatus', 'legacy'],
+      unresolved: [],
+    };
+  }
   return { value, fields: [...changes].sort(), unresolved: [...unresolved].sort() };
 }
 
@@ -453,7 +481,15 @@ export async function migrateReviewConfiguration(options) {
               if (object(record) && typeof record.id === 'string') itemId = record.id;
             }
             if (!groups.has(itemId))
-              groups.set(itemId, { file, itemId, fields: [], unresolved: [] });
+              groups.set(itemId, {
+                file,
+                itemId,
+                fields: [],
+                unresolved: [],
+                ...(conversion.value.conversionStatus === 'unconvertible-historical'
+                  ? { conversionStatus: 'unconvertible-historical' }
+                  : {}),
+              });
             groups.get(itemId)[category].push(at);
           }
         report.items.push(...groups.values());
