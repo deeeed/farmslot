@@ -25,7 +25,8 @@ Submit with named Enter. Never queue with Tab, resend buffered text, or send a m
 a shell. A send succeeds only with structured exact-prompt acceptance evidence.
 
 Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
-phases accept steering with exact native or submitted-queue proof; other runners
+phases accept steering with exact native proof, or report queued input with its
+receipt retained until native acceptance; other runners
 still require idle readiness. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
 with an explicit JSON key list on stdin. It refuses if the pane, session, or question changed.
 A response acknowledgement does not itself prove a new turn. Interactive attachment is also available. Flush only driver-owned buffered input with `flush <lane>`.

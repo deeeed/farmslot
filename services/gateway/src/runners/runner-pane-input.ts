@@ -12,17 +12,24 @@ export function runnerPaneHasQueuedInstruction(
   submittedExact = false,
 ): boolean {
   const lines = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
-  const marker = lines.findLastIndex((line) =>
-    /^[•│┃║\s]*(?:messages? to be submitted after next tool call|(?:\d+\s+)?queued messages?|message queued)[:│┃║\s]*(?:\(.*)?$/i.test(
-      line,
-    ),
-  );
+  const marker = lines
+    .map((_, index) =>
+      /^[•│┃║\s]*(?:messages? to be submitted after next tool call|(?:\d+\s+)?queued messages?|message queued)(?=[:\s]|$)/i.test(
+        normalizeInstructionText(lines.slice(index).join(' ')),
+      ),
+    )
+    .lastIndexOf(true);
   if (message === undefined)
-    return marker !== -1 && /submitted after next tool call/i.test(lines[marker]!);
+    return (
+      marker !== -1 &&
+      /submitted after next tool call/i.test(
+        normalizeInstructionText(lines.slice(marker).join(' ')),
+      )
+    );
   if (submittedExact) {
     if (marker === -1) return false;
     const body = lines.slice(marker + 1);
-    const composer = body.findLastIndex((line) => /^\s*[›❯](?:\s|$)/.test(line));
+    const composer = body.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
     const firstMessage = body.findIndex((line) => /^\s*[↳›❯](?:\s|$)/.test(line));
     if (composer === -1 || firstMessage === -1 || firstMessage >= composer) return false;
     const queued = body

@@ -218,9 +218,8 @@ export function writeSentinel(obsDir, payload, sentAt) {
   return digest;
 }
 
-export function acceptedPrompt(meta, runner, obsDir, receipt) {
-  // The operator explicitly permits Enter-submitted steering. A fresh queue marker
-  // and the complete queued text acknowledge this receipt, without claiming a new turn.
+export function queuedPrompt(meta, runner, receipt) {
+  // A queue is pending input, never terminal native acceptance. Retain its receipt.
   if (
     receipt.submitted_at &&
     receipt.pane_identity === paneIdentity(meta) &&
@@ -233,8 +232,17 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
       turn_token: null,
       observed_at: Date.now(),
     };
+  return null;
+}
+
+export function acceptedPrompt(meta, runner, obsDir, receipt) {
   const bound = sessionBinding(meta, runner, obsDir);
-  if (!bound || bound.sessionId !== receipt.session_id) return null;
+  const mayBind =
+    receipt.session_id === null &&
+    receipt.steering &&
+    receipt.submitted_at &&
+    receipt.pane_identity === paneIdentity(meta);
+  if (!bound || (bound.sessionId !== receipt.session_id && !mayBind)) return null;
   if (runner === 'codex' && bound.sessionPath) {
     const goal = acceptedCodexGoal(bound.sessionPath, bound.sessionId, receipt);
     if (goal) return goal;

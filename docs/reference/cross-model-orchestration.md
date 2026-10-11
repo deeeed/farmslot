@@ -15,7 +15,8 @@ and expected node IDs. Keep local config and state outside the tracked tree.
 
 All lane messages use `tmux-model-driver`. The runner adapter owns launch syntax
 and structured acceptance signals. Questions and foreign queued input stop ordinary delivery. Codex accepts busy/unknown
-steering when the driver proves the exact native message or complete submitted queue.
+steering when the driver proves the exact native message. A complete submitted queue
+reports pending input and retains its receipt until native acceptance.
 A steering acknowledgement does not claim a new turn started.
 `restore` recovers missing sessions, leaving surviving sessions alone.
 `reserve` and `transfer` persist ownership changes without reapplying old config reservations.

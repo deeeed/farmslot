@@ -8,8 +8,57 @@ import {
   acceptedCodexGoal,
   acceptedPrompt,
   nativeState,
+  paneIdentity,
   writeSentinel,
 } from '../scripts/native-evidence.mjs';
+
+test('a pending unknown-session receipt binds only through exact native acceptance on its pane process', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-late-binding-'));
+  const file = path.join(dir, 'rollout-late-binding.jsonl');
+  const now = Date.now();
+  const payload = 'unique late steering';
+  const meta = {
+    pane_id: '%1',
+    pane_pid: '1',
+    process_started_at: 1,
+    runner_pids: [String(process.pid)],
+  };
+  const receipt = {
+    payload,
+    session_id: null,
+    steering: true,
+    submitted_at: now,
+    sent_at: now,
+    pane_identity: paneIdentity(meta),
+    before_turn_token: null,
+  };
+  const records = [
+    { type: 'session_meta', payload: { id: 'late-session' } },
+    {
+      type: 'event_msg',
+      timestamp: new Date(now - 1).toISOString(),
+      payload: { type: 'task_started', turn_id: 'active' },
+    },
+    {
+      type: 'response_item',
+      timestamp: new Date(now + 1).toISOString(),
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: payload }] },
+    },
+  ];
+  fs.writeFileSync(file, records.map(JSON.stringify).join('\n') + '\n');
+  const fd = fs.openSync(file, 'r');
+  try {
+    assert.equal(acceptedPrompt(meta, 'codex', dir, receipt).session_id, 'late-session');
+    assert.equal(acceptedPrompt({ ...meta, process_started_at: 2 }, 'codex', dir, receipt), null);
+    assert.equal(
+      acceptedPrompt(meta, 'codex', dir, { ...receipt, payload: payload + ' wrong' }),
+      null,
+    );
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(dir, { recursive: true });
+  }
+});
 
 test('Codex exact native prompt and new-turn boundary override digest or token ambiguity', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-native-test-'));

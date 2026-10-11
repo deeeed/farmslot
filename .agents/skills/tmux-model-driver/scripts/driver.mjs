@@ -13,6 +13,7 @@ import {
   hasSubmittedQueue,
   nativeState,
   paneIdentity,
+  queuedPrompt,
   readOptional,
   supportsMidTurnPrompt,
   writeSentinel,
@@ -255,7 +256,11 @@ export function paneState(pane, expectedRunner) {
               receiptIdentity(current) === accepted.receipt_id &&
               current.payload_hash === accepted.payload_hash
             ) {
-              durableWrite(files.receipt, { ...current, accepted });
+              durableWrite(files.receipt, {
+                ...current,
+                session_id: accepted.session_id,
+                accepted,
+              });
             }
           } finally {
             fs.rmdirSync(files.lock);
@@ -575,6 +580,16 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               break;
             }
             if (after.state !== runner) break;
+            const pending = queuedPrompt(after, runner, receipt);
+            if (pending) {
+              evidence = {
+                ...pending,
+                receipt_id: receiptIdentity(receipt),
+                payload_hash: receipt.payload_hash,
+              };
+              verification = 'queued';
+              break;
+            }
             await delay(40);
           } while (Date.now() < deadline);
         }
@@ -593,6 +608,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     after_state: after.state,
     verification,
     submitted: verification === 'submitted',
+    queued: verification === 'queued',
     typed,
     flush,
     evidence,
@@ -635,7 +651,8 @@ async function main() {
               operation === 'flush',
             );
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (operation !== 'state' && !result.submitted && !result.acknowledged) process.exitCode = 2;
+  if (operation !== 'state' && !result.submitted && !result.queued && !result.acknowledged)
+    process.exitCode = 2;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

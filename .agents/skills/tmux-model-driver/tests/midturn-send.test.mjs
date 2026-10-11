@@ -32,7 +32,7 @@ test('unknown Codex submits Enter once and verifies the full new queue without a
     assert.equal(command, 'tmux', 'no process, server or native probe is launched');
     keys.push(args);
     if (args[0] === 'send-keys')
-      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `Old transcript: ${payload}\n• Messages to be submitted after next tool call (press esc to interrupt and send\n  immediately)\n  ↳ ${queuedPayload}\n\n› Ask Codex to do anything\ncontext left`;
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `Old transcript: ${payload}\n• Messages to be submitted after\nnext tool call (press esc to interrupt and send\n  immediately)\n  ↳ ${queuedPayload}\n\n› Ask Codex to do anything\ncontext left`;
     return '';
   });
   syncBuiltinESMExports();
@@ -45,7 +45,9 @@ test('unknown Codex submits Enter once and verifies the full new queue without a
   });
   assert.equal(paneState('%1', 'codex').phase, 'unknown');
   const result = await send('%1', 'codex', payload);
-  assert.equal(result.verification, 'submitted');
+  assert.equal(result.verification, 'queued');
+  assert.equal(result.submitted, false);
+  assert.equal(result.queued, true);
   assert.equal(result.evidence.source, 'runner-queue');
   assert.equal(result.evidence.turn_token, null);
   assert.deepEqual(
@@ -57,11 +59,22 @@ test('unknown Codex submits Enter once and verifies the full new queue without a
   assert.equal((await send('%1', 'codex', 'foreign queue')).verification, 'queued_input');
   assert.equal(keys.length, before);
 
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '›';
+  assert.equal((await send('%1', 'codex', 'after queue vanished')).verification, 'queued_input');
+  assert.equal(keys.length, before);
+  process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'foreign');
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+    '• Messages to be submitted after\nnext tool call\n↳ foreign payload\n› Ask Codex to do anything';
+  assert.equal((await send('%1', 'codex', payload)).verification, 'queued_input');
+  assert.equal(keys.length, before, 'wrapped foreign queue is refused without keystrokes');
+  process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'busy');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'tab to queue message\n›';
   const busy = await send('%1', 'codex', payload);
   assert.equal(busy.before.phase, 'busy');
-  assert.equal(busy.submitted, true);
+  assert.equal(busy.queued, true);
+  assert.equal(busy.submitted, false);
 
+  process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'mismatch');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '›';
   queuedPayload = `${'shared prefix '.repeat(20)}different suffix`;
   const mismatch = await send('%1', 'codex', payload);
