@@ -49,6 +49,7 @@ import {
   readState,
   type Workspace,
   workspacePoolDir,
+  workspacePoolFile,
   type WorkspaceState,
   writeState,
 } from './workspace.js';
@@ -602,7 +603,7 @@ export function projectAdd(
   const hash = hashPackDir(packDir);
   let action = decideAddAction(state.packs[pack.name]?.hash, hash);
 
-  const poolPath = join(ws.farmslotDir, state.pool_file);
+  const poolPath = workspacePoolFile(ws, state);
   const pool = readPool(poolPath);
 
   // An unchanged pack is verify-only — one-time setup must not rerun. Anything

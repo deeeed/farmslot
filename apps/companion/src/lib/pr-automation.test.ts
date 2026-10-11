@@ -16,6 +16,7 @@ import {
   newPRExecution,
   newPRMonitorDraft,
   newPRRequestDraft,
+  prExecutionText,
   qaRequestFromReview,
   togglePRSlot,
   updatePRReviewOptions,
@@ -326,4 +327,15 @@ test('QA profiles and merged inputs come from the mapped farm', () => {
   assert.equal(effective.qa?.default_profile, 'daily');
   assert.deepEqual(effective.qaInputs, { hours: 12, domain: 'assets' });
   assert.deepEqual(effectivePRRequest(draft, [team], []).qaInputs, { hours: 12 });
+});
+
+test('portable pool execution remains readable before registry binding', () => {
+  const profile = {
+    workspacePolicy: { kind: 'pool' as const },
+    transport: 'native' as const,
+    models: execution.models,
+  };
+  assert.match(prExecutionText(profile), /Review machines: Configured pool/);
+  assert.deepEqual(profile.models, execution.models);
+  assert.equal(profile.workspacePolicy.kind, 'pool');
 });

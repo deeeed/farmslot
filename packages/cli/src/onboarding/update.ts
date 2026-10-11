@@ -10,7 +10,13 @@ import { AddError, assertProjectOwnership, resolvePackSource, syncPackProjects }
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
-import { readState, type Workspace, workspacePoolDir, writeState } from './workspace.js';
+import {
+  readState,
+  type Workspace,
+  workspacePoolDir,
+  workspacePoolFile,
+  writeState,
+} from './workspace.js';
 
 // Builds every workspace the CLI depends on, in dependency order. Yarn reads
 // the list from the checkout's own manifests: this process still runs the
@@ -129,7 +135,7 @@ export async function farmslotUpdate(
 
   // 3. Pool schema migrations (versioned, preserve user edits).
   const steps = await loadMigrations(join(clone, 'migrations', 'pool'));
-  const poolPath = join(clone, state.pool_file);
+  const poolPath = workspacePoolFile(ws, state);
   const pool = readPool(poolPath);
   const previousMetroPorts = new Map(
     pool.slots.map((slot) => [slot.id, slot.resources?.['dev-server']?.metro_port]),

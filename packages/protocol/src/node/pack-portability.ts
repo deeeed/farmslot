@@ -1,25 +1,60 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { readPoolFiles } from './slot-by-repo.js';
 
 const PRIVATE_PATH =
-  /(?:^|[\s"'`(=]|file:\/\/)((?:~|\$HOME|\$\{HOME\})\/xreview(?:\/[^\s"'`)]*)?|\/(?:Users|home)\/[A-Za-z0-9_.-]+(?:\/[^\s"'`)]*)?|\/var\/root(?:\/[^\s"'`)]*)?|[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9_.-]+)/;
+  /(?:^|[\s"'`(=:>]|file:\/\/)((?:~|\$HOME|\$\{HOME\})\/[A-Za-z0-9_.-][^\s"'`)]*|\/(?:Users|home|Volumes)\/(?:[A-Za-z0-9_$.-]+|\$\{[A-Za-z0-9_]+\})(?:\/[^\s"'`)]*)?|\/(?:root|(?:private\/)?var\/root)(?:\/[^\s"'`)]*)?|[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9_.-]+)/;
+const PRIVATE_TOOL = /\b(?:slot-lock|xreview\/)/;
 const SHELL_WORD = String.raw`(?:[^\s"'\x60]+|"[^"]*"|'[^']*')`;
 const SSH_OPTIONS = String.raw`(?:-\S+(?:\s+${SHELL_WORD})?\s+)*`;
-const LOCAL_HOST = String.raw`(?:[^\s"'@]+@)?[a-z0-9_-]+\.local`;
-const FIXED_HOST = new RegExp(
-  String.raw`(?:\b(?:https?|wss?|ssh):\/\/${LOCAL_HOST}(?=[/:\s"'\x60)]|$)|\bssh\s+${SSH_OPTIONS}["']?${LOCAL_HOST}(?=[\s"'\x60)]|$)|\b(?:scp|rsync)\s+${SSH_OPTIONS}(?:${SHELL_WORD}\s+)*?["']?${LOCAL_HOST}:)`,
-  'i',
-);
+function hostReference(host: string): RegExp {
+  const target = String.raw`(?:[^\s"'@]+@)?(?:${host})`;
+  return new RegExp(
+    String.raw`(?:\b(?:https?|wss?|ssh):\/\/${target}(?=[/:\s"'\x60)]|$)|\bssh\s+${SSH_OPTIONS}["']?${target}(?=[\s"'\x60)]|$)|\b(?:scp|rsync)\s+${SSH_OPTIONS}(?:${SHELL_WORD}\s+)*?["']?${target}:)`,
+    'i',
+  );
+}
+const FIXED_HOST = hostReference(String.raw`[a-z0-9_-]+\.local`);
 const RUNTIME_DIRS = new Set(['tasks', 'runs', 'artifacts', 'temp', '.agent', '.sandbox']);
 const quoteRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const namesPattern = (values: Iterable<string>) => [...new Set(values)].map(quoteRegex).join('|');
 
 export interface PackOwnedEntry {
   rel: string;
   /** Symlink targets use the same marker as the pack hash; links are never followed. */
   content: Buffer | string;
+}
+
+/** A copied pack still owns its ignore rules, even without its original Git index. */
+function listUnindexedPackFiles(dir: string, prefix: string): string[] {
+  const gitDir = mkdtempSync(path.join(tmpdir(), 'pack-ignore-'));
+  try {
+    const initialized = spawnSync('git', ['init', '--bare', '--quiet', gitDir]);
+    if (initialized.status !== 0) throw new Error('Cannot initialize pack ownership scan');
+    const listed = spawnSync('git', [
+      '--git-dir',
+      gitDir,
+      '--work-tree',
+      dir,
+      '-c',
+      'core.excludesfile=/dev/null',
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+    ]);
+    if (listed.status !== 0) throw new Error('Cannot list copied pack-owned files');
+    return listed.stdout
+      .toString()
+      .split('\0')
+      .filter(Boolean)
+      .filter((name) => prefix !== '' || !RUNTIME_DIRS.has(name.split('/')[0]));
+  } finally {
+    rmSync(gitDir, { recursive: true, force: true });
+  }
 }
 
 /** One ownership boundary for pack hashing, admission and gateway sync. */
@@ -45,7 +80,7 @@ export function listPackOwnedEntries(root: string): PackOwnedEntry[] {
     } else if (git.status === 0 || git.status === 128) {
       // A standalone pack, or an untracked pack ignored by its parent repo,
       // still owns its source files. Its top-level runtime state is not source.
-      names = readdirSync(dir).filter((name) => prefix !== '' || !RUNTIME_DIRS.has(name));
+      names = listUnindexedPackFiles(dir, prefix);
     } else {
       throw new Error('Cannot list pack-owned files for portability validation');
     }
@@ -98,7 +133,10 @@ export function validatePackFilePortability(
   content: string,
   machines: readonly string[] = [],
 ): string[] {
-  const names = new Set(machines);
+  // Control tests deliberately contain invalid fixtures. They stay in pack hashes,
+  // while admission checks runtime files, templates and ordinary fixture files.
+  if (/(?:^|\/)[^/]+\.(?:test|spec)\.(?:[cm]?[jt]sx?|sh|bats|py)$/.test(file)) return [];
+  const names = new Set<string>();
   if (file.endsWith('.json')) {
     // Explicit node selectors are forbidden even before a pool is installed.
     let parsed: unknown;
@@ -121,12 +159,25 @@ export function validatePackFilePortability(
     };
     visit(parsed);
   }
-  const machine = names.size
-    ? new RegExp(`(?<![\\w-])(?:${[...names].map(quoteRegex).join('|')})(?![\\w-])`)
+  const selector = names.size
+    ? new RegExp(`(?<![\\w-])(?:${namesPattern(names)})(?![\\w-])`)
+    : null;
+  const registered = namesPattern(machines);
+  const host = registered ? hostReference(registered) : null;
+  const machineOption = registered
+    ? new RegExp(
+        String.raw`(?:--machine(?:=|\s+)|(?:^|[\s;])(?:HOST|FARMSLOT_MACHINE)=)["']?(?:${registered})(?=[\s"'\x60)]|$)`,
+      )
     : null;
   return content.split(/\r?\n/).flatMap((line, index) => {
     const privatePath = PRIVATE_PATH.exec(line);
-    const match = privatePath?.[1] ?? FIXED_HOST.exec(line)?.[0] ?? machine?.exec(line)?.[0];
+    const match =
+      privatePath?.[1] ??
+      PRIVATE_TOOL.exec(line)?.[0] ??
+      FIXED_HOST.exec(line)?.[0] ??
+      selector?.exec(line)?.[0] ??
+      host?.exec(line)?.[0] ??
+      machineOption?.exec(line)?.[0];
     return match
       ? [
           `${file}:${index + 1}: nonportable reference; use a relative pack path or a pool/slot {{placeholder}} for node-specific values`,

@@ -10,9 +10,13 @@ import {
   hashPackDir,
   projectName,
   projectShortName,
-  validatePackDir,
+  validatePackDir as validateInstalledPackDir,
   validatePackJson,
 } from './pack.js';
+
+// Admission fixtures must not inherit the operator's configured pool.
+const validatePackDir = (dir: string, pool = join(dir, '.test-pool')) =>
+  validateInstalledPackDir(dir, pool);
 
 const VALID_PACK = {
   name: 'example-app',

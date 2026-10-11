@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  listPackOwnedEntries,
   packMachineNames,
   validatePackFilePortability,
   validatePackPortability,
@@ -15,14 +16,23 @@ test('pack policy rejects private paths and fixed nodes with line and fix guidan
   for (const reference of [
     '~/xreview/bin/helper',
     '${HOME}/xreview/a',
+    '~/dev/app',
+    '$HOME/dev/app',
+    '${HOME}/dev/app',
+    '/Users/$USER/dev/app',
+    '/Users/${USER}/dev/app',
+    'PATH=/usr/bin:/Users/operator/bin',
+    '>/Users/operator/output',
+    '/Volumes/data/app',
+    'slot-lock run',
     '/Users/operator/dev/app',
     'file:///Users/operator/dev/app.git',
     '/home/operator/app',
     '/var/root/app',
     'C:\\Users\\operator\\app',
     'ssh worker-a.local',
-    'worker-a',
-    'worker-b',
+    '--machine worker-a',
+    'HOST=worker-b',
   ]) {
     const errors = validatePackFilePortability('hooks/project.sh', `#!/bin/sh\n${reference}\n`, [
       'macpro',
@@ -39,7 +49,7 @@ test('portable pool placeholders and pack-relative hooks pass', () => {
   assert.deepEqual(
     validatePackFilePortability(
       'project.json',
-      'node {{farmslot_dir}}/projects/example/scripts/project.mjs {{slot_id}}\n{{repo}}\n${HOME}/.farmslot',
+      'node {{farmslot_dir}}/projects/example/scripts/project.mjs {{slot_id}}\n{{repo}}\n{{farmslot_dir}}/.config',
     ),
     [],
   );
@@ -155,4 +165,55 @@ test('pack pool identities skip malformed JSON without echoing its contents', (t
     JSON.stringify({ machine: 'registered', host: 'registered.local', slots: [] }),
   );
   assert.deepEqual(packMachineNames(root), ['registered', 'registered.local']);
+});
+
+test('ordinary pool hostnames do not turn branch, mode or tool names into fixed selectors', () => {
+  const names = ['main', 'dev', 'node'];
+  assert.deepEqual(
+    validatePackFilePortability(
+      'project.json',
+      '{"default_branch":"main","mode":"dev","command":"node script.js"}',
+      names,
+    ),
+    [],
+  );
+  for (const value of [
+    'ssh -o BatchMode=yes node true',
+    '--machine dev',
+    'HOST=main',
+    '{"allowedMachines":["dev"]}',
+  ])
+    assert.equal(validatePackFilePortability('project.json', value, names).length, 1, value);
+});
+
+test('control tests remain pack-owned without treating their invalid inputs as runtime references', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'portable-control-source-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'tests'));
+  writeFileSync(
+    join(root, 'tests/portability.test.mjs'),
+    "const badInput = '/Users/operator/app';",
+  );
+  assert.ok(listPackOwnedEntries(root).some((entry) => entry.rel === 'tests/portability.test.mjs'));
+  assert.deepEqual(validatePackPortability(root), []);
+  writeFileSync(join(root, 'tests/setup.sh'), 'cd /Users/operator/app');
+  assert.equal(validatePackPortability(root).length, 1);
+  writeFileSync(join(root, 'worker.test.md'), 'cd /Users/operator/app');
+  assert.equal(validatePackPortability(root).length, 2);
+});
+
+test('copied packs honor their own ignore rules under an ignoring parent repository', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'portable-installed-pack-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '--quiet', root]);
+  writeFileSync(join(root, '.gitignore'), 'projects/\n');
+  const pack = join(root, 'projects/example');
+  mkdirSync(pack, { recursive: true });
+  writeFileSync(join(pack, '.gitignore'), 'operator.private\n');
+  writeFileSync(join(pack, 'operator.private'), '/Users/operator/restored-fixture');
+  writeFileSync(join(pack, 'project.json'), '{"repo":"{{repo}}"}');
+  assert.deepEqual(validatePackPortability(pack), []);
+  assert.ok(!listPackOwnedEntries(pack).some((entry) => entry.rel === 'operator.private'));
+  writeFileSync(join(pack, 'hook.sh'), 'cd /Users/operator/app');
+  assert.equal(validatePackPortability(pack).length, 1);
 });
