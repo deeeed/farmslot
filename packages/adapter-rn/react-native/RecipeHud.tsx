@@ -5,6 +5,7 @@ import {
   Text,
   type TextStyle,
   View,
+  type ViewProps,
   type ViewStyle,
 } from 'react-native';
 
@@ -49,6 +50,7 @@ export interface RecipeHudOptions {
 }
 
 export interface RecipeHudProps extends RecipeHudOptions {
+  onLayout?: ViewProps['onLayout'];
   state: FarmslotRecipeHudState | null;
 }
 
@@ -57,6 +59,7 @@ export function RecipeHud({
   styles: customStyles,
   text,
   overlay: Overlay,
+  onLayout,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
   if (!state || state.status === 'idle') return null;
   const badge = text?.badge?.(state) ?? formatBadge(state);
@@ -65,6 +68,7 @@ export function RecipeHud({
   const badgeTone = badgeToneForStatus(state.status);
   const overlay = (
     <View
+      onLayout={onLayout}
       accessibilityElementsHidden
       accessible={false}
       importantForAccessibility="no-hide-descendants"

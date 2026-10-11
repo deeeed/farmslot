@@ -66,7 +66,8 @@ export function RecipeBridgeProvider({
           return { ok: true, bridge: bridgeName, platform: Platform.OS, hud: true };
         }
         if (command.command === 'hud') {
-          setHud(normalizeHudState(command.payload));
+          // `clear` is part of the app.hud action manifest; it hides the HUD.
+          setHud(command.payload?.clear === true ? null : normalizeHudState(command.payload));
           return { ok: true };
         }
         if (command.command === 'trace') {

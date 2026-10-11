@@ -26,7 +26,11 @@ import {
 import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
-import { isRunnerPaneRetired, normalizeRunner } from '../runners/registry.js';
+import {
+  isRunnerPaneRetired,
+  normalizeRunner,
+  runnerIdsMatchingPaneCommand,
+} from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 import { endTmuxSessionArgv } from '../runtime/tmux-session-control.js';
 import { reviewWorkspaceShellSession } from '../runtime/workspace-terminal.js';
@@ -275,6 +279,22 @@ function paneIsWorkerContext(
   return false;
 }
 
+/**
+ * True only when the correlation names this exact pane (worker target or `%N` pane id). Unlike
+ * paneIsWorkerContext there is no session or window fallback: a review context records only its
+ * session, and a window holds split siblings, so neither identifies the pane the runner is in.
+ */
+function paneIsLocatedWorker(
+  pane: NodeTmuxPane,
+  correlation: SlotCorrelation | undefined,
+): boolean {
+  if (!correlation) return false;
+  if (correlation.workerTarget && pane.target === correlation.workerTarget) return true;
+  return Boolean(
+    correlation.workerPaneId?.startsWith('%') && pane.paneId === correlation.workerPaneId,
+  );
+}
+
 function runActivityHint(run: Run | undefined): TmuxWorkerActivityState | undefined {
   if (!run) return undefined;
   return WAITING_RUN_STATUSES.has(run.status) ? 'waiting' : 'active';
@@ -328,6 +348,12 @@ export function buildSessionCorrelation(
       const workerTargetCtx = correlatedRun?.agentContexts?.find(
         (ctx) => ctx.role === primaryFlowRole || ctx.role === 'primary',
       )?.target;
+      // Only a true tmux pane ID (%N) can be compared against node inventory pane ids. Dispatch
+      // records it in `paneId` (`pane` holds the index); numeric indexes fall back to window
+      // matching in paneIsWorkerContext.
+      const workerPaneId = [workerTargetCtx?.paneId, workerTargetCtx?.pane].find((id) =>
+        id?.startsWith('%'),
+      );
       machineSessions.set(session, {
         slotId: slot.id,
         ...(runId ? { runId } : {}),
@@ -336,9 +362,7 @@ export function buildSessionCorrelation(
         ...(runner ? { runner } : {}),
         ...(workerTargetCtx?.target ? { workerTarget: workerTargetCtx.target } : {}),
         ...(workerTargetCtx?.window ? { workerWindow: workerTargetCtx.window } : {}),
-        // Only a true tmux pane ID (%N) can be compared against node inventory pane ids;
-        // numeric indexes fall back to window matching in paneIsWorkerContext.
-        ...(workerTargetCtx?.pane?.startsWith('%') ? { workerPaneId: workerTargetCtx.pane } : {}),
+        ...(workerPaneId ? { workerPaneId } : {}),
       });
     }
   }
@@ -369,6 +393,9 @@ export function tmuxWorkerFromNodePane(params: {
   correlation?: SlotCorrelation;
 }): TmuxWorkerSummary {
   const { nodeId, pane, observedAt, correlation } = params;
+  const processRunnerIds = runnerIdsMatchingPaneCommand(pane.command);
+  // linkedRunner tells clients which runner a pane runs, so it needs positive pane identity.
+  const linkedRunner = paneIsLocatedWorker(pane, correlation) ? correlation?.runner : undefined;
   return {
     ref: {
       nodeId,
@@ -382,6 +409,7 @@ export function tmuxWorkerFromNodePane(params: {
     ...(pane.title ? { title: pane.title } : {}),
     ...(pane.cwd ? { cwd: pane.cwd } : {}),
     ...(pane.command ? { command: pane.command } : {}),
+    ...(processRunnerIds.length > 0 ? { processRunnerIds } : {}),
     ...(pane.pid != null ? { pid: pane.pid } : {}),
     canEndSession:
       !correlation &&
@@ -393,6 +421,7 @@ export function tmuxWorkerFromNodePane(params: {
     ...(pane.active != null ? { active: pane.active } : {}),
     ...(correlation?.slotId ? { linkedSlotId: correlation.slotId } : {}),
     ...(correlation?.runId ? { linkedRunId: correlation.runId } : {}),
+    ...(linkedRunner ? { linkedRunner } : {}),
     ...(correlation?.familyId ? { linkedFamilyId: correlation.familyId } : {}),
     ...(pane.branch ? { branch: pane.branch } : {}),
     ...(pane.lastChangedAt != null ? { lastChangedAt: pane.lastChangedAt } : {}),

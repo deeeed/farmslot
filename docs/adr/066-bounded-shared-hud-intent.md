@@ -54,6 +54,8 @@ as part of enabling this authoring rule; no farm repository is changed. Do not r
 - Native renderer: `@farmslot/adapter-rn/recipe-hud`, consumed by Companion and
   installed scaffold re-exports. Native peers remain optional for CLI consumers. Preserve RecipeHudOptions,
   including text/style overrides, and the custom renderHud extension point.
+  Companion consumes `RecipeHudProps.onLayout` to retain safe-area footer placement
+  when the measured panel fits, or place it above the default tab controls.
 - Harnesses, including mm-harness, inherit authoring validation and automatic HUD policy
   through recipe runner/adapters. Existing `app.hud` support remains their
   extension point; app-owned handlers/custom renderHud must adopt the helper
