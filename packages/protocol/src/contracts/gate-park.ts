@@ -32,6 +32,19 @@ import {
   type Run,
 } from './runs.js';
 
+/** A rehome changes the record's current slot; preserve the physical source slot. */
+export function parkOriginalSlotId(record: Pick<MachineParkRecord, 'slotId' | 'rehome'>): string;
+export function parkOriginalSlotId(
+  record: Partial<Pick<MachineParkRecord, 'slotId' | 'rehome'>>,
+  legacySlotId: string | null,
+): string | null;
+export function parkOriginalSlotId(
+  record: Partial<Pick<MachineParkRecord, 'slotId' | 'rehome'>>,
+  legacySlotId?: string | null,
+): string | null | undefined {
+  return record.rehome?.fromSlotId ?? record.slotId ?? legacySlotId;
+}
+
 /**
  * Whether this run's machine-park record released its slot (ADR-054
  * `free-slot` at an operator wait, amending ADR-038's gate-held slot hold).

@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 import type { Run, SlotStatus } from '@farmslot/protocol';
 
@@ -34,6 +34,31 @@ Object.assign(process.env, {
   PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH,
 });
 after(() => rmSync(root, { recursive: true, force: true }));
+
+let overlappingRelease = false;
+const realState = await import('../../core/state.js');
+mock.module('../../core/state.js', {
+  namedExports: {
+    ...realState,
+    readSlotRow: async (...args: Parameters<typeof realState.readSlotRow>) => {
+      const row = await realState.readSlotRow(...args);
+      return overlappingRelease && args[0] === 'holder' && row
+        ? { ...row, lifecycle: 'busy', phase: 'releasing' }
+        : row;
+    },
+    claimSlotStatusIf: async (...args: Parameters<typeof realState.claimSlotStatusIf>) => {
+      if (overlappingRelease && args[0] === 'holder') {
+        // The first release completes between a stale pre-claim read and CAS.
+        git(holderRepo, 'checkout', '--detach');
+        rows[0].lifecycle = 'ready';
+        rows[0].phase = null;
+        rows[0].branch = 'HEAD';
+        writeStatus();
+      }
+      return realState.claimSlotStatusIf(...args);
+    },
+  },
+});
 
 const {
   branchHolderGitCommand,
@@ -129,11 +154,14 @@ test('idle holder classifier protects active, family and parked work, including 
     slotId: 'other',
     status: 'done',
     park: {
+      phase: 'parked',
       slotId: 'holder',
       preservedWorkspace: { branch, headSha: git(base, 'rev-parse', 'HEAD') },
     },
   } as Run;
   assert.equal(branchHolderIsIdle(slot, [parked]), false);
+  const restored = { ...parked, park: { ...parked.park!, phase: 'restored' as const } };
+  assert.equal(branchHolderIsIdle(slot, [restored]), true);
 });
 
 test('branch conflicts stay on the same machine and preview exemptions require verified eligibility', () => {
@@ -189,6 +217,59 @@ test('selection rejects a new owner and a dirty holder after preview and restore
   assert.equal(row.phase, null);
   git(holderRepo, 'restore', 'file.txt');
   writeStatus();
+});
+
+test('offline holders stay non-releasable and cannot fail local selection', async (t) => {
+  const file = path.join(root, 'pool/offline.json');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      machine: 'offline',
+      host: 'unreachable.invalid',
+      project: 'farm',
+      platform: 'cli',
+      slots: [{ id: 'offline-holder', repo: '/fixture/holder', session: 'offline' }],
+    }),
+  );
+  t.after(() => rmSync(file));
+  const fleet = await loadFleetStatus();
+  const holder = {
+    ...fleet.slots.find((slot) => slot.slot === 'holder')!,
+    slot: 'offline-holder',
+    machine: 'offline',
+  };
+  const candidate = { ...holder, slot: 'offline-candidate', branch: 'main' };
+  const scoped = await inspectReleasableBranchHolders(
+    [...fleet.slots, holder, candidate],
+    'farm',
+    branch,
+    ['requested'],
+  );
+  assert.ok(scoped.has('holder'));
+  assert.ok(!scoped.has('offline-holder'));
+  const all = await inspectReleasableBranchHolders(
+    [...fleet.slots, holder, candidate],
+    'farm',
+    branch,
+  );
+  assert.ok(!all.has('offline-holder'));
+});
+
+test('overlapping release restores the successful CAS snapshot instead of an obsolete releasing fence', async (t) => {
+  const fleet = await loadFleetStatus();
+  setCachedFleetForTests(fleet);
+  overlappingRelease = true;
+  t.after(() => {
+    overlappingRelease = false;
+    git(holderRepo, 'checkout', branch);
+    rows[0].branch = branch;
+    writeStatus();
+  });
+  await assert.rejects(releaseBranchHolderForSelection('requested', branch), /clean tracked files/);
+  const row = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots[0];
+  assert.equal(row.lifecycle, 'ready');
+  assert.equal(row.phase, null);
+  assert.equal(git(holderRepo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
 });
 
 test('production selection fences and detaches a clean pushed idle holder without moving its branch', async () => {

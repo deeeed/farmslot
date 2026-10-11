@@ -40,6 +40,7 @@ import {
   type MachinePauseStatusResult,
   type MachinePauseTerminalRecoveryHandle,
   needsGateParkRestore,
+  parkOriginalSlotId,
   PipelineSteps,
   type ResourcePressureMachine,
   type Run,
@@ -154,19 +155,6 @@ type MachineParkingRecoveryProof = NonNullable<MachineParkRecord['recoveryProof'
  * recovery handle re-bound to the target's tmux session — the conversation is
  * unchanged, only its host moved.
  */
-/**
- * The slot the PARK freed, whatever a restore has since done with the record.
- *
- * `record.slotId` is the run's CURRENT home and a re-home moves it, so reading
- * it as the original collapses the move: a preview taken after a re-home would
- * emit `slotId === originalSlotId` and every client would render "restoring
- * into B (was B)". One derivation, used by every reader, is what keeps the two
- * ends of the move distinguishable for the life of the record.
- */
-function parkOriginalSlotId(record: MachineParkRecord): string {
-  return record.rehome?.fromSlotId ?? record.slotId;
-}
-
 /**
  * Why the original slot cannot take the run back, split by what an operator can
  * do about it.

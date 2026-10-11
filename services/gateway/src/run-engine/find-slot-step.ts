@@ -698,6 +698,7 @@ export async function executeFindSlotStep(
     (await loadFleetStatus()).slots,
     run.project,
     targetBranch,
+    run.slotId ? [run.slotId] : run.allowedSlots,
   );
   // A run that skips prepare keeps the slot's checkout, so slot repo blockers do not apply.
   const skipPrepare = Boolean(run.engineState?.flags?.skipPrepare);

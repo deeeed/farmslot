@@ -1,5 +1,7 @@
 import {
   DETACHED_HEAD_BRANCH,
+  hasLiveParkRecord,
+  parkOriginalSlotId,
   remoteBranchRefspec,
   type Run,
   SLOT_DESTRUCTIVE_OPS,
@@ -8,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../../core/config.js';
-import { execOnSlot } from '../../core/exec.js';
+import { execOnSlot, isLocal } from '../../core/exec.js';
 import {
   claimSlotStatusIf,
   readSlotRow,
@@ -18,6 +20,8 @@ import {
   updateSlotStatusIf,
 } from '../../core/state.js';
 import { shellQuote } from '../../core/tmux.js';
+import { getNode } from '../../fleet/machine-registry.js';
+import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { getAllRuns, getAllRunsWithArchived } from '../../runs/store.js';
 import { assertSlotNotOperatorRoot } from '../slot/slot-tracking.js';
@@ -50,7 +54,9 @@ export function branchHolderIsIdle(slot: SlotStatus, runs: readonly HolderRun[])
     !runs.some(
       (run) =>
         (run.slotId === slot.slot && !TERMINAL_RUN_STATUSES.includes(run.status)) ||
-        (run.park && (run.park.rehome?.fromSlotId ?? run.park.slotId ?? run.slotId) === slot.slot),
+        (hasLiveParkRecord(run) &&
+          run.park &&
+          parkOriginalSlotId(run.park, run.slotId) === slot.slot),
     )
   );
 }
@@ -76,12 +82,25 @@ export async function inspectReleasableBranchHolders(
   slots: readonly SlotStatus[],
   project: string,
   branch?: string | null,
+  candidateSlotIds?: readonly string[] | null,
 ): Promise<Set<string>> {
   const eligible = new Set<string>();
   if (!branch) return eligible;
+  const relevantMachines = new Set(
+    slots
+      .filter(
+        (slot) =>
+          slot.project === project &&
+          slot.linkedWorktree &&
+          slot.branch !== branch &&
+          (!candidateSlotIds || candidateSlotIds.includes(slot.slot)),
+      )
+      .map((slot) => slot.machine),
+  );
   const runs = await getAllRunsWithArchived();
   for (const slot of slots) {
     if (
+      !relevantMachines.has(slot.machine) ||
       slot.project !== project ||
       !slot.linkedWorktree ||
       slot.branch !== branch ||
@@ -89,13 +108,19 @@ export async function inspectReleasableBranchHolders(
     )
       continue;
     const vars = await loadSlotVars(slot.slot);
+    if (!isLocal(vars.host, vars.machine) && !getNode(vars.machine)) continue;
     const row = await readSlotRow(slot.slot);
     if (row && !idleBranchHolderRow(row)) continue;
-    await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
-    const result = await execOnSlot(vars, branchHolderGitCommand(vars.remoteRepo, branch), {
-      timeout: 15_000,
-    });
-    if (result.exitCode === 0) eligible.add(slot.slot);
+    try {
+      await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
+      const result = await execOnSlot(vars, branchHolderGitCommand(vars.remoteRepo, branch), {
+        timeout: 15_000,
+      });
+      if (result.exitCode === 0) eligible.add(slot.slot);
+    } catch (error) {
+      // A node that disappears during the read cannot authorize release; other candidates remain usable.
+      if (!isNodeTransportUnavailableError(error)) throw error;
+    }
   }
   return eligible;
 }
@@ -116,12 +141,20 @@ export async function releaseBranchHolderForSelection(
       `Branch ${branch} is held by slot ${holder.slot}; release requires an idle, unowned, unparked workspace with clean tracked files and pushed HEAD`,
     );
   if (!branchHolderIsIdle(holder, runs)) throw refuse();
-  const original = await readSlotRow(holder.slot);
-  if (!original) throw refuse();
+  let restoration: Record<string, unknown> | undefined;
   const vars = await loadSlotVars(holder.slot);
   await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
-  const idleRow = (row: Readonly<Record<string, unknown>>) =>
-    idleBranchHolderRow(row) && branchHolderIsIdle(holder, [...runs, ...getAllRuns()]);
+  const idleRow = (row: Readonly<Record<string, unknown>>) => {
+    if (!idleBranchHolderRow(row) || !branchHolderIsIdle(holder, [...runs, ...getAllRuns()]))
+      return false;
+    // Snapshot in the successful CAS, so a prior release cannot leave a stale busy restoration.
+    restoration = {
+      lifecycle: row.lifecycle,
+      phase: row.phase,
+      [SLOT_RELEASING_SINCE]: row[SLOT_RELEASING_SINCE] ?? null,
+    };
+    return true;
+  };
   const claim = await claimSlotStatusIf(holder.slot, idleRow, slotReleasingFenceFields());
   if (!claim.claimed) throw refuse();
   let head: string | undefined;
@@ -138,9 +171,7 @@ export async function releaseBranchHolderForSelection(
       holder.slot,
       (row) => row.slot_epoch === claim.epoch && row.phase === SLOT_PHASE_RELEASING,
       {
-        lifecycle: original.lifecycle,
-        phase: original.phase,
-        [SLOT_RELEASING_SINCE]: original[SLOT_RELEASING_SINCE] ?? null,
+        ...restoration,
         ...(head ? { branch: DETACHED_HEAD_BRANCH, head_sha: head } : {}),
       },
     );

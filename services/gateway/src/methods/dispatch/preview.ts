@@ -818,6 +818,7 @@ export async function dispatchCandidates(
       fleet.slots,
       project,
       scoring.targetBranch,
+      projectSlots.filter((slot) => slot.project === project).map((slot) => slot.slot),
     ))
       releasableBranchHolderIds.add(id);
   }
@@ -1056,6 +1057,7 @@ export async function dispatchPreview(
     fleet.slots,
     params.project,
     resolvedTargetBranch,
+    params.slotId ? [params.slotId] : params.allowedSlots,
   );
   const projectConfigList = await loadProjectConfigs();
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
