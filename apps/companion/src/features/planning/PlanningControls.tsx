@@ -81,14 +81,18 @@ export function PlanningChoices<T extends string>({
   options,
   value,
   onChange,
+  disabled = false,
+  testID,
 }: {
   label: string;
   options: readonly { value: T; label?: string }[];
   value: T;
   onChange: (value: T) => void;
+  disabled?: boolean;
+  testID?: string;
 }) {
   return (
-    <View style={styles.field}>
+    <View style={styles.field} testID={testID}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.choices}>
         {options.map((option) => {
@@ -96,6 +100,10 @@ export function PlanningChoices<T extends string>({
           return (
             <Pressable
               key={option.value || '__default'}
+              testID={testID ? `${testID}-${option.value}` : undefined}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected, disabled }}
+              disabled={disabled}
               style={[styles.choice, selected && styles.choiceSelected]}
               onPress={() => onChange(option.value)}
             >

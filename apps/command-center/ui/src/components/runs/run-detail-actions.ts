@@ -12,6 +12,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
   failedRunCancelEffects,
   Methods,
@@ -409,20 +410,16 @@ export function resolveSlotPick(
   if (context.actionsBlocked()) return;
   const slotId = context.selectedSlotId();
   if (!slotId) return;
-  gateway
-    .request(
-      Methods.RUN_RESOLVE_DECISION,
-      buildRunResolveDecisionParams({
-        runId,
-        decision: { id: decisionId },
-        actionId: 'pick',
-        selectionData: { slotId, resetBranch: context.resetBranch() },
-      }),
-    )
-    .catch((err) => {
-      // The gateway keeps the slot-pick decision pending; log the failure for diagnostics.
-      console.error('Failed to resolve slot pick:', err);
-    });
+  const request = buildRunDecisionActionRequest({
+    runId,
+    decision: { id: decisionId },
+    actionId: 'pick',
+    selectionData: { slotId, resetBranch: context.resetBranch() },
+  });
+  gateway.request(request.method, request.params).catch((err) => {
+    // The gateway keeps the slot-pick decision pending; log the failure for diagnostics.
+    console.error('Failed to resolve slot pick:', err);
+  });
   context.setSelectedSlotId(null);
   context.setResetBranch(false);
 }
