@@ -246,6 +246,16 @@ export interface PrepareStepContext {
   stepPartialIO: Map<string, StepIO>;
 }
 
+/** Fresh worker runs may replace a branch; retries of the same run must reuse it. */
+export function shouldForceNewPrepareBranch(run: Run, warmRecovery = false): boolean {
+  return (
+    (run.flowType === 'fix-bug' || run.flowType === 'dev') &&
+    !run.recoveryAttempts?.length &&
+    !run.engineState?.prepareBranch?.started &&
+    !warmRecovery
+  );
+}
+
 export async function executePrepareStep(
   runId: string,
   context: PrepareStepContext,
@@ -377,8 +387,8 @@ export async function executePrepareStep(
     branchState?.slotId === current.slotId &&
     branchState.branch === current.branch &&
     branchState.started === false;
-  const forceNewBranch =
-    !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
+  const warmRecovery = getRunFlags(runId)?.warmRecovery;
+  const forceNewBranch = shouldForceNewPrepareBranch(current, warmRecovery);
   const prepareController = new AbortController();
   // activeMonitors[runId] is exclusively owned for the duration of one
   // step; an existing entry orphans the prior controller from cancellation.
@@ -388,7 +398,6 @@ export async function executePrepareStep(
     );
   }
   activeMonitors.set(runId, prepareController);
-  const warmRecovery = getRunFlags(runId)?.warmRecovery;
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
   try {
     const prepareResult = await slotPrepare(

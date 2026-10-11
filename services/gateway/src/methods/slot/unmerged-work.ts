@@ -67,6 +67,28 @@ export async function assertPrepareCommitsPublished(
   }
 }
 
+/** Only replace a published branch after all its commits reach an allowed base. */
+export async function assertPublishedPrepareBranchContained(
+  vars: SlotVars,
+  branch: string,
+  allowedBases: readonly string[],
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<void> {
+  const result = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} log --oneline --max-count=5 ${shellQuote(`refs/remotes/origin/${branch}`)} --not ${allowedBases.map(shellQuote).join(' ')}`,
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot verify published branch ${branch}; prepare left branches untouched. ${result.stderr || result.stdout}`,
+    );
+  const commits = result.stdout.trim();
+  if (commits)
+    throw new Error(
+      `Prepare refused to replace published branch ${branch}: unique commits not contained in ${allowedBases.join(' or ')}: ${commits.replaceAll('\n', '; ')}. No local or remote branch was deleted.`,
+    );
+}
+
 /**
  * Work on the checked-out `branch` that a slot reset would lose, as a detail
  * such as "dirty files + unpushed commits", or null when nothing is at risk.
