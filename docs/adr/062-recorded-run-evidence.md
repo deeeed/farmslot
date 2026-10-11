@@ -47,6 +47,11 @@ gateway owns resource admission. Digests used as references are checked, not
 independent copies of facts. Neither a successful screenshot nor a HUD caption
 is an executed expectation or a human visual judgment.
 
+Harnesses inherit the shared HUD, with no per-harness renderers. Its bounded
+panel preserves app visibility and displays the complete intent in at most two
+lines. Node intents are one concise sentence; lint warns above 80 characters
+and fails above 120. The specification defines the rendering requirements.
+
 ### Lifecycle and evidence
 
 One engine plans the target, obtains backend-specific claims, starts capture,

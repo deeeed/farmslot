@@ -116,6 +116,15 @@ retain source provenance; they are not mislabeled as native snapshots. A missing
 frame remains missing evidence. The HUD renderer remains; the engine publishes
 its final outcome before stopping capture. No unrelated image fills a proof gap.
 
+## HUD requirements
+
+The HUD MUST display the complete node intent, wrapping to at most two lines,
+without ellipsis, clipping or truncation mid-sentence. Its bounded panel MUST
+preserve app visibility and MUST NOT obscure the app content being checked.
+Each node intent MUST be one concise sentence. Intent lint MUST warn above
+80 characters and fail above 120 characters. Harnesses MUST inherit the shared
+framework HUD; per-harness HUD renderers are forbidden.
+
 ## Lifecycle, resource limits and retention
 
 Planning/discovery are read-only. Execution resolves target/policy, applies the
@@ -258,3 +267,4 @@ successful test results:
 - **P8 QA/occurrences:** A 10+ case suite covers failed-then-passed retry, failed independent iteration, skipped required check, composed calls and sibling attempt isolation. Continuous cross-segment proof opens ordered clips; restart/held-frame gaps remain outside recording. Both output-review reports jump to each case/check against the same report identity.
 - **Frozen refresh:** Replace approved media bytes or request an unapproved artifact and observe refusal; valid approved refresh preserves selection, dependencies, approval and PR identity, and renders hosted media with HTTP 200.
 - **Clean cutover:** One normal ledger writer, no replaced recorder/linking/mapper copies or shim imports; unrecorded headless control and explicitly untimed legacy viewing remain honest.
+- **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared HUD displays the complete sentence in at most two lines inside its bounded panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
