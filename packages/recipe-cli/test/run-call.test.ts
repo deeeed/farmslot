@@ -1858,6 +1858,14 @@ describe('run', () => {
   test('conformance binds actual source bytes and refuses stale or missing evidence', async () => {
     const target = checkout();
     const recipe = recipeFile(engine.bundledLibrary.root, {
+      choose: {
+        action: 'switch',
+        value: 'proof',
+        equals: 'proof',
+        cases: { match: 'done' },
+        default: 'done',
+        intent: 'x'.repeat(81),
+      },
       done: { action: 'end', status: 'pass' },
     });
     const options: RecipeConformanceOptions = {
@@ -1874,6 +1882,10 @@ describe('run', () => {
     };
     const report = await checkRecipeConformance(engine, options);
     assert.equal(report.status, 'pass', JSON.stringify(report.checks));
+    const warning = report.checks.find((check) => check.id.endsWith(':intent'));
+    assert.equal(warning?.required, false);
+    assert.equal(warning?.status, 'pass');
+    assert.match(warning?.message ?? '', /Warning:.*81 characters/u);
     assert.equal(calls.events.length, 0);
     const unsupported = await checkRecipeConformance(
       {
@@ -1883,7 +1895,10 @@ describe('run', () => {
       options,
     );
     assert.equal(unsupported.status, 'fail');
-    assert.match(unsupported.checks[0]!.userAction ?? '', /upgrade the provider/u);
+    assert.match(
+      unsupported.checks.find((check) => check.required)?.userAction ?? '',
+      /upgrade the provider/u,
+    );
     assert.equal(fs.existsSync(path.join(target, 'temp')), false);
     assert.match(report.identity.checkout.head ?? '', /^[a-f0-9]{40}$/u);
     assert.equal(report.identity.checkout.dirtyDigest, null);

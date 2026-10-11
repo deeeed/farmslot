@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
+
 ## 0.13.0 - 2026-10-11
 
 - Project commands share library resolution across discovery, planning, execution and conformance, preserving provenance and adjacent task recipes. Provider options are validated before factory construction. Managed execution carries cancellation through command and live-action children, awaits provider cancellation/finalization before success and retains invocation and cleanup failure messages, and retains authored teardown, including streaming cleanup actions on a fresh cancellation context. Explicit slot selection requires a pool match before provider import. JSONL progress stays live while errors and completion wait for host closeout; rethrows retain original error codes and recovery details and superseded refusals remain in stderr diagnostics. Execution and overlay-install failures point to configured diagnostics and retained evidence paths. Streaming leaves have one second to finish signal traps before escalation.

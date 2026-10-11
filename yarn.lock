@@ -4752,8 +4752,17 @@ __metadata:
     ws: "npm:^8.18.0"
   peerDependencies:
     agent-device: ">=0.19.3"
+    react: ">=19"
+    react-native: ">=0.79"
+    react-native-screens: ">=4"
   peerDependenciesMeta:
     agent-device:
+      optional: true
+    react:
+      optional: true
+    react-native:
+      optional: true
+    react-native-screens:
       optional: true
   bin:
     farmslot-adapter-rn: ./bin/farmslot-adapter-rn.mjs
@@ -4779,6 +4788,7 @@ __metadata:
   resolution: "@farmslot/adapter-web@workspace:packages/adapter-web"
   dependencies:
     "@farmslot/adapter-sdk": "workspace:*"
+    "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
+
 ## 0.6.10 - 2026-10-11
 
 - Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.

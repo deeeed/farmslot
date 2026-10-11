@@ -118,6 +118,7 @@ export async function validateRecipeAdapterAware(
   rootRef?: string,
   params?: Record<string, unknown>,
   proof = false,
+  lintIntent = false,
 ): Promise<RecipeValidationResult> {
   let externalRecipeIds: ReadonlySet<string> | undefined;
   let libraryResolution: Awaited<ReturnType<typeof loadRecipeLibraries>> | undefined;
@@ -127,7 +128,7 @@ export async function validateRecipeAdapterAware(
     });
     externalRecipeIds = new Set(libraryResolution.recipes.keys());
   }
-  const validationOptions = externalRecipeIds !== undefined ? { externalRecipeIds } : undefined;
+  const validationOptions = { externalRecipeIds, lintIntent };
   const withManifest = validateRecipeWithManifest(recipe, manifest, validationOptions);
   const findings = [
     ...withManifest.findings,
@@ -250,6 +251,7 @@ export async function validateRunRecipeStatic(
   params: Record<string, unknown> = {},
   resolvedSources?: RecipeLibrarySource[],
   resolvedInvocation?: ResolvedRecipeInvocation,
+  lintIntent = false,
 ): Promise<RunRecipeStaticValidation> {
   const { resolved, librarySources } =
     resolvedInvocation ??
@@ -329,6 +331,7 @@ export async function validateRunRecipeStatic(
         resolved.ref,
         effectiveParams,
         optionFlag(options, 'proof'),
+        lintIntent,
       )
     : {
         status: 'invalid' as const,

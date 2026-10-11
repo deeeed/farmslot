@@ -46,7 +46,7 @@
       "verify": {
         "action": "command",
         "cmd": "yarn exec tsx ../../scripts/check-pr-push-acknowledgement.mts",
-        "intent": "A separate gateway connection confirms acknowledgement while preserving the unresolved conflict, stopped subscription and zero repair attempts.",
+        "intent": "A gateway read confirms acknowledgement without changing the conflict or starting repair.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

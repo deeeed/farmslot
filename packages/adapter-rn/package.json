@@ -28,7 +28,11 @@
     "./metro/launch-metro.cjs": "./metro/launch-metro.cjs",
     "./metro/metro-config.cjs": "./metro/metro-config.cjs",
     "./metro/metro-log-generation.cjs": "./metro/metro-log-generation.cjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./recipe-hud": {
+      "types": "./react-native/RecipeHud.tsx",
+      "default": "./react-native/RecipeHud.tsx"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
@@ -48,10 +52,22 @@
     "ws": "^8.18.0"
   },
   "peerDependencies": {
-    "agent-device": ">=0.19.3"
+    "agent-device": ">=0.19.3",
+    "react": ">=19",
+    "react-native": ">=0.79",
+    "react-native-screens": ">=4"
   },
   "peerDependenciesMeta": {
     "agent-device": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    },
+    "react-native-screens": {
       "optional": true
     }
   },
@@ -93,7 +109,8 @@
     "dist/**/*.js.map",
     "templates/**/*",
     "bridge-runtime/**/*.cjs",
-    "metro/*.cjs"
+    "metro/*.cjs",
+    "react-native/**/*.tsx"
   ],
   "publishConfig": {
     "access": "public"
