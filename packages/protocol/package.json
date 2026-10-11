@@ -373,6 +373,10 @@
       "types": "./dist/node/pack-portability.d.ts",
       "import": "./dist/node/pack-portability.js",
       "default": "./dist/node/pack-portability.js"
+    },
+    "./scripts/acceptance.mjs": {
+      "types": "./scripts/acceptance.d.mts",
+      "default": "./scripts/acceptance.mjs"
     }
   },
   "scripts": {
@@ -419,7 +423,10 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
-    "dist/**/*.js.map"
+    "dist/**/*.js.map",
+    "scripts/acceptance.mjs",
+    "scripts/acceptance.d.cts",
+    "scripts/acceptance.d.mts"
   ],
   "publishConfig": {
     "access": "public"

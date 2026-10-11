@@ -338,18 +338,26 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         const stats = await stat(request.outputPath);
         if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
         return {
-          ...(nativeTiming
-            ? { timingEvidencePath: `${path.basename(request.outputPath)}.timing.json` }
-            : {}),
-          ...(nativeTiming
-            ? await readCaptureHelperTiming(request.outputPath)
-            : await optionalVideoTiming(request.outputPath, { startedAtUnixMs, stoppedAtUnixMs })),
-          recorder: {
-            name: 'capture-helper',
-            ...(getVersion() ? { version: getVersion() } : {}),
-            platform: 'macos',
-            target: manifestTarget(request.target),
-          },
+          segments: [
+            {
+              path: path.basename(request.outputPath),
+              ...(nativeTiming
+                ? { timingEvidencePath: `${path.basename(request.outputPath)}.timing.json` }
+                : {}),
+              ...(nativeTiming
+                ? await readCaptureHelperTiming(request.outputPath)
+                : await optionalVideoTiming(request.outputPath, {
+                    startedAtUnixMs,
+                    stoppedAtUnixMs,
+                  })),
+              recorder: {
+                name: 'capture-helper',
+                ...(getVersion() ? { version: getVersion() } : {}),
+                platform: 'macos',
+                target: manifestTarget(request.target),
+              },
+            },
+          ],
           ...(kept ? { interruption: kept } : {}),
         };
       },
@@ -447,6 +455,7 @@ function waitForExit<T>(
 }
 
 function targetArgs(target: RecordingTarget): string[] {
+  if (target.kind === 'cdp-page') throw new Error('A CDP page requires the CDP recorder.');
   if (target.kind === 'android-device')
     throw new Error('A physical Android recording requires the owned mirror recorder.');
   if (target.kind === 'pid') return ['--pid', String(target.pid)];
@@ -458,6 +467,8 @@ function targetArgs(target: RecordingTarget): string[] {
 }
 
 export function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderTarget {
+  if (target.kind === 'cdp-page')
+    return { selector: 'cdp-page', value: `${target.host}:${target.port}:${target.targetId}` };
   if (target.kind === 'android-device') return { selector: 'adb-serial', value: target.serial };
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {

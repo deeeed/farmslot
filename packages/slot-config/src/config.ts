@@ -421,7 +421,13 @@ export interface RawProjectJson {
         share_policy?: string;
         cost?: {
           class?: string;
-          resources?: Array<{ id?: string; access?: string; kind?: string; scope?: string }>;
+          resources?: Array<{
+            id?: string;
+            access?: string;
+            kind?: string;
+            scope?: string;
+            binding?: string;
+          }>;
         };
         parameters?: Record<string, unknown>;
         actions?: {
@@ -1755,6 +1761,30 @@ export function validateRuntimeCapabilitiesConfig(
           `${projectConfig}: ${field}.cost.resources.${index}.scope must be slot, machine, or fleet`,
         );
       }
+      if (resource.binding !== undefined && resource.binding !== 'recording-target') {
+        throw new Error(
+          `${projectConfig}: ${field}.cost.resources.${index}.binding must be recording-target`,
+        );
+      }
+      if (resource.binding === 'recording-target') {
+        if (
+          resource.access !== 'exclusive' ||
+          !['machine', 'fleet'].includes(String(resource.scope))
+        ) {
+          throw new Error(
+            `${projectConfig}: ${field}.cost.resources.${index} recording-target binding requires exclusive access and explicit machine or fleet scope`,
+          );
+        }
+        if (
+          !provider.parameters ||
+          typeof provider.parameters !== 'object' ||
+          Array.isArray(provider.parameters)
+        ) {
+          throw new Error(
+            `${projectConfig}: ${field}.parameters must declare a JSON Schema for recording-target binding`,
+          );
+        }
+      }
     }
     if (provider.dependencies !== undefined) {
       if (
@@ -2082,6 +2112,7 @@ export function normalizeRawRuntimeCapabilities(
         resources: (provider.cost.resources ?? []).map((resource) => ({
           id: resource.id!,
           access: resource.access as 'exclusive' | 'shared',
+          ...(resource.binding === 'recording-target' ? { binding: resource.binding } : {}),
           ...(resource.kind
             ? { kind: resource.kind as 'port' | 'device' | 'process' | 'service' | 'other' }
             : {}),

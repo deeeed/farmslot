@@ -109,7 +109,12 @@
       "default": "./dist/runtime/operation.js"
     },
     "./cdp-broker": "./cdp-broker/cdp-broker.cjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./evidence": {
+      "types": "./dist/evidence/index.d.ts",
+      "import": "./dist/evidence/index.js",
+      "default": "./dist/evidence/index.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",

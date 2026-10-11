@@ -75,8 +75,9 @@ import {
   type DeviceTargeting,
   provenanceFailure,
   type RecipeArtifactsLayout,
+  type RecipeExecutionArtifacts,
   reportTrustFailure,
-  resolveRecipeArtifactsDir,
+  resolveRecipeExecutionArtifacts,
   runFailureUserAction,
 } from './run.js';
 
@@ -428,9 +429,9 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     return EXIT.validation;
   }
 
-  let artifactsDir: string;
+  let artifactContext: RecipeExecutionArtifacts;
   try {
-    artifactsDir = resolveRecipeArtifactsDir(
+    artifactContext = resolveRecipeExecutionArtifacts(
       target,
       optionString(options, 'artifactsDir'),
       callArtifactsLayout(resolvedAction),
@@ -443,6 +444,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
     );
   }
+  const { artifactsDir, claims } = artifactContext;
   recordCommandEvidence(artifactsDir);
   const requestedRuntimeOptions = recipeRunOptionsFromCli(adapter, options);
   const inheritedSource =
@@ -460,6 +462,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   const callRuntimeOptions: RecipeEngineRunOptions = {
     signal: commandOptions.signal,
     ...requestedRuntimeOptions,
+    claims,
     ...(resolvedAction === 'app.hud' ? { autoHud: false } : {}),
     librarySources,
     suppressLibraryResolutionLogs: true,

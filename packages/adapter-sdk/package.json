@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./evidence": {
+      "types": "./dist/evidence.d.ts",
+      "import": "./dist/evidence.js",
+      "default": "./dist/evidence.js"
     }
   },
   "scripts": {

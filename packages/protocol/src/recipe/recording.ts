@@ -1,3 +1,4 @@
+import { recipeTraceEntries } from './artifact.js';
 import {
   addFinding,
   createContext,
@@ -7,6 +8,7 @@ import {
   isRelativeArtifactPath,
   type RecipeValidationResult,
 } from './common.js';
+import { digestRecipeDocument } from './digest.js';
 
 /** Optional recording data; a recipe runner need not implement video capture. */
 export interface RecipeVideoTiming {
@@ -37,6 +39,74 @@ export interface RecipeRecordingTimelineDocument extends RecipeVideoTiming {
   /** Canonical digest of the trace entry array, excluding optional metadata. */
   traceDigest: string;
   markers: RecipeRecordingMarker[];
+}
+
+export interface RecipeRecordingTimelineBinding {
+  videoPath: string;
+  videoDigest: string;
+  trace: unknown;
+}
+
+/** Shared identity check previously owned by the desktop player. No clock precision policy. */
+export function validateRecipeRecordingTimelineBinding(
+  value: unknown,
+  binding: RecipeRecordingTimelineBinding,
+): RecipeValidationResult {
+  const validation = validateRecipeRecordingTimelineDocument(value);
+  if (validation.status !== 'valid') return validation;
+  const timeline = value as RecipeRecordingTimelineDocument;
+  const context = createContext();
+  const issue = (path: string, message: string) =>
+    addFinding(context, 'error', 'recording_timeline.identity_mismatch', path, message);
+  const digest = binding.videoDigest.startsWith('sha256:')
+    ? binding.videoDigest
+    : `sha256:${binding.videoDigest}`;
+  if (timeline.videoDigest !== digest)
+    issue('videoDigest', 'Recording timeline belongs to different video bytes.');
+  if (
+    binding.videoPath !== timeline.videoPath &&
+    !binding.videoPath.endsWith(`/${timeline.videoPath}`)
+  )
+    issue('videoPath', 'Recording timeline names a different video path.');
+  const trace = recipeTraceEntries(binding.trace);
+  if (!trace || digestRecipeDocument(trace) !== timeline.traceDigest) {
+    issue('traceDigest', 'Recording timeline belongs to a different execution trace.');
+    return finishResult(context);
+  }
+  for (const marker of timeline.markers) {
+    const entry = trace[marker.traceIndex];
+    if (
+      !isRecord(entry) ||
+      entry.nodeId !== marker.nodeId ||
+      entry.action !== marker.action ||
+      entry.ok !== marker.ok ||
+      entry.intent !== marker.intent ||
+      digestRecipeDocument(entry.proves ?? []) !== digestRecipeDocument(marker.proves ?? [])
+    ) {
+      issue(
+        `markers[${marker.traceIndex}]`,
+        'Recording marker does not match its execution trace.',
+      );
+      continue;
+    }
+    const { earliestZeroUnixMs: earliest, latestZeroUnixMs: latest } = timeline.clock;
+    for (const [timestamp, bounds] of [
+      [entry.startedAt, marker.startRangeMs],
+      [entry.endedAt, marker.endRangeMs],
+    ] as const) {
+      const at = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
+      if (
+        !Number.isFinite(at) ||
+        Math.abs(bounds[0] - (at - latest)) > 0.001 ||
+        Math.abs(bounds[1] - (at - earliest)) > 0.001
+      )
+        issue(
+          `markers[${marker.traceIndex}]`,
+          'Recording marker time does not match its execution trace.',
+        );
+    }
+  }
+  return finishResult(context);
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);

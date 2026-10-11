@@ -1,5 +1,6 @@
 import {
   normalizeRecipeRef,
+  RECIPE_ASSERTION_ACTIONS,
   type RecipeActionManifestDocument,
   type RecipeFailureCause,
   validateResolvedRecipeActionNode,
@@ -65,6 +66,7 @@ export interface ExecuteRecipeOptions {
   actionManifest: RecipeActionManifestDocument;
   adapters: ReadonlyMap<string, ActionAdapter>;
   traceWriter: TraceWriter;
+  claimProjections?: ReadonlyMap<string, { proves?: string[] }>;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
   createContext(
@@ -124,7 +126,13 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   ): Promise<RecipeRunStatus> => {
     let currentNodeId: string | undefined = entry;
     let transitionCount = 0;
-    const maxTransitions = Math.max(1, nodeCount);
+    const maxTransitions =
+      Math.max(1, nodeCount) +
+      Object.values(graph.nodes).reduce(
+        (count, node) => count + Math.max(0, Number(node.retryAttempts ?? 1) - 1),
+        0,
+      );
+    const attempts = new Map<string, number>();
 
     while (currentNodeId) {
       const localNodeId = currentNodeId;
@@ -193,6 +201,8 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
 
       const node = resolvedNode;
       const action = String(node.action);
+      const retryAttempt = (attempts.get(localNodeId) ?? 0) + 1;
+      attempts.set(localNodeId, retryAttempt);
       const startedAt = new Date();
       if (action === 'end') {
         const authored = terminalStatus(node.status);
@@ -313,11 +323,19 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           observationResult,
           observeRefs,
         });
+        const still = await captureAutomaticStill(options, node, context, retryAttempt);
+        if (still) result.artifacts = [...(result.artifacts ?? []), still];
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
           ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
           ...traceNodeMetadata(node, result),
+          ...(typeof node.retryGroup === 'string'
+            ? { retryGroup: node.retryGroup, retryAttempt }
+            : {}),
+          ...(options.claimProjections?.get(namespacedNodeId)?.proves
+            ? { proves: options.claimProjections.get(namespacedNodeId)!.proves }
+            : {}),
           startedAt: startedAt.toISOString(),
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
@@ -352,7 +370,6 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
-        failureCause ??= causeClass;
         if (options.publishHudProgress) {
           try {
             await options.publishHudProgress('fail', {
@@ -371,11 +388,21 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             );
           }
         }
+        const failureStill = signal?.aborted
+          ? undefined
+          : await captureAutomaticStill(options, node, context, retryAttempt);
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
           ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
           ...traceNodeMetadata(node),
+          ...(failureStill ? { artifacts: [failureStill] } : {}),
+          ...(typeof node.retryGroup === 'string'
+            ? { retryGroup: node.retryGroup, retryAttempt }
+            : {}),
+          ...(options.claimProjections?.get(namespacedNodeId)?.proves
+            ? { proves: options.claimProjections.get(namespacedNodeId)!.proves }
+            : {}),
           startedAt: startedAt.toISOString(),
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
@@ -384,6 +411,15 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           error: message,
           ...recipeFailureTraceFields(failure),
         });
+        if (
+          !signal?.aborted &&
+          causeClass === 'subject' &&
+          typeof node.retryGroup === 'string' &&
+          RECIPE_ASSERTION_ACTIONS.has(action) &&
+          retryAttempt < Number(node.retryAttempts ?? 1)
+        )
+          continue;
+        failureCause ??= causeClass;
         return 'fail';
       }
     }
@@ -459,6 +495,47 @@ function recipeCallTrace(
     file: resolved.file,
     ...(resolved.adapter ? { adapter: resolved.adapter } : {}),
   };
+}
+
+/** Snapshot failures are environment facts, not failed product expectations. */
+async function captureAutomaticStill(
+  options: ExecuteRecipeOptions,
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+  attempt: number,
+): Promise<NonNullable<ActionResult['artifacts']>[number] | undefined> {
+  const action = String(node.action);
+  if (
+    !RECIPE_ASSERTION_ACTIONS.has(action) ||
+    !action.startsWith('ui.') ||
+    !context.captureRecordingSnapshot
+  )
+    return undefined;
+  const file = `stills/${encodeURIComponent(context.nodeId)}-${attempt}.png`;
+  try {
+    const frame = await context.captureRecordingSnapshot(file);
+    const artifact = {
+      path: file,
+      type: 'screenshot',
+      mimeType: 'image/png',
+      nodeId: context.nodeId,
+      category: 'evidence',
+      label: typeof node.intent === 'string' ? node.intent : context.nodeId,
+      metadata: { recordedEvidence: { ...frame, traceIndex: options.traceWriter.list().length } },
+    };
+    options.registerArtifacts([artifact]);
+    return artifact;
+  } catch (error) {
+    // An unavailable optional still keeps the clip usable and the failure visible in the trace.
+    recordSyntheticFailure(
+      options.traceWriter,
+      `${context.nodeId}:still:${attempt}`,
+      error instanceof Error ? error : new Error(String(error)),
+      'record.snapshot',
+      'environment',
+    );
+    return undefined;
+  }
 }
 
 async function executeAction(

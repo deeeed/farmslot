@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
 - Verify complete Enter-submitted queue messages as guarded lane delivery, retry owned input without duplicate pastes, and discover parent sessions alongside subagents.
 
 - Retain CI check metadata at decisions and return current details through pr.status.

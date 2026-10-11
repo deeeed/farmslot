@@ -383,6 +383,7 @@ export interface RecipeRunOptions<TPlatform extends object = object> {
   slot?: string;
   validationRuntimeDir?: string;
   recordVideo?: false | 'full-run';
+  recordingReason?: string;
   librarySources?: RecipeLibrarySource[];
   // Root recipe values supplied by `run <recipe> key=value`.
   params?: Record<string, unknown>;
@@ -612,12 +613,6 @@ export interface AdapterRuntimeContextSpec {
 
 export interface AdapterRecording {
   target(context: RecordingTargetContext): Promise<RecordingTarget>;
-  // The harness-owned framed recorder: the browser pid to record, and the
-  // environment variable that names it to actions while the recording runs.
-  framed?: {
-    browserPid(projectRoot: string, artifactsDir: string, cdpPort?: string): number | undefined;
-    activePidEnv: string;
-  };
   // The device recorder the runner records with, when the platform has one.
   videoRecorder?(): Promise<VideoRecorder | undefined>;
 }

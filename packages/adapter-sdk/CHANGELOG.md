@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** Move the default recipe engine factory into the public SDK; providers inherit recording, automatic claims and shared validation. Recorder results return original segments; the separate framed recorder contract is removed (ADR-062).
+
 ## 0.8.6 - 2026-10-11
 
 - Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.

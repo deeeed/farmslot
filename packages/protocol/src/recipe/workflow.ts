@@ -37,8 +37,18 @@ const CORE_NODE_FIELDS = new Set([
   'default',
   'proves',
   'visual_review',
+  'retryGroup',
+  'retryAttempts',
 ]);
-const CALL_NODE_FIELDS = new Set(['action', 'intent', 'ref', 'params', 'proves', 'next']);
+const CALL_NODE_FIELDS = new Set([
+  'action',
+  'intent',
+  'ref',
+  'params',
+  'proves',
+  'next',
+  'claimBindings',
+]);
 
 const GENERIC_INTENTS = new Set([
   'executing recipe step',
@@ -476,6 +486,40 @@ function validateNodeShape(
     if (action !== 'call' || field !== 'ref') validateTemplates(ctx, entry, `${path}.${field}`);
   }
   validateProves(ctx, node, path);
+  if (hasOwn(node, 'retryGroup') && !isNonEmptyString(node.retryGroup))
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_retry_group',
+      `${path}.retryGroup`,
+      'Retry group must be a non-empty string.',
+    );
+  if (
+    hasOwn(node, 'retryAttempts') &&
+    (!isNonEmptyString(node.retryGroup) ||
+      !Number.isInteger(node.retryAttempts) ||
+      Number(node.retryAttempts) < 1 ||
+      Number(node.retryAttempts) > 3)
+  )
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_retry_attempts',
+      `${path}.retryAttempts`,
+      'An explicit retry group allows 1 to 3 attempts.',
+    );
+  if (
+    hasOwn(node, 'claimBindings') &&
+    (!isRecord(node.claimBindings) ||
+      Object.values(node.claimBindings).some((id) => !isNonEmptyString(id)))
+  )
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_claim_bindings',
+      `${path}.claimBindings`,
+      'Claim bindings must map child ids to parent ids.',
+    );
   validateVisualReviewMetadata(ctx, node, path);
   const hasNext = hasOwn(node, 'next');
   const hasCases = hasOwn(node, 'cases');
