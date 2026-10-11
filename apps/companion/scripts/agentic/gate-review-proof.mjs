@@ -23,6 +23,10 @@ const decisionId = 'gate-review-fixture-gate';
 const issuesRunId = 'gate-review-fixture-issues-run';
 const issuesDecisionId = 'gate-review-fixture-issues-gate';
 const phase = process.argv[2];
+// The recipe runner passes the slot's device as SIMULATOR and the app as FARMSLOT_RECIPE_APP_ID.
+const simulator = process.env.IOS_SIMULATOR || process.env.SIMULATOR;
+const bundleId =
+  process.env.BUNDLE_ID || process.env.FARMSLOT_RECIPE_APP_ID || 'net.siteed.farmslot.development';
 
 const CRITERIA = [
   'The fixture screen renders its recipe list',
@@ -92,13 +96,8 @@ function rpc(method, params = {}) {
 const gate = (id = runId, gateId = decisionId) =>
   rpc('run.get', { runId: id }).run.decisions.find((d) => d.id === gateId);
 const openUrl = (route) => {
-  assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
-  execFileSync('xcrun', [
-    'simctl',
-    'openurl',
-    process.env.IOS_SIMULATOR,
-    `farmslot-development://${route}`,
-  ]);
+  assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
+  execFileSync('xcrun', ['simctl', 'openurl', simulator, `farmslot-development://${route}`]);
 };
 
 function stopFixture() {
@@ -327,15 +326,8 @@ if (phase === 'setup') {
   process.stdout.write(readState().token);
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
-  assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
-  const bundleId = process.env.BUNDLE_ID ?? 'net.siteed.farmslot.development';
-  execFileSync('xcrun', [
-    'simctl',
-    'launch',
-    '--terminate-running-process',
-    process.env.IOS_SIMULATOR,
-    bundleId,
-  ]);
+  assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
+  execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', simulator, bundleId]);
 } else if (phase === 'open-connection') {
   openUrl('/connection');
 } else if (phase === 'open-run') {

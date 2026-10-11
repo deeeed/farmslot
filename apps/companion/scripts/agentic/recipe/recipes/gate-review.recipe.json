@@ -72,6 +72,13 @@
         "action": "ui.press",
         "test_id": "companion-connection-manual-toggle",
         "intent": "Open the manual gateway form.",
+        "next": "reveal-form"
+      },
+      "reveal-form": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the manual gateway form below any saved gateways.",
         "next": "focus-url"
       },
       "focus-url": {
@@ -142,10 +149,11 @@
       },
       "connected": {
         "action": "ui.wait_for",
-        "text_contains": ["connected"],
         "timeout_ms": 30000,
-        "intent": "The Companion reports it is connected to the fixture gateway.",
-        "next": "open-run"
+        "intent": "The Companion leaves the disconnected state for the fixture gateway.",
+        "next": "open-run",
+        "text": "disconnected",
+        "expected": "absent"
       },
       "open-run": {
         "action": "command",
@@ -258,19 +266,26 @@
         "timeout_ms": 3000,
         "intent": "The Gate tab's disabled approve opens no confirmation.",
         "proves": ["approve-guard"],
-        "next": "scroll-decision-top"
+        "next": "back-to-evidence"
       },
-      "scroll-decision-top": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 3000,
-        "intent": "Return to the gate review entry at the top of the decision workspace.",
+      "back-to-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-run-tab-evidence",
+        "intent": "Go back to run detail's Evidence tab, where the gate review entry sits.",
+        "next": "wait-run-entry-again"
+      },
+      "wait-run-entry-again": {
+        "action": "ui.wait_for",
+        "test_id": "companion-open-gate-review",
+        "expected": "visible",
+        "timeout_ms": 15000,
+        "intent": "Run detail still offers the gate review.",
         "next": "open-gate-review"
       },
       "open-gate-review": {
         "action": "ui.press",
-        "test_id": "companion-decision-open-gate-review",
-        "intent": "Open the gate review from the decision workspace.",
+        "test_id": "companion-open-gate-review",
+        "intent": "Open the gate review from run detail.",
         "next": "wait-summary"
       },
       "wait-summary": {
@@ -402,10 +417,13 @@
       },
       "swipe-viewer": {
         "action": "ui.swipe",
-        "target": "companion-ac-evidence-viewer",
+        "target": {
+          "x": 360,
+          "y": 600
+        },
         "direction": "left",
-        "distance": 260,
-        "duration_ms": 250,
+        "distance": 280,
+        "duration_ms": 300,
         "intent": "Swipe to the criterion's next evidence file.",
         "next": "assert-second-item"
       },
