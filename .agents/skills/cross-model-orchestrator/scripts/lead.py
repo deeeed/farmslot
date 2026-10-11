@@ -10,7 +10,7 @@ from common import append_report, gh, project_hook, read_json, resolve_path, wri
 from review import parse_verdict, review_dir, review_state_path
 
 READY = re.compile(r"^MERGE-READY ([\w.-]+/[\w.-]+)#(\d+) ([0-9a-f]{40})$", re.M)
-PRIVATE = re.compile(r"~/|(?:/Users|/home)/[^/\s]+/")
+PRIVATE = re.compile(r"~/[\w.-]+/|(?:/Users|/home)/[\w.-]+/")
 
 
 def portability(diff, patterns=()):

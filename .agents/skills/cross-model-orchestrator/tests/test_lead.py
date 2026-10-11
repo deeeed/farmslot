@@ -61,6 +61,13 @@ class LeadTests(unittest.TestCase):
         self.assertIsNotNone(lead.check_ci([skipped]))
         self.assertIsNotNone(lead.check_ci([*self.pr['statusCheckRollup'], skipped], ['unaffected']))
 
+    def test_home_paths_block_without_flagging_detector_source(self):
+        self.assertFalse(lead.portability("+~/" + "operator/checkout/file"))
+        for root in ("Users", "home"):
+            self.assertFalse(lead.portability("+" + "/".join(("", root, "operator", "checkout"))))
+        source = Path(lead.__file__).read_text()
+        self.assertTrue(lead.portability("\n".join("+" + line for line in source.splitlines())))
+
     def test_unresolved_or_private_diff_blocks(self):
         with patch.object(lead, 'unresolved_threads', return_value=True):
             self.assertFalse(lead.gate(self.config, 'owner/repo', 1, SHA)['ready'])
