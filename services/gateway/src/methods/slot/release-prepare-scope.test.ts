@@ -462,6 +462,7 @@ for (const copyFails of [false, true])
     assert.equal(slotRow.current_run_id, 'incoming');
     assert.equal(slotRow.lifecycle, 'busy');
     assert.equal(slotRow.phase, 'working');
+    assert.equal(emitted.filter((entry) => entry.event === 'script.complete').length, 1);
   });
 
 test('a claim during task deletion refuses the following storage cleanup', async () => {

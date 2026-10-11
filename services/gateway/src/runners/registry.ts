@@ -31,6 +31,7 @@ import { execOnSlot } from '../core/exec.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
+  resolveTmuxPaneIdentity,
   resolveTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -2478,15 +2479,10 @@ export async function execRunnerInput(
   command: (paneId: string) => string,
   exec: typeof execOnSlot = execOnSlot,
 ): Promise<ExecResult> {
-  const pane = await exec(
-    vars,
-    tmuxShellSnippet(
-      `display-message -p -t ${shellQuote(target)} '#{pane_id}|#{pane_pid}|#{pane_current_command}'`,
-    ),
-  );
-  const [paneId, panePid, foreground] = pane.stdout.trim().split('|');
-  if (pane.exitCode !== 0 || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''))
+  const pane = await resolveTmuxPaneIdentity(vars, target, { currentCommand: true, exec });
+  if (!pane)
     throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
+  const { paneId, panePid, currentCommand: foreground } = pane;
   const { buildRunnerInputHostGuardCommand, probeRunnerDescendantPid, isShellProcessCommand } =
     await import('./session-process.js');
   const probe = await probeRunnerDescendantPid(

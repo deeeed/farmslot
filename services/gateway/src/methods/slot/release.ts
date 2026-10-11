@@ -121,7 +121,8 @@ export interface SlotReleaseOptions {
   prepareStopHeartbeatMs?: number;
 }
 
-class BoundReleaseClaimLostError extends Error {}
+class ReleaseClaimLostError extends Error {}
+class BoundReleaseClaimLostError extends ReleaseClaimLostError {}
 
 function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOptions): string {
   // Only semantically identical requests may share one teardown; a request
@@ -469,7 +470,7 @@ async function slotReleaseImpl(
       throw new BoundReleaseClaimLostError();
     }
     complete(1);
-    throw new Error(
+    throw new ReleaseClaimLostError(
       refusal ??
         `Slot ${params.slotId} ownership changed before teardown; remaining release actions refused`,
     );
@@ -770,6 +771,7 @@ async function slotReleaseImpl(
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
       } catch (error) {
+        if (error instanceof ReleaseClaimLostError) throw error;
         await assertReleaseClaim();
         const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
         const held = await guardedTeardownWrite({
