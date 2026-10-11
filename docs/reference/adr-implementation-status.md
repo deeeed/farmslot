@@ -17,7 +17,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | **Not started** | Accepted/planned decision with no meaningful implementation yet.                            |
 | **Proposed**    | ADR not accepted — treat as design intent only.                                             |
 
-## Summary (ADR-026 – ADR-060)
+## Summary (ADR-026 – ADR-063)
 
 | ADR                                                        | Title                              | ADR status | Implementation | Top open gap                                                                 |
 | ---------------------------------------------------------- | ---------------------------------- | ---------- | -------------- | ---------------------------------------------------------------------------- |
@@ -45,6 +45,8 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
 ---
+
+| [063](../adr/063-review-modes-warm-cold.md) | Review modes WARM/COLD | Accepted | In progress | Shared picker and complete protocol/consumer migration; not shipped |
 
 ## ADR-026 — Self-Improvement Recursive Loop (Proposed)
 
