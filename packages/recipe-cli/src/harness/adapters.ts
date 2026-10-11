@@ -133,7 +133,7 @@ export function pickDetected(
 }
 
 // The checkout's origin URL, or '' when it is not a Git checkout or has none.
-function checkoutRemote(target: string): string {
+export function checkoutRemote(target: string): string {
   try {
     return execFileSync('git', ['-C', target, 'config', '--get', 'remote.origin.url'], {
       encoding: 'utf8',

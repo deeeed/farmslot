@@ -27,6 +27,7 @@ import {
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { withProjectMachineEnv } from '../core/project-env.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
@@ -475,7 +476,8 @@ export async function executeResourceHealth(
     return { ok: false, detail: `skipped (${unresolved.join(', ')} not configured)` };
   }
 
-  const result = await execResourceCommand(slotId, slotVars.repo, expanded, 5_000);
+  const command = withProjectMachineEnv(expanded, slotVars, projectJson, projectVars);
+  const result = await execResourceCommand(slotId, slotVars.repo, command, 5_000);
   if (result.exitCode === 0) {
     if (resourceDef.type !== 'browser') return { ok: true };
     const owned = await verifyBrowserPidFileOwnsCdp(slotId, resourceDef, slotVars, projectVars);
@@ -509,7 +511,12 @@ async function verifyBrowserPidFileOwnsCdp(
   const result = await execResourceCommand(
     slotId,
     slotVars.repo,
-    buildBrowserPidFileOwnsCdpCommand(pidPath, parseCdpPort(slotVars.resourceVars.cdp_port)),
+    withProjectMachineEnv(
+      buildBrowserPidFileOwnsCdpCommand(pidPath, parseCdpPort(slotVars.resourceVars.cdp_port)),
+      slotVars,
+      projectVars.projectJson,
+      projectVars,
+    ),
     5_000,
   );
   return result.exitCode === 0 ? { ok: true } : { ok: false };
@@ -589,7 +596,8 @@ async function recoverBrowserPidFromCdp(
   if (!pidPath) return { ok: false };
   const pidDir = path.dirname(pidPath);
   const cmd = buildBrowserPidRecoveryCommand(cdpPort, pidDir);
-  const result = await execResourceCommand(slotId, slotVars.repo, cmd, 5_000);
+  const command = withProjectMachineEnv(cmd, slotVars, projectVars.projectJson, projectVars);
+  const result = await execResourceCommand(slotId, slotVars.repo, command, 5_000);
   if (result.exitCode !== 0) return { ok: false };
 
   return { ok: true, detail: `${resourceId} pid repaired from cdp_port ${cdpPort}` };
@@ -1370,7 +1378,8 @@ export async function executeResourceControl(
     }
     try {
       const startedAt = Date.now();
-      const cmd = await resolveRemoteFarmCommand(slotVars, expanded, { budgetMs: timeoutMs });
+      const command = withProjectMachineEnv(expanded, slotVars, projectJson, projectVars);
+      const cmd = await resolveRemoteFarmCommand(slotVars, command, { budgetMs: timeoutMs });
       const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
       const execResult = (await sendNodeRequest(
         node,
@@ -1394,7 +1403,8 @@ export async function executeResourceControl(
       result = { ok: false, detail: (err as Error).message };
     }
   } else {
-    const execResult = await execLocal(expanded, { cwd: slotVars.repo, timeout: timeoutMs });
+    const command = withProjectMachineEnv(expanded, slotVars, projectJson, projectVars);
+    const execResult = await execLocal(command, { cwd: slotVars.repo, timeout: timeoutMs });
     if (execResult.exitCode === 0) {
       result = { ok: true, detail: execResult.stdout.trim() || undefined };
     } else {

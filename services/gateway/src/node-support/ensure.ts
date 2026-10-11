@@ -13,11 +13,19 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  packMachineNames,
+  validatePackBytesPortability,
+  validatePackPortability,
+} from '@farmslot/protocol/node/pack-portability';
+
 import { execOnSlot } from '../core/exec.js';
 import {
   farmslotRoot,
   isLocal,
   loadProjectVars,
+  poolDir,
+  projectsDir,
   type ProjectVars,
   type RawProjectJson,
   slotFileExists,
@@ -110,6 +118,16 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
 
 /** Read and hash the bundle's files from this gateway's tree. */
 export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
+  const projects = new Set([
+    projectName,
+    ...supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
+  ]);
+  const machines = packMachineNames(poolDir);
+  const portabilityErrors = [...projects].flatMap((name) =>
+    validatePackPortability(path.join(projectsDir, name), `projects/${name}`, machines),
+  );
+  if (portabilityErrors.length)
+    throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot);
   const files: NodeSupportFile[] = (
     await Promise.all(
@@ -123,6 +141,16 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
       }),
     )
   ).flat();
+  const shippedErrors = files.flatMap((file) => {
+    if (!file.relativePath.startsWith('projects/')) return [];
+    return validatePackBytesPortability(
+      file.relativePath,
+      Buffer.from(file.contentBase64, 'base64'),
+      machines,
+    );
+  });
+  if (shippedErrors.length)
+    throw new Error(`Project support is not portable:\n${shippedErrors.join('\n')}`);
   const manifest = {
     version: 1,
     project: projectName,
@@ -140,7 +168,7 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
 }
 
 /** Where a bundle lives on a node. */
-export function nodeSupportDir(hash: string): string {
+function nodeSupportDir(hash: string): string {
   return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
 }
 
@@ -162,6 +190,8 @@ export async function ensureNodeSupportBundle(
      * exist; a matching manifest over missing files is reported, never used.
      */
     verify?: 'full' | 'presence';
+    /** False for read-only prerequisites: preserve the slot's launch selection. */
+    selectSlot?: boolean;
     /** The bundle already read for this project; reused when its paths still match. */
     collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
   } = {},
@@ -181,7 +211,18 @@ export async function ensureNodeSupportBundle(
     options.collected && options.collected.manifest.paths.join('\0') === supportPaths.join('\0')
       ? options.collected
       : await collectNodeSupportBundle(vars.projectName, supportPaths);
-  const supportDir = nodeSupportDir(manifest.hash);
+  // Resolve on the execution node: quoting a literal ~/ path in a hook
+  // suppresses shell expansion, and the gateway's home belongs to another host.
+  const resolved = await io.exec(
+    vars,
+    `printf '%s\\n' ${shellExpressionForRemotePath(nodeSupportDir(manifest.hash))}`,
+  );
+  const supportDir = resolved.stdout.trim();
+  if (resolved.exitCode !== 0 || !path.posix.isAbsolute(supportDir)) {
+    throw new Error(
+      `Node support path did not resolve to an absolute directory (exit ${resolved.exitCode}): ${resolved.stderr}`,
+    );
+  }
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
@@ -227,7 +268,7 @@ export async function ensureNodeSupportBundle(
       if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
-      await persistSelection('current');
+      if (options.selectSlot !== false) await persistSelection('current');
       step('support', `Node support bundle current (${files.length} files)`);
       return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
     }
@@ -295,7 +336,7 @@ export async function ensureNodeSupportBundle(
   if (!(await verifyChecksums(supportDir, manifestPath))) {
     throw new Error(`Node support publish verification failed for ${manifest.hash}`);
   }
-  await persistSelection('published');
+  if (options.selectSlot !== false) await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
   return { supportDir, hash: manifest.hash, published: true, paths: supportPaths };
 }

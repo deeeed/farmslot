@@ -15,7 +15,7 @@ import type {
   Run,
   RunCancelResult,
 } from '@farmslot/protocol';
-import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
+import { failedRunCancelEffects, Methods, workspacePolicyMachines } from '@farmslot/protocol';
 
 import './execution-template-preview-modal.js';
 import '../shared/choice-picker.js';
@@ -1496,7 +1496,9 @@ export class DispatchWizard extends DispatchWizardState {
     const machines = this._reviewMachines();
     return (
       (policy?.kind === 'pool'
-        ? machines.find((machine) => policy.allowedMachines.includes(machine))
+        ? machines.find((machine) =>
+            (workspacePolicyMachines(policy) ?? machines).includes(machine),
+          )
         : undefined) ??
       machines[0] ??
       ''

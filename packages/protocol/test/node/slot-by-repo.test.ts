@@ -8,6 +8,7 @@ import {
   findSlotByRepo,
   isIgnoredPoolFile,
   resolveSlotPoolDir,
+  SlotByRepoError,
 } from '../../src/node/slot-by-repo.js';
 
 function tempDir(t: test.TestContext): string {
@@ -92,6 +93,38 @@ test('skips ignored and unparsable pool files, and answers null when nothing map
   pool(root, 'broken.json', '{');
   assert.equal(await findSlotByRepo(root, checkout), null);
   await assert.rejects(findSlotByRepo(join(root, 'no-pools'), checkout), { code: 'ENOENT' });
+});
+
+test('strict lookup refuses multiple local slots and accepts an explicit matching slot', async (t) => {
+  const root = tempDir(t);
+  const checkout = join(root, 'checkout');
+  mkdirSync(checkout);
+  pool(root, 'a-remote.json', {
+    host: 'remote.example',
+    slots: [{ id: 'remote', repo: checkout }],
+  });
+  pool(root, 'b-local.json', {
+    host: 'localhost',
+    slots: [{ id: 'first', repo: checkout }],
+  });
+  assert.equal((await findSlotByRepo(root, checkout, { strict: true }))?.slot.id, 'first');
+  pool(root, 'c-local.json', {
+    host: '127.0.0.1',
+    slots: [{ id: 'second', repo: checkout }],
+  });
+  await assert.rejects(findSlotByRepo(root, checkout, { strict: true }), (error: unknown) => {
+    assert.ok(error instanceof SlotByRepoError);
+    assert.deepEqual(error.candidates, ['first', 'second']);
+    return true;
+  });
+  assert.equal(
+    (await findSlotByRepo(root, checkout, { strict: true, slotId: 'second' }))?.slot.id,
+    'second',
+  );
+  await assert.rejects(findSlotByRepo(root, checkout, { strict: true, slotId: 'missing' }), {
+    code: 'SLOT_NOT_FOUND',
+  });
+  assert.equal((await findSlotByRepo(root, checkout))?.slot.id, 'first');
 });
 
 test('isIgnoredPoolFile admits the demo pool only when FARMSLOT_DEMO_POOL=1', () => {

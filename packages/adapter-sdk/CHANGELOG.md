@@ -4,7 +4,9 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+## 0.8.5 - 2026-10-11
+
+- Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.
 
 ## 0.8.4 - 2026-10-10
 

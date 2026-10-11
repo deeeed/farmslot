@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Clarify stored-profile requirements for shell-exported CLI gateway URLs.
+- Dev and sandbox stacks discard inherited node/gateway credentials, auth mode and bind host before loading checkout-local configuration, so an auth-free sandbox cannot reuse its parent gateway token. Physical-device LAN sandboxes need their own local-auth configuration.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.13.1 - 2026-10-05

@@ -176,12 +176,22 @@ async function recipeVariants(
   return implementations;
 }
 
-async function indexActions(
+export interface IndexedActionDeclaration {
+  library: ResolvedDiscoveryLibrary;
+  file: string;
+}
+
+export async function indexActions(
   libraries: readonly ResolvedDiscoveryLibrary[],
   platform: string | null,
   handlers: ReadonlySet<string>,
-): Promise<{ actions: Map<string, IndexedAction>; manifest: RecipeActionManifestDocument }> {
+): Promise<{
+  actions: Map<string, IndexedAction>;
+  manifest: RecipeActionManifestDocument;
+  declarations: Map<string, IndexedActionDeclaration>;
+}> {
   const actions = new Map<string, IndexedAction>();
+  const declarations = new Map<string, IndexedActionDeclaration>();
   const viewActions: RecipeActionManifestDocument['actions'] = {};
   const observers = new Map<string, unknown>();
   const viewScopes = platform ? [platform, SHARED_RECIPE_SCOPE] : null;
@@ -209,6 +219,7 @@ async function indexActions(
             existing.shadows.push(library.info.name);
         } else {
           actions.set(name, describeAction(name, entry, library.info.name, file, handlers));
+          declarations.set(name, { library, file: file.file });
         }
         if (inView && !Object.hasOwn(viewActions, name)) viewActions[name] = entry;
       }
@@ -248,6 +259,7 @@ async function indexActions(
     ...(observers.size > 0 ? { observers: [...observers.values()] } : {}),
   } as RecipeActionManifestDocument;
   return {
+    declarations,
     actions: new Map([...actions].sort(([left], [right]) => left.localeCompare(right))),
     manifest,
   };

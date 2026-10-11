@@ -248,13 +248,15 @@ export async function validateRunRecipeStatic(
   adapter: string,
   options: CliOptions,
   params: Record<string, unknown> = {},
+  resolvedSources?: RecipeLibrarySource[],
 ): Promise<RunRecipeStaticValidation> {
   // Resolve library sources first so resolveRunRecipeArg can probe personal and team
   // recipe dirs with correct precedence before the canonical packaged library.
-  let librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
+  let librarySources =
+    resolvedSources ?? (await resolveLibrarySources(catalog, optionStrings(options, 'library')));
   const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, librarySources);
   const recipeFile = 'recipeFile' in resolved ? resolved.recipeFile : path.resolve(recipeArg);
-  if ('recipeFile' in resolved && !resolved.ref) {
+  if ('recipeFile' in resolved && !resolved.ref && !resolvedSources) {
     librarySources = await resolveLibrarySources(
       catalog,
       optionStrings(options, 'library'),

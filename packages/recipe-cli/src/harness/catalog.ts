@@ -2,6 +2,9 @@
 // action manifest resolves across library sources, and the risk each bundled
 // action carries. `run`, `call` and the discovery helpers below read actions
 // only through it.
+import path from 'node:path';
+
+import type { PlatformAdapter } from '@farmslot/adapter-sdk';
 import {
   OFFICIAL_RECIPE_ACTIONS,
   type OfficialActionName,
@@ -9,8 +12,9 @@ import {
   type RecipeActionManifestDocument,
   type RecipeExecutionCapability,
   type RecipeSourceProvenance,
+  validateRecipeActionManifestDocument,
 } from '@farmslot/protocol';
-import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
+import { digestRecipeLibrary, type RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import {
   actionCapabilityMatrix,
@@ -18,7 +22,10 @@ import {
   type ActionMatrixRow,
   shortActionNames,
 } from '../action-catalog.js';
+import { indexActions } from '../discovery-index.js';
+import { resolveDiscoveryLibraries } from '../libraries.js';
 
+import { libraryName } from './adapter-plugins.js';
 import { harnessAdapters } from './adapters.js';
 import { color } from './cli-color.js';
 import { isSensitiveKey, redactStructuredValue } from './command-journal.js';
@@ -60,6 +67,142 @@ export interface RecipeCatalog {
   validateManifest(manifest: RecipeActionManifestDocument): Promise<unknown>;
   /** The execution capabilities the host enforces for a bundled action. */
   actionCapabilities(action: string): readonly RecipeExecutionCapability[];
+}
+
+export interface RuntimeRecipeCatalogOptions {
+  runtime: PlatformAdapter;
+  bundledLibrary: RecipeCatalog['bundledLibrary'];
+}
+
+/** Resolve runtime declarations through the same precedence index as discovery. */
+export function createRuntimeRecipeCatalog({
+  runtime,
+  bundledLibrary,
+}: RuntimeRecipeCatalogOptions): RecipeCatalog {
+  return {
+    bundledLibrary,
+    async validateManifest(manifest) {
+      const validation = validateRecipeActionManifestDocument(manifest);
+      if (validation.status === 'invalid') {
+        throw new Error(
+          `Invalid action manifest: ${validation.findings
+            .filter((finding) => finding.severity === 'error')
+            .map((finding) => `${finding.code} ${finding.path}`)
+            .join(', ')}`,
+        );
+      }
+      return validation;
+    },
+    actionCapabilities(action) {
+      return OFFICIAL_ACTIONS.has(action)
+        ? officialRecipeActionCapabilities(action as OfficialActionName)
+        : [];
+    },
+    async resolveActionManifest(adapter, overridePath, sources = [], taskActionRoot) {
+      if (adapter !== runtime.id)
+        throw new Error(`Runtime ${runtime.id} cannot resolve ${adapter}.`);
+      const selected = overridePath
+        ? []
+        : sources.filter(
+            (source) =>
+              source.name !== bundledLibrary.name ||
+              path.resolve(source.root) !== path.resolve(bundledLibrary.root),
+          );
+      const libraries = selected.length
+        ? await resolveDiscoveryLibraries({
+            libraries: selected.map((source) => `${libraryName(source)}=${source.root}`),
+            env: { RECIPE_LIBRARY_PATH: '' },
+          })
+        : [];
+      for (const library of libraries) {
+        const configured = selected.find(
+          (source) =>
+            path.resolve(source.root) === library.info.root &&
+            libraryName(source) === library.info.name,
+        );
+        library.source = { ...library.source, ...configured, root: library.info.root };
+      }
+      const bundledLibraries = overridePath
+        ? []
+        : await resolveDiscoveryLibraries({
+            libraries: [`${bundledLibrary.name}=${bundledLibrary.root}`],
+            env: { RECIPE_LIBRARY_PATH: '' },
+          });
+      for (const library of bundledLibraries) {
+        library.source.provenance = {
+          ...library.source.provenance,
+          kind: 'bundled',
+          trust: 'trusted',
+        };
+      }
+      const runtimePaths = overridePath
+        ? [path.resolve(overridePath)]
+        : [...(runtime.actions.manifestPaths?.() ?? [runtime.actions.manifestPath()])].reverse();
+      // Parent declarations come first in the SDK; the derived runtime wins.
+      for (const manifestPath of runtimePaths) {
+        const absolute = path.resolve(manifestPath);
+        const root = overridePath
+          ? (taskActionRoot ?? path.dirname(absolute))
+          : bundledLibrary.root;
+        const digest = await digestRecipeLibrary(root);
+        libraries.push({
+          source: {
+            name: overridePath ? 'task' : bundledLibrary.name,
+            root,
+            origin: overridePath ? 'task' : 'flag',
+            provenance: {
+              kind: overridePath ? 'custom-adapter' : 'bundled',
+              trust: overridePath ? 'unknown' : 'trusted',
+              path: root,
+              digest,
+            },
+          },
+          manifest: undefined,
+          info: {
+            rank: libraries.length + 1,
+            name: overridePath ? 'task' : bundledLibrary.name,
+            root: path.dirname(absolute),
+            origin: overridePath ? 'task' : 'flag',
+            digest,
+            platforms: [adapter],
+            adapters: {},
+            requires: [],
+            actionManifests: [{ scope: adapter, file: path.basename(absolute) }],
+          },
+        });
+      }
+      libraries.push(...bundledLibraries);
+      const { manifest, actions, declarations } = await indexActions(libraries, adapter, new Set());
+      const actionSources = new Map<string, ActionCapabilitySource>();
+      for (const [name, action] of actions) {
+        if (!action.source || !action.manifest) continue;
+        const { library, file } = declarations.get(name)!;
+        const bundled =
+          !overridePath &&
+          library.info.name === bundledLibrary.name &&
+          path.resolve(library.source.root) === path.resolve(bundledLibrary.root);
+        actionSources.set(name, {
+          name: library.info.name,
+          tier: overridePath
+            ? 'task'
+            : bundled
+              ? 'canonical'
+              : library.source.origin === 'default'
+                ? 'personal'
+                : 'team',
+          manifestPath: path.resolve(library.info.root, file),
+          implementationRoot: overridePath
+            ? library.source.root
+            : path.join(library.source.root, 'actions'),
+          trust: library.source.provenance?.trust ?? 'unknown',
+          shadows: action.shadows,
+          digest: library.info.digest,
+          resolveDigest: () => digestRecipeLibrary(library.source.root, library.manifest),
+        });
+      }
+      return { manifest, actionSources };
+    },
+  };
 }
 
 export interface DescribedAction {

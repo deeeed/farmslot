@@ -130,20 +130,17 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
 
     const fileEnv: NodeJS.ProcessEnv = {};
     loadCheckoutEnv(root, fileEnv);
-    const remote = resolveGatewayTarget(
-      {},
-      { ...fileEnv, GW_URL: 'ws://remote:7801' },
-      { gateways: {} },
+    assert.throws(
+      () => resolveGatewayTarget({}, { ...fileEnv, GW_URL: 'ws://remote:7801' }, { gateways: {} }),
+      /No stored gateway profile/,
     );
-    assert.equal(remote.credential, null);
 
     // Loopback targets still discover the same file through the cwd chain.
     process.chdir(root);
-    const local = resolveGatewayTarget(
-      {},
-      { ...fileEnv, GW_URL: 'ws://localhost:7801' },
-      { gateways: {} },
-    );
+    writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=7801\n');
+    const sandboxEnv: NodeJS.ProcessEnv = {};
+    loadCheckoutEnv(root, sandboxEnv);
+    const local = resolveGatewayTarget({}, sandboxEnv, { gateways: {} });
     const client = new GatewayClient({
       url: local.url,
       timeout: 1000,
@@ -156,4 +153,34 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
     if (saved.password !== undefined) process.env.FARMSLOT_GATEWAY_PASSWORD = saved.password;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('checkout-derived sandbox URLs remain usable without a stored profile, inherited worker URLs refuse', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-env-sandbox-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=8808\n');
+  const local: NodeJS.ProcessEnv = {};
+  loadCheckoutEnv(root, local);
+  assert.deepEqual(resolveGatewayTarget({}, local, { gateways: {} }), {
+    url: 'ws://localhost:8808',
+    source: 'env',
+  });
+  const worker: NodeJS.ProcessEnv = { GW_URL: 'ws://localhost:8808' };
+  loadCheckoutEnv(root, worker);
+  assert.throws(
+    () => resolveGatewayTarget({}, worker, { gateways: {} }),
+    /No stored gateway profile/,
+  );
+});
+
+test('malformed checkout-derived gateway URL names the configuration variable', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-env-bad-gateway-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, '.env.ports'), 'GW_URL=not-a-url\n');
+  const local: NodeJS.ProcessEnv = {};
+  loadCheckoutEnv(root, local);
+  assert.throws(
+    () => resolveGatewayTarget({}, local, { gateways: {} }),
+    /Invalid checkout-derived GW_URL/,
+  );
 });

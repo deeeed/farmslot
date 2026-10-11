@@ -1,5 +1,6 @@
-import { execOnSlot, type SlotVars } from '../../core/index.js';
+import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
 
 /**
  * Work on the checked-out `branch` that a slot reset would lose, as a detail
@@ -13,14 +14,13 @@ export async function findUnmergedSlotWork(
   vars: SlotVars,
   branch: string,
   exec: typeof execOnSlot = execOnSlot,
+  projectJson: RawProjectJson = {},
 ): Promise<string | null> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-  const dirty = (
-    await exec(
-      vars,
-      `${git} status --porcelain 2>/dev/null | grep -v '^\?\? \.omc/' | grep -v '^\?\? \.task/' | grep -v '^\?\? \.claude/CLAUDE\\.local\\.md' | head -5`,
-    )
-  ).stdout.trim();
+  const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
+  if (status.exitCode !== 0)
+    throw new Error(`Cannot inspect slot work on ${vars.slotId}: ${status.stderr}`);
+  const dirty = hasUserSlotChanges(status.stdout, projectJson);
   const unpushed = (
     await exec(vars, `${git} log --oneline HEAD --not --remotes 2>/dev/null | head -5`)
   ).stdout.trim();

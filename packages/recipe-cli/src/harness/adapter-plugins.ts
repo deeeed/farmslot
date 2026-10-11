@@ -469,7 +469,7 @@ async function declarations(
 
 // An unnamed entry takes its resolved directory's name, as recipe-runner's
 // resolver names it, so `--library .` overrides the same-named env library.
-function libraryName(source: RecipeLibrarySource): string {
+export function libraryName(source: RecipeLibrarySource): string {
   return source.name ?? path.basename(path.resolve(source.root));
 }
 
@@ -566,7 +566,7 @@ export function adapterSelectionFailureOut(
     code: string;
     message: string;
     userAction: string;
-    candidates?: readonly AdapterCandidate[];
+    candidates?: readonly AdapterCandidate[] | readonly string[];
   },
 ): number {
   if (json) {

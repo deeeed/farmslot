@@ -74,24 +74,17 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
     profileName: 'lab',
     source: 'gateway-flag',
   });
-  // GW_URL keeps its target and never borrows the secret of a profile for a
-  // different gateway. A remote one takes only an explicit env credential, so a
-  // .env-file secret meant for another gateway never reaches it.
-  assert.deepEqual(resolveGatewayTarget({}, { GW_URL: 'ws://env' }, profiles), {
-    url: 'ws://env',
-    credential: null,
-    source: 'env',
-  });
-  assert.deepEqual(
-    resolveGatewayTarget({}, { GW_URL: 'ws://env', FARMSLOT_GATEWAY_TOKEN: 'explicit' }, profiles),
-    { url: 'ws://env', credential: { token: 'explicit' }, source: 'env' },
-  );
-  // Loopback GW_URL (a dev checkout's .env.ports) keeps .env discovery.
-  for (const GW_URL of ['ws://localhost:7801', 'ws://127.0.0.1:7801', 'ws://[::1]:7801']) {
-    assert.deepEqual(resolveGatewayTarget({}, { GW_URL }, profiles), {
-      url: GW_URL,
-      source: 'env',
-    });
+  // Worker URLs require their own profile, including loopback URLs.
+  for (const GW_URL of [
+    'ws://env',
+    'ws://localhost:7801',
+    'ws://127.0.0.1:7801',
+    'ws://[::1]:7801',
+  ]) {
+    assert.throws(
+      () => resolveGatewayTarget({}, { GW_URL, FARMSLOT_GATEWAY_TOKEN: 'other-secret' }, profiles),
+      /No stored gateway profile matches GW_URL/,
+    );
   }
   // A worker's GW_URL naming a stored profile's gateway reuses that profile's
   // credential; scheme/host case, default port and trailing slash are normalized.
@@ -109,13 +102,12 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
     ),
     { url: 'ws://gw.local', credential: { token: 'n' }, profileName: 'node', source: 'env' },
   );
-  // Same host, other port or scheme is another gateway.
+  // Another scheme or port is another gateway and cannot borrow the active credential.
   for (const GW_URL of ['ws://lab:7778', 'ws://lab:7777']) {
-    assert.deepEqual(resolveGatewayTarget({}, { GW_URL }, profiles), {
-      url: GW_URL,
-      credential: null,
-      source: 'env',
-    });
+    assert.throws(
+      () => resolveGatewayTarget({}, { GW_URL }, profiles),
+      /No stored gateway profile/,
+    );
   }
   // The matching profile has no secret: no credential, and no discovery either.
   assert.deepEqual(
@@ -125,6 +117,14 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
       { gateways: { bare: { url: 'ws://localhost:7777' } } },
     ),
     { url: 'ws://localhost:7777', credential: null, profileName: 'bare', source: 'env' },
+  );
+  assert.deepEqual(
+    resolveGatewayTarget(
+      { url: 'ws://localhost:7777' },
+      { FARMSLOT_GATEWAY_TOKEN: 'unrelated-credential' },
+      { gateways: { bare: { url: 'ws://localhost:7777' } } },
+    ),
+    { url: 'ws://localhost:7777', credential: null, profileName: 'bare', source: 'url-flag' },
   );
   assert.deepEqual(resolveGatewayTarget({}, {}, profiles), {
     url: 'ws://home:7777',
@@ -144,26 +144,30 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
   );
 });
 
-test('resolveGatewayTarget ignores a corrupt store for default targets', () => {
-  // profilesOverride simulating loadProfiles() throwing: --url never calls the
-  // loader, and GW_URL only looks for a matching profile, so corruption is ignored.
-  let loaderCalls = 0;
-  const throwingProfiles: GatewayProfilesFile = {
-    get gateways(): Record<string, never> {
-      loaderCalls += 1;
-      throw new Error('boom');
-    },
-  };
-  assert.deepEqual(resolveGatewayTarget({ url: 'ws://x' }, {}, throwingProfiles), {
+test('explicit URL flags tolerate a corrupt store while worker routing reports it', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-corrupt-gateway-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, 'gateways.json'), '{invalid');
+  assert.deepEqual(resolveGatewayTarget({ url: 'ws://x' }, {}), {
     url: 'ws://x',
     source: 'url-flag',
   });
-  assert.deepEqual(resolveGatewayTarget({}, { GW_URL: 'ws://env' }, throwingProfiles), {
-    url: 'ws://env',
-    credential: null,
-    source: 'env',
-  });
-  assert.equal(loaderCalls, 1);
+  assert.throws(() => resolveGatewayTarget({}, { GW_URL: 'ws://env' }), /not valid JSON/);
+  const throwingProfiles: GatewayProfilesFile = {
+    get gateways(): Record<string, never> {
+      throw new Error('mapping failed');
+    },
+  };
+  assert.throws(
+    () => resolveGatewayTarget({ url: 'ws://x' }, {}, throwingProfiles),
+    /mapping failed/,
+  );
 });
 
 test('profileForUrl is the one URL lookup: normalized, active profile first', () => {
@@ -230,4 +234,30 @@ test('loadProfiles errors name the file and profile, never the stored secret', (
         err.message.includes(path) && err.message.includes("profile 'lab'") && !leaks(err),
     );
   }
+});
+
+test('worker URL flags and env select the matching profile while the active profile points elsewhere', () => {
+  const profiles: GatewayProfilesFile = {
+    active: 'local',
+    gateways: {
+      local: { url: 'ws://localhost:7777', authMode: 'token', secret: 'local-secret' },
+      worker: { url: 'ws://control.example:7801', authMode: 'token', secret: 'worker-secret' },
+    },
+  };
+  for (const [opts, env, source] of [
+    [{ url: 'WS://CONTROL.EXAMPLE:7801/' }, {}, 'url-flag'],
+    [{}, { GW_URL: 'WS://CONTROL.EXAMPLE:7801/' }, 'env'],
+  ] as const) {
+    assert.deepEqual(resolveGatewayTarget(opts, env, profiles), {
+      url: 'WS://CONTROL.EXAMPLE:7801/',
+      credential: { token: 'worker-secret' },
+      profileName: 'worker',
+      source,
+    });
+    assert.equal(profiles.active, 'local');
+  }
+  assert.throws(
+    () => resolveGatewayTarget({}, { GW_URL: 'ws://unknown:7801' }, profiles),
+    /add.*log in.*gateway URL in GW_URL/,
+  );
 });

@@ -4,6 +4,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+## 0.28.5 - 2026-10-11
+
+- Exact-plan approval excludes the lifecycle `RECIPE_RUN_OWNER_PID`, so a reviewed plan works in a new CLI process. All substantive environment inputs remain bound; providers validate the owner separately.
+
+- Align the protocol dependency with 0.37.0 so consumers resolve one copy.
+
 ## 0.28.4 - 2026-10-10
 
 - Keep measured partial footage when the owned Android mirror exits, and report `CAPTURE_INTERRUPTED`. The completion HUD waits for recorder finalization, including caller-owned recordings through `RecipeRunRequest.finalizeRecording`; interrupted or failed finalization draws FAIL. Losing the HUD endpoint with the capture keeps the incomplete-evidence classification; independent HUD and product failures remain failures. CDP calls reject immediately after connection closure. Session screenshots stop using cached frames as soon as the helper reports `stream_stopped`; fresh capture waits for encoder finalization. Interruption messages omit unmeasured frame counts and media times instead of reporting zero as a measurement.

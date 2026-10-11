@@ -111,7 +111,7 @@ If CDP is not available, at minimum use `node scripts/cdp.mjs gateway <method>` 
 
 Bare `yarn dev` skips `.env.ports` unless ports are already exported — prefer `yarn farmdev` on the main operator tree.
 
-The **`farmslot` CLI auto-loads `<checkout>/.env.ports` then `.env`** at startup (non-overriding — an explicit shell env var always wins). So per-checkout dev config (`FARMSLOT_HOME`, `GW_URL`, ports) applies to `yarn farmslot` without sourcing anything — the same file `scripts/dev.sh` reads for the stack. Installed clones have no such files, so it's a no-op there.
+The **`farmslot` CLI auto-loads `<checkout>/.env.ports` then `.env`** at startup (non-overriding — an explicit shell env var always wins). So per-checkout dev config (`FARMSLOT_HOME`, `GW_URL`, ports) applies to `yarn farmslot` without sourcing anything — the same file `scripts/dev.sh` reads for the stack. A shell-exported `GW_URL`, including loopback, requires a matching stored gateway profile; see [gateway routing](../../docs/operations/onboarding.md#manage-multiple-gateways). Installed clones have no such files, so it's a no-op there.
 
 ### Preferred Typecheck Command — HARD RULE
 

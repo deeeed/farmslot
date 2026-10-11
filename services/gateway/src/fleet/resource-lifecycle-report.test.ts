@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+await import('../runtime/mock-pty.test-support.js');
+
 // executeResourceControl is the one place a slot resource's boot, shutdown, or
 // relaunch hook actually runs, whether a restore called it directly or a
 // capability acquire reached it. Machine parking's restore record is built from
@@ -42,7 +44,11 @@ mock.module('../core/config.js', {
         },
       },
     }),
-    loadSlotVars: async () => ({ repo: '/tmp/repo', remoteRepo: '/tmp/repo' }),
+    loadSlotVars: async () => ({
+      machine: 'machine-a',
+      repo: '/tmp/repo',
+      remoteRepo: '/tmp/repo',
+    }),
   },
 });
 

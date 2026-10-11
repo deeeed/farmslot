@@ -94,3 +94,19 @@ farmslot runs export <candidateRunId> --as-package /tmp/candidate.result-package
 ```
 
 Real production history stays on main unless you explicitly import with `--keep-ids --force`.
+
+Dev gateway/node stacks load auth from their own `.env.local-auth` or `.env`.
+The Companion wrapper reads `.env.local-auth`. Inherited
+node/gateway credentials, auth mode and bind host are cleared before checkout
+configuration is loaded; shell-exported credentials do not configure a new stack.
+
+For physical-device LAN mode, each sandbox needs its own token and bind settings
+in `.env.local-auth`; it cannot borrow the operator gateway's credentials.
+A sandbox with no local auth file binds loopback and does not support LAN
+Companion connections. Health checks on loopback do not prove LAN connectivity.
+Slot-local LAN credential provisioning remains a rollout prerequisite.
+
+Standalone gateway hints accept shell exports. When starting through
+`yarn farmdev`, put those same token/password and `GATEWAY_HOST` settings in
+this checkout's `.env.local-auth` or `.env.ports` instead of exporting them.
+An explicit loopback bind belongs in those files too, even with local auth.

@@ -63,14 +63,17 @@ export async function resolveLibrarySources(
   catalog: RecipeCatalog,
   libraryEntry: string | readonly string[] | undefined,
   recipePath?: string,
+  resolvedSources?: RecipeLibrarySource[],
 ): Promise<RecipeLibrarySource[]> {
   const bundled = catalog.bundledLibrary;
   const cliEntries =
     typeof libraryEntry === 'string' ? [libraryEntry] : libraryEntry ? [...libraryEntry] : [];
-  const sources = await resolveRecipeLibrarySources({
-    ...(cliEntries.length > 0 ? { cliEntries } : {}),
-    ...(recipePath ? { recipePath } : {}),
-  });
+  let sources = resolvedSources
+    ? [...resolvedSources]
+    : await resolveRecipeLibrarySources({
+        ...(cliEntries.length > 0 ? { cliEntries } : {}),
+        ...(recipePath ? { recipePath } : {}),
+      });
   const canonicalRoot = path.resolve(bundled.root);
   const configuredCanonical = sources.find((source) => source.name === bundled.name);
   if (configuredCanonical && path.resolve(configuredCanonical.root) !== canonicalRoot) {
@@ -81,10 +84,29 @@ export async function resolveLibrarySources(
   if (!sources.some((source) => path.resolve(source.root) === canonicalRoot)) {
     sources.push({ name: bundled.name, root: canonicalRoot });
   }
+  if (resolvedSources && recipePath) {
+    const bound = sources;
+    sources = (
+      await resolveRecipeLibrarySources({
+        cliEntries: bound.map((source) =>
+          source.name ? `${source.name}=${source.root}` : source.root,
+        ),
+        env: {},
+        recipePath,
+      })
+    ).map(
+      (source) =>
+        bound.find(
+          (entry) =>
+            entry.name === source.name && path.resolve(entry.root) === path.resolve(source.root),
+        ) ?? source,
+    );
+  }
   return Promise.all(
     sources.map(async (source): Promise<RecipeLibrarySource> => {
       const isBundled = source.name === bundled.name;
-      const detected = isBundled ? {} : await gitLibraryProvenance(source.root);
+      const detected =
+        isBundled || source.provenance ? {} : await gitLibraryProvenance(source.root);
       return {
         ...source,
         provenance: {

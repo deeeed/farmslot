@@ -24,6 +24,7 @@ export {
   adapterFlags,
   adapterForPlatform,
   assertAdapter,
+  checkoutRemote,
   configureHarnessAdapters,
   type DeclaredDetect,
   detectAdapter,
@@ -43,10 +44,12 @@ export {
 } from './artifact-files.js';
 export {
   type ActionCapabilitySource,
+  createRuntimeRecipeCatalog,
   type DescribedAction,
   describeManifestActions,
   type RecipeCatalog,
   type ResolvedActionManifest,
+  type RuntimeRecipeCatalogOptions,
 } from './catalog.js';
 export {
   acquireCheckoutLock,
@@ -144,10 +147,26 @@ export {
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
 export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
 export {
+  assertConformanceReportCurrent,
+  checkRecipeConformance,
+  conformanceChecksPass,
+  recipeConformanceIdentity,
+  type RecipeConformanceOptions,
+  writeRecipeConformanceReport,
+} from './conformance.js';
+export {
+  authorizedProjectLibraries,
+  type ConfiguredRecipeProject,
   contextPorts,
   formatHarnessContext,
+  loadProjectProvider,
+  type LoadProjectProviderOptions,
+  type ProjectProvider,
+  recipePackageRoot,
   resolveHarnessContext,
   type ResolveHarnessContextOptions,
+  resolveProjectContext,
+  type ResolveProjectContextOptions,
   runtimeContextOwned,
 } from './context.js';
 export {
@@ -160,6 +179,9 @@ export {
   type HarnessContext,
   harnessContext,
   harnessContextField,
+  ProjectBindingError,
+  type ResolvedProjectBinding,
+  type ResolvedProjectLibrary,
   setHarnessContext,
 } from './context-state.js';
 export {
@@ -183,8 +205,11 @@ export {
   type ExecutionProvenancePhase,
   type ExecutionProvenanceRecord,
   type ExecutionProvenanceSnapshot,
+  fileFingerprint,
   ProvenanceDriftError,
+  providerSourceSnapshot,
   type SourceProvenanceSnapshot,
+  sourceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
 export {
@@ -277,9 +302,15 @@ export {
   PREPARE_PROGRESS_ARTIFACT,
   recipeHarnessPath,
   recipeHarnessRoot,
+  recipeOutputRoots,
   recipeRuntimeDir,
   recipeRuntimePath,
 } from './paths.js';
+export {
+  type ProjectRecipeHost,
+  type ProjectRecipeHostOptions,
+  withProjectRecipeHost,
+} from './project-host.js';
 export {
   type DevicePreview,
   type FeatureFlagReport,
@@ -330,6 +361,8 @@ export {
 export {
   activateRecipeRuntimeEnvironment,
   countRecipeNodes,
+  createDefaultRecipeEngine,
+  type DefaultRecipeEngineOptions,
   preflightRecipe,
   type PreparedRecipeExecution,
   type RecipeEngine,

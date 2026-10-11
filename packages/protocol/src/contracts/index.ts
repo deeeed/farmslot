@@ -25,6 +25,7 @@ export * from './pressure-admission.js';
 export * from './provider-accounts.js';
 export * from './qa.js';
 export * from './readiness.js';
+export * from './recipe-conformance.js';
 export * from './recipes.js';
 export * from './resource-posture.js';
 export * from './resources.js';

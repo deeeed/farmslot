@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
+import type { ResolvedProjectBinding } from './context-state.js';
 import { harnessHost, hostEnvName, validateRelativeRecipePath } from './host.js';
 
 // The checkout layout every host and shell leaf shares (`temp/recipe/runtime/<adapter>/`).
@@ -42,4 +44,34 @@ export function harnessExecutable(): string {
   return path.resolve(
     process.env[hostEnvName('EXECUTABLE')] ?? path.join(host.packageRoot, host.bin),
   );
+}
+
+/** Runtime state and artifacts do not belong to the provider's implementation identity. */
+export function recipeOutputRoots(
+  target: string,
+  binding: Pick<
+    ResolvedProjectBinding,
+    'checkoutRoot' | 'runtimeDir' | 'farmRuntimeDir' | 'artifactDir'
+  >,
+): string[] {
+  return [
+    path.join(binding.checkoutRoot, binding.artifactDir),
+    path.join(binding.checkoutRoot, binding.farmRuntimeDir),
+    path.join(target, binding.runtimeDir),
+  ];
+}
+
+// Whether `inner` is `outer` or inside it, comparing real paths.
+export function isPathWithin(outer: string, inner: string): boolean {
+  try {
+    const relative = path.relative(fs.realpathSync(outer), fs.realpathSync(inner));
+    return !(
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    );
+  } catch {
+    // A path that does not exist owns nothing.
+    return false;
+  }
 }

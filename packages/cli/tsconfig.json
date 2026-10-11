@@ -5,13 +5,17 @@
       "@farmslot/agent-runtime": ["../agent-runtime/src/index.ts"],
       "@farmslot/agent-runtime/*": ["../agent-runtime/src/*"],
       "@farmslot/credential-store": ["../credential-store/src/index.ts"],
+      "@farmslot/recipe-cli": ["../recipe-cli/src/index.ts"],
+      "@farmslot/recipe-cli/*": ["../recipe-cli/src/*"],
       "@farmslot/recipe-runner": ["../recipe-runner/src/index.ts"],
       "@farmslot/recipe-runner/*": ["../recipe-runner/src/*"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
       "@farmslot/run-bundle": ["../run-bundle/src/index.ts"],
       "@farmslot/slot-config": ["../slot-config/src/index.ts"],
-      "@farmslot/slot-config/*": ["../slot-config/src/*"]
+      "@farmslot/slot-config/*": ["../slot-config/src/*"],
+      "@farmslot/adapter-sdk": ["../adapter-sdk/src/index.ts"],
+      "@farmslot/adapter-sdk/*": ["../adapter-sdk/src/*"]
     },
     "jsx": "react-jsx"
   },

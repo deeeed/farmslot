@@ -6,16 +6,21 @@ import { harnessAdapter } from './adapters.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { explicitRecipeTrustOptions } from './trust.js';
 
-export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): RecipeRunOptions {
-  const recordVideo = options.recordVideo;
-  const hud = optionString(options, 'hud');
-  const trust = explicitRecipeTrustOptions({
+export function recipeTrustOptionsFromCli(
+  options: CliOptions,
+): ReturnType<typeof explicitRecipeTrustOptions> {
+  return explicitRecipeTrustOptions({
     sourceTrust: optionString(options, 'sourceTrust'),
     sourceKind: optionString(options, 'sourceKind'),
     sourceName: optionString(options, 'sourceName'),
     sourceDigest: optionString(options, 'sourceDigest'),
     approvalDigest: optionString(options, 'approvePlan'),
   });
+}
+
+export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): RecipeRunOptions {
+  const recordVideo = options.recordVideo;
+  const hud = optionString(options, 'hud');
   const platform = harnessAdapter(adapter).run?.platformOptions?.(options);
   return {
     cdpPort: optionString(options, 'cdpPort'),
@@ -25,6 +30,6 @@ export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): R
     recordVideo: recordVideo === 'full-run' ? 'full-run' : false,
     autoHud: hud === 'show' ? true : hud === 'hide' ? false : undefined,
     ...(platform ? { platform } : {}),
-    ...trust,
+    ...recipeTrustOptionsFromCli(options),
   };
 }

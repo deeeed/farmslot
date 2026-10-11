@@ -349,6 +349,32 @@ describe('resolveHarnessContext', () => {
     assert.equal(flagged.adapter, undefined);
   });
 
+  test('refuses ambiguous slot bindings until the operator selects one', async () => {
+    const checkout = tempRoot();
+    useAdapters(adapter('web'));
+    const pools = poolDir([
+      { id: 'one', repo: checkout, platform: 'web' },
+      { id: 'two', repo: checkout, platform: 'web' },
+    ]);
+    await assert.rejects(resolveHarnessContext({ tokens: [], cwd: checkout, slotPoolDir: pools }), {
+      code: 'SLOT_AMBIGUOUS',
+    });
+    const selected = await resolveHarnessContext({
+      tokens: ['--slot', 'two'],
+      cwd: checkout,
+      slotPoolDir: pools,
+    });
+    assert.equal(selected.slot?.value, 'two');
+    await assert.rejects(
+      resolveHarnessContext({
+        tokens: ['--slot', 'missing'],
+        cwd: checkout,
+        slotPoolDir: pools,
+      }),
+      { code: 'SLOT_NOT_FOUND' },
+    );
+  });
+
   test('a runtime context of another checkout binds nothing here and is reported', async () => {
     const extension = tempRoot();
     const mobile = tempRoot();
@@ -624,7 +650,12 @@ describe('resolveHarnessContext', () => {
       { id: 's-1', repo: checkout, session: 's', approvePlan: 'sha256:def', mainnet: true },
     ]);
     const context = await resolveHarnessContext({ tokens: [], cwd: checkout });
-    assert.deepEqual(Object.keys(context).sort(), ['adapter', 'slot', 'target']);
+    assert.deepEqual(Object.keys(context).sort(), [
+      'adapter',
+      'runtimeConfigPath',
+      'slot',
+      'target',
+    ]);
     assert.deepEqual(Object.keys(context.slot ?? {}).sort(), [
       'detail',
       'poolFile',
@@ -775,6 +806,8 @@ describe('port fill order', () => {
     // Identity and ports describe the same runtime: the scratch one.
     assert.equal(scratch.slot?.value, 'scratch-1');
     assert.equal(scratch.slot?.source, 'binding');
+    assert.equal(scratch.slot?.value && scratch.slot.poolSlot, 'macwork-mmdev-1');
+    assert.ok(scratch.slot?.value && scratch.slot.poolFile);
     assert.deepEqual(contextPorts(scratch, tokens, grammar, {}).env, {
       ...cdpEnv(9222),
       ...watcherEnv(8081),

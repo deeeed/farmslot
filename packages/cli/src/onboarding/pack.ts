@@ -3,10 +3,17 @@
 //
 // A pack is a directory (local path or git clone) with a pack.json at its root
 // and one or more project dirs in the standard projects/<name>/ layout.
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { validateProjectRecipeConfig } from '@farmslot/protocol';
+import {
+  listPackOwnedEntries,
+  packMachineNames,
+  validatePackPortability,
+} from '@farmslot/protocol/node/pack-portability';
+import { poolDir } from '@farmslot/slot-config';
 
 export interface PackProject {
   /** Project dir inside the pack, e.g. "projects/example-app-farm". Basename = project name. */
@@ -109,7 +116,10 @@ export function validatePackJson(pack: unknown): string[] {
 }
 
 /** Validate the pack directory itself: pack.json parses, project dirs + project.json exist. */
-export function validatePackDir(packDir: string): { pack: PackJson | null; errors: string[] } {
+export function validatePackDir(
+  packDir: string,
+  targetPoolDir = poolDir,
+): { pack: PackJson | null; errors: string[] } {
   const packJsonPath = join(packDir, 'pack.json');
   if (!existsSync(packJsonPath)) {
     return { pack: null, errors: [`no pack.json found at ${packJsonPath}`] };
@@ -123,7 +133,10 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       errors: [`pack.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`],
     };
   }
-  const errors = validatePackJson(parsed);
+  const errors = [
+    ...validatePackJson(parsed),
+    ...validatePackPortability(packDir, '', packMachineNames(targetPoolDir)),
+  ];
   if (errors.length > 0) return { pack: null, errors };
   const pack = parsed as PackJson;
   for (const proj of pack.projects) {
@@ -133,10 +146,11 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       continue;
     }
     const name = projectName(proj);
-    let declared: { name?: string };
+    let declared: { name?: string; recipe?: unknown };
     try {
       declared = JSON.parse(readFileSync(join(projDir, 'project.json'), 'utf-8')) as {
         name?: string;
+        recipe?: unknown;
       };
     } catch (err) {
       errors.push(
@@ -148,6 +162,15 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       errors.push(
         `${proj.dir}/project.json: 'name' is ${JSON.stringify(declared.name)} but must match the dir name '${name}'`,
       );
+    }
+    if (declared.recipe !== undefined) {
+      try {
+        validateProjectRecipeConfig(declared.recipe);
+      } catch (err) {
+        errors.push(
+          `${proj.dir}/project.json: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     const setupScript = join(projDir, 'setup', `${proj.platform}.sh`);
     if (!existsSync(setupScript)) {
@@ -176,30 +199,7 @@ export function projectShortName(proj: PackProject): string {
  */
 export function hashPackDir(packDir: string): string {
   const hash = createHash('sha256');
-  const entries: Array<{ rel: string; content: Buffer | string }> = [];
-  const isGitPack = existsSync(join(packDir, '.git'));
-  const isIgnored = (rel: string): boolean => {
-    if (!isGitPack) return false;
-    const result = spawnSync('git', ['-C', packDir, 'check-ignore', '--quiet', '--', rel]);
-    return result.status === 0;
-  };
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir).sort()) {
-      if (entry === '.git' || entry === 'node_modules') continue;
-      const full = join(dir, entry);
-      const rel = relative(packDir, full);
-      if (isIgnored(rel)) continue;
-      const stat = lstatSync(full);
-      if (stat.isSymbolicLink()) {
-        entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
-      } else if (stat.isDirectory()) {
-        walk(full);
-      } else {
-        entries.push({ rel, content: readFileSync(full) });
-      }
-    }
-  };
-  walk(packDir);
+  const entries = listPackOwnedEntries(packDir);
   for (const entry of entries) {
     hash.update(entry.rel);
     hash.update('\0');

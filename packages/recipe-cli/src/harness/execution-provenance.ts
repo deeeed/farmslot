@@ -6,22 +6,21 @@ import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
-import { digestRecipeDocument } from '@farmslot/protocol';
+import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
 import { indexArtifactManifest } from './artifact-files.js';
 import { harnessHost } from './host.js';
+import { isPathWithin } from './paths.js';
+
+const DIRECTORY_IGNORED_ROOTS = new Set(['.git', 'node_modules', 'temp']);
 
 const gitContexts = new Map<string, { topLevel: string; pathspec: string } | null>();
 
 export type ExecutionProvenancePhase = 'start' | 'pre-execute' | 'end';
 
-export interface SourceProvenanceSnapshot {
-  head: string | null;
-  status: string;
-  sourceFingerprint: string;
-}
+export type SourceProvenanceSnapshot = RecipeConformanceSource;
 
 export interface ExecutionProvenanceSnapshot {
   phase: ExecutionProvenancePhase;
@@ -207,7 +206,58 @@ function recipeFileDigest(recipePath: string): string {
   }
 }
 
-function sourceSnapshot(
+/** Include the imported delivery bytes when a checkout's generated modules are ignored by Git. */
+export function providerSourceSnapshot(
+  root: string,
+  module: string,
+  excludedRoots: string[] = [],
+): SourceProvenanceSnapshot {
+  const exclusions = inputSourceExclusions(root, excludedRoots);
+  const source = sourceSnapshot(root, undefined, exclusions);
+  const fullDirectory = source.head === null || gitContext(root)?.pathspec !== '.';
+  const topDirectory =
+    path.relative(path.resolve(root), path.resolve(module)).split(path.sep)[0] ?? '';
+  if (
+    fullDirectory &&
+    isPathWithin(root, module) &&
+    !DIRECTORY_IGNORED_ROOTS.has(topDirectory) &&
+    !exclusions.some((excluded) => isPathWithin(excluded, module))
+  ) {
+    // Nested/installed package snapshots already hash delivery bytes, including ignored builds.
+    return source;
+  }
+  const deliveryRoot = path.dirname(module);
+  const delivery =
+    path.resolve(deliveryRoot) === path.resolve(root)
+      ? fileFingerprint(module)
+      : inputSourceSnapshot(deliveryRoot, excludedRoots).sourceFingerprint;
+  return {
+    ...source,
+    sourceFingerprint: createHash('sha256')
+      .update(source.sourceFingerprint)
+      .update('\0provider-delivery\0')
+      .update(delivery)
+      .digest('hex'),
+  };
+}
+
+export function sourceIsDirty(source: SourceProvenanceSnapshot): boolean {
+  return source.status !== 'not-a-git-checkout' && source.status.trim().length > 0;
+}
+
+/** Explicit code inputs remain bound even when stored under the task artifact directory. */
+export function inputSourceSnapshot(
+  root: string,
+  excludedRoots: string[] = [],
+): SourceProvenanceSnapshot {
+  return sourceSnapshot(root, undefined, inputSourceExclusions(root, excludedRoots));
+}
+
+function inputSourceExclusions(root: string, excludedRoots: string[]): string[] {
+  return excludedRoots.filter((excluded) => !isPathWithin(excluded, root));
+}
+
+export function sourceSnapshot(
   root: string,
   adapter?: string,
   excludedRoots: string[] = [],
@@ -229,7 +279,18 @@ function sourceSnapshot(
     '--',
     ...pathspecs,
   ]);
-  const head = gitBuffer(git.topLevel, ['rev-parse', 'HEAD']);
+  let head: Buffer;
+  try {
+    head = gitBuffer(git.topLevel, ['rev-parse', '--verify', 'HEAD']);
+  } catch (error) {
+    // A new checkout has no commit yet; its current bytes still bind the report.
+    if ((error as { status?: number }).status !== 128) throw error;
+    return {
+      head: null,
+      status,
+      sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
+    };
+  }
   const platformFingerprint = adapter ? harnessAdapter(adapter).sourceFingerprint : undefined;
   return {
     head: head.toString('utf8').trim() || null,
@@ -374,10 +435,9 @@ function hashDirectory(
     throw error;
   }
   if (stat.isDirectory()) {
-    hash.update(`directory\0${relative}\0`);
+    // Directories carry no source bytes; files bind their relative path.
     for (const name of fs.readdirSync(absolute).sort()) {
-      if (relative === '' && (name === '.git' || name === 'node_modules' || name === 'temp'))
-        continue;
+      if (relative === '' && DIRECTORY_IGNORED_ROOTS.has(name)) continue;
       hashDirectory(hash, root, path.join(relative, name), excludedRoots);
     }
     return;
@@ -390,7 +450,7 @@ function hashDirectory(
   hash.update('\0');
 }
 
-function fileFingerprint(filePath: string): string {
+export function fileFingerprint(filePath: string): string {
   return createHash('sha256').update(readRegularFileNoFollow(filePath)).digest('hex');
 }
 

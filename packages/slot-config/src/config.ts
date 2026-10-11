@@ -32,7 +32,11 @@ import {
   type SlotActionDefinition,
   validateQaConfig,
 } from '@farmslot/protocol';
-import { findSlotByRepo, isIgnoredPoolFile } from '@farmslot/protocol/node/slot-by-repo';
+import {
+  findSlotByRepo,
+  isIgnoredPoolFile,
+  readPoolFiles,
+} from '@farmslot/protocol/node/slot-by-repo';
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
@@ -513,9 +517,9 @@ export interface ResolvedSlot {
 const MAX_AVAILABLE_SLOT_IDS = 20;
 
 export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
-  let files: string[];
+  let pools: ReturnType<typeof readPoolFiles<RawPoolJson>>;
   try {
-    files = await readdir(poolDir);
+    pools = readPoolFiles<RawPoolJson>(poolDir);
   } catch {
     throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
       userAction:
@@ -524,14 +528,12 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
   }
 
   const availableSlotIds: string[] = [];
-  for (const file of files) {
-    if (isIgnoredPoolFile(file)) continue;
+  for (const { file: poolFile, pool } of pools) {
+    if (!Array.isArray(pool.slots)) continue;
     try {
-      const content = await readFile(path.join(poolDir, file), 'utf-8');
-      const pool: RawPoolJson = JSON.parse(content);
       const slot = pool.slots.find((s) => s.id === slotId);
       if (slot) {
-        return { pool, slot, poolFile: path.join(poolDir, file) };
+        return { pool, slot, poolFile };
       }
       for (const s of pool.slots) availableSlotIds.push(s.id);
     } catch {
@@ -816,7 +818,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
 
-  const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
+  const runtimeDir = resolveProjectRuntimeDirName(projectJson);
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
   // The schema documents recipe_dir's default as "{{runtime_dir}}/recipes" —
   // resolve that reference here so a config using the documented form works.
@@ -2183,6 +2185,11 @@ export function getProjectFieldRaw(projectJson: RawProjectJson, dotpath: string)
     }
   }
   return current;
+}
+
+/** Canonical project runtime namespace, shared by loaders and lifecycle consumers. */
+export function resolveProjectRuntimeDirName(projectJson: RawProjectJson): string {
+  return getProjectField(projectJson, 'paths.runtime_dir') || '.agent';
 }
 
 /** Worker-repo task root: `task_dir` overrides `paths.artifact_dir`, then protocol default. */
