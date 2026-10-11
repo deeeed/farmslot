@@ -1179,7 +1179,7 @@ export function runnerIdsRequiringExplicitTerminationIdentity(): string[] {
 /**
  * Runners whose process matchers hit a pane's foreground command. Only runners
  * that can be attributed without a recorded identity qualify, so a generic
- * `agent` binary never names Cursor. Callers treat more than one id as unknown.
+ * `agent` binary never names Cursor. Callers treat more than one id as ambiguous.
  */
 export function runnerIdsMatchingPaneCommand(command?: string | null): string[] {
   const value = command?.trim();
