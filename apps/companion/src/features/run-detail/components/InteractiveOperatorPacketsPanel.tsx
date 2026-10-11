@@ -19,11 +19,13 @@ import {
   validateInteractiveOperatorPacket,
 } from '@farmslot/protocol';
 
+import { useHumanGateGuard } from '../../../hooks/useHumanGateGuard';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactUrl,
 } from '../../../lib/artifact-url';
+import { openHumanGateDecision } from '../../../lib/gate-review';
 import type { GatewayClient } from '../../../lib/gateway-client';
 import { gatewayFetch } from '../../../lib/gateway-http-auth';
 import {
@@ -57,6 +59,12 @@ export function InteractiveOperatorPacketsPanel({
   const [packets, setPackets] = useState<LoadedInteractivePacket[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  // A packet may name the run's publish gate; the gate review's guard applies to it too.
+  const humanGate = useHumanGateGuard(
+    client,
+    run,
+    packetArtifacts.length ? openHumanGateDecision(run) : null,
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -116,6 +124,14 @@ export function InteractiveOperatorPacketsPanel({
     const request = interactivePacketActionRequest(action);
     if (!request) {
       setFeedback(`Action "${action.label}" is missing required payload fields.`);
+      return;
+    }
+    const withheld =
+      request.kind === 'decision.resolve' && request.decisionId === openHumanGateDecision(run)?.id
+        ? humanGate?.actions.find((candidate) => candidate.id === request.actionId)?.disabledReason
+        : null;
+    if (withheld) {
+      setFeedback(`Publish approval is disabled: ${withheld}`);
       return;
     }
     const requiresConfirmation =
