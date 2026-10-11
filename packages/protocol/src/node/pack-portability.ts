@@ -2,12 +2,17 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 
-import { isIgnoredPoolFile } from './slot-by-repo.js';
+import { readPoolFiles } from './slot-by-repo.js';
 
 const PRIVATE_PATH =
   /(?:^|[\s"'`(=]|file:\/\/)((?:~|\$HOME|\$\{HOME\})\/xreview(?:\/[^\s"'`)]*)?|\/(?:Users|home)\/[A-Za-z0-9_.-]+(?:\/[^\s"'`)]*)?|\/var\/root(?:\/[^\s"'`)]*)?|[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9_.-]+)/;
-const FIXED_HOST =
-  /(?:\b(?:https?|wss?):\/\/|\b(?:ssh|scp|rsync)\s+(?:[a-z0-9_.-]+@)?)[a-z0-9_-]+\.local(?=[/:\s"'`)]|$)/i;
+const SHELL_WORD = String.raw`(?:[^\s"'\x60]+|"[^"]*"|'[^']*')`;
+const SSH_OPTIONS = String.raw`(?:-\S+(?:\s+${SHELL_WORD})?\s+)*`;
+const LOCAL_HOST = String.raw`(?:[^\s"'@]+@)?[a-z0-9_-]+\.local`;
+const FIXED_HOST = new RegExp(
+  String.raw`(?:\b(?:https?|wss?|ssh):\/\/${LOCAL_HOST}(?=[/:\s"'\x60)]|$)|\bssh\s+${SSH_OPTIONS}["']?${LOCAL_HOST}(?=[\s"'\x60)]|$)|\b(?:scp|rsync)\s+${SSH_OPTIONS}(?:${SHELL_WORD}\s+)*?["']?${LOCAL_HOST}:)`,
+  'i',
+);
 const RUNTIME_DIRS = new Set(['tasks', 'runs', 'artifacts', 'temp', '.agent', '.sandbox']);
 const quoteRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -77,18 +82,12 @@ export function packMachineNames(poolDir: string): string[] {
   if (!existsSync(poolDir)) return [];
   return [
     ...new Set(
-      readdirSync(poolDir)
-        .filter((f) => !isIgnoredPoolFile(f))
-        .flatMap((file) => {
-          const pool = JSON.parse(readFileSync(path.join(poolDir, file), 'utf8')) as {
-            machine?: string;
-            host?: string;
-          };
-          return [pool.machine, pool.host].filter(
-            (v): v is string =>
-              typeof v === 'string' && !['localhost', '127.0.0.1', '::1'].includes(v),
-          );
-        }),
+      readPoolFiles<{ machine?: string; host?: string }>(poolDir).flatMap(({ pool }) =>
+        [pool.machine, pool.host].filter(
+          (v): v is string =>
+            typeof v === 'string' && !['localhost', '127.0.0.1', '::1'].includes(v),
+        ),
+      ),
     ),
   ];
 }

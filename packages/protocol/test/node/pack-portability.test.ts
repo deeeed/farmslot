@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  packMachineNames,
   validatePackFilePortability,
   validatePackPortability,
 } from '../../src/node/pack-portability.js';
@@ -125,4 +126,33 @@ test('standalone project packs skip runtime tasks while retaining templates', (t
   mkdirSync(join(root, 'templates'));
   writeFileSync(join(root, 'templates/task.md'), '{{repo}}');
   assert.deepEqual(validatePackPortability(root), []);
+});
+
+test('ordinary SSH options and URL hosts reject foreign nodes while relative namespaces pass', () => {
+  for (const command of [
+    'ssh -o BatchMode=yes old-worker.local true',
+    "ssh -p 22 'user@old-worker.local' true",
+    'ssh://git@old-worker.local/repo.git',
+    'scp -i ./key file.txt user@old-worker.local:/tmp/file',
+    'rsync -av ./data user@old-worker.local:/data',
+  ]) {
+    assert.equal(validatePackFilePortability('hooks.sh', command).length, 1, command);
+  }
+  for (const command of [
+    'ssh example.com cat skills.local/file.md',
+    'scp skills.local/file.md example.com:/tmp/file',
+    'node skills.local/script.mjs',
+  ])
+    assert.deepEqual(validatePackFilePortability('hooks.sh', command), [], command);
+});
+
+test('pack pool identities skip malformed JSON without echoing its contents', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'portable-pool-reader-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'invalid.json'), '{"secret":"fixture-private",');
+  writeFileSync(
+    join(root, 'configured.json'),
+    JSON.stringify({ machine: 'registered', host: 'registered.local', slots: [] }),
+  );
+  assert.deepEqual(packMachineNames(root), ['registered', 'registered.local']);
 });

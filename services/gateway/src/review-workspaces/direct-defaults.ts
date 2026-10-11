@@ -2,6 +2,7 @@ import {
   assertPRExecutionProfile,
   type FlowType,
   isPRWorkspaceExecutionProfile,
+  isUnboundWorkspacePool,
   parseNativeProfileReference,
   prExecutionChoices,
   type PRExecutionProfile,
@@ -14,6 +15,7 @@ import {
   type ReviewQaDispatchSelection,
   type RunCreateParams,
   sameNativeProfileReference,
+  workspacePolicyMachines,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
@@ -95,15 +97,12 @@ export function constrainDirectWorkflowExecution(
       unavailable(
         'Select an authorized review machine; legacy slot placement requires explicit migration',
       );
-    const allowed =
-      selected.workspacePolicy.kind === 'exact'
-        ? [selected.workspacePolicy.machine]
-        : selected.workspacePolicy.allowedMachines;
-    if (!allowed)
-      unavailable(
-        'Bind the workspace policy to the configured pool registry before selecting a machine',
-      );
+    const allowed = workspacePolicyMachines(selected.workspacePolicy);
     if (input.reviewWorkspaceTarget) {
+      if (!allowed)
+        unavailable(
+          'Bind the workspace policy to the configured pool registry before selecting a machine',
+        );
       const machine = input.reviewWorkspaceTarget.machine;
       if (!allowed.includes(machine))
         unavailable('Selected machine is outside the declared workflow execution policy');
@@ -283,6 +282,12 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   if (!profile) return { params: params as T, reviewQa, sources: defaults.sources };
   if (isPRWorkspaceExecutionProfile(profile) !== (flow === 'review-pr'))
     unavailable('Workflow execution policy uses the wrong resource type');
+  const queuedPortableExecution =
+    options.purpose === 'queue' &&
+    isUnboundWorkspacePool(profile) &&
+    !original.reviewWorkspaceTarget
+      ? constrainDirectWorkflowExecution(profile, params)
+      : undefined;
   const [boundProfile] = await bindPRExecutionProfilesToPool([profile]);
   const execution = constrainDirectWorkflowExecution(boundProfile, params);
   if (isPRWorkspaceExecutionProfile(execution)) {
@@ -339,14 +344,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     return {
       params: params as T,
       reviewQa,
-      execution:
-        options.purpose === 'queue' &&
-        isPRWorkspaceExecutionProfile(profile) &&
-        profile.workspacePolicy.kind === 'pool' &&
-        profile.workspacePolicy.allowedMachines === undefined &&
-        !original.reviewWorkspaceTarget
-          ? { ...execution, workspacePolicy: { kind: 'pool' } }
-          : execution,
+      execution: queuedPortableExecution ?? execution,
       sources: defaults.sources,
       admission: waiting.admission,
     };

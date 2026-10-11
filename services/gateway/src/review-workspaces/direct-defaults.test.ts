@@ -505,3 +505,17 @@ test('queued portable defaults retain registry binding until dispatch', async ()
   assert.deepEqual(resolved.execution?.workspacePolicy, { kind: 'pool' });
   assert.equal(resolved.params.model, execution.models[0].model);
 });
+
+test('queued portable policies retain model alternatives for future registry admission', async () => {
+  const portable = {
+    ...execution,
+    workspacePolicy: { kind: 'pool' as const },
+    models: [{ ...execution.models[0], allowedMachines: ['later'] }, ...execution.models],
+  };
+  const resolved = await resolveDirectWorkflowDefaults(request, await loadProjectConfig('farm'), {
+    purpose: 'queue',
+    ownerId: 'owner',
+    execution: portable,
+  });
+  assert.deepEqual(resolved.execution, portable);
+});

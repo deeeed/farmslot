@@ -198,6 +198,28 @@ export function assertPRMonitorConfig(value: unknown): asserts value is PRMonito
   integer(value.cooldownMs, 60_000, 86_400_000, 'monitor.cooldownMs');
 }
 
+export function isUnboundWorkspacePool(
+  profile: PRExecutionProfile,
+): profile is PRWorkspaceExecutionProfile {
+  return (
+    isPRWorkspaceExecutionProfile(profile) &&
+    profile.workspacePolicy.kind === 'pool' &&
+    profile.workspacePolicy.allowedMachines === undefined
+  );
+}
+
+export function workspacePolicyMachines(
+  policy: PRWorkspaceExecutionProfile['workspacePolicy'],
+): string[] | undefined {
+  return policy.kind === 'exact' ? [policy.machine] : policy.allowedMachines;
+}
+
+export function workspacePolicyTargetLabel(
+  policy: PRWorkspaceExecutionProfile['workspacePolicy'],
+): string {
+  return workspacePolicyMachines(policy)?.join(', ') ?? 'Configured pool';
+}
+
 /** Pool authority comes only from the configured registry, never node discovery or a pack. */
 export function bindPRExecutionProfileToPool<T extends PRExecutionProfile>(
   profile: T,
@@ -206,10 +228,7 @@ export function bindPRExecutionProfileToPool<T extends PRExecutionProfile>(
   assertPRExecutionProfile(profile);
   if (!isPRWorkspaceExecutionProfile(profile)) return profile;
   const registered = new Set(registeredMachines.filter((machine) => machine.trim()));
-  const declared =
-    profile.workspacePolicy.kind === 'exact'
-      ? [profile.workspacePolicy.machine]
-      : (profile.workspacePolicy.allowedMachines ?? [...registered]);
+  const declared = workspacePolicyMachines(profile.workspacePolicy) ?? [...registered];
   const machines = declared.filter((machine) => registered.has(machine));
   if (!machines.length)
     throw new Error('Workspace execution has no machines in the configured pool registry');
@@ -238,10 +257,7 @@ export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoi
 export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoice[] {
   assertPRExecutionProfile(profile);
   if (isPRWorkspaceExecutionProfile(profile)) {
-    const machines =
-      profile.workspacePolicy.kind === 'exact'
-        ? [profile.workspacePolicy.machine]
-        : profile.workspacePolicy.allowedMachines;
+    const machines = workspacePolicyMachines(profile.workspacePolicy);
     if (!machines)
       throw new Error('Workspace pool execution must be bound to the configured pool registry');
     return profile.models.flatMap((model) =>

@@ -1,6 +1,6 @@
 import {
   bindPRExecutionProfileToPool,
-  isPRWorkspaceExecutionProfile,
+  isUnboundWorkspacePool,
   type PRExecutionProfile,
 } from '@farmslot/protocol';
 
@@ -11,15 +11,7 @@ import { loadPoolConfigs } from '../fleet/state.js';
 export async function bindPRExecutionProfilesToPool(
   profiles: PRExecutionProfile[],
 ): Promise<PRExecutionProfile[]> {
-  if (
-    !profiles.some(
-      (profile) =>
-        isPRWorkspaceExecutionProfile(profile) &&
-        profile.workspacePolicy.kind === 'pool' &&
-        profile.workspacePolicy.allowedMachines === undefined,
-    )
-  )
-    return profiles;
+  if (!profiles.some(isUnboundWorkspacePool)) return profiles;
   const machines = (await loadPoolConfigs()).map((pool) => pool.machine);
   try {
     return profiles.map((profile) => bindPRExecutionProfileToPool(profile, machines));

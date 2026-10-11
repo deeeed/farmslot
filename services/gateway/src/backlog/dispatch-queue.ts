@@ -1419,9 +1419,11 @@ async function tryDispatchNextOnce(): Promise<void> {
       } catch (error) {
         if (!(error instanceof GatewayMethodError)) throw error;
         if (liveQueuedItem(item.id) !== item) continue;
-        item.waitingReason = error.message;
-        schedulePersist('workflow-pool-configuration');
-        broadcastQueue();
+        if (item.waitingReason !== error.message) {
+          item.waitingReason = error.message;
+          schedulePersist('workflow-pool-configuration');
+          broadcastQueue();
+        }
         continue;
       }
     }
