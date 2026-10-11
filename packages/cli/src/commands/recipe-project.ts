@@ -203,8 +203,13 @@ export function registerProjectExecutionCommand(
         options.librarySource !== undefined &&
         shared.optionStrings(options, 'librarySource')?.length
       ) {
-        throw shared.usageError(
-          '--library-source belongs to standalone --project-root execution; use --library name=path for a project.',
+        throw Object.assign(
+          shared.usageError('--library-source belongs to standalone execution.'),
+          {
+            code: 'CLI_INVALID_OPTION_VALUE',
+            userAction:
+              'use --library name=path for a project, or --project-root <path> for standalone execution',
+          },
         );
       }
       process.exitCode = await shared.withProjectRecipeHost(

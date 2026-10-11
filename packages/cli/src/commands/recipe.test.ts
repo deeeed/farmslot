@@ -585,15 +585,20 @@ test('public run JSONL reports finalizer failure once after the command effect',
   assert.equal(fs.readFileSync(path.join(root, 'artifacts/effect'), 'utf8'), 'checked');
 });
 
-for (const refusal of ['grammar', 'binding']) {
+for (const [refusal, flags, code, hint] of [
+  ['grammar', ['--plna'], 'CLI_UNKNOWN_OPTION', /--plan/u],
+  ['binding', [], 'PROJECT_NOT_FOUND', /--project/u],
+  [
+    'standalone-option',
+    ['--library-source', 'unused'],
+    'CLI_INVALID_OPTION_VALUE',
+    /--library name=path/u,
+  ],
+] as const) {
   test(`public run JSONL preserves ${refusal} refusal guidance before constructing a provider`, (t) => {
     const { root, file } = runFixture(t);
     if (refusal === 'binding') fs.unlinkSync(path.join(root, 'projects/example/project.json'));
-    const result = callPublic(
-      root,
-      [file, '--json-stream', ...(refusal === 'grammar' ? ['--plna'] : [])],
-      'run',
-    );
+    const result = callPublic(root, [file, '--json-stream', ...flags], 'run');
     assert.notEqual(result.status, 0);
     const events = result.stdout
       .trim()
@@ -602,11 +607,8 @@ for (const refusal of ['grammar', 'binding']) {
     assert.equal(events.filter((event) => event.event === 'complete').length, 1);
     const errors = events.filter((event) => event.event === 'error');
     assert.equal(errors.length, 1);
-    assert.equal(
-      errors[0].error.code,
-      refusal === 'grammar' ? 'CLI_UNKNOWN_OPTION' : 'PROJECT_NOT_FOUND',
-    );
-    assert.match(errors[0].error.userAction, refusal === 'grammar' ? /--plan/u : /--project/u);
+    assert.equal(errors[0].error.code, code);
+    assert.match(errors[0].error.userAction, hint);
     assert.equal(events.at(-1).status, 'fail');
     assert.equal(result.status, events.at(-1).exitCode);
     assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
