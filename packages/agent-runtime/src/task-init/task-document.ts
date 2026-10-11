@@ -141,6 +141,15 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     renderAcceptanceCriteria(input.acceptanceCriteria),
   );
+  if (normalizeAcceptanceCriteria(input.acceptanceCriteria).length > 0) {
+    sections.push(
+      '',
+      '## Acceptance verdicts + recipe coverage',
+      '',
+      `Before successful completion or handing off a PR, set TASK_DIR to \`${taskDir}\` and run \`farmslot-agent ac list\`. Record an honest verdict for every registered AC with \`farmslot-agent ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>\`; choose the actual state, visual or mixed mode and existing evidence, and omit the recipe node when no recipe applies. Use \`untestable --note <reason>\` only when proof is unavailable.`,
+      `Run \`ac list\` again. When recipe.json exists, generate \`artifacts/recipe-coverage.md\` with \`farmslot-agent ac render\`. Run \`farmslot-agent artifact-check ${taskDir} --require-recipe-coverage-if-recipe --require-acceptance-status\` before \`mark complete\`. Missing or unrecorded verdicts refuse completion; checked checklist items alone do not assess an AC.`,
+    );
+  }
 
   if (input.affectedArea && input.affectedArea !== '_Not specified_') {
     sections.push('', '## Affected Area', '', input.affectedArea);

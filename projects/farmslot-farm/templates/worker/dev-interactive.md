@@ -103,3 +103,9 @@ When the operator says the interactive session is complete:
 **Publication may be worker-owned; final disposition remains operator-owned.** In an interactive session the worker may commit, push, and create the PR only after explicit operator approval. Once that PR exists, `mark complete --mark-last` is a handoff signal, not permission to publish: the monitor pauses the run and Farmslot presents actions such as "PR Complete" or "Detect PR + CI". Never use it with uncommitted or unpublished approved work—the unsafe failure mode from run `32909fa2`.
 
 **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
+
+## Acceptance verdicts + recipe coverage
+
+Before successful completion or handing off this PR, set `export TASK_DIR="{{TASK_DIR}}"` and run `"{{REPO}}/node_modules/.bin/farmslot-agent" ac list`. For every registered AC, record an honest verdict with `"{{REPO}}/node_modules/.bin/farmslot-agent" ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>`. Use the actual state, visual or mixed mode and existing evidence; omit the recipe node when no recipe applies. Use `untestable --note <reason>` only when proof is unavailable. Check `ac list` again.
+
+When `artifacts/recipe.json` exists, derive `artifacts/recipe-coverage.md` with `"{{REPO}}/node_modules/.bin/farmslot-agent" ac render > "{{TASK_DIR}}/artifacts/recipe-coverage.md"`. Before `mark complete`, run `node "{{farmslot_dir}}/packages/agent-runtime/scripts/check-task-artifact-contract.mjs" "{{TASK_DIR}}" --require-recipe-coverage-if-recipe --require-acceptance-status`. Refresh affected verdicts and coverage after the final proof run. Checklist completion alone does not assess an AC.
