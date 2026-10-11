@@ -8,7 +8,7 @@
       "routing": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-pr-webhook-routing.mts",
-        "intent": "Prove unavailable targets preserve legacy routing, membership failures request retry, and known repository sources are scheduled without admitting work."
+        "intent": "Webhook routing preserves legacy targets and retries membership failures."
       }
     }
   }

@@ -8,10 +8,13 @@
       "live-startup": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/review-workspace-startup.mjs",
-        "intent": "Read the production run and child progress through gateway RPC, verify startup independently of the first model-written mark using native prompt acceptance when available, and reject an unacknowledged worker.",
+        "intent": "Review startup requires actual acceptance independently of worker-written marks.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

@@ -245,8 +245,11 @@ export async function validateRecipeCliInput({
       }
     }
   }
-  const validationOptions =
-    externalRecipeIds.size > 0 || adapter ? { externalRecipeIds, adapter } : undefined;
+  const validationOptions = {
+    externalRecipeIds,
+    adapter,
+    lintIntent: !artifactDir && !artifactManifestPath,
+  };
   if (actionManifestPath) {
     const actionManifest = await readRecipeCliJsonFile(actionManifestPath, baseDir);
     results.push(validateRecipeWithManifest(recipe, actionManifest, validationOptions));

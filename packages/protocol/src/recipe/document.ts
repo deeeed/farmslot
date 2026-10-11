@@ -10,6 +10,7 @@ import {
   type RecipeValidationResult,
   validateOptionalStringField,
 } from './common.js';
+import { RECIPE_INTENT_MAX_LENGTH, RECIPE_INTENT_WARN_LENGTH } from './hud-intent.js';
 import {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,
@@ -34,6 +35,8 @@ const RECIPE_FIELDS = new Set([
 ]);
 
 export interface RecipeDocumentValidationOptions {
+  /** Authoring lint only; retained v1 artifacts and execution remain compatible. */
+  lintIntent?: boolean;
   externalRecipeIds?: ReadonlySet<string>;
   skipRecipeCallResolution?: boolean;
   adapter?: string;
@@ -248,6 +251,21 @@ export function validateRecipeDocument(
   const workflow = extractWorkflow(ctx, recipe);
   if (workflow) {
     validateWorkflowGraph(ctx, workflow);
+    if (options?.lintIntent) {
+      for (const [id, node] of Object.entries(workflow.nodes)) {
+        if (typeof node.intent !== 'string') continue;
+        const length = Array.from(node.intent.trim()).length;
+        if (length > RECIPE_INTENT_WARN_LENGTH) {
+          addFinding(
+            ctx,
+            length > RECIPE_INTENT_MAX_LENGTH ? 'error' : 'warning',
+            'workflow.intent_too_long',
+            `workflow.nodes.${id}.intent`,
+            `Intent has ${length} characters. Use one plain sentence, preferably at most ${RECIPE_INTENT_WARN_LENGTH} characters, never more than ${RECIPE_INTENT_MAX_LENGTH}.`,
+          );
+        }
+      }
+    }
     validateRecipeCalls(ctx, workflow, {
       ...(options?.externalRecipeIds ? { externalRecipeIds: options.externalRecipeIds } : {}),
       skipResolution: options?.skipRecipeCallResolution === true,

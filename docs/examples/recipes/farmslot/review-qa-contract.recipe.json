@@ -16,7 +16,7 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts legacy-queue",
         "timeout_ms": 60000,
-        "intent": "A legacy full-live request becomes distinct QA work, retains placement and provenance, and selects the canonical template unchanged.",
+        "intent": "Legacy live review requests retain their placement as separate QA work.",
         "next": "conflicting-requests"
       },
       "conflicting-requests": {
@@ -62,28 +62,28 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts linked-qa",
         "timeout_ms": 60000,
-        "intent": "Link QA to an owned completed review, preserve its exact head, deduplicate retries and reject foreign or stale sources through gateway endpoints.",
+        "intent": "Linked QA preserves the owned review head and rejects stale sources.",
         "next": "automatic-source-qa"
       },
       "automatic-source-qa": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts automatic-qa",
         "timeout_ms": 90000,
-        "intent": "Archive a completed source review through the gateway, preserve its opted-in QA follow-up across restarts, deduplicate receipts, reject disabled policy and avoid historical backfill.",
+        "intent": "Opted-in QA follow-up survives restart without duplicate or historical work.",
         "next": "publication-defaults"
       },
       "publication-defaults": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-defaults",
         "timeout_ms": 60000,
-        "intent": "Verify project publication opt-in survives unrelated review overrides, explicit opt-out wins, and values/origins persist across gateway restart without posting to GitHub.",
+        "intent": "Review publication defaults preserve explicit choices across restarts.",
         "next": "publication-accounts"
       },
       "publication-delivery-pass": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/pass pass",
         "timeout_ms": 60000,
-        "intent": "Publish one pinned review with inline findings and retain a duplicate-safe receipt across archive, restart and explicit retry.",
+        "intent": "Pinned publication retains one delivery receipt across retries.",
         "next": "publication-delivery-rejected"
       },
       "publication-delivery-stale": {
@@ -111,28 +111,28 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-accounts",
         "timeout_ms": 60000,
-        "intent": "Retain each selected GitHub account and hold a shared review when publication accounts conflict, including after gateway restart.",
+        "intent": "Conflicting publication accounts hold the shared review.",
         "next": "publication-direct"
       },
       "publication-direct": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-direct temp/publication-proof/direct",
         "timeout_ms": 120000,
-        "intent": "Create runs through the workspace CLI with publication inheritance, opt-out and explicit team selection; refuse forged authority and publish/retry the captured direct authority without launching workers.",
+        "intent": "Direct workspace requests preserve publication authority without launching workers.",
         "next": "publication-delivery-pass"
       },
       "publication-delivery-rejected": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/rejected rejected",
         "timeout_ms": 60000,
-        "intent": "An explicit HTTP 422 retains a retryable receipt; corrected provider acceptance publishes once and archived retries do not repost.",
+        "intent": "Rejected publication retries succeed once without reposting archived reviews.",
         "next": "publication-delivery-concurrent"
       },
       "qa-pool": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts qa-pool",
         "timeout_ms": 60000,
-        "intent": "Pool QA queues without pinning an arbitrary slot, preserves both allowed candidates across restart, and retains explicit user pins.",
+        "intent": "Pool QA retains all eligible candidates and explicit user pins.",
         "next": "legacy-live-request"
       },
       "publication-delivery-concurrent": {

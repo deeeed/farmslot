@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/verify-workspace-progress.mts",
         "timeout_ms": 60000,
-        "intent": "The real workspace projects child progress. Both clients accept its identity and reject another run or a run with neither a slot nor workspace.",
+        "intent": "Both clients show progress only for the matching workspace run.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

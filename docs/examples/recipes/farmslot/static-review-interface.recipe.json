@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-interface-live",
         "timeout_ms": 240000,
-        "intent": "Submit Review and QA through real browser controls; prove publication inheritance/opt-out, QA exclusion, persisted choices, run receipt/error display, retry refusal and live run-update events with gateway reads and screenshots.",
+        "intent": "Review and QA requests preserve choices and expose their actual run result.",
         "next": "done"
       },
       "done": {

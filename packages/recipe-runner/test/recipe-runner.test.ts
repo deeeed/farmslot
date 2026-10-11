@@ -628,7 +628,7 @@ test('rejects a shell-injected recipe parameter before executing its command', a
   }
 });
 
-test('validates executed parameters without overriding or rewriting the recipe', async () => {
+test('validates retained long intents and executed parameters without rewriting the recipe', async () => {
   const tempRoot = await createTempRoot();
   try {
     const recipe = recipeDocument(
@@ -636,7 +636,8 @@ test('validates executed parameters without overriding or rewriting the recipe',
         inspect: {
           action: 'command',
           cmd: 'pwd',
-          intent: 'Inspect {{params.market}}.',
+          intent:
+            'Inspect {{params.market}} while preserving the archived parameter bindings and complete evidence package from the original completed validation run.',
           next: 'done',
         },
         done: { action: 'end', status: 'pass' },
@@ -683,6 +684,16 @@ test('validates executed parameters without overriding or rewriting the recipe',
       artifactsDir,
       '--json',
     ]);
+    assert.equal(
+      (
+        await validateRecipeCliInput({
+          recipePath: result.recipePath,
+          artifactManifestPath: path.join(artifactsDir, 'artifact-manifest.json'),
+          params: { market: 'BTC', api_key_index: 8 },
+        })
+      ).status,
+      'valid',
+    );
     const override = await validateRecipeCliInput({
       recipePath: result.recipePath,
       artifactDir: artifactsDir,
@@ -2265,7 +2276,7 @@ function hudTransport(page: CdpWebPage): ReturnType<typeof createCdpWebUiTranspo
   });
 }
 
-test('CDP app.hud caps recipe text at 180 code points and draws it as text in a closed shadow root', async () => {
+test('CDP app.hud preserves intent for two-line layout and caps only auxiliary text in a closed shadow root', async () => {
   const document = new FakeDocument();
   const { page } = fakeDomPage(document);
   const transport = hudTransport(page);
@@ -2300,12 +2311,12 @@ test('CDP app.hud caps recipe text at 180 code points and draws it as text in a 
 
   assert.deepEqual(await drawn({ ...base, error: markup }), [
     `${'b'.repeat(178)}😀…`,
-    capped,
+    markup,
     `error: ${capped}`,
   ]);
   assert.deepEqual(await drawn({ ...base, detail: `${markup} detail` }), [
     `${'b'.repeat(178)}😀…`,
-    capped,
+    markup,
     capped,
   ]);
 });

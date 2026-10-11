@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/blocked-run-recovery.mjs",
         "timeout_ms": 120000,
-        "intent": "Send run.replayStep, runtime.capability.acquire and run.probeWorkerSignal to an isolated gateway; read run.get and fleet.status to prove stale attempts are refused, restart releases the slot, and an assessed fresh attempt completes monitoring.",
+        "intent": "Blocked-run replay preserves freshness and completes only an assessed attempt.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

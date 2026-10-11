@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-desktop-quit.mts",
         "timeout_ms": 240000,
-        "intent": "Press real Command+Q, verify one native confirmation, cancel with Escape and retain the connected window. Close and reactivate the window, confirm Quit, prove the process and debugger endpoints exit while fleet.status remains available, then relaunch through macOS with saved credentials and route.",
+        "intent": "Desktop quit requires confirmation and preserves the gateway and saved login.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

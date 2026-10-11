@@ -8,7 +8,7 @@
       "configuration": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/check-pr-configuration-navigation.mts",
-        "intent": "Check the team/rule explanation at mobile and desktop widths, choose real farm slots, preserve global and per-model settings through reload and Back/Forward, and exercise shared dev-harness selectors.",
+        "intent": "Automation settings retain their scope across navigation and reload.",
         "next": "done"
       },
       "done": {

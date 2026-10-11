@@ -1,3 +1,5 @@
+import { hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+
 import { isRecord } from './json.js';
 import type { RecipeHudOptions } from './types.js';
 
@@ -21,7 +23,7 @@ export function buildHudNode(
         ? event.recipe.title
         : 'Recipe run';
   const flow = hudFlow(event.action, event.node);
-  const text = hudText(event.action, status, event.node);
+  const text = hudIntentDisplay(hudText(event.action, status, event.node)).text;
   const detail = normalizeHudSecondary(hudDetail(event.node), text, flow);
   return {
     action: 'app.hud',
@@ -127,6 +129,5 @@ function hudErrorSummary(error: string): string {
   const resultIndex = summary.indexOf('. Result:');
   if (resultIndex > 0) summary = summary.slice(0, resultIndex);
   if (nestedError && !summary.includes(nestedError)) summary = `${summary}: ${nestedError}`;
-  const maxLength = 180;
-  return summary.length > maxLength ? `${summary.slice(0, maxLength - 1)}…` : summary;
+  return hudSecondaryText(summary);
 }

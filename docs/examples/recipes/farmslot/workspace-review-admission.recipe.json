@@ -9,14 +9,14 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-admission.mts preview",
         "timeout_ms": 60000,
-        "intent": "Preview records the authorized machine, slotId null, host capacity and canonical static template without creating any slot or queued work.",
+        "intent": "Review placement preserves the authorized host without allocating a slot.",
         "next": "unsupported-placement"
       },
       "unsupported-placement": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-admission.mts rejections",
         "timeout_ms": 60000,
-        "intent": "Missing or unsupported native transport, runner, model, effort, capacity opt-in and slot-pinned requests cannot authorize workspace review.",
+        "intent": "Unsupported placement cannot authorize workspace review.",
         "next": "missing-owner"
       },
       "missing-owner": {
@@ -26,7 +26,10 @@
         "intent": "A gateway without a configured native owner rejects preview without allocating resources.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 
 import type { UiObserverRef } from '@farmslot/protocol';
+import { HUD_PANEL_BOUNDS, hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
 
 import {
   type GestureAction,
@@ -1532,17 +1533,6 @@ async function runCdpLifecycle(page: CdpWebPage, node: Record<string, unknown>):
   throw new Error(`Unsupported CDP lifecycle command: ${command}.`);
 }
 
-// Recipe text reaches the page: cap each HUD line like the web HUD (180 characters,
-// whitespace flattened, an ellipsis on the cut), counting code points so the cut
-// never splits a surrogate pair.
-const MAX_HUD_TEXT = 180;
-
-function hudLine(value: string): string {
-  const flat = value.replace(/\s+/gu, ' ').trim();
-  const chars = Array.from(flat);
-  return chars.length > MAX_HUD_TEXT ? `${chars.slice(0, MAX_HUD_TEXT - 1).join('')}…` : flat;
-}
-
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
@@ -1553,7 +1543,7 @@ async function renderCdpHud(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
     );
   }
-  const title = hudLine(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
+  const title = hudSecondaryText(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
   const status = asOptionalString(node.status, 'app.hud.status') ?? 'running';
   const nodeId = asOptionalString(node.node_id ?? node.nodeId, 'app.hud.node_id') ?? context.nodeId;
   const phase = asOptionalString(node.phase, 'app.hud.phase') ?? '';
@@ -1561,11 +1551,13 @@ async function renderCdpHud(
   const action =
     asOptionalString(node.action_name ?? node.recipe_action, 'app.hud.action_name') ?? '';
   const rawText = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
-  const text = hudLine(rawText);
+  const intent = hudIntentDisplay(rawText);
+  const text = intent.text;
   const rawDetail = asOptionalString(node.detail, 'app.hud.detail') ?? '';
-  const detail = rawDetail && rawDetail !== rawText && rawDetail !== flow ? hudLine(rawDetail) : '';
+  const detail =
+    rawDetail && rawDetail !== rawText && rawDetail !== flow ? hudSecondaryText(rawDetail) : '';
   const rawError = asOptionalString(node.error, 'app.hud.error');
-  const error = rawError === undefined ? undefined : hudLine(rawError);
+  const error = rawError === undefined ? undefined : hudSecondaryText(rawError);
   const display = isRecord(node.display) ? node.display : {};
   const layout = asOptionalString(display.layout, 'app.hud.display.layout') ?? 'bottom-bar';
   const position = asOptionalString(display.position, 'app.hud.display.position') ?? 'bottom';
@@ -1579,7 +1571,7 @@ async function renderCdpHud(
   const total = typeof progress.total === 'number' ? progress.total : undefined;
   return page.evaluate(
     `(() => {
-      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines })};
+      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, bounds: HUD_PANEL_BOUNDS })};
       const id = 'farmslot-recipe-hud';
       // The recipe text lives in a closed shadow root, so the page's text and
       // selector queries (ui.wait_for, text-target presses) never see it and a
@@ -1618,11 +1610,14 @@ async function renderCdpHud(
         bottom: '',
         width: '',
         maxWidth: '',
+        maxHeight: payload.bounds.card.maxHeight + 'px',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
         borderRadius: isDocked ? '0' : '9px',
       });
       if (isCard) {
         el.style.width = payload.width || '360px';
-        el.style.maxWidth = 'calc(100vw - 16px)';
+        el.style.maxWidth = 'min(' + payload.bounds.card.maxWidth + 'px, calc(100vw - 16px))';
         if (payload.position.includes('top')) el.style.top = '8px';
         else el.style.bottom = '8px';
         if (payload.position.includes('left')) el.style.left = '8px';
@@ -1632,6 +1627,7 @@ async function renderCdpHud(
         else el.style.bottom = isDocked ? '0' : '8px';
         el.style.left = isDocked ? '0' : '8px';
         el.style.right = isDocked ? '0' : '8px';
+        el.style.maxWidth = payload.bounds.bar.maxWidth + 'px';
       }
       const accent = payload.status === 'fail' ? '#ff5c5c' : payload.status === 'pass' ? '#48d17a' : '#8ab4ff';
       const progressText = Number.isFinite(payload.current) && Number.isFinite(payload.total)
@@ -1655,7 +1651,7 @@ async function renderCdpHud(
       const body = document.createElement('div');
       Object.assign(body.style, { minWidth: '0', flex: '1' });
       const line1 = document.createElement('div');
-      Object.assign(line1.style, { color: '#fff', fontWeight: '750', lineHeight: '1.25', whiteSpace: 'normal' });
+      Object.assign(line1.style, payload.intentStyle, { color: '#fff', fontWeight: '750' });
       line1.textContent = payload.text || payload.nodeId;
       const line2 = document.createElement('div');
       Object.assign(line2.style, {

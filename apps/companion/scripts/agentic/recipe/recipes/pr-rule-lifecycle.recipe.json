@@ -113,7 +113,7 @@
       "wait-control-ready": {
         "action": "command",
         "cmd": "FARMSLOT_METRO_ORIGIN=http://localhost:$METRO_PORT yarn exec tsx ../../scripts/check-pr-rule-state.mts ui-ready",
-        "intent": "Read the rendered accessibility state until activation finishes before pressing Disable. The earlier gateway broadcast can arrive while this control is still disabled.",
+        "intent": "The gateway confirms the rule lifecycle without submitting an unintended repair.",
         "next": "disable-again"
       }
     }
