@@ -7,6 +7,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
 - Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
 
+- Keep slot readiness consistent with skills source reconciliation, additive local Git ignores and quiet live server logs, and apply the farm signing identity during health-only preparation without resetting the checkout.
+
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
 - Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.

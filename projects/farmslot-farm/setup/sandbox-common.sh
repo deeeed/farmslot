@@ -26,4 +26,3 @@ sandbox_is_primary_checkout() {
 sandbox_runtime_dir() {
   printf '%s\n' "${FARMSLOT_RUNTIME_DIR:-$1/.sandbox/farmslot-farm/agent}"
 }
-

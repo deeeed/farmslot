@@ -30,6 +30,7 @@ import {
 } from '../../runners/launch-command.js';
 import { normalizeRunner } from '../../runners/registry.js';
 
+import { ignoreFixtureMatches, skillsFixtureMatches } from './fixture-content.js';
 import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
 import { applySelectedApp, type CheckStep, type EventEmitter } from './shared.js';
@@ -442,6 +443,20 @@ async function checkFixtures(
     const rendered = await renderFixtureTemplate(localPath, vars, projectVars);
     const localMd5 = md5(rendered);
     const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`);
+    let matches = localMd5 === remoteMd5;
+    if (!matches && remoteMd5 && (dst === '.skills.local' || dst === '.git/info/exclude')) {
+      const content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`);
+      matches =
+        content.exitCode === 0 &&
+        (dst === '.git/info/exclude'
+          ? ignoreFixtureMatches(rendered, content.stdout)
+          : skillsFixtureMatches(
+              rendered,
+              content.stdout,
+              vars,
+              getProjectField(projectJson, 'repo_url'),
+            ));
+    }
     if (!remoteMd5) {
       steps.push({
         name: `fixture:${dst}`,
@@ -449,11 +464,14 @@ async function checkFixtures(
         detail: `${dst} missing on worker`,
       });
       mismatches++;
-    } else if (localMd5 === remoteMd5) {
+    } else if (matches) {
       steps.push({
         name: `fixture:${dst}`,
         status: 'pass',
-        detail: `${dst} — ${localMd5.slice(0, 8)}`,
+        detail:
+          localMd5 === remoteMd5
+            ? `${dst} — ${localMd5.slice(0, 8)}`
+            : `${dst} preserves required seed settings and installer additions`,
       });
     } else {
       steps.push({
@@ -575,7 +593,7 @@ async function checkDevice(
   }
 }
 
-async function checkDevServer(
+export async function checkDevServer(
   vars: SlotVars,
   projectJson: RawProjectJson,
   projectVars: ProjectVars | undefined,
@@ -614,16 +632,24 @@ async function checkDevServer(
     });
   }
 
-  // Check dev server log recency
+  // A healthy dev server can be quiet for hours. Old output is not evidence
+  // that the live server failed; retain the age check when liveness is absent.
   if (devServerLog) {
     const expandedLog = expandTemplate(devServerLog, vars, projectVars);
+    const running = steps.some((step) => step.name === 'devserver' && step.status === 'pass');
     try {
       const result = await execOnSlot(
         vars,
-        `find ${shellQuote(`${vars.remoteRepo}/${expandedLog}`)} -mmin -5 2>/dev/null | grep -q .`,
+        running
+          ? `test -s ${shellQuote(`${vars.remoteRepo}/${expandedLog}`)}`
+          : `find ${shellQuote(`${vars.remoteRepo}/${expandedLog}`)} -mmin -5 2>/dev/null | grep -q .`,
       );
       if (result.exitCode === 0) {
-        steps.push({ name: 'devserver.log', status: 'pass', detail: `${expandedLog} is recent` });
+        steps.push({
+          name: 'devserver.log',
+          status: 'pass',
+          detail: `${expandedLog} ${running ? 'present; dev server check passed' : 'is recent'}`,
+        });
       } else {
         steps.push({
           name: 'devserver.log',
