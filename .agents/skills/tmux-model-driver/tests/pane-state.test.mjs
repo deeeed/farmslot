@@ -77,7 +77,7 @@ test('explicit answers permit bounded text and navigation but never Tab or contr
   }
 });
 
-test('send requires the expected runner, idle native state and no question or queue', () => {
+test('send permits capable mid-turn input while protecting runner, question and queue', () => {
   const ready = { state: 'codex', confidence: 'high', delivery_phase: 'idle', phase: 'idle' };
   assert.equal(refusal(ready, 'codex'), null);
   assert.equal(
@@ -87,11 +87,16 @@ test('send requires the expected runner, idle native state and no question or qu
   assert.equal(refusal({ ...ready, state: 'shell' }, 'codex'), 'wrong_runner');
   assert.equal(refusal({ ...ready, state: 'unknown' }, 'codex'), 'wrong_runner');
   assert.equal(refusal({ ...ready, pending_question: true }, 'codex'), 'pending_question');
-  assert.equal(refusal({ ...ready, delivery_phase: 'busy' }, 'codex'), 'busy');
-  assert.equal(
-    refusal({ ...ready, delivery_phase: 'unknown' }, 'codex'),
-    'observability_unavailable',
-  );
+  assert.equal(refusal({ ...ready, delivery_phase: 'busy' }, 'codex'), null);
+  assert.equal(refusal({ ...ready, delivery_phase: 'unknown' }, 'codex'), null);
+  for (const phase of ['busy', 'unknown']) {
+    const state = { ...ready, state: 'claude', delivery_phase: phase, phase };
+    assert.equal(refusal(state, 'claude'), phase === 'busy' ? 'busy' : 'observability_unavailable');
+    assert.equal(
+      refusal({ ...ready, delivery_phase: phase, phase }, 'codex', true),
+      phase === 'busy' ? 'busy' : 'observability_unavailable',
+    );
+  }
   assert.equal(refusal({ ...ready, queued: true }, 'codex'), 'queued_input');
   assert.equal(
     refusal({ ...ready, queued: true, queue_kind: 'runner-queue' }, 'codex', true),
@@ -229,7 +234,8 @@ test('unhooked observation reads the native session held open by the runner', ()
     assert.equal(nativeState(meta, 'codex', dir).phase, 'idle');
     assert.equal(nativeState(meta, 'codex', dir).source, 'native-session-read-only');
     delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
-    assert.equal(nativeState(meta, 'codex', dir).phase, 'unknown');
+    assert.equal(nativeState(meta, 'codex', dir).phase, 'idle');
+    assert.equal(nativeState(meta, 'codex', dir).source, 'native-session');
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     if (saved === undefined) delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;

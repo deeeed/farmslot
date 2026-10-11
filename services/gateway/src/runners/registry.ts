@@ -1,3 +1,11 @@
+import {
+  runnerPaneContainsInstruction,
+  runnerPaneHasQueuedInstruction,
+} from './runner-pane-input.js';
+export {
+  runnerPaneContainsInstruction,
+  runnerPaneHasQueuedInstruction,
+} from './runner-pane-input.js';
 // runners.ts — Runner definitions and helpers (ADR-023 capability model)
 // Capability-based registry: RunnerDefinition exposes runner capabilities; launch-command.ts owns shell command construction.
 
@@ -1599,12 +1607,6 @@ export function runnerPaneComposerDraftState(
   return 'unknown';
 }
 
-export function runnerPaneContainsInstruction(pane: string, message: string): boolean {
-  const needle = instructionNeedle(message);
-  if (!needle) return false;
-  return normalizeInstructionText(pane).includes(needle);
-}
-
 export function runnerPaneHasProgressAfterInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
@@ -1616,18 +1618,6 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
     /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
-  );
-}
-
-export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
-  if (!runnerPaneContainsInstruction(pane, message)) return false;
-  const compactPane = normalizeInstructionText(pane).toLowerCase();
-  return (
-    compactPane.includes('messages to be submitted after next tool call') ||
-    compactPane.includes('submitted after next tool call') ||
-    compactPane.includes('message queued') ||
-    compactPane.includes('queued message') ||
-    compactPane.includes('tab to queue message')
   );
 }
 
