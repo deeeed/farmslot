@@ -211,3 +211,17 @@ test('review refresh preserves an unpublished old tip in a durable ref before re
   git(repo, 'reset', '--hard', 'origin/main');
   assert.equal(git(repo, 'show', 'refs/farmslot/preserved/' + tip + ':fix.txt'), 'fix.txt');
 });
+
+for (const backing of ['requested', 'default', 'none'])
+  test(`detached unpublished work backed only by ${backing} is still refused`, async (t) => {
+    const { repo, vars } = slotRepo(t, ['origin']);
+    const tip = git(repo, 'rev-parse', 'HEAD');
+    if (backing === 'default') git(repo, 'branch', '-f', 'main', tip);
+    git(repo, 'checkout', '--detach');
+    if (backing !== 'requested') git(repo, 'branch', '-D', BRANCH);
+    await assert.rejects(
+      assertPrepareCommitsPublished(vars, backing === 'requested' ? BRANCH : 'next', bash),
+      /unpushed commits/,
+    );
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), tip);
+  });

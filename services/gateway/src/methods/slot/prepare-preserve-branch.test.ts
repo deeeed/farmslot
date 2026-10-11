@@ -108,6 +108,22 @@ test('recovery into another clone restores a published branch without overwritin
   assert.equal(git(slot, 'rev-parse', 'main'), baseHead);
 });
 
+test('fresh dev prepare reuses detached parked work without moving its unpublished branch', async () => {
+  const slot = freshSlot('parked-slot');
+  git(slot, 'checkout', '-b', 'parked-work', baseHead);
+  writeFileSync(path.join(slot, 'file.txt'), 'parked worker commit\n');
+  git(slot, 'commit', '-am', 'test: parked work');
+  const parkedHead = git(slot, 'rev-parse', 'HEAD');
+  git(slot, 'checkout', '--detach');
+  await slotPrepare(
+    { ...params, branch: 'next-work', flowType: 'dev', forceNewBranch: true },
+    () => {},
+  );
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), baseHead);
+  assert.equal(git(slot, 'rev-parse', 'parked-work'), parkedHead);
+  assert.equal(git(slot, 'show', 'parked-work:file.txt'), 'parked worker commit');
+});
+
 test('start-ref recovery preserves unpublished commits and dirty files while recording the frozen base', async () => {
   const { slot, head } = unpublishedSlot('comparison-slot');
   const result = await slotPrepare(

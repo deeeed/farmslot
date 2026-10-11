@@ -89,3 +89,19 @@ test('a skipped original prepare does not record unused branch authority', async
   await recordInitialPrepareBranchState(run.id);
   assert.equal(getRun(run.id)?.engineState?.prepareBranch, undefined);
 });
+
+test('an original branchless claim can record intent when its branch is assigned later', async () => {
+  const run = createRun(
+    { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-930', slotId: 'slot' },
+    { deferBackgroundPersist: true },
+  );
+  await recordInitialPrepareBranchState(run.id);
+  assert.equal(getRun(run.id)?.engineState?.prepareBranch, undefined);
+  updateRun(run.id, { branch: 'late-work' });
+  await recordInitialPrepareBranchState(run.id);
+  assert.deepEqual(getRun(run.id)?.engineState?.prepareBranch, {
+    slotId: 'slot',
+    branch: 'late-work',
+    started: false,
+  });
+});

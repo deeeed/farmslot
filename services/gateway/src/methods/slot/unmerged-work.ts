@@ -69,6 +69,14 @@ export async function assertPrepareCommitsPublished(
   if (currentResult.exitCode !== 0 && currentResult.exitCode !== 1)
     throw prepareGitFailure('Cannot inspect current branch', currentResult);
   const currentBranch = currentResult.stdout.trim();
+  const containingRefs = async (tip: string, roots: string[]) => {
+    const result = await exec(
+      vars,
+      `${git} for-each-ref --contains=${shellQuote(tip)} --format='%(refname)' ${roots.map(shellQuote).join(' ')}`,
+    );
+    if (result.exitCode !== 0) throw prepareGitFailure('Cannot inspect backing Git refs', result);
+    return result.stdout.trim().split(/\s+/).filter(Boolean);
+  };
   const refreshed = new Set<string>();
   const protectedTips = new Set<string>();
   for (const ref of refs) {
@@ -76,19 +84,26 @@ export async function assertPrepareCommitsPublished(
     if (tipResult.exitCode !== 0) throw prepareGitFailure(`Cannot inspect ${ref}`, tipResult);
     const tip = tipResult.stdout.trim();
     if (protectedTips.has(tip)) continue;
+    if (ref === 'HEAD' && !currentBranch) {
+      // ADR-054 detaches parked work without moving its branch. Only refs that
+      // this prepare cannot reset or delete may protect that detached tip.
+      const local = await containingRefs(tip, ['refs/heads', 'refs/farmslot/preserved']);
+      if (
+        local.some(
+          (name) =>
+            name && name !== `refs/heads/${branch}` && name !== `refs/heads/${defaultBranch}`,
+        )
+      ) {
+        protectedTips.add(tip);
+        continue;
+      }
+    }
     const candidates = new Set<string>();
     for (const name of [currentBranch, branch, defaultBranch])
       if (name) for (const remote of remotes) candidates.add(`refs/remotes/${remote}/${name}`);
     // Cached refs are candidate names only. They never count as publication
     // evidence until that exact ref has been refreshed, including narrow clones.
-    const containing = await exec(
-      vars,
-      `${git} for-each-ref --contains=${shellQuote(tip)} --format='%(refname)' refs/remotes`,
-    );
-    if (containing.exitCode !== 0)
-      throw prepareGitFailure('Cannot inspect publication candidates', containing);
-    for (const candidate of containing.stdout.trim().split(/\s+/).filter(Boolean))
-      candidates.add(candidate);
+    for (const candidate of await containingRefs(tip, ['refs/remotes'])) candidates.add(candidate);
     let published = false;
     for (const candidate of candidates) {
       const remote = remotes.find((name) => candidate.startsWith(`refs/remotes/${name}/`));
@@ -146,7 +161,7 @@ export async function assertPrepareCommitsPublished(
     }
     if (!published)
       throw new Error(
-        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits or an unverified tip (${tip.slice(0, 12)}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, detach its worktree first, then delete that branch with git branch -D <abandoned-branch>`,
+        `Prepare refused on ${vars.slotId}: ${ref} has unpushed commits or an unverified tip (${tip.slice(0, 12)}). Push or preserve this branch before retrying; no branch was reset or deleted. To intentionally discard abandoned work, check out the slot's idle branch before deleting the abandoned branch with git branch -D <abandoned-branch>`,
       );
     protectedTips.add(tip);
   }

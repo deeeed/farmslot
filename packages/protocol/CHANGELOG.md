@@ -5,7 +5,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Support targeted publication checks against any configured Git remote.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.0 - 2026-10-10

@@ -6,6 +6,10 @@ clear_inherited_gateway_credentials() {
   unset GATEWAY_HOST FARMSLOT_GATEWAY_AUTH_MODE
 }
 
+sandbox_runtime_dir() {
+  printf '%s\n' "${FARMSLOT_RUNTIME_DIR:-$1/.sandbox/farmslot-farm/agent}"
+}
+
 # Sandbox services and their clients must never open the operator credential store.
 isolate_sandbox_home() {
   mkdir -p "$1/home"

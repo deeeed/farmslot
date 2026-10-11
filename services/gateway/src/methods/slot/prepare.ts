@@ -558,10 +558,9 @@ async function slotPrepareInner(
 
   // Preserve-mode retries keep the branch ref; every path that resets or recreates
   // refs must prove worker commits are remotely backed before its first destructive Git command.
-  const preserveOldReviewTips =
-    params.flowType === 'review-pr' || params.flowType === 'pr-complete';
+  const reviewRefreshFlow = params.flowType === 'review-pr' || params.flowType === 'pr-complete';
   const protectPrepareWork = () =>
-    assertPrepareCommitsPublished(vars, branch, execOnSlot, defaultBranch, preserveOldReviewTips);
+    assertPrepareCommitsPublished(vars, branch, execOnSlot, defaultBranch, reviewRefreshFlow);
   if (phaseEnabled('git') && !(branch && opts?.preserveBranch)) {
     await protectPrepareWork();
   }
@@ -805,7 +804,7 @@ async function slotPrepareInner(
       }
     }
     if (localExists) {
-      if (params.flowType === 'review-pr' || params.flowType === 'pr-complete') {
+      if (reviewRefreshFlow) {
         const refresh = await execOnSlot(
           vars,
           `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(branch))} && git -C ${shellQuote(vars.remoteRepo)} merge --ff-only ${shellQuote(`origin/${branch}`)}`,

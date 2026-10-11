@@ -60,6 +60,7 @@ import {
   handleRepeatReviewDecision,
 } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
+import { recordInitialPrepareBranchState } from './prepare-branch-state.js';
 import { detectProfileFit, FARMSLOT_PROJECT } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -483,6 +484,7 @@ export async function executeGradeStep(
       }
     }
   }
+  await recordInitialPrepareBranchState(runId);
   return { inputs, outputs };
 }
 
@@ -692,6 +694,8 @@ export async function executeWriteTaskStep(
       console.warn(`[run-engine] write-task summary failed (non-fatal): ${(err as Error).message}`);
     }
   }
+
+  await recordInitialPrepareBranchState(runId);
 
   // Template name mapping
   const FLOW_TO_TEMPLATE: Record<string, string> = {

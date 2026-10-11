@@ -68,7 +68,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
 clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
-isolate_sandbox_home "${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
+isolate_sandbox_home "$(sandbox_runtime_dir "$REPO_ROOT")"
 
 echo "[sandbox-companion] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"
 bash "${SCRIPT_DIR}/sandbox-dev.sh" start --gateway-port "${GATEWAY_PORT}"
