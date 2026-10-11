@@ -16,6 +16,7 @@ import {
   type RunnerSessionUsage,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -873,7 +874,10 @@ async function recoverRunningReviewAgent(params: {
           : {}),
         repository: identity?.repository,
         prNumber: identity?.prNumber,
-        lastReviewedHeadSha: reviewSnapshot.snapshot.headSha ?? undefined,
+        lastReviewedHeadSha:
+          (params.mode === 'warm'
+            ? reviewSnapshot.snapshot.baseSha
+            : reviewSnapshot.snapshot.headSha) ?? undefined,
       },
       validationDepth: params.validationDepth,
       usage,
@@ -939,6 +943,12 @@ export async function runReviewAgent(
       'missing-session',
       'WARM requires the reviewId of the lineage being continued',
     );
+  const resolvedEffort = executionModelFromSelection({
+    runner,
+    model,
+    effort: effort ?? null,
+    mode,
+  }).effort;
   if (getRun(_runId)?.transport === 'native') {
     const { runNativeReviewAgent } = await import('./native-review-agent.js');
     return runNativeReviewAgent({
@@ -952,7 +962,7 @@ export async function runReviewAgent(
       validationDepth,
       artifactScope,
       mode,
-      effort,
+      effort: resolvedEffort,
       reviewId,
     });
   }
@@ -974,7 +984,7 @@ export async function runReviewAgent(
   });
   if (recovered) return recovered;
   const parentRun = getRun(_runId);
-  const launchEffort = effort?.trim() || undefined;
+  const launchEffort = resolvedEffort ?? undefined;
   const startedAt = new Date().toISOString();
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   let progressWatcher: { stop(): void | Promise<void> } | null = null;
@@ -1570,7 +1580,9 @@ export async function runReviewAgent(
         sessionId: sessionMeta.runnerSessionId ?? undefined,
         repository: identity?.repository,
         prNumber: identity?.prNumber,
-        lastReviewedHeadSha: reviewSnapshot.snapshot.headSha,
+        lastReviewedHeadSha: warmSession
+          ? warmSession.lastReviewedHeadSha
+          : reviewSnapshot.snapshot.headSha,
         runner,
         model,
         effort: launchEffort ?? null,

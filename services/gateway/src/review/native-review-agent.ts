@@ -479,14 +479,19 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       session: {
         mode: input.mode,
         reviewId: lineage,
-        continuity: retained ? 'resumed' : 'fresh',
+        continuity: input.mode === 'warm' ? 'resumed' : 'fresh',
         ...(retained
           ? { priorRunId: retained.runId, priorSessionId: retained.runnerSessionId }
-          : {}),
+          : input.mode === 'warm' && recovering
+            ? { priorRunId: runId, priorSessionId: context.runnerSessionId ?? undefined }
+            : {}),
         sessionId: context.runnerSessionId ?? undefined,
         repository: identity?.repository,
         prNumber: identity?.prNumber,
-        lastReviewedHeadSha: reviewSnapshot.snapshot.headSha!,
+        lastReviewedHeadSha:
+          input.mode === 'warm'
+            ? reviewSnapshot.snapshot.baseSha!
+            : reviewSnapshot.snapshot.headSha!,
         runner,
         model,
         effort: input.effort?.trim() || null,

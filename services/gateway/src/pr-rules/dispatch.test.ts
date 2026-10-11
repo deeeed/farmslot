@@ -11,6 +11,7 @@ import {
   type PRWorkspaceExecutionProfile,
   resolveReviewQaDispatch,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
 import { migrateQueuedReviewQa } from '../backlog/review-qa-migration.js';
@@ -147,6 +148,32 @@ test('review admission reuses one durable queue entry across concurrent ticks an
   await next.dispatcher.reconcile();
   assert.equal(getQueueSnapshot().filter((item) => item.prWork?.sourceId === intent.id).length, 1);
   assert.equal(next.store.intent(intent.id)?.queueItemId, queued[0].id);
+});
+
+test('runner-default review model and effort remain authorized at final admission', async (t) => {
+  const selection = { runner: 'codex', model: null, effort: null, mode: 'cold' as const };
+  const profile = { ...execution, models: [selection] };
+  const { store, intent, dispatcher, preview } = await fixture(t, profile);
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === intent.id)!;
+  const resolved = executionModelFromSelection(selection);
+  assert.equal(item.model, resolved.model);
+  assert.equal(item.effort, resolved.effort);
+  const admission = new PRReviewDispatcher(
+    store,
+    {
+      refreshTarget: async () => preview,
+      refreshSubmission: async () => {
+        throw new Error('Unexpected submission');
+      },
+    },
+    () => true,
+    () => {},
+    async () => ({ choices: intersectPRExecutionProfiles([profile]), errors: [] }),
+  );
+  await admission.refreshBeforeCreate(item);
+  assert.doesNotThrow(() => admission.assertCurrent(item));
+  assert.throws(() => admission.assertCurrent({ ...item, effort: 'low' }), /changed/);
 });
 
 test('COLD intake retains the owned predecessor domain for skill and template selection', async (t) => {

@@ -56,16 +56,6 @@ export function reviewLoopNumberFromId(source: ReviewSource, id: string): number
 }
 
 /**
- * Composite merge key used by `prepareCompletionPackage` when reconciling
- * priorReviews against materialized reviews. Keying on (sourceKind, loopNumber)
- * makes accidental id collisions across streams impossible — defense in depth
- * if a future caller bypasses the source helpers.
- */
-export function reviewCompositeKey(source: ReviewSourceKind, loopNumber: number): string {
-  return `${source}::${loopNumber}`;
-}
-
-/**
  * Pure registry-driven mapping from a review id to its source kind. Iterates
  * the frozen REVIEW_SOURCES and matches the canonical `${prefix}-` shape.
  * Adding a new ReviewSourceKind is a pure addition — register the source and

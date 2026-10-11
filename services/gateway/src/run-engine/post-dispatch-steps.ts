@@ -1200,7 +1200,7 @@ export async function executeHumanGateStep(
         gateAction = await presentReadyGate();
         continue;
       }
-      if (gateAction === 'request-review' || gateAction === 'request-review') {
+      if (gateAction === 'request-review') {
         reviewRequestLoops += 1;
         if (shouldWarnHumanGateReviewRequestRunaway(reviewRequestLoops)) {
           console.warn(
@@ -1209,7 +1209,7 @@ export async function executeHumanGateStep(
         }
         const beforeReviewPlan = getRun(runId)!;
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
-        // Prefer the latest request-review / request-review
+        // Prefer the latest request-review
         // decision's selectionData over a stale pending plan. Pending alone
         // previously won, so a second request that changed runner (claude→codex)
         // could still launch the old runner. Approval-only decision lookup was

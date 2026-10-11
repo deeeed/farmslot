@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
 
 import type { Run } from '@farmslot/protocol';
@@ -15,12 +16,14 @@ import {
   assertRunGateActionAvailable,
   buildReviewChainResult,
   buildRunCreateParams,
+  buildRunGateParams,
   formatReviewChainLine,
   formatRunSessionLines,
   formatRunStepTimingLines,
   parseAgentRole,
   parseOptionalPrNumber,
   parseTaskPath,
+  registerRunCommand,
 } from './run.js';
 
 function repeatReviewRun(): Run {
@@ -126,6 +129,58 @@ test('run gate allows continue on a timed-out interactive handoff', () => {
     () => assertRunGateActionAvailable(decision, 'not-real'),
     /Available actions: signal-written, continue, abort/,
   );
+});
+
+test('run gate selection flags serialize the shared request and package binding', () => {
+  const program = new Command();
+  registerRunCommand(program);
+  const command = program.commands
+    .find((entry) => entry.name() === 'run')!
+    .commands.find((entry) => entry.name() === 'gate')!;
+  command.parseOptions([
+    '--action',
+    'request-review',
+    '--runner',
+    'codex',
+    '--model',
+    'gpt-6.1-sol',
+    '--effort',
+    'xhigh',
+    '--review-mode',
+    'cold',
+    '--review-sequence',
+    '[]',
+  ]);
+  const decision = {
+    id: 'gate-1',
+    payload: { kind: 'ready', prPackage: { id: 'package-1', packageHash: 'hash-1' } },
+  } as unknown as Run['decisions'][number];
+  const params = buildRunGateParams(repeatReviewRun(), decision, 'request-review', command.opts());
+  assert.equal(params.runId, 'review-run-2');
+  assert.equal(params.actionId, 'request-review');
+  assert.equal(params.selectionData?.packageId, 'package-1');
+  assert.deepEqual(params.selectionData?.reviewRequest, {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'xhigh',
+    mode: 'cold',
+  });
+});
+
+test('run gate WARM requires and preserves retained lineage', () => {
+  const run = repeatReviewRun();
+  const decision = { id: 'gate-1' } as Run['decisions'][number];
+  const selection = { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', reviewMode: 'warm' };
+  assert.throws(() => buildRunGateParams(run, decision, 'request-review', selection), /WARM/);
+  const context = {
+    reviewLineages: [{ repository: 'example/repo', prNumber: 1, reviewId: 'review-1' }],
+  };
+  const params = buildRunGateParams(run, decision, 'request-review', {
+    ...selection,
+    reviewContext: JSON.stringify(context),
+  });
+  assert.deepEqual((params.selectionData?.reviewRequest as { context: unknown }).context, context);
+  assert.throws(() => buildRunGateParams(run, decision, 'hold', selection), /request-review/);
 });
 
 test('run create builds params from a GitHub/Jira ticket source', () => {

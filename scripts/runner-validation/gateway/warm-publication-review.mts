@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { reviewPolicySatisfied } from '../../../packages/protocol/src/runs/review-policy.js';
 import { REQUESTED_REVIEW_SOURCE } from '../../../services/gateway/src/quality/review-sources.js';
 import { loadSlotVars } from '../../../services/gateway/src/core/config.js';
+import { reviewFinalSnapshotMatchesPreparedPackage } from '../../../services/gateway/src/run-engine/gate-policy.js';
 import {
   createRun,
   getRun,
@@ -235,6 +236,22 @@ if (phase === 'first') {
       },
     },
   });
+  const { prepareCompletionPackage } =
+    await import('../../../services/gateway/src/run-completion/orchestrator.js');
+  const { prPackage } = await prepareCompletionPackage(runId, { stampReviews: false });
+  const review = getRun(runId)!.engineState!.publishGate!.reviews!.find(
+    (candidate) => candidate.id === priorReviewScope,
+  )!;
+  assert.equal(
+    result.session?.lastReviewedHeadSha,
+    first.result.reviewSnapshot.headSha,
+    'WARM result provenance keeps the previous reviewed head',
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(review, prPackage),
+    true,
+    'The real WARM delta must certify the refreshed full PR package',
+  );
 }
 after = getRun(runId)!;
 assert.equal(

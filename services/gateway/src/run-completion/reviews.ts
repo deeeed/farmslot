@@ -13,6 +13,20 @@ import {
 import { formatReviewMarkdown } from '../quality/review-artifacts.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 
+function newerPersistedReview(run: Run, review: ReviewStatus): ReviewStatus | undefined {
+  const running = run.steps.find((step) => step.name === 'review')?.status === 'running';
+  const prior = [...(run.engineState?.publishGate?.reviews ?? [])]
+    .reverse()
+    .find(
+      (candidate) => candidate.id === review.id && (candidate.verdict !== 'pending' || running),
+    );
+  if (!prior) return undefined;
+  const priorAt = prior.completedAt ?? prior.reviewSnapshot?.capturedAt ?? prior.startedAt ?? '';
+  const materializedAt =
+    review.completedAt ?? review.reviewSnapshot?.capturedAt ?? review.startedAt ?? '';
+  return priorAt >= materializedAt ? prior : undefined;
+}
+
 export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus[]> {
   const step = run.steps.find((s) => s.name === 'review');
   const out = (step?.outputs ?? {}) as Record<string, unknown>;
@@ -65,6 +79,8 @@ export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus
       startedAt: attempts[0]?.startedAt ?? step.startedAt,
       completedAt: finalAttempt.completedAt ?? step.completedAt,
     };
+    const prior = newerPersistedReview(run, review);
+    if (prior) return [prior];
     if (run.taskFile) {
       const taskDir = path.dirname(run.taskFile);
       const artifactsDir = path.join(taskDir, 'artifacts');
@@ -146,6 +162,8 @@ export async function materializeReviewArtifacts(run: Run): Promise<ReviewStatus
     startedAt: step.startedAt,
     completedAt: step.completedAt,
   };
+  const prior = newerPersistedReview(run, review);
+  if (prior) return [prior];
 
   if (run.taskFile) {
     const artifactsDir = path.join(path.dirname(run.taskFile), 'artifacts');

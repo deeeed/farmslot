@@ -12,6 +12,7 @@ import type {
   TaskTemplateSelection,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { defaultModelForRunner, type ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 
@@ -58,6 +59,21 @@ export interface DispatchPayloadDraftInput {
   pressureAdmissionRef?: PressureAdmissionReference;
   pressureOverride?: PressureDispatchOverride;
   comparison: Partial<ComparisonRunParams>;
+}
+
+export function dispatchWizardExecutionOptions(
+  flowType: FlowType | null,
+  picker: ReviewDispatchViewModel,
+): Pick<DispatchPayloadDraftInput, 'runner' | 'model' | 'effort' | 'reviewMode' | 'reviewContext'> {
+  const selection = picker.toSelection();
+  return {
+    runner: selection.runner,
+    model: selection.model ?? defaultModelForRunner(selection.runner, picker.catalog) ?? '',
+    effort: selection.effort ?? '',
+    ...(flowType === 'review-pr'
+      ? { reviewMode: selection.mode, reviewContext: picker.toReviewContext() }
+      : {}),
+  };
 }
 
 export function buildDispatchWizardPayloadDraft(

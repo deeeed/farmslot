@@ -29,12 +29,12 @@ export interface ReviewValidationOptions {
   allowSequence?: boolean;
   allowEmpty?: boolean;
   maxRows?: number;
+  sequenceRole?: ReviewDispatchSequenceRole;
 }
 export type ReviewDispatchAction = 'request-review' | 'dispatch' | 'configure' | 'chat';
 export type ReviewDispatchSequenceRole = 'reviews' | 'execution-alternatives';
 export interface ReviewDispatchContext extends ReviewValidationOptions {
   allowedActions: readonly ReviewDispatchAction[];
-  sequenceRole?: ReviewDispatchSequenceRole;
   /** QA uses execution choices without static-review session eligibility. */
   workflow?: 'review' | 'qa';
   defaults?: Partial<ReviewSelection>;

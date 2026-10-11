@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type {
+  PRExecutionProfile,
   PRMonitor,
   PRProjectMonitorPolicy,
   PRReviewIntent,
   PRTeamProfile,
   Run,
 } from '@farmslot/protocol';
-import { ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
+import {
+  ReviewDispatchViewModel,
+  reviewLineagesForPR,
+  reviewSequenceForExecution,
+} from '@farmslot/review-dispatch';
 
 import {
   buildPRMonitorConfig,
@@ -482,4 +487,81 @@ test('the QA picker keeps its work separate from unavailable static WARM provena
   const qa = updatePRReviewOptions({ mode: 'warm' }, { workflow: 'qa' });
   assert.equal(qa.mode, 'cold');
   assert.equal(qa.reviewContext, undefined);
+});
+
+test('six and twenty PR alternatives retain null defaults and row resources through editing and serialization', () => {
+  for (const count of [6, 20]) {
+    const models = Array.from({ length: count }, (_, index) => ({
+      runner: 'codex',
+      model: index % 2 ? 'gpt-6-sol' : null,
+      effort: index % 2 ? 'medium' : null,
+      mode: 'cold' as const,
+      allowedSlots: [`slot-${index}`],
+    }));
+    const profile: PRExecutionProfile = {
+      slotPolicy: { kind: 'pool', allowedSlots: models.flatMap((model) => model.allowedSlots) },
+      models,
+    };
+    const picker = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['configure'],
+        allowSequence: true,
+        sequenceRole: 'execution-alternatives',
+      },
+      sequence: reviewSequenceForExecution(profile.models),
+    });
+    const resources = new Map(
+      picker.rows.map((row, index) => [row.id, { allowedSlots: models[index].allowedSlots }]),
+    );
+    picker.moveRow(picker.rows.at(-1)!.id, 0);
+    const expected = [models.at(-1)!, ...models.slice(0, -1)];
+    const selected = { ...profile, models: picker.toExecutionModels(resources) };
+    const request = buildPRRequest(
+      {
+        ...newPRRequestDraft(),
+        url: 'https://github.com/owner/repo/pull/42',
+        teamId: team.id,
+        overrideExecution: true,
+        execution: selected,
+      },
+      `alternatives-${count}`,
+    );
+    assert.deepEqual(request.execution?.models, expected);
+    const monitor = buildPRMonitorConfig({
+      ...newPRMonitorDraft(),
+      url: 'https://github.com/owner/repo/pull/42',
+      login: 'reader',
+      project: 'project',
+      automatic: true,
+      execution: selected,
+    });
+    assert.equal(monitor.policy.mode, 'automatic-repair');
+    if (monitor.policy.mode === 'automatic-repair')
+      assert.deepEqual(monitor.policy.execution.models, expected);
+    if (count === 20) assert.equal(picker.canAddRow, false);
+  }
+});
+
+test('the PR alternative limit remains twenty while counted review sequences remain five', () => {
+  const selection = { runner: 'codex', model: null, effort: null, mode: 'cold' as const };
+  assert.throws(
+    () =>
+      new ReviewDispatchViewModel({
+        context: {
+          allowedActions: ['configure'],
+          allowSequence: true,
+          sequenceRole: 'execution-alternatives',
+        },
+        sequence: Array.from({ length: 21 }, () => ({ ...selection })),
+      }),
+    /20/,
+  );
+  assert.throws(
+    () =>
+      new ReviewDispatchViewModel({
+        context: { allowedActions: ['request-review'], allowSequence: true },
+        sequence: Array.from({ length: 6 }, () => ({ ...selection })),
+      }),
+    /5/,
+  );
 });

@@ -307,6 +307,22 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
     ],
   });
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(approvedRun, pkg));
+  const latestFailure: ReviewStatus = { ...review, verdict: 'issues', unresolvedCount: 1 };
+  assert.throws(
+    () => assertUnavailableSnapshotOverrideAvailable([review, latestFailure], pkg, reviewPolicy),
+    /exact package HEAD and subject/,
+  );
+  assert.throws(
+    () =>
+      assertPublicationReviewPolicySatisfied(
+        makeRun({
+          ...approvedRun,
+          engineState: { publishGate: { reviewPolicy, reviews: [review, latestFailure] } },
+        }),
+        pkg,
+      ),
+    /requires passing reviews/,
+  );
 });
 test('publication review policy rejects semantic review subject drift', () => {
   const pkg = makeReadyGatePackage({
@@ -567,6 +583,7 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
         },
       ],
       reviewSnapshot: {
+        ...pkg.reviewSnapshot,
         headSha: 'head-new',
         capturedAt: '2026-04-15T00:40:00.000Z',
         source: 'local-git',
@@ -587,6 +604,33 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
 
   assert.equal(countStalePublicationReviews(reviews, pkg), 0);
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, pkg));
+
+  const twoReviewPackage = {
+    ...pkg,
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' as const },
+  };
+  assert.equal(countStalePublicationReviews(reviews, twoReviewPackage), 2);
+  assert.throws(
+    () => assertPublicationReviewPolicySatisfied(run, twoReviewPackage),
+    /requires passing reviews/,
+    'one current-head fix-loop approval cannot satisfy a minimum of two',
+  );
+  const secondCurrentApproval = {
+    ...reviews[2]!,
+    id: 'review-4',
+    reviewerSessionId: 'fixture-session-review-4',
+    feedbackSent: false,
+    attempts: [],
+    timeline: [],
+  };
+  const currentReviews = [...reviews, secondCurrentApproval];
+  assert.equal(countStalePublicationReviews(currentReviews, twoReviewPackage), 0);
+  assert.doesNotThrow(() =>
+    assertPublicationReviewPolicySatisfied(
+      makeRun({ engineState: { publishGate: { reviews: currentReviews } } }),
+      twoReviewPackage,
+    ),
+  );
 
   const mismatchedSubjectCertification = reviews.map((review) =>
     review.id === 'review-3' ? { ...review, reviewedReviewSubjectHash: 'subject-old' } : review,
@@ -1044,6 +1088,14 @@ test('a verified WARM delta certifies the current full PR package head', () => {
     },
   };
   assert.equal(reviewFinalSnapshotMatchesPreparedPackage(review, pkg), true);
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      { ...review, session: { ...review.session!, lastReviewedHeadSha: 'current' } },
+      pkg,
+    ),
+    false,
+    'the WARM result retains the prior reviewed head, not the advanced retained binding',
+  );
   assert.doesNotThrow(() =>
     assertPublicationReviewPolicySatisfied(
       makeRun({ engineState: { publishGate: { reviews: [review] } } }),

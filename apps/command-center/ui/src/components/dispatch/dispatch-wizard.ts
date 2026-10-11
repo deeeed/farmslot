@@ -53,6 +53,7 @@ import {
   addDispatchQueueItemFromDraft,
   buildDispatchWizardPayloadDraft,
   dispatchRunCreateFromDraft,
+  dispatchWizardExecutionOptions,
 } from './dispatch-wizard-actions.js';
 import { deriveDispatchWizardBlockingState } from './dispatch-wizard-blockers.js';
 import {
@@ -1356,9 +1357,7 @@ export class DispatchWizard extends DispatchWizardState {
       slotOverride: this._slotOverride,
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
-      model: this._model,
-      runner: this._runner,
-      effort: this._effort,
+      ...dispatchWizardExecutionOptions(this._flowType, this._executionPicker),
       app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
       taskTemplate,
       domain: this._domain || undefined,
@@ -1373,8 +1372,6 @@ export class DispatchWizard extends DispatchWizardState {
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
 
-      reviewMode:
-        this._flowType === 'review-pr' ? this._executionPicker.toSelection().mode : undefined,
       ...(publicationReviewsEnabled(this._flowType, mode)
         ? this._reviewPicker.toDispatchOptions()
         : {}),

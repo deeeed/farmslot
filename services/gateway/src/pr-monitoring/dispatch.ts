@@ -396,12 +396,26 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
     const latest = this.lookup(item);
     if (!latest || expected !== fingerprint(latest.monitor, latest.repair))
       throw new Error('Repair policy or evidence changed during admission');
-    const selection = JSON.stringify([item.slotId, item.runner, item.model, item.effort]);
+    const execution = executionModelFromSelection({
+      runner: item.runner ?? '',
+      model: item.model ?? null,
+      effort: item.effort ?? null,
+      mode: item.reviewMode ?? 'cold',
+    });
+    const selection = JSON.stringify([
+      item.slotId,
+      execution.runner,
+      execution.model,
+      execution.effort,
+    ]);
     if (
-      !prepared.choices.some(
-        (choice) =>
-          JSON.stringify([choice.slotId, choice.runner, choice.model, choice.effort]) === selection,
-      )
+      !prepared.choices.some((choice) => {
+        const execution = executionModelFromSelection(choice);
+        return (
+          JSON.stringify([choice.slotId, execution.runner, execution.model, execution.effort]) ===
+          selection
+        );
+      })
     )
       throw new Error('Selected repair execution is no longer authorized');
     this.proofs.set(item.id, { fingerprint: expected, checkedAt: Date.now(), selection });
@@ -409,12 +423,19 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   assertCurrent(item: QueueItem): void {
     const current = this.lookup(item);
     const proof = this.proofs.get(item.id);
+    const execution = executionModelFromSelection({
+      runner: item.runner ?? '',
+      model: item.model ?? null,
+      effort: item.effort ?? null,
+      mode: item.reviewMode ?? 'cold',
+    });
     if (
       !current ||
       !proof ||
       Date.now() - proof.checkedAt > 60_000 ||
       proof.fingerprint !== fingerprint(current.monitor, current.repair) ||
-      proof.selection !== JSON.stringify([item.slotId, item.runner, item.model, item.effort])
+      proof.selection !==
+        JSON.stringify([item.slotId, execution.runner, execution.model, execution.effort])
     )
       throw new Error('Repair admission changed; revalidate before dispatch');
     const reason = this.refusal(current.monitor, current.repair);

@@ -146,7 +146,7 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
   const json = JSON.parse(await readFile(path.join(dir, PREVIOUS_REVIEW_JSON_INPUT), 'utf-8'));
   assert.equal(json.currentHeadSha, 'current-head');
   const markdown = await readFile(path.join(dir, PREVIOUS_REVIEW_MD_INPUT), 'utf-8');
-  assert.match(markdown, /Scope: incremental/);
+  assert.match(markdown, /Review mode: warm/);
   assert.match(markdown, /src\/a\.ts:7 — Fix this\./);
   assert.match(markdown, /artifacts\/recipe\.json/);
 });

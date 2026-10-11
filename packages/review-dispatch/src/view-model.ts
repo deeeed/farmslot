@@ -17,6 +17,7 @@ import {
 } from './catalog.js';
 import { copyExecutionResources } from './execution.js';
 import { assertWarmReviewContext } from './provenance.js';
+import { sequenceMaximumRows } from './row-limit.js';
 import type {
   ReviewDispatchAction,
   ReviewDispatchCatalog,
@@ -105,7 +106,10 @@ export class ReviewDispatchViewModel {
     return this.currentContext.minRows ?? (this.currentContext.allowEmpty ? 0 : 1);
   }
   private get maxRows(): number {
-    return this.currentContext.allowSequence ? (this.currentContext.maxRows ?? 5) : 1;
+    return sequenceMaximumRows({
+      ...this.currentContext,
+      allowSequence: Boolean(this.currentContext.allowSequence),
+    });
   }
 
   subscribe(listener: () => void): () => void {
@@ -119,7 +123,7 @@ export class ReviewDispatchViewModel {
   }
   private checkContext(context: ReviewDispatchContext): ReviewDispatchContext {
     const min = context.minRows ?? (context.allowEmpty ? 0 : 1);
-    const max = context.allowSequence ? (context.maxRows ?? 5) : 1;
+    const max = sequenceMaximumRows({ ...context, allowSequence: Boolean(context.allowSequence) });
     if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 0 || max < 1 || min > max)
       throw new Error('Review picker row limits are invalid');
     if (context.workflow === 'qa' && context.allowedActions.includes('request-review'))
@@ -339,7 +343,11 @@ export class ReviewDispatchViewModel {
       )
     )
       throw new Error('Dispatch configuration is unavailable in this context');
-    const reviewSequence = this.toSequence();
+    const reviewSequence = parseReviewSequence(this.toSequence(), {
+      ...this.currentContext,
+      catalog: this.catalog,
+      sequenceRole: 'reviews',
+    });
     return {
       reviewSequence,
       ...(this.toReviewContext() ? { reviewSequenceContext: this.toReviewContext() } : {}),

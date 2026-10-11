@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReviewSelection, ReviewSessionTrace, Run } from '@farmslot/protocol';
+import {
+  assertPRExecutionProfile,
+  type ReviewSelection,
+  type ReviewSessionTrace,
+  type Run,
+} from '@farmslot/protocol';
 
 import {
   assertReviewPolicy,
@@ -11,12 +16,15 @@ import {
   catalogWithRunnerModels,
   createReviewDispatchCatalog,
   executionModelFromSelection,
+  executionModelsFromReviewSequence,
+  parseReviewSequence,
   resolveReviewDispatchDefaults,
   reviewContextFromRequest,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
   reviewRequestContextForPR,
   reviewRequestFromSequence,
+  reviewSequenceForExecution,
   reviewSequenceFromRequest,
 } from '../src/index.js';
 
@@ -394,4 +402,111 @@ test('a project WARM default starts COLD without lineage, while explicit WARM st
   vm.setMode(vm.rows[0].id, 'warm');
   assert.equal(vm.selection?.mode, 'warm');
   assert.equal(vm.canInvoke('request-review'), false);
+});
+
+for (const count of [6, 20]) {
+  test(`${count}-alternative PR profiles open, reorder and serialize through the shared model`, () => {
+    const sequence = Array.from({ length: count }, (_, index) => ({
+      ...cold,
+      model: index % 2 ? null : cold.model,
+      effort: index % 2 ? null : cold.effort,
+    }));
+    const resources = sequence.map((_, index) => ({ allowedMachines: [`machine-${index}`] }));
+    const models = executionModelsFromReviewSequence(sequence, resources);
+    assertPRExecutionProfile({ workspacePolicy: { kind: 'pool' }, models });
+    const context = {
+      allowedActions: ['configure'] as const,
+      allowSequence: true,
+      sequenceRole: 'execution-alternatives' as const,
+    };
+    const vm = new ReviewDispatchViewModel({
+      context,
+      sequence: reviewSequenceForExecution(models),
+    });
+    const rowResources = new Map(vm.rows.map((row, index) => [row.id, resources[index]]));
+    assert.equal(vm.valid, true);
+    assert.equal(vm.canAddRow, count < 20);
+    assert.deepEqual(vm.toExecutionModels(rowResources), models);
+    assert.deepEqual(parseReviewSequence(sequence, context), sequence);
+    vm.moveRow(vm.rows[count - 1].id, 0);
+    assert.deepEqual(vm.toExecutionModels(rowResources), [
+      models[count - 1],
+      ...models.slice(0, -1),
+    ]);
+    assert.deepEqual(vm.toSequence(), [sequence[count - 1], ...sequence.slice(0, -1)]);
+  });
+}
+
+test('execution alternatives stop at 20 while counted review serialization stops at 5', () => {
+  const twenty = Array.from({ length: 20 }, () => ({ ...cold }));
+  const options = { allowSequence: true, sequenceRole: 'execution-alternatives' as const };
+  const vm = new ReviewDispatchViewModel({
+    context: { ...options, allowedActions: ['configure'] },
+    sequence: twenty,
+  });
+  assert.throws(() => vm.addRow(cold), /at most 20/);
+  assert.throws(() => vm.setSequence([...twenty, cold]), /at most 20/);
+  assert.equal(vm.toExecutionModels().length, 20);
+  assert.throws(() => executionModelsFromReviewSequence([...twenty, cold]), /at most 20/);
+  assert.throws(() => reviewSequenceForExecution([...twenty, cold]), /at most 20/);
+  assert.throws(() => vm.toDispatchOptions(), /at most 5/);
+  const six = twenty.slice(0, 6);
+  assert.throws(
+    () =>
+      new ReviewDispatchViewModel({
+        context: { allowedActions: ['request-review'], allowSequence: true },
+        sequence: six,
+      }),
+    /at most 5/,
+  );
+  assert.throws(() => assertReviewSequence(six, { maxRows: 20 }), /at most 5/);
+  assert.throws(() => reviewRequestFromSequence(six, options), /at most 5/);
+  assert.throws(
+    () => assertReviewRequestPayload({ ...cold, sequence: six.slice(1) }, options),
+    /at most 5/,
+  );
+  assert.throws(
+    () => reviewSequenceFromRequest({ ...cold, sequence: six.slice(1) }, options),
+    /at most 5/,
+  );
+  assert.doesNotThrow(() => reviewRequestFromSequence(twenty.slice(0, 5)));
+});
+
+test('stored selection overrides inherit undefined fields and preserve explicit null defaults', () => {
+  const project = {
+    name: 'app',
+    defaults: { dev: { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high' } },
+  };
+  const fallback = { runner: 'claude', model: 'opus', effort: null, mode: 'cold' as const };
+  assert.deepEqual(
+    resolveReviewDispatchDefaults(project, 'dev', fallback, {
+      runner: undefined,
+      model: undefined,
+      effort: undefined,
+    }),
+    cold,
+  );
+  assert.deepEqual(
+    resolveReviewDispatchDefaults(project, 'dev', fallback, {
+      runner: 'pi',
+      model: null,
+      effort: null,
+    }),
+    { runner: 'pi', model: null, effort: null, mode: 'cold' },
+  );
+  assert.deepEqual(
+    resolveReviewDispatchDefaults(project, 'dev', fallback, {
+      model: 'gpt-6-astra',
+      effort: 'ultra',
+      mode: 'warm',
+    }),
+    { runner: 'codex', model: 'gpt-6-astra', effort: 'ultra', mode: 'warm' },
+  );
+  assert.deepEqual(
+    resolveReviewDispatchDefaults(undefined, 'dev', fallback, {
+      model: undefined,
+      effort: undefined,
+    }),
+    fallback,
+  );
 });

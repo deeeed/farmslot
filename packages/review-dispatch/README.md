@@ -42,8 +42,13 @@ specific ID or one unambiguous lineage. `setContext` preserves selections;
 and blocks invocation. The gateway verifies ownership and eligibility.
 
 PR alternatives set `sequenceRole: 'execution-alternatives'` and may share one
-lineage. Counted review rows cannot duplicate it. QA contexts set `workflow: 'qa'`;
+lineage, with up to 20 rows. Counted review sequences stay capped at five rows and
+cannot duplicate a lineage. QA contexts set `workflow: 'qa'`;
 static lineage does not block QA, and QA cannot invoke `request-review`.
+
+`resolveReviewDispatchDefaults(project, flow, fallback, overrides)` applies stored
+overrides after project defaults. Undefined fields inherit defaults; null model
+and effort values remain explicit runner-default choices.
 
 ## Source layout
 

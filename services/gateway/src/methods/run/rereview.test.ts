@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, { mock } from 'node:test';
+import test, { beforeEach, mock } from 'node:test';
 
 import type { Run, RunCreateParams } from '@farmslot/protocol';
 
@@ -10,6 +10,7 @@ const liveHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
 const runs = new Map<string, Run>();
 let releaseAncestry: () => void = () => {};
 let ancestryCalls = 0;
+let ancestor = true;
 
 const prior = {
   id: 'prior-review',
@@ -23,13 +24,23 @@ const prior = {
   slotId: 'slot-1',
   steps: [],
   decisions: [],
-  metrics: { runner: 'codex', model: 'model' },
+  metrics: { runner: 'codex', model: 'gpt-6-astra' },
+  effort: 'high',
   reviewResult: {
     kind: 'review',
     prNumber: 42,
     repo: 'owner/repo',
     recommendation: 'request changes',
     reviewMd: 'review.md',
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: 'review-lineage',
+      sessionId: 'prior-session',
+      repository: 'owner/repo',
+      prNumber: 42,
+      lastReviewedHeadSha: priorHead,
+    },
     lineComments: [{ path: 'src/a.ts', line: 7, body: 'Fix this.', severity: 'blocking' }],
     reviewSnapshot: {
       source: 'github-pr',
@@ -55,7 +66,7 @@ mock.module('../../external/github.js', {
           resolve();
         };
       });
-      return false;
+      return ancestor;
     },
   },
 });
@@ -85,6 +96,7 @@ mock.module('../../runs/store.js', {
     getAllRuns: () => [...runs.values()],
     listRuns: () => ({ runs: [...runs.values()] }),
     createRun: (params: RunCreateParams) => {
+      assertPrimaryReviewContext(params);
       const run = { ...params, id: `child-${runs.size}`, status: 'created' } as unknown as Run;
       runs.set(run.id, run);
       return run;
@@ -105,8 +117,41 @@ mock.module('../../run-engine/orchestrator.js', {
 });
 
 const { runRereviewLatestHead } = await import('./rereview.js');
+const { assertPrimaryReviewContext } = await import('../../run-engine/review-plan.js');
+const { registerWarmReviewerSession, resetWarmReviewerSessionsForTest } =
+  await import('../../review/session-mode.js');
 
-test('a retried click during the ancestry lookup reuses the first rebased re-review', async () => {
+beforeEach(() => {
+  runs.clear();
+  runs.set(prior.id, { ...prior });
+  ancestryCalls = 0;
+  ancestor = true;
+  releaseAncestry = () => {};
+  resetWarmReviewerSessionsForTest();
+  registerWarmReviewerSession({
+    runId: prior.id,
+    reviewId: 'review-lineage',
+    project: prior.project,
+    ownerPrincipalId: null,
+    transport: 'tmux',
+    taskDir: '/tmp/review',
+    artifactScope: 'review-lineage',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    repository: 'owner/repo',
+    prNumber: 42,
+    contextId: 'review-context',
+    windowName: 'review-window',
+    slotId: 'slot-1',
+    runnerSessionId: 'prior-session',
+    runnerSessionPath: '/tmp/reviewer.jsonl',
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: priorHead,
+  });
+});
+
+test('a retried click during ancestry lookup reuses the WARM child with its primary lineage', async () => {
   const first = runRereviewLatestHead({ runId: prior.id });
   const second = runRereviewLatestHead({ runId: prior.id });
   while (ancestryCalls < 2) await new Promise((resolve) => setImmediate(resolve));
@@ -117,10 +162,48 @@ test('a retried click during the ancestry lookup reuses the first rebased re-rev
   assert.equal(children.length, 1, 'one warm re-review per head');
   assert.equal(a.runId, children[0]!.id);
   assert.equal(b.runId, children[0]!.id);
-  assert.equal(children[0]!.reviewMode, 'full', 'a rebased head gets a full review');
+  assert.equal(children[0]!.reviewMode, 'warm');
+  assert.deepEqual(children[0]!.reviewContext, {
+    reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-lineage' }],
+  });
   assert.deepEqual(children[0]!.repeatReviewContext?.unresolvedFindings, [
     { file: 'src/a.ts', line: 7, description: 'Fix this.' },
   ]);
+});
+
+test('missing or ambiguous lineage preserves the parent without creating a child', async () => {
+  const result = prior.reviewResult!;
+  for (const state of [
+    { reviewResult: { ...result, session: undefined } },
+    { repeatReviewContext: { session: { ...result.session!, reviewId: 'review-other' } } },
+  ]) {
+    runs.set(prior.id, { ...prior, ...state } as Run);
+    await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /missing or ambiguous/);
+    assert.equal(runs.size, 1);
+    assert.equal(runs.get(prior.id)!.status, 'blocked');
+  }
+});
+
+test('unavailable retained session refuses before superseding the parent', async () => {
+  resetWarmReviewerSessionsForTest();
+  const click = runRereviewLatestHead({ runId: prior.id });
+  const refused = assert.rejects(click, /no verified retained session/);
+  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseAncestry();
+  await refused;
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'blocked');
+});
+
+test('a rebased head refuses WARM without changing the parent', async () => {
+  ancestor = false;
+  const click = runRereviewLatestHead({ runId: prior.id });
+  const refused = assert.rejects(click, /WARM review unavailable.*not an ancestor/);
+  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseAncestry();
+  await refused;
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'blocked');
 });
 
 test('a parent cancelled during the ancestry lookup gets no warm re-review', async () => {

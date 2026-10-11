@@ -25,6 +25,7 @@ import {
   type Run,
   type RunCancelEffect,
   type RunCreateParams,
+  type RunDecision,
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
@@ -35,7 +36,13 @@ import {
   runStepQueuedMs,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
-import { parseReviewRequestContext, parseReviewSequence } from '@farmslot/review-dispatch';
+import {
+  parseReviewRequestContext,
+  parseReviewSelection,
+  parseReviewSequence,
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+} from '@farmslot/review-dispatch';
 
 import { bold, cyan, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
@@ -70,6 +77,61 @@ export function assertRunGateActionAvailable(
       userAction: 'List current actions with `farmslot run gate <runId>`.',
     },
   );
+}
+
+export interface RunGateCliOptions {
+  action?: string;
+  decision?: string;
+  runner?: string;
+  model?: string;
+  effort?: string;
+  reviewMode?: string;
+  reviewSequence?: string;
+  reviewContext?: string;
+}
+
+export function buildRunGateParams(
+  run: Run,
+  decision: RunDecision,
+  actionId: string,
+  options: RunGateCliOptions,
+) {
+  let selectionData: Record<string, unknown> | undefined;
+  if (actionId === 'request-review') {
+    const model = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['request-review'],
+        allowSequence: true,
+        reviewLineages: reviewLineagesForRun(run),
+        ...(options.reviewContext
+          ? { reviewContext: parseReviewRequestContext(JSON.parse(options.reviewContext)) }
+          : {}),
+      },
+    });
+    model.setSequence([
+      parseReviewSelection({
+        ...model.toSelection(),
+        ...(options.runner ? { runner: options.runner } : {}),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.reviewMode ? { mode: options.reviewMode } : {}),
+      }),
+      ...(options.reviewSequence
+        ? parseReviewSequence(JSON.parse(options.reviewSequence), { allowEmpty: true })
+        : []),
+    ]);
+    selectionData = { reviewRequest: model.toRequestPayload() };
+  } else if (
+    options.runner ||
+    options.model ||
+    options.effort ||
+    options.reviewMode ||
+    options.reviewSequence ||
+    options.reviewContext
+  ) {
+    throw new Error('Review selection options require --action request-review');
+  }
+  return buildRunResolveDecisionParams({ runId: run.id, decision, actionId, selectionData });
 }
 
 export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } {
@@ -710,7 +772,13 @@ export function registerRunCommand(program: Command): void {
       'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
-    .action(async (runId: string, opts: { action?: string; decision?: string }, cmd: Command) => {
+    .option('--runner <runner>', 'Review runner for request-review')
+    .option('--model <model>', 'Review model for request-review')
+    .option('--effort <level>', 'Review reasoning effort for request-review')
+    .option('--review-mode <mode>', 'Review mode: warm or cold (default: cold)')
+    .option('--review-sequence <json>', 'Additional ordered review selections as JSON')
+    .option('--review-context <json>', 'Retained review lineage context as JSON')
+    .action(async (runId: string, opts: RunGateCliOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
@@ -757,11 +825,7 @@ export function registerRunCommand(program: Command): void {
           () =>
             client.call(
               'run.resolveDecision',
-              buildRunResolveDecisionParams({
-                runId,
-                decision,
-                actionId,
-              }),
+              buildRunGateParams(current, decision, actionId, opts),
             ),
           !emit.machine,
         );

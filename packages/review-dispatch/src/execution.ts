@@ -42,10 +42,12 @@ export function executionModelsFromReviewSequence(
   resources: readonly ReviewDispatchExecutionResources[] = [],
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
 ): PRExecutionModel[] {
-  return parseReviewSequence(sequence, { catalog }).map((selection, index) => ({
-    ...selection,
-    ...copyExecutionResources(resources[index]),
-  }));
+  return parseReviewSequence(sequence, { catalog, sequenceRole: 'execution-alternatives' }).map(
+    (selection, index) => ({
+      ...selection,
+      ...copyExecutionResources(resources[index]),
+    }),
+  );
 }
 
 export function reviewSequenceForExecution(
@@ -53,16 +55,14 @@ export function reviewSequenceForExecution(
   mode: ReviewMode = 'cold',
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
 ): ReviewSequence {
-  return models.map((model) =>
-    parseReviewSelection(
-      {
-        runner: model.runner,
-        model: model.model,
-        effort: model.effort ?? null,
-        mode: model.mode ?? mode,
-      },
-      { catalog },
-    ),
+  return parseReviewSequence(
+    models.map((model) => ({
+      runner: model.runner,
+      model: model.model,
+      effort: model.effort ?? null,
+      mode: model.mode ?? mode,
+    })),
+    { catalog, sequenceRole: 'execution-alternatives' },
   );
 }
 

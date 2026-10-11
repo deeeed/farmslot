@@ -283,10 +283,12 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
         startedAt: '2026-05-17T00:10:00.000Z',
         completedAt: '2026-05-17T00:12:00.000Z',
         outputs: {
+          reviewId: 'pipeline-review-2',
+          mode: 'cold',
           verdict: 'pass',
           unresolvedCount: 0,
           reviewSnapshot: {
-            headSha,
+            headSha: 'stale-pipeline-head',
             capturedAt: '2026-05-17T00:12:00.000Z',
             source: 'local-git',
           },
@@ -302,13 +304,26 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
         reviews: [
           {
             reviewerSessionId: 'fixture-session-' + 'review-2',
-            mode: 'cold' as const,
+            mode: 'warm' as const,
             id: 'pipeline-review-2',
             source: 'pipeline',
             loopNumber: 2,
             verdict: 'pass',
             unresolvedCount: 0,
+            completedAt: '2026-05-17T00:14:00.000Z',
+            session: {
+              mode: 'warm',
+              continuity: 'resumed',
+              reviewId: 'pipeline-review-2',
+              sessionId: 'fixture-session-review-2',
+              lastReviewedHeadSha: 'stale-pipeline-head',
+            },
+            attempts: [
+              { mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0 },
+              { mode: 'warm', loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
+            ],
             reviewSnapshot: {
+              baseSha: 'stale-pipeline-head',
               headSha,
               capturedAt: '2026-05-17T00:12:00.000Z',
               source: 'local-git',
@@ -339,6 +354,12 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const refreshedDecision = getRun(run.id)!.decisions[0];
   const refreshedPayload = refreshedDecision.payload as ReadyGatePayload;
   assert.equal(refreshedPayload.publicationTarget, 'draft');
+  const refreshedReview = getRun(run.id)!.engineState!.publishGate!.reviews![0]!;
+  assert.equal(getRun(run.id)!.engineState!.publishGate!.reviews!.length, 1);
+  assert.equal(refreshedReview.mode, 'warm');
+  assert.equal(refreshedReview.reviewSnapshot?.headSha, headSha);
+  assert.equal(refreshedReview.session?.lastReviewedHeadSha, 'stale-pipeline-head');
+  assert.equal(refreshedReview.attempts?.length, 2);
   assert.equal(refreshedPayload.gateSummary?.review.passingReviews, 0);
   // Wiring: soft fields are re-probed on the live slot repo (clean main) and must
   // not keep stale mergeConflictPaths / hints from the prior payload.

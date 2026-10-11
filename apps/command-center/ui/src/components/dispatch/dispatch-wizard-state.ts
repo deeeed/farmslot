@@ -17,8 +17,7 @@ import type {
   TemplatePreview,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import { DEFAULT_CLAUDE_MODEL } from '@farmslot/protocol';
-import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import { resolveReviewDispatchDefaults, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type EffortLevel } from '../../utils/runner-options.js';
 
@@ -50,7 +49,7 @@ export abstract class DispatchWizardState extends LitElement {
   _executionPicker = new ReviewDispatchViewModel({
     context: {
       allowedActions: ['dispatch'],
-      defaults: { runner: 'claude', model: DEFAULT_CLAUDE_MODEL },
+      defaults: resolveReviewDispatchDefaults(undefined, 'dev', { runner: 'claude' }),
     },
   });
   get _runner() {

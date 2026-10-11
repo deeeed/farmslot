@@ -17,7 +17,7 @@ import {
   type ProjectConfig,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
-import { resolveReviewDispatchDefaults, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import {
   PlanningChoices,
@@ -26,6 +26,7 @@ import {
   PlanningToggle,
 } from '../features/planning/PlanningControls';
 import { ReviewDispatchPicker } from '../features/review-dispatch/ReviewDispatchPicker';
+import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
@@ -102,17 +103,7 @@ export function BacklogCreateForm({
       new ReviewDispatchViewModel({
         context: {
           allowedActions: ['configure'],
-          defaults: {
-            ...resolveReviewDispatchDefaults(selectedProject, flowType),
-            ...(item
-              ? {
-                  runner: item.runner,
-                  model: item.model,
-                  effort: item.effort,
-                  mode: item.reviewMode,
-                }
-              : {}),
-          },
+          defaults: backlogExecutionDefaults(selectedProject, flowType, item),
           allowSequence: false,
           reviewContext: flowType === 'review-pr' ? item?.reviewContext : undefined,
         },

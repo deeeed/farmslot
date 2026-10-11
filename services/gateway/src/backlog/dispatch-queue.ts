@@ -1204,6 +1204,7 @@ export async function selectPRQueueExecution(
   }
   for (const group of groups.values()) {
     const model = group[0];
+    const execution = executionModelFromSelection(model);
     const allowedSlots = [
       ...new Set(
         group
@@ -1231,15 +1232,15 @@ export async function selectPRQueueExecution(
       slotId: undefined,
       allowedSlots,
       runner: model.runner,
-      model: executionModelFromSelection(model).model,
-      effort: executionModelFromSelection(model).effort ?? undefined,
+      model: execution.model,
+      effort: execution.effort ?? undefined,
     };
     const slotId = await selectQueueDispatchSlot(slots, proposed);
     if (slotId) {
       item.allowedSlots = allowedSlots;
       item.runner = model.runner;
-      item.model = executionModelFromSelection(model).model;
-      item.effort = executionModelFromSelection(model).effort ?? undefined;
+      item.model = execution.model;
+      item.effort = execution.effort ?? undefined;
       return slotId;
     }
   }
@@ -1281,6 +1282,7 @@ async function selectQueuedReviewWorkspace(
   for (const choice of candidates) {
     let eligible = false;
     try {
+      const execution = executionModelFromSelection(choice);
       const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
       assertReviewWorkspacePlacement(proposed);
       const admission = await inspectReviewWorkspaceTarget(
@@ -1288,8 +1290,8 @@ async function selectQueuedReviewWorkspace(
           project: item.project,
           machine: choice.machine,
           runner: choice.runner,
-          model: executionModelFromSelection(choice).model,
-          effort: executionModelFromSelection(choice).effort ?? undefined,
+          model: execution.model,
+          effort: execution.effort ?? undefined,
           transport: choice.transport,
           nativeProfile: choice.nativeProfile,
         },
@@ -1300,8 +1302,8 @@ async function selectQueuedReviewWorkspace(
       assertReviewWorkspaceAdmitted(admission);
       item.reviewWorkspaceTarget = { machine: choice.machine };
       item.runner = choice.runner;
-      item.model = executionModelFromSelection(choice).model;
-      item.effort = executionModelFromSelection(choice).effort ?? undefined;
+      item.model = execution.model;
+      item.effort = execution.effort ?? undefined;
       item.transport = choice.transport;
       item.nativeProfile = choice.nativeProfile;
       item.executionTemplateId = admission.project.staticReview!.templateId;

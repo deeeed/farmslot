@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+
+import type { ReviewStatus } from '@farmslot/protocol';
 
 import { materializeReviewArtifacts } from './reviews.js';
 import { makeRun } from './test-fixtures.js';
@@ -79,4 +84,85 @@ test('materializeReviewArtifacts does not create stale pending review for comple
   const reviews = await materializeReviewArtifacts(run);
 
   assert.deepEqual(reviews, []);
+});
+
+test('materializing old pipeline output preserves its newer WARM result and artifact', async (t) => {
+  const taskDir = await mkdtemp(path.join(tmpdir(), 'review-materialization-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  await mkdir(path.join(taskDir, 'artifacts'));
+  const review: ReviewStatus = {
+    id: 'pipeline-review-lane',
+    source: 'pipeline',
+    mode: 'warm',
+    reviewerSessionId: 'retained-session',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    completedAt: '2026-10-12T00:02:00Z',
+    reviewedHeadSha: 'head-2',
+    reviewedReviewSubjectHash: 'subject-2',
+    session: {
+      mode: 'warm',
+      continuity: 'resumed',
+      reviewId: 'pipeline-review-lane',
+      sessionId: 'retained-session',
+      lastReviewedHeadSha: 'head-1',
+    },
+    reviewSnapshot: {
+      source: 'local-git',
+      capturedAt: '2026-10-12T00:01:00Z',
+      baseSha: 'head-1',
+      headSha: 'head-2',
+    },
+    attempts: [
+      { mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0 },
+      { mode: 'warm', loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
+    ],
+  };
+  const artifact = path.join(taskDir, 'artifacts/pipeline-review-lane.json');
+  await writeFile(artifact, JSON.stringify(review));
+  for (const attempts of [undefined, [review.attempts![0]]]) {
+    const run = makeRun({
+      taskFile: path.join(taskDir, 'TASK.md'),
+      engineState: { publishGate: { reviews: [review] } },
+      steps: [
+        {
+          name: 'review',
+          status: 'done',
+          completedAt: '2026-10-12T00:00:00Z',
+          outputs: { reviewId: review.id, mode: 'cold', verdict: 'pass', attempts },
+        },
+      ],
+    });
+    assert.deepEqual(await materializeReviewArtifacts(run), [review]);
+    assert.deepEqual(JSON.parse(await readFile(artifact, 'utf8')), review);
+  }
+});
+
+test('completed pipeline materialization drops a stale pending record', async () => {
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'pipeline-review-1',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pending',
+            unresolvedCount: 0,
+            startedAt: '2026-10-12T00:02:00Z',
+          },
+        ],
+      },
+    },
+    steps: [
+      {
+        name: 'review',
+        status: 'done',
+        completedAt: '2026-10-12T00:01:00Z',
+        outputs: { verdict: 'pass' },
+      },
+    ],
+  });
+  assert.equal((await materializeReviewArtifacts(run))[0]?.verdict, 'pass');
 });

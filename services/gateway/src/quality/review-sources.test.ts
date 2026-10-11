@@ -5,7 +5,6 @@ import {
   inferReviewSourceKind,
   PIPELINE_REVIEW_SOURCE,
   REQUESTED_REVIEW_SOURCE,
-  reviewCompositeKey,
   reviewLoopNumberFromId,
 } from './review-sources.js';
 
@@ -17,7 +16,6 @@ test('pipeline and requested review artifacts have distinct neutral namespaces',
   assert.notEqual(pipeline.jsonRel, requested.jsonRel);
   assert.equal(inferReviewSourceKind(pipeline), 'pipeline');
   assert.equal(inferReviewSourceKind(requested), 'requested');
-  assert.notEqual(reviewCompositeKey('pipeline', 1), reviewCompositeKey('requested', 1));
 });
 
 test('review source parser rejects foreign and invalid ids', () => {

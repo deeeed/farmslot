@@ -378,3 +378,23 @@ test('portable workspace pools bind only configured registry machines and retain
     /allowedSlots/,
   );
 });
+
+test('execution profile cardinality preserves 20 alternatives and rejects the next row', () => {
+  const models = Array.from({ length: 20 }, () => ({
+    runner: 'codex',
+    model: null,
+    effort: null,
+    mode: 'cold' as const,
+  }));
+  assert.doesNotThrow(() =>
+    assertPRExecutionProfile({ workspacePolicy: { kind: 'pool' }, models }),
+  );
+  assert.throws(
+    () =>
+      assertPRExecutionProfile({
+        workspacePolicy: { kind: 'pool' },
+        models: [...models, models[0]],
+      }),
+    /1 to 20 alternatives/,
+  );
+});

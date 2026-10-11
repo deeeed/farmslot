@@ -453,17 +453,17 @@ test('resolveAgentTarget prefers explicit and persisted role targets', async (t)
 
 test('resolveAgentTarget rejects mismatched explicit target and role selectors', async () => {
   await assert.rejects(
-    () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:review', role: 'review' }),
-    /target mme-1:review belongs to role review, not review/,
+    () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:review', role: 'review-fix' }),
+    /target mme-1:review belongs to role review, not review-fix/,
   );
   await assert.rejects(
     () =>
       resolveAgentTarget('runner-browser-1', {
         target: 'mme-1:review',
-        role: 'review',
+        role: 'review-fix',
         contextId: 'review',
       }),
-    /context review does not match role review/,
+    /context review does not match role review-fix/,
   );
   await assert.rejects(
     () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:ci-fix', contextId: 'review' }),

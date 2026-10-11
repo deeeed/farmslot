@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import type { PRMonitorConfig, PRMonitorObservation } from '@farmslot/protocol';
+import type {
+  PRMonitorConfig,
+  PRMonitorObservation,
+  PRSlotExecutionProfile,
+} from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -56,12 +61,15 @@ function observation(): PRMonitorObservation {
     ],
   };
 }
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, profile: PRSlotExecutionProfile = execution) {
   const directory = await mkdtemp(join(tmpdir(), 'pr-repair-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'monitors.json');
   const store = await PRMonitorStore.load(file);
-  const monitor = await store.subscribe('owner', config);
+  const monitor = await store.subscribe('owner', {
+    ...config,
+    policy: { mode: 'automatic-repair', execution: profile },
+  });
   await store.observe(monitor.id, 'owner', monitor.revision, { observation: observation() });
   t.after(async () => {
     for (const item of getQueueSnapshot().filter((entry) =>
@@ -79,10 +87,9 @@ async function fixture(t: test.TestContext) {
         choices: [
           {
             slotId: 'repair-slot',
-            runner: 'codex',
-            model: 'gpt-6-astra',
-            effort: 'high',
-            mode: 'cold' as const,
+            ...profile.models[0],
+            effort: profile.models[0].effort ?? null,
+            mode: profile.models[0].mode ?? ('cold' as const),
           },
         ],
         errors: [],
@@ -99,6 +106,35 @@ async function fixture(t: test.TestContext) {
     },
   };
 }
+
+test('runner-default repair model and effort remain authorized at final admission', async (t) => {
+  const selection = { runner: 'codex', model: null, effort: null, mode: 'cold' as const };
+  const profile = { ...execution, models: [selection] };
+  const { store, monitor } = await fixture(t, profile);
+  const dispatcher = new PRRepairDispatcher(
+    store,
+    {
+      refresh: async () => {
+        const current = store.get(monitor.id, 'owner');
+        await store.observe(monitor.id, 'owner', current.revision, { observation: observation() });
+        return store.get(monitor.id, 'owner');
+      },
+    },
+    () => true,
+    () => {},
+    async () => ({ choices: [{ slotId: 'repair-slot', ...selection }], errors: [] }),
+    async () => {},
+  );
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === monitor.id)!;
+  const resolved = executionModelFromSelection(selection);
+  assert.equal(item.model, resolved.model);
+  assert.equal(item.effort, resolved.effort);
+  const selected = { ...item, slotId: 'repair-slot' };
+  await dispatcher.refreshBeforeCreate(selected);
+  assert.doesNotThrow(() => dispatcher.assertCurrent(selected));
+  assert.throws(() => dispatcher.assertCurrent({ ...selected, effort: 'low' }), /changed/);
+});
 
 test('manual repair rejects workspace review authority without mutating the monitor', async (t) => {
   const { store, monitor } = await fixture(t);

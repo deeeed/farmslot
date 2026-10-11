@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch. Publication counts verified reviewer sessions, including pipeline reviews; WARM refuses unavailable continuity and COLD creates a fresh full-diff review.
+- Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch, including runner defaults and retained rechecks. Publication counts current-package reviewer approvals, including pipeline reviews; refresh preserves the latest result, WARM refuses unavailable continuity and COLD creates a fresh full-diff review.
 
 - Publish-approval action ids and review-depth counting come from `@farmslot/protocol`, shared with the clients' publish guards; gate behavior is unchanged.
 - PR-producing worker templates record acceptance verdicts and derive recipe coverage before completion, including development and interactive sessions.

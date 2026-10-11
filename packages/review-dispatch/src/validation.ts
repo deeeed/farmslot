@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { DEFAULT_REVIEW_DISPATCH_CATALOG, effortsForRunner, runnerOption } from './catalog.js';
+import { sequenceMaximumRows } from './row-limit.js';
 import type { ReviewValidationOptions } from './types.js';
 
 function record(value: unknown, field: string): asserts value is Record<string, unknown> {
@@ -62,7 +63,7 @@ export function assertReviewSequence(
   options: ReviewValidationOptions = {},
 ): asserts value is ReviewSequence {
   if (!Array.isArray(value)) throw new Error('Review sequence must be an array');
-  const maxRows = options.allowSequence === false ? 1 : (options.maxRows ?? 5);
+  const maxRows = sequenceMaximumRows(options);
   if (options.allowEmpty === false && value.length === 0)
     throw new Error('Review sequence requires at least one selection');
   if (value.length > maxRows)
@@ -73,6 +74,7 @@ export function assertReviewRequestPayload(
   value: unknown,
   options: ReviewValidationOptions = {},
 ): asserts value is ReviewRequestPayload {
+  const reviewOptions: ReviewValidationOptions = { ...options, sequenceRole: 'reviews' };
   record(value, 'Review request');
   exactKeys(value, ['runner', 'model', 'effort', 'mode', 'sequence', 'context'], 'Review request');
   selection(value, options);
@@ -82,8 +84,8 @@ export function assertReviewRequestPayload(
       1 + (Array.isArray(value.sequence) ? value.sequence.length : 0),
     );
   if (value.sequence !== undefined) {
-    assertReviewSequence(value.sequence, { ...options, allowEmpty: true });
-    const maxRows = options.allowSequence === false ? 1 : (options.maxRows ?? 5);
+    assertReviewSequence(value.sequence, { ...reviewOptions, allowEmpty: true });
+    const maxRows = sequenceMaximumRows(reviewOptions);
     if (value.sequence.length + 1 > maxRows)
       throw new Error(`Review request may contain at most ${maxRows} rows`);
   }
@@ -118,7 +120,7 @@ export function reviewRequestFromSequence(
   options: ReviewValidationOptions = {},
   context?: ReviewRequestContext,
 ): ReviewRequestPayload {
-  const rows = parseReviewSequence(value, options);
+  const rows = parseReviewSequence(value, { ...options, sequenceRole: 'reviews' });
   if (!rows.length) throw new Error('A review request requires at least one selection');
   const [first, ...remaining] = rows;
   if (context) assertReviewRequestContext(context, rows.length);

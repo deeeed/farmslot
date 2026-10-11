@@ -267,6 +267,10 @@ export function resolveReviewDispatchDefaults(
   project: ReviewDispatchProjectDefaults | undefined,
   flow: string,
   fallback: Partial<ReviewSelection> = {},
+  overrides: Partial<ReviewSelection> = {},
 ): Partial<ReviewSelection> {
-  return defaultsForFlow(flow, project ? [project] : [], project?.name ?? '', fallback);
+  return {
+    ...defaultsForFlow(flow, project ? [project] : [], project?.name ?? '', fallback),
+    ...Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined)),
+  };
 }

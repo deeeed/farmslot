@@ -4,6 +4,7 @@
   "description": "ADR-063 live proof of the merged gate screen. Configure the single shared picker, send the confirmation, and read the persisted request through run.get. Registered fixture slots are disabled and orchestration is off, so no reviewer is launched.",
   "workflow": {
     "entry": "setup",
+    "teardown": "cleanup",
     "nodes": {
       "setup": {
         "action": "command",
@@ -126,15 +127,19 @@
         "action": "command",
         "intent": "The gateway stores the request-review action and all four selected fields.",
         "cmd": "node scripts/agentic/gate-review-proof.mjs verify-review-request",
-        "next": "cleanup"
+        "next": "done"
       },
       "cleanup": {
         "action": "command",
         "intent": "Stop only the fixture gateway.",
         "cmd": "node scripts/agentic/gate-review-proof.mjs cleanup",
-        "next": "done"
+        "next": "cleanup-done"
       },
       "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cleanup-done": {
         "action": "end",
         "status": "pass"
       }

@@ -31,7 +31,7 @@ import {
   persistRunPrNumber,
   recordRunPRPublication,
 } from '../integrations/pr-linkage.js';
-import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
+import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -661,30 +661,13 @@ export async function prepareCompletionPackage(
         reviewStep?.status !== 'running'
       ),
   );
-  // Composite (sourceKind, loopNumber) key — defense in depth so two streams
-  // can't collide even if a future caller bypasses the source helpers. The id
-  // alone was the prior key and silently dropped entries on collision.
-  const priorReviewsByCompositeKey = new Map<string, ReviewStatus>();
-  const reviewsByCompositeKey = new Map<string, ReviewStatus>();
-  for (const review of priorReviews) {
-    const key = reviewCompositeKey(inferReviewSourceKind(review), review.loopNumber);
-    priorReviewsByCompositeKey.set(key, review);
-    reviewsByCompositeKey.set(key, review);
-  }
-  const priorReview =
-    priorReviews.filter((review) => inferReviewSourceKind(review) === 'pipeline').at(-1) ?? null;
-  if (materializedReviews.some((review) => inferReviewSourceKind(review) === 'pipeline')) {
-    for (const [key, review] of reviewsByCompositeKey) {
-      if (inferReviewSourceKind(review) === 'pipeline') reviewsByCompositeKey.delete(key);
-    }
-  }
+  // Review IDs identify durable lineages; a loop number can be reused by a WARM recheck.
+  const priorReviewsById = new Map(priorReviews.map((review) => [review.id, review]));
+  const reviewsById = new Map(priorReviewsById);
   for (const review of materializedReviews) {
-    const key = reviewCompositeKey(inferReviewSourceKind(review), review.loopNumber);
-    const prior =
-      priorReviewsByCompositeKey.get(key) ??
-      (inferReviewSourceKind(review) === 'pipeline' ? priorReview : null);
-    reviewsByCompositeKey.set(
-      key,
+    const prior = priorReviewsById.get(review.id);
+    reviewsById.set(
+      review.id,
       options?.stampReviews === false && prior
         ? {
             ...review,
@@ -695,7 +678,7 @@ export async function prepareCompletionPackage(
         : review,
     );
   }
-  let reviews = [...reviewsByCompositeKey.values()].sort((a, b) => a.loopNumber - b.loopNumber);
+  let reviews = [...reviewsById.values()].sort((a, b) => a.loopNumber - b.loopNumber);
   reviews = await augmentReviewAttemptsFromArtifacts(run, reviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
   // A live slot always wins. A persisted package HEAD is accepted only as the

@@ -11,6 +11,7 @@ import {
   latestExhaustedReview,
   type NoChangeGatePayload,
   PUBLISH_APPROVAL_ACTIONS,
+  qualifyingPassingReviews,
   type ReadyGatePrPackage,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -619,18 +620,14 @@ export function countStalePublicationReviews(
     minimumReviews: preparedPackage.reviewPolicy?.minimumReviews ?? 1,
     requestedBy: preparedPackage.reviewPolicy?.requestedBy ?? 'dispatch',
   };
-  const freshReviews = reviews.filter((review) =>
+  const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>
     reviewCertifiesPreparedPackage(review, preparedPackage),
   );
   if (freshPublicationReviewCountSatisfied(reviewPolicy, freshReviews)) return 0;
-  const certifiedByFreshFixLoop = reviews.some((review) =>
-    reviewCertifiesApprovedHeadAfterFix(review, preparedPackage),
-  );
   return reviews.filter(
     (review) =>
       isQualifyingReview(review) &&
-      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale &&
-      !certifiedByFreshFixLoop,
+      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale,
   ).length;
 }
 
@@ -755,7 +752,7 @@ export function unavailableSnapshotOverrideAvailable(
   reviewPolicy: ReviewPolicy,
 ): boolean {
   if (preparedPackage.reviewSnapshot?.source !== 'unavailable') return false;
-  const matching = reviews.filter((review) =>
+  const matching = qualifyingPassingReviews(reviews).filter((review) =>
     reviewMatchesUnavailableSnapshotPackage(review, preparedPackage),
   );
   return freshPublicationReviewCountSatisfied(reviewPolicy, matching);
@@ -855,52 +852,15 @@ export function assertPublicationReviewPolicySatisfied(
 ): void {
   const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
   const reviews = current.engineState?.publishGate?.reviews ?? [];
-  const requiredReviewCount = effectiveRequiredReviewCount(reviewPolicy);
-  const staleReviewCount =
-    requiredReviewCount > 0 ? countStalePublicationReviews(reviews, preparedPackage) : 0;
+  const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>
+    reviewCertifiesPreparedPackage(review, preparedPackage),
+  );
   const unavailableOverrideApproved =
     snapshotUnavailableOverrideWasApproved(current, preparedPackage) &&
     unavailableSnapshotOverrideAvailable(reviews, preparedPackage, reviewPolicy);
-  if (
-    !reviewPolicySatisfied(reviewPolicy, reviews) ||
-    (staleReviewCount > 0 && !unavailableOverrideApproved)
-  ) {
+  if (!reviewPolicySatisfied(reviewPolicy, freshReviews) && !unavailableOverrideApproved) {
     throw new Error(
       'Publication approval requires passing reviews for the approved package; package changed, refresh package and re-review before publishing',
     );
   }
-}
-
-function reviewCertifiesApprovedHeadAfterFix(
-  review: ReviewStatus,
-  preparedPackage: ReadyGatePrPackage,
-): boolean {
-  if (!preparedPackage.headSha) return false;
-  if (!isQualifyingReview(review)) return false;
-  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
-  const snapshot = review.reviewSnapshot;
-  if (
-    !snapshot ||
-    snapshot.source === 'unavailable' ||
-    snapshot.headSha !== preparedPackage.headSha
-  )
-    return false;
-  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
-  if (!packageReviewSubjectHash) return false;
-  if (review.reviewedReviewSubjectHash !== packageReviewSubjectHash) return false;
-  return reviewHasWorkerFixLoop(review);
-}
-
-function reviewHasWorkerFixLoop(review: ReviewStatus): boolean {
-  if (review.feedbackSent) return true;
-  if (review.timeline?.some((segment) => segment.kind === 'worker-fix')) return true;
-  const attempts = review.attempts ?? [];
-  if (attempts.some((attempt) => attempt.fixDelta)) return true;
-  const sawIssues = attempts.some(
-    (attempt) => attempt.verdict === 'issues' && attempt.unresolvedCount > 0,
-  );
-  const sawPass = attempts.some(
-    (attempt) => attempt.verdict === 'pass' && attempt.unresolvedCount === 0,
-  );
-  return sawIssues && sawPass;
 }
