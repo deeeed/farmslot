@@ -13,7 +13,7 @@ export function runnerPaneHasQueuedInstruction(
 ): boolean {
   const lines = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
   const marker = lines.findLastIndex((line) =>
-    /^[•│┃║\s]*(?:messages? to be submitted after next tool call|(?:\d+\s+)?queued messages?|message queued)[:│┃║\s]*$/i.test(
+    /^[•│┃║\s]*(?:messages? to be submitted after next tool call|(?:\d+\s+)?queued messages?|message queued)[:│┃║\s]*(?:\(.*)?$/i.test(
       line,
     ),
   );
