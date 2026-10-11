@@ -197,6 +197,7 @@ test('prepare fetches only possible backing refs and keeps timeout diagnostics',
     commands.some((command) => command.includes('fetch') && command.includes('refs/heads/')),
   );
   assert.ok(commands.every((command) => !command.includes('--all')));
+  assert.equal(commands.filter((command) => command.includes('ls-remote')).length, 1);
   await assert.rejects(
     assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
       if (command.includes('show-ref'))

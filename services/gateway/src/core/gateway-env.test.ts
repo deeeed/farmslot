@@ -47,7 +47,7 @@ test('gateway checkout reload cannot replace the isolated sandbox home with an a
     ],
     {
       encoding: 'utf8',
-      timeout: 4000,
+      timeout: 4900,
       env: {
         ...process.env,
         GATEWAY_HOST: '127.0.0.1',

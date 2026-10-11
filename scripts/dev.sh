@@ -78,9 +78,7 @@ fi
 
 # Sandbox wrappers select a private home for gateway, node and child clients.
 # Checkout files may name the operator home; they cannot override that scope.
-if [ -n "${FARMSLOT_SANDBOX_HOME:-}" ]; then
-  export FARMSLOT_HOME="$FARMSLOT_SANDBOX_HOME"
-fi
+pin_sandbox_home
 
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then
   echo "[dev] ERROR: GATEWAY_PORT and VITE_PORT must come from .env.ports or explicit environment values." >&2

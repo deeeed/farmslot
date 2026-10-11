@@ -65,10 +65,12 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Use the helper beside this support bundle, even when the slot checkout is older.
-source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+source "$SCRIPT_DIR/sandbox-common.sh"
 clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
-isolate_sandbox_home "$(sandbox_runtime_dir "$REPO_ROOT")"
+if ! sandbox_is_primary_checkout "$REPO_ROOT"; then
+  isolate_sandbox_home "$(sandbox_runtime_dir "$REPO_ROOT")"
+fi
 
 echo "[sandbox-companion] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"
 bash "${SCRIPT_DIR}/sandbox-dev.sh" start --gateway-port "${GATEWAY_PORT}"

@@ -34,9 +34,9 @@
   "hooks": {
     "post_merge_install": "yarn install && yarn workspace @farmslot/recipe-runner build",
     "preflight": "cd apps/command-center && yarn typecheck",
-    "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}",
+    "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}",
     "setup": "cd apps/companion && yarn install",
     "recipe_action_manifest": "cat {{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
     "recipe_doctor": "FARMSLOT_SLOT_REPO={{repo}} node {{repo}}/apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{cdp_port}} --gateway-port {{port}} --slot-id {{slot_id}} --project-root {{repo}} --json",
@@ -56,7 +56,7 @@
         "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes. Typecheck is not run here — use profile typecheck when you need it before dispatch.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
         }
       },
       "attach": {
@@ -268,9 +268,9 @@
         "port": "{{port}}"
       },
       "hooks": {
-        "boot": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}",
-        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
-        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
+        "boot": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}",
+        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
       }
     },
     "browser-cdp": {

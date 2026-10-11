@@ -40,6 +40,7 @@ function fixture(t, auth = '') {
     'scripts/lib/stack-credentials.sh',
     'scripts/lib/sandbox-home.cjs',
     'projects/farmslot-farm/setup/sandbox-dev.sh',
+    'projects/farmslot-farm/setup/sandbox-common.sh',
     'projects/farmslot-farm/setup/sandbox-companion.sh',
   ]) {
     mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
@@ -290,4 +291,79 @@ test('warm reuse restarts after stack script or own credentials change', (t) => 
   assert.equal(refreshed.generation, first.generation + 2);
   assert.equal(refreshed.nodeToken, 'stack-fresh');
   assert.ok(!readFileSync(f.fingerprint, 'utf8').includes('stack-fresh'));
+});
+
+test('primary companion keeps the operator home and creates no sandbox home', (t) => {
+  const f = fixture(t);
+  writeFileSync(
+    path.join(f.root, 'projects/farmslot-farm/project.json'),
+    JSON.stringify({ primary_repo: f.root }),
+  );
+  const stub = '#!/bin/sh\nprintf "%s" "$FARMSLOT_HOME"';
+  writeFileSync(
+    path.join(f.root, 'projects/farmslot-farm/setup/sandbox-dev.sh'),
+    stub + ' > "$STACK_CREDENTIAL_CAPTURE.gateway"\n',
+  );
+  writeFileSync(
+    path.join(f.root, 'apps/companion/scripts/agentic/prepare-profile.sh'),
+    stub + ' > "$STACK_CREDENTIAL_CAPTURE.companion"\n',
+  );
+  execFileSync(
+    'bash',
+    [
+      path.join(f.root, 'projects/farmslot-farm/setup/sandbox-companion.sh'),
+      '--gateway-port',
+      '8808',
+      '--metro-port',
+      '8181',
+    ],
+    { env: f.env, stdio: 'pipe' },
+  );
+  assert.equal(readFileSync(f.capture + '.gateway', 'utf8'), f.env.FARMSLOT_HOME);
+  assert.equal(readFileSync(f.capture + '.companion', 'utf8'), f.env.FARMSLOT_HOME);
+  assert.equal(existsSync(path.join(f.env.FARMSLOT_RUNTIME_DIR, 'home')), false);
+});
+
+test('sandbox home preload is idempotent and preserves other Node options', (t) => {
+  const f = fixture(t);
+  const output = execFileSync(
+    'bash',
+    [
+      '-c',
+      'source "$FARMSLOT_SLOT_REPO/scripts/lib/stack-credentials.sh"; isolate_sandbox_home "$FARMSLOT_RUNTIME_DIR"; isolate_sandbox_home "$FARMSLOT_RUNTIME_DIR"; printf "%s" "$NODE_OPTIONS"',
+    ],
+    { env: { ...f.env, NODE_OPTIONS: '--no-warnings' }, encoding: 'utf8' },
+  );
+  assert.equal(output.match(/--require/g)?.length, 1);
+  assert.ok(output.endsWith(' --no-warnings'));
+});
+
+test('configured sandbox lifecycle hooks select current support over an older checkout', (t) => {
+  const f = fixture(t);
+  const project = JSON.parse(
+    readFileSync(path.join(repo, 'projects/farmslot-farm/project.json'), 'utf8'),
+  );
+  const support = path.join(f.root, 'support');
+  const relative = 'projects/farmslot-farm/setup/sandbox-dev.sh';
+  mkdirSync(path.dirname(path.join(support, relative)), { recursive: true });
+  writeFileSync(
+    path.join(support, relative),
+    '#!/bin/sh\nprintf "%s %s" "$1" "$FARMSLOT_SLOT_REPO"\n',
+  );
+  writeFileSync(path.join(f.root, relative), '#!/bin/sh\nexit 99\n');
+  for (const hook of [
+    project.hooks.health_check,
+    project.hooks.dev_server_check,
+    project.hooks.teardown,
+    project.prepare.profiles.sandbox.hooks.preflight,
+    ...Object.values(project.resources['dev-server'].hooks),
+  ]) {
+    const command = hook
+      .replaceAll('{{repo}}', f.root)
+      .replaceAll('{{node_support_dir}}', support)
+      .replaceAll('{{port}}', '8808');
+    const result = execFileSync('bash', ['-c', command], { env: f.env, encoding: 'utf8' });
+    assert.match(result, /^(start|health|stop) /);
+    assert.ok(result.endsWith(' ' + f.root));
+  }
 });

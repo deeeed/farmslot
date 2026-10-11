@@ -42,7 +42,7 @@ SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Use the helper beside this support bundle, even when the slot checkout is older.
-source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+source "$SCRIPT_DIR/sandbox-common.sh"
 clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="$(sandbox_runtime_dir "$REPO_ROOT")"
@@ -68,6 +68,7 @@ hash.update(JSON.stringify({ gatewayPort, vitePort, machine, home }));
 const files = [
   ...['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env'].map(file => path.join(root, file)),
   path.join(scriptDir, 'sandbox-dev.sh'),
+  path.join(scriptDir, 'sandbox-common.sh'),
   path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh'),
   path.join(scriptDir, '../../../scripts/lib/sandbox-home.cjs'),
 ];
@@ -147,29 +148,8 @@ fi
 OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-}"
 OPERATOR_VITE_PORT="${VITE_PORT:-}"
 
-read_primary_repo() {
-  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
-  [[ -f "$project_json" ]] || return 1
-  node -e "
-    const fs = require('fs');
-    const { execFileSync } = require('node:child_process');
-    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    const configured = String(project.primary_repo || '').trim();
-    const primary = configured || execFileSync('git',
-      ['-C', process.argv[2], 'worktree', 'list', '--porcelain', '-z'],
-      { encoding: 'utf8' }).split('\0')[0].slice('worktree '.length);
-    process.stdout.write(primary);
-  " "$project_json" "$REPO_ROOT"
-}
-
-is_primary_checkout() {
-  local primary_repo
-  primary_repo="$(read_primary_repo)" || return 1
-  [[ "$(cd "$REPO_ROOT" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
-}
-
 PRIMARY_CHECKOUT=0
-if is_primary_checkout; then
+if sandbox_is_primary_checkout "$REPO_ROOT"; then
   PRIMARY_CHECKOUT=1
   # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
   if [[ ! "$OPERATOR_GATEWAY_PORT" =~ ^[0-9]+$ || ! "$OPERATOR_VITE_PORT" =~ ^[0-9]+$ ]]; then
@@ -199,7 +179,7 @@ resolve_primary_runs_dir() {
     return 0
   fi
   local primary_repo
-  primary_repo="$(read_primary_repo)" || return 0
+  primary_repo="$(sandbox_primary_repo "$REPO_ROOT")" || return 0
   local primary_runs="$primary_repo/.runs"
   if [[ -d "$primary_runs" ]]; then
     export FARMSLOT_RUNS_DIR="$primary_runs"

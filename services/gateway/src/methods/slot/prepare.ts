@@ -117,7 +117,11 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { assertPrepareCommitsPublished, localBranchExists } from './unmerged-work.js';
+import {
+  assertPrepareCommitsPublished,
+  localBranchExists,
+  probeRemoteBranch,
+} from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -562,8 +566,29 @@ async function slotPrepareInner(
   // Preserve-mode retries keep the branch ref; every path that resets or recreates
   // refs must prove worker commits are remotely backed before its first destructive Git command.
   const reviewRefreshFlow = params.flowType === 'review-pr' || params.flowType === 'pr-complete';
-  const protectPrepareWork = () =>
-    assertPrepareCommitsPublished(vars, branch, execOnSlot, defaultBranch, reviewRefreshFlow);
+  const protectPrepareWork = (preserveUnpublished = reviewRefreshFlow) =>
+    assertPrepareCommitsPublished(vars, branch, execOnSlot, defaultBranch, preserveUnpublished);
+  const resetCleanReplayBranch = async (base: string) => {
+    const status = await execOnSlot(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} status --porcelain`,
+    );
+    if (status.exitCode !== 0 || status.stdout.trim())
+      throw new Error(
+        `Replay cannot safely update ${branch}: working tree is dirty or unreadable. Local work was preserved; commit or preserve the files before retrying`,
+      );
+    await protectPrepareWork(true);
+    const reset = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(base)}; }`,
+    );
+    if (reset.exitCode !== 0)
+      throw new Error(`Replay reset to ${base} failed: ${reset.stderr || reset.stdout}`);
+    step(
+      'branch',
+      `Clean replay updated ${branch} to ${base}; old commits remain backed or preserved`,
+    );
+  };
   if (phaseEnabled('git') && !(branch && opts?.preserveBranch)) {
     await protectPrepareWork();
   }
@@ -808,26 +833,31 @@ async function slotPrepareInner(
     }
     if (localExists) {
       if (reviewRefreshFlow) {
+        const fetch = await execOnSlot(
+          vars,
+          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
+        );
+        if (fetch.exitCode !== 0)
+          throw new Error(
+            `Replay cannot fetch ${branch}: ${fetch.stderr.slice(-200) || fetch.stdout.slice(-200)}. Local work was preserved; restore the remote before retrying`,
+          );
         const refresh = await execOnSlot(
           vars,
-          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(branch))} && git -C ${shellQuote(vars.remoteRepo)} merge --ff-only ${shellQuote(`origin/${branch}`)}`,
+          `git -C ${shellQuote(vars.remoteRepo)} merge --ff-only ${shellQuote(`origin/${branch}`)}`,
         );
-        if (refresh.exitCode !== 0)
-          throw new Error(
-            `Replay cannot safely update ${branch} from its published head: ${refresh.stderr.slice(-200) || refresh.stdout.slice(-200)}. Local work was preserved; resolve divergence or restore the remote before retrying`,
-          );
+        if (refresh.exitCode !== 0) await resetCleanReplayBranch(`origin/${branch}`);
       }
-      step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+      step('branch', `Replay prepared existing local ${branch} while preserving its work`);
     }
   }
   if (branch && opts?.preserveBranch) {
     await resolveRequestedStartRef();
     if (params.flowType === 'qa' && resolvedStartRef) {
       const head = await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`);
-      if (head.exitCode !== 0 || head.stdout.trim() !== resolvedStartRef.resolvedSha)
-        throw new Error(
-          `QA replay requires frozen head ${resolvedStartRef.resolvedSha} on ${params.slotId}. Restore a matching checkout before retrying; current work was preserved`,
-        );
+      if (head.exitCode !== 0)
+        throw new Error(`Cannot inspect QA replay HEAD: ${head.stderr || head.stdout}`);
+      if (head.stdout.trim() !== resolvedStartRef.resolvedSha)
+        await resetCleanReplayBranch(resolvedStartRef.resolvedSha);
     }
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
@@ -1040,13 +1070,12 @@ async function slotPrepareInner(
         );
       }
       // Check if branch exists on remote
-      const remoteExists =
-        (
-          await execOnSlot(
-            vars,
-            `cd ${shellQuote(vars.remoteRepo)} && git ls-remote --exit-code origin refs/heads/${shellQuote(branch)} >/dev/null 2>&1`,
-          )
-        ).exitCode === 0;
+      const remote = await probeRemoteBranch(vars, 'origin', branch);
+      if (remote.presence === 'unknown')
+        throw new Error(
+          `Cannot inspect remote branch ${branch}; current work preserved: ${remote.result.stderr || remote.result.stdout}`,
+        );
+      const remoteExists = remote.presence === 'present';
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??

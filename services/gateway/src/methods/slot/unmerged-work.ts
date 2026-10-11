@@ -29,6 +29,36 @@ export async function localBranchExists(
   );
 }
 
+interface RemoteBranchProbe {
+  presence: 'present' | 'missing' | 'unknown';
+  branches: string[];
+  result: ExecResult;
+}
+
+/** Only Git's no-match exit proves absence. A transport failure proves nothing. */
+export async function probeRemoteBranch(
+  vars: SlotVars,
+  remote: string,
+  branch: string | string[],
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<RemoteBranchProbe> {
+  const result = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads ${shellQuote(remote)} ${(Array.isArray(branch) ? branch : [branch]).map((name) => shellQuote(`refs/heads/${name}`)).join(' ')}`,
+  );
+  return {
+    presence: result.exitCode === 0 ? 'present' : result.exitCode === 2 ? 'missing' : 'unknown',
+    branches: result.stdout
+      .trim()
+      .split('\n')
+      .flatMap((line) => {
+        const name = line.split('\t')[1];
+        return name?.startsWith('refs/heads/') ? [name.slice('refs/heads/'.length)] : [];
+      }),
+    result,
+  };
+}
+
 /** Commits at a ref which no remote-tracking ref contains. Never hide a failed Git check. */
 export async function findUnpushedSlotCommits(
   vars: SlotVars,
@@ -112,12 +142,36 @@ export async function assertPrepareCommitsPublished(
     for (const candidate of await containingRefs(tip, ['refs/remotes'])) candidates.add(candidate);
     let published = false;
     let firstFailure: Error | undefined;
+    const probes = new Map<string, RemoteBranchProbe>();
     for (const candidate of candidates) {
       const remote = remotes.find((name) => candidate.startsWith(`refs/remotes/${name}/`));
       if (!remote) continue;
       const name = candidate.slice(`refs/remotes/${remote}/`.length);
       if (name === 'HEAD') continue;
       if (!refreshed.has(candidate)) {
+        let exists = probes.get(remote);
+        if (!exists) {
+          const prefix = `refs/remotes/${remote}/`;
+          const names = [...candidates]
+            .filter((value) => value.startsWith(prefix))
+            .map((value) => value.slice(prefix.length))
+            .filter((value) => value !== 'HEAD');
+          exists = await probeRemoteBranch(vars, remote, names, exec);
+          probes.set(remote, exists);
+        }
+        if (exists.presence === 'unknown') {
+          firstFailure ??= prepareGitFailure(
+            `Cannot verify publication ref ${candidate}; current work preserved`,
+            exists.result,
+          );
+          continue;
+        }
+        if (!exists.branches.includes(name)) {
+          const prune = await exec(vars, `${git} update-ref -d ${shellQuote(candidate)}`);
+          if (prune.exitCode !== 0)
+            throw prepareGitFailure(`Cannot remove stale publication ref ${candidate}`, prune);
+          continue;
+        }
         // Fetch only possible backing refs. A full fetch on MetaMask's thousands
         // of branches can take minutes and is unnecessary for this proof.
         const fetch = await exec(
@@ -125,20 +179,10 @@ export async function assertPrepareCommitsPublished(
           `${git} fetch ${shellQuote(remote)} ${shellQuote(remoteBranchRefspec(name, remote))}`,
         );
         if (fetch.exitCode !== 0) {
-          const exists = await exec(
-            vars,
-            `${git} ls-remote --exit-code --heads ${shellQuote(remote)} ${shellQuote(`refs/heads/${name}`)}`,
+          firstFailure ??= prepareGitFailure(
+            `Cannot verify publication ref ${candidate}; current work preserved`,
+            fetch,
           );
-          if (exists.exitCode !== 2) {
-            firstFailure ??= prepareGitFailure(
-              `Cannot verify publication ref ${candidate}; current work preserved`,
-              fetch,
-            );
-            continue;
-          }
-          const prune = await exec(vars, `${git} update-ref -d ${shellQuote(candidate)}`);
-          if (prune.exitCode !== 0)
-            throw prepareGitFailure(`Cannot remove stale publication ref ${candidate}`, prune);
           continue;
         }
         refreshed.add(candidate);
@@ -205,12 +249,10 @@ export async function findUnmergedSlotWork(
   // runs `git push -u`, which records that remote as the branch's upstream;
   // push-remote config may name a different one and proves nothing. A remote
   // that cannot be asked proves nothing either, so the work stays protected.
-  const remote = `$(${git} config --get ${shellQuote(`branch.${branch}.remote`)} || echo origin)`;
-  const probe = await exec(
-    vars,
-    `${git} ls-remote --heads "${remote}" ${shellQuote(branch)} 2>/dev/null`,
-  );
-  if (probe.exitCode === 0 && !probe.stdout.trim()) {
+  const remote = await exec(vars, `${git} config --get ${shellQuote(`branch.${branch}.remote`)}`);
+  if (remote.exitCode !== 0 && remote.exitCode !== 1) return 'unpushed commits';
+  const probe = await probeRemoteBranch(vars, remote.stdout.trim() || 'origin', branch, exec);
+  if (probe.presence === 'missing') {
     console.log(
       `[slot.release] ${vars.slotId}: remote branch '${branch}' deleted (merged) — allowing recycle`,
     );
