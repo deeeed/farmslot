@@ -399,6 +399,66 @@ test('public project run plans without executing a command', (t) => {
   assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
 });
 
+test('public run refuses proof without plan before provider construction', (t) => {
+  const { root, file } = runFixture(t);
+  const result = callPublic(root, [file, '--proof'], 'run');
+  assert.notEqual(result.status, 0);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.error.code, 'CLI_INVALID_OPTION_VALUE');
+  assert.match(output.error.message, /--proof requires --plan/u);
+  assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
+  assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+});
+
+test('public JSONL retains artifact paths when the host closes successfully', (t) => {
+  const { root, file } = runFixture(t);
+  const result = callPublic(root, [file, '--json-stream'], 'run');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const events = result.stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(events.filter((event) => event.event === 'complete').length, 1);
+  assert.equal(events.filter((event) => event.event === 'error').length, 0);
+  const complete = events.at(-1);
+  assert.equal(complete.status, 'pass');
+  for (const key of ['artifactManifestPath', 'tracePath', 'summaryPath', 'reportPath'])
+    assert.ok(fs.statSync(complete[key]).isFile(), `${key} was retained`);
+  assert.equal(fs.readFileSync(path.join(root, 'artifacts/finalized'), 'utf8'), 'yes');
+});
+
+for (const mode of ['list', 'invalid recipe'] as const) {
+  test(`public JSONL closes once when ${mode} refusal and finalization fail`, (t) => {
+    const { root, file } = runFixture(t);
+    if (mode === 'invalid recipe') {
+      const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+      delete document.workflow.nodes.effect.cmd;
+      fs.writeFileSync(file, JSON.stringify(document));
+    }
+    const result = callPublic(
+      root,
+      [...(mode === 'list' ? ['--list'] : [file]), '--json-stream', '--finalize-fail'],
+      'run',
+    );
+    assert.notEqual(result.status, 0);
+    const events = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(events.filter((event) => event.event === 'error').length, 1);
+    assert.equal(events.filter((event) => event.event === 'complete').length, 1);
+    assert.equal(events.at(-1).status, 'fail');
+    assert.equal(events.at(-1).exitCode, result.status);
+    assert.ok(events.some((event) => event.error?.message === 'finalization failed'));
+    assert.match(
+      result.stderr,
+      mode === 'list' ? /JSON_STREAM_UNSUPPORTED_MODE/u : /RECIPE_VALIDATION_FAILED/u,
+    );
+    assert.equal(fs.readFileSync(path.join(root, 'artifacts/finalized'), 'utf8'), 'yes');
+    assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+  });
+}
+
 test('public run JSONL reports finalizer failure once after the command effect', (t) => {
   const { root, file } = runFixture(t);
   const result = callPublic(root, [file, '--json-stream', '--finalize-fail'], 'run');

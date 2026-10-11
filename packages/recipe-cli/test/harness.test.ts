@@ -485,6 +485,47 @@ describe('library provenance', () => {
 });
 
 describe('output', () => {
+  test('deferred results keep progress live and replace failure only after closeout', (t) => {
+    const lines: string[] = [];
+    const diagnostics: string[] = [];
+    t.mock.method(console, 'error', (message: string) => {
+      diagnostics.push(message);
+    });
+    const stream = new JsonStreamWriter('run', true, {
+      write: (chunk: string) => lines.push(chunk) > 0,
+    });
+    const release = stream.deferResult();
+    stream.phase('preflight');
+    stream.error({ code: 'USAGE', message: 'original refusal' });
+    stream.complete('fail', 2);
+    assert.deepEqual(
+      lines.map((line) => JSON.parse(line).event),
+      ['phase'],
+    );
+    stream.error({ code: 'CLOSEOUT', message: 'cleanup failed' });
+    stream.complete('fail', 1, { artifactManifestPath: 'retained.json' });
+    stream.complete('pass', 0);
+    assert.deepEqual(
+      lines.map((line) => JSON.parse(line).event),
+      ['phase'],
+    );
+    release();
+    release();
+    stream.emit('late');
+    const events = lines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+      events.map((event) => event.event),
+      ['phase', 'error', 'complete'],
+    );
+    assert.equal(events[1].error.code, 'CLOSEOUT');
+    assert.equal(events[2].exitCode, 1);
+    assert.equal(events[2].artifactManifestPath, 'retained.json');
+    assert.deepEqual(
+      diagnostics.map((line) => JSON.parse(line).code),
+      ['USAGE'],
+    );
+  });
+
   test('JSON stream emits each event once and stops after complete', () => {
     const lines: string[] = [];
     const stream = new JsonStreamWriter('run', true, {

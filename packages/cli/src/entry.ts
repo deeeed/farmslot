@@ -107,7 +107,22 @@ try {
   await program.parseAsync();
 } catch (err) {
   const commanderError = err as { code?: string; exitCode?: number };
-  if (typeof commanderError?.code !== 'string' || !commanderError.code.startsWith('commander.')) {
+  const isCommander =
+    typeof commanderError?.code === 'string' && commanderError.code.startsWith('commander.');
+  const benign = ['commander.helpDisplayed', 'commander.help', 'commander.version'];
+  const args = process.argv.slice(2);
+  const optionEnd = args.indexOf('--');
+  const recipeStream =
+    cliCommandFromArgv() === 'recipe.run' &&
+    args.slice(0, optionEnd === -1 ? undefined : optionEnd).includes('--json-stream');
+  if (recipeStream && !benign.includes(commanderError?.code ?? '')) {
+    const shared = await import('@farmslot/recipe-cli/harness');
+    process.exitCode = shared.failStream(
+      new shared.JsonStreamWriter('run', true),
+      err,
+      isCommander ? 'USAGE_ERROR' : 'RUN_FAILED',
+    );
+  } else if (!isCommander) {
     // Non-commander failure that escaped an action (e.g. gateway profile
     // resolution in a command not yet envelope-wired): one envelope or one
     // teach-the-escape line, never a raw stack trace.
@@ -118,8 +133,7 @@ try {
     }
     process.exitCode = 1;
   } else {
-    const benign = ['commander.helpDisplayed', 'commander.help', 'commander.version'];
-    if (benign.includes(commanderError.code)) {
+    if (benign.includes(commanderError.code ?? '')) {
       process.exitCode = commanderError.exitCode ?? 0;
     } else {
       // Commander already printed usage on stderr; machine consumers still need

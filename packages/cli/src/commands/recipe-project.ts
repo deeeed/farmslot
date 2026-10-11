@@ -113,7 +113,7 @@ export function registerProjectExecutionCommand(
     command
       .option('--plan', 'Validate the complete execution plan without running it')
       .option('--describe', 'Describe one recipe and its dependencies')
-      .option('--proof', 'Preflight behavioral proof bindings')
+      .option('--proof', 'With --plan, preflight behavioral proof bindings')
       .option('--json-stream', 'Stream JSONL progress and a terminal result');
     if (standalone)
       command
@@ -134,10 +134,12 @@ export function registerProjectExecutionCommand(
     const options: CliOptions = { ...cmd.optsWithGlobals(), json: isMachineMode(output) };
     let stream: JsonStreamWriter | undefined;
     let restoreStdout = () => {};
+    let releaseResult = () => {};
     try {
       const shared = await import('@farmslot/recipe-cli/harness');
       if (operation === 'run' && options.jsonStream === true) {
         stream = new shared.JsonStreamWriter('run', true);
+        releaseResult = stream.deferResult();
         restoreStdout = stream.isolateStdout();
       }
       const invocation = projectCommandInvocation(cmd, {
@@ -146,6 +148,10 @@ export function registerProjectExecutionCommand(
         requiredUnless: ['--list'],
         noPositionalsWith: ['--list'],
         variadic: { label: 'key=value', pattern: /^[^=\s]+=.*/u },
+        refine: (_positionals, seen, failure) =>
+          operation === 'run' && seen.has('--proof') && !seen.has('--plan')
+            ? failure.usage('CLI_INVALID_OPTION_VALUE', '--proof requires --plan.')
+            : null,
       });
       if (standalone) {
         // The original complete manifest/artifact invocation keeps core-only semantics.
@@ -223,6 +229,7 @@ export function registerProjectExecutionCommand(
       } else emit.fail(error);
     } finally {
       restoreStdout();
+      releaseResult();
     }
   });
 }

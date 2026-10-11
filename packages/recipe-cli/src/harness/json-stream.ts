@@ -4,6 +4,15 @@ import { recordCommandStage } from './command-journal.js';
 import { createStageReporter } from './stage-progress.js';
 type JsonFields = Record<string, unknown>;
 type WriteCallback = (error?: Error | null) => void;
+interface StreamCompletion {
+  status: 'pass' | 'fail' | 'unknown';
+  exitCode: number;
+  fields: JsonFields;
+}
+interface DeferredStreamResult {
+  error?: JsonFields;
+  completion?: StreamCompletion;
+}
 
 function redirectStdout(write: typeof process.stdout.write): () => void {
   const original = process.stdout.write;
@@ -44,6 +53,7 @@ export class JsonStreamWriter implements CommandEventStream {
   readonly command: string;
 
   private completed = false;
+  private deferredResult: DeferredStreamResult | undefined;
   private lastError: string | undefined;
   private readonly writeLine: (line: string) => void;
   private readonly stages = createStageReporter({ event: (fields) => this.emit('stage', fields) });
@@ -58,6 +68,21 @@ export class JsonStreamWriter implements CommandEventStream {
     const write = output.write.bind(output);
     this.writeLine = (line) => {
       write(`${line}\n`);
+    };
+  }
+
+  /** Keep progress live, but release error/completion only after the host has closed. */
+  deferResult(): () => void {
+    const pending: DeferredStreamResult = {};
+    this.deferredResult = pending;
+    return () => {
+      if (this.deferredResult !== pending) return;
+      this.deferredResult = undefined;
+      if (pending.error) this.error(pending.error);
+      if (pending.completion) {
+        const { status, exitCode, fields } = pending.completion;
+        this.complete(status, exitCode, fields);
+      }
     };
   }
 
@@ -107,11 +132,24 @@ export class JsonStreamWriter implements CommandEventStream {
   }
 
   error(error: JsonFields): void {
+    if (this.completed) return;
+    if (this.deferredResult) {
+      const prior = this.deferredResult.error;
+      if (prior && (prior.code !== error.code || prior.message !== error.message))
+        console.error(JSON.stringify(prior));
+      this.deferredResult.error = error;
+      delete this.deferredResult.completion;
+      return;
+    }
     if (typeof error.message === 'string') this.lastError = error.message;
     this.emit('error', { error });
   }
 
   complete(status: 'pass' | 'fail' | 'unknown', exitCode: number, fields: JsonFields = {}): void {
+    if (this.deferredResult) {
+      this.deferredResult.completion ??= { status, exitCode, fields };
+      return;
+    }
     // A stage the platform left running ends with the command, on stderr too.
     if (status === 'pass') this.stages.close('done');
     else this.stages.close('failed', this.lastError ?? `exit ${exitCode}`);
