@@ -427,6 +427,7 @@ export async function answerQuestion(pane, runner, fingerprint, actions, tracePa
 }
 
 export function refusal(before, runner, flush = false) {
+  if (before.evidence_source === 'native-session-read-only') return 'observability_unavailable';
   if (before.state !== runner) return runner === 'shell' ? 'shell_launch_blocked' : 'wrong_runner';
   if (before.confidence !== 'high') return 'unknown';
   if (before.pending_question) return 'pending_question';

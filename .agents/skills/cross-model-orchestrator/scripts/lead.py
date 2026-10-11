@@ -5,6 +5,7 @@ from pathlib import Path
 import glob
 import json
 import re
+import subprocess
 import time
 
 from common import append_report, gh, locked_state, project_hook, read_json, resolve_path, write_json
@@ -224,6 +225,12 @@ def run_attention(config, repo):
 
 def _attention(config, repo, runs, state):
     alerts = []
+    if "seen" not in state:
+        # Version 1 stored repo:run -> status:timestamp, including an empty dict.
+        acknowledgements = [f"{key.rsplit(':', 1)[-1]}|{token.split(':', 1)[0]}"
+                            for key, token in state.items()]
+        state.clear()
+        state["seen"] = acknowledgements
     # A read-only seed keeps pre-cutover acknowledgements without rewriting the legacy file.
     seed = config["projects"][repo].get("attention_seen_file")
     seen = set(resolve_path(config, seed).read_text().splitlines()) if seed else set()
@@ -261,7 +268,7 @@ def heartbeat(config, read_only=False):
                 continue
             try:
                 info[hook] = project_hook(config, repo, hook)
-            except (RuntimeError, OSError, ValueError) as error:
+            except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 info[hook] = {"error": str(error)}
         if isinstance(info.get("nodes"), str):
             nodes = json.loads(info["nodes"])

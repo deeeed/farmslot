@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -255,6 +256,26 @@ class LeadTests(unittest.TestCase):
         self.assertEqual([a['id'] for a in alerts], ['new'])
         self.assertEqual((alerts[0]['ticket'], alerts[0]['slot'], alerts[0]['error']), ('T-1', 's1', 'worker exited'))
         self.assertEqual(seed.read_text(), 'old|blocked\n')
+
+    def test_attention_upgrades_old_empty_and_populated_state_without_replaying_acknowledgements(self):
+        runs = [{'id': 'old', 'status': 'blocked'}, {'id': 'new', 'status': 'failed'}]
+        for old, expected in [({}, ['old', 'new']), ({'owner/repo:old': 'blocked:2026-10-11T00:00:00Z'}, ['new'])]:
+            with self.subTest(old=old):
+                write_json(self.root / 'attention.json', old)
+                with patch.object(lead, 'project_hook', return_value=json.dumps({'runs': runs})):
+                    self.assertEqual([r['id'] for r in lead.run_attention(self.config, 'owner/repo')], expected)
+                    self.assertEqual(lead.run_attention(self.config, 'owner/repo'), [])
+                state = json.loads((self.root / 'attention.json').read_text())
+                self.assertIn('old|blocked', state['seen'])
+                self.assertIn('new|failed', state['seen'])
+
+    def test_timed_out_hook_is_visible_without_hiding_pr_status(self):
+        self.report(f'MERGE-READY owner/repo#1 {SHA}\n')
+        self.config['projects']['owner/repo'].update(hooks={'heartbeat': ['probe']})
+        with patch('lanes.status', return_value=[]), patch.object(lead, 'project_hook', side_effect=subprocess.TimeoutExpired('probe', 1)):
+            output = lead.heartbeat(self.config)
+        self.assertIn('error', output['projects']['owner/repo']['heartbeat'])
+        self.assertEqual(output['reviews'][0]['head'], SHA)
 
     def test_config_resolves_portable_relative_paths_and_unique_lanes(self):
         path = self.root / 'config.json'

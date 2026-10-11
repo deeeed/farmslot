@@ -80,6 +80,10 @@ test('explicit answers permit bounded text and navigation but never Tab or contr
 test('send requires the expected runner, idle native state and no question or queue', () => {
   const ready = { state: 'codex', confidence: 'high', delivery_phase: 'idle', phase: 'idle' };
   assert.equal(refusal(ready, 'codex'), null);
+  assert.equal(
+    refusal({ ...ready, evidence_source: 'native-session-read-only' }, 'codex'),
+    'observability_unavailable',
+  );
   assert.equal(refusal({ ...ready, state: 'shell' }, 'codex'), 'wrong_runner');
   assert.equal(refusal({ ...ready, state: 'unknown' }, 'codex'), 'wrong_runner');
   assert.equal(refusal({ ...ready, pending_question: true }, 'codex'), 'pending_question');

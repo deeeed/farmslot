@@ -120,6 +120,10 @@ class LaneTests(unittest.TestCase):
             self.assertEqual(lanes.observe(self.config, 'one', read_only=True)['status'], 'idle')
         self.assertFalse(lanes.registry_path(self.config).exists())
 
+    def test_transport_environment_does_not_inherit_observation_mode(self):
+        with patch.dict('os.environ', {'TMUX_MODEL_DRIVER_READ_ONLY': '1'}):
+            self.assertNotIn('TMUX_MODEL_DRIVER_READ_ONLY', lanes._env(self.config, self.config['lanes'][0], {}))
+
     def test_send_refuses_shell_and_never_uses_raw_tmux_send(self):
         def command(argv, **kwargs):
             if "list-panes" in argv:

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import time
 
@@ -100,6 +101,7 @@ def _pane(config, lane, record):
 
 def _env(config, lane, record):
     env = driver_env(config, lane)
+    env.pop("TMUX_MODEL_DRIVER_READ_ONLY", None)
     runtime = record.get("runtime_dir", lane.get("runtime_dir",
         str(Path(config["state_dir"]) / "lanes" / lane["id"] / "runtime")))
     env["TMUX_MODEL_DRIVER_RUNTIME_DIR"] = runtime
@@ -180,7 +182,7 @@ def status(config):
     for lane in config.get("lanes", []):
         try:
             observations.append(observe(config, lane["id"], read_only=True))
-        except (RuntimeError, OSError, ValueError) as error:
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
             observations.append({"id": lane["id"], "state": "unknown", "phase": "unknown",
                                  "status": "unknown", "error": str(error)})
     return observations
