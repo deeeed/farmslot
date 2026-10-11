@@ -95,8 +95,8 @@ def reverse_lines(handle, block_size=65536):
 
 # Find the newest exact prompt in the send window, then keep walking backward
 # to the native task_started boundary that owns it. Codex steering messages are
-# intentionally part of the active turn; safe-send waits for an unrelated busy
-# turn to finish before submitting a new prompt. No fixed byte tail may sever
+# intentionally part of the active turn; the caller decides whether acceptance
+# requires a new turn. No fixed byte tail may sever
 # the prompt from its owning boundary on a large rollout.
 matched_at = None
 try:
@@ -652,6 +652,7 @@ async function readCodexPromptAcceptance(
 }
 
 export const codexSessionObservability: RunnerObservability = {
+  supportsMidTurnPrompt: true,
   ...claudeHookObservability,
   promptAcceptanceMode: 'native-text',
   async getSessionDeliveryState(vars, target, sessionId, sessionPath) {

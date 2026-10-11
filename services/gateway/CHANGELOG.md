@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery.
+- Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
+
 - Retain CI check metadata at decisions and return current details through pr.status.
 - Validate deterministic local CI receipts before package preparation and publication, including current source inputs and runtime support.
 - Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch, including runner defaults and retained rechecks. Publication counts current-package reviewer approvals, including pipeline reviews; refresh preserves the latest result, WARM refuses unavailable continuity and COLD creates a fresh full-diff review.
