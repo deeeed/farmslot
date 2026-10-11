@@ -1,5 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // react-native-screens' FullWindowOverlay (iOS) paints in a UIWindow above every
 // native layer — including native-stack modal screens (sheets, perps-style modal
@@ -39,7 +40,12 @@ interface RecipeHudProps {
   state: FarmslotRecipeHudState | null;
 }
 
+// One line, centred in the bottom safe-area inset when it fits, so proof captures show the HUD
+// and the screen's bottom row of controls together.
+const HUD_HEIGHT = 22;
+
 export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactElement | null {
+  const insets = useSafeAreaInsets();
   if (!state || state.status === 'idle') return null;
   const progress = formatProgress(state.currentStep, state.totalSteps);
   const overlay = (
@@ -48,7 +54,7 @@ export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactEleme
       accessible={false}
       importantForAccessibility="no-hide-descendants"
       pointerEvents="none"
-      style={styles.container}
+      style={[styles.container, { bottom: Math.max(4, (insets.bottom - HUD_HEIGHT) / 2) }]}
     >
       <View style={[styles.pill, state.status === 'fail' ? styles.fail : styles.active]}>
         <Text style={styles.pillText}>
@@ -87,21 +93,21 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 12,
     right: 12,
-    bottom: 16,
+    minHeight: HUD_HEIGHT,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    borderRadius: 12,
-    padding: 8,
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     backgroundColor: 'rgba(10, 12, 16, 0.78)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255, 255, 255, 0.18)',
   },
   pill: {
     borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginTop: 1,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
   },
   active: {
     backgroundColor: 'rgba(16, 185, 129, 0.22)',
@@ -115,7 +121,7 @@ const styles = StyleSheet.create({
   },
   pillText: {
     color: '#ffffff',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '700',
     letterSpacing: 0.3,
   },
@@ -125,12 +131,12 @@ const styles = StyleSheet.create({
   },
   intent: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   error: {
     color: '#fca5a5',
-    fontSize: 11,
+    fontSize: 10,
     marginTop: 1,
   },
 });
