@@ -552,7 +552,14 @@ function deterministicInputHash(checkout, taskDir) {
           const head = spawnSync('git', ['-C', file, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
           const dirty = spawnSync(
             'git',
-            ['-C', file, 'status', '--porcelain=v1', '--untracked-files=all'],
+            [
+              '-C',
+              file,
+              'status',
+              '--porcelain=v1',
+              '--untracked-files=all',
+              '--ignore-submodules=none',
+            ],
             { encoding: 'utf8' },
           );
           if (head.status !== 0 || dirty.status !== 0)
