@@ -1,6 +1,6 @@
 # ADR-063: Review modes WARM and COLD
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-11
 **Owner:** Farmslot maintainers
 **Scope:** Review sessions, publication gates, dispatch configuration, and shared web/mobile pickers
@@ -15,9 +15,8 @@ artifacts and picker labels. Separate session and scope settings also permit
 contradictory requests. Picker implementations differ between gate, dispatch,
 backlog and PR screens, and between web and mobile.
 
-This record proposes one review contract and one configurable picker. It is a
-proposal for approval before implementation, not a claim that the behavior has
-shipped.
+This record defines one review contract and one configurable picker. Acceptance
+authorizes implementation; it does not claim that the behavior has shipped.
 
 ## Decision
 
@@ -144,7 +143,7 @@ does not grant publication, merge or dispatch authority.
 
 ## Implementation order
 
-1. Obtain lead and product-owner approval for this Proposed ADR. Stop here.
+1. Lead and product-owner approval recorded on 2026-10-11.
 2. Implement protocol, shared picker/view-model and all consumers in one PR.
    Cover gateway quality/review sources and artifacts, completion, review loops,
    backlog/dispatch, gate replay, slot release and session-process ownership.

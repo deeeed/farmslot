@@ -67,4 +67,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |
 | [059](059-pi-tui-model-agnostic-runner.md)               | PI TUI as a model-agnostic Farmslot worker                              | Accepted |
 | [060](060-sub-task-observability.md)                     | Sub-task observability through child checklist units                    | Accepted |
-| [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Proposed |
+| [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Accepted |
