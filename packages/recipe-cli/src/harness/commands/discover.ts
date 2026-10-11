@@ -52,11 +52,13 @@ import { EXIT } from '../shared.js';
 /** `actions`: the adapter's action catalog, one action, a search, its categories, or the matrix. */
 export async function handleActions(
   { options, positional }: ParsedArgs,
-  commandOptions: { catalog: RecipeCatalog },
+  commandOptions: { catalog: RecipeCatalog; librarySources?: RecipeLibrarySource[] },
 ): Promise<number> {
   const { catalog } = commandOptions;
   const host = harnessHost().name;
-  const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
+  const librarySources =
+    commandOptions.librarySources ??
+    (await resolveLibrarySources(catalog, optionStrings(options, 'library')));
   const json = optionFlag(options, 'json');
   const action = optionString(options, 'action');
   const query = positional[0]?.trim();
@@ -500,7 +502,7 @@ function catalogDescription(description: string | undefined): string {
 export async function handleListExecutables(
   command: 'call' | 'run',
   options: CliOptions,
-  commandOptions: { catalog: RecipeCatalog },
+  commandOptions: { catalog: RecipeCatalog; librarySources?: RecipeLibrarySource[] },
 ): Promise<number> {
   const { catalog } = commandOptions;
   const host = harnessHost().name;
@@ -539,7 +541,9 @@ export async function handleListExecutables(
     );
   };
 
-  const librarySources = await resolveLibrarySources(catalog, optionStrings(options, 'library'));
+  const librarySources =
+    commandOptions.librarySources ??
+    (await resolveLibrarySources(catalog, optionStrings(options, 'library')));
   const libraryLines = (): string[] => {
     const lines = ['Libraries loaded:'];
     for (const source of librarySources) {
@@ -672,7 +676,7 @@ export async function handleListExecutables(
 export async function handleDescribeRecipe(
   recipeArg: string,
   options: CliOptions,
-  commandOptions: { catalog: RecipeCatalog },
+  commandOptions: { catalog: RecipeCatalog; librarySources?: RecipeLibrarySource[] },
 ): Promise<number> {
   const { catalog } = commandOptions;
   const host = harnessHost().name;
@@ -684,6 +688,7 @@ export async function handleDescribeRecipe(
     catalog,
     libraryEntries,
     fs.existsSync(directRecipePath) ? directRecipePath : undefined,
+    commandOptions.librarySources,
   );
   const result = await describeRunnableRecipe(catalog, recipeArg, adapter, librarySources);
   const targetEntry = optionString(options, 'target');

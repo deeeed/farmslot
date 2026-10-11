@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.13.0 - 2026-10-11
+
+- Project commands preserve resolved library provenance and validate provider options before factory construction. Managed execution carries cancellation through command and live-action children, awaits provider cancellation/finalization before success, and retains authored teardown. Binding and cleanup failures use the same JSONL terminal event.
+
 ## 0.12.0 - 2026-10-11
 
 - Resolve project providers and ordered libraries through one authorized binding and compose the shared SDK engine. Static conformance reports bind checkout and SDK code, runtime and pool selection, recipe inputs and trust; task-local code remains bound inside artifact directories. `run --plan` and conformance require mutation providers to expose read-only `trustedMutation.preflight`; missing support refuses with an upgrade hint. Recipe state stays separate from farm state, and legacy scratch-slot identities remain supported.

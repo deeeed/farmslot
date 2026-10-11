@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
+import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { fuzzyResolveActions, resolveActionCapabilityRefusal } from '../../action-catalog.js';
 import { harnessAdapter } from '../adapters.js';
@@ -37,6 +38,7 @@ import {
   optionFlag,
   optionString,
   parseArgs,
+  type ParsedArgs,
   resolveAdapter,
   shellQuote,
   usageError,
@@ -79,6 +81,11 @@ import {
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
+  /** Already checked against the bound provider's command grammar. */
+  parsed?: ParsedArgs;
+  librarySources?: RecipeLibrarySource[];
+  signal?: AbortSignal;
+  beforeResult?(): Promise<void>;
   targetDevice?: DeviceTargeting;
   // The action the usage example names when no action is given; undefined
   // falls back to `command`, then the first action.
@@ -93,11 +100,14 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   const host = harnessHost().name;
   // --list: actions accepted by `call` for the detected adapter (no <action>
   // required). Intercept before the "action first" grammar check.
-  if (argv.includes('--list')) {
-    const { options } = parseArgs(argv);
-    return handleListExecutables('call', options, { catalog: engine });
+  if (commandOptions.parsed?.options.list || argv.includes('--list')) {
+    const { options } = commandOptions.parsed ?? parseArgs(argv);
+    return handleListExecutables('call', options, {
+      catalog: engine,
+      librarySources: commandOptions.librarySources,
+    });
   }
-  if (argv.length > 0 && argv[0]!.startsWith('--')) {
+  if (!commandOptions.parsed && argv.length > 0 && argv[0]!.startsWith('--')) {
     // The public wrapper catches this with the structured grammar. Keep the
     // guard for direct callers: without it, parseCallArgs can mistake an
     // option value (for example `core`) for the action.
@@ -105,8 +115,12 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     console.error(message);
     return EXIT.usage;
   }
-  const { action: shortName, args, rest } = parseCallArgs(argv);
-  const { options } = parseArgs(rest);
+  const {
+    action: shortName,
+    args,
+    rest,
+  } = parseCallArgs(commandOptions.parsed?.positional ?? argv);
+  const { options } = commandOptions.parsed ?? parseArgs(rest);
   if (['domain', 'source', 'sort'].some((name) => optionString(options, name) !== undefined)) {
     throw usageError('--domain, --source, and --sort require call --list.');
   }
@@ -116,7 +130,12 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     let discovery = `${host} actions`;
     try {
       const { adapter } = resolveAdapter(options);
-      const { manifest } = await resolveCommandManifest(engine, adapter, options);
+      const { manifest } = await resolveCommandManifest(
+        engine,
+        adapter,
+        options,
+        commandOptions.librarySources,
+      );
       const names = getRecipeActionManifestActionNames(manifest);
       const exampleAction =
         commandOptions.exampleAction?.(names) ??
@@ -237,6 +256,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
     engine,
     adapter,
     options,
+    commandOptions.librarySources,
   );
   const names = getRecipeActionManifestActionNames(manifest);
 
@@ -437,6 +457,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
   // unless --hud hide. A `call app.hud` drives the HUD itself, so the automatic
   // updates stay off: a completion update would redraw what `clear=true` removed.
   const callRuntimeOptions: RecipeEngineRunOptions = {
+    signal: commandOptions.signal,
     ...requestedRuntimeOptions,
     ...(resolvedAction === 'app.hud' ? { autoHud: false } : {}),
     librarySources,
@@ -569,6 +590,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       const { result, violation } = executionResult;
       await started.finalize(result.artifactManifestPath);
       observers = undefined;
+      await commandOptions.beforeResult?.();
       persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
       if (violation !== null) {
         const conciseFailure = violation.originalError

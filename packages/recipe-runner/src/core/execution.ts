@@ -5,7 +5,13 @@ import {
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
-import { RecipeExecutionError, recipeFailureCause, recipeFailureTraceFields } from './failure.js';
+import {
+  assertRecipeActive,
+  recipeAbortError,
+  RecipeExecutionError,
+  recipeFailureCause,
+  recipeFailureTraceFields,
+} from './failure.js';
 import { extractWorkflowGraph, resolveNextNode } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
@@ -46,6 +52,7 @@ type HudPublisher = (
 ) => Promise<boolean>;
 
 export interface ExecuteRecipeOptions {
+  signal?: AbortSignal;
   ref: string;
   adapter?: string;
   recipe: Record<string, unknown>;
@@ -112,6 +119,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     entry: string,
     nodeCount: number,
     stopAfterNode?: string,
+    signal?: AbortSignal,
   ): Promise<RecipeRunStatus> => {
     let currentNodeId: string | undefined = entry;
     let transitionCount = 0;
@@ -120,6 +128,17 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     while (currentNodeId) {
       const localNodeId = currentNodeId;
       const namespacedNodeId = `${prefix}${localNodeId}`;
+      if (signal?.aborted) {
+        recordSyntheticFailure(
+          options.traceWriter,
+          namespacedNodeId,
+          recipeAbortError(signal),
+          String(graph.nodes[localNodeId]?.action ?? 'unknown'),
+          'environment',
+        );
+        failureCause ??= 'environment';
+        return 'fail';
+      }
       transitionCount += 1;
       if (transitionCount > maxTransitions) {
         recordSyntheticFailure(
@@ -213,7 +232,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         return 'fail';
       }
 
-      const context = options.createContext(namespacedNodeId, options.recipe, outputs, getOutput);
+      const context = {
+        ...options.createContext(namespacedNodeId, options.recipe, outputs, getOutput),
+        signal,
+      };
       try {
         const resolvedValidation = validateResolvedRecipeActionNode(node, options.actionManifest, {
           adapter: options.adapter,
@@ -248,15 +270,18 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           }
         }
 
+        assertRecipeActive(signal);
         const result =
           action === 'call'
             ? await executeRecipeCall({
                 ...options,
+                signal,
                 node,
                 callNodeId: namespacedNodeId,
                 callStack: nextCallStack,
               })
             : await executeAction(adapter!, action, node, context);
+        assertRecipeActive(signal);
         const observeRefs = resolveObserveRefs(action, options.defaultObserverRefs);
         const observationResult =
           action === 'call'
@@ -269,6 +294,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
                 logger: options.logger,
                 refs: observeRefs,
               });
+        assertRecipeActive(signal);
         if (result.output !== undefined) {
           localOutputs[localNodeId] = result.output;
           outputs.set(localNodeId, result.output);
@@ -318,11 +344,13 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             return 'fail';
           }
         }
+        assertRecipeActive(signal);
         if (localNodeId === stopAfterNode) return 'pass';
         currentNodeId = next;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const causeClass = recipeFailureCause(error);
+        const failure = signal?.aborted ? recipeAbortError(signal) : error;
+        const message = failure instanceof Error ? failure.message : String(failure);
+        const causeClass = recipeFailureCause(failure);
         failureCause ??= causeClass;
         if (options.publishHudProgress) {
           try {
@@ -353,7 +381,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ok: false,
           cause_class: causeClass,
           error: message,
-          ...recipeFailureTraceFields(error),
+          ...recipeFailureTraceFields(failure),
         });
         return 'fail';
       }
@@ -361,9 +389,19 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     return 'fail';
   };
 
-  const mainStatus = await runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode);
+  const mainStatus = await runGraph(
+    graph.entry,
+    graph.mainNodeCount,
+    options.stopAfterNode,
+    options.signal,
+  );
   const teardownStatus = graph.teardownEntry
-    ? await runGraph(graph.teardownEntry, graph.teardownNodeCount)
+    ? await runGraph(
+        graph.teardownEntry,
+        graph.teardownNodeCount,
+        undefined,
+        options.signal ? new AbortController().signal : undefined,
+      )
     : 'pass';
   const status = combineStatuses(mainStatus, teardownStatus);
   return {

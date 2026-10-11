@@ -1,0 +1,5 @@
+{
+  "name": "browser-example",
+  "paths": { "runtime_dir": "temp/recipe/runtime", "artifact_dir": "temp/tasks" },
+  "recipe": { "provider": { "module": "./provider.mjs" }, "adapter": "browser" }
+}

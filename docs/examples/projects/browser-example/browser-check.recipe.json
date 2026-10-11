@@ -1,0 +1,41 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Verify a browser navigation",
+  "description": "Press a real navigation control, assert the resulting URL, and capture HUD evidence.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": { "click_selector": { "type": "string" }, "expected_url": { "type": "string" } },
+    "required": ["click_selector", "expected_url"]
+  },
+  "workflow": {
+    "entry": "navigate",
+    "nodes": {
+      "navigate": {
+        "action": "ui.press",
+        "selector": "{{params.click_selector}}",
+        "intent": "Open the requested application view",
+        "next": "status"
+      },
+      "status": {
+        "action": "app.status",
+        "intent": "Read the resulting browser URL",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "assert_output",
+        "source": "status",
+        "assert": { "path": "$.url", "operator": "eq", "value": "{{params.expected_url}}" },
+        "intent": "Verify navigation reached the requested view",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/navigation.png",
+        "intent": "Record the requested view and its live application data",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

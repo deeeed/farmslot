@@ -3,6 +3,41 @@ import type { CommandEventStream, StageHandle } from '@farmslot/adapter-sdk';
 import { recordCommandStage } from './command-journal.js';
 import { createStageReporter } from './stage-progress.js';
 type JsonFields = Record<string, unknown>;
+type WriteCallback = (error?: Error | null) => void;
+
+function redirectStdout(write: typeof process.stdout.write): () => void {
+  const original = process.stdout.write;
+  process.stdout.write = write;
+  return () => {
+    if (process.stdout.write === write) process.stdout.write = original;
+  };
+}
+
+/** Release machine output only after closeout; retain failed invocation output as diagnostics. */
+export function deferCommandOutput(): (success: boolean) => void {
+  const chunks: Buffer[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  const restore = redirectStdout(((
+    chunk: string | Uint8Array,
+    encoding?: BufferEncoding | WriteCallback,
+    callback?: WriteCallback,
+  ) => {
+    chunks.push(
+      typeof chunk === 'string'
+        ? Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8')
+        : Buffer.from(chunk),
+    );
+    (typeof encoding === 'function' ? encoding : callback)?.();
+    return true;
+  }) as typeof process.stdout.write);
+  return (success) => {
+    restore();
+    for (const chunk of chunks) {
+      if (success) write(chunk);
+      else process.stderr.write(chunk);
+    }
+  };
+}
 
 export class JsonStreamWriter implements CommandEventStream {
   readonly enabled: boolean;
@@ -28,16 +63,12 @@ export class JsonStreamWriter implements CommandEventStream {
 
   isolateStdout(): () => void {
     if (!this.enabled) return () => undefined;
-    const original = process.stdout.write;
     const redirect = ((
       chunk: string | Uint8Array,
       encoding?: BufferEncoding,
       callback?: (error?: Error | null) => void,
     ) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
-    process.stdout.write = redirect;
-    return () => {
-      if (process.stdout.write === redirect) process.stdout.write = original;
-    };
+    return redirectStdout(redirect);
   }
 
   emit(event: string, fields: JsonFields = {}): void {
@@ -91,17 +122,23 @@ export class JsonStreamWriter implements CommandEventStream {
 }
 
 /** Ends a stream on a thrown error: an `error` event, then `complete` (fail). */
-export function failStream(stream: JsonStreamWriter, error: unknown, code: string): void {
+export function failStream(
+  stream: JsonStreamWriter,
+  error: unknown,
+  code: string,
+  defaultExitCode = 1,
+): number {
   const exitCode =
     error !== null &&
     typeof error === 'object' &&
     'exitCode' in error &&
     typeof (error as { exitCode?: unknown }).exitCode === 'number'
       ? (error as { exitCode: number }).exitCode
-      : 1;
+      : defaultExitCode;
   stream.error({
     code: exitCode === 2 ? 'USAGE' : code,
     message: error instanceof Error ? error.message : String(error),
   });
   stream.complete('fail', exitCode);
+  return exitCode;
 }

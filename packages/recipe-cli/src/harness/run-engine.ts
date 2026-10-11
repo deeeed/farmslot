@@ -60,7 +60,7 @@ import {
   recipeRunning,
   recipeRunningRefusal,
 } from './heal-bounds.js';
-import { harnessHost, hostEnvName, recipeEnvName } from './host.js';
+import { harnessHost, hostEnvName, recipeEnvName, withRecipeCleanup } from './host.js';
 import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
 import { runNetworkCaptureAction } from './network-observation.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
@@ -354,6 +354,7 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
 
 /** A run's options: the generic ones (with the platform's own) and the command line it came from. */
 export type RecipeEngineRunOptions = RecipeRunOptions & {
+  signal?: AbortSignal;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
   cli?: CommandOptions;
@@ -449,7 +450,10 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     // Always clear a HUD step the engine left on-device (a failed run strands
     // the FAIL banner). Best-effort — never masks the run's real outcome.
     const run = harnessAdapter(adapter).run;
-    if (run?.teardown) await run.teardown(projectRoot, recipeRunEnv(adapter, runtimeOptions));
+    if (run?.teardown) {
+      const teardown = () => run.teardown!(projectRoot, recipeRunEnv(adapter, runtimeOptions));
+      await (runtimeOptions.signal ? withRecipeCleanup(teardown) : teardown());
+    }
   }
   let recordingError: unknown;
   if (executionError === undefined && result) {
@@ -601,6 +605,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     trust.source?.trust !== 'unknown' &&
     captureHelperSupportsRecordSessionSnapshots(projectRoot);
   const runRequest: RecipeRunRequest = {
+    signal: runtimeOptions.signal,
     ...(recipeDocument !== undefined
       ? { recipeDocument }
       : absoluteRecipePath

@@ -35,6 +35,17 @@ export class RecipeExecutionError extends Error {
   }
 }
 
+export function recipeAbortError(signal: AbortSignal): RecipeExecutionError {
+  return new RecipeExecutionError('environment', 'Recipe execution was cancelled.', {
+    code: 'RECIPE_ABORTED',
+    cause: signal.reason,
+  });
+}
+
+export function assertRecipeActive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw recipeAbortError(signal);
+}
+
 function isRecipeExecutionError(error: unknown): error is RecipeExecutionError {
   return Boolean(
     error &&

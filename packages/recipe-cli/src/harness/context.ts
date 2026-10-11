@@ -43,7 +43,7 @@ import {
   harnessAdapters,
   isPlatformTarget,
 } from './adapters.js';
-import { optionValues } from './command-contract.js';
+import { type ContractedCommand, optionValues } from './command-contract.js';
 import {
   type ContextPortName,
   type ContextSource,
@@ -59,13 +59,14 @@ import {
   validateRelativeRecipePath,
 } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
-import type { CliOptions } from './parse-args.js';
+import type { CliOptions, ParsedArgs } from './parse-args.js';
 import {
   DEFAULT_RECIPE_RUNTIME_DIR,
   isPathWithin as within,
   recipeOutputRoots,
   recipeRuntimeDir,
 } from './paths.js';
+import { parseProjectInvocation, type ProjectCommandInvocation } from './project-command.js';
 import type { RecipeEngine } from './run-engine.js';
 
 export interface ResolveHarnessContextOptions {
@@ -591,6 +592,10 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   command?: string;
   options?: CliOptions;
+  /** Target and paths already resolved by the shared host, authoritative over raw input. */
+  resolvedOptions?: CliOptions;
+  invocation?: ProjectCommandInvocation;
+  onParsedInvocation?(invocation: ParsedArgs): void;
 }
 
 // Authority and the checked source identity cannot be supplied by discovered JSON
@@ -1008,11 +1013,28 @@ export async function loadProjectProvider(
         } as HarnessHostConfig)
       : undefined;
   if (host) configureHarnessHost(host);
+  let providerOptions = { ...options.options, ...options.resolvedOptions };
+  if (options.invocation && options.command) {
+    if (module.providerCommands !== undefined && !Array.isArray(module.providerCommands)) {
+      throw new ProjectBindingError(
+        'PROVIDER_INVALID',
+        `Provider ${provider.ref} has an invalid command grammar.`,
+        'export providerCommands as an array of command contracts',
+      );
+    }
+    const parsed = parseProjectInvocation(
+      options.command,
+      options.invocation,
+      module.providerCommands as readonly ContractedCommand[] | undefined,
+    );
+    providerOptions = { ...options.options, ...parsed.options, ...options.resolvedOptions };
+    options.onParsedInvocation?.({ ...parsed, options: providerOptions });
+  }
   const result = (await createProvider({
     ...context,
     ...(host ? { host } : {}),
     command: options.command,
-    options: options.options,
+    options: providerOptions,
     libraries: authorizedProjectLibraries(context),
   })) as ProjectProvider;
   if (!result?.runtime || typeof result.runtime.id !== 'string') {
