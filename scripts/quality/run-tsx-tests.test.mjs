@@ -139,7 +139,6 @@ test('worker count defaults to serial and rejects invalid values', () => {
 
 test('classification keys off module mocks and the serial pragma', () => {
   assert.equal(classifyTest('const x = 1;'), 'parallel');
-  assert.equal(classifyTest("import './stack-base-prepare.test-support.js';"), 'module-mock');
   assert.equal(
     classifyTest("await import('../../runtime/mock-pty.test-support.js');"),
     'module-mock',

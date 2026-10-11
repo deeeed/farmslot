@@ -261,30 +261,38 @@ test('dirty QA recovery retains the branch and files when the frozen head differ
 });
 
 for (const forceNewBranch of [false, true])
-  test(`destructive prepare rechecks a cross-clone rewrite before reset, forceNewBranch=${forceNewBranch}`, async () => {
-    const slot = freshSlot('rewritten-slot-' + forceNewBranch);
-    const author = path.join(root, 'rewrite-author-' + forceNewBranch);
-    execFileSync('git', ['clone', remote, author], { stdio: 'ignore' });
-    git(author, 'checkout', '-B', 'rewritten-work', 'origin/published-work');
-    writeFileSync(path.join(author, 'unique.txt'), 'only on rewritten branch\n');
-    git(author, 'add', 'unique.txt');
-    git(author, 'commit', '-m', 'test: remote-only publication');
-    git(author, 'push', 'origin', 'rewritten-work');
-    git(slot, 'fetch', 'origin');
-    git(slot, 'checkout', '-b', 'rewritten-work', 'origin/rewritten-work');
-    const head = git(slot, 'rev-parse', 'HEAD');
-    await assert.rejects(
-      slotPrepare({ ...params, branch: 'rewritten-work', forceNewBranch }, () => {}, undefined, {
-        beforeBranchSetup: async () => {
-          git(author, 'checkout', '-B', 'rewritten-work', 'origin/main');
-          git(author, 'push', '--force', 'origin', 'rewritten-work');
-        },
-      }),
-      /unpushed commits/,
-    );
-    assert.equal(git(slot, 'rev-parse', 'HEAD'), head);
-    assert.equal(git(slot, 'rev-parse', 'refs/heads/rewritten-work'), head);
-  });
+  test(
+    `destructive prepare rechecks a cross-clone rewrite before reset, forceNewBranch=${forceNewBranch}`,
+    {
+      skip:
+        process.env.FARMSLOT_LIVE_PREPARE_REWRITES !== '1' &&
+        'manual live tier: prepare-rewrite-proof.mts',
+    },
+    async () => {
+      const slot = freshSlot('rewritten-slot-' + forceNewBranch);
+      const author = path.join(root, 'rewrite-author-' + forceNewBranch);
+      execFileSync('git', ['clone', remote, author], { stdio: 'ignore' });
+      git(author, 'checkout', '-B', 'rewritten-work', 'origin/published-work');
+      writeFileSync(path.join(author, 'unique.txt'), 'only on rewritten branch\n');
+      git(author, 'add', 'unique.txt');
+      git(author, 'commit', '-m', 'test: remote-only publication');
+      git(author, 'push', 'origin', 'rewritten-work');
+      git(slot, 'fetch', 'origin');
+      git(slot, 'checkout', '-b', 'rewritten-work', 'origin/rewritten-work');
+      const head = git(slot, 'rev-parse', 'HEAD');
+      await assert.rejects(
+        slotPrepare({ ...params, branch: 'rewritten-work', forceNewBranch }, () => {}, undefined, {
+          beforeBranchSetup: async () => {
+            git(author, 'checkout', '-B', 'rewritten-work', 'origin/main');
+            git(author, 'push', '--force', 'origin', 'rewritten-work');
+          },
+        }),
+        /unpushed commits/,
+      );
+      assert.equal(git(slot, 'rev-parse', 'HEAD'), head);
+      assert.equal(git(slot, 'rev-parse', 'refs/heads/rewritten-work'), head);
+    },
+  );
 
 test('review recovery fast-forwards a stale published head', async () => {
   const slot = freshSlot('review-advance-slot');

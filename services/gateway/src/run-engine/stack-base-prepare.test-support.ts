@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
-// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
+// Manual live proof uses an existing guarded server and owns only its fixture sessions:
 // no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
 export const tmuxSandbox =
   !process.env.TMUX &&
@@ -17,10 +17,6 @@ export const tmuxSandbox =
     `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
     ? process.env.FARMSLOT_TMUX_SANDBOX
     : null;
-export const needsTmuxSandbox = {
-  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
-};
-
 const execFileAsync = promisify(execFile);
 
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
