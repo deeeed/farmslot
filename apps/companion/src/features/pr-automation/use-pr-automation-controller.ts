@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Linking } from 'react-native';
 
 import {
@@ -8,6 +8,7 @@ import {
   Events,
   Methods,
   monitoredPRUrl,
+  parseGitHubPullUrl,
   type PRMonitor,
   type PRProjectMonitorPolicy,
   type PRPushListResult,
@@ -21,6 +22,7 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
+import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
 import type { GatewayClient, GatewayHttpAuthHeaders } from '../../lib/gateway-client';
 import {
@@ -93,6 +95,15 @@ export function usePRAutomationController(
   const [teamId, setTeamId] = useState('');
   const [history, setHistory] = useState(false);
   const [editor, setEditor] = useState<Editor>();
+  const [executionPicker, attachExecutionPicker] = useState<ReviewDispatchViewModel>();
+  const [, refreshExecutionPicker] = useState(0);
+  useEffect(
+    () =>
+      executionPicker?.subscribe(() => {
+        refreshExecutionPicker((revision) => revision + 1);
+      }),
+    [executionPicker],
+  );
   const [monitorDraft, setMonitorDraft] = useState(newPRMonitorDraft);
   const [requestDraft, setRequestDraft] = useState(newPRRequestDraft);
   const [preview, setPreview] = useState<PRRulePreview>();
@@ -239,6 +250,16 @@ export function usePRAutomationController(
       ? data
       : undefined;
   const disabled = busy || !current || !!error;
+  const effectiveRequest = useMemo(
+    () => effectivePRRequest(requestDraft, data?.reviews.teams ?? [], data?.farms.projects ?? []),
+    [requestDraft, data?.reviews.teams, data?.farms.projects],
+  );
+  const requestReviewLineages = useMemo(() => {
+    const pr = parseGitHubPullUrl(requestDraft.url);
+    return pr
+      ? reviewLineagesForPR(runs, { host: 'github.com', repo: pr.repo, number: pr.number })
+      : [];
+  }, [runs, requestDraft.url]);
   const mutate = useCallback(
     async <T>(method: string, params: unknown): Promise<T | undefined> => {
       if (!client || mutation.current || client.connectionState !== 'connected') return;
@@ -320,6 +341,9 @@ export function usePRAutomationController(
   const saveEditor = async () => {
     if (!editor || disabled) return;
     try {
+      if (executionPicker && !executionPicker.canInvoke('configure')) {
+        throw new Error(executionPicker.errors.join(' ') || 'Review configuration is unavailable.');
+      }
       let result: unknown;
       if (editor.kind === 'request') {
         requestKey.current ??= `companion-${Date.now()}-${++requestSequence}-${Math.random().toString(36).slice(2)}`;
@@ -413,11 +437,9 @@ export function usePRAutomationController(
           : undefined,
       monitorDraft,
       requestDraft,
-      effectiveRequest: effectivePRRequest(
-        requestDraft,
-        data?.reviews.teams ?? [],
-        data?.farms.projects ?? [],
-      ),
+      executionPickerValid: executionPicker?.canInvoke('configure') ?? true,
+      effectiveRequest,
+      requestReviewLineages,
       watches: data?.watches ?? { monitors: [] },
       reviews: data?.reviews ?? { teams: [], rules: [], intents: [] },
       queue: data?.queue.items ?? [],
@@ -510,6 +532,7 @@ export function usePRAutomationController(
       editMonitor: (patch: Partial<PRMonitorDraft>) =>
         setMonitorDraft((draft) => ({ ...draft, ...patch })),
       editRequest,
+      attachExecutionPicker,
       closeEditor: () => setEditor(undefined),
       saveEditor: () => {
         void saveEditor();

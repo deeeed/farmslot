@@ -80,14 +80,14 @@ export function isPostGateReviewOrFixInFlight(
 ): boolean {
   if (!run) return false;
 
-  const plan = run.engineState?.publishGate?.pendingReviewPlan;
+  const plan = run.engineState?.publishGate?.reviewSequence;
   if (Array.isArray(plan) && plan.length > 0) return true;
 
   for (const agent of run.agentContexts ?? []) {
     if (!ACTIVE_REVIEW_AGENT_STATUSES.has(String(agent.status ?? ''))) continue;
     const id = String(agent.id ?? '');
     const role = String(agent.role ?? '');
-    if (role === 'self-review' || role === 'self-review-fix') return true;
+    if (role === 'review' || role === 'review-fix') return true;
     if (/^rev/i.test(id) || /review/i.test(id)) return true;
   }
 
@@ -113,7 +113,7 @@ export function computePackageRefreshStatus(
 /**
  * Visual tone for any pipeline step/node (canvas + mini).
  * Prefer explicit verdict on outputs when present (publication reviews), but
- * self-review must honor maxRetriesExhausted before treating issues as orange.
+ * review must honor maxRetriesExhausted before treating issues as orange.
  */
 export function pipelineStepTone(
   step: Pick<RunStep, 'name' | 'status' | 'detail'> & {
@@ -130,8 +130,8 @@ export function pipelineStepTone(
         : null;
   const verdictLower = (verdict ?? '').trim().toLowerCase();
 
-  // Self-review first: terminal exhaustion is red even when verdict is still "issues".
-  if (step.name === 'self-review' && step.status === 'failed') {
+  // Review first: terminal exhaustion is red even when verdict is still "issues".
+  if (step.name === 'review' && step.status === 'failed') {
     if (outputs?.maxRetriesExhausted === true) return 'fail';
     if (verdictLower === 'issues' || /issues/i.test(step.detail ?? '')) return 'warn';
     return 'fail';

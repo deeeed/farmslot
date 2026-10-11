@@ -83,7 +83,7 @@ function tat4091Run(publicationStatus?: Publication, runner = 'codex'): Run {
   } as AgentContext;
   const reviewer = {
     id: 'rev-codex',
-    role: 'self-review',
+    role: 'review',
     label: 'rev-codex',
     status: 'complete',
     runner: 'codex',

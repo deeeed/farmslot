@@ -44,8 +44,8 @@ export async function resumeNativeWorker(
       }
     | { purpose: 'blocked-worker'; commandId: string; assertCurrent: () => void }
     | { purpose: 'handoff'; contextId: string; assertCurrent: () => void }
-    | { purpose: 'self-review-fix'; assertCurrent?: () => void }
-    | { purpose: 'self-review'; contextId: string; text: string; assertCurrent?: () => void },
+    | { purpose: 'review-fix'; assertCurrent?: () => void }
+    | { purpose: 'review'; contextId: string; text: string; assertCurrent?: () => void },
 ): Promise<void> {
   const slotId = getRun(runId)?.slotId;
   if (!slotId) throw new Error('Native worker recovery requires its owned slot');
@@ -77,17 +77,17 @@ async function resumeNativeWorkerExclusive(
   const slotId = run.slotId;
   const context = selectAgentContext(
     run,
-    options?.purpose === 'self-review' ||
+    options?.purpose === 'review' ||
       options?.purpose === 'handoff' ||
       options?.purpose === 'parking'
       ? { contextId: options.contextId }
       : { role: primaryRoleForFlow(run.flowType) },
   );
-  if (options?.purpose === 'self-review' && context?.role !== 'self-review')
+  if (options?.purpose === 'review' && context?.role !== 'review')
     throw new Error('Native reviewer recovery requires its exact reviewer context');
-  const fix = selectAgentContext(run, { role: 'self-review-fix' });
+  const fix = selectAgentContext(run, { role: 'review-fix' });
   const activeFix =
-    options?.purpose !== 'self-review' &&
+    options?.purpose !== 'review' &&
     fix?.status === 'working' &&
     fix.taskFile === run.activeTaskFile
       ? fix
@@ -281,14 +281,14 @@ async function resumeNativeWorkerExclusive(
               text: `First run ${shellQuote(path.posix.join(path.posix.dirname(context.taskFile), 'mark'))} start to begin a fresh signal attempt. Continue the current task in ${context.taskFile}. Preserve completed work and do not repeat completed steps.`,
             }
           : {}),
-        ...(options?.purpose === 'self-review' || options?.purpose === 'parking'
+        ...(options?.purpose === 'review' || options?.purpose === 'parking'
           ? { text: options.text }
           : activeFix
             ? {
                 contextId: activeFix.id,
                 text: `${activeFix.nativeCommandText}\nContinue this fix pass. Preserve completed work and do not repeat completed steps.`,
               }
-            : options?.purpose === 'self-review-fix' || options?.purpose === 'handoff'
+            : options?.purpose === 'review-fix' || options?.purpose === 'handoff'
               ? { resumeOnly: true }
               : {}),
       },
@@ -412,7 +412,7 @@ async function resumeNativeWorkerExclusive(
     await admit();
     await upsertAgentContext(
       runId,
-      'self-review-fix',
+      'review-fix',
       { id: intent.contextId },
       {
         mirrorIf: (slot) => slot.current_run_id === runId,

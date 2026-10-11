@@ -5,8 +5,10 @@ import path from 'node:path';
 
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { EXTRA_REVIEW_SOURCE } from '../../../services/gateway/src/quality/review-sources.js';
+import { reviewPolicySatisfied } from '../../../packages/protocol/src/runs/review-policy.js';
+import { REQUESTED_REVIEW_SOURCE } from '../../../services/gateway/src/quality/review-sources.js';
 import { loadSlotVars } from '../../../services/gateway/src/core/config.js';
+import { reviewFinalSnapshotMatchesPreparedPackage } from '../../../services/gateway/src/run-engine/gate-policy.js';
 import {
   createRun,
   getRun,
@@ -16,21 +18,24 @@ import {
 } from '../../../services/gateway/src/runs/store.js';
 const reviewModulePath =
   process.env.FARMSLOT_WARM_PROOF_REVIEW_MODULE ??
-  '../../../services/gateway/src/self-review/review-agent.js';
+  '../../../services/gateway/src/review/review-agent.js';
 const { runReviewAgent } = await import(reviewModulePath);
+const { resetWarmReviewerSessionsForTest, resolveWarmReviewerSession } =
+  await import('../../../services/gateway/src/review/session-mode.js');
 
 const [phase, fixture] = process.argv.slice(2);
 assert.ok(fixture);
 const vars = await loadSlotVars('warm-proof-slot');
 const taskDir = 'tasks/review';
-const priorReviewScope = EXTRA_REVIEW_SOURCE.artifactRefs(1).id;
-const currentReviewScope = EXTRA_REVIEW_SOURCE.artifactRefs(2).id;
+const priorReviewScope = REQUESTED_REVIEW_SOURCE.artifactRefs(1).id;
+const currentReviewScope = priorReviewScope;
+const mode = phase === 'first' ? 'cold' : 'warm';
 let runId: string;
 if (phase === 'first') {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'warm-proof',
-    ticketOrPr: 'WARM-PROOF',
+    ticketOrPr: 'example/warm-proof#1',
     slotId: vars.slotId,
     runner: 'claude',
     model: 'opus',
@@ -72,10 +77,9 @@ if (process.env.FARMSLOT_WARM_PROOF_GATEWAY === '1') {
     })),
   });
   await prepareCompletionPackage(runId, {
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    stampReviews: false,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'human-gate',
     },
   });
@@ -100,19 +104,22 @@ if (process.env.FARMSLOT_WARM_PROOF_GATEWAY === '1') {
       await connection.call('run.resolveDecision', {
         runId,
         decisionId: decision.id,
-        actionId: 'request-extra-review',
+        actionId: 'request-review',
         selectionData: {
           reviewRequest: {
-            extraLoopsRequested: 1,
-            loops: [
-              {
-                order: 1,
-                runner: 'claude',
-                model: 'opus',
-                validationDepth: 'static-code',
-                sessionIntent: 'resume',
-              },
-            ],
+            runner: 'claude',
+            model: 'opus',
+            effort: null,
+            mode,
+            ...(mode === 'warm'
+              ? {
+                  context: {
+                    reviewLineages: [
+                      { repository: 'example/warm-proof', prNumber: 1, reviewId: priorReviewScope },
+                    ],
+                  },
+                }
+              : {}),
           },
         },
       });
@@ -121,16 +128,11 @@ if (process.env.FARMSLOT_WARM_PROOF_GATEWAY === '1') {
     }
   }
   const action = await awaitingDecision;
-  assert.equal(action, 'request-extra-review');
+  assert.equal(action, 'request-review');
   const request = getRun(runId)!.decisions.at(-1)!;
-  const loop = (
-    request.selectionData?.reviewRequest as { loops?: Array<{ sessionIntent?: string }> }
-  )?.loops?.[0];
-  assert.equal(
-    loop?.sessionIntent,
-    'resume',
-    'Review request must preserve the warm review choice',
-  );
+  const selection = request.selectionData?.reviewRequest as { mode?: string; effort?: string };
+  assert.equal(selection?.mode, mode, 'Review request must preserve the chosen mode');
+  assert.equal(selection?.effort, null);
 }
 const before = getRun(runId)!;
 const priorSessionId = await readFile(path.join(fixture, 'prior-session'), 'utf8').catch(
@@ -140,7 +142,7 @@ const priorSessionId = await readFile(path.join(fixture, 'prior-session'), 'utf8
   },
 );
 const prior = before.agentContexts?.find(
-  (context) => context.role === 'self-review' && context.runner === 'claude',
+  (context) => context.role === 'review' && context.reviewId === priorReviewScope,
 );
 const reviewPromise = runReviewAgent(
   vars,
@@ -153,74 +155,44 @@ const reviewPromise = runReviewAgent(
   1,
   'static-code',
   phase === 'first' ? priorReviewScope : currentReviewScope,
-  'warm-per-reviewer',
-  'resume',
+  mode,
+  null,
+  priorReviewScope,
 );
-if (phase === 'negative') {
-  const expectedSession = await readFile(path.join(fixture, 'prior-session'), 'utf8');
-  for (let attempt = 0; attempt < 900; attempt++) {
-    const current = getRun(runId)?.agentContexts?.find(
-      (candidate) =>
-        candidate.role === 'self-review' &&
-        candidate.artifactScope === currentReviewScope &&
-        ['launching', 'working'].includes(candidate.status),
-    );
-    if (current?.target?.pane) {
-      const snapshot = await readFile(
-        path.join(
-          vars.remoteRepo,
-          '.agent',
-          '.observability',
-          'panes',
-          `${encodeURIComponent(current.target.pane)}.json`,
-        ),
-        'utf8',
-      ).catch((error) => {
-        if (error.code === 'ENOENT') return null;
-        throw error;
-      });
-      if (snapshot) {
-        const hook = JSON.parse(snapshot);
-        if (hook.session_id) {
-          if (hook.session_id === expectedSession)
-            throw new Error('Removed recovery unexpectedly reused the saved reviewer session');
-          assert.equal(
-            hook.session_id,
-            expectedSession,
-            'Explicit warm publication review must reuse the persisted session after gateway restart',
-          );
-        }
-      }
-    }
-    await delay(100);
-  }
-  throw new Error('Negative proof did not establish a native reviewer binding');
-}
 const result = await reviewPromise;
 assert.equal(result.verdict, 'pass');
-const after = getRun(runId)!;
-const context = after.agentContexts!.find(
-  (candidate) => candidate.role === 'self-review' && candidate.runner === 'claude',
-)!;
+let after = getRun(runId)!;
+const context = [...after.agentContexts!]
+  .filter((candidate) => candidate.role === 'review' && candidate.reviewId === priorReviewScope)
+  .sort((left, right) => (right.startedAt ?? '').localeCompare(left.startedAt ?? ''))[0]!;
 assert.ok(context.runnerSessionId);
 if (phase === 'first') {
   const checklist = await readFile(
-    path.join(vars.remoteRepo, taskDir, 'SELF-REVIEW.rev-claude.md'),
+    path.join(vars.remoteRepo, taskDir, 'REVIEW.rev-claude.md'),
     'utf8',
   );
   assert.doesNotMatch(checklist, /This is an incremental continuation/);
+  assert.equal(result.mode, 'cold');
+  assert.equal(result.session?.continuity, 'fresh');
+  assert.equal(
+    result.reviewSnapshot?.baseSha,
+    execFileSync('git', ['rev-parse', 'main'], { cwd: vars.remoteRepo, encoding: 'utf8' }).trim(),
+  );
   updateRun(runId, {
     engineState: {
       publishGate: {
         publicationStatus: 'not_published',
-        independentReviews: [
+        reviews: [
           {
             id: priorReviewScope,
             source: 'human-gate',
             runner: 'claude',
             model: 'opus',
             reviewerSessionId: context.runnerSessionId,
-            crossRunner: false,
+            effort: null,
+            mode,
+            session: result.session,
+            reviewedHeadSha: result.reviewSnapshot?.headSha,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -238,10 +210,106 @@ if (phase === 'first') {
     'Explicit warm publication review must reuse the persisted session after gateway restart',
   );
   assert.equal(context.artifactScope, currentReviewScope);
+  assert.equal(context.reviewId, priorReviewScope);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.session?.reviewId, priorReviewScope);
+  const first = JSON.parse(await readFile(path.join(fixture, 'first.json'), 'utf8'));
+  assert.equal(result.reviewSnapshot?.baseSha, first.result.reviewSnapshot.headSha);
+  assert.notEqual(result.reviewSnapshot?.baseSha, result.reviewSnapshot?.headSha);
   assert.equal(after.engineState!.publishGate!.publicationStatus, 'not_published');
   assert.ok(prior?.runnerSessionId);
+  updateRun(runId, {
+    engineState: {
+      ...after.engineState,
+      publishGate: {
+        ...after.engineState!.publishGate!,
+        reviews: after.engineState!.publishGate!.reviews!.map((review) =>
+          review.id === priorReviewScope
+            ? {
+                ...review,
+                mode,
+                session: result.session,
+                reviewSnapshot: result.reviewSnapshot,
+                reviewedHeadSha: result.reviewSnapshot?.headSha,
+                reviewerSessionId: context.runnerSessionId,
+              }
+            : review,
+        ),
+      },
+    },
+  });
+  const { prepareCompletionPackage } =
+    await import('../../../services/gateway/src/run-completion/orchestrator.js');
+  const { prPackage } = await prepareCompletionPackage(runId, { stampReviews: false });
+  const review = getRun(runId)!.engineState!.publishGate!.reviews!.find(
+    (candidate) => candidate.id === priorReviewScope,
+  )!;
+  assert.equal(
+    result.session?.lastReviewedHeadSha,
+    first.result.reviewSnapshot.headSha,
+    'WARM result provenance keeps the previous reviewed head',
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(review, prPackage),
+    true,
+    'The real WARM delta must certify the refreshed full PR package',
+  );
 }
-await persistRunNow(getRun(runId)!);
+after = getRun(runId)!;
+// Exercise the same verified session as standalone result provenance, with no publication rows
+// or in-memory registration. IDs, captured head and session evidence come from the real review.
+const standalone = {
+  ...after,
+  flowType: 'review-pr' as const,
+  decisions: [],
+  engineState: { ...after.engineState!, publishGate: undefined },
+  reviewResult: {
+    recommendation: 'approve',
+    reviewMd: result.artifactPaths.find((file: string) => file.endsWith('/review.md')) ?? '',
+    lineComments: [],
+    reviewSnapshot: result.reviewSnapshot,
+    session: result.session,
+  },
+};
+resetWarmReviewerSessionsForTest();
+const recoveredPrimary = resolveWarmReviewerSession(
+  {
+    runId: runId,
+    reviewId: priorReviewScope,
+    project: after.project,
+    ownerPrincipalId: after.nativeOwnerPrincipalId ?? after.createdByPrincipalId ?? null,
+    transport: 'tmux',
+    taskDir,
+    artifactScope: priorReviewScope,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    repository: result.session.repository,
+    prNumber: result.session.prNumber,
+  },
+  [standalone],
+);
+assert.equal(recoveredPrimary?.runnerSessionId, context.runnerSessionId);
+assert.equal(recoveredPrimary?.lastReviewedHeadSha, result.reviewSnapshot.headSha);
+assert.equal(
+  context.runner,
+  after.metrics.runner,
+  'Runner choice does not alter separate-session review eligibility',
+);
+assert(
+  reviewPolicySatisfied(
+    { minimumReviews: 1, requestedBy: 'human-gate' },
+    after.engineState!.publishGate!.reviews ?? [],
+  ),
+);
+assert(
+  !reviewPolicySatisfied(
+    { minimumReviews: 2, requestedBy: 'human-gate' },
+    after.engineState!.publishGate!.reviews ?? [],
+  ),
+  'Rechecks replace one review result',
+);
+await persistRunNow(after);
 await writeFile(
   path.join(fixture, `${phase}.json`),
   JSON.stringify(
@@ -250,7 +318,9 @@ await writeFile(
     2,
   ),
 );
-if (context.target?.target) execFileSync('tmux', ['kill-window', '-t', context.target.target]);
+// Keep the completed first reviewer available for the WARM phase.
+if (phase !== 'first' && context.target?.target)
+  execFileSync('tmux', ['kill-window', '-t', context.target.target]);
 console.log(
   JSON.stringify({
     phase,

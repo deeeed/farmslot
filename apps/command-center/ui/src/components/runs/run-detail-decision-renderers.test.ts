@@ -17,7 +17,7 @@ test('publication gate title names review issues instead of worker finished', ()
     publicationGateWaitingTitle({
       actions: [{ id: 'continue-review-fix', label: 'Continue Fixing', style: 'primary' }],
     }),
-    'Independent review found issues',
+    'Review found issues',
   );
   assert.equal(
     publicationGateWaitingTitle({

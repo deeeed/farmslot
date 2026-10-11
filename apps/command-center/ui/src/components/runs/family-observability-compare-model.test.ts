@@ -35,7 +35,7 @@ function run(
     metrics: { runner: 'codex', model: 'gpt-5.5', nudgeCount: 0 },
     diffStat: { available: true, files: 2, additions: 10, deletions: 1 },
     recipeQuality: { semantic: 'good', evidence: 'good', notes: [] },
-    selfReview: { verdict: 'approve', summary: null, issues: [] },
+    review: { verdict: 'approve', summary: null, issues: [] },
     artifacts: [],
     steps: [],
     decisions: [],
@@ -87,7 +87,7 @@ test('crossComparePrompt summarizes comparison runs and evidence', () => {
           diffStat: { available: false, files: 0, additions: 0, deletions: 0 },
           metrics: { runner: 'claude', model: 'sonnet', nudgeCount: 0 },
           recipeQuality: { semantic: 'unknown', evidence: 'good', notes: [] },
-          selfReview: { verdict: 'needs-work', summary: null, issues: [] },
+          review: { verdict: 'needs-work', summary: null, issues: [] },
         }),
       ],
       [
@@ -107,7 +107,7 @@ test('crossComparePrompt summarizes comparison runs and evidence', () => {
   assert.match(prompt, /evidence=1 artifact · 1 img/);
   assert.match(prompt, /claude-sonnet \(compare-b\).*diff=diff unavailable/);
   assert.match(prompt, /recipe=unknown/);
-  assert.match(prompt, /selfReview=needs-work/);
+  assert.match(prompt, /review=needs-work/);
 });
 
 test('familyCopilotCompareRequest preserves compare prompt event detail', () => {

@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import type { RawPoolJson } from '../core/config.js';
 
 import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
-import { REVIEW_STARTUP_TIMEOUT_MS, reviewTmuxStartupState } from './review-tmux.js';
+import {
+  REVIEW_STARTUP_TIMEOUT_MS,
+  reviewTmuxStartupState,
+  verifiedWarmReviewSessionId,
+} from './review-tmux.js';
 
 const started = Date.parse('2026-09-21T09:35:00Z');
 
@@ -149,5 +155,49 @@ test('native exact-prompt acceptance acknowledges startup before a model-written
       null,
     ),
     'acknowledged',
+  );
+});
+
+test('terminal WARM reservation requires exact PR, lineage, session and reviewed-head provenance', () => {
+  const trace = {
+    mode: 'warm' as const,
+    continuity: 'resumed' as const,
+    reviewId: 'review-lineage',
+    repository: 'owner/repo',
+    prNumber: 42,
+    priorRunId: 'prior-run',
+    priorSessionId: 'prior-session',
+    lastReviewedHeadSha: '1111111',
+  };
+  const run = {
+    reviewMode: 'warm',
+    ticketOrPr: 'owner/repo#42',
+    repeatReviewContext: { mode: 'warm', session: trace },
+  } as Run;
+  assert.equal(verifiedWarmReviewSessionId(run), 'prior-session');
+  for (const session of [
+    { ...trace, reviewId: undefined },
+    { ...trace, lastReviewedHeadSha: undefined },
+    { ...trace, continuity: 'refused' as const },
+  ])
+    assert.throws(
+      () =>
+        verifiedWarmReviewSessionId({
+          ...run,
+          repeatReviewContext: { ...run.repeatReviewContext!, session },
+        }),
+      /WARM review refused/,
+    );
+  assert.throws(
+    () => verifiedWarmReviewSessionId({ ...run, ticketOrPr: 'owner/repo#43' }),
+    /pr-mismatch/,
+  );
+  assert.equal(
+    verifiedWarmReviewSessionId({
+      ...run,
+      reviewMode: 'cold',
+      repeatReviewContext: { ...run.repeatReviewContext!, mode: 'cold' },
+    }),
+    undefined,
   );
 });

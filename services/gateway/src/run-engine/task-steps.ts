@@ -741,7 +741,7 @@ export async function executeWriteTaskStep(
         includeChecklist: !isLightweightInteractiveDevRun(afterWrite),
       }),
     );
-    if (afterWrite.repeatReviewContext?.contextMode === 'reuse') {
+    if (afterWrite.repeatReviewContext?.mode === 'warm') {
       artifacts.push(
         { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },
         { path: PREVIOUS_REVIEW_MD_INPUT, purpose: 'previous-review-summary' },

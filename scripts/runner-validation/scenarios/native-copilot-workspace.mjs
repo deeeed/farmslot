@@ -309,10 +309,18 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
             ),
           'configured fixture option',
         );
-        for (const label of [runner, selectedModel])
-          await evaluate(
-            `const picker=${viewRoot}?.querySelector('runner-model-effort-picker')?.shadowRoot; const button=Array.from(picker?.querySelectorAll('button')??[]).find(item=>item.textContent.trim()===${JSON.stringify(label)}); if(!button || button.disabled) throw new Error('Picker choice unavailable'); button.click(); return {clicked:true};`,
-          );
+        await cdp(
+          'select',
+          route,
+          `${viewSelector}review-dispatch-picker >>> [data-testid="review-dispatch-runner"]`,
+          runner,
+        );
+        await cdp(
+          'select',
+          route,
+          `${viewSelector}review-dispatch-picker >>> [data-testid="review-dispatch-model"]`,
+          selectedModel,
+        );
         await cdp(
           'select',
           route,

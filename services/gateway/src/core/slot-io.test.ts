@@ -320,7 +320,7 @@ test('slotCopyDir worker artifact policy preserves gateway-owned diff artifacts'
     'utf-8',
   );
   await writeFile(
-    path.join(sourceDir, 'runner-blockers', 'self-review-launch.txt'),
+    path.join(sourceDir, 'runner-blockers', 'review-launch.txt'),
     'pane failed',
     'utf-8',
   );

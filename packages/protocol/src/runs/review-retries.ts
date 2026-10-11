@@ -1,10 +1,10 @@
-import type { IndependentReviewStatus } from '../contracts/runs.js';
+import type { ReviewStatus } from '../contracts/runs.js';
 
 export const APPROVE_PUBLISH_UNRESOLVED_ACTION = 'approve-publish-unresolved';
 
 type ReviewRetryFields = Partial<
   Pick<
-    IndependentReviewStatus,
+    ReviewStatus,
     | 'source'
     | 'verdict'
     | 'unresolvedCount'
@@ -21,7 +21,7 @@ type ReviewRetryFields = Partial<
   >
 >;
 
-export function independentReviewRetryCount(review: ReviewRetryFields): number {
+export function reviewRetryCount(review: ReviewRetryFields): number {
   const fromAttempts = Math.max(0, (review.attempts?.length ?? 1) - 1);
   if (typeof review.retryCount === 'number' && Number.isFinite(review.retryCount)) {
     return Math.max(0, Math.round(review.retryCount), fromAttempts);
@@ -30,19 +30,18 @@ export function independentReviewRetryCount(review: ReviewRetryFields): number {
 }
 
 /**
- * True when an extra/independent review consumed its auto-fix budget with
+ * True when an review consumed its auto-fix budget with
  * findings still open. `max_retries: 0` is not a cap-hit: the operator still
  * uses Continue Fixing to authorize the first worker pass.
  *
  * Records without `maxRetries` are exhausted only when `maxRetriesExhausted`
  * was persisted. Missing cap fields are not inferred.
  */
-export function independentReviewFixRetriesExhausted(review: ReviewRetryFields): boolean {
-  if (review.source === 'self-review') return false;
+export function reviewFixRetriesExhausted(review: ReviewRetryFields): boolean {
   if (review.verdict !== 'issues') return false;
   const findings = Math.max(review.unresolvedCount ?? 0, review.issues?.length ?? 0);
   if (findings <= 0) return false;
-  const retryCount = independentReviewRetryCount(review);
+  const retryCount = reviewRetryCount(review);
   if (typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)) {
     if (review.maxRetries <= 0) return false;
     if (review.maxRetriesExhausted === true) return true;
@@ -52,12 +51,11 @@ export function independentReviewFixRetriesExhausted(review: ReviewRetryFields):
 }
 
 /** Repair wiped `retryCount: 0` and stamp a missing cap from project config. */
-export function stampIndependentReviewRetryCap<T extends ReviewRetryFields>(
+export function stampReviewRetryCap<T extends ReviewRetryFields>(
   review: T,
   configuredMaxRetries?: number,
 ): T {
-  if (review.source === 'self-review') return review;
-  const retryCount = independentReviewRetryCount(review);
+  const retryCount = reviewRetryCount(review);
   const maxRetries =
     typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)
       ? review.maxRetries
@@ -69,37 +67,33 @@ export function stampIndependentReviewRetryCap<T extends ReviewRetryFields>(
     retryCount,
     ...(typeof maxRetries === 'number' ? { maxRetries } : {}),
   };
-  if (!independentReviewFixRetriesExhausted(next)) return next;
+  if (!reviewFixRetriesExhausted(next)) return next;
   return { ...next, maxRetriesExhausted: true, recoveryContinuationPending: false };
 }
 
-export function independentReviewRetryCapReason(review: ReviewRetryFields): string {
-  const retryCount = independentReviewRetryCount(review);
+export function reviewRetryCapReason(review: ReviewRetryFields): string {
+  const retryCount = reviewRetryCount(review);
   const findings = Math.max(review.unresolvedCount ?? 0, review.issues?.length ?? 0);
   const findingLabel = `${findings} finding${findings === 1 ? '' : 's'}`;
   if (typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)) {
-    return `Independent review stopped after ${retryCount}/${review.maxRetries} fix attempts; ${findingLabel} remain. Request another review, or bypass publish (dangerous).`;
+    return `Review stopped after ${retryCount}/${review.maxRetries} fix attempts; ${findingLabel} remain. Request another review, or bypass publish (dangerous).`;
   }
-  return `Independent review stopped after ${retryCount} fix attempt${retryCount === 1 ? '' : 's'}; ${findingLabel} remain. Request another review, or bypass publish (dangerous).`;
+  return `Review stopped after ${retryCount} fix attempt${retryCount === 1 ? '' : 's'}; ${findingLabel} remain. Request another review, or bypass publish (dangerous).`;
 }
 
-export function latestIndependentReview(
+export function latestReview(
   reviews: readonly ReviewRetryFields[] | undefined,
 ): ReviewRetryFields | undefined {
   return [...(reviews ?? [])]
     .reverse()
-    .find(
-      (review) =>
-        review.source !== 'self-review' &&
-        (review.verdict === 'pass' || review.verdict === 'issues'),
-    );
+    .find((review) => review.verdict === 'pass' || review.verdict === 'issues');
 }
 
-/** Latest terminal extra-review that hit its auto-fix cap. Package HEAD drift does not hide this. */
-export function latestExhaustedIndependentReview(
+/** Latest terminal review that hit its auto-fix cap. Package HEAD drift does not hide this. */
+export function latestExhaustedReview(
   reviews: readonly ReviewRetryFields[] | undefined,
 ): ReviewRetryFields | undefined {
-  const latest = latestIndependentReview(reviews);
-  if (!latest || !independentReviewFixRetriesExhausted(latest)) return undefined;
+  const latest = latestReview(reviews);
+  if (!latest || !reviewFixRetriesExhausted(latest)) return undefined;
   return latest;
 }

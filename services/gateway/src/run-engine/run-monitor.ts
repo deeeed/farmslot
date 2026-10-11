@@ -1020,7 +1020,7 @@ export async function monitorRun(
     actions?: RunDecision['actions'],
   ) => createBlockedDecision(id, reason, description, actions, { signal, generation });
   // The monitor follows the flow-owned primary worker for this run. Secondary
-  // roles such as self-review and ci-fix have their own watchers/signals and
+  // roles such as review and ci-fix have their own watchers/signals and
   // must not retarget the main completion monitor mid-run.
   let monitorContext = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   const currentMonitorContext = () => {

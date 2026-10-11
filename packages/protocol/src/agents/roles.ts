@@ -17,8 +17,7 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   dev: 'Dev',
   'fix-bug': 'Bugfix',
   review: 'Review',
-  'self-review': 'Self-review',
-  'self-review-fix': 'Self-review fix',
+  'review-fix': 'Review fix',
   'ci-fix': 'CI fix',
   subtask: 'Sub-task',
 };
@@ -28,8 +27,7 @@ export const AGENT_ROLE_SHORT_LABELS: Record<AgentRole, string> = {
   dev: 'DEV',
   'fix-bug': 'BUG',
   review: 'REV',
-  'self-review': 'S-REV',
-  'self-review-fix': 'S-FIX',
+  'review-fix': 'R-FIX',
   'ci-fix': 'CI',
   subtask: 'SUB',
 };
@@ -39,8 +37,7 @@ export const AGENT_ROLE_WINDOWS: Record<AgentRole, string | null> = {
   dev: 'dev',
   'fix-bug': 'bugfix',
   review: 'review',
-  'self-review': 'self-review',
-  'self-review-fix': null, // runs in the primary worker's window, not a separate one
+  'review-fix': null, // runs in the primary worker's window, not a separate one
   'ci-fix': 'ci-fix',
   subtask: null, // a child unit is observed, never spawned — it owns no window
 };
@@ -51,7 +48,7 @@ export const PRIMARY_WORKER_WINDOW = 'worker';
 /**
  * Concrete dispatch/shutdown target for a role. Unlike agentRoleWindow(), this
  * resolves the primary role to the canonical session anchor. Secondary roles
- * without their own pane (self-review-fix) still return null because they must
+ * without their own pane (review-fix) still return null because they must
  * share the owning run's persisted worker target.
  */
 export function agentDispatchWindow(role: AgentRole): string | null {
@@ -67,8 +64,7 @@ export const AGENT_ROLE_RANKS: Record<AgentRole, number> = {
   dev: 1,
   'fix-bug': 2,
   review: 3,
-  'self-review': 10,
-  'self-review-fix': 20,
+  'review-fix': 20,
   'ci-fix': 30,
   subtask: 40,
 };

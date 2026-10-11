@@ -12,7 +12,7 @@ const workerTemplateDir = path.join(repoRoot, 'projects/farmslot-farm/templates/
 
 function assertRoleTemplateUsesTaskDirMark(abs) {
   const src = readFileSync(abs, 'utf8');
-  assert.doesNotMatch(src, /mark-self-review/);
+  assert.doesNotMatch(src, /mark-review/);
   assert.doesNotMatch(src, /packages\/skills\/scripts\/mark-checklist-step\.cjs/);
   assert.doesNotMatch(
     src,

@@ -12,7 +12,7 @@ import { PRRuleStore } from './store.js';
 const pr = { host: 'github.com', repo: 'owner/repo', number: 42 };
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'review-slot' },
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 async function teamFor(store: PRRuleStore, owner = 'owner'): Promise<PRTeamProfile> {
   return store.saveTeam(owner, {
@@ -40,7 +40,7 @@ async function fixture(t: test.TestContext) {
     autoStart: false,
     idempotencyKey: 'request-one',
     source: { client: 'external-integration', reference: 'request-42', requester: 'a teammate' },
-    review: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' },
+    review: { mode: 'warm' as const },
   };
   const item: PRRulePreviewItem = {
     subject: {
@@ -84,10 +84,7 @@ test('idempotent intake survives restart and rejects changed payloads without tr
   assert.equal(restarted.intent(applied.intentId!)?.author, 'pr-author');
   assert.equal(restarted.intent(applied.intentId!)?.title, 'Review');
   assert.equal(restarted.intent(applied.intentId!)?.contributions[0].ownerId, 'owner');
-  assert.equal(
-    restarted.intent(applied.intentId!)?.contributions[0].review?.validationDepth,
-    'full-live',
-  );
+  assert.equal(restarted.intent(applied.intentId!)?.contributions[0].review?.mode, 'warm');
   assert.throws(() => restarted.submission(first.id, 'not-owner'), /not found/);
 });
 
@@ -226,7 +223,7 @@ test('new requests after execution starts create follow-up rounds instead of inh
   const { store, team, request, item } = await fixture(t);
   const initial = await store.submit('owner', {
     ...request,
-    review: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'static-code' },
+    review: { mode: 'warm' as const },
   });
   const first = await store.applySubmission('owner', initial.id, initial.revision, team.revision, {
     item: { ...item, review: initial.request.review },
@@ -245,7 +242,7 @@ test('new requests after execution starts create follow-up rounds instead of inh
   let fresh = await store.submit('owner', {
     ...request,
     idempotencyKey: 'fresh-review',
-    review: { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' },
+    review: { mode: 'cold' as const },
   });
   fresh = await store.applySubmission('owner', fresh.id, fresh.revision, team.revision, {
     item: { ...item, review: fresh.request.review },
@@ -368,11 +365,7 @@ test('an identical retry returns its durable receipt after the team changes prov
 
 test('concurrent static Review and QA requests have separate durable intents', async (t) => {
   const { store, team, request, item, file } = await fixture(t);
-  const review = {
-    sessionIntent: 'resume' as const,
-    scope: 'incremental' as const,
-    workflow: 'review' as const,
-  };
+  const review = { mode: 'warm' as const, workflow: 'review' as const };
   const runtime = { ...review, workflow: 'qa' as const, qaProfileId: 'changed-area' };
   const first = await store.submit('owner', { ...request, review });
   const second = await store.submit('owner', { ...request, idempotencyKey: 'qa', review: runtime });
@@ -404,11 +397,7 @@ test('concurrent static Review and QA requests have separate durable intents', a
 
 test('direct QA receipts persist configured and resolved purpose through restart', async (t) => {
   const { store, team, request, item, file } = await fixture(t);
-  const review = {
-    sessionIntent: 'resume' as const,
-    scope: 'incremental' as const,
-    workflow: 'qa' as const,
-  };
+  const review = { mode: 'warm' as const, workflow: 'qa' as const };
   const submission = await store.submit('owner', { ...request, review });
   const resolved: PRRulePreviewItem = { ...item, review };
   resolvePreviewQaPreset(resolved, {
@@ -445,12 +434,7 @@ test('publication requests with different accounts hold pending work and cannot 
       name: 'Other publisher',
       account: { host: 'github.com', login: 'other-publisher' },
     });
-    const review = {
-      sessionIntent: 'reset' as const,
-      scope: 'full' as const,
-      workflow: 'review' as const,
-      publishReview: true,
-    };
+    const review = { mode: 'cold' as const, workflow: 'review' as const, publishReview: true };
     const item = { ...f.item, review };
     const first = await f.store.submit('owner', { ...f.request, review });
     const delayed = await f.store.submit('owner', {
@@ -493,12 +477,7 @@ test('publication requests with different accounts hold pending work and cannot 
 test('publication authority cannot move to another owner sharing the same GitHub account', async (t) => {
   const f = await fixture(t);
   const other = await teamFor(f.store, 'other-owner');
-  const review = {
-    sessionIntent: 'reset' as const,
-    scope: 'full' as const,
-    workflow: 'review' as const,
-    publishReview: true,
-  };
+  const review = { mode: 'cold' as const, workflow: 'review' as const, publishReview: true };
   const first = await f.store.submit('owner', { ...f.request, review });
   const delayed = await f.store.submit('other-owner', {
     ...f.request,

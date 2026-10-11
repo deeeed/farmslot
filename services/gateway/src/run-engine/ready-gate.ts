@@ -1,32 +1,39 @@
+import { randomUUID } from 'node:crypto';
 // ready-gate.ts — Human ready/publication gate orchestration.
-
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  effectiveRequiredReviewCount,
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
-  independentReviewFixRetriesExhausted,
-  independentReviewRetryCapReason,
-  independentReviewRetryCount,
-  type IndependentReviewStatus,
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
-  latestExhaustedIndependentReview,
+  latestExhaustedReview,
   MachineParkEligibilityCodes,
   PipelineSteps,
   type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
-  type ReviewDepthPolicy,
-  type ReviewLoopRequest,
-  reviewValidationDepthForLoop,
+  reviewFixRetriesExhausted,
+  type ReviewPolicy,
+  reviewPolicySatisfied,
+  type ReviewRequestContext,
+  reviewRetryCapReason,
+  reviewRetryCount,
+  type ReviewSelection,
+  type ReviewStatus,
   type Run,
   type RunDecision,
-  stampIndependentReviewRetryCap,
+  stampReviewRetryCap,
 } from '@farmslot/protocol';
+import {
+  executionModelFromSelection,
+  parseReviewRequestContext,
+  reviewContextFromRequest,
+} from '@farmslot/review-dispatch';
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -35,17 +42,20 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
-import { formatIndependentReviewMarkdown } from '../quality/independent-review-artifacts.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import { formatReviewMarkdown } from '../quality/review-artifacts.js';
 import {
-  effectiveRequiredReviewCount,
-  independentReviewPolicySatisfied,
-} from '../quality/review-policy.js';
-import {
-  EXTRA_REVIEW_SOURCE,
   inferReviewSourceKind,
+  REQUESTED_REVIEW_SOURCE,
   REVIEW_SOURCES,
 } from '../quality/review-sources.js';
+import {
+  executeReview as executeReviewDefault,
+  type ReviewResult,
+} from '../review/orchestrator.js';
+import { reviewedInputsAwaitingReview, reviewedInputsChanged } from '../review/reviewed-inputs.js';
+import { reviewPRIdentity } from '../review/session-mode.js';
+import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
 import {
   isArtifactOnlyRun,
   publicationStatusForRun,
@@ -56,14 +66,8 @@ import {
   readReadyGatePreparedPackage,
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
-import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
+import { runnerDefaultModel } from '../runners/registry.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
-import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
-import {
-  reviewedInputsAwaitingReview,
-  reviewedInputsChanged,
-} from '../self-review/reviewed-inputs.js';
-import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -98,7 +102,7 @@ import {
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
-  pendingIndependentReviewContinuation,
+  pendingReviewContinuation as findPendingReviewContinuation,
   publicationGateDecisionActions,
   restampStaleApprovingReviewsForEvidenceRefresh,
   reviewerIsActiveForReview,
@@ -116,14 +120,12 @@ import {
   resolveGateChoiceOutcome,
 } from './resource-posture.js';
 import {
-  assertIndependentReviewLaunchStateForSlot,
+  assertReviewLaunchStateForSlot,
   publicationReviewLaunchRejectionFromError,
 } from './review-launch-gate.js';
 import {
-  effectiveReviewRunner,
-  humanGateReviewDepth,
+  humanGateReviewPolicy,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
-  requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import {
@@ -140,15 +142,15 @@ const ACCEPTANCE_STATUS_ARTIFACT_REL = `artifacts/${ACCEPTANCE_STATUS_FILENAME}`
 
 const activePublicationReviewContinuations = new Map<
   string,
-  Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null>
+  Promise<{ reviewId: string; verdict: ReviewResult['verdict'] } | null>
 >();
 
-function interruptedPublicationReview(run: Run): IndependentReviewStatus | undefined {
+function interruptedPublicationReview(run: Run): ReviewStatus | undefined {
   const activeFix = run.agentContexts?.some(
-    (context) => context.role === 'self-review-fix' && context.status === 'working',
+    (context) => context.role === 'review-fix' && context.status === 'working',
   );
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
-  const pending = pendingIndependentReviewContinuation(reviews);
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  const pending = findPendingReviewContinuation(reviews);
   // A gateway restart can happen after the worker fix completed and while the
   // retained reviewer is already checking the new HEAD. The persisted review
   // still carries the prior round's pending findings until that reviewer
@@ -157,8 +159,8 @@ function interruptedPublicationReview(run: Run): IndependentReviewStatus | undef
   // fix when no reviewer for this review lane is running.
   if (pending) return reviewerIsActiveForReview(run, pending) ? undefined : pending;
   if (!activeFix) return undefined;
-  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
-  if (latest && independentReviewFixRetriesExhausted(latest)) return undefined;
+  const latest = reviews.at(-1);
+  if (latest && reviewFixRetriesExhausted(latest)) return undefined;
   return latest?.verdict === 'issues' &&
     latest.unresolvedCount > 0 &&
     (latest.issues?.length ?? 0) > 0
@@ -166,9 +168,13 @@ function interruptedPublicationReview(run: Run): IndependentReviewStatus | undef
     : undefined;
 }
 
-function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus): SelfReviewResult {
+function reviewResultFromInterruptedReview(review: ReviewStatus): ReviewResult {
   return {
     verdict: 'issues',
+    mode: review.mode,
+    reviewId: review.id,
+    reviewerSessionId: review.reviewerSessionId ?? undefined,
+    session: review.session,
     issues: review.issues ?? [],
     reviewSnapshot: review.reviewSnapshot,
     fixDelta: review.fixDelta,
@@ -180,8 +186,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     runner: review.runner ?? undefined,
     model: review.model ?? undefined,
     effort: review.effort ?? undefined,
-    crossRunner: review.crossRunner,
-    retryCount: independentReviewRetryCount(review),
+    retryCount: reviewRetryCount(review),
     ...(typeof review.maxRetries === 'number' ? { maxRetries: review.maxRetries } : {}),
     feedbackSent: review.feedbackSent,
     recoveryContinuationPending: review.recoveryContinuationPending,
@@ -190,14 +195,14 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
 
 /**
  * Resume the fix/re-review continuation lost when the gateway restarted after
- * persisting an ISSUES verdict but before executeSelfReview could deliver it.
+ * persisting an ISSUES verdict but before executeReview could deliver it.
  * The same review id is replaced so recovery cannot inflate review counts.
  */
 export async function resumeInterruptedPublicationReview(
   runId: string,
   slotId: string,
-  dependencies: { executeReview?: typeof executeSelfReview } = {},
-): Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null> {
+  dependencies: { executeReview?: typeof executeReviewDefault } = {},
+): Promise<{ reviewId: string; verdict: ReviewResult['verdict'] } | null> {
   const active = activePublicationReviewContinuations.get(runId);
   if (active) return active;
   const continuation = resumeInterruptedPublicationReviewOnce(runId, slotId, dependencies);
@@ -214,15 +219,15 @@ export async function resumeInterruptedPublicationReview(
 async function resumeInterruptedPublicationReviewOnce(
   runId: string,
   slotId: string,
-  dependencies: { executeReview?: typeof executeSelfReview },
-): Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null> {
+  dependencies: { executeReview?: typeof executeReviewDefault },
+): Promise<{ reviewId: string; verdict: ReviewResult['verdict'] } | null> {
   const run = getRun(runId);
   if (!run) return null;
   const interrupted = interruptedPublicationReview(run);
   if (!interrupted) return null;
 
-  const executeReview = dependencies.executeReview ?? executeSelfReview;
-  let result: SelfReviewResult;
+  const executeReview = dependencies.executeReview ?? executeReviewDefault;
+  let result: ReviewResult;
   try {
     result = await executeReview(runId, slotId, {
       reviewRunner: interrupted.runner ?? null,
@@ -231,8 +236,10 @@ async function resumeInterruptedPublicationReviewOnce(
       // Reviews recorded before depth existed ran the live contract; resume them as recorded.
       validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
+      reviewId: interrupted.id,
+      mode: 'warm',
       publicationReview: true,
-      resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),
+      resumeFromResult: reviewResultFromInterruptedReview(interrupted),
     });
   } catch (error) {
     if (isTerminalReviewArtifactError(error)) throw error;
@@ -242,19 +249,18 @@ async function resumeInterruptedPublicationReviewOnce(
     return null;
   }
   const latest = getRun(runId)!;
-  const latestReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const latestReviews = latest.engineState?.publishGate?.reviews ?? [];
   const reviewStatus = buildPublishGateReviewStatus({
     source: interrupted.source === 'dispatch' ? 'dispatch' : 'human-gate',
     priorReviewCount: Math.max(0, latestReviews.length - 1),
     reviewResult: result,
     requestedRunner: interrupted.runner ?? null,
-    workerRunner: latest.metrics.runner,
     model: interrupted.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
     effort: result.effort ?? interrupted.effort ?? null,
     reviewId: interrupted.id,
     reviewedPackage: await readPreparedPackage(latest),
   });
-  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewStatus]);
+  const [persisted] = await persistReviewArtifactsForRun(latest, [reviewStatus]);
   const nextReviews = latestReviews.map((review) =>
     review.id === interrupted.id ? persisted : review,
   );
@@ -263,7 +269,7 @@ async function resumeInterruptedPublicationReviewOnce(
       ...latest.engineState,
       publishGate: {
         ...latest.engineState?.publishGate,
-        independentReviews: nextReviews,
+        reviews: nextReviews,
       },
     },
   });
@@ -276,11 +282,9 @@ export interface PublishGateReviewPlanResult {
 }
 
 export interface PublishGateReviewPlanDependencies {
-  assertLaunchAllowed?: (
-    reviews: readonly IndependentReviewStatus[],
-    slotId: string,
-  ) => Promise<void>;
-  executeReview?: typeof executeSelfReview;
+  assertLaunchAllowed?: (reviews: readonly ReviewStatus[], slotId: string) => Promise<void>;
+  executeReview?: typeof executeReviewDefault;
+  reviewSequenceContext?: ReviewRequestContext;
 }
 
 function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: string): Run {
@@ -327,7 +331,7 @@ export function reconcileReviewLaunchRejectionForCurrentHead(
 export async function executePublishGateReviewPlan(
   runId: string,
   slotId: string,
-  plan: ReviewLoopRequest[],
+  plan: ReviewSelection[],
   source: 'dispatch' | 'human-gate',
   dependencies: PublishGateReviewPlanDependencies = {},
 ): Promise<PublishGateReviewPlanResult> {
@@ -336,17 +340,17 @@ export async function executePublishGateReviewPlan(
     clearPublicationReviewLaunchRejection(runId);
     return { reviewIds: [] };
   }
-  const assertLaunchAllowed =
-    dependencies.assertLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot;
-  const executeReview = dependencies.executeReview ?? executeSelfReview;
+  const assertLaunchAllowed = dependencies.assertLaunchAllowed ?? assertReviewLaunchStateForSlot;
+  const executeReview = dependencies.executeReview ?? executeReviewDefault;
   const reviewIds: string[] = [];
+  const reviewSequenceContext =
+    dependencies.reviewSequenceContext ??
+    getRun(runId)?.engineState?.publishGate?.reviewSequenceContext;
+  if (reviewSequenceContext) parseReviewRequestContext(reviewSequenceContext, boundedPlan.length);
   for (const planStep of boundedPlan) {
     const launchSnapshot = getRun(runId)!;
     try {
-      await assertLaunchAllowed(
-        launchSnapshot.engineState?.publishGate?.independentReviews ?? [],
-        slotId,
-      );
+      await assertLaunchAllowed(launchSnapshot.engineState?.publishGate?.reviews ?? [], slotId);
     } catch (error) {
       const rejection = publicationReviewLaunchRejectionFromError(error);
       if (!rejection) throw error;
@@ -372,37 +376,55 @@ export async function executePublishGateReviewPlan(
     const latestBeforeReview = clearPublicationReviewLaunchRejection(runId);
     const reviewedPackage =
       source === 'human-gate' ? await readPreparedPackage(latestBeforeReview) : undefined;
-    // ID + artifact paths flow through EXTRA_REVIEW_SOURCE so this stream stays
-    // namespace-isolated from the worker's self-review attempts (review-sources.ts).
-    const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(
-      (latestBeforeReview.engineState?.publishGate?.independentReviews ?? []).length + 1,
-    ).id;
-    const requestedRunner = effectiveReviewRunner(planStep);
+    // ID + artifact paths flow through REQUESTED_REVIEW_SOURCE so this stream stays
+    // namespace-isolated from the worker's review attempts (review-sources.ts).
+    const continuation = reviewSequenceContext?.reviewLineages[boundedPlan.indexOf(planStep)];
+    const reviewIdentity = reviewPRIdentity(latestBeforeReview);
+    if (
+      planStep.mode === 'warm' &&
+      continuation &&
+      (!reviewIdentity ||
+        continuation.repository.toLowerCase() !== reviewIdentity.repository.toLowerCase() ||
+        continuation.prNumber !== reviewIdentity.prNumber)
+    )
+      throw new Error(
+        'WARM review unavailable: the lineage context belongs to a different repository/PR',
+      );
+    if (planStep.mode === 'warm' && !continuation?.reviewId)
+      throw new Error(
+        'WARM review unavailable: this request row has no reviewId lineage context. Choose a previous review or COLD.',
+      );
+    const reviewId =
+      planStep.mode === 'warm'
+        ? continuation!.reviewId
+        : REQUESTED_REVIEW_SOURCE.artifactRefs(
+            (latestBeforeReview.engineState?.publishGate?.reviews ?? []).length + 1,
+            `${runId}-${randomUUID()}`,
+          ).id;
+    const priorReview = latestBeforeReview.engineState?.publishGate?.reviews?.find(
+      (review) => review.id === reviewId,
+    );
+    const execution = executionModelFromSelection(planStep);
+    const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {
       detail: requestedRunner
-        ? `Running ${source} ${requestedRunner} review (${planStep.order}/${boundedPlan.length})...`
-        : `Running ${source} independent review (${planStep.order}/${boundedPlan.length})...`,
+        ? `Running ${source} ${requestedRunner} review (${boundedPlan.indexOf(planStep) + 1}/${boundedPlan.length})...`
+        : `Running ${source} review (${boundedPlan.indexOf(planStep) + 1}/${boundedPlan.length})...`,
     });
-    const validationDepth =
-      planStep.validationDepth ??
-      reviewValidationDepthForLoop(planStep.order - 1, boundedPlan.length);
-    let reviewResult: SelfReviewResult;
+    const validationDepth = 'static-code' as const;
+    let reviewResult: ReviewResult;
     let reviewRecoveryPending = false;
     try {
       reviewResult = await executeReview(runId, slotId, {
         reviewRunner: requestedRunner,
-        model: planStep.model ?? null,
-        effort: planStep.effort ?? null,
+        model: execution.model,
+        effort: execution.effort,
         validationDepth,
         artifactScope: reviewId,
+        reviewId,
+        priorAttempts: planStep.mode === 'warm' ? priorReview?.attempts : undefined,
         publicationReview: true,
-        reviewSessionIntent: planStep.sessionIntent ?? 'reset',
-        // An explicit operator Continue/Fresh choice starts a retained review
-        // work order: Fresh resets generation 1, while fixes/re-reviews can
-        // still reuse that reviewer. The override is NOT redundant with the
-        // warm default — a project configured fresh-per-pass must still honor
-        // the operator's explicit retained-session choice.
-        ...(planStep.sessionIntent ? { reviewSessionPolicy: 'warm-per-reviewer' as const } : {}),
+        mode: planStep.mode,
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.
@@ -415,6 +437,11 @@ export async function executePublishGateReviewPlan(
         `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
       );
       reviewResult = {
+        mode: planStep.mode,
+        reviewId,
+        runner: requestedRunner,
+        model: planStep.model ?? undefined,
+        effort: planStep.effort,
         verdict: 'blocked',
         reason: `review-unavailable: ${message}`,
         retryCount: 0,
@@ -422,6 +449,7 @@ export async function executePublishGateReviewPlan(
         attempts: [
           {
             loopNumber: 1,
+            mode: planStep.mode,
             verdict: 'failed',
             unresolvedCount: 0,
             reason: `review-unavailable: ${message}`,
@@ -433,20 +461,13 @@ export async function executePublishGateReviewPlan(
       };
     }
     const latest = getRun(runId)!;
-    const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+    const priorReviews = latest.engineState?.publishGate?.reviews ?? [];
     const builtReviewStatus = buildPublishGateReviewStatus({
       source,
-      priorReviewCount: priorReviews.length,
+      priorReviewCount: priorReview ? priorReview.loopNumber - 1 : priorReviews.length,
       reviewResult,
       requestedRunner,
-      workerRunner: latest.metrics.runner,
-      model:
-        reviewResult.model ??
-        planStep.model ??
-        runnerDefaultModel(requestedRunner) ??
-        latest.metrics.actualModel ??
-        latest.metrics.model ??
-        null,
+      model: reviewResult.model ?? planStep.model ?? runnerDefaultModel(requestedRunner) ?? null,
       effort: reviewResult.effort ?? planStep.effort ?? null,
       reviewId,
       reviewedPackage,
@@ -454,14 +475,19 @@ export async function executePublishGateReviewPlan(
     const reviewStatus = reviewRecoveryPending
       ? { ...builtReviewStatus, recoveryContinuationPending: true }
       : builtReviewStatus;
-    const reviewStatuses = await persistIndependentReviewArtifactsForRun(latest, [reviewStatus]);
+    const reviewStatuses = await persistReviewArtifactsForRun(latest, [reviewStatus]);
     reviewIds.push(...reviewStatuses.map((review) => review.id));
     updateRun(runId, {
       engineState: {
         ...latest.engineState,
         publishGate: {
           ...latest.engineState?.publishGate,
-          independentReviews: [...priorReviews, ...reviewStatuses],
+          reviews: [
+            ...priorReviews.filter(
+              (prior) => !reviewStatuses.some((review) => review.id === prior.id),
+            ),
+            ...reviewStatuses,
+          ],
         },
       },
     });
@@ -469,15 +495,15 @@ export async function executePublishGateReviewPlan(
   }
   return { reviewIds };
 }
-export async function persistIndependentReviewArtifactsForRun(
+export async function persistReviewArtifactsForRun(
   run: Run,
-  reviews: IndependentReviewStatus[],
-): Promise<IndependentReviewStatus[]> {
+  reviews: ReviewStatus[],
+): Promise<ReviewStatus[]> {
   if (!run.taskFile || reviews.length === 0) return reviews;
   const taskDir = path.dirname(run.taskFile);
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
-  const persisted: IndependentReviewStatus[] = [];
+  const persisted: ReviewStatus[] = [];
   for (const review of reviews) {
     // Resolve artifact paths through the ReviewSource registry so persistence
     // honors per-stream conventions instead of reconstructing from id alone.
@@ -492,11 +518,7 @@ export async function persistIndependentReviewArtifactsForRun(
       JSON.stringify(withArtifacts, null, 2),
       'utf-8',
     );
-    await writeFile(
-      path.join(taskDir, refs.mdRel),
-      formatIndependentReviewMarkdown(withArtifacts),
-      'utf-8',
-    );
+    await writeFile(path.join(taskDir, refs.mdRel), formatReviewMarkdown(withArtifacts), 'utf-8');
     persisted.push(withArtifacts);
   }
   invalidateArtifactTextCache(taskDir, run.slotId);
@@ -620,15 +642,13 @@ async function applyEvidenceRefreshOverride(
   runId: string,
   approvedPackage: ReadyGatePrPackage,
   decision: RunDecision | undefined,
-  reviewDepth: ReviewDepthPolicy,
+  reviewPolicy: ReviewPolicy,
   selectionData: Record<string, unknown> | undefined,
 ): Promise<void> {
   const before = getRun(runId)!;
-  const priorReviews = before.engineState?.publishGate?.independentReviews ?? [];
+  const priorReviews = before.engineState?.publishGate?.reviews ?? [];
   const { reviews, restampedIds, oldReviewSubjectHashes } =
-    restampStaleApprovingReviewsForEvidenceRefresh(priorReviews, approvedPackage, {
-      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-    });
+    restampStaleApprovingReviewsForEvidenceRefresh(priorReviews, approvedPackage);
   const operator = typeof selectionData?.operator === 'string' ? selectionData.operator : null;
   const auditRecord: EvidenceRefreshOverrideRecord = {
     at: new Date().toISOString(),
@@ -656,7 +676,7 @@ async function applyEvidenceRefreshOverride(
       ...before.engineState,
       publishGate: {
         ...before.engineState?.publishGate,
-        independentReviews: reviews,
+        reviews: reviews,
       },
     },
   });
@@ -798,19 +818,17 @@ export async function executeReadyGate(runId: string): Promise<string> {
 
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
   const configuredMaxRetries =
-    typeof pv?.projectJson?.self_review?.max_retries === 'number'
-      ? pv.projectJson.self_review.max_retries
+    typeof pv?.projectJson?.review?.max_retries === 'number'
+      ? pv.projectJson.review.max_retries
       : undefined;
   // Re-read: `current` predates a chain of awaits and the launch-rejection
   // reconcile just above, which may have cleared `reviewLaunchRejection`.
   // Spreading the stale snapshot would write that rejection back.
   const runForRetryCap = getRun(runId)!;
-  const storedReviews = runForRetryCap.engineState?.publishGate?.independentReviews ?? [];
-  const independentReviews = storedReviews.map((review) =>
-    stampIndependentReviewRetryCap(review, configuredMaxRetries),
-  );
+  const storedReviews = runForRetryCap.engineState?.publishGate?.reviews ?? [];
+  const reviews = storedReviews.map((review) => stampReviewRetryCap(review, configuredMaxRetries));
   if (
-    independentReviews.some(
+    reviews.some(
       (review, index) =>
         review.retryCount !== storedReviews[index]?.retryCount ||
         review.maxRetries !== storedReviews[index]?.maxRetries ||
@@ -823,12 +841,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ...runForRetryCap.engineState,
         publishGate: {
           ...runForRetryCap.engineState?.publishGate,
-          independentReviews,
+          reviews,
         },
       },
     });
   }
-  const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
+  const exhaustedReview = latestExhaustedReview(reviews);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage
@@ -849,10 +867,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
                 ]
               : []),
           ...(exhaustedReview
-            ? [
-                '',
-                `**Review retries exhausted:** ${independentReviewRetryCapReason(exhaustedReview)}`,
-              ]
+            ? ['', `**Review retries exhausted:** ${reviewRetryCapReason(exhaustedReview)}`]
             : []),
           ...(videoProofWarning ? ['', videoProofWarning] : []),
           '',
@@ -870,29 +885,27 @@ export async function executeReadyGate(runId: string): Promise<string> {
       ].join('\n')
     : baseDescription;
 
-  const reviewDepth =
-    preparedPackage?.reviewDepth ??
+  const reviewPolicy =
+    preparedPackage?.reviewPolicy ??
     publicationReviewPolicyForRun(
       current,
       pv?.projectJson,
-      current.engineState?.publishGate?.reviewDepth,
+      current.engineState?.publishGate?.reviewPolicy,
     );
-  const pendingReview = pendingIndependentReviewContinuation(independentReviews);
+  const pendingReview = findPendingReviewContinuation(reviews);
   const pendingReviewContinuation =
     pendingReview && !reviewerIsActiveForReview(current, pendingReview) ? pendingReview : undefined;
-  const requiredReviewCount = effectiveRequiredReviewCount(reviewDepth);
+  const requiredReviewCount = effectiveRequiredReviewCount(reviewPolicy);
   const staleReviewCount =
     publicationApprovalGate && preparedPackage && requiredReviewCount > 0
-      ? countStalePublicationReviews(independentReviews, preparedPackage, {
-          requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-        })
+      ? countStalePublicationReviews(reviews, preparedPackage)
       : 0;
   // The evidence or HEAD changed after the last passing review:
-  // self-review must run again before publication, whatever the review minimum.
+  // review must run again before publication, whatever the review minimum.
   const reviewedInputsStale = publicationApprovalGate && (await reviewedInputsChanged(current));
   const reviewSatisfied =
     !publicationApprovalGate ||
-    (independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
+    (reviewPolicySatisfied(reviewPolicy, reviews) &&
       staleReviewCount === 0 &&
       !reviewedInputsStale);
   // The evidence-refresh override is offered ONLY when staleness is purely
@@ -900,11 +913,11 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // and never when what the last review judged has changed since.
   const evidenceRefreshAction =
     publicationApprovalGate && preparedPackage && !reviewedInputsStale
-      ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
+      ? buildEvidenceRefreshAction(reviews, preparedPackage)
       : null;
   const unavailableSnapshotAction =
     publicationApprovalGate && preparedPackage
-      ? buildUnavailableSnapshotAction(independentReviews, preparedPackage, reviewDepth)
+      ? buildUnavailableSnapshotAction(reviews, preparedPackage, reviewPolicy)
       : null;
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
@@ -915,7 +928,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
           evidenceRefreshAction,
           unavailableSnapshotAction,
           pendingReviewContinuation,
-          independentReviews,
+          reviews,
           preparedPackage,
         })
       : [
@@ -966,19 +979,19 @@ export async function executeReadyGate(runId: string): Promise<string> {
     }
   }
 
-  // Read self-review step output
-  let selfReviewVerdict: string | undefined;
-  let selfReviewSummary: string | undefined;
-  const selfReviewStep = current.steps.find((s) => s.name === 'self-review');
-  if (selfReviewStep?.outputs) {
-    const out = selfReviewStep.outputs as Record<string, unknown>;
-    selfReviewVerdict =
+  // Read review step output
+  let reviewVerdict: string | undefined;
+  let reviewSummary: string | undefined;
+  const reviewStep = current.steps.find((s) => s.name === 'review');
+  if (reviewStep?.outputs) {
+    const out = reviewStep.outputs as Record<string, unknown>;
+    reviewVerdict =
       typeof out.verdict === 'string' ? out.verdict : out.skipped ? 'skipped' : undefined;
     const issues = Array.isArray(out.issues)
       ? out.issues.filter((item): item is Record<string, unknown> => Boolean(item))
       : [];
     if (issues.length > 0) {
-      selfReviewSummary = issues
+      reviewSummary = issues
         .map((issue) => `${String(issue.file ?? '')}: ${String(issue.description ?? '')}`)
         .join('; ');
     }
@@ -1077,8 +1090,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
         })
       ).artifact,
       artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
-      selfReviewVerdict,
-      selfReviewSummary,
+      reviewVerdict,
+      reviewSummary,
       workerLearnings,
       reviewLaunchRejection,
       ciChecks,
@@ -1090,8 +1103,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ? {
             prPackage: preparedPackage,
             ...(currentDescription ? { currentDescription } : {}),
-            reviewDepth,
-            independentReviews,
+            reviewPolicy,
+            reviews,
             gatePolicy: preparedPackage.gatePolicy,
             validationSummary: preparedPackage.validationSummaryPath ?? undefined,
             publicationTarget: preparedPackage.publicationTarget,
@@ -1112,7 +1125,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const afterDecisionRun = getRun(runId)!;
   // Bind to the latest decision matching the action we just resolved — not an
   // older review request (e.g. first loop claude when the operator just asked
-  // for codex). Sort by resolvedAt so a second request-extra-review wins.
+  // for codex). Sort by resolvedAt so a second request-review wins.
   const decision =
     afterDecisionRun.decisions
       .filter(
@@ -1135,8 +1148,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
   // F42: the evidence or HEAD changed while the gate was open and
-  // self-review has not run again for it. Hold instead of approving: the gate
-  // step re-runs self-review and presents the gate again.
+  // review has not run again for it. Hold instead of approving: the gate
+  // step re-runs review and presents the gate again.
   if (
     publicationApprovalGate &&
     isPublishApprovalAction(actionId) &&
@@ -1182,24 +1195,23 @@ export async function executeReadyGate(runId: string): Promise<string> {
       // Re-derive availability against the decision-time package so a code change
       // between gate render and resolve cannot smuggle the override through.
       assertEvidenceRefreshOverrideAvailable(
-        getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        getRun(runId)!.engineState?.publishGate?.reviews ?? [],
         approvedPackage,
-        reviewDepth,
       );
       await applyEvidenceRefreshOverride(
         runId,
         approvedPackage,
         decision,
-        reviewDepth,
+        reviewPolicy,
         selectionData,
       );
     }
     if (actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
       assertUnavailableSnapshotOverrideAvailable(
-        getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        getRun(runId)!.engineState?.publishGate?.reviews ?? [],
         approvedPackage,
-        reviewDepth,
+        reviewPolicy,
       );
     }
     if (isPublishApprovalAction(actionId)) {
@@ -1220,36 +1232,20 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ? (selectionData.reviewRequest as Record<string, unknown>)
         : {};
     const selectedPlan = reviewPlanFromSelection(selectionData);
-    const requestRequiresCrossRunner = reviewRequest.requireCrossRunner === true;
-    const requestedPlan: ReviewLoopRequest[] =
-      actionId === 'request-cross-runner-review' &&
-      !selectedPlan.some((loop) => effectiveReviewRunner(loop))
-        ? [
-            {
-              order: 1,
-              runner: defaultAlternateReviewRunner(
-                current.metrics.runner,
-              ) as ReviewLoopRequest['runner'],
-              validationDepth: 'static-code' as const,
-            },
-          ]
-        : selectedPlan;
-    const loopsToAdd =
-      actionId === 'request-cross-runner-review'
-        ? Math.max(1, requestedPlan.length)
-        : requestedReviewLoopCount(reviewRequest, requestedPlan.length);
+    const requestedPlan = selectedPlan;
+    const loopsToAdd = requestedPlan.length;
     const reviewRequestConsumed = markResolvedHumanGateReviewRequestConsumed(decision);
-    const baseReviewDepth = publicationReviewPolicyForRun(current, pv?.projectJson);
+    const baseReviewPolicy = publicationReviewPolicyForRun(current, pv?.projectJson);
     const patch =
-      actionId === 'request-extra-review' || actionId === 'request-cross-runner-review'
+      actionId === 'request-review'
         ? {
-            reviewDepth: humanGateReviewDepth(
-              baseReviewDepth,
-              { ...reviewRequest, requireCrossRunner: requestRequiresCrossRunner },
-              { actionId, fallbackLoopCount: loopsToAdd },
-            ),
-            pendingReviewPlan: requestedPlan,
-            pendingReviewPlanRequestedAt: new Date().toISOString(),
+            reviewPolicy: humanGateReviewPolicy(baseReviewPolicy, reviewRequest, {
+              actionId,
+              fallbackLoopCount: loopsToAdd,
+            }),
+            reviewSequence: requestedPlan,
+            reviewSequenceContext: reviewContextFromRequest(reviewRequest),
+            reviewSequenceRequestedAt: new Date().toISOString(),
           }
         : {};
     // applyEvidenceRefreshOverride persists restamped reviews + an audit record

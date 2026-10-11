@@ -176,8 +176,7 @@ test('farm workflow QA defaults resolve before migration and cannot later add ad
   const farm = {
     qa: {
       review: {
-        sessionIntent: 'resume' as const,
-        scope: 'full' as const,
+        mode: 'cold' as const,
         workflow: 'qa' as const,
         qaProfileId: 'pr',
         qaInputs: { scope: 'pr' },

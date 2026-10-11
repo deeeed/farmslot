@@ -38,7 +38,7 @@ test('ready workspace action model derives decision state keys and messages', ()
   assert.equal(isReadyPublicationApproval('ready', false), false);
   assert.equal(readyActionRequiresConfirmation('approve-publish', true), true);
   assert.equal(readyActionRequiresConfirmation('ready', true), true);
-  assert.equal(readyActionRequiresConfirmation('request-extra-review', true), false);
+  assert.equal(readyActionRequiresConfirmation('request-review', true), false);
   assert.equal(isReadyPublicationApproval(APPROVE_PUBLISH_UNRESOLVED_ACTION, true), true);
   assert.equal(readyActionRequiresConfirmation(APPROVE_PUBLISH_UNRESOLVED_ACTION, true), true);
   assert.equal(readyDecisionSubmittingMessage(true), 'Submitting publication decision…');
@@ -57,7 +57,9 @@ test('ready workspace action model builds package and non-package selection data
       payload: packagePayload,
       publicationTarget: 'draft',
       selectedEvidenceKeys: ['after.png'],
-      extraSelectionData: { reviewRequest: { extraLoopsRequested: 1 } },
+      extraSelectionData: {
+        reviewRequest: { runner: 'codex', model: null, effort: null, mode: 'cold' },
+      },
     }),
     {
       publicationTarget: 'draft',
@@ -65,7 +67,7 @@ test('ready workspace action model builds package and non-package selection data
       packageId: 'pkg-1',
       packageHash: 'abcdef',
       packageHeadSha: '123456',
-      reviewRequest: { extraLoopsRequested: 1 },
+      reviewRequest: { runner: 'codex', model: null, effort: null, mode: 'cold' },
     },
   );
   assert.equal(

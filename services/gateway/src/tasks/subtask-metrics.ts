@@ -62,7 +62,7 @@ export async function resolveWorkerTaskDirForRun(
  * One entry per registered child unit, or null when the run registered none.
  *
  * Every unit in the registry is reported, whatever parent checklist it hangs off
- * — a self-review child costs the run the same as a worker-checklist child, and
+ * — a review child costs the run the same as a worker-checklist child, and
  * the `parent` field says which is which. `status` is the child's own signal
  * status; the gateway's `stale` projection is a live read, not a recorded fact,
  * so it never lands here.

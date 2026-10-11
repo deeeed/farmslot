@@ -366,7 +366,14 @@ test('production gateway publishes off-diff findings once through the publicatio
             execution: {
               workspacePolicy: { kind: 'exact', machine: 'fixture' },
               transport: 'tmux',
-              models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+              models: [
+                {
+                  effort: null,
+                  mode: 'cold' as const,
+                  runner: 'cursor',
+                  model: 'cursor-grok-4.6-xhigh',
+                },
+              ],
             },
             githubTeams: [],
             notificationPrincipalIds: [],

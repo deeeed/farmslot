@@ -1,28 +1,28 @@
-// recover-inflight-reviews.ts — Recover completed independent reviews whose
-// result was lost to a gateway restart mid-`executeSelfReview` await.
+// recover-inflight-reviews.ts — Recover completed reviews whose
+// result was lost to a gateway restart mid-`executeReview` await.
 //
-// A publish-gate independent review spawns a reviewer runner and awaits its
-// completion inside `executeSelfReview`. If the gateway restarts during that
+// A publish-gate review spawns a reviewer runner and awaits its
+// completion inside `executeReview`. If the gateway restarts during that
 // await, the reviewer keeps running on its own tmux window and writes its
 // feedback + terminal signal, but the awaiting call never returns — the result
-// never reaches `publishGate.independentReviews`, and because the human gate
-// already cleared `pendingReviewPlan`, the review is not re-run. The gate then
+// never reaches `publishGate.reviews`, and because the human gate
+// already cleared `reviewSequence`, the review is not re-run. The gate then
 // re-presents as if no review happened, discarding a completed (often ~40 min)
 // review.
 //
-// `recoverSelfReviewFixPass` covers the mirror case for an in-flight FIX pass.
+// `recoverReviewFixPass` covers the mirror case for an in-flight FIX pass.
 // This module covers the review pass: on human-gate re-entry, scan the run's
 // persisted reviewer contexts for a completed signal + feedback and ingest the
-// verdict into `independentReviews`, mirroring fix-pass recovery.
+// verdict into `reviews`, mirroring fix-pass recovery.
 
 import path from 'node:path';
 
 import {
   type AgentContext,
-  independentReviewFixRetriesExhausted,
-  type IndependentReviewStatus,
   type ReadyGatePrPackage,
   type ReviewDiffSnapshot,
+  reviewFixRetriesExhausted,
+  type ReviewStatus,
   type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -31,29 +31,29 @@ import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { EXTRA_REVIEW_SOURCE } from '../quality/review-sources.js';
-import { getRun, updateRun } from '../runs/store.js';
-import { readReviewFeedback } from '../self-review/feedback.js';
-import type { SelfReviewResult } from '../self-review/orchestrator.js';
+import { REQUESTED_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { readReviewFeedback } from '../review/feedback.js';
+import type { ReviewResult } from '../review/orchestrator.js';
 import {
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
-} from '../self-review/review-agent.js';
-import { recordReviewedInputs } from '../self-review/reviewed-inputs.js';
-import { getSelfReviewConfig } from '../self-review/templates.js';
+} from '../review/review-agent.js';
+import { recordReviewedInputs } from '../review/reviewed-inputs.js';
+import { getReviewConfig } from '../review/templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
   isTerminalReviewArtifactError,
   TerminalReviewArtifactError,
-} from '../self-review/terminal-result.js';
+} from '../review/terminal-result.js';
+import { getRun, updateRun } from '../runs/store.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import {
   buildPublishGateReviewStatus,
-  independentReviewNeedsContinuation,
   normalizeExhaustedReviewContinuation,
+  reviewNeedsContinuation,
 } from './gate-policy.js';
-import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
+import { persistReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 import { reviewerContextEffort } from './review-plan.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
@@ -91,7 +91,7 @@ async function markRecoveredReviewerContext(
   const completedAt = new Date().toISOString();
   const updated = await upsertAgentContext(
     runId,
-    'self-review',
+    'review',
     { id: ctx.id },
     {
       resolvePatch: (current) => {
@@ -141,7 +141,7 @@ export function isRecoverableReviewerContext(
   options: { includeFailed?: boolean; includeBlocked?: boolean } = {},
 ): boolean {
   return (
-    ctx.role === 'self-review' &&
+    ctx.role === 'review' &&
     (ctx.status === 'working' ||
       ctx.status === 'launching' ||
       ctx.status === 'complete' ||
@@ -152,7 +152,7 @@ export function isRecoverableReviewerContext(
 
 function isFailedReviewPlaceholder(
   review: Pick<
-    IndependentReviewStatus,
+    ReviewStatus,
     'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
   >,
 ): boolean {
@@ -169,16 +169,15 @@ function hasLaterSettledReview(reviews: RecoverableReviewRecord[], recordedIndex
     .slice(recordedIndex + 1)
     .some(
       (review) =>
-        review.source !== 'self-review' &&
         (review.verdict === 'pass' || review.verdict === 'issues') &&
         review.unresolvedCount !== undefined,
     );
 }
 
-type RecoverableReviewRecord = Pick<IndependentReviewStatus, 'id'> &
+type RecoverableReviewRecord = Pick<ReviewStatus, 'id'> &
   Partial<
     Pick<
-      IndependentReviewStatus,
+      ReviewStatus,
       | 'source'
       | 'verdict'
       | 'unresolvedCount'
@@ -212,7 +211,7 @@ export function reviewerContextNeedsRecovery(
     recorded.verdict !== undefined &&
     recorded.unresolvedCount !== undefined &&
     !hasLaterSettledReview(reviews, recordedIndex) &&
-    independentReviewNeedsContinuation({
+    reviewNeedsContinuation({
       source: recorded.source,
       verdict: recorded.verdict,
       feedbackSent: recorded.feedbackSent,
@@ -257,7 +256,7 @@ export function reviewerContextIsSettled(
   ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
   reviews: RecoverableReviewRecord[],
 ): boolean {
-  if (ctx.role !== 'self-review' || (ctx.status !== 'working' && ctx.status !== 'launching')) {
+  if (ctx.role !== 'review' || (ctx.status !== 'working' && ctx.status !== 'launching')) {
     return false;
   }
   const artifactScope = ctx.artifactScope?.trim();
@@ -269,7 +268,7 @@ export function reviewerContextIsSettled(
 }
 
 /**
- * Build the `IndependentReviewStatus` for a recovered reviewer, or `null` when
+ * Build the `ReviewStatus` for a recovered reviewer, or `null` when
  * the reviewer has not actually finished (no fresh terminal signal or completed
  * runtime context, or feedback that never parsed into a verdict). Pure so the
  * recovery decision is unit testable without slot I/O.
@@ -295,7 +294,7 @@ export function buildRecoveredReview(params: {
   reviewSnapshot?: ReviewDiffSnapshot;
   reviewedPackage: ReadyGatePrPackage | undefined;
   recoveryContinuationPending?: boolean;
-}): IndependentReviewStatus | null {
+}): ReviewStatus | null {
   const { run, ctx, signal, feedback, reviewSnapshot, reviewedPackage } = params;
   // Freshness anchors on the CURRENT attempt's launch time. startedAt is too
   // old for warm-reused contexts (they keep loop 1's value, so a prior loop's
@@ -313,12 +312,12 @@ export function buildRecoveredReview(params: {
     return null;
   if (feedback.incomplete) return null;
 
-  const priorReviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const priorReviews = run.engineState?.publishGate?.reviews ?? [];
   const reviewId = recoveredReviewArtifactScope(
     ctx,
-    EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
+    REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
   );
-  const reviewResult: SelfReviewResult = {
+  const reviewResult: ReviewResult = {
     verdict: feedback.verdict,
     issues: feedback.issues,
     validationDepth: feedback.validationDepth,
@@ -327,9 +326,14 @@ export function buildRecoveredReview(params: {
     effort: reviewerContextEffort(ctx),
     retryCount: 0,
     reviewSnapshot,
+    reviewId: ctx.reviewId,
+    reviewerSessionId: ctx.runnerSessionId ?? undefined,
+    mode: priorReviews.find((review) => review.id === reviewId)?.mode ?? 'cold',
+    session: priorReviews.find((review) => review.id === reviewId)?.session,
     attempts: [
       {
         loopNumber: 1,
+        mode: run.reviewMode ?? 'cold',
         verdict: feedback.verdict,
         unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
         ...(feedback.issues.length ? { issues: feedback.issues } : {}),
@@ -342,13 +346,12 @@ export function buildRecoveredReview(params: {
   };
   const recovered = buildPublishGateReviewStatus({
     source:
-      run.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
+      run.engineState?.publishGate?.reviewPolicy?.requestedBy === 'dispatch'
         ? 'dispatch'
         : 'human-gate',
     priorReviewCount: priorReviews.length,
     reviewResult,
     requestedRunner: ctx.runner ?? null,
-    workerRunner: run.metrics.runner,
     model: ctx.model ?? run.metrics.actualModel ?? run.metrics.model ?? null,
     effort: reviewerContextEffort(ctx),
     reviewId,
@@ -492,7 +495,7 @@ async function readSlotHeadSha(
 
 /**
  * Ingest any completed-but-lost publication reviews for a run into
- * `publishGate.independentReviews`. Idempotent: complete contexts are matched to
+ * `publishGate.reviews`. Idempotent: complete contexts are matched to
  * their persisted artifact scope, while in-flight contexts are flipped to
  * `complete` on ingest. Returns the ids of the reviews it recovered.
  */
@@ -504,7 +507,7 @@ export async function recoverInflightPublicationReviews(
   if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
   let run = getRun(runId);
   if (!run) return { recoveredIds: [], terminalErrors: [] };
-  let reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  let reviews = run.engineState?.publishGate?.reviews ?? [];
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),
   );
@@ -520,7 +523,7 @@ export async function recoverInflightPublicationReviews(
     );
     run = getRun(runId);
     if (!run) return { recoveredIds: [], terminalErrors: [] };
-    reviews = run.engineState?.publishGate?.independentReviews ?? [];
+    reviews = run.engineState?.publishGate?.reviews ?? [];
   }
   const candidates = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true, includeBlocked: true }),
@@ -528,8 +531,8 @@ export async function recoverInflightPublicationReviews(
   if (candidates.length === 0) return { recoveredIds: [], terminalErrors: [] };
   const vars = await loadSlotVars(slotId);
 
-  const selfReviewConfig = await getSelfReviewConfig(run.project);
-  const recoveryContinuationPending = Math.max(0, selfReviewConfig.max_retries ?? 1) > 0;
+  const reviewConfig = await getReviewConfig(run.project);
+  const recoveryContinuationPending = Math.max(0, reviewConfig.max_retries ?? 1) > 0;
   const reviewedPackage = await readPreparedPackage(run);
   // Stamp recovered reviews against the prepared package only when the slot HEAD
   // still matches it — a lost review certifies the HEAD it saw, and at the human
@@ -643,8 +646,8 @@ async function ingestRecoveredReviewer(
   }
 
   const latest = getRun(runId)!;
-  const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
-  const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
+  const priorReviews = latest.engineState?.publishGate?.reviews ?? [];
+  const reviewId = REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
   const artifactScope = recoveredReviewArtifactScope(ctx, reviewId);
   if (!ctx.artifactScope?.trim()) {
     console.warn(
@@ -670,17 +673,17 @@ async function ingestRecoveredReviewer(
     existingReview &&
     !isFailedReviewPlaceholder(existingReview) &&
     existingReview.verdict !== 'skipped' &&
-    !independentReviewNeedsContinuation(existingReview)
+    !reviewNeedsContinuation(existingReview)
   ) {
     return null;
   }
   const reviewToPersist = existingReview
     ? appendRecoveredContinuationAttempt(existingReview, review)
     : review;
-  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
+  const [persisted] = await persistReviewArtifactsForRun(latest, [reviewToPersist]);
   if (options.shouldAbort?.()) return null;
   const finalRun = getRun(runId)!;
-  const finalReviews = finalRun.engineState?.publishGate?.independentReviews ?? [];
+  const finalReviews = finalRun.engineState?.publishGate?.reviews ?? [];
   const existingIndex = finalReviews.findIndex((candidate) => candidate.id === persisted.id);
   if (
     existingIndex >= 0 &&
@@ -692,7 +695,7 @@ async function ingestRecoveredReviewer(
     existingIndex >= 0 &&
     !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
     finalReviews[existingIndex]!.verdict !== 'skipped' &&
-    !independentReviewNeedsContinuation(finalReviews[existingIndex]!)
+    !reviewNeedsContinuation(finalReviews[existingIndex]!)
   ) {
     return null;
   }
@@ -710,7 +713,7 @@ async function ingestRecoveredReviewer(
       ...finalRun.engineState,
       publishGate: {
         ...finalRun.engineState?.publishGate,
-        independentReviews: nextReviews,
+        reviews: nextReviews,
       },
     },
   });
@@ -731,17 +734,17 @@ async function persistRecoveredFailedReviewer(
 ): Promise<string | null> {
   if (options.shouldAbort?.()) return null;
   const latest = getRun(runId)!;
-  const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const priorReviews = latest.engineState?.publishGate?.reviews ?? [];
   const reviewId = recoveredReviewArtifactScope(
     ctx,
-    EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
+    REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
   );
   const existingIndex = priorReviews.findIndex((review) => review.id === reviewId);
   const existing = existingIndex >= 0 ? priorReviews[existingIndex] : undefined;
   const validationDepth = existing?.validationDepth ?? 'full-live';
   const failed = buildPublishGateReviewStatus({
     source:
-      latest.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
+      latest.engineState?.publishGate?.reviewPolicy?.requestedBy === 'dispatch'
         ? 'dispatch'
         : 'human-gate',
     priorReviewCount: priorReviews.length,
@@ -756,6 +759,7 @@ async function persistRecoveredFailedReviewer(
       attempts: [
         {
           loopNumber: 1,
+          mode: existing?.mode ?? 'cold',
           verdict: 'failed',
           unresolvedCount: 0,
           validationDepth,
@@ -765,7 +769,6 @@ async function persistRecoveredFailedReviewer(
       ],
     },
     requestedRunner: ctx.runner ?? null,
-    workerRunner: latest.metrics.runner,
     model: ctx.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
     effort: reviewerContextEffort(ctx),
     reviewId,
@@ -775,7 +778,7 @@ async function persistRecoveredFailedReviewer(
     ...(existing ? appendRecoveredContinuationAttempt(existing, failed) : failed),
     recoveryContinuationPending: false,
   };
-  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
+  const [persisted] = await persistReviewArtifactsForRun(latest, [reviewToPersist]);
   if (options.shouldAbort?.()) return null;
   const nextReviews = [...priorReviews];
   if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
@@ -793,7 +796,7 @@ async function persistRecoveredFailedReviewer(
       ...latest.engineState,
       publishGate: {
         ...latest.engineState?.publishGate,
-        independentReviews: nextReviews,
+        reviews: nextReviews,
       },
     },
   });
@@ -815,20 +818,16 @@ async function persistRecoveredFailedReviewer(
  * mutate the run until later refusals have passed project first and commit with
  * `normalizeExhaustedReviewContinuationsForRun` once they are past them.
  */
-export function projectExhaustedReviewContinuationsForRun(
-  runId: string,
-): IndependentReviewStatus[] {
+export function projectExhaustedReviewContinuationsForRun(runId: string): ReviewStatus[] {
   const run = getRun(runId);
-  const storedReviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  const storedReviews = run?.engineState?.publishGate?.reviews ?? [];
   if (!run) return storedReviews;
   return storedReviews.map(normalizeExhaustedReviewContinuation);
 }
 
-export function normalizeExhaustedReviewContinuationsForRun(
-  runId: string,
-): IndependentReviewStatus[] {
+export function normalizeExhaustedReviewContinuationsForRun(runId: string): ReviewStatus[] {
   const run = getRun(runId);
-  const storedReviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  const storedReviews = run?.engineState?.publishGate?.reviews ?? [];
   if (!run) return storedReviews;
   const normalized = storedReviews.map(normalizeExhaustedReviewContinuation);
   if (!normalized.some((review, index) => review !== storedReviews[index])) return storedReviews;
@@ -837,7 +836,7 @@ export function normalizeExhaustedReviewContinuationsForRun(
       ...run.engineState,
       publishGate: {
         ...run.engineState?.publishGate,
-        independentReviews: normalized,
+        reviews: normalized,
       },
     },
   });
@@ -849,12 +848,12 @@ export function normalizeExhaustedReviewContinuationsForRun(
 
 export function recoveredReviewAlreadyIngested(
   existing: Pick<
-    IndependentReviewStatus,
+    ReviewStatus,
     'completedAt' | 'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
   > &
-    Partial<Pick<IndependentReviewStatus, 'attempts'>>,
-  recovered: Pick<IndependentReviewStatus, 'completedAt'> &
-    Partial<Pick<IndependentReviewStatus, 'attempts' | 'verdict' | 'unresolvedCount'>>,
+    Partial<Pick<ReviewStatus, 'attempts'>>,
+  recovered: Pick<ReviewStatus, 'completedAt'> &
+    Partial<Pick<ReviewStatus, 'attempts' | 'verdict' | 'unresolvedCount'>>,
 ): boolean {
   // A delivery placeholder records the time the orchestration failed, which
   // can be later than the reviewer's already-written terminal signal. It is
@@ -878,10 +877,7 @@ export function recoveredReviewAlreadyIngested(
   return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
 }
 
-function applyIndependentReviewRetryCap(
-  review: IndependentReviewStatus,
-  existing?: IndependentReviewStatus,
-): IndependentReviewStatus {
+function applyReviewRetryCap(review: ReviewStatus, existing?: ReviewStatus): ReviewStatus {
   const attempts = review.attempts ?? existing?.attempts ?? [];
   const retryCount = Math.max(
     existing?.retryCount ?? 0,
@@ -889,7 +885,7 @@ function applyIndependentReviewRetryCap(
     Math.max(0, attempts.length - 1),
   );
   const maxRetries = existing?.maxRetries ?? review.maxRetries;
-  const exhausted = independentReviewFixRetriesExhausted({
+  const exhausted = reviewFixRetriesExhausted({
     ...review,
     retryCount,
     maxRetries,
@@ -905,23 +901,23 @@ function applyIndependentReviewRetryCap(
 }
 
 export function appendRecoveredContinuationAttempt(
-  existing: IndependentReviewStatus,
-  recovered: IndependentReviewStatus,
-): IndependentReviewStatus {
-  if (independentReviewFixRetriesExhausted(existing)) {
-    return applyIndependentReviewRetryCap(existing);
+  existing: ReviewStatus,
+  recovered: ReviewStatus,
+): ReviewStatus {
+  if (reviewFixRetriesExhausted(existing)) {
+    return applyReviewRetryCap(existing);
   }
-  if (!independentReviewNeedsContinuation(existing)) {
-    return applyIndependentReviewRetryCap(recovered, existing);
+  if (!reviewNeedsContinuation(existing)) {
+    return applyReviewRetryCap(recovered, existing);
   }
   const priorAttempts = existing.attempts ?? [];
   const recoveredAttempt = recovered.attempts?.at(-1);
-  if (!recoveredAttempt) return applyIndependentReviewRetryCap(existing);
+  if (!recoveredAttempt) return applyReviewRetryCap(existing);
   const attempts = [
     ...priorAttempts,
     { ...recoveredAttempt, loopNumber: priorAttempts.length + 1 },
   ];
-  return applyIndependentReviewRetryCap(
+  return applyReviewRetryCap(
     {
       ...recovered,
       loopNumber: existing.loopNumber,

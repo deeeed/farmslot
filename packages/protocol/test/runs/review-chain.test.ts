@@ -8,7 +8,7 @@ import {
   reviewChainForRun,
 } from '../../src/runs/review-chain.js';
 
-function repeatReviewRun(reviewScope: 'full' | 'incremental'): Run {
+function repeatReviewRun(mode: 'cold' | 'warm'): Run {
   return {
     id: 'review-2',
     familyId: 'family-1',
@@ -30,24 +30,22 @@ function repeatReviewRun(reviewScope: 'full' | 'incremental'): Run {
       unresolvedFindings: [],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      contextMode: 'reuse',
-      reviewScope,
+      mode,
       validationDepth: 'static-code',
-      sessionIntent: reviewScope === 'incremental' ? 'resume' : 'reset',
       priorGenerations: [],
     },
   } as Run;
 }
 
-test('review-chain range uses the prior head only for incremental reviews', () => {
-  const incremental = currentReviewChainEntry(repeatReviewRun('incremental'))!;
+test('review-chain range uses the prior head only for WARM reviews', () => {
+  const incremental = currentReviewChainEntry(repeatReviewRun('warm'))!;
   assert.equal(incremental.baseSha, 'prior-head');
-  assert.equal(currentReviewChainEntry(repeatReviewRun('full'))?.baseSha, undefined);
+  assert.equal(currentReviewChainEntry(repeatReviewRun('cold'))?.baseSha, undefined);
   assert.equal(observedReviewSessionContinuity(incremental), 'unknown');
 });
 
 test('review-chain projection keeps every generation ordered with pending counts unknown', () => {
-  const run = repeatReviewRun('incremental');
+  const run = repeatReviewRun('warm');
   run.id = 'review-3';
   run.repeatReviewContext!.generation = 3;
   run.repeatReviewContext!.priorGenerations = [
@@ -59,7 +57,7 @@ test('review-chain projection keeps every generation ordered with pending counts
       repository: 'deeeed/farmslot',
       prNumber: 1,
       headSha: 'prior-head',
-      reviewScope: 'incremental',
+      mode: 'warm',
       validationDepth: 'static-code',
       verdict: 'pass',
       unresolvedCount: 0,
@@ -76,7 +74,7 @@ test('review-chain projection keeps every generation ordered with pending counts
       repository: 'deeeed/farmslot',
       prNumber: 1,
       headSha: 'initial-head',
-      reviewScope: 'full',
+      mode: 'cold',
       validationDepth: 'static-code',
       verdict: 'issues',
       unresolvedCount: 2,

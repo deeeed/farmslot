@@ -246,7 +246,7 @@ function renderCompareMatrix(
     ${hasGateSummaries
       ? html`
           <div class="compare-section-label">
-            Per-model breakdown (worker · self-review · sub-agents)
+            Per-model breakdown (worker · review · sub-agents)
           </div>
           <div class="compare-gate-grid">
             ${gateSummaries.map(
@@ -420,7 +420,7 @@ function renderFamilyComparisonCard(
         <span>${options.renderRunDiffLink(options.snapshot, run, true)}</span>
         <span>recipe ${run.recipeQuality.semantic}</span>
         <span>${evidence}</span>
-        <span>self-review ${run.selfReview.verdict ?? '—'}</span>
+        <span>review ${run.review.verdict ?? '—'}</span>
         ${run.metrics?.costEstimate != null
           ? html`<span>$${run.metrics.costEstimate.toFixed(2)}</span>`
           : nothing}

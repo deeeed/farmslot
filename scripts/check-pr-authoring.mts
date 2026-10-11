@@ -57,8 +57,7 @@ try {
     assert.deepEqual(team.config.execution?.slotPolicy, { kind: 'exact', slotId });
     assert.equal(team.config.execution?.models[0].model, 'gpt-6-astra');
     assert.equal(team.config.execution?.models[0].effort, 'high');
-    assert.equal(team.config.review?.validationDepth, 'full-live');
-    assert.equal(team.config.review?.sessionIntent, 'resume');
+    assert.equal(team.config.review?.mode, 'warm');
     assert.equal(team.config.repositories.length, 1);
     const policy = team.config.repositories[0];
     assert.equal(policy.repo, repo);
@@ -70,12 +69,7 @@ try {
       assert.equal(policy.review, undefined, 'Repository initially inherits review settings');
     } else {
       assert.equal(team.revision, phase === 'conflict' ? 3 : 2, 'Editing updates the same team');
-      assert.equal(policy.review?.sessionIntent, 'reset');
-      assert.equal(
-        policy.review?.validationDepth,
-        'full-live',
-        'Repository override starts from the inherited settings',
-      );
+      assert.equal(policy.review?.mode, 'cold');
       assert.deepEqual(policy.excludedLabels, ['skip-review']);
     }
     if (['rule', 'rule-edited', 'concurrent-edit', 'conflict'].includes(phase)) {

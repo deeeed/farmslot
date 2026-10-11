@@ -494,7 +494,7 @@
       },
       "press-extra-review": {
         "action": "ui.press",
-        "selector": "id=\"companion-gate-review-action-request-extra-review\" enabled=true",
+        "selector": "id=\"companion-publish-gate-review-submit\" enabled=true",
         "intent": "The operator asks for another review, which matches only while it is enabled.",
         "proves": ["approve-guard"],
         "next": "extra-review-confirm"

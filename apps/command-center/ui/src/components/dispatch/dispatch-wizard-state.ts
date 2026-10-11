@@ -17,12 +17,11 @@ import type {
   TemplatePreview,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import { DEFAULT_CLAUDE_MODEL } from '@farmslot/protocol';
+import { resolveReviewDispatchDefaults, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type EffortLevel } from '../../utils/runner-options.js';
 
 import type { DispatchNativeProfileSelection } from './dispatch-native-profile-model.js';
-import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 
 interface DispatchWizardMockInitialState {
   flowType?: FlowType;
@@ -47,8 +46,33 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _flowType: FlowType | null = null;
   @state() _ticketId = '';
   _normalizedTicket = ''; // server-normalized form for internal matching only
-  @state() _model = DEFAULT_CLAUDE_MODEL;
-  @state() _runner = 'claude';
+  _executionPicker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['dispatch'],
+      defaults: resolveReviewDispatchDefaults(undefined, 'dev', { runner: 'claude' }),
+    },
+  });
+  get _runner() {
+    return this._executionPicker.selection!.runner;
+  }
+  set _runner(value: string) {
+    this._executionPicker.setRunner(this._executionPicker.rows[0].id, value);
+    this.requestUpdate();
+  }
+  get _model() {
+    return this._executionPicker.selection!.model ?? '';
+  }
+  set _model(value: string) {
+    this._executionPicker.setModel(this._executionPicker.rows[0].id, value || null);
+    this.requestUpdate();
+  }
+  get _effort(): EffortLevel {
+    return (this._executionPicker.selection!.effort ?? '') as EffortLevel;
+  }
+  set _effort(value: EffortLevel) {
+    this._executionPicker.setEffort(this._executionPicker.rows[0].id, value || null);
+    this.requestUpdate();
+  }
   @state() _transport: 'tmux' | 'native' = 'tmux';
   _transportChosen = false;
   @state() _nativeWorkerRunners: string[] = [];
@@ -61,7 +85,6 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _nativeProfileScope = '';
   _nativeCatalogGeneration = 0;
   _nativeAutomaticSlot = false;
-  @state() _effort: EffortLevel = '';
   @state() _slotOverride = '';
   @state() _slotOverrideExplicit = false;
   @state() _project = '';
@@ -98,13 +121,15 @@ export abstract class DispatchWizardState extends LitElement {
   _profileFitSelectionKey = '';
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewMachine = '';
-  @state() _legacyReviewPlacementError = '';
+  @state() _configurationError = '';
   @state() _qaProfileId = '';
   @state() _qaInputsText = '';
   _workflowSelectionKey = '';
   @state() _reviewAutoFinish = false;
-  @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];
-  _nextPublicationReviewLoopId = 1;
+  _reviewPicker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'], allowSequence: true, allowEmpty: true },
+    sequence: [],
+  });
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];
   /** Full-fleet snapshot from the last dispatch.candidates load. `_candidates` is the farm filter. */
   _allCandidates: DispatchCandidatesResult['candidates'] = [];

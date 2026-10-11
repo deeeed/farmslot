@@ -100,13 +100,28 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
           disabled={vm.disabled}
           onChange={(overrideExecution) => actions.editRequest({ overrideExecution })}
         />
-        {vm.requestDraft.overrideExecution && vm.effectiveRequest.execution ? (
+        {vm.effectiveRequest.execution ? (
           <PRExecutionFields
+            onPickerReady={actions.attachExecutionPicker}
             value={vm.effectiveRequest.execution}
             slots={vm.slots}
             project={vm.effectiveRequest.project}
             disabled={vm.disabled}
-            onChange={(execution) => actions.editRequest({ execution })}
+            reviewMode={
+              prReviewWorkflow(vm.effectiveRequest.review) === 'review'
+                ? vm.effectiveRequest.review.mode
+                : undefined
+            }
+            workflow={prReviewWorkflow(vm.effectiveRequest.review)}
+            reviewContext={vm.effectiveRequest.review.reviewContext}
+            reviewLineages={vm.requestReviewLineages}
+            onReviewModeChange={(mode, reviewContext) =>
+              actions.editRequest({
+                overrideReview: true,
+                review: { ...vm.effectiveRequest.review, mode, reviewContext },
+              })
+            }
+            onChange={(execution) => actions.editRequest({ overrideExecution: true, execution })}
           />
         ) : (
           <Text style={styles.muted}>{prExecutionText(vm.effectiveRequest.execution)}</Text>
@@ -116,7 +131,7 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
             prReviewWorkflow(vm.effectiveRequest.review) === 'qa' ? 'Request QA' : 'Request review'
           }
           testID="companion-pr-request-submit"
-          disabled={vm.disabled}
+          disabled={vm.disabled || !vm.executionPickerValid}
           onPress={actions.saveEditor}
         />
       </View>
@@ -187,6 +202,7 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
       )}
       {(isRepair || draft.automatic) && (
         <PRExecutionFields
+          onPickerReady={actions.attachExecutionPicker}
           value={draft.execution}
           onChange={(execution) => actions.editMonitor({ execution })}
           slots={vm.slots}
@@ -230,7 +246,7 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
       <PRButton
         label={isRepair ? 'Request repair' : 'Save monitoring'}
         testID="companion-pr-monitor-submit"
-        disabled={vm.disabled}
+        disabled={vm.disabled || !vm.executionPickerValid}
         onPress={actions.saveEditor}
       />
     </View>

@@ -11,7 +11,7 @@ if (config && Number(process.env.FARMSLOT_NATIVE_REVIEW_CLEANUP_PID) === process
   const originalClose = FSWatcher.prototype.close;
   FSWatcher.prototype.add = function (...args) {
     // Tag the gateway call site, not runner output or task completion state.
-    if (new Error().stack?.includes('/self-review/progress.')) progressWatchers.add(this);
+    if (new Error().stack?.includes('/review/progress.')) progressWatchers.add(this);
     return originalAdd.apply(this, args);
   };
   FSWatcher.prototype.close = async function (...args) {

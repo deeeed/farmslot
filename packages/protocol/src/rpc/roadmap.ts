@@ -83,6 +83,7 @@ export interface RoadmapRefineParams {
   runner?: string;
   /** Optional model override for this refinement session. */
   model?: string;
+  effort?: string;
   /** Optional shell command template to run for refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}. */
   runnerCommand?: string;
   /** Optional runner safety tier for the refinement launch. Defaults to sandboxed runner behavior. */
@@ -105,6 +106,7 @@ export interface RoadmapRefineResult {
   attachCommand: string;
   runner?: string;
   model?: string;
+  effort?: string;
   runnerCommand?: string;
   safetyTier?: SafetyTier;
 }

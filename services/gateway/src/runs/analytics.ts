@@ -134,8 +134,8 @@ function classifyFailureReason(run: Run, failedStep: string | null): FailureReas
   return 'unknown';
 }
 
-function selfReviewLoopCount(run: Run): number | null {
-  const attempts = (run.steps ?? []).find((s) => s.name === 'self-review')?.outputs?.attempts;
+function reviewLoopCount(run: Run): number | null {
+  const attempts = (run.steps ?? []).find((s) => s.name === 'review')?.outputs?.attempts;
   return Array.isArray(attempts) ? attempts.length : null;
 }
 
@@ -246,7 +246,7 @@ export function buildAnalyticsRecord(
     wallMs,
     idleMs,
     nudgeCount: run.metrics?.nudgeCount ?? 0,
-    selfReviewLoops: selfReviewLoopCount(run),
+    reviewLoops: reviewLoopCount(run),
     ciResult: ci.result,
     ciPollCount: ci.pollCount,
     ciInlineFixAttempts: ci.inlineFix,
@@ -383,7 +383,7 @@ export function aggregateAnalytics(
   const stepDurations = new Map<string, number[]>();
   const wallValues: number[] = [];
   const idleValues: number[] = [];
-  const selfReviewValues: number[] = [];
+  const reviewValues: number[] = [];
   const pollValues: number[] = [];
   const inlineFixValues: number[] = [];
   const nudgeByModel = new Map<string, { sum: number; n: number }>();
@@ -412,7 +412,7 @@ export function aggregateAnalytics(
     }
     if (r.wallMs != null) wallValues.push(r.wallMs);
     if (r.idleMs != null) idleValues.push(r.idleMs);
-    if (r.selfReviewLoops != null) selfReviewValues.push(r.selfReviewLoops);
+    if (r.reviewLoops != null) reviewValues.push(r.reviewLoops);
     if (r.ciResult) ciResultBreakdown[r.ciResult] = (ciResultBreakdown[r.ciResult] ?? 0) + 1;
     if (r.ciPollCount != null) pollValues.push(r.ciPollCount);
     if (r.ciInlineFixAttempts != null) inlineFixValues.push(r.ciInlineFixAttempts);
@@ -461,7 +461,7 @@ export function aggregateAnalytics(
     idle: durationStats(idleValues),
     failureByStep,
     failureByReason,
-    selfReviewLoops: loopStats(selfReviewValues),
+    reviewLoops: loopStats(reviewValues),
     ci: {
       resultBreakdown: ciResultBreakdown,
       pollCount: durationStats(pollValues),

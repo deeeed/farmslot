@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch, including runner defaults and retained rechecks. Publication counts current-package reviewer approvals, including pipeline reviews; refresh preserves the latest result, WARM refuses unavailable continuity and COLD creates a fresh full-diff review.
 - Keep runtime cleanup failed when a shutdown hook loses its pidfile but leaves the owned process running; cover six recovery scenarios with isolated gateway, Git and process fixtures in CI.
 
 - Publish-approval action ids and review-depth counting come from `@farmslot/protocol`, shared with the clients' publish guards; gate behavior is unchanged.

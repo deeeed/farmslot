@@ -135,15 +135,15 @@ test('stepArtifactsForRunStep normalizes typed artifacts and drops malformed row
 });
 
 test('stepHasReviewLoop gates the loop panel to review steps with attempts', () => {
-  const selfReviewOutputs = {
+  const reviewOutputs = {
     verdict: 'pass',
-    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 8 }],
+    attempts: [{ loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 8 }],
   };
   assert.equal(
     stepHasReviewLoop({
-      name: 'self-review',
+      name: 'review',
       status: 'done',
-      outputs: selfReviewOutputs,
+      outputs: reviewOutputs,
     } as RunStep),
     true,
   );
@@ -155,9 +155,9 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
     } as RunStep),
     true,
   );
-  // self-review with no loop data should not render the panel
+  // review with no loop data should not render the panel
   assert.equal(
-    stepHasReviewLoop({ name: 'self-review', status: 'running', outputs: {} } as RunStep),
+    stepHasReviewLoop({ name: 'review', status: 'running', outputs: {} } as RunStep),
     false,
   );
   // unrelated steps never render the panel
@@ -166,13 +166,14 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
       name: 'verify',
       status: 'done',
       outputs: { attempts: [{ loopNumber: 1 }] },
+      mode: 'cold',
     } as RunStep),
     false,
   );
-  // self-review with an empty attempts array (and no timeline) does not render
+  // review with an empty attempts array (and no timeline) does not render
   assert.equal(
     stepHasReviewLoop({
-      name: 'self-review',
+      name: 'review',
       status: 'done',
       outputs: { attempts: [] },
     } as RunStep),
@@ -180,15 +181,16 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
   );
 });
 
-test('reviewLoopAttempts normalizes self-review loop convergence', () => {
+test('reviewLoopAttempts normalizes review loop convergence', () => {
   const step = {
-    name: 'self-review',
+    name: 'review',
     status: 'done',
     outputs: {
       verdict: 'pass',
       attempts: [
         {
           loopNumber: 1,
+          mode: 'cold',
           verdict: 'issues',
           unresolvedCount: 8,
           completedAt: '2026-05-24T08:59:22.694Z',
@@ -199,6 +201,7 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
         },
         {
           loopNumber: 2,
+          mode: 'cold',
           verdict: 'issues',
           unresolvedCount: 1,
           fixDelta: {
@@ -207,14 +210,14 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
             diffPath: 'artifacts/review-loop-2/fix-delta.diff',
           },
         },
-        { loopNumber: 3, verdict: 'issues', unresolvedCount: 4 },
-        { loopNumber: 4, verdict: 'pass', unresolvedCount: 0 },
+        { loopNumber: 3, mode: 'cold', verdict: 'issues', unresolvedCount: 4 },
+        { loopNumber: 4, mode: 'cold', verdict: 'pass', unresolvedCount: 0 },
       ],
     },
   } as RunStep;
 
   const attempts = reviewLoopAttempts(step);
-  // The self-review loop converges 8 -> 1 -> 4 -> 0 across four passes.
+  // The review loop converges 8 -> 1 -> 4 -> 0 across four passes.
   assert.deepEqual(
     attempts.map((a) => [a.loopNumber, a.verdict, a.unresolvedCount]),
     [
@@ -236,11 +239,17 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
 
 test('reviewLoopAttempts does not call an unavailable snapshot a worker fix', () => {
   const step = {
-    name: 'self-review',
+    name: 'review',
     status: 'done',
     outputs: {
       attempts: [
-        { loopNumber: 2, verdict: 'pass', unresolvedCount: 0, fixDelta: { source: 'unavailable' } },
+        {
+          loopNumber: 2,
+          mode: 'cold',
+          verdict: 'pass',
+          unresolvedCount: 0,
+          fixDelta: { source: 'unavailable' },
+        },
       ],
     },
   } as RunStep;
@@ -251,12 +260,12 @@ test('reviewLoopAttempts does not call an unavailable snapshot a worker fix', ()
 
 test('reviewLoopAttempts returns [] for missing or non-array attempts', () => {
   assert.deepEqual(
-    reviewLoopAttempts({ name: 'self-review', status: 'running', outputs: {} } as RunStep),
+    reviewLoopAttempts({ name: 'review', status: 'running', outputs: {} } as RunStep),
     [],
   );
   assert.deepEqual(
     reviewLoopAttempts({
-      name: 'self-review',
+      name: 'review',
       status: 'done',
       outputs: { attempts: 'nope' },
     } as unknown as RunStep),
@@ -266,7 +275,7 @@ test('reviewLoopAttempts returns [] for missing or non-array attempts', () => {
 
 test('reviewLoopAttempts falls back to index-based loop numbers', () => {
   const step = {
-    name: 'self-review',
+    name: 'review',
     status: 'done',
     outputs: { attempts: [{ verdict: 'pass' }, {}] },
   } as RunStep;

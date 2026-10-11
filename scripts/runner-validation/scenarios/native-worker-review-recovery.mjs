@@ -20,7 +20,7 @@ export async function verifyNativeFixReplay(statePath, timeoutMs) {
   const offset = fs.statSync(logPath).size;
   const before = rpc('run.get', { runId: state.runId }).run;
   const reviewers = before.agentContexts
-    .filter((context) => context.role === 'self-review')
+    .filter((context) => context.role === 'review')
     .map((context) => context.id)
     .sort();
   const generation = before.engineState.generation ?? 0;
@@ -34,7 +34,7 @@ export async function verifyNativeFixReplay(statePath, timeoutMs) {
     timeoutMs,
   );
   const retirement = `[run-engine] run ${state.runId.slice(0, 8)} — stale loop in catch (gen ${generation}), not marking failed`;
-  const preserved = `[run-engine] run ${state.runId.slice(0, 8)} step self-review threw after monitoring; preserving operator state`;
+  const preserved = `[run-engine] run ${state.runId.slice(0, 8)} step review threw after monitoring; preserving operator state`;
   fs.writeFileSync(state.releasePath, 'continue\n');
   await wait(
     () => rpc('run.get', { runId: state.runId }).run,
@@ -42,7 +42,7 @@ export async function verifyNativeFixReplay(statePath, timeoutMs) {
       assert.equal(run.status, 'monitoring');
       assert.deepEqual(
         run.agentContexts
-          .filter((context) => context.role === 'self-review')
+          .filter((context) => context.role === 'review')
           .map((context) => context.id)
           .sort(),
         reviewers,
@@ -72,12 +72,12 @@ export async function verifyNativeFixReplay(statePath, timeoutMs) {
   assert.equal(after.status, 'monitoring');
   assert.deepEqual(
     after.agentContexts
-      .filter((context) => context.role === 'self-review')
+      .filter((context) => context.role === 'review')
       .map((context) => context.id)
       .sort(),
     reviewers,
   );
-  assert.equal(after.steps.find((step) => step.name === 'self-review').status, 'pending');
+  assert.equal(after.steps.find((step) => step.name === 'review').status, 'pending');
   const cancelled = rpc('run.cancel', {
     runId: state.runId,
     reason: 'Native review replay fixture complete',
@@ -108,7 +108,7 @@ export async function prepareNativeFixRestart({
     () => rpc('run.get', { runId }).run,
     (current) => {
       assert.ok(!['failed', 'cancelled'].includes(current.status), current.error);
-      const fix = current.agentContexts.find((context) => context.role === 'self-review-fix');
+      const fix = current.agentContexts.find((context) => context.role === 'review-fix');
       if (!fix?.nativeCommandId || !fix.signalAttemptId) return false;
       const snapshot = rpc('native.session.read', {
         ...pinnedWorkerTarget(runId, fix.id, fix.nativeSessionOwner.leaseId),
@@ -121,7 +121,7 @@ export async function prepareNativeFixRestart({
     },
     timeoutMs,
   );
-  const fix = run.agentContexts.find((context) => context.role === 'self-review-fix');
+  const fix = run.agentContexts.find((context) => context.role === 'review-fix');
   const owner = run.agentContexts.find(
     (context) => context.id === fix.nativeSessionOwner.contextId,
   );
@@ -276,12 +276,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, explicit }
       timeoutMs,
     );
     assert.equal(fs.readFileSync(state.fixture.path, 'utf8'), state.fixture.text);
-    assert.equal(done.steps.find((step) => step.name === 'self-review').outputs.verdict, 'pass');
+    assert.equal(done.steps.find((step) => step.name === 'review').outputs.verdict, 'pass');
     assert.equal(
       done.agentContexts.find((context) => context.id === state.fix.id).status,
       'complete',
     );
-    const reviewers = done.agentContexts.filter((context) => context.role === 'self-review');
+    const reviewers = done.agentContexts.filter((context) => context.role === 'review');
     assert.equal(reviewers.length, 2);
     assert.ok(reviewers.every((context) => context.reviewResultValidatedAt));
     assert.equal(reviewers[0].nativeSession.sessionId, reviewers[1].nativeSession.sessionId);

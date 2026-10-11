@@ -535,7 +535,7 @@ export async function runScenario({
           { mode: 0o600 },
         );
       }
-      rpc('run.interactiveDev.resolve', { runId, action: 'run-self-review' });
+      rpc('run.interactiveDev.resolve', { runId, action: 'run-review' });
       if (reviewerRestart) {
         report.recoveryState = await prepareNativeReviewerRestart({
           runId,
@@ -598,7 +598,7 @@ export async function runScenario({
       const reviewed = await wait(
         () => rpc('run.get', { runId }).run,
         (current) => {
-          const step = current.steps.find((step) => step.name === 'self-review');
+          const step = current.steps.find((step) => step.name === 'review');
           assert.ok(
             step?.status !== 'failed',
             `Native review failed: ${current.error ?? step?.detail}`,
@@ -608,7 +608,7 @@ export async function runScenario({
         timeoutMs,
       );
       const reviewers = reviewed.agentContexts.filter(
-        (context) => context.role === 'self-review' && context.nativeSession,
+        (context) => context.role === 'review' && context.nativeSession,
       );
       const reviewer = reviewers.at(-1);
       if (reviewFix) {
@@ -617,7 +617,7 @@ export async function runScenario({
           fs.readFileSync(originalReviewFixture.path, 'utf8'),
           originalReviewFixture.text,
         );
-        const fix = reviewed.agentContexts.find((context) => context.role === 'self-review-fix');
+        const fix = reviewed.agentContexts.find((context) => context.role === 'review-fix');
         assert.equal(fix.status, 'complete');
         assert.equal(fix.target, null);
         assert.equal(fix.nativeSession, undefined, 'Fix must not duplicate session ownership');

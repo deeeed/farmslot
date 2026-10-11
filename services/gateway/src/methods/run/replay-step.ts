@@ -158,7 +158,7 @@ const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
   [PS.PREPARE]: 'preparing',
   [PS.DISPATCH]: 'dispatching',
   [PS.MONITOR]: 'monitoring',
-  [PS.SELF_REVIEW]: 'self-reviewing',
+  [PS.REVIEW]: 'reviewing',
   [PS.HUMAN_GATE]: 'human-gating',
   [PS.FINALIZE]: 'completing',
   [PS.COMPLETE]: 'completing',
@@ -169,16 +169,16 @@ function activeStatusForReplayStep(stepName: string): RunStatus {
   return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
 }
 
-function hasActiveSelfReviewFix(run: Pick<Run, 'agentContexts'>): boolean {
-  return activeSelfReviewFixTaskFile(run) !== undefined;
+function hasActiveReviewFix(run: Pick<Run, 'agentContexts'>): boolean {
+  return activeReviewFixTaskFile(run) !== undefined;
 }
 
-function activeSelfReviewFixTaskFile(run: Pick<Run, 'agentContexts'>): string | undefined {
+function activeReviewFixTaskFile(run: Pick<Run, 'agentContexts'>): string | undefined {
   return (
     (run.agentContexts ?? [])
       .filter(
         (context) =>
-          context.role === 'self-review-fix' &&
+          context.role === 'review-fix' &&
           (context.status === 'launching' ||
             context.status === 'working' ||
             context.status === 'waiting') &&
@@ -271,15 +271,18 @@ export function resetPublishGateApprovalForReplay(
     approvedAt: _approvedAt,
     approvedPackageHash: _approvedPackageHash,
     reviewRecovery: _reviewRecovery,
-    pendingReviewPlan,
-    pendingReviewPlanRequestedAt,
+    reviewSequence,
+    reviewSequenceRequestedAt,
+    reviewSequenceContext,
     ...publishGateWithoutApproval
   } = engineState.publishGate;
   return {
     ...engineState,
     publishGate: {
       ...publishGateWithoutApproval,
-      ...(preservePendingReviewPlan ? { pendingReviewPlan, pendingReviewPlanRequestedAt } : {}),
+      ...(preservePendingReviewPlan
+        ? { reviewSequence, reviewSequenceRequestedAt, reviewSequenceContext }
+        : {}),
       publicationStatus: 'not_published',
     },
   };
@@ -721,7 +724,7 @@ function assertReplayAfterDispatchAllowed(
   replayStepName: string,
   dispatchAdopted = false,
 ): void {
-  const workerLifecycleSteps = new Set<string>([PS.MONITOR, PS.SELF_REVIEW]);
+  const workerLifecycleSteps = new Set<string>([PS.MONITOR, PS.REVIEW]);
   if (!workerLifecycleSteps.has(replayStepName)) return;
   if (!flowSteps || targetIdx < 0) return;
   const dispatchIdx = flowSteps.indexOf(PS.DISPATCH);
@@ -840,10 +843,10 @@ export async function runReplayStep(
     hasRunnerOverride &&
     params.stepName !== PS.DISPATCH &&
     params.stepName !== PS.MONITOR &&
-    params.stepName !== PS.SELF_REVIEW
+    params.stepName !== PS.REVIEW
   ) {
     throw new Error(
-      'runner/model override is valid only when replaying dispatch, monitor, or self-review',
+      'runner/model override is valid only when replaying dispatch, monitor, or review',
     );
   }
   assertSupportedRunnerSpelling(params.runner);
@@ -929,7 +932,7 @@ export async function runReplayStep(
   const prepareIdx = flowSteps ? flowSteps.indexOf(PS.PREPARE) : -1;
   const dispatchIdx = flowSteps ? flowSteps.indexOf(PS.DISPATCH) : -1;
   const monitorIdx = flowSteps ? flowSteps.indexOf(PS.MONITOR) : -1;
-  const selfReviewIdx = flowSteps ? flowSteps.indexOf(PS.SELF_REVIEW) : -1;
+  const reviewIdx = flowSteps ? flowSteps.indexOf(PS.REVIEW) : -1;
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
   const probedTaskSignal =
@@ -1383,7 +1386,7 @@ export async function runReplayStep(
       replayStepName === PS.HUMAN_GATE &&
       effectiveSlotId &&
       replayTaskFile &&
-      !hasActiveSelfReviewFix(runBeforeGateReplay)
+      !hasActiveReviewFix(runBeforeGateReplay)
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
@@ -1391,7 +1394,7 @@ export async function runReplayStep(
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
       );
-    } else if (replayStepName === PS.HUMAN_GATE && hasActiveSelfReviewFix(runBeforeGateReplay)) {
+    } else if (replayStepName === PS.HUMAN_GATE && hasActiveReviewFix(runBeforeGateReplay)) {
       console.log(
         `[run] replay from ${replayStepName} — active review fix will be resumed before the package mirror`,
       );
@@ -1442,13 +1445,13 @@ export async function runReplayStep(
       );
     }
 
-    // Replaying from self-review or later must clear nested-loop artifacts and active task variants.
+    // Replaying from review or later must clear nested-loop artifacts and active task variants.
     if (
       effectiveSlotId &&
       existing.taskFile &&
       targetIdx >= 0 &&
-      selfReviewIdx >= 0 &&
-      targetIdx >= selfReviewIdx
+      reviewIdx >= 0 &&
+      targetIdx >= reviewIdx
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
@@ -1470,23 +1473,23 @@ export async function runReplayStep(
           const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
           const taskDirRel = `${taskDirName}/${taskRelDir}`;
           const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
-          const preserveSelfReviewFix = hasActiveSelfReviewFix(getRun(params.runId) ?? existing);
+          const preserveReviewFix = hasActiveReviewFix(getRun(params.runId) ?? existing);
           const {
             CHECKLIST_TARGET_BY_AGENT_ROLE,
             restoreWorkerChecklistTargetFromSlot,
             syncChecklistTargetForRole,
           } = await import('../../tasks/checklist-target.js');
-          const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
-          const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+          const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
+          const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
           const nestedFiles = [
-            `${workerTaskDir}/${selfReviewTarget.checklist}`,
-            `${workerTaskDir}/${selfReviewTarget.signal}`,
-            ...(preserveSelfReviewFix
+            `${workerTaskDir}/${reviewTarget.checklist}`,
+            `${workerTaskDir}/${reviewTarget.signal}`,
+            ...(preserveReviewFix
               ? []
               : [
-                  `${workerTaskDir}/${selfReviewFixTarget.checklist}`,
-                  `${workerTaskDir}/${selfReviewFixTarget.signal}`,
+                  `${workerTaskDir}/${reviewFixTarget.checklist}`,
+                  `${workerTaskDir}/${reviewFixTarget.signal}`,
                 ]),
             `${workerTaskDir}/${ciFixTarget.checklist}`,
             `${workerTaskDir}/${ciFixTarget.signal}`,
@@ -1500,8 +1503,8 @@ export async function runReplayStep(
           );
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
-          if (preserveSelfReviewFix) {
-            await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
+          if (preserveReviewFix) {
+            await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix');
           } else {
             await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
               flowType: existing.flowType,
@@ -1509,7 +1512,7 @@ export async function runReplayStep(
             });
           }
           console.log(
-            `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,
+            `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveReviewFix ? ' (preserved active review-fix)' : ''}`,
           );
         }
       } catch (err) {
@@ -1552,16 +1555,16 @@ export async function runReplayStep(
           const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
           const { CHECKLIST_TARGET_BY_AGENT_ROLE, WORKER_SIGNAL_FILE } =
             await import('../../tasks/checklist-target.js');
-          const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
-          const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+          const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
+          const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
           await execOnSlot(
             vars,
             `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${selfReviewTarget.signal}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${selfReviewFixTarget.signal}`)} ` +
+              `${shellQuote(`${workerTaskDir}/${reviewTarget.signal}`)} ` +
+              `${shellQuote(`${workerTaskDir}/${reviewFixTarget.signal}`)} ` +
               `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
             vars.remoteRepo,
           );
@@ -1712,8 +1715,8 @@ export async function runReplayStep(
     const replayGeneration = ownedGeneration;
     const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
     const activeFixTaskFile =
-      targetIdx >= 0 && selfReviewIdx >= 0 && targetIdx >= selfReviewIdx
-        ? activeSelfReviewFixTaskFile(currentBeforeReplayUpdate)
+      targetIdx >= 0 && reviewIdx >= 0 && targetIdx >= reviewIdx
+        ? activeReviewFixTaskFile(currentBeforeReplayUpdate)
         : undefined;
     const engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate

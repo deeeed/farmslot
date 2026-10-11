@@ -17,15 +17,15 @@ function subscriptionState(keys: string[]): TerminalSubscriptionState {
 }
 
 test('terminalUnsubscribeKeysForRequest removes only the exact role key', () => {
-  const state = subscriptionState(['runner-browser-1:self-review']);
+  const state = subscriptionState(['runner-browser-1:review']);
   assert.deepEqual(
     terminalUnsubscribeKeysForRequest(
       state,
       'runner-browser-1',
-      'runner-browser-1:self-review',
-      'runner-browser-1:self-review',
+      'runner-browser-1:review',
+      'runner-browser-1:review',
     ),
-    ['runner-browser-1:self-review'],
+    ['runner-browser-1:review'],
   );
 });
 
@@ -35,8 +35,8 @@ test('terminalUnsubscribeKeysForRequest does not mass-remove current role keys f
     terminalUnsubscribeKeysForRequest(
       state,
       'runner-browser-1',
-      'runner-browser-1:self-review',
-      'runner-browser-1:self-review',
+      'runner-browser-1:review',
+      'runner-browser-1:review',
     ),
     [],
   );

@@ -64,7 +64,7 @@ function runLabel(run: Run): string {
 }
 
 function reviewTokenParts(run: Run): TokenParts {
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   return reviews.reduce((acc, review) => {
     const usage = review.usage;
     if (!usage || num(usage.totalTokens) <= 0) return acc;
@@ -79,7 +79,7 @@ function reviewTokenParts(run: Run): TokenParts {
 }
 
 function reviewContributions(run: Run): TokenContribution[] {
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   return reviews
     .filter((review) => review.usage && num(review.usage.totalTokens) > 0)
     .map((review) => ({

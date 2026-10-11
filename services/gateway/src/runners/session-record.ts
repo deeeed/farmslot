@@ -3,7 +3,7 @@
 //
 // Before this module every launch/relaunch/handoff site hand-wrote the two
 // session fields onto its own upsert, so the sites that respawned a runner
-// (self-review fix relaunch, CI inline fix) cleared the pair and never recorded
+// (review fix relaunch, CI inline fix) cleared the pair and never recorded
 // the new session. An operator could then see a live worker with no way to
 // reopen its conversation. Capture stays in `captureRunnerSessionMetadata` —
 // this module owns *recording* it, and offers the capture+record pair for sites

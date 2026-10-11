@@ -3,33 +3,33 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   deriveChecklistStepDurations,
-  type IndependentReviewAttempt,
-  type IndependentReviewStatus,
   observedReviewSessionContinuity,
   type ReadyGatePayload,
+  type ReviewAttempt,
   type ReviewChainEntry,
+  type ReviewStatus,
   type Run,
 } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 import { formatPreciseDuration } from '../../workspace-shared/format';
 
-function latestReadyReviews(run: Run): IndependentReviewStatus[] {
+function latestReadyReviews(run: Run): ReviewStatus[] {
   for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
     const payload = run.decisions[index]?.payload;
-    if (payload?.kind === 'ready') return (payload as ReadyGatePayload).independentReviews ?? [];
+    if (payload?.kind === 'ready') return (payload as ReadyGatePayload).reviews ?? [];
   }
   return [];
 }
 
-function shaRange(attempt: IndependentReviewAttempt): string {
+function shaRange(attempt: ReviewAttempt): string {
   const snapshot = attempt.reviewSnapshot;
   const base = snapshot?.baseSha?.slice(0, 7);
   const head = snapshot?.headSha?.slice(0, 7);
   return base || head ? `${base ?? '?'} → ${head ?? '?'}` : 'SHA unavailable';
 }
 
-function stat(attempt: IndependentReviewAttempt): string | null {
+function stat(attempt: ReviewAttempt): string | null {
   const delta = attempt.fixDelta;
   const diff = delta?.diffStat;
   if (!diff) return null;
@@ -41,16 +41,15 @@ function stat(attempt: IndependentReviewAttempt): string | null {
   return `${paths} · +${diff.additions} −${diff.deletions}`;
 }
 
-function totalDuration(attempt: IndependentReviewAttempt): string | null {
+function totalDuration(attempt: ReviewAttempt): string | null {
   if (!attempt.startedAt || !attempt.completedAt) return null;
   const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
   return Number.isFinite(durationMs) && durationMs >= 0 ? formatPreciseDuration(durationMs) : null;
 }
 
-function reviewSource(review: IndependentReviewStatus): string {
-  if (review.source === 'self-review') return 'Self-review';
-  if (review.source === 'human-gate') return 'Independent review (requested)';
-  return 'Independent review';
+function reviewSource(review: ReviewStatus): string {
+  if (review.source === 'human-gate') return 'Requested review';
+  return 'Review';
 }
 
 function ReviewAttemptCard({
@@ -60,7 +59,7 @@ function ReviewAttemptCard({
   feedbackSent,
   onOpenArtifact,
 }: {
-  attempt: IndependentReviewAttempt;
+  attempt: ReviewAttempt;
   attemptIndex: number;
   defaultExpanded: boolean;
   feedbackSent: boolean;
@@ -161,7 +160,7 @@ function ReviewCard({
   reviewerActive,
   onOpenArtifact,
 }: {
-  review: IndependentReviewStatus;
+  review: ReviewStatus;
   reviewIndex: number;
   defaultExpanded: boolean;
   continuationActive: boolean;
@@ -169,9 +168,7 @@ function ReviewCard({
   onOpenArtifact: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const attempts = review.attempts?.length
-    ? review.attempts
-    : ([review] as IndependentReviewAttempt[]);
+  const attempts = review.attempts?.length ? review.attempts : ([review] as ReviewAttempt[]);
   const findingCount = attempts.reduce(
     (total, attempt) => total + (attempt.issues?.length ?? 0),
     0,
@@ -251,8 +248,7 @@ export function ReviewHistoryPanel({
   const attemptCount = reviews.reduce((total, review) => total + (review.attempts?.length || 1), 0);
   const continuationActive = (run.agentContexts ?? []).some(
     (context) =>
-      context.role === 'self-review-fix' &&
-      ['launching', 'working', 'waiting'].includes(context.status),
+      context.role === 'review-fix' && ['launching', 'working', 'waiting'].includes(context.status),
   );
 
   return (
@@ -297,7 +293,7 @@ export function ReviewHistoryPanel({
                   </View>
                   <Text style={styles.meta}>
                     {entry.runner || 'unknown runner'} / {entry.model || 'default'} ·{' '}
-                    {entry.reviewScope} · {entry.validationDepth}
+                    {entry.mode.toUpperCase()} · {entry.validationDepth}
                   </Text>
                   <Text style={styles.meta}>
                     {entry.baseSha?.slice(0, 7) ?? '?'} → {entry.headSha?.slice(0, 7) ?? '?'} ·{' '}
@@ -325,7 +321,7 @@ export function ReviewHistoryPanel({
           continuationActive={continuationActive}
           reviewerActive={(run.agentContexts ?? []).some(
             (context) =>
-              context.role === 'self-review' &&
+              context.role === 'review' &&
               ['launching', 'working', 'waiting'].includes(context.status) &&
               context.artifactScope === review.id,
           )}

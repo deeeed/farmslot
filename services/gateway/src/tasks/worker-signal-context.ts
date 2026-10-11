@@ -71,7 +71,7 @@ export async function applyRunningWorkerSignalToContext(
           }
           return null;
         }
-        if (rearmingTerminalContext && current.role === 'self-review') options?.beforeRearm?.();
+        if (rearmingTerminalContext && current.role === 'review') options?.beforeRearm?.();
         const adoptingAttemptId = Boolean(signal.attemptId && !current.signalAttemptId);
         return {
           id: current.id,
@@ -83,5 +83,5 @@ export async function applyRunningWorkerSignalToContext(
       },
     },
   );
-  return updated !== null && rearmingTerminalContext && match.role === 'self-review';
+  return updated !== null && rearmingTerminalContext && match.role === 'review';
 }

@@ -238,26 +238,17 @@ function normalizePublicationReview(
     const flowConfig = (cfg as Record<string, unknown>)[flow];
     if (!isRecord(flowConfig)) continue;
     const flowReview: NonNullable<ProjectConfig['publicationReview']>[typeof flow] = {};
-    const minimumIndependentReviews = flowConfig.minimum_independent_reviews;
+    const minimumReviews = flowConfig.minimum_reviews;
     if (
-      minimumIndependentReviews !== undefined &&
-      (typeof minimumIndependentReviews !== 'number' ||
-        !Number.isInteger(minimumIndependentReviews) ||
-        minimumIndependentReviews < 0)
+      minimumReviews !== undefined &&
+      (typeof minimumReviews !== 'number' ||
+        !Number.isInteger(minimumReviews) ||
+        minimumReviews < 0)
     ) {
-      throw new Error(
-        `publication_review.${flow}.minimum_independent_reviews must be a non-negative integer`,
-      );
+      throw new Error(`publication_review.${flow}.minimum_reviews must be a non-negative integer`);
     }
-    if (typeof minimumIndependentReviews === 'number') {
-      flowReview.minimumIndependentReviews = minimumIndependentReviews;
-    }
-    const requireCrossRunner = flowConfig.require_cross_runner;
-    if (requireCrossRunner !== undefined && typeof requireCrossRunner !== 'boolean') {
-      throw new Error(`publication_review.${flow}.require_cross_runner must be a boolean`);
-    }
-    if (typeof requireCrossRunner === 'boolean') {
-      flowReview.requireCrossRunner = requireCrossRunner;
+    if (typeof minimumReviews === 'number') {
+      flowReview.minimumReviews = minimumReviews;
     }
     normalized[flow] = flowReview;
   }
@@ -829,6 +820,16 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
             artifactDir: raw.paths?.artifact_dir || '',
           },
           defaults: raw.defaults || {},
+          ...(raw.review
+            ? {
+                review: {
+                  runner: raw.review.runner,
+                  model: raw.review.model,
+                  effort: raw.review.effort,
+                  mode: raw.review.mode,
+                },
+              }
+            : {}),
           hooks: raw.hooks || {},
           health: raw.health || {},
           ci: {

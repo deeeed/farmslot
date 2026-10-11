@@ -25,6 +25,11 @@ test('lane launcher delegates fresh and resumed commands to shared runner adapte
     assert.ok(codex.command.includes('codex'));
     assert.ok(codex.command.includes('check_for_update_on_startup=false'));
     assert.equal(codex.goal_supported, true);
+    for (const resume_id of [undefined, 'configured-session']) {
+      const configured = runnerLaunch({ ...lane, runner: 'codex', effort: 'xhigh', resume_id });
+      assert.ok(configured.command.includes('fixture-model'));
+      assert.match(configured.command, /model_reasoning_effort.*xhigh/);
+    }
     for (const resume_id of [undefined, 'fixture-session']) {
       const routed = runnerLaunch({
         ...lane,

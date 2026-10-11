@@ -17,11 +17,11 @@ const SYNC_KEYS = [
   'INTERACTIVE_CHECKLIST_MARKDOWN',
   'WORKER_SIGNAL_FILE',
   'ROLE_SIGNAL_SUFFIX',
-  'SELF_REVIEW_CHECKLIST',
-  'SELF_REVIEW_FIX_CHECKLIST',
+  'REVIEW_CHECKLIST',
+  'REVIEW_FIX_CHECKLIST',
   'CI_FIX_CHECKLIST',
-  'SELF_REVIEW_CHECKLIST_TARGET',
-  'SELF_REVIEW_FIX_CHECKLIST_TARGET',
+  'REVIEW_CHECKLIST_TARGET',
+  'REVIEW_FIX_CHECKLIST_TARGET',
   'CI_FIX_CHECKLIST_TARGET',
   'CHECKLIST_TARGET_BY_AGENT_ROLE',
   'DEFAULT_CHECKLIST_TARGET_REGISTRY',
@@ -119,16 +119,16 @@ test('checklist-target.cjs enumerateChecklistCheckboxes matches protocol behavio
 
 test('checklist-target.cjs helpers match protocol registry semantics', () => {
   assert.deepEqual(
-    cjs.targetForChecklistBasename(protocol.SELF_REVIEW_CHECKLIST),
-    protocol.targetForChecklistBasename(protocol.SELF_REVIEW_CHECKLIST),
+    cjs.targetForChecklistBasename(protocol.REVIEW_CHECKLIST),
+    protocol.targetForChecklistBasename(protocol.REVIEW_CHECKLIST),
   );
   assert.deepEqual(
     cjs.checklistTargetForAgentRole('ci-fix'),
     protocol.checklistTargetForAgentRole('ci-fix'),
   );
   assert.equal(
-    cjs.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
-    protocol.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
+    cjs.terminalContractInputForChecklist('REVIEW.rev-codex.md'),
+    protocol.terminalContractInputForChecklist('REVIEW.rev-codex.md'),
   );
 });
 

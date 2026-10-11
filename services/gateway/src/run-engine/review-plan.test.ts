@@ -1,433 +1,187 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunDecision } from '@farmslot/protocol';
+import {
+  reviewPolicySatisfied,
+  type ReviewSelection,
+  type ReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   automaticPublicationReviewPlan,
-  humanGateReviewDepth,
-  latestResolvedHumanGateReviewRequestDecision,
-  recoveryReviewPlanForActiveFix,
+  humanGateReviewPolicy,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
   reviewPlanFromSelection,
 } from './review-plan.js';
 
-test('automatic publication reviews materialize the policy as static independent work', () => {
-  const policy = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
-    requestedBy: 'dispatch' as const,
+const selection: ReviewSelection = {
+  runner: 'codex',
+  model: 'gpt-6-astra',
+  effort: 'high',
+  mode: 'cold' as const,
+};
+function passing(
+  id: string,
+  session: string,
+  source: ReviewStatus['source'] = 'pipeline',
+): ReviewStatus {
+  return {
+    id,
+    source,
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    mode: 'cold' as const,
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewerSessionId: session,
+    reviewedHeadSha: 'head',
+    completedAt: '2026-10-11T01:00:00Z',
   };
-  assert.deepEqual(automaticPublicationReviewPlan(policy, [], 'claude'), [
-    { order: 1, runner: 'same', validationDepth: 'static-code' },
-  ]);
-  assert.deepEqual(
-    automaticPublicationReviewPlan(
-      policy,
-      [
-        {
-          id: 'self-review-1',
-          source: 'self-review',
-          runner: 'claude',
-          crossRunner: false,
-          loopNumber: 1,
-          verdict: 'pass',
-          unresolvedCount: 0,
-          validationDepth: 'static-code',
-        },
-      ],
-      'claude',
-    ),
-    [{ order: 1, runner: 'same', validationDepth: 'static-code' }],
-    'worker self-review must not consume the independent-review minimum',
-  );
-});
+}
 
-test('automatic publication reviews select an alternate runner only when policy requires it', () => {
-  const policy = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: true,
-    extraLoopsRequested: 0,
-    requestedBy: 'dispatch' as const,
+test('gate payload round trips effort and ordered remaining selections', () => {
+  const second = {
+    ...selection,
+    runner: 'claude',
+    model: null,
+    effort: null,
+    mode: 'warm' as const,
   };
-  assert.deepEqual(automaticPublicationReviewPlan(policy, [], 'claude'), [
-    { order: 1, runner: 'codex', validationDepth: 'static-code' },
-  ]);
-});
-
-test('explicit publication review plans remain authoritative when the policy minimum is zero', () => {
-  const plan = [
-    { order: 1, runner: 'codex' as const, validationDepth: 'full-live' as const },
-    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
-  ];
-
-  assert.deepEqual(remainingExplicitReviewPlan(plan, []), plan);
-});
-
-test('explicit publication review recovery drops the already-passed prefix', () => {
-  const plan = [
-    { order: 1, runner: 'codex' as const, validationDepth: 'full-live' as const },
-    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
-  ];
-
   assert.deepEqual(
-    remainingExplicitReviewPlan(plan, [
-      {
-        id: 'independent-review-1',
-        source: 'dispatch',
-        runner: 'codex',
-        crossRunner: true,
-        loopNumber: 1,
-        verdict: 'pass',
-        unresolvedCount: 0,
-      },
-    ]),
-    [plan[1]],
+    reviewPlanFromSelection({ reviewRequest: { ...selection, sequence: [second] } }),
+    [selection, second],
+  );
+  assert.throws(() => reviewPlanFromSelection({ reviewRequest: { runner: 'same' } }));
+  assert.throws(() => reviewPlanFromSelection({ reviewRequest: { ...selection, loops: [] } }));
+});
+
+test('pipeline review satisfies the policy regardless of worker runner', () => {
+  const review = passing('pipeline-review-1', 'session-1');
+  const policy = { minimumReviews: 1, requestedBy: 'dispatch' as const };
+  assert.equal(reviewPolicySatisfied(policy, [review]), true);
+  assert.deepEqual(automaticPublicationReviewPlan(policy, [review]), []);
+});
+
+test('rechecks of one session consume one required reviewer', () => {
+  const policy = { minimumReviews: 2, requestedBy: 'dispatch' as const };
+  assert.equal(
+    reviewPolicySatisfied(policy, [passing('one', 'session-1'), passing('recheck', 'session-1')]),
+    false,
+  );
+  assert.equal(automaticPublicationReviewPlan(policy, [passing('one', 'session-1')]).length, 1);
+  assert.equal(
+    reviewPolicySatisfied(policy, [passing('one', 'session-1'), passing('two', 'session-2')]),
+    true,
   );
 });
 
-test('explicit publication review recovery ignores passes from an earlier work order', () => {
-  const plan = [{ order: 1, runner: 'codex' as const, validationDepth: 'static-code' as const }];
-  const reviews = [
-    {
-      id: 'earlier-human-review',
-      source: 'human-gate' as const,
-      runner: 'codex',
-      crossRunner: true,
-      loopNumber: 1,
-      verdict: 'pass' as const,
-      unresolvedCount: 0,
-      completedAt: '2026-07-30T01:00:00.000Z',
-    },
-  ];
-
-  assert.deepEqual(
-    remainingExplicitReviewPlan(plan, reviews, {
-      requestedAt: '2026-07-30T02:00:00.000Z',
-      source: 'human-gate',
-    }),
-    plan,
+test('historical records lacking session or reviewed head cannot satisfy publication', () => {
+  const policy = { minimumReviews: 1, requestedBy: 'dispatch' as const };
+  assert.equal(
+    reviewPolicySatisfied(policy, [{ ...passing('one', 'session-1'), reviewerSessionId: null }]),
+    false,
   );
+  assert.equal(
+    reviewPolicySatisfied(policy, [{ ...passing('one', 'session-1'), reviewedHeadSha: undefined }]),
+    false,
+  );
+});
+
+test('explicit sequence matches each session only once and preserves order', () => {
   assert.deepEqual(
     remainingExplicitReviewPlan(
-      plan,
-      [{ ...reviews[0], id: 'current-human-review', completedAt: '2026-07-30T03:00:00.000Z' }],
-      {
-        requestedAt: '2026-07-30T02:00:00.000Z',
-        source: 'human-gate',
-      },
+      [selection, selection],
+      [passing('one', 'session-1'), passing('retry', 'session-1')],
     ),
-    [],
+    [selection],
   );
 });
 
-test('explicit publication review recovery preserves a missing runner-specific prefix', () => {
-  const plan = [
-    { order: 1, runner: 'codex' as const, validationDepth: 'static-code' as const },
-    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
-  ];
-
-  assert.deepEqual(
-    remainingExplicitReviewPlan(
-      plan,
-      [
-        {
-          id: 'second-loop-pass',
-          source: 'human-gate',
-          runner: 'claude',
-          crossRunner: false,
-          loopNumber: 2,
-          verdict: 'pass',
-          unresolvedCount: 0,
-          completedAt: '2026-07-30T03:00:00.000Z',
-        },
-      ],
-      {
-        requestedAt: '2026-07-30T02:00:00.000Z',
-        source: 'human-gate',
-      },
-    ),
-    plan,
-  );
-});
-
-test('reviewPlanFromSelection honors explicit loop runners', () => {
-  assert.deepEqual(
-    reviewPlanFromSelection({
-      reviewRequest: {
-        extraLoopsRequested: 1,
-        requireCrossRunner: true,
-        loops: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
-      },
-    }),
-    [{ order: 1, runner: 'codex', model: null, validationDepth: 'static-code' }],
-  );
-});
-
-test('reviewPlanFromSelection honors per-loop model and effort', () => {
-  assert.deepEqual(
-    reviewPlanFromSelection({
-      reviewRequest: {
-        extraLoopsRequested: 2,
-        requireCrossRunner: true,
-        loops: [
-          {
-            order: 1,
-            runner: 'pi',
-            model: 'grok-4.6',
-            effort: 'low',
-            validationDepth: 'static-code',
-            sessionIntent: 'reset',
-          },
-          {
-            order: 2,
-            runner: 'codex',
-            model: 'gpt-6-astra',
-            effort: 'xhigh',
-            validationDepth: 'full-live',
-            sessionIntent: 'resume',
-          },
-        ],
-      },
-    }),
-    [
-      {
-        order: 1,
-        runner: 'pi',
-        model: 'grok-4.6',
-        effort: 'low',
-        validationDepth: 'static-code',
-        sessionIntent: 'reset',
-      },
-      {
-        order: 2,
-        runner: 'codex',
-        model: 'gpt-6-astra',
-        effort: 'xhigh',
-        validationDepth: 'full-live',
-        sessionIntent: 'resume',
-      },
-    ],
-  );
-});
-
-test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stale claude pending', () => {
-  // Reproduction of run 71803bd2: decision[1] requested codex while pending
-  // still held claude from the first request / wrong plan preference.
-  const stalePending = [
-    { order: 1, runner: 'claude' as const, validationDepth: 'static-code' as const },
-  ];
+test('latest gate selection overrides stale pending work', () => {
   const decisions: RunDecision[] = [
     {
-      id: 'd0',
+      id: 'request',
       type: 'engine_human_gate',
-      title: 'first',
+      title: '',
       description: '',
       actions: [],
-      createdAt: '2026-08-01T13:41:00.000Z',
-      resolvedAt: '2026-08-01T13:41:47.116Z',
-      resolvedAction: 'request-extra-review',
-      selectionData: {
-        reviewRequest: {
-          extraLoopsRequested: 1,
-          requireCrossRunner: true,
-          loops: [{ order: 1, runner: 'claude', validationDepth: 'static-code' }],
-        },
-      },
-      context: { reviewRequestConsumedAt: '2026-08-01T13:41:47.119Z' },
-    },
-    {
-      id: 'd1',
-      type: 'engine_human_gate',
-      title: 'second',
-      description: '',
-      actions: [],
-      createdAt: '2026-08-01T14:07:13.000Z',
-      resolvedAt: '2026-08-01T14:19:17.296Z',
-      resolvedAction: 'request-extra-review',
-      selectionData: {
-        reviewRequest: {
-          extraLoopsRequested: 1,
-          requireCrossRunner: true,
-          loops: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
-        },
-      },
+      createdAt: '',
+      resolvedAt: '2026-10-11T01:00:00Z',
+      resolvedAction: 'request-review',
+      selectionData: { reviewRequest: selection },
     },
   ];
-
-  const plan = resolveHumanGateReviewExecutionPlan({
-    gateAction: 'request-extra-review',
-    pendingPlan: stalePending,
-    decisions,
-  });
-  assert.equal(plan[0]?.runner, 'codex', 'second request must launch codex, not stale claude');
-  assert.deepEqual(plan, [
-    { order: 1, runner: 'codex', model: null, validationDepth: 'static-code' },
-  ]);
-
-  // Old buggy path: prefer pending when non-empty, ignore decision selection.
-  const buggyPlan = stalePending.length
-    ? stalePending
-    : reviewPlanFromSelection(
-        latestResolvedHumanGateReviewRequestDecision(decisions)?.selectionData,
-      );
-  assert.equal(buggyPlan[0]?.runner, 'claude', 'documents the pre-fix failure mode');
-});
-
-test('resolveHumanGateReviewExecutionPlan falls back to pending when selection has no explicit runner', () => {
-  const pending = [{ order: 1, runner: 'cursor' as const, validationDepth: 'full-live' as const }];
-  const decisions: RunDecision[] = [
-    {
-      id: 'd0',
-      type: 'engine_human_gate',
-      title: 'count-only',
-      description: '',
-      actions: [],
-      createdAt: '2026-08-01T13:00:00.000Z',
-      resolvedAt: '2026-08-01T13:01:00.000Z',
-      resolvedAction: 'request-extra-review',
-      selectionData: {
-        reviewRequest: { extraLoopsRequested: 1, requireCrossRunner: true },
-      },
-    },
-  ];
-  const plan = resolveHumanGateReviewExecutionPlan({
-    gateAction: 'request-extra-review',
-    pendingPlan: pending,
-    decisions,
-  });
-  assert.deepEqual(plan, pending);
-});
-
-test('resolveHumanGateReviewExecutionPlan preserves a default same-runner request without pending work', () => {
-  const decisions: RunDecision[] = [
-    {
-      id: 'd0',
-      type: 'engine_human_gate',
-      title: 'default review',
-      description: '',
-      actions: [],
-      createdAt: '2026-08-01T13:00:00.000Z',
-      resolvedAt: '2026-08-01T13:01:00.000Z',
-      resolvedAction: 'request-extra-review',
-      selectionData: { reviewRequest: { extraLoopsRequested: 1 } },
-    },
-  ];
-
   assert.deepEqual(
     resolveHumanGateReviewExecutionPlan({
-      gateAction: 'request-extra-review',
-      pendingPlan: [],
+      gateAction: 'request-review',
+      pendingPlan: [{ ...selection, runner: 'claude' }],
       decisions,
     }),
-    [{ order: 1, runner: 'same', validationDepth: 'static-code' }],
+    [selection],
   );
-});
-
-test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
-  const basePolicy = {
-    minimumIndependentReviews: 0,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
-    requestedBy: 'dispatch' as const,
-  };
-
   assert.deepEqual(
-    humanGateReviewDepth(
-      basePolicy,
-      {},
-      { actionId: 'request-extra-review', fallbackLoopCount: 1 },
+    humanGateReviewPolicy(
+      { minimumReviews: 0, requestedBy: 'dispatch' },
+      { ...selection, sequence: [selection] },
     ),
-    {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
-      requestedBy: 'human-gate',
-    },
-  );
-
-  assert.deepEqual(
-    humanGateReviewDepth(basePolicy, {}, { actionId: 'request-cross-runner-review' }),
-    {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: true,
-      extraLoopsRequested: 0,
-      requestedBy: 'human-gate',
-    },
+    { minimumReviews: 2, requestedBy: 'human-gate' },
   );
 });
 
-test('recoveryReviewPlanForActiveFix restores the latest reviewer work order', () => {
-  assert.deepEqual(
-    recoveryReviewPlanForActiveFix({
-      agentContexts: [
-        {
-          id: 'rev-codex',
-          role: 'self-review',
-          label: 'Reviewer',
-          status: 'complete',
-          slotId: 'slot-1',
-          runId: 'run-1',
-          runner: 'codex',
-          model: 'gpt-5.6-sol',
-          effort: 'low',
-          attemptStartedAt: '2026-07-30T03:24:00.000Z',
-        },
-        {
-          id: 'self-review-fix',
-          role: 'self-review-fix',
-          label: 'Review fix',
-          status: 'working',
-          slotId: 'slot-1',
-          runId: 'run-1',
-          startedAt: '2026-07-30T03:30:00.000Z',
-        },
-      ],
-      engineState: {
-        publishGate: {
-          independentReviews: [
-            {
-              id: 'independent-review-1',
-              source: 'human-gate',
-              runner: 'codex',
-              crossRunner: true,
-              loopNumber: 1,
-              verdict: 'issues',
-              unresolvedCount: 1,
-              validationDepth: 'static-code',
-            },
-          ],
-        },
-      },
-    }),
-    [
-      {
-        order: 1,
-        runner: 'codex',
-        model: 'gpt-5.6-sol',
-        effort: 'low',
-        validationDepth: 'static-code',
-      },
-    ],
+test('a later recheck failure replaces its earlier passing session result', () => {
+  const review = passing('one', 'session-1');
+  assert.equal(
+    reviewPolicySatisfied({ minimumReviews: 1, requestedBy: 'dispatch' }, [
+      review,
+      { ...review, verdict: 'issues', unresolvedCount: 1 },
+    ]),
+    false,
   );
 });
 
-test('recoveryReviewPlanForActiveFix ignores completed fix contexts', () => {
-  assert.deepEqual(
-    recoveryReviewPlanForActiveFix({
-      agentContexts: [
+test('WARM preflight refuses unbound or foreign lineage without changing the requested mode', async () => {
+  const { assertWarmReviewRequestAvailable, assertPrimaryReviewContext } =
+    await import('./review-plan.js');
+  const { makeRun } = await import('./test-fixtures.js');
+  const run = makeRun({ flowType: 'review-pr', ticketOrPr: 'owner/repo#42' });
+  const request = { ...selection, mode: 'warm' as const };
+  assert.throws(() => assertWarmReviewRequestAvailable(run, request, []), /WARM.*lineage/);
+  assert.throws(
+    () =>
+      assertWarmReviewRequestAvailable(
+        run,
         {
-          id: 'self-review-fix',
-          role: 'self-review-fix',
-          label: 'Review fix',
-          status: 'complete',
-          slotId: 'slot-1',
-          runId: 'run-1',
+          ...request,
+          context: {
+            reviewLineages: [{ repository: 'owner/foreign', prNumber: 42, reviewId: 'review-1' }],
+          },
         },
-      ],
-    }),
-    [],
+        [],
+      ),
+    /different repository\/PR/,
+  );
+  assert.throws(
+    () => assertPrimaryReviewContext({ ...run, reviewMode: 'warm' }),
+    /explicit reviewId lineage/,
+  );
+  assert.equal(request.mode, 'warm');
+});
+
+test('fresh-session rechecks of one lineage still count only its latest result', () => {
+  const policy = { minimumReviews: 2, requestedBy: 'dispatch' as const };
+  assert.equal(
+    reviewPolicySatisfied(policy, [passing('one', 'session-1'), passing('one', 'session-2')]),
+    false,
+  );
+  assert.equal(
+    reviewPolicySatisfied({ ...policy, minimumReviews: 1 }, [
+      passing('one', 'session-1'),
+      { ...passing('one', 'session-2'), verdict: 'issues', unresolvedCount: 1 },
+    ]),
+    false,
   );
 });

@@ -61,7 +61,7 @@ test('workspace decision selectors expose review and retro independently', () =>
       kind: 'retrospective',
       outcome: 'success',
       whatThisIs: 'retro',
-      selfReviewSummary: 'retro',
+      reviewSummary: 'retro',
       actionEffects: [],
     },
   });

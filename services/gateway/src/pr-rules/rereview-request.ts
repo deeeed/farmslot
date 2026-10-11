@@ -2,17 +2,17 @@
 // blocked review-pr run on the PR's current head (ADR-055 reviewer continuity).
 //
 // A review that could not be posted because the head moved is not lost work:
-// a new round with `sessionIntent: 'resume'` and `scope: 'incremental'` lets
+// a new round with verified WARM lineage lets
 // the dispatcher reuse the retained reviewer session and hand it only the new
 // diff plus the unresolved findings. The request goes through the same intake
 // as "Request review / QA", so admission, authorization and the queue apply.
-
 import {
   parseGitHubRef,
   type PRReviewRequest,
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
+import { reviewRequestContextForRun } from '@farmslot/review-dispatch';
 
 export interface RereviewTeamCandidate {
   id: string;
@@ -32,7 +32,10 @@ export type RereviewRun = Pick<
   | 'transport'
   | 'effort'
   | 'reviewValidationDepth'
-> & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
+> &
+  Partial<Pick<Run, 'engineState' | 'decisions' | 'reviewResult' | 'repeatReviewContext'>> & {
+    metrics: Pick<Run['metrics'], 'runner' | 'model'>;
+  };
 
 /** Repo slug and number of the PR a review-pr run reviewed. */
 export function rereviewTarget(
@@ -121,6 +124,8 @@ export function buildRereviewRequest(
   const team = selectRereviewTeam(teams, target.repo, run.project);
   const runner = run.metrics.runner;
   const model = run.metrics.model;
+  const reviewContext = reviewRequestContextForRun({ ...run, decisions: run.decisions ?? [] });
+  const mode = reviewContext ? ('warm' as const) : ('cold' as const);
   return {
     teamId: team.id,
     pr: { host: 'github.com', repo: target.repo, number: target.number },
@@ -134,23 +139,20 @@ export function buildRereviewRequest(
           execution: {
             workspacePolicy: { kind: 'exact' as const, machine: run.reviewWorkspaceTarget.machine },
             transport: run.transport ?? 'tmux',
-            models: [{ runner, model, ...(run.effort ? { effort: run.effort } : {}) }],
+            models: [{ runner, model, effort: run.effort ?? null, mode }],
           },
         }
       : run.slotId && runner && model
         ? {
             execution: {
               slotPolicy: { kind: 'exact' as const, slotId: run.slotId },
-              models: [{ runner, model, ...(run.effort ? { effort: run.effort } : {}) }],
+              models: [{ runner, model, effort: run.effort ?? null, mode }],
             },
           }
         : {}),
     review: {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      // Same depth as the review being redone; a dead session is no reason to go shallower.
-      validationDepth: run.reviewValidationDepth ?? 'static-code',
-      busySession: 'wait',
+      mode,
+      ...(reviewContext ? { reviewContext } : {}),
       autoFinish: false,
     },
     source: { client: 'command-center', reference: `run:${run.id}`, requester: ownerId },

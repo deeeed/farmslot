@@ -53,7 +53,7 @@ test('builtin contracts retain worker-authored recipe quality support', () => {
 });
 
 test('withTerminalReportPath scopes reviewer completion artifacts to its context', () => {
-  const base = resolveWorkerTerminalContract(undefined, 'self-review');
+  const base = resolveWorkerTerminalContract(undefined, 'review');
   const scoped = withTerminalReportPath(base, 'artifacts/review-feedback.rev8-claude.md');
 
   for (const command of ['complete', 'no-change'] as const) {

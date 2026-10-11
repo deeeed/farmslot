@@ -21,13 +21,12 @@ test('an item with no dispatch config, wait policy included, stays hidden', () =
 
 test('pending review loops show model and effort in the read-only summary', () => {
   const summary = summarizeBacklogDispatchConfig({
-    pendingReviewPlan: [
+    reviewSequence: [
       {
-        order: 1,
         runner: 'pi',
         model: 'grok-4.6',
         effort: 'low',
-        validationDepth: 'static-code',
+        mode: 'warm',
       },
     ],
   });
@@ -36,7 +35,7 @@ test('pending review loops show model and effort in the read-only summary', () =
     {
       label: 'review 1',
       runner: 'pi',
-      detail: 'grok-4.6 / low / static-code',
+      detail: 'grok-4.6 / low / WARM',
     },
   ]);
 });

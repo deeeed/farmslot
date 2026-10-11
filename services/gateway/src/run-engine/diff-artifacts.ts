@@ -33,7 +33,12 @@ import {
   type SourceDiffFilter,
 } from '../core/source-diff-filter.js';
 import { shellQuote } from '../core/tmux.js';
-import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
+import {
+  fetchGitHubCompareFiles,
+  fetchGitHubPR,
+  fetchPRDiffFiles,
+  type GitHubPrDiffOptions,
+} from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { getRunWithArchived } from '../runs/store.js';
 
@@ -1022,7 +1027,7 @@ interface ReviewInputCaptureDeps {
   fetchPRDiffFiles: (
     repo: string,
     prNumber: number,
-    opts?: { signal?: AbortSignal },
+    opts?: GitHubPrDiffOptions,
   ) => ReturnType<typeof fetchPRDiffFiles>;
   fetchGitHubCompareFiles?: (
     repo: string,
@@ -1110,7 +1115,7 @@ async function readExistingAvailableReviewInputArtifacts(
 async function readFreshReviewInputArtifacts(
   inputsDir: string,
   prRef: { repo: string; prNumber: number },
-  run: Pick<Run, 'reviewScope' | 'repeatReviewContext'>,
+  run: Pick<Run, 'reviewMode' | 'repeatReviewContext'>,
   nowMs = Date.now(),
 ): Promise<ArtifactRef[] | null> {
   const diffStatPath = path.join(inputsDir, 'diff-stat.json');
@@ -1120,14 +1125,14 @@ async function readFreshReviewInputArtifacts(
     if (!isFamilyDiffProvenance(parsed) || parsed.kind !== 'review-input') return null;
     if (parsed.repository && parsed.repository !== prRef.repo) return null;
     if (parsed.prNumber != null && parsed.prNumber !== prRef.prNumber) return null;
-    if ((parsed.reviewScope ?? 'full') !== (run.reviewScope ?? 'full')) return null;
+    if ((parsed.reviewMode ?? 'cold') !== (run.reviewMode ?? 'cold')) return null;
     if (
       run.repeatReviewContext?.currentHeadSha &&
       parsed.headSha !== run.repeatReviewContext.currentHeadSha
     )
       return null;
     if (
-      run.reviewScope === 'incremental' &&
+      run.reviewMode === 'warm' &&
       parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
     )
       return null;
@@ -1272,9 +1277,9 @@ async function captureReviewInputArtifactsForRunUnlocked(
           );
         }
         const incrementalBase =
-          run.reviewScope === 'incremental'
-            ? run.repeatReviewContext?.priorReviewedHeadSha
-            : undefined;
+          run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : undefined;
+        if (run.reviewMode === 'warm' && !incrementalBase)
+          throw new Error('WARM review unavailable: missing last reviewed head');
         const fetchedFiles = incrementalBase
           ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
               prRef.repo,
@@ -1283,6 +1288,8 @@ async function captureReviewInputArtifactsForRunUnlocked(
               { signal: controller.signal },
             )
           : await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
+              baseSha: fetchedPr.baseSha,
+              headSha: fetchedPr.headSha,
               signal: controller.signal,
             });
         return { pr: fetchedPr, files: fetchedFiles };
@@ -1295,16 +1302,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewScope === 'incremental'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseRef,
+        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
       baseSha:
-        run.reviewScope === 'incremental'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseSha,
+        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewScope: run.reviewScope ?? 'full',
+      reviewMode: run.reviewMode ?? 'cold',
       capturedAt: now,
       source: 'github-pr',
     };
@@ -1328,16 +1331,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewScope === 'incremental'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseRef,
+        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
       baseSha:
-        run.reviewScope === 'incremental'
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : pr.baseSha,
+        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewScope: run.reviewScope ?? 'full',
+      reviewMode: run.reviewMode ?? 'cold',
       capturedAt: now,
       configSource: sourceFilterSettings.configSource,
       ...(sourceFilterSettings.configFallbackReason
@@ -1369,7 +1368,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const unavailable: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      reviewScope: run.reviewScope ?? 'full',
+      reviewMode: run.reviewMode ?? 'cold',
       ...(pr
         ? {
             baseRef: pr.baseRef,

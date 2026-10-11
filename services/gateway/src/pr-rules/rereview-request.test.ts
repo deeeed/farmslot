@@ -18,9 +18,23 @@ const run: RereviewRun = {
   ticketOrPr: 'MetaMask/metamask-mobile#36169',
   prNumber: 36169,
   slotId: 'mini-mm-2',
-  effort: 'standard',
+  effort: undefined,
   reviewValidationDepth: 'full-live',
   metrics: { runner: 'claude', model: 'opus' },
+  reviewResult: {
+    recommendation: 'pass',
+    reviewMd: 'review.md',
+    lineComments: [],
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      repository: 'MetaMask/metamask-mobile',
+      prNumber: 36169,
+      reviewId: 'lineage',
+      sessionId: 'reviewer',
+      lastReviewedHeadSha: 'prior-head',
+    },
+  },
 };
 const head = 'f175fabe7885bfe6a851fb94a008e69fc151d8aa';
 const perps = {
@@ -41,7 +55,7 @@ const platform = {
   },
 };
 
-test('the request resumes the same slot, runner and model with incremental scope', () => {
+test('one verified review lineage requests WARM on the recorded slot, runner and model', () => {
   const request = buildRereviewRequest(run, [perps], 'owner-1', { headSha: head });
   assert.equal(request.teamId, 'team-perps');
   assert.deepEqual(request.pr, {
@@ -57,14 +71,16 @@ test('the request resumes the same slot, runner and model with incremental scope
   assert.equal(request.autoStart, true);
   assert.deepEqual(request.execution, {
     slotPolicy: { kind: 'exact', slotId: 'mini-mm-2' },
-    models: [{ runner: 'claude', model: 'opus', effort: 'standard' }],
+    models: [{ mode: 'warm' as const, runner: 'claude', model: 'opus', effort: null }],
   });
   assert.deepEqual(request.review, {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'full-live',
-    busySession: 'wait',
+    mode: 'warm' as const,
     autoFinish: false,
+    reviewContext: {
+      reviewLineages: [
+        { repository: 'MetaMask/metamask-mobile', prNumber: 36169, reviewId: 'lineage' },
+      ],
+    },
   });
   assert.equal(request.source.reference, 'run:run-1');
 });
@@ -77,7 +93,6 @@ test('without recorded runner/model the team configuration decides execution', (
     { headSha: head },
   );
   assert.equal(request.execution, undefined);
-  assert.equal(request.review?.validationDepth, 'static-code');
 });
 
 test('worktree re-review preserves machine, transport and reviewer without allocating a slot', () => {
@@ -98,9 +113,11 @@ test('worktree re-review preserves machine, transport and reviewer without alloc
   assert.deepEqual(request.execution, {
     workspacePolicy: { kind: 'exact', machine: 'macwork' },
     transport: 'tmux',
-    models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+    models: [
+      { effort: null, mode: 'warm' as const, runner: 'cursor', model: 'cursor-grok-4.6-xhigh' },
+    ],
   });
-  assert.equal(request.review?.scope, 'incremental');
+  assert.equal(request.review?.mode, 'warm');
 });
 
 test('team selection covers the repo case-insensitively and prefers the run project', () => {
@@ -156,4 +173,54 @@ test('the live reviewer session is the run slot whose working review context is 
     'another run owns it',
   );
   assert.equal(liveReviewSessionSlot({ id: 'run-1', slotId: null }, slots), undefined);
+});
+
+test('missing, unconfirmed or ambiguous retained lineage requests COLD', () => {
+  const result = run.reviewResult!;
+  const cases: Array<Pick<RereviewRun, 'reviewResult' | 'decisions'>> = [
+    { reviewResult: undefined },
+    {
+      reviewResult: { ...result, session: { ...result.session!, lastReviewedHeadSha: undefined } },
+    },
+    {
+      reviewResult: {
+        ...result,
+        session: { ...result.session!, continuity: 'resume-unconfirmed' },
+      },
+    },
+    {
+      reviewResult: result,
+      decisions: [
+        {
+          id: 'sibling-result',
+          type: 'engine_review_posting',
+          title: 'Review',
+          description: 'Sibling reviewer',
+          actions: [],
+          createdAt: '2026-10-12T00:00:00Z',
+          payload: {
+            kind: 'review',
+            repo: 'MetaMask/metamask-mobile',
+            prNumber: 36169,
+            recommendation: 'pass',
+            reviewMd: 'sibling-review.md',
+            lineComments: [],
+            session: {
+              ...result.session!,
+              reviewId: 'sibling-lineage',
+              sessionId: 'sibling-session',
+            },
+          },
+        },
+      ],
+    },
+  ];
+  for (const state of cases) {
+    const request = buildRereviewRequest({ ...run, ...state }, [perps], 'owner-1', {
+      headSha: head,
+    });
+    assert.equal(request.review?.mode, 'cold');
+    assert.equal(request.review?.reviewContext, undefined);
+    assert.equal(request.execution?.models[0].mode, 'cold');
+  }
 });

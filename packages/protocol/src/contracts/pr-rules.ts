@@ -4,12 +4,13 @@ import type {
   PRMonitorPolicy,
   PRSourceAccount,
 } from './pr-monitoring.js';
-import type { ReviewScope, ReviewSessionIntent, ReviewValidationDepth } from './runs.js';
+import type { ReviewMode, ReviewRequestContext } from './runs.js';
 
-/** Review execution policy; old validationDepth values are read only for compatibility. */
+/** Review mode plus host-owned publication and QA controls. */
 export interface PRReviewOptions {
-  sessionIntent: ReviewSessionIntent;
-  scope: ReviewScope;
+  mode: ReviewMode;
+  /** Selected reviewer lineage provenance, aligned with execution model rows. */
+  reviewContext?: ReviewRequestContext;
   workflow?: 'review' | 'qa';
   /** Publish the static verdict to its PR after authority/head checks. Omitted inherits defaults. */
   publishReview?: boolean;
@@ -17,19 +18,15 @@ export interface PRReviewOptions {
   autoFinish?: boolean;
   qaProfileId?: string;
   qaInputs?: Record<string, import('./qa.js').QaInput>;
-  validationDepth?: ReviewValidationDepth;
-  /** Wait for the compatible saved reviewer's slot, or allow a fresh session elsewhere. */
-  busySession?: 'wait' | 'fresh';
 }
 
 export const DEFAULT_PR_REVIEW_OPTIONS: Readonly<PRReviewOptions> = {
-  sessionIntent: 'resume',
-  scope: 'incremental',
+  mode: 'cold',
   workflow: 'review',
 };
 
 export function prReviewWorkflow(options?: PRReviewOptions): 'review' | 'qa' {
-  return options?.workflow ?? (options?.validationDepth === 'full-live' ? 'qa' : 'review');
+  return options?.workflow ?? 'review';
 }
 
 /** A stable purpose key keeps runtime QA distinct from static review of the same head. */
@@ -53,9 +50,8 @@ export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): b
   const left = a ?? DEFAULT_PR_REVIEW_OPTIONS;
   const right = b ?? DEFAULT_PR_REVIEW_OPTIONS;
   return (
-    left.sessionIntent === right.sessionIntent &&
-    left.scope === right.scope &&
-    (left.busySession ?? 'wait') === (right.busySession ?? 'wait') &&
+    left.mode === right.mode &&
+    JSON.stringify(left.reviewContext ?? null) === JSON.stringify(right.reviewContext ?? null) &&
     (left.publishReview === true) === (right.publishReview === true) &&
     (left.autoFinish === true) === (right.autoFinish === true) &&
     prReviewPurpose(left) === prReviewPurpose(right)

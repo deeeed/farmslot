@@ -13,7 +13,7 @@ const SIDEBAR_ACTIVE_STATUSES = new Set<RunStatus>([
   'preparing',
   'dispatching',
   'monitoring',
-  'self-reviewing',
+  'reviewing',
   'completing',
   'ci-watching',
   'human-gating',

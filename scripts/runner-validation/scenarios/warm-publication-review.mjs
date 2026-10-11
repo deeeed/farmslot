@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { ROOT, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { installHooks } from '../lib/install.mjs';
-import { ensureShellSession, killSession, sendShellScript, tmux } from '../lib/tmux.mjs';
+import { ensureShellSession, killSession, paneState, sendShellScript, tmux } from '../lib/tmux.mjs';
 
 export const SCENARIO_ID = 'warm-publication-review';
 
@@ -60,7 +60,7 @@ export async function runScenario({ runnerAdapter, outDir }) {
     'Read {{TASK_FILE}} and execute its checklist. Do not edit source.',
   );
   write(
-    path.join(project, 'templates/worker/self-review.static-code.md'),
+    path.join(project, 'templates/worker/review.static-code.md'),
     `# Static reviewer smoke
 
 - [ ] 1. Read message.txt and confirm it contains hello.
@@ -74,6 +74,7 @@ Remain idle after completing the checklist so the gateway can verify the native 
   git('init', '-b', 'main');
   write(path.join(repo, '.git/info/exclude'), 'tasks/\n.agent/\n.observability\n.omc/\n.omx/\n');
   write(path.join(repo, 'message.txt'), 'base\n');
+  write(path.join(repo, 'greeting.js'), 'export function greeting() { return greetingText; }\n');
   git('add', '.');
   git(
     '-c',
@@ -86,6 +87,7 @@ Remain idle after completing the checklist so the gateway can verify the native 
   );
   git('checkout', '-b', 'proof-change');
   write(path.join(repo, 'message.txt'), 'hello\n');
+  write(path.join(repo, 'greeting.js'), 'export function greeting() { return \"hello\"; }\n');
   git('add', '.');
   git(
     '-c',
@@ -110,7 +112,7 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
   fs.chmodSync(path.join(repo, 'tasks/review/mark'), 0o700);
   write(
     path.join(repo, 'tasks/review/artifacts/pr-description.md'),
-    '# Verify message\n\nThe fixture changes message.txt to hello.\n',
+    '# Verify message\n\nThe fixture updates message.txt to a greeting containing hello and makes greeting() in greeting.js return hello.\n',
   );
   write(
     path.join(fixture, 'pool/local.json'),
@@ -183,7 +185,7 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
     ]);
     sleepMs(500);
     sendShellScript(bootstrapPane, repo, [
-      `DISABLE_OMC=1 DISABLE_OMX=1 ${shSingleQuote(runnerAdapter.binaryPath())} --dangerously-skip-permissions --model opus --settings ${shSingleQuote(path.join(repo, '.agent/.observability/claude-settings.json'))} 'Reply exactly READY and remain available for another task.'`,
+      `DISABLE_OMC=1 DISABLE_OMX=1 ${shSingleQuote(runnerAdapter.binaryPath())} --dangerously-skip-permissions --model claude-opus-5-5 --settings ${shSingleQuote(path.join(repo, '.agent/.observability/claude-settings.json'))} 'Reply exactly READY and remain available for another task.'`,
     ]);
     const bootstrapState = path.join(
       repo,
@@ -192,7 +194,44 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
     );
     const bootstrapDeadline = Date.now() + 90_000;
     let bootstrapCompleted = false;
+    let trustConfirmed = false;
     while (Date.now() < bootstrapDeadline) {
+      // This script created the fixture. Confirm only its explicit trust question;
+      // pane text never proves that the bootstrap turn or review completed.
+      if (!trustConfirmed) {
+        const observation = paneState(bootstrapPane);
+        const question = observation.question?.text ?? '';
+        if (
+          observation.pending_question &&
+          question.includes(repo) &&
+          question.includes('Yes, I trust this folder')
+        ) {
+          try {
+            execFileSync(
+              'bash',
+              [
+                path.join(ROOT, '.agents/skills/tmux-model-driver/scripts/answer-question.sh'),
+                bootstrapPane,
+                'claude',
+                observation.question_fingerprint,
+              ],
+              { input: JSON.stringify(['Down', 'Enter']), stdio: ['pipe', 'pipe', 'pipe'] },
+            );
+            trustConfirmed = true;
+          } catch (error) {
+            fs.mkdirSync(outDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(outDir, 'trust-answer-diagnostic.txt'),
+              `${error.stdout ?? ''}\n${error.stderr ?? ''}`,
+            );
+            fs.writeFileSync(
+              path.join(outDir, 'bootstrap-diagnostic.txt'),
+              tmux(['capture-pane', '-p', '-t', bootstrapPane, '-S', '-60']),
+            );
+            throw error;
+          }
+        }
+      }
       if (fs.existsSync(bootstrapState)) {
         const state = JSON.parse(fs.readFileSync(bootstrapState));
         if (
@@ -205,6 +244,15 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
         }
       }
       sleepMs(500);
+    }
+    if (!bootstrapCompleted) {
+      fs.mkdirSync(outDir, { recursive: true });
+      if (fs.existsSync(bootstrapState))
+        fs.copyFileSync(bootstrapState, path.join(outDir, 'bootstrap-observation.json'));
+      fs.writeFileSync(
+        path.join(outDir, 'bootstrap-diagnostic.txt'),
+        tmux(['capture-pane', '-p', '-t', bootstrapPane, '-S', '-60']),
+      );
     }
     assert.ok(
       bootstrapCompleted,
@@ -231,17 +279,35 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
     };
     console.log(JSON.stringify({ fixture, session, port: env.GATEWAY_PORT }));
     process.stdout.write(execute('first'));
+    const firstReceipt = JSON.parse(fs.readFileSync(path.join(fixture, 'first.json')));
+    const bootstrapReceipt = JSON.parse(fs.readFileSync(bootstrapState));
+    assert.notEqual(
+      firstReceipt.sessionId,
+      bootstrapReceipt.session_id,
+      'COLD review must create a fresh session',
+    );
+    write(path.join(repo, 'message.txt'), 'hello again\n');
+    git('add', 'message.txt');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-m',
+      'test: revise reviewed fixture',
+    );
     const runId = fs.readFileSync(path.join(fixture, 'run-id'), 'utf8');
     const runFile = path.join(fixture, '.runs', `${runId}.json`);
     const priorRun = fs.readFileSync(runFile);
-    const reviewModule = path.join(ROOT, 'services/gateway/src/self-review/review-agent.ts');
+    const reviewModule = path.join(ROOT, 'services/gateway/src/review/review-agent.ts');
     const original = fs.readFileSync(reviewModule, 'utf8');
-    const integration = 'warmSession = persistedWarmReviewerSession(warmScope, parentRunForAlloc);';
+    const integration = 'warmSession = resolveWarmReviewerSession(warmScope, getAllRuns());';
     assert.ok(original.includes(integration));
     // Mutate a private module copy so the operator gateway is never restarted for the negative proof.
     const mutatedPath = path.join(fixture, 'mutated-review-agent.mts');
     const mutated = original
-      .replace(integration, 'warmSession = null;')
+      .replaceAll(integration, 'warmSession = null;')
       .replace(
         /(from\s+|import\()(['"])(\.[^'"]+)\2/g,
         (match, prefix, quote, relative) =>
@@ -254,16 +320,15 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
     } catch (error) {
       assert.ok(error.status, 'Negative proof must fail its assertion, not time out');
       const output = `${error.stdout ?? ''}\n${error.stderr ?? ''}`;
-      assert.match(output, /Explicit warm publication review must reuse the persisted session/);
+      assert.match(
+        output,
+        /WARM review refused|WARM review unavailable|Explicit warm publication review must reuse the persisted session/,
+      );
       fs.writeFileSync(path.join(fixture, 'negative.log'), output);
       negativeFailed = true;
     }
     assert.ok(negativeFailed, 'Disabling production recovery must break this proof');
-    // Retire only the fixture reviewer and restore the completed first generation before positive replay.
-    const negativeRun = JSON.parse(fs.readFileSync(runFile));
-    const reviewer = negativeRun.agentContexts.find((context) => context.role === 'self-review');
-    if (reviewer?.target?.target)
-      execFileSync('tmux', ['kill-window', '-t', reviewer.target.target]);
+    // The refused request must leave the retained first reviewer intact.
     fs.writeFileSync(runFile, priorRun);
     process.stdout.write(execute('second'));
     const first = JSON.parse(fs.readFileSync(path.join(fixture, 'first.json')));

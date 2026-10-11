@@ -97,6 +97,7 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { initReview } from './review/orchestrator.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
 import {
   initRunEngine,
@@ -129,7 +130,6 @@ import {
   resolveWorkOriginator,
   runWithSessionOriginator,
 } from './security/work-originator.js';
-import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
@@ -455,7 +455,7 @@ async function main(): Promise<void> {
     },
     24 * 60 * 60 * 1000,
   );
-  initSelfReview(observedBroadcast);
+  initReview(observedBroadcast);
 
   // Load dispatch queue + init auto-dispatch
   await loadEvalSuiteCaps();
@@ -605,12 +605,14 @@ async function main(): Promise<void> {
       launchSlotPolicy: item.launchSlotPolicy,
       launchAttempt: item.launchAttempt,
       devChecklist: item.devChecklist,
-      reviewDepth: item.reviewDepth,
-      reviewScope: item.reviewScope,
+      reviewPolicy: item.reviewPolicy,
+      reviewMode: item.reviewMode,
       reviewValidationDepth: item.reviewValidationDepth,
       qaProfileId: item.qaProfileId,
       qaInputs: item.qaInputs,
-      pendingReviewPlan: item.pendingReviewPlan,
+      reviewSequence: item.reviewSequence,
+      reviewSequenceContext: item.reviewSequenceContext,
+      reviewContext: item.reviewContext,
       safetyTier: effectiveSafetyTier,
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const createQueuedRun = () =>

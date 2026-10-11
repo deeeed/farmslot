@@ -226,7 +226,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       'preparing',
       'dispatching',
       'monitoring',
-      'self-reviewing',
+      'reviewing',
       'completing',
       'ci-watching',
     ]);

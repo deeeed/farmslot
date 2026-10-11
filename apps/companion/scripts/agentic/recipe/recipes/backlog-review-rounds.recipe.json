@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Companion backlog review rounds are static",
-  "description": "ADR-058 native proof. Preconditions: `node scripts/agentic/backlog-review-proof.mjs setup` has started the private fixture gateway (holding a pre-migration backlog item whose review round asks for full-live), and the Companion is connected to it (backlog-review-connect). Creates an item with a static round and saves the legacy item, verifying labels on screen and persisted static-code through the fixture gateway. Run `cleanup` afterwards.",
+  "title": "Companion review sequence preserves model, effort and mode",
+  "description": "ADR-063 native configuration proof. Setup the private fixture gateway with backlog-review-proof.mjs setup and connect the Companion with backlog-review-connect. Configure two review rows by user input, assert missing-lineage WARM refusal, explicitly choose COLD, then verify persisted choices through backlog.list. Edit and reopen a seeded configuration to verify WARM provenance round-trip. This recipe does not launch or prove a retained reviewer session. Run cleanup afterwards.",
   "workflow": {
     "entry": "create-relaunch",
     "nodes": {
@@ -47,16 +47,16 @@
       "create-add-review": {
         "action": "ui.press",
         "test_id": "companion-backlog-review-add",
-        "intent": "Add one independent review round.",
-        "next": "create-static-label"
+        "intent": "Add a review row using the shared picker.",
+        "next": "create-runner"
       },
       "create-static-label": {
         "action": "ui.wait_for",
-        "test_id": "companion-backlog-review-depth-0",
-        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "test_id": "companion-backlog-review-mode-1-cold",
+        "text_contains": ["COLD"],
         "timeout_ms": 15000,
-        "intent": "A new round is labelled static and offers no full-live choice.",
-        "next": "capture-create"
+        "intent": "The shared picker exposes COLD next to the review choices.",
+        "next": "capture-create-hud"
       },
       "capture-create": {
         "action": "ui.screenshot",
@@ -81,7 +81,7 @@
       "verify-create": {
         "action": "command",
         "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-create",
-        "intent": "backlog.list shows the new item with one static-code review round.",
+        "intent": "backlog.list returns the two COLD selections with model and effort intact after the explicit operator choice.",
         "next": "edit-relaunch"
       },
       "edit-relaunch": {
@@ -100,7 +100,7 @@
       "open-edit": {
         "action": "command",
         "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
-        "intent": "Open the seeded legacy backlog item in the Companion edit form.",
+        "intent": "Open the seeded review sequence for editing.",
         "next": "wait-edit"
       },
       "wait-edit": {
@@ -116,19 +116,19 @@
         "intent": "Expand Publication review.",
         "next": "reveal-edit-round"
       },
-      "edit-legacy-label": {
+      "edit-cold-mode": {
         "action": "ui.wait_for",
-        "test_id": "companion-backlog-review-depth-0",
-        "text_contains": ["Legacy full live: saving makes it static."],
+        "test_id": "companion-backlog-review-mode-0-cold",
+        "text_contains": ["COLD"],
         "timeout_ms": 15000,
-        "intent": "The stored full-live round is shown as legacy, not as a selectable depth.",
-        "next": "capture-legacy"
+        "intent": "The saved sequence exposes its COLD mode.",
+        "next": "edit-warm"
       },
-      "capture-legacy": {
+      "capture-warm-mode": {
         "action": "ui.screenshot",
-        "path": "screenshots/companion-backlog-legacy-round.png",
-        "label": "Seeded legacy round shows the legacy wording",
-        "intent": "Record the legacy wording before saving.",
+        "path": "screenshots/companion-backlog-warm-review.png",
+        "label": "Edit the saved review sequence",
+        "intent": "Record the selected WARM review before saving.",
         "next": "reveal-edit-submit"
       },
       "edit-submit": {
@@ -140,7 +140,7 @@
       "verify-edit": {
         "action": "command",
         "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-edit",
-        "intent": "backlog.list shows the seeded item's round persisted as static-code with its runner once the save completes.",
+        "intent": "backlog.list returns the edited WARM selection with its model, effort and configured lineage intact.",
         "next": "reopen-relaunch"
       },
       "reopen-relaunch": {
@@ -159,7 +159,7 @@
       "reopen-edit": {
         "action": "command",
         "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
-        "intent": "Reopen the saved legacy backlog item in the Companion edit form.",
+        "intent": "Reopen the saved review sequence.",
         "next": "wait-reopen"
       },
       "wait-reopen": {
@@ -193,22 +193,22 @@
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 400,
-        "intent": "Show the saved review round and its depth wording.",
+        "intent": "Show the saved review round and its review choices.",
         "next": "reopen-static-label"
       },
       "reopen-static-label": {
         "action": "ui.wait_for",
-        "test_id": "companion-backlog-review-depth-0",
-        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "test_id": "companion-backlog-review-mode-0-warm",
+        "text_contains": ["WARM"],
         "timeout_ms": 15000,
-        "intent": "The saved round now reads as a static review; the legacy wording is gone.",
-        "next": "capture-saved"
+        "intent": "The reopened sequence exposes WARM and its persisted choices.",
+        "next": "capture-saved-hud"
       },
       "capture-saved": {
         "action": "ui.screenshot",
-        "path": "screenshots/companion-backlog-legacy-saved-static.png",
-        "label": "Saved legacy round now shows the static wording",
-        "intent": "Record the saved round reopened in the Companion.",
+        "path": "screenshots/companion-backlog-reopened-warm-review.png",
+        "label": "Reopened WARM review sequence",
+        "intent": "Record the saved review reopened in Companion.",
         "next": "done"
       },
       "done": {
@@ -239,7 +239,7 @@
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 400,
-        "intent": "Show the add independent review button on screen.",
+        "intent": "Show the add review button.",
         "next": "create-add-review"
       },
       "reveal-create-submit": {
@@ -260,15 +260,15 @@
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 700,
-        "intent": "Show the Publication review section header of the stored item.",
+        "intent": "Show the Publication review section header of the saved item.",
         "next": "edit-open-reviews"
       },
       "reveal-edit-round": {
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 400,
-        "intent": "Show the stored review round and its depth wording.",
-        "next": "edit-legacy-label"
+        "intent": "Show the stored review round and its review choices.",
+        "next": "edit-cold-mode"
       },
       "reveal-edit-submit": {
         "action": "ui.scroll",
@@ -276,6 +276,160 @@
         "pixels": 900,
         "intent": "Show the save button at the end of the edit form.",
         "next": "edit-submit"
+      },
+      "create-runner": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-runner-0-codex",
+        "intent": "Choose Codex for the first review.",
+        "next": "reveal-create-model"
+      },
+      "create-model": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-model-0-gpt-6.1-sol",
+        "intent": "Choose the first review model.",
+        "next": "create-effort"
+      },
+      "create-effort": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-effort-0-high",
+        "intent": "Choose explicit high effort.",
+        "next": "create-cold"
+      },
+      "create-cold": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-mode-0-cold",
+        "intent": "Choose a fresh COLD review.",
+        "next": "create-second"
+      },
+      "create-second": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-add",
+        "intent": "Add the second row to the ordered sequence.",
+        "next": "create-second-runner"
+      },
+      "create-second-runner": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-runner-1-codex",
+        "intent": "Choose Codex for the second review.",
+        "next": "reveal-second-model"
+      },
+      "create-second-model": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-model-1-gpt-6.1-sol",
+        "intent": "Keep the same model for the retained reviewer.",
+        "next": "create-second-effort"
+      },
+      "create-second-effort": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-effort-1-high",
+        "intent": "Preserve high effort on the second row.",
+        "next": "create-second-warm"
+      },
+      "create-second-warm": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-mode-1-warm",
+        "intent": "Choose WARM for the second review.",
+        "next": "create-warm-refusal"
+      },
+      "edit-warm": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-mode-0-warm",
+        "intent": "Change the saved review to WARM.",
+        "next": "edit-lineage"
+      },
+      "create-warm-refusal": {
+        "action": "ui.wait_for",
+        "text_contains": [
+          "WARM review row 2 requires an unambiguous repository/PR and reviewId lineage."
+        ],
+        "timeout_ms": 15000,
+        "intent": "Missing WARM provenance refuses the request and keeps the chosen mode visible.",
+        "next": "capture-warm-refusal-hud"
+      },
+      "capture-warm-refusal": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-warm-unavailable.png",
+        "label": "WARM without lineage is refused",
+        "intent": "Record the refusal before the operator changes mode.",
+        "next": "reveal-warm-submit"
+      },
+      "create-second-cold": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-mode-1-cold",
+        "intent": "Explicitly choose COLD after the unavailable WARM choice.",
+        "next": "create-static-label"
+      },
+      "edit-lineage": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-lineage-0",
+        "text_contains": ["validation/companion-proof#901 / proof-review-901"],
+        "timeout_ms": 15000,
+        "intent": "The shared picker exposes its configured lineage as read-only provenance.",
+        "next": "capture-warm-mode-hud"
+      },
+      "reveal-warm-submit": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the submit button while the review remains WARM without lineage.",
+        "next": "attempt-warm-create"
+      },
+      "attempt-warm-create": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-submit",
+        "intent": "Attempt the real save so missing-lineage refusal can be verified at the gateway.",
+        "next": "verify-warm-refusal"
+      },
+      "verify-warm-refusal": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-refusal",
+        "intent": "backlog.list contains no new item after the unavailable WARM save; a silent COLD fallback would fail this assertion.",
+        "next": "reveal-cold-recovery"
+      },
+      "reveal-cold-recovery": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 1000,
+        "intent": "Return to publication review choices after the refused form returned to its first field.",
+        "next": "create-second-cold"
+      },
+      "reveal-create-model": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 250,
+        "intent": "The publication review model options fit above the bottom bar so their labels can be read.",
+        "next": "create-model"
+      },
+      "reveal-second-model": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 250,
+        "intent": "The next review model choices fit above the bottom bar so their labels can be read.",
+        "next": "create-second-model"
+      },
+      "capture-create-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the static round before saving.",
+        "next": "capture-create"
+      },
+      "capture-warm-mode-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the selected WARM review before saving.",
+        "next": "capture-warm-mode"
+      },
+      "capture-saved-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the saved review reopened in Companion.",
+        "next": "capture-saved"
+      },
+      "capture-warm-refusal-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the refusal before the operator changes mode.",
+        "next": "capture-warm-refusal"
       }
     }
   }

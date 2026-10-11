@@ -2,12 +2,13 @@ const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
 const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs');
-const { isProtocolSourceModule } = require('./metro-protocol-source.cjs');
+const { isWorkspaceSourceModule } = require('./metro-workspace-source.cjs');
 
 // Always anchored to this file — independent of process.cwd() / launch folder.
 const projectRoot = __dirname;
 const monorepoRoot = path.resolve(projectRoot, '../..');
 const protocolRoot = path.resolve(monorepoRoot, 'packages/protocol');
+const reviewDispatchRoot = path.resolve(monorepoRoot, 'packages/review-dispatch');
 const originResolveBases = [projectRoot, monorepoRoot, protocolRoot, process.cwd()];
 const configuredMetroPort = process.env.METRO_PORT;
 const metroPort = configuredMetroPort ? Number(configuredMetroPort) : undefined;
@@ -33,7 +34,9 @@ function shouldRewriteProtocolJsImport(originModulePath, moduleName) {
   return (
     moduleName.startsWith('.') &&
     moduleName.endsWith('.js') &&
-    isProtocolSourceModule(originModulePath, protocolRoot, originResolveBases)
+    [protocolRoot, reviewDispatchRoot].some((root) =>
+      isWorkspaceSourceModule(originModulePath, root, originResolveBases),
+    )
   );
 }
 
@@ -62,7 +65,7 @@ config.resolver = {
   unstable_enablePackageExports: true,
   enablePackageExports: true,
   sourceExts: [...config.resolver.sourceExts, 'cjs', 'mjs'],
-  // Rewrite .js imports to .ts for @farmslot/protocol source (ESM convention).
+  // Rewrite .js imports to .ts for shared workspace source (ESM convention).
   // Nested deps under packages/protocol/node_modules are excluded; if a rewrite
   // still misses, fall back to the original .js so third-party packages work.
   resolveRequest: (context, moduleName, platform) => {

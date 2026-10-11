@@ -846,15 +846,6 @@ export function isKnownRunner(runnerId?: string | null): boolean {
   return Object.prototype.hasOwnProperty.call(KNOWN_RUNNERS, normalizeRunner(runnerId));
 }
 
-export function defaultAlternateReviewRunner(runnerId?: string | null): string {
-  const current = normalizeRunner(runnerId);
-  return (
-    Object.keys(KNOWN_RUNNERS).find(
-      (candidate) => candidate !== current && KNOWN_RUNNERS[candidate].supportsInteractivePrompt,
-    ) ?? DEFAULT_RUNNER
-  );
-}
-
 export function getRunnerDefinition(runnerId?: string | null): RunnerDefinition {
   const normalized = normalizeRunner(runnerId);
   const def = KNOWN_RUNNERS[normalized] ?? KNOWN_RUNNERS[DEFAULT_RUNNER];
@@ -1082,22 +1073,16 @@ export interface RetainedReviewerDeliveryPlan {
   resetContext: boolean;
 }
 
-/** Fresh context needs either the runner's native reset or a cold process replacement. */
+/** COLD always replaces the process with a fresh session. WARM cannot reset or relaunch cold. */
 export function retainedReviewerDeliveryPlan(
   runnerId: string,
-  sessionIntent: 'reset' | 'resume',
-  loopNumber: number,
+  mode: 'warm' | 'cold',
+  _loopNumber: number,
 ): RetainedReviewerDeliveryPlan {
-  const resetContext = sessionIntent === 'reset' && loopNumber === 1;
-  if (runnerRetainedSessionHandoff(runnerId) === 'argv-relaunch') {
-    // Cursor cannot prove an injected prompt was accepted. Loop 2+/resume still
-    // argv-respawn; the re-review checklist prefix carries prior findings.
-    return { kind: 'cold-relaunch', resetContext: false };
-  }
-  if (!resetContext) return { kind: 'in-place', resetContext: false };
-  return runnerContextResetCommand(runnerId)
-    ? { kind: 'in-place', resetContext: true }
-    : { kind: 'cold-relaunch', resetContext: false };
+  if (mode === 'cold') return { kind: 'cold-relaunch', resetContext: false };
+  if (runnerRetainedSessionHandoff(runnerId) !== 'resume-with-prompt')
+    throw new Error(`WARM review is unsupported by ${runnerId}`);
+  return { kind: 'in-place', resetContext: false };
 }
 
 export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
@@ -1807,7 +1792,7 @@ export function runnerPaneShowsPromptAccepted(
     return true;
   }
   // Seeing the marker alone is not proof that the runner accepted the prompt:
-  // Codex can echo the full instruction (including SELF-REVIEW.md/TASK.md) in
+  // Codex can echo the full instruction (including REVIEW.md/TASK.md) in
   // the live composer while the final Enter was swallowed. Treat that as not
   // accepted so sendRunnerPostLaunchPrompt sends a bare Enter and verifies
   // actual progress instead of leaving the run stuck at an idle prompt.

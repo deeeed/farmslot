@@ -16,7 +16,7 @@ const ACTIVE_RUN_TERMINAL_PRIORITY: Partial<Record<RunStatus, number>> = {
   blocked: 7,
   'human-gating': 7,
   monitoring: 6,
-  'self-reviewing': 5,
+  reviewing: 5,
   completing: 5,
   'ci-watching': 4,
   paused: 4,

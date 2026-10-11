@@ -2,8 +2,8 @@ import type { AgentContext, AgentRole } from '../contracts/index.js';
 
 import { AGENT_ROLE_WINDOWS, agentRoleLabel, agentRoleWindow, contextIdFor } from './roles.js';
 
-/** Legacy fixed self-review tmux window (pre multi-reviewer tabs). */
-export const LEGACY_SELF_REVIEW_WINDOW = AGENT_ROLE_WINDOWS['self-review'] ?? 'self-review';
+/** Legacy fixed review tmux window (pre multi-reviewer tabs). */
+export const LEGACY_REVIEW_WINDOW = AGENT_ROLE_WINDOWS['review'] ?? 'review';
 
 /**
  * Short runner token for tmux tab names. Model stays in AgentContext.model metadata —
@@ -34,7 +34,7 @@ const LEGACY_REVIEW_FIX_WINDOW_RE = /^review-fix(?:-\d+)?$/;
 
 export function isReviewerWindowName(windowName: string | null | undefined): boolean {
   if (!windowName) return false;
-  if (windowName === LEGACY_SELF_REVIEW_WINDOW) return true;
+  if (windowName === LEGACY_REVIEW_WINDOW) return true;
   return REVIEWER_WINDOW_RE.test(windowName) || LEGACY_REVIEW_FIX_WINDOW_RE.test(windowName);
 }
 
@@ -42,8 +42,8 @@ export function parseReviewerWindowName(
   windowName: string | null | undefined,
 ): { ordinal: number; runnerToken: string } | null {
   if (!windowName) return null;
-  if (windowName === LEGACY_SELF_REVIEW_WINDOW) {
-    return { ordinal: 0, runnerToken: 'self-review' };
+  if (windowName === LEGACY_REVIEW_WINDOW) {
+    return { ordinal: 0, runnerToken: 'review' };
   }
   const match = REVIEWER_WINDOW_RE.exec(windowName);
   if (!match) return null;
@@ -54,7 +54,7 @@ export function parseReviewerWindowName(
 }
 
 export function isReviewerAgentRole(role: AgentRole | null | undefined): boolean {
-  return role === 'self-review';
+  return role === 'review';
 }
 
 export function isReviewerAgentContext(
@@ -71,8 +71,7 @@ export function isReviewerAgentContext(
   if (isReviewerAgentRole(ctx.role ?? null)) return true;
   if (isReviewerWindowName(ctx.target?.window ?? null)) return true;
   const id = ctx.id ?? '';
-  if (id === contextIdFor('self-review') || id.startsWith('rev-') || /^rev\d+-/.test(id))
-    return true;
+  if (id === contextIdFor('review') || id.startsWith('rev-') || /^rev\d+-/.test(id)) return true;
   return false;
 }
 
@@ -103,7 +102,7 @@ export interface AllocateReviewerContextInput {
 
 export interface AllocatedReviewerContext {
   id: string;
-  role: 'self-review';
+  role: 'review';
   label: string;
   windowName: string;
   runId: string;
@@ -124,7 +123,7 @@ export function allocateReviewerContext(
 
   return {
     id: reviewerContextId(windowName),
-    role: 'self-review',
+    role: 'review',
     label: reviewerContextLabel(runner, windowName, model),
     windowName,
     runId,
@@ -133,7 +132,7 @@ export function allocateReviewerContext(
   };
 }
 
-/** Prefer the most recently updated reviewer; falls back to legacy self-review id. */
+/** Prefer the most recently updated reviewer; falls back to legacy review id. */
 export function selectLatestReviewerContext<
   T extends {
     id: string;
@@ -156,7 +155,7 @@ export function selectLatestReviewerContext<
 
 export function agentRoleForWindowName(windowName: string | null | undefined): AgentRole | null {
   if (!windowName) return null;
-  if (isReviewerWindowName(windowName)) return 'self-review';
+  if (isReviewerWindowName(windowName)) return 'review';
   for (const [role, name] of Object.entries(AGENT_ROLE_WINDOWS) as Array<
     [AgentRole, string | null]
   >) {

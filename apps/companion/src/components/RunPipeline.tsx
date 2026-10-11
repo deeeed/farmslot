@@ -22,7 +22,6 @@ function stepColor(status: RunStepStatus): string {
 
 function shortName(name: string): string {
   return name
-    .replace('self-review', 'review')
     .replace('human-gate', 'gate')
     .replace('ci-watch', 'CI')
     .replace('find-slot', 'slot')

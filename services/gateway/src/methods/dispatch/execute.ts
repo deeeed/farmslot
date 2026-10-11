@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -15,7 +16,6 @@ import {
   type PressureAdmissionRejected,
   type PressureOverrideAudit,
   primaryRoleForFlow,
-  reviewSessionIntentForContext,
   type ReviewSessionTrace,
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -1180,7 +1180,14 @@ export async function dispatchExecute(
   const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId
     ? (getRun(currentRun.repeatReviewContext.priorRunId) ?? null)
     : null;
-  const repeatReviewSessionIntent = reviewSessionIntentForContext(currentRun?.repeatReviewContext);
+  const primaryReviewId =
+    currentRun?.flowType === 'review-pr'
+      ? currentRun?.reviewMode === 'warm'
+        ? currentRun.repeatReviewContext?.session?.reviewId
+        : randomUUID()
+      : undefined;
+  const repeatReviewMode =
+    currentRun?.repeatReviewContext?.mode ?? currentRun?.reviewMode ?? 'cold';
   const existingNativeBinding =
     currentRun?.transport === 'native'
       ? selectAgentContext(currentRun, { role: primaryRoleForFlow(currentRun.flowType) })
@@ -1188,8 +1195,12 @@ export async function dispatchExecute(
       : undefined;
   const repeatReviewResumePlan =
     currentRun && !existingNativeBinding
-      ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner, model)
-      : ({ kind: 'reset' } as const);
+      ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner, model, effort)
+      : ({ kind: 'fresh' } as const);
+  if (repeatReviewResumePlan.kind === 'refused')
+    throw new Error(
+      `WARM review unavailable: ${repeatReviewResumePlan.reason}. Wait or choose COLD.`,
+    );
   let reviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
   const recordReviewSession = (trace: ReviewSessionTrace): void => {
     if (!currentRun?.repeatReviewContext) return;
@@ -1211,19 +1222,16 @@ export async function dispatchExecute(
         nativeRetainedFrom: { runId: source.priorRunId, contextId: source.contextId },
       };
       recordReviewSession({
-        intent: 'resume',
+        mode: 'warm',
         continuity: 'resume-unconfirmed',
         priorRunId: source.priorRunId,
         priorSessionId: source.runnerSessionId,
       });
     } else {
       recordReviewSession({
-        intent: repeatReviewSessionIntent,
-        continuity: repeatReviewResumePlan.kind === 'fallback' ? 'fallback-fresh' : 'fresh',
+        mode: repeatReviewMode,
+        continuity: 'fresh',
         priorRunId: currentRun.repeatReviewContext.priorRunId,
-        ...(repeatReviewResumePlan.kind === 'fallback'
-          ? { fallbackReason: repeatReviewResumePlan.reason }
-          : {}),
       });
     }
   }
@@ -1254,17 +1262,17 @@ export async function dispatchExecute(
       assertCurrent: options.assertCurrent,
       emit,
     });
+    if (primaryReviewId)
+      await upsertAgentContext(currentRun.id, primaryRoleForFlow(currentRun.flowType), {
+        reviewId: primaryReviewId,
+      });
     const latest = getRun(currentRun.id)!;
     if (latest.repeatReviewContext) {
       const reviewer = selectAgentContext(latest, { role: primaryRoleForFlow(latest.flowType) });
       recordReviewSession({
         ...latest.repeatReviewContext.session,
-        intent: reviewSessionIntentForContext(latest.repeatReviewContext),
-        continuity: reviewer?.nativeSession?.handoffCompletedAt
-          ? 'resumed'
-          : latest.repeatReviewContext.session?.continuity === 'fallback-fresh'
-            ? 'fallback-fresh'
-            : 'fresh',
+        mode: latest.repeatReviewContext.mode,
+        continuity: reviewer?.nativeSession?.handoffCompletedAt ? 'resumed' : 'fresh',
         sessionId: reviewer?.runnerSessionId ?? undefined,
       });
       const { persistRunNow } = await import('../../runs/store.js');
@@ -1641,6 +1649,7 @@ export async function dispatchExecute(
   };
   if (params.runId && currentRun) {
     await upsertAgentContext(params.runId, workerRole, {
+      reviewId: primaryReviewId,
       status: 'launching',
       // A cold dispatch starts a new task attempt; the previous binding must
       // not survive until a fast worker's terminal signal is first observed.
@@ -1709,8 +1718,7 @@ export async function dispatchExecute(
   };
   let runnerProcessStarted = false;
   let resumedReviewSession = false;
-  let repeatReviewFallbackReason =
-    repeatReviewResumePlan.kind === 'fallback' ? repeatReviewResumePlan.reason : null;
+
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
@@ -1746,15 +1754,17 @@ export async function dispatchExecute(
           runnerSessionPath: binding.runnerSessionPath,
         };
         recordReviewSession({
-          intent: 'resume',
+          mode: 'warm',
+          reviewId: primaryReviewId,
           continuity: 'resumed',
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
           sessionId: binding.runnerSessionId,
         });
-      } else if (attempt.kind === 'fallback') {
-        repeatReviewFallbackReason = 'session-unavailable';
-        step('launch', `${attempt.reason}; launching a fresh reviewer`);
+      } else if (attempt.kind === 'refused') {
+        throw new Error(
+          `WARM review unavailable: ${attempt.reason}. Wait for the retained session or choose COLD.`,
+        );
       } else if (attempt.kind === 'hold') {
         // The adapter mutated the pane before acknowledgement timed out. Never
         // launch a duplicate or terminalize/release a run whose reviewer may be
@@ -1767,7 +1777,8 @@ export async function dispatchExecute(
           runnerSessionPath: binding.runnerSessionPath,
         };
         recordReviewSession({
-          intent: 'resume',
+          mode: 'warm',
+          reviewId: primaryReviewId,
           continuity: 'resume-unconfirmed',
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
@@ -1938,17 +1949,12 @@ export async function dispatchExecute(
       );
     }
     if (currentRun?.repeatReviewContext) {
-      if (!resumedReviewSession && repeatReviewSessionIntent === 'resume') {
-        recordReviewSession({
-          intent: 'resume',
-          continuity: 'fallback-fresh',
-          priorRunId: currentRun.repeatReviewContext.priorRunId,
-          ...(sessionMeta.runnerSessionId ? { sessionId: sessionMeta.runnerSessionId } : {}),
-          fallbackReason: repeatReviewFallbackReason ?? 'missing-session',
-        });
+      if (!resumedReviewSession && repeatReviewMode === 'warm') {
+        throw new Error('WARM review unavailable: retained session was not resumed');
       } else if (!resumedReviewSession) {
         recordReviewSession({
-          intent: 'reset',
+          mode: 'cold',
+          reviewId: primaryReviewId,
           continuity: 'fresh',
           ...(sessionMeta.runnerSessionId ? { sessionId: sessionMeta.runnerSessionId } : {}),
         });
@@ -2013,6 +2019,7 @@ export async function dispatchExecute(
         });
       }
       primaryWatchContext = await upsertAgentContext(params.runId, workerRole, {
+        reviewId: primaryReviewId,
         status: 'working',
         taskFile: `${workerTaskDir}/TASK.md`,
         signalFile: `${workerTaskDir}/SIGNAL.json`,

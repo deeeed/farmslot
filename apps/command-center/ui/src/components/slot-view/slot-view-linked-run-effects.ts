@@ -23,8 +23,8 @@ import {
 } from './slot-view-model.js';
 import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
 
-function selfReviewProgressDetail(run: Run | null | undefined): string | null {
-  return run?.steps.find((step) => step.name === 'self-review')?.detail ?? null;
+function reviewProgressDetail(run: Run | null | undefined): string | null {
+  return run?.steps.find((step) => step.name === 'review')?.detail ?? null;
 }
 
 function taskContextSignature(run: Run | null | undefined): string {
@@ -58,7 +58,7 @@ export function applySlotViewLinkedRun(
   if (contextPinUnresolved) run = null;
   const previousRunId = view._lastLinkedRunId;
   const previousActiveTaskFile = view._lastLinkedRunActiveTaskFile;
-  const previousSelfReviewProgress = view._lastLinkedRunSelfReviewProgress;
+  const previousReviewProgress = view._lastLinkedRunReviewProgress;
   const previousTaskContextSignature = taskContextSignature(view._linkedRun);
   const previousSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
   if (!run) {
@@ -75,7 +75,7 @@ export function applySlotViewLinkedRun(
     }
     view._lastLinkedRunId = null;
     view._lastLinkedRunActiveTaskFile = null;
-    view._lastLinkedRunSelfReviewProgress = null;
+    view._lastLinkedRunReviewProgress = null;
     return null;
   }
 
@@ -91,7 +91,7 @@ export function applySlotViewLinkedRun(
   view._linkedRun = run;
   view._lastLinkedRunId = run.id;
   view._lastLinkedRunActiveTaskFile = run.activeTaskFile ?? null;
-  view._lastLinkedRunSelfReviewProgress = selfReviewProgressDetail(run);
+  view._lastLinkedRunReviewProgress = reviewProgressDetail(run);
   if (previousSnapshotKey !== nextSnapshotKey) {
     view._branchDiffGeneration += 1;
     view._liveDiffContents = new Map();
@@ -145,7 +145,7 @@ export function applySlotViewLinkedRun(
   });
   // Agent-context selections are run-scoped. Clear the persisted per-slot tab
   // when the run changes or completes so the next dispatch starts on its
-  // primary worker instead of a stale self-review/ci-fix tab. Only clear when
+  // primary worker instead of a stale review/ci-fix tab. Only clear when
   // the live recovery epoch is current; cached/RPC disagreement during
   // reconnect must not wipe pinned tabs.
   if (transition.shouldClearAgentContext && isRecoveryEpochCurrent(view._recoveryEpoch)) {
@@ -157,7 +157,7 @@ export function applySlotViewLinkedRun(
 
   if (
     (run.activeTaskFile ?? null) !== previousActiveTaskFile ||
-    selfReviewProgressDetail(run) !== previousSelfReviewProgress ||
+    reviewProgressDetail(run) !== previousReviewProgress ||
     taskContextSignature(run) !== previousTaskContextSignature
   ) {
     view._structuredProgress = undefined;

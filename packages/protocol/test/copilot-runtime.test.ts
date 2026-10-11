@@ -51,7 +51,7 @@ test('one client-neutral session shape carries lifecycle, checkout, delivery, wo
       severity: 'normal',
       totals: {
         implementation: 0,
-        independentReview: 0,
+        review: 0,
         reviewRework: 0,
         ciFix: 0,
         fullQa: 0,

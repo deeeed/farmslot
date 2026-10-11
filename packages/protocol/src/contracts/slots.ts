@@ -105,7 +105,7 @@ export interface SlotStatus {
   currentFamilyId?: string | null;
   currentLane?: RunLane | null;
   currentVariant?: string | null;
-  activeTaskFile?: string; // currently active task md (TASK.md, SELF-REVIEW.md, SELF-REVIEW-FIX.md)
+  activeTaskFile?: string; // currently active task md (TASK.md, REVIEW.md, REVIEW-FIX.md)
   agentContexts?: AgentContextSummary[];
   dispatchedAt: string | null;
   completedAt: string | null;

@@ -11,9 +11,9 @@ import {
   CI_FIX_CHECKLIST_TARGET,
   DEFAULT_CHECKLIST_TARGET_REGISTRY,
   nestedLoopProgressLabel,
-  SELF_REVIEW_CHECKLIST,
-  SELF_REVIEW_CHECKLIST_TARGET,
-  SELF_REVIEW_FIX_CHECKLIST,
+  REVIEW_CHECKLIST,
+  REVIEW_CHECKLIST_TARGET,
+  REVIEW_FIX_CHECKLIST,
   shouldAcceptTaskProgressUpdate,
   signalFileForChecklist,
   SUBTASK_ID_PATTERN,
@@ -26,7 +26,7 @@ import {
 import { isSettledSubtaskStatus, isTerminalWorkerSignalStatus } from '../src/transport/signal.js';
 
 test('targetForChecklistBasename maps role checklists to sibling signal files', () => {
-  assert.deepEqual(targetForChecklistBasename(SELF_REVIEW_CHECKLIST), SELF_REVIEW_CHECKLIST_TARGET);
+  assert.deepEqual(targetForChecklistBasename(REVIEW_CHECKLIST), REVIEW_CHECKLIST_TARGET);
   assert.deepEqual(targetForChecklistBasename(CI_FIX_CHECKLIST), CI_FIX_CHECKLIST_TARGET);
   assert.deepEqual(targetForChecklistBasename('TASK.md'), {
     checklist: 'TASK.md',
@@ -56,14 +56,14 @@ test('terminalContractInputForChecklist isolates nested agent contracts', () => 
     'inputs/worker-terminal-contract.json',
   );
   assert.equal(
-    terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
-    'inputs/worker-terminal-contract.SELF-REVIEW.rev-codex.json',
+    terminalContractInputForChecklist('REVIEW.rev-codex.md'),
+    'inputs/worker-terminal-contract.REVIEW.rev-codex.json',
   );
 });
 
 test('agentRoleForChecklistBasename resolves nested-loop roles from registry', () => {
-  assert.equal(agentRoleForChecklistBasename(SELF_REVIEW_CHECKLIST), 'self-review');
-  assert.equal(agentRoleForChecklistBasename(SELF_REVIEW_FIX_CHECKLIST), 'self-review-fix');
+  assert.equal(agentRoleForChecklistBasename(REVIEW_CHECKLIST), 'review');
+  assert.equal(agentRoleForChecklistBasename(REVIEW_FIX_CHECKLIST), 'review-fix');
   assert.equal(agentRoleForChecklistBasename(CI_FIX_CHECKLIST), 'ci-fix');
   assert.equal(agentRoleForChecklistBasename('TASK.md'), null);
 });
@@ -71,41 +71,32 @@ test('agentRoleForChecklistBasename resolves nested-loop roles from registry', (
 test('shouldAcceptTaskProgressUpdate filters stale nested-loop progress', () => {
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      { taskFile: 'TASK.md', activeTaskFile: SELF_REVIEW_CHECKLIST },
-      { contextId: 'self-review' },
+      { taskFile: 'TASK.md', activeTaskFile: REVIEW_CHECKLIST },
+      { contextId: 'review' },
     ),
     true,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      { taskFile: 'TASK.md', activeTaskFile: SELF_REVIEW_CHECKLIST },
+      { taskFile: 'TASK.md', activeTaskFile: REVIEW_CHECKLIST },
       { contextId: 'worker' },
     ),
     false,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      { taskFile: 'TASK.md', activeTaskFile: SELF_REVIEW_FIX_CHECKLIST },
-      { contextId: 'self-review' },
+      { taskFile: 'TASK.md', activeTaskFile: REVIEW_FIX_CHECKLIST },
+      { contextId: 'review' },
     ),
     false,
   );
 });
 
 test('nestedLoopProgressLabel uses active checklist basename', () => {
-  assert.equal(
-    nestedLoopProgressLabel('self-review', SELF_REVIEW_FIX_CHECKLIST),
-    'Self-review Fix Progress',
-  );
-  assert.equal(
-    nestedLoopProgressLabel('self-review', SELF_REVIEW_CHECKLIST),
-    'Self-review Progress',
-  );
+  assert.equal(nestedLoopProgressLabel('review', REVIEW_FIX_CHECKLIST), 'Review Fix Progress');
+  assert.equal(nestedLoopProgressLabel('review', REVIEW_CHECKLIST), 'Review Progress');
   assert.equal(nestedLoopProgressLabel('ci-watch', CI_FIX_CHECKLIST), 'CI Fix Progress');
-  assert.equal(
-    nestedLoopProgressLabel('human-gate', 'SELF-REVIEW.rev-cursor.md'),
-    'Independent Review Progress',
-  );
+  assert.equal(nestedLoopProgressLabel('human-gate', 'REVIEW.rev-cursor.md'), 'Review Progress');
 });
 
 test('checklistTargetForAgentRole reads from registry', () => {
@@ -190,9 +181,9 @@ test('isSettledSubtaskStatus is not the terminal predicate', () => {
 
 test('shouldAcceptTaskProgressUpdate accepts a child only while its parent checklist is active', () => {
   const workerRun = { taskFile: 'temp/tasks/dev/demo/TASK.md', activeTaskFile: null };
-  const selfReviewRun = {
+  const reviewRun = {
     taskFile: 'temp/tasks/dev/demo/TASK.md',
-    activeTaskFile: `temp/tasks/dev/demo/${SELF_REVIEW_CHECKLIST}`,
+    activeTaskFile: `temp/tasks/dev/demo/${REVIEW_CHECKLIST}`,
   };
   const child = (parentChecklist: string) => ({
     role: 'subtask' as const,
@@ -202,12 +193,12 @@ test('shouldAcceptTaskProgressUpdate accepts a child only while its parent check
 
   // child parent CHECKLIST.md, active worker file → accept
   assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child('CHECKLIST.md')), true);
-  // child parent SELF-REVIEW.md, active SELF-REVIEW.md → accept
-  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child(SELF_REVIEW_CHECKLIST)), true);
-  // child parent CHECKLIST.md, active SELF-REVIEW.md → reject
-  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child('CHECKLIST.md')), false);
-  // child parent SELF-REVIEW.md, active worker file → reject
-  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(SELF_REVIEW_CHECKLIST)), false);
+  // child parent REVIEW.md, active REVIEW.md → accept
+  assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, child(REVIEW_CHECKLIST)), true);
+  // child parent CHECKLIST.md, active REVIEW.md → reject
+  assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, child('CHECKLIST.md')), false);
+  // child parent REVIEW.md, active worker file → reject
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(REVIEW_CHECKLIST)), false);
 
   // A child update with no parent link is never live.
   assert.equal(
@@ -215,6 +206,6 @@ test('shouldAcceptTaskProgressUpdate accepts a child only while its parent check
     false,
   );
   // Every other role keeps today's behaviour.
-  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, { contextId: 'self-review' }), true);
-  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, { contextId: 'worker' }), false);
+  assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, { contextId: 'review' }), true);
+  assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, { contextId: 'worker' }), false);
 });

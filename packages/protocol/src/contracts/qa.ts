@@ -156,20 +156,20 @@ export function resolveReviewQaDispatch(
 }
 
 /**
- * New independent review rounds are static. A `full-live` loop cannot be downgraded to a static
+ * New review rounds are static. A `full-live` loop cannot be downgraded to a static
  * verdict or mapped to a publication QA gate, so new requests must choose the separate QA flow.
  * Stored plans on started runs keep their original depth and never pass through this check.
  */
-export function assertStaticReviewLoopRequests(
+export function assertStaticReviewSelections(
   loops: readonly unknown[] | null | undefined,
-  field = 'pendingReviewPlan',
+  field = 'reviewSequence',
 ): void {
   const index = (loops ?? []).findIndex(
     (loop) => isRecord(loop) && loop.validationDepth === 'full-live',
   );
   if (index >= 0)
     throw new ReviewQaConfigurationError(
-      `${field}[${index}] requests full-live validation; independent reviews are static. Run runtime validation with the QA flow and a farm QA preset.`,
+      `${field}[${index}] requests full-live validation; reviews are static. Run runtime validation with the QA flow and a farm QA preset.`,
     );
 }
 
@@ -290,14 +290,7 @@ export function captureQaAfterReview(
     config.after_review.profile_id,
     defaults.review?.qaInputs,
   );
-  const {
-    validationDepth: _legacyDepth,
-    busySession: _busySession,
-    ...review
-  } = defaults.review ?? {
-    sessionIntent: 'reset' as const,
-    scope: 'full' as const,
-  };
+  const review = defaults.review ?? { mode: 'cold' as const };
   return {
     version: 1,
     capturedAt: new Date().toISOString(),
@@ -305,8 +298,7 @@ export function captureQaAfterReview(
     ...(defaults.execution ? { execution: structuredClone(defaults.execution) } : {}),
     review: {
       ...structuredClone(review),
-      sessionIntent: 'reset',
-      scope: 'full',
+      mode: 'cold',
       workflow: 'qa',
       qaProfileId: selection.profile.id,
       qaInputs: structuredClone(selection.inputs),

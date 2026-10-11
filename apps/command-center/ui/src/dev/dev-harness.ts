@@ -33,6 +33,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 import { INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import '../components/pr-dashboard/pr-project-field-picker.js';
 import '../components/shared/choice-picker.js';
@@ -76,7 +77,7 @@ import '../components/workspace/review-workspace.js';
 import '../components/workspace/ready-workspace.js';
 import '../components/shared/global-filter-bar.js';
 import '../components/shared/linked-run-summary.js';
-import '../components/shared/runner-model-effort-picker.js';
+import '../components/shared/review-dispatch-picker.js';
 import '../components/shared/slot-choice-list.js';
 import '../components/shared/slot-selector-modal.js';
 import '../components/runs/family-observability.js';
@@ -105,7 +106,6 @@ import '../components/shared/update-banner.js';
 
 import { buildCaseCatalog, catalogItemFromManual } from '../components/evals/eval-suite-helpers.js';
 import { newPRExecution } from '../components/pr-dashboard/pr-execution-picker.js';
-import type { RunnerModelEffortChangeDetail } from '../components/shared/runner-model-effort-picker.js';
 import type { SlotChoiceChangeDetail } from '../components/shared/slot-choice-list.js';
 import type { StreamFeed } from '../components/stream-feed/stream-feed.js';
 import {
@@ -120,7 +120,6 @@ import {
   updateRuns,
 } from '../state.js';
 import { colors, fonts, spacing } from '../styles/theme-tokens.js';
-import type { EffortLevel } from '../utils/runner-options.js';
 
 import {
   mockAcceptanceCriteria,
@@ -194,7 +193,7 @@ type DevRoute =
   | 'review-workspace'
   | 'ready-workspace'
   | 'global-filter'
-  | 'runner-model-effort'
+  | 'review-dispatch-picker'
   | 'slot-choice-list'
   | 'slot-selector'
   | 'choice-picker'
@@ -286,7 +285,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'pipeline', label: 'Pipeline', group: 'components' },
   { route: 'pipeline-mini', label: 'Pipeline Mini', group: 'components' },
   { route: 'global-filter', label: 'Global Filter', group: 'components' },
-  { route: 'runner-model-effort', label: 'Runner Model Effort', group: 'components' },
+  { route: 'review-dispatch-picker', label: 'Review and dispatch picker', group: 'components' },
   { route: 'slot-choice-list', label: 'Slot Choice List', group: 'components' },
   { route: 'slot-selector', label: 'Slot Selector', group: 'components' },
   { route: 'step-inspector', label: 'Step Inspector', group: 'components' },
@@ -349,9 +348,9 @@ export class DevHarness extends LitElement {
   @state() private _diffViewerModalTestOnly = false;
   @state() private _slotSelectorSelection = ['runner-local-mobile-2'];
   @state() private _slotChoiceSelection = ['runner-local-mobile-2'];
-  @state() private _pickerRunner = 'codex';
-  @state() private _pickerModel = 'gpt-5.5';
-  @state() private _pickerEffort: EffortLevel = 'medium';
+  private _picker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'], allowSequence: true },
+  });
   private _stateSnapshot: AppStateSliceSnapshot | null = null;
   private _metroInterval: ReturnType<typeof setInterval> | null = null;
   private _mockSource1: MockH264Source | null = null;
@@ -522,8 +521,8 @@ export class DevHarness extends LitElement {
         return this.renderReadyWorkspace();
       case 'global-filter':
         return this.renderGlobalFilter();
-      case 'runner-model-effort':
-        return this.renderRunnerModelEffortPicker();
+      case 'review-dispatch-picker':
+        return this.renderReviewDispatchPicker();
       case 'slot-choice-list':
         return this.renderSlotChoiceList();
       case 'choice-picker':
@@ -2172,9 +2171,9 @@ All checks passed.`;
       'Completed — full pipeline (fix-bug)',
       'Early-stage (review-pr)',
       'Failed (dev)',
-      'Self-review running 7/11 (fix-bug)',
-      'Self-review done w/ issues + retry (fix-bug)',
-      'Publish-gate independent review loop (fix-bug)',
+      'Review running 7/11 (fix-bug)',
+      'Review done w/ issues + retry (fix-bug)',
+      'Publish-gate review loop (fix-bug)',
     ];
     return html`
       <p class="section-label">Run pipeline canvas (${runs.length} scenarios, 3 flow types)</p>
@@ -2294,7 +2293,6 @@ All checks passed.`;
         version: 1,
         chainId: 'prior-review-run',
         generation: 2,
-        contextMode: 'reuse',
         priorRunId: 'prior-review-run',
         priorFamilyId: 'prior-review-family',
         repository: 'deeeed/farmslot',
@@ -2307,11 +2305,11 @@ All checks passed.`;
         ],
         artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
         farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
-        reviewScope: 'incremental',
+        mode: 'warm',
         validationDepth: 'static-code',
-        sessionIntent: 'resume',
+
         session: {
-          intent: 'resume',
+          mode: 'warm',
           continuity: 'resumed',
           priorRunId: 'prior-review-run',
           priorSessionId: 'review-session-1',
@@ -2327,7 +2325,7 @@ All checks passed.`;
             prNumber: 500,
             baseSha: '9999999999999999',
             headSha: 'aaaaaaaaaaaaaaaa',
-            reviewScope: 'full',
+            mode: 'cold',
             validationDepth: 'static-code',
             verdict: 'request changes',
             unresolvedCount: 1,
@@ -2353,29 +2351,23 @@ All checks passed.`;
           createdAt: '2026-08-07T00:00:00.000Z',
           actions: [
             {
-              id: 'reuse-incremental-static',
+              id: 'warm',
               label: 'Continue — incremental static',
               style: 'primary',
             },
             {
-              id: 'reuse-full-static',
-              label: 'Load context — full static',
-              style: 'secondary',
-            },
-            {
-              id: 'fresh-full-static',
-              label: 'Fresh context — full static',
+              id: 'cold',
+              label: 'COLD review',
               style: 'secondary',
             },
           ],
           payload: {
             kind: 'review_continuation',
-            recommendedActionId: 'reuse-incremental-static',
+            recommendedActionId: 'warm',
             prior: {
               version: 1,
               chainId: 'prior-review-run',
               generation: 2,
-              contextMode: 'reuse',
               priorRunId: 'prior-review-run',
               priorFamilyId: 'prior-review-family',
               repository: 'deeeed/farmslot',
@@ -2388,9 +2380,9 @@ All checks passed.`;
               ],
               artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
               farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
-              reviewScope: 'incremental',
+              mode: 'warm',
               validationDepth: 'static-code',
-              sessionIntent: 'resume',
+
               priorGenerations: [],
             },
           },
@@ -2835,7 +2827,7 @@ All checks passed.`;
           '## Validation',
           '- Recipe passed',
           '- Typecheck passed',
-          '- Independent self-review loops: 2',
+          '- Review rounds: 2',
           '',
           '## Visuals',
           '- Before: BTC rendered with an unnecessary decimal',
@@ -2868,19 +2860,20 @@ All checks passed.`;
         publicationStatus: 'not_published',
         createdAt: new Date().toISOString(),
       },
-      reviewDepth: {
-        minimumIndependentReviews: 1,
-        requireCrossRunner: true,
-        extraLoopsRequested: 1,
+      reviewPolicy: {
+        minimumReviews: 1,
+
         requestedBy: 'human-gate',
       },
-      independentReviews: [
+      reviews: [
         {
           id: 'independent-review-1',
           runner: 'claude',
           model: 'sonnet',
-          crossRunner: false,
+
           loopNumber: 1,
+          mode: 'cold',
+          reviewerSessionId: 'fixture-review-session',
           verdict: 'issues',
           unresolvedCount: 2,
           issues: [
@@ -2907,27 +2900,30 @@ All checks passed.`;
             capturedAt: new Date().toISOString(),
           },
           taskProgressArtifactPath:
-            'tasks/fix-bug/proj-2418/artifacts/independent-review-1/review-loop-1/self-review.md',
+            'tasks/fix-bug/proj-2418/artifacts/independent-review-1/review-loop-1/review.md',
           startedAt: new Date(Date.now() - 12 * 60000).toISOString(),
           completedAt: new Date(Date.now() - 9 * 60000).toISOString(),
           artifactPaths: [
             'artifacts/independent-review-1.json',
             'artifacts/independent-review-1.md',
             'artifacts/independent-review-1/review-loop-1/review.diff',
-            'artifacts/independent-review-1/review-loop-1/self-review.md',
+            'artifacts/independent-review-1/review-loop-1/review.md',
           ],
         },
         {
           id: 'independent-review-2',
           runner: 'codex',
           model: 'gpt-5.5',
-          crossRunner: true,
+
           loopNumber: 2,
+          mode: 'cold',
+          reviewerSessionId: 'fixture-review-session',
           verdict: 'pass',
           unresolvedCount: 0,
           attempts: [
             {
               loopNumber: 1,
+              mode: 'cold',
               verdict: 'issues',
               unresolvedCount: 2,
               issues: [
@@ -2954,6 +2950,7 @@ All checks passed.`;
             },
             {
               loopNumber: 2,
+              mode: 'cold',
               verdict: 'pass',
               unresolvedCount: 0,
               validationDepth: 'static-code',
@@ -2999,7 +2996,7 @@ All checks passed.`;
             capturedAt: new Date().toISOString(),
           },
           taskProgressArtifactPath:
-            'tasks/fix-bug/proj-2418/artifacts/independent-review-2/review-loop-2/self-review.md',
+            'tasks/fix-bug/proj-2418/artifacts/independent-review-2/review-loop-2/review.md',
           startedAt: new Date(Date.now() - 8 * 60000).toISOString(),
           completedAt: new Date(Date.now() - 3 * 60000).toISOString(),
           artifactPaths: [
@@ -3007,7 +3004,7 @@ All checks passed.`;
             'artifacts/independent-review-2.md',
             'artifacts/independent-review-2/review-loop-1/review.diff',
             'artifacts/independent-review-2/review-loop-2/fix-delta.diff',
-            'artifacts/independent-review-2/review-loop-2/self-review.md',
+            'artifacts/independent-review-2/review-loop-2/review.md',
           ],
         },
       ],
@@ -3019,9 +3016,9 @@ All checks passed.`;
       },
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
-      selfReviewVerdict: 'pass',
-      selfReviewSummary:
-        'Loop 1 found two issues: missing integer formatter regression coverage and stale snapshot copy. The worker added focused formatter tests, updated snapshots, then loop 2 passed the independent review with zero unresolved findings.',
+      reviewVerdict: 'pass',
+      reviewSummary:
+        'Loop 1 found two issues: missing integer formatter regression coverage and stale snapshot copy. The worker added focused formatter tests, updated snapshots, then loop 2 passed the review with zero unresolved findings.',
       workerLearnings: `- Investigation took ~15min, fix was 2 lines. Most time spent finding the right formatter function across 4 files.\n- TASK.md step 5 ("validate with recipe") was unclear — no recipe file existed yet at that point.\n- Got stuck on snapshot test failures — updating snapshots via \`yarn test -u\` unblocked.\n- Knowing that \`formatBalance.ts\` delegates to \`roundToSignificantFigures\` would have saved investigation time.`,
       ciChecks: [
         { name: 'lint', status: 'completed', conclusion: 'success' },
@@ -3045,10 +3042,10 @@ All checks passed.`;
         { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
         { id: 'hold', label: 'Hold', style: 'secondary' },
         { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
-        { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+        { id: 'request-review', label: 'Request Review', style: 'secondary' },
         {
           id: 'request-external-review',
-          label: 'Request Independent Review (runner diversity)',
+          label: 'Request Review',
           style: 'secondary',
         },
       ],
@@ -3071,7 +3068,7 @@ All checks passed.`;
           runner="claude"
         ></ready-workspace>
       </div>
-      <p class="section-label">Ready workspace — independent review retry cap exhausted</p>
+      <p class="section-label">Ready workspace — review retry cap exhausted</p>
       <div
         style="height: 160px; border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden; margin-top: 12px"
       >
@@ -3081,34 +3078,35 @@ All checks passed.`;
             ...mockDecision,
             id: 'mock-ready-exhausted-1',
             description:
-              '**Review retries exhausted:** Independent review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
+              '**Review retries exhausted:** Review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
             actions: [
               { id: 'hold', label: 'Hold', style: 'secondary' as const },
               {
-                id: 'request-extra-review',
-                label: 'Request Independent Review',
+                id: 'request-review',
+                label: 'Request Review',
                 style: 'primary' as const,
-                description:
-                  'Start a new independent review. Remaining findings are not auto-sent.',
+                description: 'Start a new review. Remaining findings are not auto-sent.',
               },
               {
                 id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
                 label: 'Bypass Review (dangerous)',
                 style: 'danger' as const,
                 description:
-                  'Independent review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
+                  'Review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
               },
             ],
             payload: {
               ...mockPayload,
-              independentReviews: [
+              reviews: [
                 {
                   id: 'independent-review-3',
                   source: 'human-gate' as const,
                   runner: 'cursor',
                   model: 'gpt-5.6-sol-high',
-                  crossRunner: true,
+
                   loopNumber: 3,
+                  mode: 'cold',
+                  reviewerSessionId: 'fixture-review-session',
                   verdict: 'issues' as const,
                   unresolvedCount: 6,
                   feedbackSent: false,
@@ -3276,7 +3274,7 @@ All checks passed.`;
       missingData: [],
     };
     const withLearningsAndMissing = {
-      stepName: 'self-review',
+      stepName: 'review',
       status: 'done' as const,
       durationMs: 14000,
       detail: 'verdict=issues',
@@ -3284,7 +3282,7 @@ All checks passed.`;
         {
           runId: 'r1',
           familyId: 'f1',
-          stepName: 'self-review',
+          stepName: 'review',
           path: 'artifacts/review-feedback.md',
           purpose: 'review',
           sizeBytes: 2160,
@@ -3294,13 +3292,13 @@ All checks passed.`;
       learnings: [
         {
           runId: 'r1',
-          stepName: 'self-review',
+          stepName: 'review',
           source: 'step-output' as const,
           title: 'Edge case missed',
           summary: 'Empty-list guard absent in ActivityFeed.',
         },
       ],
-      missingData: ['self-review-details'],
+      missingData: ['review-details'],
     };
     const onClick = (e: CustomEvent<{ artifacts: unknown[]; index: number }>) => {
       console.log('[dev] step-artifact-click', e.detail);
@@ -3487,7 +3485,7 @@ All checks passed.`;
             execution: {
               workspacePolicy: { kind: 'exact', machine: 'review-one' },
               transport: 'native',
-              models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
+              models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' }],
             },
           },
         },
@@ -4395,61 +4393,17 @@ All checks passed.`;
     `;
   }
 
-  private renderRunnerModelEffortPicker() {
-    const onChange = (event: CustomEvent<RunnerModelEffortChangeDetail>) => {
-      this._pickerRunner = event.detail.runner;
-      this._pickerModel = event.detail.model;
-      this._pickerEffort = event.detail.effort;
-    };
-    return html`
-      <div style="padding: 20px; background: ${colors.bgBase}; min-height: 70vh;">
-        <h3 style="color: ${colors.textPrimary}; margin-bottom: 16px">
-          Runner / Model / Effort Picker
-        </h3>
-        <div style="display: grid; gap: 20px; max-width: 920px; color: ${colors.textPrimary};">
-          <section
-            style="border: 1px solid ${colors.bgCard}; border-radius: 8px; padding: 16px; background: ${colors.bgSurface};"
-          >
-            <div style="color:${colors.textMuted}; font-size: 12px; margin-bottom: 12px;">
-              Dispatch mode
-            </div>
-            <runner-model-effort-picker
-              .runner=${this._pickerRunner}
-              .model=${this._pickerModel}
-              .effort=${this._pickerEffort}
-              @runner-model-effort-change=${onChange}
-            ></runner-model-effort-picker>
-          </section>
-          <section
-            style="border: 1px solid ${colors.bgCard}; border-radius: 8px; padding: 16px; background: ${colors.bgSurface};"
-          >
-            <div style="color:${colors.textMuted}; font-size: 12px; margin-bottom: 12px;">
-              Backlog/WorkGraph mode with default option
-            </div>
-            <runner-model-effort-picker
-              .runner=${this._pickerRunner}
-              .model=${this._pickerModel}
-              .effort=${this._pickerEffort}
-              .allowDefault=${true}
-              @runner-model-effort-change=${onChange}
-            ></runner-model-effort-picker>
-          </section>
-          <pre
-            style="margin: 0; color: ${colors.textSecondary}; background: ${colors.bgCard}; padding: 12px; border-radius: 8px;"
-          >
-${JSON.stringify(
-              {
-                runner: this._pickerRunner,
-                model: this._pickerModel,
-                effort: this._pickerEffort,
-              },
-              null,
-              2,
-            )}</pre
-          >
-        </div>
-      </div>
-    `;
+  private renderReviewDispatchPicker() {
+    return html`<div style="padding:20px;color:${colors.textPrimary};background:${colors.bgBase}">
+      <h3>Review and dispatch picker</h3>
+      <review-dispatch-picker
+        .viewModel=${this._picker}
+        .review=${true}
+        .discover=${false}
+        @review-dispatch-change=${() => this.requestUpdate()}
+      ></review-dispatch-picker>
+      <pre>${JSON.stringify(this._picker.toRequestPayload(), null, 2)}</pre>
+    </div>`;
   }
 
   private renderSlotSelector() {

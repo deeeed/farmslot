@@ -6,18 +6,18 @@ import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
-  type IndependentReviewStatus,
   type ReadyGatePayload,
+  type ReviewStatus,
   type RunDecision,
 } from '@farmslot/protocol';
 import { colors } from '@farmslot/theme';
 
 import {
   approvePublishGuard,
-  gateIndependentReviews,
   gateRequiredReviewCount,
   gateReviewActions,
   gateReviewHref,
+  gateReviews,
   gateReviewSummary,
   humanGateGuard,
   latestReviewVerdicts,
@@ -28,20 +28,17 @@ import { acceptanceLedgerView } from './task-progress-view';
 const GATE_ACTIONS: DecisionAction[] = [
   { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
   { id: 'hold', label: 'Hold', style: 'secondary' },
-  { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
-  {
-    id: 'request-cross-runner-review',
-    label: 'Request Independent Review (runner diversity)',
-    style: 'secondary',
-  },
+  { id: 'request-review', label: 'Request review', style: 'secondary' },
 ];
 
-function review(overrides: Partial<IndependentReviewStatus>): IndependentReviewStatus {
+function review(overrides: Partial<ReviewStatus>): ReviewStatus {
   return {
     id: 'review',
     source: 'dispatch',
+    mode: 'cold',
     runner: 'codex',
-    crossRunner: false,
+    reviewerSessionId: 'session-' + (overrides.id ?? 'review'),
+    reviewedHeadSha: 'reviewed-head',
     loopNumber: 1,
     verdict: 'pass',
     unresolvedCount: 0,
@@ -73,7 +70,7 @@ function gateDecision(overrides: Partial<RunDecision> = {}): RunDecision {
       publicationStatus: 'not_published',
       createdAt: '2026-10-11T09:00:00.000Z',
     },
-    independentReviews: [review({ id: 'snapshot', runner: 'claude' })],
+    reviews: [review({ id: 'snapshot', runner: 'claude' })],
   } as ReadyGatePayload;
   return {
     id: 'gate-1',
@@ -126,48 +123,33 @@ test('the package summary prefers the prepared package over the worker payload',
 test('live publish-gate reviews win over the snapshot the gate opened with', () => {
   const live = [review({ id: 'live' })];
   assert.deepEqual(
-    gateIndependentReviews(
-      { engineState: { publishGate: { independentReviews: live } } } as never,
-      gateDecision(),
-    ).map((entry) => entry.id),
+    gateReviews({ engineState: { publishGate: { reviews: live } } } as never, gateDecision()).map(
+      (entry) => entry.id,
+    ),
     ['live'],
   );
   assert.deepEqual(
-    gateIndependentReviews({ engineState: undefined } as never, gateDecision()).map(
-      (entry) => entry.id,
-    ),
+    gateReviews({ engineState: undefined } as never, gateDecision()).map((entry) => entry.id),
     ['snapshot'],
   );
 });
 
-test('each reviewer runner contributes only its latest verdict; self-review never does', () => {
+test('separate sessions using one runner count and a recheck replaces only its lineage', () => {
   const verdicts = latestReviewVerdicts([
-    review({ id: 'codex-1', runner: 'codex', verdict: 'issues', unresolvedCount: 2 }),
-    review({
-      id: 'codex-2',
-      runner: 'codex',
-      verdict: 'pass',
-      completedAt: '2026-10-11T10:30:00.000Z',
-    }),
-    review({ id: 'claude-1', runner: 'claude', verdict: 'pass' }),
-    review({ id: 'self', source: 'self-review', runner: 'cursor', verdict: 'issues' }),
-    // The gateway also recognises a self-review by its id, whatever the source says.
-    review({ id: 'self-review-2', runner: 'cursor', verdict: 'issues' }),
+    review({ id: 'r1', runner: 'codex', verdict: 'issues', unresolvedCount: 2 }),
+    review({ id: 'r2', runner: 'codex', verdict: 'pass' }),
+    review({ id: 'r1', runner: 'codex', verdict: 'pass', loopNumber: 2, mode: 'warm' }),
+    review({ id: 'pipeline', source: 'pipeline', runner: 'codex', verdict: 'pass' }),
   ]);
-  assert.deepEqual(
-    verdicts.map((verdict) => [verdict.runner, verdict.label, verdict.approved]),
-    [
-      ['claude', 'pass', true],
-      ['codex', 'pass', true],
-    ],
-  );
+  assert.equal(verdicts.length, 3);
+  assert(verdicts.every((verdict) => verdict.approved));
   assert.equal(verdicts[0].color, colors.statusOk);
 });
 
 test('a stale pass or open findings are not an approval', () => {
   const [stale, findings] = latestReviewVerdicts([
-    review({ runner: 'a', stale: true }),
-    review({ runner: 'b', verdict: 'issues', unresolvedCount: 3 }),
+    review({ id: 'a', runner: 'a', stale: true }),
+    review({ id: 'b', runner: 'b', verdict: 'issues', unresolvedCount: 3 }),
   ]);
   assert.equal(stale.approved, false);
   assert.equal(stale.label, 'pass (stale)');
@@ -197,13 +179,16 @@ function acceptance(withVerdictFor: string[]) {
   );
 }
 
-const approvals = latestReviewVerdicts([review({ runner: 'codex' }), review({ runner: 'claude' })]);
+const approvals = latestReviewVerdicts([
+  review({ id: 'a', runner: 'codex' }),
+  review({ id: 'b', runner: 'claude' }),
+]);
 
 test('a later loop is the latest review even when an earlier loop finished afterwards', () => {
   const [codex] = latestReviewVerdicts([
     review({ id: 'r1', loopNumber: 1, startedAt: '2026-10-11T09:00:00.000Z' }),
     review({
-      id: 'r2',
+      id: 'r1',
       loopNumber: 2,
       verdict: 'pending',
       startedAt: '2026-10-11T09:30:00.000Z',
@@ -222,10 +207,8 @@ test('a publication gate requires the reviews its frozen policy counts', () => {
       ...payload,
       prPackage: {
         ...payload.prPackage!,
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 1,
+        reviewPolicy: {
+          minimumReviews: 2,
           requestedBy: 'dispatch',
         },
       },
@@ -257,8 +240,7 @@ test('approve-publish is withheld while a criterion has no verdict; hold and rev
   assert.deepEqual(withheld(GATE_ACTIONS, guard), [
     ['approve-publish', 'AC-2 has no verdict'],
     ['hold', null],
-    ['request-extra-review', null],
-    ['request-cross-runner-review', null],
+    ['request-review', null],
   ]);
 });
 
@@ -307,7 +289,7 @@ test('a latest verdict that is not an approval withholds plain approvals, not th
       reviews: [],
       requiredReviews: 1,
     }).reviewReasons,
-    ['No independent review verdict yet'],
+    ['No review verdict yet'],
   );
 });
 
@@ -350,13 +332,13 @@ test('criteria that are loading or unavailable cannot clear the guard', () => {
 
 test('a gate is guarded with its own review requirement and the run it belongs to', () => {
   const judged = { view: acceptance(['AC-1', 'AC-2']), error: null };
-  const run = { engineState: { publishGate: { independentReviews: [] } } } as never;
+  const run = { engineState: { publishGate: { reviews: [] } } } as never;
   // A publication gate needs a review; with none live or in its snapshot, approve is withheld.
   const payload = gateDecision().payload as ReadyGatePayload;
-  const unreviewed = gateDecision({ payload: { ...payload, independentReviews: [] } });
+  const unreviewed = gateDecision({ payload: { ...payload, reviews: [] } });
   assert.equal(
     humanGateGuard(run, unreviewed, judged).actions[0].disabledReason,
-    'No independent review verdict yet',
+    'No review verdict yet',
   );
   // Without its run the gate cannot show its criteria, so approval is withheld.
   assert.deepEqual(humanGateGuard(null, gateDecision(), judged).guard.acceptanceReasons, [

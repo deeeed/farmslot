@@ -1,6 +1,6 @@
 # Static review workspaces
 
-Configure and launch slot-free PR reviews under [ADR-058](../adr/058-static-review-and-farm-owned-qa.md). Runtime validation uses the separate [farm QA flow](farm-qa.md).
+Configure and launch slot-free PR reviews under [ADR-058](../adr/058-static-review-and-farm-owned-qa.md), with the [WARM/COLD contract](../reference/review-modes-warm-cold.md) from ADR-063. Runtime validation uses the separate [farm QA flow](farm-qa.md).
 
 ## Configure the farm
 
@@ -36,12 +36,12 @@ Select the project template and frozen skill sources in `project.json`:
           "allowedMachines": ["review-host", "review-other"]
         },
         "transport": "native",
-        "models": [{ "runner": "<native-runner>", "model": "<model>", "effort": "high" }]
+        "models": [
+          { "runner": "<native-runner>", "model": "<model>", "effort": "high", "mode": "cold" }
+        ]
       },
       "review": {
-        "sessionIntent": "resume",
-        "scope": "incremental",
-        "validationDepth": "static-code"
+        "mode": "cold"
       }
     }
   }
@@ -66,13 +66,13 @@ yarn farmslot run create --project example --flow-type review-pr --ticket exampl
 yarn farmslot run create --project example --flow-type review-pr --ticket example/app#42 --review-machine review-other --effort high
 ```
 
-Static requests default to autonomous mode. Preview shows capacity without starting a reviewer. Direct creation refuses a full host; queued requests retain their permitted alternatives and wait. PR automation rules use the same admission and ownership checks. Repeat workspace reviews currently start a fresh native session, retain prior findings, and record the fallback when incremental continuation was requested.
+Static requests default to autonomous dispatch and COLD review mode. Preview shows capacity without starting a reviewer. Direct creation refuses a full host; queued requests retain their permitted alternatives and wait. PR automation rules use the same admission and ownership checks. COLD starts a fresh reviewer session and reviews the whole PR diff. WARM resumes the identified repository/PR + reviewId session and reviews the delta from its last reviewed head. Missing or ambiguous WARM provenance is refused. The shared picker shows runner, model, effort and mode; retained lineage is request context.
 
 Completion, failure and a worker-reported blocker retain task artifacts and release the owned checkout and process. Unconfirmed cleanup continues to reserve capacity and exposes the cleanup error. No static worker builds, installs dependencies, runs the app or publishes a verdict. This stage retains results in Farmslot; publication policy is a separate capability.
 
 ## Existing runtime reviews
 
-Unstarted `review-pr` requests with `reviewValidationDepth: full-live` normalize to QA using the configured farm profile. Their slot constraints and original settings remain recorded. Missing profiles or ambiguous legacy tier/recipe settings require configuration. New callers should send `flowType: qa` and a profile. New independent review loops (dispatch, backlog, queue and ready-gate `pendingReviewPlan` / `reviewRequest.loops`) must be static; a `full-live` loop is refused with `REVIEW_QA_NEEDS_CONFIGURATION`. A queued legacy loop waits with a `Review/QA migration:` reason until the operator requeues it static or runs QA. Started and completed reviews keep their recorded depth.
+Unstarted `review-pr` requests with `reviewValidationDepth: full-live` normalize to QA using the configured farm profile. Their slot constraints and original settings remain recorded. Missing profiles or ambiguous legacy tier/recipe settings require configuration. New callers should send `flowType: qa` and a profile. New review sequences in dispatch, backlog, queue and ready-gate `reviewSequence` / `reviewRequest.sequence` must be static; a `full-live` loop is refused with `REVIEW_QA_NEEDS_CONFIGURATION`. A queued legacy loop waits with a `Review/QA migration:` reason until the operator requeues it static or runs QA. Started and completed reviews keep their recorded depth.
 
 Already-running work and historical results retain their original contract. Migration does not relabel an old verdict as newly verified QA.
 
@@ -82,7 +82,7 @@ An unstarted static request pinned to a slot requires explicit workspace configu
 
 PR-intake requests can set `review.publishReview` to true or false. Omission inherits
 request/rule, repository, team and farm policy, in that order; the built-in default
-keeps results in Farmslot. Publication inherits independently of session/scope choices.
+keeps results in Farmslot. Publication inherits independently of review mode.
 Projects opt in through `workflow_defaults["review-pr"].review.publishReview`.
 QA cannot enable static-review publication.
 
@@ -114,3 +114,5 @@ opt-out needs no account. Omitted publication flags inherit policy. The gateway 
 the selection, rejects client-forged authority and revalidates it before publication.
 
 A portable farm may use `workspacePolicy: { kind: "pool" }`. Admission binds it to the configured pool registry; an empty registry refuses. Explicit and model machine lists still narrow that registry. Pool files use stable filename order, and an explicit list keeps its declared order.
+
+The CLI accepts lineage context separately from reviewer selection. Use `--review-mode warm --review-context '{"reviewLineages":[{"repository":"example/app","prNumber":42,"reviewId":"<retained-review-id>"}]}'` for a known primary review lineage. `--review-sequence` accepts ordered `{runner, model, effort, mode}` rows; `--review-sequence-context` carries the matching lineage rows. The gateway validates the session and reviewed head before launch. These provenance arguments do not add picker dimensions.

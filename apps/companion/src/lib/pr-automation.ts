@@ -2,8 +2,6 @@ import {
   assertPRMonitorConfig,
   assertPRReviewRequest,
   assertPRSlotExecutionProfile,
-  DEFAULT_CODEX_EFFORT,
-  DEFAULT_CODEX_MODEL,
   DEFAULT_PR_REVIEW_OPTIONS,
   isPRWorkspaceExecutionProfile,
   monitoredPRKey,
@@ -26,25 +24,36 @@ import {
   type Run,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
+import {
+  defaultReviewDispatchExecutionModels,
+  executionModelsFromReviewSequence,
+  reviewSequenceForExecution,
+} from '@farmslot/review-dispatch';
 
 export function newPRExecution(): PRSlotExecutionProfile {
   return {
     slotPolicy: { kind: 'pool', allowedSlots: [] },
-    models: [{ runner: 'codex', model: DEFAULT_CODEX_MODEL, effort: DEFAULT_CODEX_EFFORT }],
+    models: defaultReviewDispatchExecutionModels(),
   };
 }
 export function normalizePRExecution(profile: PRExecutionProfile): PRExecutionProfile {
   return {
     ...profile,
-    models: profile.models.map((model) => ({
-      ...model,
-      runner: model.runner.trim(),
-      model: model.model.trim(),
-      effort: model.effort?.trim() || undefined,
-      ...(model.allowedSlots
-        ? { allowedSlots: model.allowedSlots.map((slot) => slot.trim()).filter(Boolean) }
-        : {}),
-    })),
+    models: executionModelsFromReviewSequence(
+      reviewSequenceForExecution(profile.models),
+      profile.models.map((model) => ({
+        ...(model.allowedSlots
+          ? { allowedSlots: model.allowedSlots.map((slot) => slot.trim()).filter(Boolean) }
+          : {}),
+        ...(model.allowedMachines
+          ? {
+              allowedMachines: model.allowedMachines
+                .map((machine) => machine.trim())
+                .filter(Boolean),
+            }
+          : {}),
+      })),
+    ),
   };
 }
 export interface PRRequestDraft {
@@ -104,13 +113,11 @@ export function updatePRReviewOptions(
   value: PRReviewOptions,
   patch: Partial<PRReviewOptions>,
 ): PRReviewOptions {
-  const { validationDepth: _legacy, ...current } = value;
-  const next = { ...current, workflow: prReviewWorkflow(value), ...patch };
+  const next = { ...value, workflow: prReviewWorkflow(value), ...patch };
   if (next.workflow === 'qa') {
     delete next.publishReview;
-    next.sessionIntent = 'reset';
-    next.scope = 'full';
-    delete next.busySession;
+    next.mode = 'cold';
+    delete next.reviewContext;
   } else {
     delete next.qaProfileId;
     delete next.qaInputs;
@@ -242,13 +249,13 @@ export function prExecutionText(profile?: PRExecutionProfile): string {
   if (!profile) return 'No execution profile configured';
   if (isPRWorkspaceExecutionProfile(profile)) {
     const machines = workspacePolicyTargetLabel(profile.workspacePolicy);
-    return `Review machines: ${machines} · ${profile.models.map((model) => `${model.runner}/${model.model}`).join(' or ')}`;
+    return `Review machines: ${machines} · ${profile.models.map((model) => `${model.runner}/${model.model || 'default model'}/${model.effort || 'default effort'}`).join(' or ')}`;
   }
-  return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model}${model.effort ? `/${model.effort}` : ''}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;
+  return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model || 'default model'}/${model.effort || 'default effort'}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;
 }
 export function prReviewText(options: PRReviewOptions = DEFAULT_PR_REVIEW_OPTIONS): string {
   if (prReviewWorkflow(options) === 'qa') return `QA · ${options.qaProfileId ?? 'farm default'}`;
-  return `${options.sessionIntent === 'resume' ? 'Continue' : 'Fresh'} · ${options.scope === 'full' ? 'Full review' : 'Changes since last review'} · Static review · ${options.publishReview === undefined ? 'Publication inherited' : options.publishReview ? 'Publish to PR' : 'Farmslot results only'}`;
+  return `${options.mode.toUpperCase()} review · Static review · ${options.publishReview === undefined ? 'Publication inherited' : options.publishReview ? 'Publish to PR' : 'Farmslot results only'}`;
 }
 export function prMonitorFreshness(monitor: PRMonitor, now = Date.now()): string {
   if (!monitor.observation) return 'Awaiting observation';

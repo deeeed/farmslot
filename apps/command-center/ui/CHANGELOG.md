@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Review and dispatch choices share runner, model, effort and WARM/COLD controls across gates, dispatch, backlog and PR workflows.
+
 - Share decision candidate selection and improvement Apply routing and validation results with Companion.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.

@@ -147,7 +147,7 @@ export class FlowGraphComponent extends LitElement {
       })) as ConfigTemplatesResult;
       for (const t of result.templates) {
         this._templateCache.set(`${cacheKey}:${t.flowType}`, t);
-        // Also cache by fileName for self-review template lookups
+        // Also cache by fileName for review template lookups
         this._templateCache.set(`${cacheKey}:file:${t.fileName}`, t);
       }
       this._templateCache = new Map(this._templateCache); // trigger reactive update

@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../..",
+    "paths": {
+      "@farmslot/protocol": ["../../protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../../protocol/src/*"],
+      "@farmslot/review-dispatch": ["../src/index.ts"]
+    }
+  },
+  "include": ["../src/**/*.ts", "./**/*.ts"]
+}

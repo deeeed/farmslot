@@ -18,7 +18,7 @@ It reduces coordination toil while keeping evidence, decisions, and escalation p
 | Monitor   | Detect stuck, drifting, or unhealthy runs before the operator has to poll terminals.  |
 | Nudge     | Send context-aware steering while preserving a visible audit trail.                   |
 | Summarize | Turn run state, artifacts, and diffs into reviewable briefs.                          |
-| Review    | Highlight weak evidence, risky changes, and cross-runner disagreements.               |
+| Review    | Highlight weak evidence, risky changes, and review disagreements.                     |
 | Recover   | Propose typed recovery actions for known transient failures.                          |
 | Improve   | Convert accepted learnings into proposed prompt, template, recipe, or config changes. |
 

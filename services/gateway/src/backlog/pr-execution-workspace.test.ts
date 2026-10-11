@@ -52,7 +52,7 @@ const { updateMachineMetrics, resetPressureHistoryForTest } =
   await import('../fleet/node-health.js');
 const execution: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['missing-node', 'review-node'] },
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
   transport: 'native',
 };
 
@@ -67,6 +67,7 @@ test('workspace execution resolves authorized machine alternatives without any d
         runner: 'codex',
         model: 'gpt-6-astra',
         effort: 'high',
+        mode: 'cold',
         transport: 'native',
       },
     ],
@@ -280,4 +281,26 @@ test('automatic portable workspace pools admit only configured machines', async 
   );
   assert.deepEqual(denied.choices, []);
   assert.match(denied.errors.join('; '), /pool/);
+});
+
+test('workspace admission resolves null model/effort defaults while preserving the saved choices', async () => {
+  const defaults: PRWorkspaceExecutionProfile = {
+    ...execution,
+    models: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }],
+  };
+  const resolved = await resolvePRExecution('review', 'owner/repo', [defaults], {
+    ownerId: 'review-owner',
+  });
+  assert.deepEqual(resolved.errors, []);
+  assert.deepEqual(resolved.choices, [
+    {
+      machine: 'review-node',
+      runner: 'codex',
+      model: null,
+      effort: null,
+      mode: 'cold',
+      transport: 'native',
+    },
+  ]);
+  assert.deepEqual(defaults.models, [{ runner: 'codex', model: null, effort: null, mode: 'cold' }]);
 });
