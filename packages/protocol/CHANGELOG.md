@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Export the publish-approval action set (`PUBLISH_APPROVAL_ACTIONS`, `isPublishApprovalAction`) and the review-depth helpers (`defaultReviewDepthPolicy`, `effectiveRequiredReviewCount`, `isQualifyingIndependentReview`) so clients guard publish gates with the gateway's own rules.
+
 ## 0.38.0 - 2026-10-11
 
 - Declare connection-scoped node execution and cancellation support.

@@ -1,37 +1,13 @@
-import type { IndependentReviewStatus, ReviewDepthPolicy } from '@farmslot/protocol';
+import {
+  defaultReviewDepthPolicy,
+  effectiveRequiredReviewCount,
+  type IndependentReviewStatus,
+  isQualifyingIndependentReview,
+  minimumIndependentReviewCount,
+  type ReviewDepthPolicy,
+} from '@farmslot/protocol';
 
-/**
- * Normalizes an already-computed publication review snapshot. Use
- * publicationReviewPolicyForRun() when deriving flow defaults; this helper preserves
- * legacy review-gate behavior only for already-materialized snapshots.
- */
-export function defaultReviewDepthPolicy(existing?: ReviewDepthPolicy | null): ReviewDepthPolicy {
-  const requireCrossRunner = existing?.requireCrossRunner === true;
-  const minimumIndependentReviews = Math.max(
-    requireCrossRunner ? 1 : 0,
-    existing?.minimumIndependentReviews ?? 1,
-  );
-  return {
-    minimumIndependentReviews,
-    requireCrossRunner,
-    extraLoopsRequested: Math.max(0, existing?.extraLoopsRequested ?? 0),
-    ...(existing?.countingVersion === 2 ? { countingVersion: 2 as const } : {}),
-    requestedBy: existing?.requestedBy ?? 'dispatch',
-  };
-}
-
-export function effectiveRequiredReviewCount(policy: ReviewDepthPolicy): number {
-  const base = minimumIndependentReviewCount(policy);
-  return base + Math.max(0, policy.extraLoopsRequested);
-}
-
-function minimumIndependentReviewCount(policy: ReviewDepthPolicy): number {
-  return Math.max(policy.requireCrossRunner ? 1 : 0, Math.max(0, policy.minimumIndependentReviews));
-}
-
-export function isQualifyingIndependentReview(review: IndependentReviewStatus): boolean {
-  return review.source !== 'self-review' && !review.id.startsWith('self-review-');
-}
+export { defaultReviewDepthPolicy, effectiveRequiredReviewCount, isQualifyingIndependentReview };
 
 export function independentReviewPolicySatisfied(
   policy: ReviewDepthPolicy,
