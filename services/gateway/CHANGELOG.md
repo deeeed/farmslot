@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run replay and startup recovery reuse the run branch. New-work prepare refuses to replace a published branch with commits outside the default branch or recorded start ref, and reports those commits before resetting or deleting any branch.
+
 - Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
 - Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
 
