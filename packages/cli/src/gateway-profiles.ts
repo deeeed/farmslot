@@ -10,7 +10,7 @@ import type { GatewayAuthMode } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
-import { credentialFromEnv } from './gateway-client.js';
+import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
 
 export type { GatewayAuthMode };
 
@@ -153,31 +153,47 @@ export function profileForUrl(
   return name ? { name, profile: profiles.gateways[name] } : undefined;
 }
 
-function isLoopbackGatewayUrl(raw: string): boolean {
-  try {
-    return isLoopbackHost(new URL(raw).hostname);
-  } catch {
-    return false;
-  }
+function targetForMatchedUrl(
+  url: string,
+  source: GatewayTarget['source'],
+  profiles: GatewayProfilesFile,
+): GatewayTarget | undefined {
+  const match = profileForUrl(url, profiles);
+  return match
+    ? { url, credential: profileCredential(match.profile) ?? null, profileName: match.name, source }
+    : undefined;
 }
 
 /**
  * Resolve which gateway a command targets.
  * Precedence: --url > --gateway <name> > GW_URL env (back-compat) >
- * active profile > default localhost. GW_URL carries the credential of a stored
- * profile with the same URL; with no such profile, .env file discovery applies
- * to loopback URLs only.
+ * active profile > default localhost. Explicit URLs reuse only the matching
+ * stored profile. GW_URL requires a match and never falls back to the active
+ * profile or a credential belonging to another gateway.
  *
  * The profile store is read lazily: a corrupt gateways.json must never break
- * --url/GW_URL/default invocations.
+ * explicit --url invocations. A malformed store fails env/profile routing.
  */
 export function resolveGatewayTarget(
   opts: { url?: string; gateway?: string },
   env: NodeJS.ProcessEnv = process.env,
   profilesOverride?: GatewayProfilesFile,
 ): GatewayTarget {
-  if (opts.url) return { url: opts.url, source: 'url-flag' };
   const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles();
+
+  if (opts.url) {
+    let profiles: GatewayProfilesFile;
+    try {
+      profiles = getProfiles();
+    } catch {
+      // A raw URL remains available if the store cannot be loaded. Mapping
+      // failures after loading propagate rather than silently losing auth.
+      return { url: opts.url, source: 'url-flag' };
+    }
+    return (
+      targetForMatchedUrl(opts.url, 'url-flag', profiles) ?? { url: opts.url, source: 'url-flag' }
+    );
+  }
 
   if (opts.gateway) {
     const profiles = getProfiles();
@@ -198,25 +214,23 @@ export function resolveGatewayTarget(
   if (env.GW_URL) {
     // The gateway sets GW_URL for remote workers to the URL their node dials.
     // A stored profile for that gateway supplies its credential (or none).
-    let match: ReturnType<typeof profileForUrl>;
-    try {
-      match = profileForUrl(env.GW_URL, getProfiles());
-    } catch {
-      // A corrupt store must not break GW_URL invocations; it matches nothing.
+    const target = targetForMatchedUrl(env.GW_URL, 'env', getProfiles());
+    if (target) return target;
+    // Locally derived sandbox URLs may intentionally name an unauthenticated
+    // development gateway. An inherited worker URL never gets this fallback.
+    if (isCheckoutGatewayUrl(env, env.GW_URL)) {
+      if (!URL.canParse(env.GW_URL))
+        throw new Error(
+          'Invalid checkout-derived GW_URL; correct it in the checkout configuration',
+        );
+      if (isLoopbackHost(new URL(env.GW_URL).hostname)) return { url: env.GW_URL, source: 'env' };
     }
-    if (match) {
-      return {
-        url: env.GW_URL,
-        credential: profileCredential(match.profile) ?? null,
-        profileName: match.name,
-        source: 'env',
-      };
-    }
-    // Only a loopback gateway may use secrets discovered in .env files; a
-    // remote one gets an explicit env credential or none, so a file secret
-    // meant for another gateway never travels to it.
-    if (isLoopbackGatewayUrl(env.GW_URL)) return { url: env.GW_URL, source: 'env' };
-    return { url: env.GW_URL, credential: credentialFromEnv(env) ?? null, source: 'env' };
+    throw Object.assign(
+      new Error(
+        'No stored gateway profile matches GW_URL; add and log in to a profile for the gateway URL in GW_URL with farmslot gateway add and farmslot login',
+      ),
+      { userAction: 'farmslot gateway add <name> <ws-url> && farmslot login <name>' },
+    );
   }
 
   // Fail hard on a corrupt store here: silently falling back to localhost

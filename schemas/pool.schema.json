@@ -95,10 +95,10 @@
     },
     "env": {
       "type": "object",
-      "description": "Environment the gateway exports into the shells it runs on this machine for runner launches and reloads, the prepare install, preflight, health, and unlock hooks (and the profile health_ok probe), and recipe runs; wins over the project command_env. Put machine-specific tool locations here, for example a project harness binary.",
+      "description": "Environment the gateway exports on this machine for runner launches and reloads; prepare prerequisites, install, preflight, health and unlock hooks; profile artifact, dev-server and health probes; recipe project hooks and runs; slot actions and slot.check device, dev-server and unlock probes; and resource boot, shutdown, health and browser-pid commands. Wins over project command_env. Put machine-specific tool locations here, for example a project harness binary.",
       "additionalProperties": { "type": "string" },
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-      "examples": [{ "MM_HARNESS_BIN": "/Users/me/dev/metamask-harness/bin/mm-harness" }]
+      "examples": [{ "MM_HARNESS_BIN": "/configured/tools/mm-harness" }]
     },
     "domain": {
       "type": "string",

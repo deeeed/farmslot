@@ -816,7 +816,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
 
-  const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
+  const runtimeDir = resolveProjectRuntimeDirName(projectJson);
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
   // The schema documents recipe_dir's default as "{{runtime_dir}}/recipes" —
   // resolve that reference here so a config using the documented form works.
@@ -2183,6 +2183,11 @@ export function getProjectFieldRaw(projectJson: RawProjectJson, dotpath: string)
     }
   }
   return current;
+}
+
+/** Canonical project runtime namespace, shared by loaders and lifecycle consumers. */
+export function resolveProjectRuntimeDirName(projectJson: RawProjectJson): string {
+  return getProjectField(projectJson, 'paths.runtime_dir') || '.agent';
 }
 
 /** Worker-repo task root: `task_dir` overrides `paths.artifact_dir`, then protocol default. */

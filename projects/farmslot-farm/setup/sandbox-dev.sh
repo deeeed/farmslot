@@ -41,6 +41,9 @@ done
 SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Use the helper beside this support bundle, even when the slot checkout is older.
+source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"

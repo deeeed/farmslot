@@ -16,7 +16,6 @@ import {
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
-  applyProjectCommandEnv,
   execOnSlot,
   expandTemplate,
   farmslotRoot,
@@ -26,17 +25,17 @@ import {
   loadProjectVars,
   loadSlotVars,
   type ProjectVars,
-  type RawProjectJson,
   readSlotField,
   SLOT_PHASE_RELEASING,
   slotFileExists,
   slotReadFile,
   type SlotVars,
   updateSlotStatus,
-  withMachineEnv,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
@@ -96,6 +95,7 @@ import {
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
+import { checkProjectPrerequisites } from './prerequisites.js';
 import {
   activePrepareAborts,
   activePrepareSessions,
@@ -203,6 +203,13 @@ export async function slotPrepare(
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
     await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
+    const selectedApp = await applySelectedApp(vars, params.app);
+    let projectVars: ProjectVars | undefined;
+    try {
+      projectVars = await loadProjectVars(vars.projectName);
+    } catch {
+      /* no project config: retain default prepare behavior */
+    }
     assertNativeSlotReplacementOwner(params.slotId, params.runId);
     const preparingRun = params.runId ? getRun(params.runId) : null;
     if (preparingRun?.transport === 'native') {
@@ -220,10 +227,28 @@ export async function slotPrepare(
           undefined,
         );
     }
+    if (vars.slotEnabled) {
+      const prerequisites = await checkProjectPrerequisites(
+        vars,
+        projectVars?.projectJson ?? {},
+        projectVars,
+        resolveEffectiveDomain(params.domain, vars.domain),
+      );
+      if (prerequisites) {
+        stream.step('prerequisites', prerequisites.detail);
+        if (prerequisites.status === 'fail') throw new Error(prerequisites.detail);
+      }
+    }
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     await retireNativeWorkersForSlot(params.slotId, params.runId);
-    const result = await slotPrepareInner(params, stream, prepareSignal, opts);
+    const result = await slotPrepareInner(
+      params,
+      { vars, projectVars, selectedApp },
+      stream,
+      prepareSignal,
+      opts,
+    );
     if (!result.prepared) {
       stream.complete(1, `Slot ${params.slotId} is disabled`);
     } else {
@@ -268,14 +293,20 @@ export async function readPrepareLogTailChunk(
   }
 }
 
+interface PrepareProjectContext {
+  vars: SlotVars;
+  projectVars?: ProjectVars;
+  selectedApp: string;
+}
+
 async function slotPrepareInner(
   params: SlotPrepareParams,
+  context: PrepareProjectContext,
   stream: PrepareStream,
   signal?: AbortSignal,
   opts?: SlotPrepareInternalOptions,
 ): Promise<Omit<SlotPrepareResult, 'requestId'>> {
-  const vars = await loadSlotVars(params.slotId);
-  const selectedApp = await applySelectedApp(vars, params.app);
+  const { vars, projectVars, selectedApp } = context;
   const checkAborted = () => {
     if (signal?.aborted) throw new Error('Prepare cancelled');
   };
@@ -284,15 +315,7 @@ async function slotPrepareInner(
     return { prepared: false };
   }
 
-  let projectVars: ProjectVars | undefined;
-  let projectJson: RawProjectJson = {};
-  try {
-    projectVars = await loadProjectVars(vars.projectName);
-    projectJson = projectVars.projectJson;
-  } catch {
-    /* no project config */
-  }
-
+  const projectJson = projectVars?.projectJson ?? {};
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   const devServerName = getProjectField(projectJson, 'health.dev_server_name') || 'DevServer';
   const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
@@ -338,16 +361,8 @@ async function slotPrepareInner(
   let branchCreatedFromBase = false;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
-  // Project command_env first, then the machine's pool env: pool overrides
-  // project, the same precedence dispatch applies around the runner launch.
   const applyCommandEnv = (command: string) =>
-    applyProjectCommandEnv(projectJson, withMachineEnv(command, vars), {
-      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, {
-          domain: effectiveDomain ?? '',
-        }),
-    });
+    withProjectMachineEnv(command, vars, projectJson, projectVars, effectiveDomain);
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')
@@ -532,6 +547,8 @@ async function slotPrepareInner(
     step('fixtures', `Fixtures synced (log: ${syncLogPath})`);
     fixturesSynced = true;
   };
+
+  await excludeSlotScaffolding(vars, projectJson);
 
   // 2. Verify clean state / checkout branch
   const current = (
@@ -1197,6 +1214,8 @@ async function slotPrepareInner(
   // project setup files such as .tool-versions are in place. Profile-gated
   // inside syncFixtures.
   await syncFixtures();
+  // Fixture packs can replace info/exclude; keep generated namespaces excluded.
+  await excludeSlotScaffolding(vars, projectJson);
 
   // 3b. Install deps. Always install after a checkout when the phase is
   // enabled: skip-heuristics (lockHash before/after, .yarn-state.yml present)

@@ -201,7 +201,10 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
 
 // ─── ExecOnSlotOptions ───
 
-export type ExecOnSlotOptions = ExecOptions;
+export interface ExecOnSlotOptions extends ExecOptions {
+  /** Read-only probes may deliver a bundle without selecting it for the slot. */
+  selectNodeSupport?: boolean;
+}
 
 // ─── execOnSlot ───
 // Run a command on the slot's host — locally or via agent-rpc.
@@ -240,7 +243,10 @@ export async function execOnSlot(
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../node-support/remote-command.js');
     try {
-      cmd = await resolveRemoteFarmCommand(slotVars, cmd, { budgetMs: timeout });
+      cmd = await resolveRemoteFarmCommand(slotVars, cmd, {
+        budgetMs: timeout,
+        selectSlot: opts.selectNodeSupport,
+      });
     } catch (error) {
       // A bounded probe must not wait out a first bundle delivery: it times
       // out like any slow command, and the delivery finishes for the next one.

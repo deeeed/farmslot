@@ -46,6 +46,11 @@ load_simple_env_file() {
 # Load port overrides. Caller-set GATEWAY_PORT/VITE_PORT (sandbox prepare) win over file values.
 _gateway_override="${GATEWAY_PORT:-}"
 _vite_override="${VITE_PORT:-}"
+# Stack ports select an independent auth and bind scope. Clear inherited
+# credentials, auth mode and bind host before this checkout loads its files.
+source "$FARMSLOT_ROOT/scripts/lib/stack-credentials.sh"
+clear_inherited_gateway_credentials
+
 if [ -f "$PORT_ENV_FILE" ]; then
   load_simple_env_file "$PORT_ENV_FILE"
   echo "[dev] Loaded ports from $PORT_ENV_FILE"
@@ -108,7 +113,7 @@ echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"
 echo "[dev] Node:    $GATEWAY_URL (machine: $(hostname -s))"
 if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
-  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing will fail until GATEWAY_HOST=0.0.0.0"
+  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing needs GATEWAY_HOST=0.0.0.0 in this checkout's .env.ports or .env.local-auth"
 fi
 if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]; then
   echo "[dev] Gateway auth: token"

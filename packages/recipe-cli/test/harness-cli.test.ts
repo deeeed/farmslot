@@ -1440,6 +1440,77 @@ export const adapter = {
     assert.equal(help.result.exitCode, 0);
   });
 
+  test('slot ambiguity is a structured refusal before dispatch, while help stays readable', async () => {
+    const checkout = terminalCheckout();
+    process.chdir(checkout);
+    const pools = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(pools, 'local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        slots: [
+          { id: 'one', repo: checkout },
+          { id: 'two', repo: checkout },
+        ],
+      }),
+    );
+    const cli = createHarnessCli({
+      ...contextOptions([]),
+      slotPoolDir: () => pools,
+    });
+    const refused = await capture(() => cli.main(['status', '--json']));
+    assert.equal(refused.result.exitCode, 2);
+    assert.equal(JSON.parse(refused.stdout).error.code, 'SLOT_AMBIGUOUS');
+    assert.match(JSON.parse(refused.stdout).error.userAction, /single pool slot/u);
+    assert.deepEqual(JSON.parse(refused.stdout).error.candidates, ['one', 'two']);
+    assert.deepEqual(calls, []);
+    const help = await capture(() => cli.main(['status', '--help']));
+    assert.equal(help.result.exitCode, 0);
+    assert.match(help.stdout, /status help/u);
+  });
+
+  test('legacy provisioning slot identities reach the handler without requiring a pool entry', async () => {
+    const checkout = fs.realpathSync(tempRoot());
+    const pools = fs.realpathSync(tempRoot());
+    fs.writeFileSync(
+      path.join(pools, 'local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        slots: [{ id: 'registered', repo: checkout }],
+      }),
+    );
+    const cli = createHarnessCli({
+      ...cliOptions(),
+      slotPoolDir: () => pools,
+      commands: [
+        command('provision', {
+          options: contractOptions(HELP, {
+            '--adapter': valueOption(),
+            '--slot': valueOption(),
+            '--target': valueOption(),
+            '--runtime-dir': valueOption(),
+          }),
+          positionals: [{ label: 'mode' }, { label: 'platform' }],
+        }),
+      ],
+    });
+    const argv = [
+      'runway',
+      'ios',
+      '--adapter',
+      'web',
+      '--slot',
+      'scratch-1',
+      '--runtime-dir',
+      'temp/recipe/runtime-8081',
+      '--target',
+      checkout,
+    ];
+    const result = await capture(() => cli.main(['provision', ...argv]));
+    assert.equal(result.result.exitCode, 0, result.stderr);
+    assert.deepEqual(calls, [{ command: 'provision', argv }]);
+  });
+
   test('status --task and --watch resolve the target and slot only, so an ambiguous checkout is fine', async () => {
     const checkout = terminalCheckout();
     process.chdir(checkout);

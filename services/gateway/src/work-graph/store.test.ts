@@ -8,13 +8,16 @@ import { fileURLToPath } from 'node:url';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
-import { buildCollisionSuccessorParams } from '../run-engine/engine-decisions.js';
-
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-work-graph-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_WORK_GRAPH_DIR = path.join(testDir, 'graphs');
 process.env.FARMSLOT_RUNS_DIR = path.join(testDir, 'runs');
+// Slot ownership must use the fixture fleet, never checkout/operator pool files.
+process.env.FARMSLOT_POOL_DIR = path.join(testDir, 'pool');
+await mkdir(process.env.FARMSLOT_POOL_DIR, { recursive: true });
+await import('../runtime/mock-pty.test-support.js');
+const { buildCollisionSuccessorParams } = await import('../run-engine/engine-decisions.js');
 
 test.after(() => rm(testDir, { recursive: true, force: true }));
 

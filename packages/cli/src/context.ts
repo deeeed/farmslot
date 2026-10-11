@@ -8,6 +8,8 @@ interface ResolveContextOptions {
   timeout?: number;
 }
 
+type GatewayProfileResolutionError = Error & { userAction?: string };
+
 export interface CommandContext {
   client: GatewayClient;
   output: OutputContext;
@@ -26,9 +28,12 @@ export function resolveContext(cmd: Command, options: ResolveContextOptions = {}
     // rethrow so the action's emitter (or the entry-level fallback) prints one
     // envelope / teach-the-escape line — never print-and-exit here, which can
     // truncate stdout and double-report.
-    throw Object.assign(err instanceof Error ? err : new Error(String(err)), {
+    const error: GatewayProfileResolutionError =
+      err instanceof Error ? err : new Error(String(err));
+    throw Object.assign(error, {
       code: 'GATEWAY_PROFILE_ERROR',
       userAction:
+        error.userAction ??
         'List gateway profiles with `farmslot gateway list`, or pass an explicit --url. Diagnose with `farmslot doctor`.',
     });
   }

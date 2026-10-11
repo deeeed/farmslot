@@ -162,6 +162,8 @@ export async function ensureNodeSupportBundle(
      * exist; a matching manifest over missing files is reported, never used.
      */
     verify?: 'full' | 'presence';
+    /** False for read-only prerequisites: preserve the slot's launch selection. */
+    selectSlot?: boolean;
     /** The bundle already read for this project; reused when its paths still match. */
     collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
   } = {},
@@ -238,7 +240,7 @@ export async function ensureNodeSupportBundle(
       if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
-      await persistSelection('current');
+      if (options.selectSlot !== false) await persistSelection('current');
       step('support', `Node support bundle current (${files.length} files)`);
       return { supportDir, hash: manifest.hash, published: false, paths: supportPaths };
     }
@@ -306,7 +308,7 @@ export async function ensureNodeSupportBundle(
   if (!(await verifyChecksums(supportDir, manifestPath))) {
     throw new Error(`Node support publish verification failed for ${manifest.hash}`);
   }
-  await persistSelection('published');
+  if (options.selectSlot !== false) await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
   return { supportDir, hash: manifest.hash, published: true, paths: supportPaths };
 }
