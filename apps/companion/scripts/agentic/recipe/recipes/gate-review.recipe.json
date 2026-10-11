@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion publish gate review",
-  "description": "Opens three runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, passing reviewers and a worker packet asking to approve: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on the gate review, the Gate tab and for the packet, while hold and review requests stay enabled; the criterion's evidence opens in the artifact viewer and swipes within that criterion; holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish and the gate review withholds it. The third has every criterion proven and no passing review: the gateway's review bypass stays enabled. Requires the leased iOS simulator and the dev client with the recipe bridge; the relaunch step forgets the gateway profiles the app saved before the run.",
+  "description": "Opens three runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, passing reviewers and a worker packet asking to approve: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on the gate review, the Gate tab and for the packet, while hold and review requests stay enabled; the criterion's evidence opens in the artifact viewer and swipes within that criterion; holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish and the gate review withholds it. The third has every criterion proven and no passing review: the gateway's review bypass stays enabled. Requires the leased iOS simulator and the dev client with the recipe bridge; the relaunch step starts the app on a saved profile for the fixture gateway, replacing the profiles saved before the run.",
   "proofTargets": [
     {
       "id": "gate-review-screen",
@@ -28,24 +28,12 @@
         "cmd": "node scripts/agentic/gate-review-proof.mjs setup",
         "timeout_ms": 120000,
         "intent": "Start a private fixture gateway holding one run parked at a publish gate.",
-        "next": "fixture-url"
-      },
-      "fixture-url": {
-        "action": "command",
-        "cmd": "node scripts/agentic/gate-review-proof.mjs gateway-url",
-        "intent": "Read the fixture gateway address for the connection form.",
-        "next": "fixture-token"
-      },
-      "fixture-token": {
-        "action": "command",
-        "cmd": "node scripts/agentic/gate-review-proof.mjs token",
-        "intent": "Read the fixture gateway credential for the connection form.",
         "next": "relaunch"
       },
       "relaunch": {
         "action": "command",
         "cmd": "node scripts/agentic/gate-review-proof.mjs relaunch",
-        "intent": "Restart the Companion so no earlier screen can take this run's input.",
+        "intent": "Restart the Companion on the fixture gateway, so no earlier screen takes input.",
         "next": "app-ready"
       },
       "app-ready": {
@@ -53,114 +41,7 @@
         "test_id": "companion-tab-settings",
         "timeout_ms": 60000,
         "intent": "The restarted Companion shows its tab bar and accepts deep links.",
-        "next": "open-connection"
-      },
-      "open-connection": {
-        "action": "command",
-        "cmd": "node scripts/agentic/gate-review-proof.mjs open-connection",
-        "intent": "Open Companion connection settings on the leased simulator.",
-        "next": "wait-connection"
-      },
-      "wait-connection": {
-        "action": "ui.wait_for",
-        "test_id": "companion-connection-manual-toggle",
-        "timeout_ms": 30000,
-        "intent": "The connection screen is ready for a manual gateway profile.",
-        "next": "reveal-manual"
-      },
-      "reveal-manual": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 3000,
-        "intent": "Show the manual setup toggle below any gateways saved by earlier runs.",
-        "next": "open-manual"
-      },
-      "open-manual": {
-        "action": "ui.press",
-        "test_id": "companion-connection-manual-toggle",
-        "intent": "Open the manual gateway form.",
-        "next": "reveal-form"
-      },
-      "reveal-form": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 3000,
-        "intent": "Show the manual gateway form below any saved gateways.",
-        "next": "focus-url"
-      },
-      "focus-url": {
-        "action": "ui.press",
-        "test_id": "companion-native-profile-url",
-        "intent": "Focus the gateway URL field so the keyboard opens.",
-        "next": "reveal-url"
-      },
-      "reveal-url": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 300,
-        "intent": "Bring the focused gateway URL field above the keyboard.",
-        "next": "profile-url"
-      },
-      "profile-url": {
-        "action": "ui.set_input",
-        "test_id": "companion-native-profile-url",
-        "value": "{{outputs.fixture-url.stdout}}",
-        "intent": "Point the profile at the private fixture gateway.",
-        "next": "reveal-auth"
-      },
-      "reveal-auth": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 300,
-        "intent": "Reveal the token authentication option above the keyboard.",
-        "next": "auth-token"
-      },
-      "auth-token": {
-        "action": "ui.press",
-        "test_id": "companion-native-auth-token",
-        "intent": "Use token authentication.",
-        "next": "focus-secret"
-      },
-      "focus-secret": {
-        "action": "ui.press",
-        "test_id": "companion-native-profile-secret",
-        "intent": "Focus the gateway credential field.",
-        "next": "reveal-secret"
-      },
-      "reveal-secret": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 300,
-        "intent": "Bring the focused credential field above the keyboard.",
-        "next": "profile-secret"
-      },
-      "profile-secret": {
-        "action": "ui.set_input",
-        "test_id": "companion-native-profile-secret",
-        "value": "{{outputs.fixture-token.stdout}}",
-        "intent": "Enter the fixture gateway credential.",
-        "next": "reveal-save"
-      },
-      "reveal-save": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 300,
-        "intent": "Reveal the save button above the keyboard.",
-        "next": "save-profile"
-      },
-      "save-profile": {
-        "action": "ui.press",
-        "test_id": "companion-native-profile-save",
-        "intent": "Save and connect to the fixture gateway.",
-        "next": "connected"
-      },
-      "connected": {
-        "action": "ui.wait_for",
-        "timeout_ms": 30000,
-        "intent": "The Companion leaves the disconnected state for the fixture gateway.",
-        "next": "open-run",
-        "text": "disconnected",
-        "expected": "absent"
+        "next": "open-run"
       },
       "open-run": {
         "action": "command",
@@ -186,7 +67,7 @@
       "hud-run-entry": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Run detail links its open publish gate to the gate review.",
+        "intent": "Run detail links to the gate review.",
         "next": "capture-run-entry"
       },
       "capture-run-entry": {
@@ -254,7 +135,7 @@
       "hud-packet": {
         "action": "app.hud",
         "status": "running",
-        "intent": "A worker packet cannot approve past the guard.",
+        "intent": "A packet cannot approve past the guard.",
         "next": "capture-packet"
       },
       "capture-packet": {
@@ -307,7 +188,7 @@
       "hud-decision-guard": {
         "action": "app.hud",
         "status": "running",
-        "intent": "The Gate tab applies the same publish guard.",
+        "intent": "The Gate tab applies the same guard.",
         "next": "capture-decision-guard"
       },
       "capture-decision-guard": {
@@ -385,7 +266,7 @@
       "hud-summary": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Package summary and both reviewers' latest verdicts.",
+        "intent": "Package summary and review verdicts.",
         "next": "capture-summary"
       },
       "capture-summary": {
@@ -432,7 +313,7 @@
       "hud-criteria": {
         "action": "app.hud",
         "status": "running",
-        "intent": "One criterion proven, one awaiting a verdict, evidence strip below.",
+        "intent": "One AC proven, one awaiting a verdict.",
         "next": "capture-criteria"
       },
       "capture-criteria": {
@@ -470,7 +351,7 @@
       "hud-viewer": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Criterion evidence opened in the artifact viewer.",
+        "intent": "AC evidence in the artifact viewer.",
         "next": "capture-viewer"
       },
       "capture-viewer": {
@@ -513,7 +394,7 @@
       "hud-viewer-text": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Swiped to the criterion's text evidence.",
+        "intent": "Swiped to the AC's text evidence.",
         "next": "capture-viewer-text"
       },
       "capture-viewer-text": {
@@ -557,7 +438,7 @@
       "hud-actions": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Approve withheld with its reason; hold and review requests available.",
+        "intent": "Approve withheld; hold stays enabled.",
         "next": "capture-actions"
       },
       "capture-actions": {
@@ -652,7 +533,7 @@
       "hud-resolved": {
         "action": "app.hud",
         "status": "pass",
-        "intent": "Gate held through the decision-resolve call.",
+        "intent": "Gate held via the decision-resolve call.",
         "next": "capture-resolved"
       },
       "capture-resolved": {
@@ -704,7 +585,7 @@
       "hud-issues": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Approve withheld while the latest claude review has open findings.",
+        "intent": "Approve withheld for review findings.",
         "next": "capture-issues"
       },
       "capture-issues": {
@@ -779,7 +660,7 @@
       "hud-bypass": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Review bypass stays available once criteria are judged.",
+        "intent": "Bypass stays enabled once ACs are judged.",
         "next": "capture-bypass"
       },
       "capture-bypass": {

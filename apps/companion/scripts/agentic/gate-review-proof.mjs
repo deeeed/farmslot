@@ -5,11 +5,12 @@
 // the gate. On the second, every criterion is proven and codex passed, but the latest claude review
 // has open findings: the gateway still counts the policy satisfied and offers approve-publish. On
 // the third, every criterion is proven and no review passed, so the gateway offers only the review
-// bypass. Each gate's actions come from the gateway's own policy functions. The recipe drives the Companion UI; these phases only own the
-// fixture gateway and read its persisted state.
+// bypass. Each gate's actions come from the gateway's own policy functions, and each run has its
+// own registered fixture slot. The recipe drives the Companion UI; these phases own the fixture
+// gateway (loopback-only, unauthenticated), start the app on it, and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
 const statePath = path.join(proofDir, 'state.json');
 const project = 'companion-proof';
-const slotId = 'companion-proof-slot';
+// One registered slot per fixture run: a slot's task is its active run's.
+const SLOTS = {
+  'gate-review-fixture-run': 'companion-proof-slot-1',
+  'gate-review-fixture-issues-run': 'companion-proof-slot-2',
+  'gate-review-fixture-bypass-run': 'companion-proof-slot-3',
+};
 const runId = 'gate-review-fixture-run';
 const decisionId = 'gate-review-fixture-gate';
 const issuesRunId = 'gate-review-fixture-issues-run';
@@ -26,6 +32,7 @@ const issuesDecisionId = 'gate-review-fixture-issues-gate';
 const bypassRunId = 'gate-review-fixture-bypass-run';
 const bypassDecisionId = 'gate-review-fixture-bypass-gate';
 const PACKET_PATH = 'artifacts/gate-approve.packet.json';
+const FIXTURE_PROFILE_ID = 'gate-review-fixture';
 const phase = process.argv[2];
 // The recipe runner passes the slot's device as SIMULATOR and the app as FARMSLOT_RECIPE_APP_ID.
 const simulator = process.env.IOS_SIMULATOR || process.env.SIMULATOR;
@@ -88,11 +95,7 @@ function rpc(method, params = {}) {
         cwd: root,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}`,
-          FARMSLOT_GATEWAY_TOKEN: state.token,
-        },
+        env: { ...process.env, FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.port}` },
       },
     ),
   );
@@ -105,13 +108,13 @@ const openUrl = (route) => {
 };
 
 /**
- * Forget the gateways earlier runs saved, so the manual form sits where a fresh
- * install has it. Setup-time only: the app is stopped, and the recipe still adds
- * and connects the fixture gateway through the real connection screen. Uses the
- * React Native AsyncStorage iOS layout: small values in manifest.json, large ones
- * in a file named by the key's MD5.
+ * Start the app on the fixture gateway: one saved profile for the loopback
+ * fixture, active, replacing the gateways earlier runs saved. Setup-time only:
+ * the app is stopped, nothing on screen is set, and the connection flow is not
+ * what this recipe proves. Uses the React Native AsyncStorage iOS layout: small
+ * values inline in manifest.json, large ones in a file named by the key's MD5.
  */
-function forgetSavedGateways() {
+function seedFixtureGateway(port) {
   const terminated = spawnSync('xcrun', ['simctl', 'terminate', simulator, bundleId], {
     encoding: 'utf8',
   });
@@ -129,20 +132,29 @@ function forgetSavedGateways() {
     'RCTAsyncLocalStorage_V1',
   );
   const manifestPath = path.join(storage, 'manifest.json');
-  // A fresh install has written nothing yet, so there is nothing to forget.
-  if (!fs.existsSync(manifestPath)) return;
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  for (const key of [
-    '@farmslot:gatewayProfiles',
-    '@farmslot:activeGatewayProfileId',
-    '@farmslot:gatewayUrl',
-  ]) {
-    if (!(key in manifest)) continue;
-    if (manifest[key] === null) {
-      fs.rmSync(path.join(storage, createHash('md5').update(key).digest('hex')), { force: true });
-    }
-    delete manifest[key];
+  const manifest = fs.existsSync(manifestPath)
+    ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    : {};
+  const url = `ws://127.0.0.1:${port}`;
+  const profile = {
+    id: FIXTURE_PROFILE_ID,
+    name: 'Gate review fixture',
+    url,
+    kind: 'lan',
+    authMode: 'none',
+  };
+  const values = {
+    '@farmslot:gatewayProfiles': JSON.stringify([profile]),
+    '@farmslot:activeGatewayProfileId': FIXTURE_PROFILE_ID,
+    '@farmslot:gatewayUrl': url,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    // A value an earlier run stored out of line would shadow nothing once the
+    // manifest holds it inline, but it would be left behind; remove it.
+    fs.rmSync(path.join(storage, createHash('md5').update(key).digest('hex')), { force: true });
+    manifest[key] = value;
   }
+  fs.mkdirSync(storage, { recursive: true });
   fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 }
 
@@ -224,7 +236,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
     status: 'human-gating',
     project,
     ticketOrPr: 'FIXTURE-GATE-REVIEW',
-    slotId,
+    slotId: SLOTS[id],
     branch: 'feat/fixture-gate-review',
     taskFile,
     createdByPrincipalId: 'legacy-env',
@@ -287,7 +299,6 @@ if (phase === 'setup') {
   fs.rmSync(proofDir, { recursive: true, force: true });
   const fixture = path.join(proofDir, 'farm');
   const port = Number(process.env.COMPANION_PROOF_GATEWAY_PORT ?? 18795);
-  const token = randomBytes(32).toString('hex');
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
   for (const name of ['scripts', 'services', 'packages'])
     fs.symlinkSync(path.join(root, name), path.join(fixture, name));
@@ -295,9 +306,25 @@ if (phase === 'setup') {
   writeJson(path.join(fixture, 'projects', project, 'project.json'), {
     name: project,
     default_branch: 'main',
-    paths: { runtime_dir: '.agent', artifact_dir: '.task' },
+    // The slot repo is the fixture root, so a slot's task dir is the run's recorded one.
+    paths: { runtime_dir: '.agent', artifact_dir: `projects/${project}/tasks` },
   });
-  fs.mkdirSync(path.join(fixture, 'pool'));
+  // The run's slot is registered so posture and slot reads resolve it; disabled,
+  // so nothing is dispatched to it.
+  writeJson(path.join(fixture, 'pool', `${project}.json`), {
+    machine: `${project}-node`,
+    host: 'localhost',
+    project,
+    platform: 'cli',
+    os: process.platform,
+    slots: Object.values(SLOTS).map((id) => ({
+      id,
+      enabled: false,
+      repo: fixture,
+      session: id,
+      resources: {},
+    })),
+  });
   const taskFile = seedTask(fixture, 'gate-review-fixture', 1);
   // A worker packet asking the operator to approve this gate from run detail.
   writeJson(path.join(path.dirname(taskFile), PACKET_PATH), {
@@ -355,16 +382,18 @@ if (phase === 'setup') {
       FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
       FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
       FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
+      // Loopback-only and unauthenticated, so the app's seeded profile needs no credential.
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_TOKEN: token,
+      FARMSLOT_GATEWAY_TOKEN: '',
+      FARMSLOT_GATEWAY_PASSWORD: '',
       FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
       FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     },
   });
   gateway.unref();
-  writeJson(statePath, { fixture, port, token, pid: gateway.pid });
+  writeJson(statePath, { fixture, port, pid: gateway.pid });
   const deadline = Date.now() + 60000;
   let seeded;
   while (!seeded && Date.now() < deadline) {
@@ -378,7 +407,7 @@ if (phase === 'setup') {
   }
   assert.equal(seeded?.type, 'engine_human_gate');
   assert.equal(seeded.resolvedAt, undefined);
-  const progress = rpc('task.progress', { slotId, runId });
+  const progress = rpc('task.progress', { slotId: SLOTS[runId], runId });
   assert.deepEqual(
     progress.acceptanceCriteria?.map((criterion) => criterion.id),
     ['AC-1', 'AC-2'],
@@ -404,18 +433,11 @@ if (phase === 'setup') {
   );
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
-} else if (phase === 'gateway-url') {
-  // Printed bare so the recipe can type them as `{{outputs.<node>.stdout}}`.
-  process.stdout.write(`ws://127.0.0.1:${readState().port}`);
-} else if (phase === 'token') {
-  process.stdout.write(readState().token);
 } else if (phase === 'relaunch') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
-  forgetSavedGateways();
+  seedFixtureGateway(readState().port);
   execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', simulator, bundleId]);
-} else if (phase === 'open-connection') {
-  openUrl('/connection');
 } else if (phase === 'open-run') {
   openUrl(`/workspace/run/${runId}/evidence`);
 } else if (phase === 'open-issues-gate') {
