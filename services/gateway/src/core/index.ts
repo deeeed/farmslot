@@ -32,6 +32,7 @@ export {
   loadSlotVars,
   poolDir,
   projectsDir,
+  resolveProjectRuntimeDirName,
   resolveProjectTaskDirName,
   resolveRemoteRepo,
   resolveSlot,
