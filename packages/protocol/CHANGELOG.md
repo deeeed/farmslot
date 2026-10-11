@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose shared snapshot and current-check views for CI decisions.
 - Carry frozen deterministic checklist commands and verified local CI receipts into publication packages.
 - Replace runner-diversity review contracts with WARM/COLD selections, ordered review sequences and separate-session review provenance.
 

@@ -1261,10 +1261,11 @@ export interface RunDecision {
   triageAssessmentId?: string;
   payload?: RunDecisionPayload;
   /**
-   * Payload keys `run.list` left out because their values are large (review
+   * Detail keys `run.list` left out because their values are large (review
    * markdown, input snapshots, PR packages, artifact manifests). Absent on
    * `run.get`, `run.forSlot` and every run event, which carry the full
-   * payload; a reader that needs one of these keys fetches the run directly.
+   * payload/context; `context.checkSnapshot` also names omitted CI context.
+   * A reader that needs one of these keys fetches the run directly.
    */
   payloadTrimmed?: string[];
   selectionData?: Record<string, unknown>;

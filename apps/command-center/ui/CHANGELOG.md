@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show retained check metadata in CI decisions without changing timeout auto-resume.
 - Show local CI commands, exit codes and execution logs in the publication package.
 - Review and dispatch choices share runner, model, effort and WARM/COLD controls across gates, dispatch, backlog and PR workflows.
 

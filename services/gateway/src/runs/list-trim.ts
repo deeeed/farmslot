@@ -5,10 +5,15 @@
 // that only the page for that one run ever renders. The UI bootstrap request
 // timed out on it, which paused every run-page action (gate approvals, step
 // replays) behind "Run refresh failed". The list now drops any decision payload
-// value above RUN_LIST_PAYLOAD_VALUE_LIMIT bytes and names the dropped keys in
+// value above RUN_LIST_PAYLOAD_VALUE_LIMIT bytes and removes context.checkSnapshot, naming omitted values in
 // `payloadTrimmed`; run.get, run.forSlot and run events stay complete.
 
-import type { Run, RunDecision, RunDecisionPayload } from '@farmslot/protocol';
+import {
+  CI_SNAPSHOT_TRIM_KEY,
+  type Run,
+  type RunDecision,
+  type RunDecisionPayload,
+} from '@farmslot/protocol';
 
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
@@ -24,11 +29,18 @@ function utf8ByteLength(text: string): number {
 }
 
 export function trimDecisionForList(decision: RunDecision): RunDecision {
-  if (!decision.payload) return decision;
+  const trimmed: string[] = [];
+  let context = decision.context;
+  if (context?.checkSnapshot !== undefined) {
+    context = { ...context };
+    delete context.checkSnapshot;
+    trimmed.push(CI_SNAPSHOT_TRIM_KEY);
+  }
+  if (!decision.payload)
+    return trimmed.length ? { ...decision, context, payloadTrimmed: trimmed } : decision;
   // A list row's payload is the same shape with some keys left out; Partial is
   // the honest type while keys are removed from the copy.
   const kept = { ...decision.payload } as Partial<RunDecisionPayload>;
-  const trimmed: string[] = [];
   for (const key of Object.keys(kept) as Array<keyof RunDecisionPayload>) {
     const value = kept[key];
     if (
@@ -40,7 +52,7 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
     }
   }
   if (trimmed.length === 0) return decision;
-  return { ...decision, payload: kept as RunDecisionPayload, payloadTrimmed: trimmed };
+  return { ...decision, context, payload: kept as RunDecisionPayload, payloadTrimmed: trimmed };
 }
 
 /** A copy of `run` for run.list; the store's own object is never mutated. */

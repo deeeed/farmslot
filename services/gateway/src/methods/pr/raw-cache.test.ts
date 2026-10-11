@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ProjectCICheckGroup } from '@farmslot/protocol';
+import { normalizeCICheckDetail, type ProjectCICheckGroup } from '@farmslot/protocol';
 
 import { matchCheckGroups } from '../pr.js';
 
@@ -25,13 +25,75 @@ test('buildPRChecksArgs uses JSON buckets so pending checks remain data, not com
     '--repo',
     'example-org/example-browser',
     '--json',
-    'name,bucket,startedAt,completedAt',
+    'name,bucket,startedAt,completedAt,state,link',
     '--jq',
-    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // "")] | @tsv',
+    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // ""), (.state // ""), (.link // "")] | @tsv',
   ]);
 });
 
 // ─── ADR-028 GraphQL batch tests ───
+
+test('GraphQL carries the same check activity and link metadata as the CLI rows', () => {
+  const startedAt = '2026-10-12T11:00:00Z';
+  const completedAt = '2026-10-12T11:02:00Z';
+  const url = 'https://github.com/owner/repo/actions/runs/1';
+  const raw = synthesizeRawSnapshotFromGraphQL({
+    statusCheckRollup: {
+      contexts: {
+        nodes: [
+          {
+            __typename: 'CheckRun',
+            name: 'unit',
+            status: 'COMPLETED',
+            conclusion: 'SUCCESS',
+            startedAt,
+            completedAt,
+            detailsUrl: url,
+          },
+          {
+            __typename: 'StatusContext',
+            context: 'legacy',
+            state: 'PENDING',
+            createdAt: startedAt,
+            targetUrl: url,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(raw.checksAvailable, true);
+  const rows = raw.checksStdout
+    .trimEnd()
+    .split('\n')
+    .map((line) => {
+      const [name, , start, end, state, detailsUrl] = line.split('\t');
+      return normalizeCICheckDetail({
+        name,
+        startedAt: start,
+        completedAt: end,
+        state,
+        detailsUrl,
+      });
+    });
+  assert.deepEqual(rows, [
+    normalizeCICheckDetail({
+      name: 'unit',
+      state: 'SUCCESS',
+      startedAt,
+      completedAt,
+      detailsUrl: url,
+    }),
+    normalizeCICheckDetail({ name: 'legacy', state: 'PENDING', startedAt, detailsUrl: url }),
+  ]);
+  assert.equal(synthesizeRawSnapshotFromGraphQL({ statusCheckRollup: null }).checksAvailable, true);
+  assert.equal(synthesizeRawSnapshotFromGraphQL({}).checksAvailable, false);
+  assert.equal(
+    synthesizeRawSnapshotFromGraphQL({
+      statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: true } } },
+    }).checksAvailable,
+    false,
+  );
+});
 
 test('chunkPRsByRepo splits a repo above the per-query cap and leaves smaller repos alone', () => {
   const big = Array.from({ length: 20 }, (_, i) => 100 + i);
@@ -146,15 +208,15 @@ test('synthesizeRawSnapshotFromGraphQL → parseChecksOutput maps CheckRun + Sta
 
   // Expect TSV rows in the bucket vocabulary that `gh pr checks --json bucket` emits.
   // Don't `.trim()` — that would strip the trailing tab on the last StatusContext
-  // row (jq @tsv emits 4 columns with empty trailing fields preserved).
+  // row (jq @tsv emits 6 columns with empty trailing fields preserved).
   assert.equal(snap.author, 'pr-author');
   const lines = snap.checksStdout.replace(/\n$/, '').split('\n');
   assert.equal(lines.length, 5);
-  assert.equal(lines[0], 'lint\tpass\tt1\tt2');
-  assert.equal(lines[1], 'unit\tfail\tt3\tt4');
-  assert.equal(lines[2], 'e2e\tpending\tt5\t');
-  assert.equal(lines[3], 'flake\tcancel\tt6\tt7');
-  assert.equal(lines[4], 'continuous-integration/legacy\tpass\tt8\t');
+  assert.equal(lines[0], 'lint\tpass\tt1\tt2\tSUCCESS\t');
+  assert.equal(lines[1], 'unit\tfail\tt3\tt4\tFAILURE\t');
+  assert.equal(lines[2], 'e2e\tpending\tt5\t\tIN_PROGRESS\t');
+  assert.equal(lines[3], 'flake\tcancel\tt6\tt7\tCANCELLED\t');
+  assert.equal(lines[4], 'continuous-integration/legacy\tpass\tt8\t\tSUCCESS\t');
   assert.equal(snap.latestCommitStdout.replace(/\n$/, ''), '2026-04-30T12:00:00Z');
 });
 
@@ -458,8 +520,8 @@ test('checkRunBucket maps QUEUED + StatusContext ERROR to the right bucket vocab
     commits: { nodes: [] },
   });
   const lines = snap.checksStdout.replace(/\n$/, '').split('\n');
-  assert.equal(lines[0], 'queued\tpending\t\t');
-  assert.equal(lines[1], 'webhook/legacy\tfail\tt0\t');
+  assert.equal(lines[0], 'queued\tpending\t\t\tQUEUED\t');
+  assert.equal(lines[1], 'webhook/legacy\tfail\tt0\t\tERROR\t');
 });
 
 test('prefetchPRBatchViaGraphQL early-returns on empty input without firing GraphQL', async () => {
