@@ -1,12 +1,12 @@
 # Fail-closed run lifecycle
 
-**Status:** Proposed normative specification for [ADR-065](../adr/065-fail-closed-run-lifecycle.md).
+**Status:** Accepted normative specification for [ADR-065](../adr/065-fail-closed-run-lifecycle.md), 2026-10-12.
 **Owner:** Farmslot maintainers.
 **Scope:** Gateway enforcement over existing evidence, review, runtime and runner contracts.
 
-MUST and MUST NOT are requirements for the proposed implementation, not claims
-about current behavior. Keep this specification with ADR-065 until acceptance
-and implementation. ADR-062 and ADR-063 own the referenced evidence/review rules.
+MUST and MUST NOT are requirements for implementation, not claims about current
+behavior. Keep this specification with ADR-065 through implementation. ADR-062
+and ADR-063 own the referenced evidence/review rules.
 
 ## Inputs and ownership
 

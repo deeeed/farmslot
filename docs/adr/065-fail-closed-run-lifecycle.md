@@ -1,7 +1,7 @@
 # ADR-065: Fail-closed run lifecycle
 
-**Status:** Proposed
-**Date:** 2026-10-11
+**Status:** Accepted
+**Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Gateway gate prerequisites, recovery, declared-resource acquisition and run state
 **Related:** [ADR-037](037-prepare-profiles.md), [ADR-038](038-gate-held-worker-session.md), [ADR-049](049-agent-execution-template-selection.md), [ADR-053](053-run-lifecycle-transition-routing.md), [ADR-054](054-run-resource-posture.md), [ADR-057](057-structured-runner-transports.md), ADR-062 recorded run evidence, ADR-063 review modes
@@ -113,8 +113,8 @@ private paths. Acquisition does not authorize funding, resets or external writes
 
 ## Implementation order
 
-1. Obtain independent ADR/spec review, Goal 3 conflict review and lead approval.
-   The documentation remains Proposed until approval.
+1. Independent ADR/spec review, Goal 3 conflict review and lead approval are
+   complete. ADR-065 and its specification were accepted on 2026-10-12.
 2. PR 2 may start immediately after ADR/spec approval. It adds the six recovery
    scenarios and only repairs their demonstrated gaps. Reuse existing branch,
    runner, sandbox and release protections.
