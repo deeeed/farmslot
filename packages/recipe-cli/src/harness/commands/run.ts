@@ -42,6 +42,7 @@ import {
   targetPath,
   usageError,
 } from '../parse-args.js';
+import { resolveLibrarySources, resolveRunRecipeArg } from '../recipe-library.js';
 import { validateRunRecipeStatic } from '../recipe-validation.js';
 import { recordingUnsupported } from '../recording-target.js';
 import {
@@ -360,6 +361,26 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   // The runtime directory names where the slot's context and the run's runtime
   // state live, so it applies before the plan and before the slot resolves.
   applyRuntimeDirOption(options);
+  if (commandOptions.librarySources) {
+    const { adapter } = resolveAdapter(options);
+    const resolved = await resolveRunRecipeArg(
+      engine,
+      targetRecipe,
+      adapter,
+      commandOptions.librarySources,
+    );
+    if ('recipeFile' in resolved && !resolved.ref) {
+      commandOptions = {
+        ...commandOptions,
+        librarySources: await resolveLibrarySources(
+          engine,
+          undefined,
+          resolved.recipeFile,
+          commandOptions.librarySources,
+        ),
+      };
+    }
+  }
   if (optionFlag(options, 'plan')) {
     return handleRunPlan(targetRecipe, params, options, stream, commandOptions);
   }

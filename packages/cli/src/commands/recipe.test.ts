@@ -592,7 +592,7 @@ for (const [refusal, flags, code, hint] of [
     'standalone-option',
     ['--library-source', 'unused'],
     'CLI_INVALID_OPTION_VALUE',
-    /--library name=path/u,
+    /--library name=path.*--project-root <path> --action-manifest <path> --artifacts-dir <path>/u,
   ],
 ] as const) {
   test(`public run JSONL preserves ${refusal} refusal guidance before constructing a provider`, (t) => {
@@ -657,6 +657,71 @@ for (const flag of ['--list', '--describe'] as const) {
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /library-only/u);
     assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+  });
+}
+
+for (const mode of ['plan', 'run', 'untrusted'] as const) {
+  test(`public project ${mode} includes the adjacent task library before declared libraries`, (t) => {
+    const root = declaredLibraryFixture(t);
+    const task = path.join(root, 'task');
+    const localRecipes = path.join(task, 'recipe-library/recipes');
+    fs.mkdirSync(localRecipes, { recursive: true });
+    const child = JSON.parse(fs.readFileSync(path.join(root, 'recipe.json'), 'utf8'));
+    child.workflow.nodes.effect.cmd = 'printf local > artifacts/effect';
+    const childName = mode === 'plan' ? 'task-only' : 'library-only';
+    fs.writeFileSync(path.join(localRecipes, `${childName}.recipe.json`), JSON.stringify(child));
+    const file = path.join(task, 'recipe.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        description: 'Run a child recipe from the task library.',
+        workflow: {
+          entry: 'child',
+          nodes: {
+            child: {
+              action: 'call',
+              ref: childName,
+              intent: 'Use the task recipe before the declared recipe of the same name',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    const manifestPath = path.join(root, 'projects/example/manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.actions.call = {
+      description: 'Run a child recipe.',
+      examples: [{ action: 'call', ref: childName, intent: 'Run the child recipe', next: 'done' }],
+    };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    const flags =
+      mode === 'plan'
+        ? ['--plan']
+        : mode === 'untrusted'
+          ? ['--source-trust', 'untrusted', '--source-kind', 'task']
+          : [];
+    const result = callPublic(root, [file, ...flags], 'run');
+    const output = JSON.parse(result.stdout);
+    if (mode === 'untrusted') {
+      assert.notEqual(result.status, 0);
+      assert.equal(output.error.code, 'RECIPE_TRUST_REQUIRED');
+      assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+      return;
+    }
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(output.status, 'pass');
+    if (mode === 'plan') {
+      assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+    } else {
+      assert.equal(fs.readFileSync(path.join(root, 'artifacts/effect'), 'utf8'), 'local');
+      const summary = JSON.parse(fs.readFileSync(output.result.summaryPath, 'utf8'));
+      const names = summary.recipeLibraries.sources.map((source: { name: string }) => source.name);
+      assert.equal(names[0], 'task-local');
+      assert.ok(names.indexOf('team') > 0);
+    }
   });
 }
 
