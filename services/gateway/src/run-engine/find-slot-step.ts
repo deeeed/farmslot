@@ -40,6 +40,10 @@ import {
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import {
+  inspectReleasableBranchHolders,
+  releaseBranchHolderForSelection,
+} from '../methods/dispatch/branch-checkout.js';
+import {
   activeRunIds,
   activeRunSlotIds,
   companionResourceBlocker,
@@ -224,6 +228,8 @@ async function claimSelectedSlot(
     }
   }
 
+  if (!run.engineState?.flags?.skipPrepare)
+    await releaseBranchHolderForSelection(slotId, run.branch);
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
@@ -682,11 +688,17 @@ export async function executeFindSlotStep(
   // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
   // the same way the normal slot picker does.
   const targetBranch =
-    (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
+    (run.flowType === 'review-pr' || run.flowType === 'pr-complete' || run.flowType === 'qa') &&
+    run.branch
       ? run.branch
       : undefined;
   // Explicit prepare only — profile-fit suggestions never rewrite FIND_SLOT eligibility.
   const requiredPrepareProfile = run.prepareProfile || null;
+  const releasableBranchHolderIds = await inspectReleasableBranchHolders(
+    (await loadFleetStatus()).slots,
+    run.project,
+    targetBranch,
+  );
   // A run that skips prepare keeps the slot's checkout, so slot repo blockers do not apply.
   const skipPrepare = Boolean(run.engineState?.flags?.skipPrepare);
 
@@ -812,6 +824,7 @@ export async function executeFindSlotStep(
     } else if (replaceableWarm || becameFree) {
       eligibilityFail = validateSlotForDispatch(wizardSlot, liveFleet.slots, {
         targetBranch,
+        releasableBranchHolderIds,
         requiredPrepareProfile,
         skipPrepare,
         allowWorking: replaceableWarm,
@@ -884,6 +897,7 @@ export async function executeFindSlotStep(
   const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) =>
     !validateSlotForDispatch(slot, fleet.slots, {
       targetBranch,
+      releasableBranchHolderIds,
       requiredPrepareProfile,
       skipPrepare,
     });
@@ -912,6 +926,7 @@ export async function executeFindSlotStep(
       affinitySlot &&
       !validateSlotForDispatch(affinitySlot, fleet.slots, {
         targetBranch,
+        releasableBranchHolderIds,
         requiredPrepareProfile,
         skipPrepare,
       })
@@ -1145,6 +1160,7 @@ export async function executeFindSlotStep(
             }
             const err = validateSlotForDispatch(picked, freshFleet.slots, {
               targetBranch,
+              releasableBranchHolderIds,
               requiredPrepareProfile,
               skipPrepare,
             });
@@ -1272,6 +1288,7 @@ export async function executeFindSlotStep(
       }
       const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
         targetBranch,
+        releasableBranchHolderIds,
         requiredPrepareProfile,
         skipPrepare,
       });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Dispatch can release a target branch from an idle linked-worktree holder after checking configured ownership, park records, tracked changes and remote ancestry. It detaches without moving the branch; active, parked, dirty and unpushed work stays protected. Branch conflicts are local to the machine.
 - Release ignores untracked task/runtime scaffolding, protects tracked edits and unpublished commits, and collects owned files into private run archives before cleanup. Prepare keeps those namespaces in the repository Git exclude file.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.

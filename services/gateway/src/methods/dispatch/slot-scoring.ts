@@ -336,6 +336,7 @@ export function findBestSlot(
   options?: {
     allowedSlots?: string[] | null;
     targetBranch?: string;
+    releasableBranchHolderIds?: ReadonlySet<string>;
     familyId?: string | null;
     lane?: string | null;
     variant?: string | null;
@@ -357,7 +358,15 @@ export function findBestSlot(
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
       if (slotRepoBlocker(s, options)) return false;
       if (options?.pressureRejectedMachines?.has(s.machine)) return false;
-      if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
+      if (
+        slotBranchCheckoutBlocker(
+          s,
+          slots,
+          options?.targetBranch,
+          options?.releasableBranchHolderIds,
+        )
+      )
+        return false;
       if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
       if (
         !s.currentRunId &&
@@ -407,6 +416,7 @@ export function slotBranchCheckoutBlocker(
   slot: SlotStatus,
   slots: readonly SlotStatus[],
   targetBranch?: string | null,
+  releasableBranchHolderIds?: ReadonlySet<string>,
 ): SlotStatus | null {
   if (!targetBranch || !slot.linkedWorktree || slot.branch === targetBranch) return null;
   return (
@@ -414,6 +424,8 @@ export function slotBranchCheckoutBlocker(
       (other) =>
         other.slot !== slot.slot &&
         other.project === slot.project &&
+        other.machine === slot.machine &&
+        !releasableBranchHolderIds?.has(other.slot) &&
         other.linkedWorktree &&
         other.branch === targetBranch,
     ) ?? null
@@ -424,11 +436,16 @@ export function validateSlotForTargetBranch(
   slot: SlotStatus,
   slots: readonly SlotStatus[],
   targetBranch?: string | null,
-  options?: { allowWorking?: boolean },
+  options?: { allowWorking?: boolean; releasableBranchHolderIds?: ReadonlySet<string> },
 ): string | null {
   const baseError = validateSlot(slot, options);
   if (baseError) return baseError;
-  const blocker = slotBranchCheckoutBlocker(slot, slots, targetBranch);
+  const blocker = slotBranchCheckoutBlocker(
+    slot,
+    slots,
+    targetBranch,
+    options?.releasableBranchHolderIds,
+  );
   if (!blocker) return null;
   return `Branch ${targetBranch} is already checked out by linked worktree slot ${blocker.slot}`;
 }
@@ -438,6 +455,7 @@ export function validateSlotForDispatch(
   slots: readonly SlotStatus[],
   options?: {
     targetBranch?: string | null;
+    releasableBranchHolderIds?: ReadonlySet<string>;
     requiredPrepareProfile?: string | null;
     allowWorking?: boolean;
     skipPrepare?: boolean;
@@ -446,6 +464,7 @@ export function validateSlotForDispatch(
   return (
     validateSlotForTargetBranch(slot, slots, options?.targetBranch, {
       allowWorking: options?.allowWorking,
+      releasableBranchHolderIds: options?.releasableBranchHolderIds,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
     slotRepoBlocker(slot, options)
