@@ -42,7 +42,9 @@ function isEligibleEvidence(
   manifest: EvidenceManifest | null | undefined,
 ): boolean {
   return (
-    isUploadableMediaPath(artifact.path) && isPackageSelectableEvidenceArtifact(artifact, manifest)
+    isUploadableMediaPath(artifact.path) &&
+    // Approval checks an immutable, already-filtered inventory without a live manifest.
+    (manifest === undefined || isPackageSelectableEvidenceArtifact(artifact, manifest))
   );
 }
 

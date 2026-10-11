@@ -20,6 +20,7 @@ import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
+  type RecipeRunRequest,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-runner';
@@ -37,6 +38,11 @@ import { createEmitter, isMachineMode } from '../envelope.js';
 import { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
 
+import {
+  collectRecipeOption,
+  registerProjectActionsCommand,
+  registerProjectExecutionCommand,
+} from './recipe-project.js';
 import { resolveRecipeProjectHookGatewayTimeoutMs } from './recipe-project-hook-timeout.js';
 
 interface RecipeValidateOptions {
@@ -80,10 +86,6 @@ function statusLabel(status: RecipeValidationResult['status']): string {
     default:
       return red('invalid');
   }
-}
-
-function collectLibrarySource(value: string, previous: string[]): string[] {
-  return [...previous, value];
 }
 
 function findingLabel(finding: RecipeValidationFinding): string {
@@ -438,7 +440,9 @@ function formatValidationResult(result: RecipeValidationResult): string {
 }
 
 export function registerRecipeCommand(program: Command): void {
-  const recipe = program.command('recipe').description('Recipe protocol helpers');
+  const recipe = program.command('recipe').description('Checkout recipes and artifact helpers');
+  registerProjectActionsCommand(recipe);
+  registerProjectExecutionCommand(recipe, 'call');
 
   recipe
     .command('validate')
@@ -458,7 +462,7 @@ export function registerRecipeCommand(program: Command): void {
     .option(
       '--library-source <spec>',
       'Recipe library source (name=path or path, colon-separated); repeatable. call.refs resolvable here are not reported as unresolved.',
-      collectLibrarySource,
+      collectRecipeOption,
       [],
     )
     .action(async (recipePaths: string[], opts: RecipeValidateOptions, cmd: Command) => {
@@ -626,92 +630,65 @@ export function registerRecipeCommand(program: Command): void {
       }
     });
 
-  recipe
-    .command('run')
-    .description('Run a recipe through the reusable Farmslot recipe harness')
-    .argument('<recipe>', 'Path to recipe.json')
-    .argument('[params...]', 'Recipe parameters as key=value')
-    .requiredOption('--artifacts-dir <path>', 'Directory where the v1 artifact package is written')
-    .requiredOption('--action-manifest <path>', 'Runner action manifest for this recipe')
-    .option(
-      '--project-root <path>',
-      'Project root used for command execution and artifact indexing',
-    )
-    .option('--source-trust <trust>', 'Recipe source trust: trusted, untrusted, or unknown')
-    .option('--source-kind <kind>', 'Recipe source kind supplied by the caller')
-    .option('--source-name <name>', 'Human-readable recipe source name')
-    .option('--source-digest <digest>', 'Caller-computed source digest')
-    .option('--approve-plan <digest>', 'Approve exactly one resolved execution-plan digest')
-    .option('--adapter <name>', 'Active adapter for adapter-specific library recipes')
-    .option(
-      '--library-source <spec>',
-      'Recipe library source (name=path or path, colon-separated); repeatable',
-      collectLibrarySource,
-      [],
-    )
-    .action(
-      async (
-        recipePath: string,
-        paramAssignments: string[],
-        opts: RecipeRunOptions,
-        cmd: Command,
-      ) => {
-        const globals = cmd.optsWithGlobals();
-        const output = new OutputContext(Boolean(globals.json));
-        const emit = createEmitter(output, cmd);
+  registerProjectExecutionCommand(recipe, 'run', async (recipePath, paramAssignments, cmd) => {
+    const opts = cmd.opts<RecipeRunOptions>();
+    const globals = cmd.optsWithGlobals();
+    const output = new OutputContext(Boolean(globals.json));
+    const emit = createEmitter(output, cmd);
 
-        try {
-          if (!opts.artifactsDir) throw new Error('Missing --artifacts-dir.');
-          if (!opts.actionManifest) throw new Error('Missing --action-manifest.');
-          const actionManifest = await readRecipeCliJsonFile(opts.actionManifest);
-          const runner = createRecipeRunner({
-            actionManifest: actionManifest as RecipeActionManifestDocument,
-            adapters: createStandardCoreAdapters({
-              actions: getRecipeActionManifestActionNames(actionManifest),
-            }),
-            defaultSource: {
-              kind: 'operator',
-              trust: 'trusted',
-              name: '@farmslot/cli',
-            },
-          });
-          const trust = resolveRecipeTrustInput({
-            sourceTrust: opts.sourceTrust,
-            sourceKind: opts.sourceKind,
-            sourceName: opts.sourceName,
-            sourceDigest: opts.sourceDigest,
-            approvalDigest: opts.approvePlan,
-          });
-          const invocationTrust = trust.source?.trust ?? 'trusted';
-          const librarySources = applyTaskLocalInvocationTrust(
-            await resolveRecipeLibrarySources({
-              cliEntries: opts.librarySource,
-              recipePath: resolveRecipeCliPath(recipePath),
-            }),
-            invocationTrust,
-          );
-          const result = await runner.run({
-            recipePath: resolveRecipeCliPath(recipePath),
-            artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
-            projectRoot: opts.projectRoot
-              ? resolveRecipeCliPath(opts.projectRoot)
-              : resolveRecipeCliPath('.'),
-            params: parseRecipeParamAssignments(paramAssignments),
-            ...(opts.adapter ? { adapter: opts.adapter } : {}),
-            librarySources,
-            ...trust,
-          });
-          if (emit.machine) {
-            emit.ok(result);
-          } else {
-            output.write(
-              `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
-            );
-          }
-          if (result.status !== 'pass') process.exitCode = 1;
-        } catch (error) {
-          emit.fail(error);
-        }
-      },
-    );
+    try {
+      if (!opts.artifactsDir) throw new Error('Missing --artifacts-dir.');
+      if (!opts.actionManifest) throw new Error('Missing --action-manifest.');
+      const actionManifest = await readRecipeCliJsonFile(opts.actionManifest);
+      const runner = createRecipeRunner({
+        actionManifest: actionManifest as RecipeActionManifestDocument,
+        adapters: createStandardCoreAdapters({
+          actions: getRecipeActionManifestActionNames(actionManifest),
+        }),
+        defaultSource: {
+          kind: 'operator',
+          trust: 'trusted',
+          name: '@farmslot/cli',
+        },
+      });
+      const trust = resolveRecipeTrustInput({
+        sourceTrust: opts.sourceTrust,
+        sourceKind: opts.sourceKind,
+        sourceName: opts.sourceName,
+        sourceDigest: opts.sourceDigest,
+        approvalDigest: opts.approvePlan,
+      });
+      const invocationTrust = trust.source?.trust ?? 'trusted';
+      const librarySources = applyTaskLocalInvocationTrust(
+        await resolveRecipeLibrarySources({
+          cliEntries: opts.librarySource,
+          recipePath: resolveRecipeCliPath(recipePath),
+        }),
+        invocationTrust,
+      );
+      const { withRecipeSignals } = await import('@farmslot/recipe-cli/harness');
+      const request: RecipeRunRequest = {
+        recipePath: resolveRecipeCliPath(recipePath),
+        artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
+        projectRoot: opts.projectRoot
+          ? resolveRecipeCliPath(opts.projectRoot)
+          : resolveRecipeCliPath('.'),
+        params: parseRecipeParamAssignments(paramAssignments),
+        ...(opts.adapter ? { adapter: opts.adapter } : {}),
+        librarySources,
+        ...trust,
+      };
+      const result = await withRecipeSignals((signal) => runner.run({ ...request, signal }));
+      if (emit.machine) {
+        emit.ok(result);
+      } else {
+        output.write(
+          `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
+        );
+      }
+      if (result.status !== 'pass') process.exitCode = 1;
+    } catch (error) {
+      emit.fail(error);
+    }
+  });
 }

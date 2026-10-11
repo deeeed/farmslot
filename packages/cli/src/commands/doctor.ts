@@ -5,7 +5,6 @@ import path from 'node:path';
 import type { Command } from 'commander';
 
 import type { RecipeConformanceReport } from '@farmslot/protocol';
-import { resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 import type {
   CliOptions,
   HarnessContext,
@@ -18,38 +17,31 @@ import { bold, dim, green, red, yellow } from '../colors.js';
 import { errorEnvelope, isMachineMode, okEnvelope } from '../envelope.js';
 import { runDoctor } from '../onboarding/doctor.js';
 import { maybePromptGithubStar, starSupportHint } from '../onboarding/star-prompt.js';
-import { repoRoot, resolveWorkspace } from '../onboarding/workspace.js';
+import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
+import {
+  collectRecipeOption,
+  projectRecipeHostOptions,
+  recipeProjectOptions,
+} from './recipe-project.js';
+
 export function registerDoctorCommand(program: Command): void {
-  program
-    .command('doctor')
-    .description('Check installation or a checkout project and recipe conformance')
-    .argument('[checkout]', 'Checkout to inspect')
+  recipeProjectOptions(
+    program
+      .command('doctor')
+      .description('Check installation or a checkout project and recipe conformance')
+      .argument('[checkout]', 'Checkout to inspect'),
+  )
     .option('--conformance', 'Check provider, libraries, handlers and full recipe preflight')
-    .option('--project <name>', 'Select a registered project')
-    .option('--projects-dir <path>', 'Operator-owned project registry')
-    .option(
-      '--authorize-provider <module>',
-      'Authorize an exact discovered provider source',
-      collect,
-      [],
-    )
-    .option('--adapter <name>', 'Select the project runtime')
-    .option('--app <name>', 'Select a monorepo app')
-    .option('--slot <id>', 'Select one pool slot')
-    .option('--device <id>', 'Select one device')
-    .option('--cdp-port <port>', 'Select the CDP transport port')
-    .option('--runtime-dir <path>', 'Target-relative recipe runtime directory')
     .option('--artifacts-dir <path>', 'Checkout-relative report directory')
-    .option('--library <name=path>', 'Override a recipe library', collect, [])
     .option(
       '--recipe <ref>',
       'Check a specific invocation instead of every catalog recipe',
-      collect,
+      collectRecipeOption,
       [],
     )
-    .option('--param <key=value>', 'Supply checked invocation parameters', collect, [])
+    .option('--param <key=value>', 'Supply checked invocation parameters', collectRecipeOption, [])
     .option('--source-trust <trust>', 'Explicit recipe source trust')
     .option('--source-kind <kind>', 'Explicit recipe source kind')
     .action(async (checkout: string | undefined, _: unknown, cmd: Command) => {
@@ -120,10 +112,6 @@ export function registerDoctorCommand(program: Command): void {
     });
 }
 
-function collect(value: string, previous: string[]): string[] {
-  return [...previous, value];
-}
-
 export interface ProjectConformanceResult {
   context: HarnessContext;
   report: RecipeConformanceReport;
@@ -143,43 +131,8 @@ export async function runProjectConformance(
       '--param requires --recipe to select the invocation receiving those parameters.',
     );
   }
-  const tokens: string[] = [];
-  if (checkout) tokens.push('--target', path.resolve(checkout));
-  for (const [key, flag] of Object.entries({
-    project: '--project',
-    adapter: '--adapter',
-    app: '--app',
-    slot: '--slot',
-    device: '--device',
-    cdpPort: '--cdp-port',
-    runtimeDir: '--runtime-dir',
-    artifactsDir: '--artifacts-dir',
-    library: '--library',
-  })) {
-    const value = options[key];
-    for (const entry of Array.isArray(value) ? value : typeof value === 'string' ? [value] : [])
-      tokens.push(flag, entry);
-  }
-  const workspace = resolveWorkspace();
-  const configuredPool = resolveSlotPoolDir();
-  const slotPoolDir =
-    configuredPool && configuredPool.source !== 'farmslot-node'
-      ? configuredPool.dir
-      : workspace
-        ? path.join(workspace.farmslotDir, 'pool')
-        : undefined;
-  const registry =
-    shared.optionString(options, 'projectsDir') ??
-    path.join(workspace?.farmslotDir ?? process.env.FARMSLOT_ROOT ?? repoRoot, 'projects');
   return shared.withProjectRecipeHost(
-    {
-      tokens,
-      projectsDir: existsSync(registry) ? registry : undefined,
-      slotPoolDir,
-      command: 'doctor',
-      options,
-      authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
-    },
+    await projectRecipeHostOptions('doctor', checkout, options),
     async ({ context, provider, engine, librarySources: sources, cli }) => {
       const binding = context.project!;
       const recipes = selected.length
