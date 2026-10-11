@@ -1,6 +1,9 @@
 {
   "version": 1,
   "state_dir": "state",
+  "reports": [],
+  "ci": { "no_ci_repos": [], "workflow_skip_repos": [] },
+  "reviews": { "legacy_root": "legacy-reviews" },
   "tmux": { "socket": "cross-model-demo" },
   "lanes": [
     {
@@ -26,6 +29,10 @@
       "auto_merge": false,
       "hooks": {},
       "forbidden_patterns": [],
+      "portability_exclusions": ["(^|/)(tests|examples)/", "(?i)guard|forbid|pattern"],
+      "required_workflows": [],
+      "heartbeat_hooks": [],
+      "mutating_heartbeat_hooks": [],
       "expected_nodes": []
     }
   }

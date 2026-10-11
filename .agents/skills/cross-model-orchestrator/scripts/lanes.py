@@ -4,10 +4,11 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import time
 
-from common import DRIVER_DIR, append_report, driver_env, run, tmux_argv, write_json
+from common import DRIVER_DIR, append_report, driver_env, read_json, resolve_path, run, tmux_argv, write_json
 
 
 COMMANDS = {"lanes-status", "launch", "restore", "send", "flush", "reserve", "transfer"}
@@ -90,8 +91,9 @@ def _pane(config, lane, record):
     panes = _panes(config, lane)
     if not panes:
         return None
-    if record.get("pane_id") in panes:
-        return record["pane_id"]
+    preferred = record.get("pane_id", lane.get("pane_id"))
+    if preferred in panes:
+        return preferred
     if len(panes) == 1:
         return panes[0]
     raise ValueError(f"lane {lane['id']} has several panes and no matching registered pane")
@@ -99,10 +101,12 @@ def _pane(config, lane, record):
 
 def _env(config, lane, record):
     env = driver_env(config, lane)
-    runtime = record.get("runtime_dir", str(Path(config["state_dir"]) / "lanes" /
-                                           lane["id"] / "runtime"))
+    env.pop("TMUX_MODEL_DRIVER_READ_ONLY", None)
+    runtime = record.get("runtime_dir", lane.get("runtime_dir",
+        str(Path(config["state_dir"]) / "lanes" / lane["id"] / "runtime")))
     env["TMUX_MODEL_DRIVER_RUNTIME_DIR"] = runtime
-    env["TMUX_MODEL_DRIVER_OBSERVABILITY_DIR"] = record.get("observability_dir", str(Path(runtime) / ".observability"))
+    env["TMUX_MODEL_DRIVER_OBSERVABILITY_DIR"] = str(resolve_path(config,
+        record.get("observability_dir", lane.get("observability_dir", str(Path(runtime) / ".observability")))))
     env["TMUX_MODEL_DRIVER_STATE_DIR"] = str(Path(config["state_dir"]) / "transport")
     # Do not inherit a different pane's binding from the calling lead session.
     for name, value in (("SESSION_ID", record.get("session_id", lane.get("resume_id"))),
@@ -116,10 +120,16 @@ def _env(config, lane, record):
     return env
 
 
-def _observe(config, lane, pane, record):
+def _observe(config, lane, pane, record, *, persist=True):
+    env = _env(config, lane, record)
+    env.pop("TMUX_MODEL_DRIVER_READ_ONLY", None)
+    if not persist:
+        env["TMUX_MODEL_DRIVER_READ_ONLY"] = "1"
     result = run(["bash", str(DRIVER_DIR / "pane-state.sh"), pane, lane["runner"]],
-                 cwd=str(DRIVER_DIR.parents[3]), env=_env(config, lane, record))
+                 cwd=str(DRIVER_DIR.parents[3]), env=env)
     observation = json.loads(result.stdout)
+    if not persist:
+        return observation
     observed = {key: observation[key] for key in ("session_id", "session_path")
                 if observation.get(key)}
     accepted = observation.get("accepted") or {}
@@ -140,9 +150,11 @@ def _observe(config, lane, pane, record):
     return observation
 
 
-def observe(config, lane_id):
+def observe(config, lane_id, *, read_only=False):
     lane = lane_by_id(config, lane_id)
-    record = _record(config, lane_id)
+    record = (read_json(registry_path(config), {"lanes": {}})["lanes"].get(lane_id,
+              {"reservations": sorted({_reservation(lane, value) for value in lane.get("reservations", [])})})
+              if read_only else _record(config, lane_id))
     item = {"id": lane_id, "runner": lane["runner"], "session": _session(lane),
             "goal": lane["goal"], "report": lane["report"],
             "reservations": record["reservations"]}
@@ -150,7 +162,8 @@ def observe(config, lane_id):
     if pane is None:
         item.update(status="missing", state="missing", phase="missing")
     else:
-        observation = _observe(config, lane, pane, record)
+        observation = (_observe(config, lane, pane, record, persist=False) if read_only
+                       else _observe(config, lane, pane, record))
         phase = observation.get("phase", "unknown")
         state = observation.get("state", "unknown")
         item.update(pane_id=pane, state=state, phase=phase,
@@ -160,7 +173,19 @@ def observe(config, lane_id):
 
 
 def status(config):
-    return [observe(config, lane["id"]) for lane in config.get("lanes", [])]
+    registry = read_json(registry_path(config), {"version": 1, "lanes": {}})
+    for lane in config.get("lanes", []):
+        registry["lanes"].setdefault(lane["id"], {"reservations": sorted(
+            {_reservation(lane, value) for value in lane.get("reservations", [])})})
+    _validate_ownership(registry)
+    observations = []
+    for lane in config.get("lanes", []):
+        try:
+            observations.append(observe(config, lane["id"], read_only=True))
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            observations.append({"id": lane["id"], "state": "unknown", "phase": "unknown",
+                                 "status": "unknown", "error": str(error)})
+    return observations
 
 
 def _send(config, lane, pane, record, payload, *, flushing=False):

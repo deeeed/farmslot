@@ -97,7 +97,7 @@ class LaneTests(unittest.TestCase):
             statuses = lanes.status(self.config)
         self.assertEqual([item["status"] for item in statuses], ["question", "queued"])
         self.assertEqual(statuses[0]["observation"]["question"]["text"], "Which target?")
-        self.assertEqual(lanes._record(self.config, "one")["session_id"], "codex-session")
+        self.assertFalse(lanes.registry_path(self.config).exists())
         for call in mocked.call_args_list:
             argv, kwargs = call.args[0], call.kwargs
             if argv[0] == "tmux":
@@ -105,6 +105,24 @@ class LaneTests(unittest.TestCase):
             else:
                 self.assertEqual(kwargs["env"]["TMUX_MODEL_DRIVER_SOCKET"], "lanes-test-private")
                 self.assertIn("TMUX_MODEL_DRIVER_OBSERVABILITY_DIR", kwargs["env"])
+                self.assertEqual(kwargs["env"]["TMUX_MODEL_DRIVER_READ_ONLY"], "1")
+
+    def test_status_uses_configured_pane_and_observability_without_acknowledging(self):
+        lane = self.config['lanes'][0]
+        lane['pane_id'] = '%2'
+        lane['observability_dir'] = str(Path(self.config['state_dir']) / 'existing-hooks')
+        def command(argv, **kwargs):
+            if 'list-panes' in argv:return result('%1\n%2\n')
+            self.assertEqual(argv[-2], '%2')
+            self.assertEqual(kwargs['env']['TMUX_MODEL_DRIVER_OBSERVABILITY_DIR'], str(Path(lane['observability_dir']).resolve()))
+            return result(json.dumps({'state': 'codex', 'phase': 'idle', 'accepted': {'receipt_id': 'late'}}))
+        with patch.object(lanes, 'run', side_effect=command):
+            self.assertEqual(lanes.observe(self.config, 'one', read_only=True)['status'], 'idle')
+        self.assertFalse(lanes.registry_path(self.config).exists())
+
+    def test_transport_environment_does_not_inherit_observation_mode(self):
+        with patch.dict('os.environ', {'TMUX_MODEL_DRIVER_READ_ONLY': '1'}):
+            self.assertNotIn('TMUX_MODEL_DRIVER_READ_ONLY', lanes._env(self.config, self.config['lanes'][0], {}))
 
     def test_send_refuses_shell_and_never_uses_raw_tmux_send(self):
         def command(argv, **kwargs):
