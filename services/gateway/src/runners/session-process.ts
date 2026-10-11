@@ -38,6 +38,12 @@ import {
   statSessionPathMtimeMs,
 } from './session-path-resolution.js';
 
+const SHELL_PROCESS_PATTERN = '(^|/)-?(sh|bash|zsh|fish|dash|ksh|csh|tcsh)$';
+
+export function isShellProcessCommand(command: string): boolean {
+  return new RegExp(SHELL_PROCESS_PATTERN).test(command);
+}
+
 export type RunnerSessionBindingSource = 'hook' | 'native' | 'filesystem';
 
 export interface RunnerSessionBinding {
@@ -118,7 +124,7 @@ try:
                     re.fullmatch(pattern, executable_name)
                     or re.fullmatch(pattern, executable)
                 )
-                shell_wrapper = os.path.basename(executable) in {'bash', 'zsh', 'sh', 'fish'}
+                shell_wrapper = bool(re.search(${JSON.stringify(SHELL_PROCESS_PATTERN)}, executable))
                 matches.append((strong, not shell_wrapper, depth, candidate))
             queue.extend((child, depth + 1) for child in children.get(candidate, []))
         if not matches:
@@ -1080,6 +1086,8 @@ export type RunnerDescendantPidProbe =
     };
 
 export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
+  /** Input may reach only a live runner in the terminal's foreground group. */
+  foregroundOnly?: boolean;
   /**
    * Bounded retries for a timed-out or transport-failed attempt. Each retry
    * doubles the exec budget, so a host too loaded to answer inside the first
@@ -1141,7 +1149,7 @@ export async function probeRunnerDescendantPid(
       reason: 'runner process pattern is missing',
     };
   }
-  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
+  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern, options?.foregroundOnly);
   const attempts = Math.max(1, options?.attempts ?? 1);
   const baseTimeout = options?.timeout ?? RUNNER_PROCESS_PROBE_TIMEOUT_MS;
   const deadline = options?.deadline;
@@ -1439,8 +1447,34 @@ export async function resolveRetainedRunnerPane(
   return null;
 }
 
-export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: string): string {
-  return buildFindRunnerDescendantPidCommandWithRoot(shellQuote(panePid), pattern);
+export function buildFindRunnerDescendantPidCommand(
+  panePid: string,
+  pattern: string,
+  foregroundOnly = false,
+): string {
+  return buildFindRunnerDescendantPidCommandWithRoot(shellQuote(panePid), pattern, foregroundOnly);
+}
+
+/** Revalidate on the execution host after transport waits, before typing. */
+export function buildRunnerInputHostGuardCommand(
+  paneId: string,
+  panePid: string,
+  runnerId: string,
+  refusalExitCode: number,
+): string {
+  const paneProbe = tmuxShellSnippet(`display-message -p -t ${shellQuote(paneId)} '#{pane_pid}'`);
+  const processProbe = buildFindRunnerDescendantPidCommand(
+    panePid,
+    runnerProcessPatternSource(runnerId),
+    true,
+  );
+  return [
+    '# farmslot runner input execution-host guard',
+    `if [ "$( ${paneProbe} )" != ${shellQuote(panePid)} ] || ! ( ${processProbe} ) >/dev/null; then`,
+    `  printf '%s\\n' ${shellQuote(`Runner input refused: no live foreground ${runnerId} on the pinned pane; no input was sent`)} >&2`,
+    `  exit ${refusalExitCode}`,
+    'fi',
+  ].join('\n');
 }
 
 /**
@@ -1500,9 +1534,13 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * never matched as a live runner: it has already exited and only its exit
  * status remains, but its children are still traversed.
  */
-function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
+function buildFindRunnerDescendantPidCommandWithRoot(
+  quotedRoot: string,
+  pattern: string,
+  foregroundOnly = false,
+): string {
   const walk = [
-    'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
+    `BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"]; foreground_only = ${foregroundOnly ? 1 : 0} }`,
     '{',
     // The state column is validated as a `ps` STAT word, not merely as
     // non-empty. A host whose `ps` omits it shifts every later column left, so
@@ -1539,9 +1577,11 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     '    if (pid in visited) continue',
     '    visited[pid] = 1',
     '    command = cmd[pid]',
-    '    if (command != "" && state[pid] !~ /^Z/ && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
+    '    split(command, argv, /[ \\t]/)',
+    `    shell_wrapper = argv[1] ~ /${SHELL_PROCESS_PATTERN.replaceAll('/', '\\/')}/`,
+    '    input_eligible = !foreground_only || (index(state[pid], "+") > 0 && !shell_wrapper)',
+    '    if (input_eligible && command != "" && state[pid] !~ /^Z/ && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
     '      fallback = pid',
-    '      split(command, argv, /[ \\t]/)',
     '      if (exact == "" && argv[1] ~ pattern) exact = pid',
     '    }',
     '    n = split(kids[pid], child, " ")',
@@ -1558,7 +1598,7 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     `root=${quotedRoot}`,
     `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
     'export FARMSLOT_RUNNER_PATTERN',
-    `snapshot=$(ps -axo pid=,ppid=,state=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
     `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
     `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
   ].join('\n');

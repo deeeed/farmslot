@@ -15,6 +15,7 @@ import {
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
   DEFAULT_RUNNER,
+  type ExecResult,
   isPiThinkingLevel,
   isReviewerWindowName,
   normalizeRunner,
@@ -30,6 +31,7 @@ import { execOnSlot } from '../core/exec.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
+  resolveTmuxPaneIdentity,
   resolveTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -1352,13 +1354,16 @@ export function keyForClassifierTrustAction(
  * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
  * so tests can pin target, key, and the no-evidence-no-send rule.
  */
+type LaunchBlockerCommand = (
+  command: string,
+) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
+
 export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   runnerId: string | null | undefined;
   target: string;
   logPrefix: string;
-  exec: (
-    tmuxCommand: string,
-  ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
+  exec: LaunchBlockerCommand;
+  sendKeys: LaunchBlockerCommand;
   refreshCodexHooks?: () => Promise<void>;
   logNoFreshEvidence?: boolean;
 }): Promise<{ outcome: 'sent'; key: string } | { outcome: 'no-fresh-evidence' }> {
@@ -1389,9 +1394,7 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
     blocker?.autoAction === 'claude-trust-workspace'
       ? `${shellQuote(key)} ${shellQuote('Enter')}`
       : shellQuote(key);
-  const sent = await opts.exec(
-    `send-keys -t ${shellQuote(opts.target)} ${keySequence} 2>/dev/null`,
-  );
+  const sent = await opts.sendKeys(keySequence);
   if (sent.exitCode !== 0) {
     throw new Error(
       `Failed to apply trust confirmation ${key} in ${opts.target}: ${
@@ -2468,6 +2471,66 @@ export function withRunnerPromptMutationBoundary<Result>(
   );
 }
 
+/** A stale ready signal never authorizes input to a shell or background runner. */
+export async function execRunnerInput(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  command: (paneId: string) => string,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<ExecResult> {
+  const pane = await resolveTmuxPaneIdentity(vars, target, { currentCommand: true, exec });
+  if (!pane)
+    throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
+  const { paneId, panePid, currentCommand: foreground } = pane;
+  const { buildRunnerInputHostGuardCommand, probeRunnerDescendantPid, isShellProcessCommand } =
+    await import('./session-process.js');
+  const probe = await probeRunnerDescendantPid(
+    vars,
+    panePid!,
+    runner,
+    { foregroundOnly: true, attempts: 2, deadline: Date.now() + 20_000 },
+    { exec },
+  );
+  if (probe.state !== 'present')
+    throw new Error(
+      `Runner input refused: ${probe.state === 'unknown' ? `process check failed: ${probe.reason}` : isShellProcessCommand(foreground ?? '') ? `${target} is a shell without a live foreground ${runner}` : `no live foreground ${runner} in ${target}`}; no input was sent`,
+    );
+  // A transport resend could reach a shell after the checked runner exited.
+  // Only the caller may retry, by entering this guard again.
+  const hostGuard = buildRunnerInputHostGuardCommand(
+    paneId!,
+    panePid!,
+    runner,
+    PROMPT_TYPE_FAILURE_EXIT_CODE,
+  );
+  return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
+}
+
+function runnerKeysCommand(paneId: string, keys: string): string {
+  return tmuxShellSnippet(`send-keys -t ${shellQuote(paneId)} ${keys} 2>/dev/null`);
+}
+
+export function execRunnerKeys(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  keys: string,
+  exec: typeof execOnSlot = execOnSlot,
+  beforeMutation?: () => void,
+): Promise<ExecResult> {
+  return execRunnerInput(
+    vars,
+    target,
+    runner,
+    (paneId) => {
+      beforeMutation?.();
+      return runnerKeysCommand(paneId, keys);
+    },
+    exec,
+  );
+}
+
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -2484,17 +2547,16 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    promptMutationStore.getStore()?.started();
-    const write = await execOnSlot(
-      vars,
-      tmuxSendTextCommand(target, message, {
+    const write = await execRunnerInput(vars, target, runner, (paneId) => {
+      promptMutationStore.getStore()?.started();
+      return tmuxSendTextCommand(paneId, message, {
         enter: true,
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
         ...(promptMutationStore.getStore()
           ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
           : {}),
-      }),
-    );
+      });
+    });
     // Only once the write actually succeeded. `execOnSlot` resolves on a non-zero exit
     // rather than throwing, so awaiting it proves nothing on its own: send-keys against
     // a dead tmux server or a vanished window comes back here having typed nothing. A
@@ -2524,10 +2586,8 @@ async function submitRunnerInstruction(
       return 'not-buffered';
     }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
-    promptMutationStore.getStore()?.started();
-    const submit = await execOnSlot(
-      vars,
-      tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`),
+    const submit = await execRunnerKeys(vars, target, runner, submitKey, execOnSlot, () =>
+      promptMutationStore.getStore()?.started(),
     );
     if (submit.exitCode !== 0) {
       promptMutationStore.getStore()?.confirmedUntouched?.();
@@ -2552,10 +2612,7 @@ async function submitRunnerInstruction(
     if (attempt < 5) {
       const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
       console.warn(`[${logPrefix}] instruction appears buffered in ${target}; sending submit key`);
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`),
-      );
+      await execRunnerKeys(vars, target, runner, submitKey);
     }
   }
 
@@ -3260,10 +3317,7 @@ export async function sendRunnerPostLaunchPrompt(
         blocker.autoAction === 'claude-trust-workspace'
           ? `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`
           : shellQuote(autoActionKey);
-      const trustResult = await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${trustKeySequence} 2>/dev/null`),
-      );
+      const trustResult = await execRunnerKeys(vars, target, runner, trustKeySequence);
       if (trustResult.exitCode !== 0) {
         throw new Error(
           `Failed to accept ${runner} workspace trust prompt in ${target}: ${
@@ -3285,13 +3339,11 @@ export async function sendRunnerPostLaunchPrompt(
       autoActionKey &&
       codexUpdatePromptAttempts < maxBlockerAutoAttempts
     ) {
-      const skipResult = await execOnSlot(
+      const skipResult = await execRunnerKeys(
         vars,
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} ${shellQuote(
-            'Enter',
-          )} 2>/dev/null`,
-        ),
+        target,
+        runner,
+        `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`,
       );
       if (skipResult.exitCode !== 0) {
         throw new Error(
@@ -3312,12 +3364,7 @@ export async function sendRunnerPostLaunchPrompt(
       autoActionKey &&
       grokProjectAttempts < maxBlockerAutoAttempts
     ) {
-      const selectResult = await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
-        ),
-      );
+      const selectResult = await execRunnerKeys(vars, target, runner, shellQuote(autoActionKey));
       if (selectResult.exitCode !== 0) {
         throw new Error(
           `Failed to select current Grok project directory in ${target}: ${
@@ -3352,13 +3399,11 @@ export async function sendRunnerPostLaunchPrompt(
           }`,
         );
       }
-      const trustResult = await execOnSlot(
+      const trustResult = await execRunnerKeys(
         vars,
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} ${shellQuote(
-            'Enter',
-          )} 2>/dev/null`,
-        ),
+        target,
+        runner,
+        `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`,
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
@@ -3461,10 +3506,7 @@ export async function sendRunnerPostLaunchPrompt(
       console.log(
         `[${logPrefix}] pane classifier suggested ${key} for ${target}: ${classifierForFailure.reason}`,
       );
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
-      );
+      await execRunnerKeys(vars, target, runner, key);
       const recovered = await waitForPaneAfterClassifierAction(
         vars,
         target,
@@ -3520,6 +3562,7 @@ export async function sendRunnerPostLaunchPrompt(
         target,
         logPrefix,
         exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        sendKeys: (keys) => execRunnerKeys(vars, target, runner, keys),
         refreshCodexHooks: async () => {
           const refreshed = await execOnSlot(
             vars,
@@ -3747,31 +3790,33 @@ export async function sendRunnerPostLaunchPrompt(
         { allowMarkerOnly: attempt > 1 },
       );
     }
-    let sendCommand: string;
+    let sendCommand: (paneId: string) => string;
     if (shouldSubmitOnly) {
       console.log(
         `[${logPrefix}] recovering buffered instruction in ${target} with submit-only delivery`,
       );
-      sendCommand = tmuxShellSnippet(
-        `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
-      );
+      sendCommand = (paneId) =>
+        runnerKeysCommand(paneId, runnerBufferedInstructionSubmitKey(preSendPane, runner));
     } else {
       try {
         await writeRunnerPromptSentinel(vars, message);
       } catch (error) {
         console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
       }
-      sendCommand = tmuxSendTextCommand(target, message, {
-        enter: true,
-        submitKey: runnerPromptSubmitKey(runner),
-        ...(promptMutationStore.getStore()
-          ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
-          : {}),
-      });
+      sendCommand = (paneId) =>
+        tmuxSendTextCommand(paneId, message, {
+          enter: true,
+          submitKey: runnerPromptSubmitKey(runner),
+          ...(promptMutationStore.getStore()
+            ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
+            : {}),
+        });
     }
     const sentAtMs = Date.now();
-    promptMutationStore.getStore()?.started();
-    const promptResult = await execOnSlot(vars, sendCommand);
+    const promptResult = await execRunnerInput(vars, target, runner, (paneId) => {
+      promptMutationStore.getStore()?.started();
+      return sendCommand(paneId);
+    });
     if (promptResult.exitCode !== 0) {
       if (shouldSubmitOnly || promptResult.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
         promptMutationStore.getStore()?.confirmedUntouched?.();

@@ -559,6 +559,47 @@ export async function resolveTmuxPaneId(
   return paneId || null;
 }
 
+export interface TmuxPaneIdentity {
+  paneId: string;
+  panePid: string;
+  currentCommand?: string;
+}
+
+function parseTmuxPaneIdentity(fields: string[]): TmuxPaneIdentity | null {
+  const [paneId, panePid, currentCommand] = fields;
+  return /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
+    ? {
+        paneId: paneId!,
+        panePid: panePid!,
+        ...(currentCommand === undefined ? {} : { currentCommand }),
+      }
+    : null;
+}
+
+export async function resolveTmuxPaneIdentity(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  options: { currentCommand?: boolean; exec?: typeof execOnSlot } = {},
+): Promise<TmuxPaneIdentity | null> {
+  const separator = options.currentCommand ? '|' : '\t';
+  const format = [
+    '#{pane_id}',
+    '#{pane_pid}',
+    ...(options.currentCommand ? ['#{pane_current_command}'] : []),
+  ].join(separator);
+  const result = await (options.exec ?? execOnSlot)(
+    vars,
+    tmuxShellSnippet(
+      `display-message -p -t ${shellQuote(target)} ${shellQuote(format)} 2>/dev/null`,
+    ),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  throwIfTmuxQueryTimedOut(result, `resolveTmuxPaneIdentity ${target}`);
+  return result.exitCode === 0
+    ? parseTmuxPaneIdentity(result.stdout.trim().split(separator))
+    : null;
+}
+
 export function selectExactTmuxWindowPane(
   output: string,
   session: string,
@@ -567,9 +608,7 @@ export function selectExactTmuxWindowPane(
   for (const line of output.split('\n')) {
     const [candidateSession, candidateWindow, paneId, panePid] = line.split('\t');
     if (candidateSession !== session || candidateWindow !== windowName) continue;
-    return paneId && panePid && /^%\d+$/.test(paneId) && /^\d+$/.test(panePid)
-      ? { paneId, panePid }
-      : null;
+    return parseTmuxPaneIdentity([paneId ?? '', panePid ?? '']);
   }
   return null;
 }
@@ -583,20 +622,7 @@ export async function resolveExactTmuxWindowPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
 ): Promise<{ paneId: string; panePid: string } | null> {
-  if (/^%\d+$/.test(target)) {
-    const result = await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
-      ),
-      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
-    );
-    throwIfTmuxQueryTimedOut(result, `resolveExactTmuxWindowPane ${target}`);
-    const [paneId, panePid] = result.stdout.trim().split('\t');
-    return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
-      ? { paneId: paneId!, panePid: panePid! }
-      : null;
-  }
+  if (/^%\d+$/.test(target)) return resolveTmuxPaneIdentity(vars, target);
   if (/^@\d+$/.test(target)) {
     const result = await execOnSlot(
       vars,
@@ -606,10 +632,7 @@ export async function resolveExactTmuxWindowPane(
       { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     throwIfTmuxQueryTimedOut(result, `resolveExactTmuxWindowPane ${target}`);
-    const [paneId, panePid] = result.stdout.trim().split('\t');
-    return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
-      ? { paneId: paneId!, panePid: panePid! }
-      : null;
+    return result.exitCode === 0 ? parseTmuxPaneIdentity(result.stdout.trim().split('\t')) : null;
   }
   const separator = target.indexOf(':');
   if (separator <= 0 || separator === target.length - 1) return null;

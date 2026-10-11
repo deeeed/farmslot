@@ -429,6 +429,10 @@ describe('cursor runner', () => {
       runnerId: 'grok',
       target: 'ff-2:agent.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'ff-2:agent.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? grokPane : '' };
@@ -451,6 +455,10 @@ describe('cursor runner', () => {
       runnerId: 'cursor',
       target: 'ff-1:agent.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'ff-1:agent.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? cursorPane : '' };
@@ -474,6 +482,10 @@ describe('cursor runner', () => {
       runnerId: 'claude',
       target: 'mme-1:dev.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'mme-1:dev.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? claudePane : '' };
@@ -503,6 +515,10 @@ describe('cursor runner', () => {
       runnerId: 'codex',
       target: 'core-2:review.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'core-2:review.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
@@ -537,6 +553,10 @@ describe('cursor runner', () => {
       runnerId: 'codex',
       target: 'mm-3:agent.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'mm-3:agent.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
@@ -564,6 +584,10 @@ describe('cursor runner', () => {
       runnerId: 'grok',
       target: 'ff-2:agent.0',
       logPrefix: 'test',
+      sendKeys: async (keys) => {
+        commands.push("send-keys -t 'ff-2:agent.0' " + keys);
+        return { exitCode: 0, stdout: '' };
+      },
       exec: async (tmuxCommand) => {
         commands.push(tmuxCommand);
         // Fresh capture shows a ready pane — the trust prompt is gone.
@@ -587,6 +611,7 @@ describe('cursor runner', () => {
           runnerId: 'grok',
           target: 'ff-2:agent.0',
           logPrefix: 'test',
+          sendKeys: async () => ({ exitCode: 1, stdout: '', stderr: 'no such pane' }),
           exec: async (tmuxCommand) =>
             tmuxCommand.startsWith('capture-pane')
               ? { exitCode: 0, stdout: grokPane }

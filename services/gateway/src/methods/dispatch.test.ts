@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildComparisonVariant,
   DEFAULT_CURSOR_MODEL,
+  type ExecResult,
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
@@ -188,6 +189,15 @@ function makeSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
   };
 }
 
+function runnerInputProbe(command: string): ExecResult | null {
+  if (command.includes('send-keys')) return null;
+  if (command.includes('#{pane_current_command}'))
+    return { exitCode: 0, stdout: '%1|123|cursor-agent', stderr: '' };
+  if (command.includes('FARMSLOT_RUNNER_PATTERN='))
+    return { exitCode: 0, stdout: '456', stderr: '' };
+  return null;
+}
+
 test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the blocker to clear', async () => {
   const commands: string[] = [];
   const panes = [cursorWorkspaceTrustPane, 'Cursor chat ready'];
@@ -200,6 +210,8 @@ test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the bl
     },
     exec: async (_vars, command) => {
       commands.push(command);
+      const probe = runnerInputProbe(command);
+      if (probe) return probe;
       if (command.includes('send-keys')) {
         return { exitCode: 0, stdout: '', stderr: '' };
       }
@@ -274,6 +286,8 @@ test('resolveRunnerLaunchBlockers retries auto-action once before reporting time
       },
       exec: async (_vars, command) => {
         commands.push(command);
+        const probe = runnerInputProbe(command);
+        if (probe) return probe;
         return { exitCode: 0, stdout: cursorWorkspaceTrustPane, stderr: '' };
       },
     }),
@@ -281,6 +295,28 @@ test('resolveRunnerLaunchBlockers retries auto-action once before reporting time
   );
 
   assert.equal(commands.filter((command) => command.includes('send-keys')).length, 2);
+});
+
+test('initial launch-blocker keys refuse a shell even with the stale trust menu visible', async () => {
+  const commands: string[] = [];
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 100, {
+      exec: async (_vars, command) => {
+        commands.push(command);
+        return {
+          exitCode: command.includes('FARMSLOT_RUNNER_PATTERN=') ? 1 : 0,
+          stdout: command.includes('#{pane_current_command}')
+            ? '%1|123|zsh'
+            : command.includes('FARMSLOT_RUNNER_PATTERN=')
+              ? ''
+              : cursorWorkspaceTrustPane,
+          stderr: '',
+        };
+      },
+    }),
+    /is a shell.*no input was sent/,
+  );
+  assert.equal(commands.filter((command) => command.includes('send-keys')).length, 0);
 });
 
 test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {

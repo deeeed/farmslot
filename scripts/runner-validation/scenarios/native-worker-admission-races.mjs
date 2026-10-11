@@ -304,7 +304,12 @@ async function verifyDispatchSettlement({ runnerAdapter, slotId, model, timeoutM
     report.runId = runId;
     await wait(() => fs.existsSync(`${fault}.held`), Boolean, timeoutMs);
     assert.equal(JSON.parse(fs.readFileSync(`${fault}.held`, 'utf8')).runId, runId);
-    releasing = request('slot.release', { slotId, expectedRunId: runId, keepWork: true });
+    releasing = request('slot.release', {
+      slotId,
+      expectedRunId: runId,
+      keepWork: true,
+      forceReset: true,
+    });
     await wait(
       () => rpc('fleet.status').fleet.slots.find((item) => item.slot === slotId),
       (item) => item.phase === 'releasing',

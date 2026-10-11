@@ -477,7 +477,7 @@ export const FLEET_TOOLS: Tool[] = [
   {
     name: 'slot_recycle',
     description:
-      'Hard-reset a stuck slot. DESTRUCTIVE: kills processes, wipes state. Use only when user explicitly asks or slot is unrecoverably stuck.',
+      'Reset an unowned or terminal slot. DESTRUCTIVE: kills processes and wipes state. Cancel any active owning run with farmslot run cancel <runId> first. Use only when the user explicitly asks.',
     parameters: Type.Object({
       slot_id: Type.String(),
     }),
