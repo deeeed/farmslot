@@ -585,20 +585,34 @@ test('public run JSONL reports finalizer failure once after the command effect',
   assert.equal(fs.readFileSync(path.join(root, 'artifacts/effect'), 'utf8'), 'checked');
 });
 
-test('public run JSONL refuses a misspelled plan flag before constructing a provider', (t) => {
-  const { root, file } = runFixture(t);
-  const result = callPublic(root, [file, '--json-stream', '--plna'], 'run');
-  assert.notEqual(result.status, 0);
-  const events = result.stdout
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line));
-  assert.equal(events.filter((event) => event.event === 'complete').length, 1);
-  assert.equal(events.at(-1).status, 'fail');
-  assert.equal(result.status, events.at(-1).exitCode);
-  assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
-  assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
-});
+for (const refusal of ['grammar', 'binding']) {
+  test(`public run JSONL preserves ${refusal} refusal guidance before constructing a provider`, (t) => {
+    const { root, file } = runFixture(t);
+    if (refusal === 'binding') fs.unlinkSync(path.join(root, 'projects/example/project.json'));
+    const result = callPublic(
+      root,
+      [file, '--json-stream', ...(refusal === 'grammar' ? ['--plna'] : [])],
+      'run',
+    );
+    assert.notEqual(result.status, 0);
+    const events = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(events.filter((event) => event.event === 'complete').length, 1);
+    const errors = events.filter((event) => event.event === 'error');
+    assert.equal(errors.length, 1);
+    assert.equal(
+      errors[0].error.code,
+      refusal === 'grammar' ? 'CLI_UNKNOWN_OPTION' : 'PROJECT_NOT_FOUND',
+    );
+    assert.match(errors[0].error.userAction, refusal === 'grammar' ? /--plan/u : /--project/u);
+    assert.equal(events.at(-1).status, 'fail');
+    assert.equal(result.status, events.at(-1).exitCode);
+    assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
+    assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+  });
+}
 
 test('standalone execution refuses project-only preview flags before any command', (t) => {
   const { root, file } = runFixture(t);

@@ -12,7 +12,7 @@ import type {
   ProjectRecipeHostOptions,
 } from '@farmslot/recipe-cli/harness';
 
-import { createEmitter, isMachineMode } from '../envelope.js';
+import { createEmitter, errorEnvelope, isMachineMode } from '../envelope.js';
 import { repoRoot, resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
@@ -225,6 +225,7 @@ export function registerProjectExecutionCommand(
     } catch (error) {
       if (stream?.enabled) {
         const shared = await import('@farmslot/recipe-cli/harness');
+        stream.error({ ...errorEnvelope(`recipe.${operation}`, error).error }, error);
         process.exitCode = shared.failStream(stream, error, 'RUN_FAILED', shared.EXIT.runtime);
       } else emit.fail(error);
     } finally {
