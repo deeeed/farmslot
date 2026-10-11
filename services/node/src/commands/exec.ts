@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,6 +80,18 @@ export async function resolveLoginPath(): Promise<string> {
   return (await resolveLoginEnvironment()).PATH ?? SYSTEM_PATH_FALLBACK;
 }
 
+/** The standalone deployment flattens services/node into its install root. */
+export function resolveExecPoolDir(
+  moduleUrl = import.meta.url,
+  configured = process.env.FARMSLOT_POOL_DIR,
+): string {
+  if (configured) return path.resolve(configured);
+  const nodeRoot = fileURLToPath(new URL('../../', moduleUrl));
+  const metadata = JSON.parse(readFileSync(path.join(nodeRoot, 'package.json'), 'utf8'));
+  const root = metadata.name === '@farmslot/node' ? path.resolve(nodeRoot, '../..') : nodeRoot;
+  return path.join(root, 'pool');
+}
+
 export async function exec(
   params: NodeExecParams,
   onOutput?: OutputCallback,
@@ -111,9 +124,7 @@ export async function exec(
   }
   if (params.requestScoped) {
     // The daemon knows its deployment, while a login shell may point at another gateway's pool.
-    env.FARMSLOT_POOL_DIR = process.env.FARMSLOT_POOL_DIR
-      ? path.resolve(process.env.FARMSLOT_POOL_DIR)
-      : fileURLToPath(new URL('../../../../pool', import.meta.url));
+    env.FARMSLOT_POOL_DIR = resolveExecPoolDir();
   }
 
   return new Promise((resolve) => {

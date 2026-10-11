@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
-import { exec, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
+import { exec, resolveExecPoolDir, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
 import { ExecRequests } from './exec-requests.js';
 
 test('node command exec preserves a cached non-PATH login export', async () => {
@@ -189,3 +193,22 @@ test(
     assert.equal(result.stdout, '/pool/request-proof');
   },
 );
+
+test('scoped exec resolves the default pool in checkout and deployed layouts', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'node-exec-pool-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const layout of [
+    { name: '@farmslot/node', directory: 'checkout/services/node', pool: 'checkout/pool' },
+    { name: '@farmslot/node-standalone', directory: 'node-dev', pool: 'node-dev/pool' },
+  ]) {
+    const nodeRoot = path.join(root, layout.directory);
+    await mkdir(nodeRoot, { recursive: true });
+    await writeFile(path.join(nodeRoot, 'package.json'), JSON.stringify({ name: layout.name }));
+    const moduleUrl = pathToFileURL(path.join(nodeRoot, 'src/commands/exec.ts')).href;
+    assert.equal(resolveExecPoolDir(moduleUrl, ''), path.join(root, layout.pool));
+    assert.equal(
+      resolveExecPoolDir(moduleUrl, './configured-pool'),
+      path.resolve('./configured-pool'),
+    );
+  }
+});
