@@ -268,11 +268,13 @@ case "$ACTION" in
       fi
       exit 1
     fi
-    if gateway_health && ui_health && launch_is_current; then
+    current_launch=0
+    if launch_is_current; then current_launch=1; fi
+    if gateway_health && ui_health && [[ "$current_launch" == 1 ]]; then
       echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}, UI on :${VITE_PORT}"
       exit 0
     fi
-    if ! launch_is_current; then
+    if [[ "$current_launch" != 1 ]]; then
       echo "[sandbox-dev] stack launch is stale; prepare sandbox to apply current credentials and scripts" >&2
     fi
     if ! gateway_health; then

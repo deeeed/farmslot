@@ -5,16 +5,10 @@ export interface RecoveryBranchState {
   branch: string;
   presence: RecoveryBranchPresence;
   workerNeverStarted: boolean;
-  /** False also covers unreachable or dirty source work on a cross-slot recovery. */
-  sourceWorkSafe: boolean;
 }
 
 /** The entry step and when the name was assigned cannot authorize losing work. */
 export function recoveryBranchAction(state: RecoveryBranchState): RecoveryBranchAction {
-  if (!state.sourceWorkSafe)
-    throw new Error(
-      `Replay cannot preserve ${state.branch}: original work has unpushed commits, dirty files or could not be verified. Push or preserve it before changing slots; no branch was reset or deleted.`,
-    );
   if (state.presence === 'local' || state.presence === 'published') return 'preserve';
   if (state.presence === 'unknown')
     throw new Error(

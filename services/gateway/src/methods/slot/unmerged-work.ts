@@ -34,6 +34,62 @@ export async function localBranchExists(
   );
 }
 
+/** Dirty status has one owner for prepare and release, including framework artifacts. */
+export async function slotHasUserChanges(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<boolean> {
+  const status = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} status --porcelain -z --untracked-files=all`,
+  );
+  if (status.exitCode !== 0)
+    throw prepareGitFailure(`Cannot inspect slot work on ${vars.slotId}`, status);
+  return hasUserSlotChanges(status.stdout, projectJson);
+}
+
+/** A reused source slot may hold another run. Protect this run's named branch,
+ * and its working tree only when HEAD belongs to that branch. Detached work with
+ * no named branch cannot be attributed safely, so retain the conservative guard. */
+export async function assertRecoverySourceWorkSafe(
+  vars: SlotVars,
+  branch: string,
+  projectJson: RawProjectJson,
+  defaultBranch = DEFAULT_BRANCH,
+  exec: typeof execOnSlot = execOnSlot,
+): Promise<void> {
+  const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+  const current = await exec(vars, `${git} symbolic-ref --quiet --short HEAD`);
+  if (current.exitCode !== 0 && current.exitCode !== 1)
+    throw prepareGitFailure('Cannot inspect recovery source branch', current);
+  let includeHead = current.stdout.trim() === branch;
+  if (current.exitCode === 1) {
+    includeHead = true;
+    if (await localBranchExists(vars, branch, exec)) {
+      const tips = await exec(vars, `${git} rev-parse HEAD ${shellQuote(`refs/heads/${branch}`)}`);
+      if (tips.exitCode !== 0)
+        throw prepareGitFailure('Cannot inspect detached recovery source', tips);
+      const [head, branchTip] = tips.stdout.trim().split(/\s+/);
+      includeHead = head === branchTip;
+    }
+  }
+  if (includeHead && (await slotHasUserChanges(vars, projectJson, exec))) {
+    throw new Error(
+      `Replay cannot preserve ${branch}: original work on ${vars.slotId} has dirty files. Commit, push or preserve them before changing slots; no branch was reset or deleted.`,
+    );
+  }
+  await assertPrepareCommitsPublished(
+    vars,
+    branch,
+    exec,
+    defaultBranch,
+    false,
+    undefined,
+    includeHead,
+  );
+}
+
 /** Commits at a ref which no remote-tracking ref contains. Never hide a failed Git check. */
 export async function findUnpushedSlotCommits(
   vars: SlotVars,
@@ -61,9 +117,11 @@ export async function assertPrepareCommitsPublished(
   defaultBranch = DEFAULT_BRANCH,
   preserveUnpublished = false,
   onPreserved?: (ref: string) => void,
+  includeHead = true,
 ): Promise<void> {
-  const refs = new Set(['HEAD']);
+  const refs = new Set<string>(includeHead ? ['HEAD'] : []);
   if (branch && (await localBranchExists(vars, branch, exec))) refs.add(`refs/heads/${branch}`);
+  if (!refs.size) return;
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const remoteResult = await exec(vars, `${git} remote`);
   if (remoteResult.exitCode !== 0)
@@ -111,7 +169,7 @@ export async function assertPrepareCommitsPublished(
     }
     const candidates = new Set<string>();
     for (const remote of probeRemotes)
-      for (const name of [currentBranch, branch, defaultBranch])
+      for (const name of [includeHead ? currentBranch : '', branch, defaultBranch])
         if (name) candidates.add(`refs/remotes/${remote}/${name}`);
     // Cached refs are candidate names only. They never count as publication
     // evidence until that exact ref has been refreshed, including narrow clones.
@@ -215,10 +273,7 @@ export async function findUnmergedSlotWork(
   projectJson: RawProjectJson = {},
 ): Promise<string | null> {
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-  const status = await exec(vars, `${git} status --porcelain -z --untracked-files=all`);
-  if (status.exitCode !== 0)
-    throw new Error(`Cannot inspect slot work on ${vars.slotId}: ${status.stderr}`);
-  const dirty = hasUserSlotChanges(status.stdout, projectJson);
+  const dirty = await slotHasUserChanges(vars, projectJson, exec);
   const unpushed = (await findUnpushedSlotCommits(vars, 'HEAD', exec)).length > 0;
   // Edits in the working tree were never published anywhere: always keep them.
   if (dirty) return unpushed ? 'dirty files + unpushed commits' : 'dirty files';

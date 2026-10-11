@@ -3,6 +3,8 @@
 // Manual live tier: these real-tmux prepare cases take over five seconds.
 // Run only against an existing owned-session tmux socket; never start or kill a server.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { after } from 'node:test';
 import { test } from 'node:test';
 
 import {
@@ -13,6 +15,15 @@ import {
 } from '../../../services/gateway/src/run-engine/stack-base-prepare.test-support.js';
 
 assert.ok(tmuxSandbox, 'An existing guarded tmux socket is required; this manual proof must run');
+const serverPid = () =>
+  execFileSync('tmux', ['-N', '-S', tmuxSandbox!, 'display-message', '-p', '#{pid}'], {
+    encoding: 'utf8',
+  }).trim();
+const originalServerPid = serverPid();
+assert.match(originalServerPid, /^[1-9][0-9]*$/, 'The guarded tmux server must already be running');
+after(() =>
+  assert.equal(serverPid(), originalServerPid, 'Cleanup must preserve the existing tmux server'),
+);
 
 test('a reused linked worktree on the work branch still lands on the stack base', async (t) => {
   const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {

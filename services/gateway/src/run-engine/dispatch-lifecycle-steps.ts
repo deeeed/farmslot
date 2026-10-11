@@ -34,6 +34,7 @@ import {
   recordInitialPrepareBranchState,
   recordWorkerLaunchStarting,
   recoveryMayInitializeBranch,
+  recoverySourceNeedsVerification,
 } from './prepare-branch-state.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -315,12 +316,24 @@ export async function executePrepareStep(
   // existing branch instead: recreating it from main discards the very commits
   // and local evidence the operator is trying to recover.
   const isRecoveryPrepare = prepareReusesRunBranch(current);
+  if (isRecoveryPrepare && !current.branch && ['fix-bug', 'dev'].includes(current.flowType)) {
+    throw new Error(
+      'Replay cannot prepare without a run branch. Replay from grade or write-task to assign it first; existing work was preserved.',
+    );
+  }
   const branchIdentity = current.branch
     ? { slotId: current.slotId, branch: current.branch }
     : undefined;
   await recordInitialPrepareBranchState(runId);
   const branchState = getRun(runId)?.engineState?.prepareBranch;
-  const allowMissingReplayBranch = isRecoveryPrepare && recoveryMayInitializeBranch(getRun(runId)!);
+  const recoveryRun = getRun(runId)!;
+  const allowMissingReplayBranch = isRecoveryPrepare && recoveryMayInitializeBranch(recoveryRun);
+  const verifyRecoverySource = isRecoveryPrepare && recoverySourceNeedsVerification(recoveryRun);
+  if (verifyRecoverySource && current.branch && !branchState?.slotId) {
+    throw new Error(
+      `Replay cannot preserve ${current.branch}: original slot identity is unknown. Restore the run's source binding before retrying; no branch was reset or deleted.`,
+    );
+  }
   const forceNewBranch =
     !isRecoveryPrepare && (current.flowType === 'fix-bug' || current.flowType === 'dev');
 
@@ -400,7 +413,7 @@ export async function executePrepareStep(
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isRecoveryPrepare ? { preserveBranch: true } : {}),
         allowMissingReplayBranch,
-        recoverySourceSlotId: isRecoveryPrepare ? branchState?.slotId : undefined,
+        recoverySourceSlotId: verifyRecoverySource ? branchState?.slotId : undefined,
         beforeBranchSetup: branchIdentity
           ? async () => {
               const latest = getRun(runId);

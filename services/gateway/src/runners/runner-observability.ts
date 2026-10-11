@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 
-import { NODE_SUPPORT_HASH_FILENAME } from '@farmslot/protocol/node/farm-support';
+import { selectedSupportHashPath } from '@farmslot/protocol/node/farm-support';
 
 import type { loadSlotVars } from '../core/config.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
@@ -83,12 +83,7 @@ export function buildRunnerObservabilityInstallCommand(
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
   }
 
-  const supportHashPath = path.posix.join(
-    repo,
-    runtimeDir,
-    '.observability',
-    NODE_SUPPORT_HASH_FILENAME,
-  );
+  const supportHashPath = selectedSupportHashPath(repo, runtimeDir);
   const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
   const supportRoot = '${HOME}/farmslot-node/support/${support_hash}';
   const supportInstaller = `${supportRoot}/${INSTALLER_RELATIVE_PATH}`;

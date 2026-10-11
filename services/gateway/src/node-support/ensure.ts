@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   NODE_SUPPORT_ROOT as REMOTE_SUPPORT_ROOT,
   nodeSupportDir,
+  selectedSupportHashPath,
 } from '@farmslot/protocol/node/farm-support';
 import {
   packMachineNames,
@@ -38,10 +39,7 @@ import {
   slotWriteFiles,
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
-import {
-  NODE_SUPPORT_HASH_FILENAME,
-  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
-} from '../runners/runner-observability.js';
+import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observability.js';
 
 import { collectSupportFiles, type NodeSupportFile, supportHash } from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
@@ -224,9 +222,10 @@ export async function ensureNodeSupportBundle(
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
   const persistSelection = async (how: 'published' | 'current') => {
-    await io.writeFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
+    const selectionPath = selectedSupportHashPath(vars.remoteRepo, runtimeDir);
+    await io.writeFiles(vars, path.posix.dirname(selectionPath), [
       {
-        path: NODE_SUPPORT_HASH_FILENAME,
+        path: path.posix.basename(selectionPath),
         content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
         mode: 0o644,
       },

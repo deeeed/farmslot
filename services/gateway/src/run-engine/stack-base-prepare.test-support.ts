@@ -64,11 +64,11 @@ export async function stackFixture(
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
     // Prepare's tmux phase opens a real session named after the slot.
-    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
+    spawnSync('tmux', ['-N', '-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
       stdio: 'ignore',
     });
     assert.notEqual(
-      spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
+      spawnSync('tmux', ['-N', '-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
         stdio: 'ignore',
       }).status,
       0,

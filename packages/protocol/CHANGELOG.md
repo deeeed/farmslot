@@ -4,10 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Share selected support-bundle paths and remote hook remapping with gateway-free lifecycle commands.
-- Persist worker-launch history independently of replay step timestamps so recovery can safely distinguish first initialization from missing worker work.
-
-- Support targeted Git publication checks and initial branch intent before slot binding.
+- Preserve branch intent, original slot identity and worker-launch history across recovery, and share targeted publication checks and selected support-bundle paths with gateway-free lifecycle commands.
 - Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
 
 - Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.

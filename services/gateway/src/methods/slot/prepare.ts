@@ -36,7 +36,7 @@ import {
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { excludeSlotScaffolding, hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
+import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
@@ -122,7 +122,12 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { assertPrepareCommitsPublished, localBranchExists } from './unmerged-work.js';
+import {
+  assertPrepareCommitsPublished,
+  assertRecoverySourceWorkSafe,
+  localBranchExists,
+  slotHasUserChanges,
+} from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -567,6 +572,8 @@ async function slotPrepareInner(
   // Preserve-mode retries keep the branch ref; every path that resets or recreates
   // refs must prove worker commits are remotely backed before its first destructive Git command.
   const reviewRefreshFlow = params.flowType === 'review-pr' || params.flowType === 'pr-complete';
+  // Publication proofs must be refreshed at each destructive boundary: the
+  // remote can be rewritten between checkout and reset. Cache only within a proof.
   const protectPrepareWork = (preserveUnpublished = reviewRefreshFlow) =>
     assertPrepareCommitsPublished(
       vars,
@@ -581,11 +588,7 @@ async function slotPrepareInner(
         ),
     );
   const resetCleanReplayBranch = async (base: string) => {
-    const status = await execOnSlot(
-      vars,
-      `git -C ${shellQuote(vars.remoteRepo)} status --porcelain -z --untracked-files=all`,
-    );
-    if (status.exitCode !== 0 || hasUserSlotChanges(status.stdout, projectJson))
+    if (await slotHasUserChanges(vars, projectJson))
       throw new Error(
         `Replay cannot safely update ${branch}: working tree is dirty or unreadable. Local work was preserved; commit or preserve the files before retrying`,
       );
@@ -798,20 +801,17 @@ async function slotPrepareInner(
     opts.recoverySourceSlotId &&
     opts.recoverySourceSlotId !== vars.slotId
   ) {
-    const source = await loadSlotVars(opts.recoverySourceSlotId);
-    const status = await execOnSlot(
-      source,
-      `git -C ${shellQuote(source.remoteRepo)} status --porcelain -z --untracked-files=all`,
-    );
-    recoveryBranchAction({
-      branch,
-      presence: 'local',
-      workerNeverStarted: opts.allowMissingReplayBranch === true,
-      sourceWorkSafe: status.exitCode === 0 && !hasUserSlotChanges(status.stdout, projectJson),
-    });
-    // Refresh remote backing on the original node. A destination clone's clean
-    // branch says nothing about unpublished work left in the original clone.
-    await assertPrepareCommitsPublished(source, branch, execOnSlot, defaultBranch);
+    // A destination clone cannot prove that the original clone's latest work
+    // was published. Scope verification to this run, even if the slot was reused.
+    try {
+      const source = await loadSlotVars(opts.recoverySourceSlotId);
+      await assertRecoverySourceWorkSafe(source, branch, projectJson, defaultBranch);
+    } catch (error) {
+      throw new Error(
+        `Replay cannot preserve ${branch}: original source ${opts.recoverySourceSlotId} could not be verified. Push or preserve its work, or restore access before retrying; no branch was reset or deleted. ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
   }
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
@@ -841,7 +841,6 @@ async function slotPrepareInner(
         branch,
         presence,
         workerNeverStarted: opts.allowMissingReplayBranch === true,
-        sourceWorkSafe: true, // Original cross-slot work was verified above.
       });
     } catch (error) {
       throw new Error(

@@ -1,6 +1,39 @@
-import type { Run, RunEngineState, SlotStatus } from '@farmslot/protocol';
+import {
+  resolveRunSlotId,
+  type Run,
+  type RunEngineState,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+
+/** Save historical identity before replay releases or rebinds its slot. Unknown
+ * setup/launch history stays unknown; migration cannot grant fresh-branch authority. */
+export async function recordRecoveryBranchSource(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run ${runId} was removed before recording its recovery source`);
+  if (run.engineState?.prepareBranch) return;
+  const slotId = resolveRunSlotId(run);
+  if (!run.branch && !slotId) return;
+  await persistRunNow(
+    updateRun(runId, {
+      engineState: {
+        ...run.engineState,
+        prepareBranch: { slotId: slotId ?? undefined, branch: run.branch ?? undefined },
+      },
+    }),
+    'historical recovery branch source',
+  );
+}
+
+/** Source access is unnecessary only when neither setup nor worker launch began. */
+export function recoverySourceNeedsVerification(run: Pick<Run, 'branch' | 'engineState'>): boolean {
+  return !(
+    run.engineState?.prepareBranch?.branch === run.branch &&
+    run.engineState.prepareBranch.started === false &&
+    run.engineState.workerLaunchStarted === false
+  );
+}
 
 /** A new binding knows setup has not started; historical recovery does not. */
 export function initialPrepareBranchState(
@@ -18,15 +51,25 @@ export function initialPrepareBranchState(
   return { slotId: run.slotId ?? undefined, branch: run.branch, started: false };
 }
 
-/** A newly minted branch name is known not to have reached setup, even on retry. */
+/** Record a first name without discarding historical source identity or setup uncertainty. */
 export async function updateRunSummaryAndBranch(
   runId: string,
   patch: Pick<Partial<Run>, 'summary' | 'branch'>,
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run ${runId} was removed before assigning its branch`);
+  if (!run.branch && patch.branch && run.engineState?.workerLaunchStarted !== false) {
+    throw new Error(
+      'Replay cannot assign a first branch after an unknown or started worker launch. Restore the original run branch identity before retrying; existing work was preserved.',
+    );
+  }
+  const priorSource = run.engineState?.prepareBranch;
   const intent =
-    !run.branch && patch.branch ? initialPrepareBranchState({ ...run, ...patch }, true) : undefined;
+    !run.branch && patch.branch
+      ? priorSource && !priorSource.branch
+        ? { ...priorSource, branch: patch.branch }
+        : initialPrepareBranchState({ ...run, ...patch }, true)
+      : undefined;
   const updated = updateRun(runId, {
     ...patch,
     ...(intent ? { engineState: { ...run.engineState, prepareBranch: intent } } : {}),

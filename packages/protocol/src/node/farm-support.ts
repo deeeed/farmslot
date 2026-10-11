@@ -8,6 +8,12 @@ export function nodeSupportDir(hash: string, home?: string): string {
   return `${root}/${hash}`;
 }
 
+/** Slot-relative pointer shared by its writer, reader and gateway-free probe.
+ * Self-contained so the probe can serialize it into a remote node process. */
+export function selectedSupportHashPath(repo: string, runtimeDir: string): string {
+  return `${repo.replace(/\/+$/, '')}/${[runtimeDir, '.observability', NODE_SUPPORT_HASH_FILENAME].filter((part) => part && part !== '.').join('/')}`;
+}
+
 /**
  * A remote farm reference, as `{{farmslot_dir}}` expands on a node: a file
  * under `projects/` or `scripts/`, or the bare root handed to a farm script

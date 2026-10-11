@@ -49,6 +49,7 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import { recordRecoveryBranchSource } from '../../run-engine/prepare-branch-state.js';
 import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
@@ -1177,6 +1178,12 @@ export async function runReplayStep(
     if (hooks.afterGenerationBump) await hooks.afterGenerationBump();
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+
+    if (targetIdx >= 0 && targetIdx <= prepareIdx) {
+      await recordRecoveryBranchSource(params.runId);
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      assertNativeReplayCurrent();
+    }
 
     if (replayStepName === PS.FIND_SLOT && existing.status === 'blocked' && existing.slotId) {
       const slot = await readSlotRow(existing.slotId);

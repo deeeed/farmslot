@@ -229,3 +229,49 @@ test('worker launch history persists before dispatch and survives replay resets'
   const persisted = JSON.parse(readFileSync(path.join(root, run.id + '.json'), 'utf8'));
   assert.equal(persisted.engineState.workerLaunchStarted, true);
 });
+
+test('source verification is skipped only for matching durable no-setup and no-worker history', async () => {
+  const { recoverySourceNeedsVerification } = await import('./prepare-branch-state.js');
+  const run = {
+    branch: 'work',
+    engineState: {
+      prepareBranch: { slotId: 'source', branch: 'work', started: false },
+      workerLaunchStarted: false,
+    },
+  };
+  assert.equal(recoverySourceNeedsVerification(run), false);
+  for (const workerLaunchStarted of [true, undefined]) {
+    assert.equal(
+      recoverySourceNeedsVerification({
+        ...run,
+        engineState: { ...run.engineState, workerLaunchStarted },
+      }),
+      true,
+    );
+  }
+  assert.equal(recoverySourceNeedsVerification({ ...run, branch: 'another' }), true);
+  assert.equal(
+    recoverySourceNeedsVerification({
+      ...run,
+      engineState: { ...run.engineState, prepareBranch: { branch: 'work' } },
+    }),
+    true,
+  );
+});
+
+test('first branch assignment refuses unknown or previously launched unnamed worker work', async () => {
+  for (const workerLaunchStarted of [true, undefined]) {
+    const run = createRun(
+      { flowType: 'fix-bug', project: 'fixture', ticketOrPr: 'TEST-930' },
+      { deferBackgroundPersist: true },
+    );
+    // Historical absence cannot be erased by updateRun, so this fixture primes
+    // the store object before any replacement state is persisted.
+    run.engineState = { workerLaunchStarted };
+    await assert.rejects(
+      updateRunSummaryAndBranch(run.id, { branch: 'work' }),
+      /Restore the original run branch identity/,
+    );
+    assert.equal(getRun(run.id)?.branch, null);
+  }
+});

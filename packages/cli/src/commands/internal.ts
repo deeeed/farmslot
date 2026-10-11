@@ -21,6 +21,7 @@ import {
   NODE_SUPPORT_ROOT,
   nodeSupportDir,
   remapRemoteFarmRefs,
+  selectedSupportHashPath,
 } from '@farmslot/protocol/node/farm-support';
 import {
   computeFixturePlan,
@@ -167,7 +168,9 @@ export function selectedNodeSupportProbe(): string {
 const fs = require('node:fs'), path = require('node:path');
 const NODE_SUPPORT_ROOT = ${JSON.stringify(NODE_SUPPORT_ROOT)};
 const nodeSupportDir = ${nodeSupportDir.toString()};
-const file = path.join(process.argv[1], process.argv[2], '.observability', ${JSON.stringify(NODE_SUPPORT_HASH_FILENAME)});
+const NODE_SUPPORT_HASH_FILENAME = ${JSON.stringify(NODE_SUPPORT_HASH_FILENAME)};
+const selectedSupportHashPath = ${selectedSupportHashPath.toString()};
+const file = selectedSupportHashPath(process.argv[1], process.argv[2]);
 if (!fs.existsSync(file)) { process.stdout.write('null'); } else {
   const hash = fs.readFileSync(file, 'utf8').trim();
   const dir = nodeSupportDir(hash, require('node:os').homedir());
