@@ -15,6 +15,7 @@ import {
   optionalValueOption,
   valueOption,
 } from '../src/harness/command-contract.js';
+import { handleRun } from '../src/harness/commands/run.js';
 import { recipeConformanceIdentity } from '../src/harness/conformance.js';
 import { harnessContext } from '../src/harness/context-state.js';
 import { sourceSnapshot } from '../src/harness/execution-provenance.js';
@@ -259,6 +260,29 @@ test('host preserves both invocation and finalization failures', async (t) => {
       assert.deepEqual(
         error.errors.map((failure) => failure.message),
         ['invocation failed', 'finalization failed'],
+      );
+      return true;
+    },
+  );
+});
+
+test('run preserves a thrown invocation failure when provider finalization also fails', async (t) => {
+  const options = fixture(t);
+  await assert.rejects(
+    withProjectRecipeHost(
+      { ...options, command: 'run', options: { finalizeFail: true } },
+      ({ engine, finalize }) =>
+        handleRun(['--target', options.cwd, '--adapter', 'headless', '--json'], {
+          engine,
+          beforeResult: finalize,
+        }),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.match(error.message, /run requires <recipe.json>.*finalization failed/u);
+      assert.deepEqual(
+        error.errors.map((failure: Error) => failure.message),
+        ['run requires <recipe.json>.', 'finalization failed'],
       );
       return true;
     },

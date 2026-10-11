@@ -214,8 +214,8 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       message: error instanceof Error ? error.message : String(error),
       userAction: `${host} doctor --target ${shellQuote(target)} --json`,
     });
-    await beforeResult();
     stream.complete('fail', exitCode);
+    // The owning host finalizes after a throw and retains both failure causes.
     throw error;
   } finally {
     restoreStdout();

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import {
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -11,7 +12,11 @@ import {
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
 
-import { recipeExecutionSignal, runOwnedRecipeProcess } from '../src/adapters/core.js';
+import {
+  recipeExecutionSignal,
+  runOwnedRecipeProcess,
+  withRecipeExecutionSignal,
+} from '../src/adapters/core.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 
 const actionManifest: RecipeActionManifestDocument = {
@@ -59,6 +64,32 @@ const recipeDocument = {
     },
   },
 };
+
+test('independent runner copies share main and cleanup signal scopes', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-signal-copy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+  const copy = path.join(root, 'execution-signal.ts');
+  await copyFile(new URL('../src/core/execution-signal.ts', import.meta.url), copy);
+  const other: typeof import('../src/core/execution-signal.js') = await import(
+    pathToFileURL(copy).href
+  );
+  const owner = new AbortController();
+  const cleanup = new AbortController();
+  owner.abort('SIGTERM');
+  await withRecipeExecutionSignal(owner.signal, async () => {
+    await Promise.resolve();
+    assert.equal(other.recipeExecutionSignal(), owner.signal);
+    await other.withRecipeExecutionSignal(cleanup.signal, async () => {
+      await Promise.resolve();
+      assert.equal(recipeExecutionSignal(), cleanup.signal);
+      assert.equal(recipeExecutionSignal()?.aborted, false);
+    });
+    assert.equal(recipeExecutionSignal(), owner.signal);
+  });
+  assert.equal(recipeExecutionSignal(), undefined);
+  assert.equal(other.recipeExecutionSignal(), undefined);
+});
 
 for (const nested of [false, true]) {
   for (const when of ['before run', 'during action', 'action rejection', 'after action'] as const) {
