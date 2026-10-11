@@ -1,5 +1,6 @@
 import type { RecipeFailureCause } from '@farmslot/protocol';
 
+import { recipeFailureTraceFields } from './failure.js';
 import type { ActionResult, TraceEntry, TraceWriter } from './types.js';
 
 export function recordSyntheticFailure(
@@ -19,6 +20,7 @@ export function recordSyntheticFailure(
     ok: false,
     cause_class: causeClass,
     error: error.message,
+    ...recipeFailureTraceFields(error),
   });
 }
 

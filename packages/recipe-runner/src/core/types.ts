@@ -15,6 +15,8 @@ export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
 
 export interface RecipeRunRequest {
+  /** Cancels execution; authored teardown runs without the cancelled signal. */
+  signal?: AbortSignal;
   recipePath?: string;
   recipeDocument?: unknown;
   artifactsDir: string;
@@ -252,6 +254,7 @@ export interface RecipeActionPhase {
 }
 
 export interface ActionExecutionContext {
+  signal?: AbortSignal;
   nodeId: string;
   recipe: unknown;
   projectRoot: string;
