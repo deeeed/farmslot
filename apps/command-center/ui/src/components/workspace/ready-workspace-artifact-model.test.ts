@@ -16,6 +16,18 @@ function payload(overrides: Record<string, unknown>): ReadyGatePayload {
   return overrides as unknown as ReadyGatePayload;
 }
 
+test('CI execution logs use the existing artifact collection and viewer path', () => {
+  const path = 'artifacts/deterministic-checks/CHECKLIST.md/check.log';
+  const artifacts = readyWorkspaceAllArtifacts(
+    payload({
+      prPackage: {
+        deterministicChecks: [{ logPath: path, status: 'passed', exitCode: 0 }],
+      },
+    }),
+  );
+  assert.deepEqual(artifacts, [{ path, purpose: 'ci-parity-log' }]);
+});
+
 test('ready workspace artifact model merges package, evidence, and review artifacts', () => {
   const artifacts = readyWorkspaceAllArtifacts(
     payload({

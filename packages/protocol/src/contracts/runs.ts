@@ -24,6 +24,7 @@ import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.j
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
 import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
+import type { DeterministicChecklistCheck } from './worker-terminal.js';
 
 // ─── Runs ───
 
@@ -757,6 +758,8 @@ export interface ReadyGatePrPackage {
   selectedEvidenceKeys?: string[];
   validationSummaryPath?: string | null;
   validationSummaryHash?: string | null;
+  /** Verified local command receipts for this package's source inputs, ADR-064. */
+  deterministicChecks?: DeterministicChecklistCheck[];
   reviewArtifactIds: string[];
   dispatchMode?: 'interactive' | 'autonomous' | 'validation';
   gatePolicy: GatePolicy;

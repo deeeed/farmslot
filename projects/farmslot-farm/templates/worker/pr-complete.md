@@ -11,11 +11,15 @@
 - [ ] **5. Read inherited context** — review `{{TASK_DIR}}/inputs/inherited/` and any materialized family artifacts before making changes.
 - [ ] **6. Fix the reported PR follow-up issue** — keep changes minimal and scoped to the current follow-up.
 - [ ] **7. Validate** — run typecheck and focused tests:
+
   ```bash
   (cd "{{REPO}}/apps/command-center" && yarn typecheck)
   # Replace the example path with the affected gateway test files.
   cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
+
+{{CI_PARITY_STEP}}
+
 - [ ] **8. Commit and push — REQUIRED before marking complete:**
   ```bash
   git status --porcelain   # must be empty after committing
@@ -24,7 +28,7 @@
   ```
   The gateway verifies the branch is pushed before accepting your completion signal; an unpushed `mark complete` blocks the run.
 - [ ] **9. Behind-main + merge-tree conflict probe** — before signaling re-review /
-  completion ready (after must-fix commits):
+      completion ready (after must-fix commits):
   ```bash
   # Fail closed on fetch: do not trust a stale origin/main tracking ref.
   if ! git fetch origin main; then

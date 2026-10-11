@@ -14,6 +14,7 @@ import {
   modelsMatch,
   type PublicationStatus,
   type PublicationTarget,
+  type ReadyGatePayload,
   type ReadyGatePrPackage,
   type ReviewDepthPolicy,
   type Run,
@@ -32,6 +33,7 @@ import {
 } from '../integrations/pr-linkage.js';
 import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
+import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -50,6 +52,7 @@ import {
   ledgerFromArtifactText,
 } from '../tasks/acceptance-status.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
+import { validateDeterministicChecksForRun } from '../tasks/worker-terminal-contract.js';
 
 import { refreshArtifactMirror } from './artifact-mirror.js';
 import {
@@ -426,6 +429,10 @@ export async function renderCurrentDescription(
   artifacts?: ArtifactRef[],
 ): Promise<{ draftTitle: string; draftBody: string }> {
   if (!current.taskFile) throw new Error('Approved package requires a task directory');
+  const deterministicChecks = await currentDeterministicChecks(current);
+  if (stableJson(deterministicChecks) !== stableJson(preparedPackage.deterministicChecks ?? [])) {
+    throw packageChangedError(current.id, 'deterministic CI receipts changed; refresh the package');
+  }
   const report = await readWorkerReport(current);
   // Same body the package was prepared with; a run without project config
   // (fixtures, imported runs) keeps the default branch, as preparation does.
@@ -504,6 +511,17 @@ export function isPublishedStatus(status: PublicationStatus | undefined | null):
 
 export function publicationStatusForRun(run: Run | null | undefined): PublicationStatus {
   return run?.engineState?.publishGate?.publicationStatus ?? 'not_published';
+}
+
+async function currentDeterministicChecks(run: Run) {
+  // Evidence-only refreshes retain the published source proof without taking a new slot.
+  if (isPublishedStatus(publicationStatusForRun(run))) {
+    const payload = latestResolvedHumanGateDecision(run.decisions)?.payload as
+      | ReadyGatePayload
+      | undefined;
+    return payload?.prPackage?.deterministicChecks ?? [];
+  }
+  return validateDeterministicChecksForRun(run);
 }
 
 export function isArtifactOnlyRun(run: Pick<Run, 'completionPolicy'> | null | undefined): boolean {
@@ -632,6 +650,8 @@ export async function prepareCompletionPackage(
   const before = getRun(runId);
   if (!before) throw new Error(`Run not found: ${runId}`);
 
+  const deterministicChecks = await currentDeterministicChecks(before);
+
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective: true,
     suppressPrMutation: true,
@@ -758,6 +778,7 @@ export async function prepareCompletionPackage(
       }),
     validationSummaryPath: validation.path,
     validationSummaryHash: validation.hash,
+    ...(deterministicChecks.length ? { deterministicChecks } : {}),
     reviewArtifactIds: independentReviews.flatMap((review) => review.artifactPaths ?? [review.id]),
     dispatchMode: run.mode,
     gatePolicy: gatePolicyForRun(run),
@@ -924,6 +945,7 @@ export async function runCompletionPipeline(
     options?.suppressPrMutation ||
     isNoCodeTerminalDisposition(updatedRun.metrics.disposition) ||
     isArtifactOnlyRun(updatedRun);
+  if (!suppressPrMutation) await currentDeterministicChecks(updatedRun);
 
   // Resolve CI repo
   const pv = await loadProjectVars(updatedRun.project).catch(() => null);

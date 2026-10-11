@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Validate deterministic local CI receipts before package preparation and publication, including current source inputs and runtime support.
+
 - Publish-approval action ids and review-depth counting come from `@farmslot/protocol`, shared with the clients' publish guards; gate behavior is unchanged.
 - PR-producing worker templates record acceptance verdicts and derive recipe coverage before completion, including development and interactive sessions.
 

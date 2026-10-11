@@ -165,6 +165,7 @@
   },
   "ci": {
     "enabled": true,
+    "local_check": "yarn ci:local",
     "repo": "deeeed/farmslot"
   },
   "publication_review": {

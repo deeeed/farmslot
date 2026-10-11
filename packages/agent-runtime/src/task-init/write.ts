@@ -2,6 +2,7 @@
 // plane and a harness both call it, so the two surfaces cannot drift.
 
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -25,6 +26,17 @@ export const MARK_SHIM = 'mark';
 export const MARK_COMMAND_ENV = 'FARMSLOT_MARK_CMD';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const require = createRequire(import.meta.url);
+const { deterministicChecks } = require('../../scripts/worker-terminal-contract.cjs') as {
+  deterministicChecks: {
+    freeze: (
+      contract: WorkerTerminalContractDocument,
+      markdown: string,
+      checklist: string,
+      commands?: Record<string, string>,
+    ) => WorkerTerminalContractDocument;
+  };
+};
 
 /**
  * Quote one word for the shim's default command: double quotes keep spaces
@@ -63,6 +75,8 @@ export interface WriteTaskDirInput {
   markCommand?: string;
   handoff: HandoffMetadata;
   terminalContract: WorkerTerminalContractDocument;
+  /** Project command references made available to the selected checklist. */
+  deterministicCommands?: Record<string, string>;
   /** Ticket data as fetched, written to inputs/bug-input.json when present. */
   bugInput?: unknown;
 }
@@ -85,7 +99,13 @@ export async function writeTaskDir(input: WriteTaskDirInput): Promise<WrittenTas
   const taskDocument = path.join(taskDir, TASK_DOCUMENT);
   await writeFile(taskDocument, input.taskMarkdown, 'utf-8');
 
-  return { taskDocument, ...(await ensureTaskRuntime(input, true)) };
+  const terminalContract = deterministicChecks.freeze(
+    input.terminalContract,
+    input.checklistMarkdown ?? input.taskMarkdown,
+    input.checklistMarkdown === null ? TASK_DOCUMENT : EXECUTION_CHECKLIST_DOCUMENT,
+    input.deterministicCommands,
+  );
+  return { taskDocument, ...(await ensureTaskRuntime({ ...input, terminalContract }, true)) };
 }
 
 /** Initialize existing author-owned tasks through the same runtime producer. */
@@ -94,6 +114,17 @@ export async function ensureTaskRuntime(
   replaceExisting = false,
 ): Promise<Omit<WrittenTaskDir, 'taskDocument'>> {
   const taskDir = path.resolve(input.taskDir);
+  if (input.checklistMarkdown !== null) {
+    input = {
+      ...input,
+      terminalContract: deterministicChecks.freeze(
+        input.terminalContract,
+        input.checklistMarkdown,
+        EXECUTION_CHECKLIST_DOCUMENT,
+        input.deterministicCommands,
+      ),
+    };
+  }
   if (!replaceExisting) {
     const existing = async (name: string) => {
       try {

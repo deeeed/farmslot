@@ -259,6 +259,8 @@ export interface ProjectConfig {
   health: Record<string, string>;
   ci: {
     repo: string;
+    /** Portable local command used by declared CI-parity checklist steps. */
+    localCheck?: string;
     prLabels?: string[];
     prTitleSuffix?: string;
     watchChecks: string[];

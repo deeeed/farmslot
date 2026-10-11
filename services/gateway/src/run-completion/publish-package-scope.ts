@@ -45,6 +45,8 @@ import { normalizeEvidenceManifestArtifactPath } from './evidence-manifest.js';
  * reads recipe-run/report.md) when the run died before writing its markers.
  */
 export const PUBLISH_PACKAGE_STEP_DIRS = [
+  // Task-owned command receipts and logs displayed by the publication gate.
+  'deterministic-checks',
   // Worker recipe library; pushRunRecipeToSlot replays from the mirror's copy.
   'recipe-library',
   // Eval harness hook logs and verify output (eval-harness-lifecycle.ts).

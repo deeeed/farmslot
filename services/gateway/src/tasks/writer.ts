@@ -36,7 +36,12 @@ import {
 } from '@farmslot/protocol';
 import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
-import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+} from '../core/config.js';
 import { collectPlaceholderTokens, expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
@@ -1222,6 +1227,8 @@ export async function writeTaskFile(
     name: 'render-template',
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
+  vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
+  vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   const content = renderTemplatePlaceholders(
     template,
     vars,
@@ -1368,6 +1375,7 @@ export async function writeTaskFile(
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    deterministicCommands: vars,
   });
   await writeQaInput(taskAbsDir, {
     ...run,

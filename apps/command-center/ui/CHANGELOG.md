@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show local CI commands, exit codes and execution logs in the publication package.
+
 - Share decision candidate selection and improvement Apply routing and validation results with Companion.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.

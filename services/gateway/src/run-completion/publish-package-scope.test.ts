@@ -30,7 +30,7 @@ test('buildPublishPackageScanCommand lists the scope in one worker-side command'
   assert.ok(lines.includes(`find . -mindepth 1 -maxdepth 1 ${list} ${keep}`));
   assert.ok(
     lines.includes(
-      `  for p in './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
+      `  for p in './deterministic-checks' './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
     ),
   );
   const markerFind = lines.find((line) => line.startsWith('  find . -maxdepth 4 '));
@@ -59,6 +59,23 @@ test('buildPublishPackageScanCommand lists the scope in one worker-side command'
     ),
   );
   assert.equal(lines.at(-2), 'echo "S $scan_status"');
+});
+
+test('the bounded worker scan includes command receipts and execution logs', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ci-mirror-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'deterministic-checks', 'CHECKLIST.md');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, '1.json'), '{}\n');
+  await writeFile(path.join(dir, 'run.log'), 'local check passed\n');
+  const command = buildPublishPackageScanCommand(root, { namedPaths: [], snapshotRoot: null });
+  const scanned = parsePublishPackageScan(
+    execFileSync('bash', ['-c', command], { encoding: 'utf8' }),
+  );
+  assert.deepEqual(scanned.entries.map((entry) => entry.path).sort(), [
+    'deterministic-checks/CHECKLIST.md/1.json',
+    'deterministic-checks/CHECKLIST.md/run.log',
+  ]);
 });
 
 test('the scan command finds recipe packages by marker within the depth bound, prunes excluded trees and lists links', async (t) => {

@@ -10,6 +10,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
   defaultReviewDepthPolicy,
+  type DeterministicChecklistCheck,
   effectiveRequiredReviewCount,
   type IndependentReviewStatus,
   isPublishApprovalAction,
@@ -61,6 +62,7 @@ export interface GateReviewSummary {
   files: number | null;
   additions: number | null;
   deletions: number | null;
+  deterministicChecks?: DeterministicChecklistCheck[];
 }
 
 export interface GateReviewVerdict {
@@ -123,6 +125,9 @@ export function gateReviewSummary(decision: GateDecision): GateReviewSummary {
   const diffStat = prPackage?.diffStat ?? payload?.diffStat ?? null;
   return {
     title: payload?.currentDescription?.title || prPackage?.draftTitle || decision.title,
+    ...(prPackage?.deterministicChecks?.length
+      ? { deterministicChecks: prPackage.deterministicChecks }
+      : {}),
     target: prPackage?.publicationTarget ?? payload?.publicationTarget ?? null,
     branch: prPackage?.branch || payload?.branch || null,
     files: diffStat?.files ?? null,

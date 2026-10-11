@@ -1,8 +1,10 @@
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
   checklistBasenameFromTaskPath,
+  type DeterministicChecklistCheck,
   type ExecResult,
   type Run,
   taskDirRelPath,
@@ -16,6 +18,7 @@ import {
 import {
   farmslotRoot,
   getOrchestratorTaskRoot,
+  getProjectField,
   loadProjectVars,
   loadSlotVars,
   resolveProjectTaskDirName,
@@ -33,6 +36,7 @@ import { subtaskTerminalRefusal } from './subtasks.js';
 const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
+  deterministicChecks,
   lintWorkerTemplateAgainstContract,
   templateUsesTerminalMark,
 } = require('@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs') as {
@@ -46,6 +50,16 @@ const {
     contract: WorkerTerminalContractDocument,
   ) => string[];
   templateUsesTerminalMark: (content: string) => boolean;
+  deterministicChecks: {
+    outputPrefix: string;
+    declarations: (markdown: string, checklist: string) => Array<{ stepNumber: number }>;
+    freeze: (
+      contract: WorkerTerminalContractDocument,
+      markdown: string,
+      checklist: string,
+      commands: Record<string, string>,
+    ) => WorkerTerminalContractDocument;
+  };
 };
 
 export {
@@ -120,7 +134,10 @@ export async function validateTerminalSignalArtifacts(
   signalJsonPath: string,
   signal: WorkerSignal,
   checklistTaskFile?: string | null,
-): Promise<{ ok: true } | { ok: false; kind: 'artifact' | 'infrastructure'; message: string }> {
+): Promise<
+  | { ok: true; deterministicChecks?: DeterministicChecklistCheck[] }
+  | { ok: false; kind: 'artifact' | 'infrastructure'; message: string }
+> {
   const terminalCommand = artifactTerminalCommandForSignal(signal);
   if (!terminalCommand) return { ok: true };
 
@@ -201,7 +218,18 @@ export async function validateTerminalSignalArtifacts(
     timeout: 60_000,
     maxBuffer: 256 * 1024,
   });
-  if (result.exitCode === 0) return { ok: true };
+  if (result.exitCode === 0) {
+    const resultLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith(deterministicChecks.outputPrefix));
+    if (!resultLine) return { ok: true };
+    const checks = JSON.parse(
+      resultLine.slice(deterministicChecks.outputPrefix.length),
+    ) as DeterministicChecklistCheck[];
+    if (!Array.isArray(checks))
+      throw new Error('Invalid deterministic-check projection from the artifact checker');
+    return { ok: true, deterministicChecks: checks };
+  }
 
   const detail = `${result.stderr}\n${result.stdout}`
     .trim()
@@ -264,6 +292,25 @@ export async function syncTerminalContractForFlowOnSlot(
     { mode },
   );
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
+  const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check');
+  const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
+  const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
+  if (!checklistBasename && (await slotFileExists(vars, parentContractPath))) {
+    // Role cleanup restores the initialized parent's command, including TASK.md
+    // for interactive dev. Current project configuration must not rewrite it.
+    const initialized = JSON.parse(
+      await slotReadFile(vars, parentContractPath),
+    ) as WorkerTerminalContractDocument;
+    if (initialized.deterministicChecks) {
+      contract = { ...contract, deterministicChecks: initialized.deterministicChecks };
+    }
+  } else if (localCheck) {
+    const checklist = checklistBasename ?? 'CHECKLIST.md';
+    const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
+    contract = deterministicChecks.freeze(contract, markdown, checklist, {
+      'ci.local_check': localCheck,
+    });
+  }
   await writeTextFileOnSlot(
     vars,
     taskDirRelPath(
@@ -290,10 +337,7 @@ export async function loadTerminalContractForRun(
 
   try {
     const vars = await loadSlotVars(slotId);
-    const taskDir = resolveProjectTaskDirName(projectVars.projectJson);
-    const orchRoot = getOrchestratorTaskRoot(run.project, projectVars.projectJson);
-    const taskRel = resolveTaskRelDir(run.taskFile, orchRoot) ?? '';
-    const contractPath = `${vars.remoteRepo}/${taskDir}/${taskRel}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
+    const contractPath = `${terminalTaskDirOnSlot(run, vars, projectVars)}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
     const result = await execOnSlot(vars, `cat ${shellQuote(contractPath)} 2>/dev/null`);
     if (result.exitCode === 0 && result.stdout.trim()) {
       return JSON.parse(result.stdout) as WorkerTerminalContractDocument;
@@ -302,4 +346,97 @@ export async function loadTerminalContractForRun(
     // fall back to project/builtin contract
   }
   return fallback;
+}
+
+function terminalTaskDirOnSlot(
+  run: Run,
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  projectVars: Awaited<ReturnType<typeof loadProjectVars>>,
+): string {
+  const taskDir = resolveProjectTaskDirName(projectVars.projectJson);
+  const orchRoot = getOrchestratorTaskRoot(run.project, projectVars.projectJson);
+  const taskRel = resolveTaskRelDir(run.taskFile!, orchRoot) ?? '';
+  return `${vars.remoteRepo}/${taskDir}/${taskRel}`;
+}
+
+/** Role cleanup clears activeTaskFile, but a completed fix owns the final source proof. */
+export function deterministicChecklistTaskFileForPublication(run: Run): string | null {
+  const fixes = (run.agentContexts ?? [])
+    .filter(
+      (context) =>
+        (context.role === 'self-review-fix' || context.role === 'ci-fix') &&
+        context.status === 'complete' &&
+        context.taskFile,
+    )
+    .sort((a, b) =>
+      (b.lastSignalAt ?? b.completedAt ?? b.attemptStartedAt ?? '').localeCompare(
+        a.lastSignalAt ?? a.completedAt ?? a.attemptStartedAt ?? '',
+      ),
+    );
+  const active = checklistBasenameFromTaskPath(run.activeTaskFile);
+  if (active === 'SELF-REVIEW-FIX.md' || active === 'CI-FIX.md') return run.activeTaskFile!;
+  return fixes[0]?.taskFile ?? run.taskFile;
+}
+
+/** Revalidate task-owned receipts on the selected checkout before publication. */
+export async function validateDeterministicChecksForRun(
+  run: Run,
+): Promise<DeterministicChecklistCheck[]> {
+  if (!run.taskFile) return [];
+  const taskFile = deterministicChecklistTaskFileForPublication(run);
+  const checklist = checklistBasenameFromTaskPath(taskFile);
+  const input = checklist
+    ? terminalContractInputForChecklist(checklist)
+    : WORKER_TERMINAL_CONTRACT_INPUT;
+  const vars = run.slotId ? await loadSlotVars(run.slotId) : null;
+  const projectVars = vars ? await loadProjectVars(run.project) : null;
+  const taskDir =
+    vars && projectVars
+      ? terminalTaskDirOnSlot(run, vars, projectVars)
+      : path.dirname(run.taskFile);
+  const readTaskFile = async (relative: string): Promise<string | null> => {
+    const file = path.join(taskDir, relative);
+    if (vars) return (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null;
+    try {
+      return await readFile(file, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return null;
+    }
+  };
+  const content = await readTaskFile(input);
+  const contract: WorkerTerminalContractDocument | null = content ? JSON.parse(content) : null;
+  if (!contract?.deterministicChecks?.length) {
+    for (const checklist of new Set([
+      'CHECKLIST.md',
+      'TASK.md',
+      ...(taskFile ? [path.basename(taskFile)] : []),
+    ])) {
+      const markdown = (await readTaskFile(checklist)) ?? '';
+      if (deterministicChecks.declarations(markdown, checklist).length) {
+        throw new Error(
+          'Deterministic CI gate blocked: declared checks have no frozen task contract. Restore or initialize the task contract.',
+        );
+      }
+    }
+    return [];
+  }
+  if (!run.slotId)
+    throw new Error('Deterministic CI checks require the run checkout; slot is missing');
+  const result = await validateTerminalSignalArtifacts(
+    run.slotId,
+    `${taskDir}/SIGNAL.json`,
+    {
+      status: 'complete',
+      timestamp: new Date().toISOString(),
+    },
+    taskFile,
+  );
+  if (!result.ok) throw new Error(`Deterministic CI gate blocked: ${result.message}`);
+  if (!result.deterministicChecks?.length) {
+    throw new Error(
+      'Deterministic CI gate blocked: the node checker cannot verify execution receipts. Update the Farmslot runtime.',
+    );
+  }
+  return result.deterministicChecks;
 }
