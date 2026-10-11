@@ -209,12 +209,12 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       typeof (error as { exitCode?: unknown }).exitCode === 'number'
         ? (error as { exitCode: number }).exitCode
         : EXIT.runtime;
+    await beforeResult();
     stream.error({
       code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
       message: error instanceof Error ? error.message : String(error),
       userAction: `${host} doctor --target ${shellQuote(target)} --json`,
     });
-    await beforeResult();
     stream.complete('fail', exitCode);
     throw error;
   } finally {

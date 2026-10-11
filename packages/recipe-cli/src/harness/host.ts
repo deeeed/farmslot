@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { RECIPE_PROCESS_SIGNALS } from '@farmslot/recipe-runner/adapters/core';
+
 /**
  * Who is running the generic harness commands. A product harness (`mm-harness`)
  * configures this once at startup, so every message and environment variable
@@ -66,13 +68,11 @@ export async function withRecipeSignals<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const scoped = signal ?? controller.signal;
-  const handlers = (signal ? [] : (['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const)).map(
-    (name) => {
-      const handler = (): void => controller.abort(name);
-      process.on(name, handler);
-      return { name, handler };
-    },
-  );
+  const handlers = (signal ? [] : RECIPE_PROCESS_SIGNALS).map((name) => {
+    const handler = (): void => controller.abort(name);
+    process.on(name, handler);
+    return { name, handler };
+  });
   try {
     return await invoke(scoped);
   } finally {

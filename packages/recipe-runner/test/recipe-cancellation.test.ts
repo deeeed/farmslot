@@ -172,6 +172,49 @@ for (const nested of [false, true]) {
   }
 }
 
+for (const ownerExits of [false, true]) {
+  test(
+    `foreground timeout closes inherited pipes when the owner ${ownerExits ? 'already exited' : 'is running'}`,
+    { timeout: 2500, skip: process.platform === 'win32' },
+    async (t) => {
+      let owner = 0;
+      let descendant = 0;
+      t.after(() => {
+        for (const pid of [owner, descendant]) {
+          if (!pid) continue;
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          }
+        }
+      });
+      const source = `
+        const { spawn } = require('node:child_process');
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 50)'], { stdio: 'inherit' });
+        process.stdout.write(String(child.pid));
+        ${ownerExits ? 'child.unref();' : ''}
+      `;
+      const started = Date.now();
+      const result = await runOwnedRecipeProcess(process.execPath, ['-e', source], {
+        cwd: os.tmpdir(),
+        ownProcessGroup: false,
+        timeoutMs: 250,
+        onSpawn(pid) {
+          owner = pid;
+          return undefined;
+        },
+        onOutput(chunk) {
+          descendant = Number(Buffer.from(chunk).toString());
+        },
+      });
+      assert.equal(result.timedOut, true);
+      assert.ok(descendant > 0, 'the inherited-pipe holder was started');
+      assert.ok(Date.now() - started < 1500, 'timeout settled without waiting for the descendant');
+    },
+  );
+}
+
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'timeout'] as const) {
   test(
     `owned command group is gone after ${signal}`,

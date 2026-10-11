@@ -19,6 +19,8 @@ import type { ActionAdapter, ActionExecutionContext } from '../core/types.js';
 
 export { assertRecipeActive } from '../core/failure.js';
 
+export const RECIPE_PROCESS_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
+
 export function createStandardCoreAdapters(
   options: { actions?: Iterable<string> } = {},
 ): ActionAdapter[] {
@@ -381,16 +383,26 @@ export function runOwnedRecipeProcess(
         }
       }
     };
+    const finishStopping = (): void => {
+      signalTree('SIGKILL');
+      // Foreground callers cannot kill the shared group. Descendants must not
+      // hold this timed-out invocation open through inherited output pipes.
+      if (!ownsProcessGroup) {
+        child.stdout!.destroy();
+        child.stderr!.destroy();
+      }
+    };
     const stop = (signal: NodeJS.Signals): void => {
       if (stopping || settled) return;
       stopping = true;
       signalTree(signal);
-      escalation = setTimeout(() => signalTree('SIGKILL'), 1000);
+      if (leafExited) finishStopping();
+      else escalation = setTimeout(finishStopping, 1000);
     };
     const abort = (): void => {
       const reason: unknown = options.signal?.reason;
       stop(
-        typeof reason === 'string' && ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'].includes(reason)
+        RECIPE_PROCESS_SIGNALS.some((name) => name === reason)
           ? (reason as NodeJS.Signals)
           : 'SIGTERM',
       );
@@ -404,7 +416,7 @@ export function runOwnedRecipeProcess(
     child.once('exit', () => {
       leafExited = true;
       // A shell may exit while a descendant still holds the output pipe open.
-      if (stopping) signalTree('SIGKILL');
+      if (stopping) finishStopping();
     });
     child.once('close', (code, signal) => {
       if (stopping) signalTree('SIGKILL');

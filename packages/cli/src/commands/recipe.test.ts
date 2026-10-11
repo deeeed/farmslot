@@ -26,7 +26,7 @@ function discovery(t: TestContext, flags: string[]) {
     }),
   );
   fs.writeFileSync(path.join(root, 'provider.mjs'), "throw new Error('unapproved import');");
-  const env = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, FARMSLOT_HOME: root };
   for (const name of [
     'FARMSLOT_ROOT',
     'FARMSLOT_POOL_DIR',
@@ -408,6 +408,7 @@ test('public run JSONL reports finalizer failure once after the command effect',
     .split('\n')
     .map((line) => JSON.parse(line));
   assert.equal(events.filter((event) => event.event === 'complete').length, 1);
+  assert.equal(events.filter((event) => event.event === 'error').length, 1);
   assert.equal(events.at(-1).status, 'fail');
   assert.equal(result.status, events.at(-1).exitCode);
   assert.equal(fs.readFileSync(path.join(root, 'artifacts/effect'), 'utf8'), 'checked');

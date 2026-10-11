@@ -139,19 +139,23 @@ export async function resolveHarnessContext(
   const pool = options.slotPoolDir
     ? { dir: options.slotPoolDir, source: 'option' as const }
     : resolveSlotPoolDir();
+  const requestedSlot =
+    options.slotSelection === 'identity'
+      ? undefined
+      : optionValues(options.tokens, '--slot').at(-1);
   const pooled = pool
     ? await poolSlot(
         root,
         pool.dir,
         pool.source === 'farmslot-node' ? 'slot-config (~/farmslot-node/pool)' : 'slot-config',
-        options.slotSelection === 'identity'
-          ? undefined
-          : optionValues(options.tokens, '--slot').at(-1),
+        requestedSlot,
         options.strictSlot ?? true,
         options.slotSelection,
       )
     : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
+  if (requestedSlot && options.strictSlot !== false && !pooledSlot)
+    throw new SlotByRepoError([], requestedSlot);
   // The pool's slot keeps the owned runtime context's ports beside its own
   // (camelCase runtime keys, snake_case pool keys), so they can win the fill.
   const owned = runtimeSlot(runtime);

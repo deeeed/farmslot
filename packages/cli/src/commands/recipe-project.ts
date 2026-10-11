@@ -98,23 +98,8 @@ export function registerProjectExecutionCommand(
     )
     .addOption(new Option('--hud <mode>', 'Evidence HUD').choices(['show', 'hide']))
     .addOption(new Option('--record-video [mode]', 'Record evidence').choices(['full-run', 'off']))
-    .addOption(
-      new Option('--source-trust <trust>', 'Explicit recipe source trust').choices([
-        'trusted',
-        'untrusted',
-        'unknown',
-      ]),
-    )
-    .addOption(
-      new Option('--source-kind <kind>', 'Explicit recipe source kind').choices([
-        'bundled',
-        'operator',
-        'task',
-        'recipe-file',
-        'library',
-        'custom-adapter',
-      ]),
-    )
+    .option('--source-trust <trust>', 'Explicit recipe source trust')
+    .option('--source-kind <kind>', 'Explicit recipe source kind')
     .option('--source-name <name>', 'Recipe source name')
     .option('--source-digest <digest>', 'Recipe source digest')
     .option('--approve-plan <digest>', 'Approve an exact execution plan')
