@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Derive claim verdicts, measured moments and source-frame stills automatically; bound recording and preserve original segments and partial capture (ADR-062).
+
 ## 0.29.0 - 2026-10-11
 
 - Accept a caller cancellation signal, stop later recipe nodes after cancellation, and record `RECIPE_ABORTED` while still running authored teardown. Graph execution scopes shared leaf helpers to each phase's signal, including nested calls and fresh teardown signals across source and installed module copies. Signal-aware commands and timeouts clean their owned process groups; callers without signal transport retain their existing foreground-group behavior and bounded timeouts even when descendants hold output pipes.

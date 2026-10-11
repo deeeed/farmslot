@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   access,
   chmod,
@@ -310,7 +311,7 @@ test('tracked core action manifests match the bundled adapter contract', async (
 });
 
 function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
-  return createRawRecipeRunner({
+  const runner = createRawRecipeRunner({
     ...options,
     actionManifest: withTestSchemas(options.actionManifest),
     adapters: options.adapters.map((adapter) => ({
@@ -323,6 +324,18 @@ function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]
     })),
     defaultSource: { kind: 'operator', trust: 'trusted', name: 'recipe harness test' },
   });
+  // Transport-only cases do not start a real recorder. Dedicated fixtures test auto capture.
+  const isolated = (request: Parameters<typeof runner.run>[0]) => ({
+    ...request,
+    recordVideo: request.recordVideo ?? false,
+    recordingReason:
+      request.recordingReason ?? 'Transport isolation; dedicated fixtures qualify capture.',
+  });
+  return {
+    run: (request: Parameters<typeof runner.run>[0]) => runner.run(isolated(request)),
+    preflight: (request: Parameters<typeof runner.preflight>[0]) =>
+      runner.preflight(isolated(request)),
+  };
 }
 
 async function createTempRoot(): Promise<string> {
@@ -1154,11 +1167,16 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
           async stop() {
             await writeFile(request.outputPath, 'fake mp4');
             return {
-              recorder: {
-                name: 'fake-recorder',
-                platform: 'test',
-                target: { selector: 'pid', value: '123' },
-              },
+              segments: [
+                {
+                  path: request.outputPath.split(/[\\/]/u).at(-1)!,
+                  recorder: {
+                    name: 'fake-recorder',
+                    platform: 'test',
+                    target: { selector: 'pid', value: '123' },
+                  },
+                },
+              ],
             };
           },
         };
@@ -1208,6 +1226,7 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
         target: { selector: 'pid', value: '123' },
       },
       maxFps: 24,
+      sha256: createHash('sha256').update('fake mp4').digest('hex'),
       timelineUnavailableReason: 'Recorder does not provide timeline alignment.',
     });
   } finally {
@@ -1232,7 +1251,7 @@ test('record-video stages privately and rejects a symlinked artifact destination
         return {
           async stop() {
             await writeFile(request.outputPath, 'safe staged mp4');
-            return {};
+            return { segments: [{ path: request.outputPath.split(/[\\/]/u).at(-1)! }] };
           },
         };
       },
@@ -1438,16 +1457,21 @@ test('record-video stream interruption keeps the partial MP4 and fails the run w
             await writeFile(request.outputPath, 'partial mp4');
             const now = Date.now();
             return {
-              interruption,
-              timing: {
-                framesMs: [0, 33.3],
-                durationMs: 66.7,
-                clock: {
-                  source: 'coremedia-host-clock',
-                  earliestZeroUnixMs: now - 1000,
-                  latestZeroUnixMs: now - 999,
+              segments: [
+                {
+                  path: request.outputPath.split(/[\\/]/u).at(-1)!,
+                  timing: {
+                    framesMs: [0, 33.3],
+                    durationMs: 66.7,
+                    clock: {
+                      source: 'coremedia-host-clock',
+                      earliestZeroUnixMs: now - 1000,
+                      latestZeroUnixMs: now - 999,
+                    },
+                  },
                 },
-              },
+              ],
+              interruption,
             };
           },
         };
@@ -1515,10 +1539,10 @@ test('record-video stop success still requires a non-empty MP4 artifact', async 
       async doctor() {
         return { ok: true, code: 'ok', message: 'ready' };
       },
-      async start() {
+      async start(request) {
         return {
           async stop() {
-            return {};
+            return { segments: [{ path: request.outputPath.split(/[\\/]/u).at(-1)! }] };
           },
         };
       },
@@ -1663,7 +1687,7 @@ setInterval(() => {}, 1000);
     const result = await active.stop();
 
     assert.match(await readFile(outputPath, 'utf-8'), /fake mp4/);
-    assert.deepEqual(result.recorder, {
+    assert.deepEqual(result.segments[0]?.recorder, {
       name: 'capture-helper',
       platform: 'macos',
       target: { selector: 'pid', value: '123' },

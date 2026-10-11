@@ -13,7 +13,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
-import { recordRecipeAcceptance } from '../acceptance-ledger.js';
+import { recordRecipeAcceptance, runTaskDir } from '../acceptance-ledger.js';
 import { harnessAdapter } from '../adapters.js';
 import {
   actionLibraryContextArgs,
@@ -753,16 +753,6 @@ export function resolveRecipeArtifactsDir(
   const taskDir = runTaskDir(target);
   if (taskDir) return path.join(taskDir, 'artifacts', layout.taskSubdir ?? '');
   return path.join(target, 'temp', 'recipe', layout.fresh);
-}
-
-/** The run's task dir (RECIPE_TASK_DIR / FARMSLOT_TASK_DIR), resolved inside the checkout, or null. */
-function runTaskDir(target: string): string | null {
-  const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
-  if (!taskDir) return null;
-  const resolvedTask = path.resolve(target, taskDir);
-  const relative = path.relative(path.resolve(target), resolvedTask);
-  if (!relative.startsWith(`..${path.sep}`) && relative !== '..') return resolvedTask;
-  throw new Error(`task directory must be inside the target checkout: ${taskDir}`);
 }
 
 // The task's acceptance ledger from the recipe's proof targets. The run's result

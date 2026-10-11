@@ -304,6 +304,8 @@ function refused(result, pattern, label) {
   const ledger = ledgerOf(dir);
   assert.deepEqual(summarizeAcceptanceStatus(ledger), {
     proven: 1,
+    failed: 0,
+    'awaiting-review': 0,
     weak: 1,
     missing: 0,
     untestable: 1,
@@ -318,7 +320,16 @@ function refused(result, pattern, label) {
       { id: 'AC-3', text: CRITERIA[2] },
       { id: 'AC-4', text: 'Not judged yet' },
     ]),
-    { proven: 1, weak: 1, missing: 0, untestable: 1, unrecorded: 1, total: 4 },
+    {
+      proven: 1,
+      failed: 0,
+      'awaiting-review': 0,
+      weak: 1,
+      missing: 0,
+      untestable: 1,
+      unrecorded: 1,
+      total: 4,
+    },
   );
   const rendered = ac(dir, 'render');
   assert.equal(rendered.status, 0, rendered.stderr);
@@ -352,7 +363,7 @@ function refused(result, pattern, label) {
   assert.deepEqual(validateAcceptanceStatusLedger([]), ['acceptance ledger: expected object']);
   assert.match(
     validateAcceptanceStatusLedger({ schemaVersion: 2, criteria: [] }).join('\n'),
-    /schemaVersion: expected 1/,
+    /recipeRunId: expected execution identity/,
   );
   assert.match(
     validateAcceptanceStatusLedger({ schemaVersion: 1, criteria: {} }).join('\n'),

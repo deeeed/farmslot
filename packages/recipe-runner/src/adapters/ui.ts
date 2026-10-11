@@ -80,6 +80,8 @@ export interface UiActionTransport {
 export interface CreateStandardUiAdaptersOptions {
   transport: UiActionTransport;
   actions?: Iterable<string>;
+  /** Live conformance records rendered HUD observations around capture. */
+  captureHudEvidence?: boolean;
 }
 
 export function createStandardUiAdapters(
@@ -96,45 +98,29 @@ export function createStandardUiAdapters(
       name: '@farmslot/recipe-runner',
     },
     async execute(node, context) {
-      if (
-        action === 'ui.screenshot' &&
-        node.fullPage !== true &&
-        context.captureRecordingSnapshot
-      ) {
-        const file =
-          typeof node.path === 'string'
-            ? node.path
-            : `screenshots/${context.nodeId.replaceAll('/', '-')}.png`;
-        const capture = await context.captureRecordingSnapshot(file);
-        const artifact = {
-          path: file,
-          type: 'screenshot',
-          mimeType: 'image/png',
-          nodeId: context.nodeId,
-          label: typeof node.label === 'string' ? node.label : context.nodeId,
-          category: typeof node.category === 'string' ? node.category : 'evidence',
-          ...(Array.isArray(node.covers) ? { covers: node.covers as string[] } : {}),
-          ...(typeof node.proofTarget === 'string' ? { proofTarget: node.proofTarget } : {}),
-          // A recorder that lost its session may capture outside it (`run` reports metadata.fallbackFrom).
-          ...(typeof capture.fallbackFrom === 'string'
-            ? {
-                metadata: {
-                  fallbackFrom: capture.fallbackFrom,
-                  ...(typeof capture.fallbackReason === 'string'
-                    ? { fallbackReason: capture.fallbackReason }
-                    : {}),
-                },
-              }
-            : {}),
-        };
-        return {
-          output: { ...capture, captured: true, path: file, artifact },
-          artifacts: [artifact],
-        };
+      const captureHud =
+        options.captureHudEvidence === true &&
+        (action === 'ui.screenshot' || action === 'ui.capture_surface');
+      if (!captureHud) return executeUi(action, node, context);
+      context.signal?.throwIfAborted();
+      const before = await readHud(node, context);
+      context.signal?.throwIfAborted();
+      const registered: NonNullable<ActionResult['artifacts']> = [];
+      const result = await executeUi(action, node, {
+        ...context,
+        registerArtifact(artifact) {
+          registered.push(artifact);
+          context.registerArtifact(artifact);
+        },
+      });
+      context.signal?.throwIfAborted();
+      const after = await readHud(node, context);
+      context.signal?.throwIfAborted();
+      for (const artifact of [...registered, ...(result.artifacts ?? [])]) {
+        if (artifact.type !== 'screenshot' && artifact.type !== 'video') continue;
+        artifact.metadata = { ...artifact.metadata, hud: { before, after } };
       }
-      if (action === 'ui.scroll_to') return executeScrollTo(options.transport, node, context);
-      if (action === 'ui.scroll') assertScrollMovement(node);
-      return normalizeUiTransportResult(await options.transport.execute(action, node, context));
+      return result;
     },
     async observe(refs, node, context) {
       if (!options.transport.observe) {
@@ -148,6 +134,69 @@ export function createStandardUiAdapters(
       return options.transport.observe(refs, node, context);
     },
   }));
+
+  async function readHud(
+    node: Record<string, unknown>,
+    context: ActionExecutionContext,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const result = await options.transport.observe?.(['ui.hud'], node, context);
+      const observation = result?.observations?.['ui.hud'];
+      if (isRecord(observation) && !result?.warnings?.length) return observation;
+      return {
+        visible: false,
+        reason:
+          result?.warnings?.map((warning) => warning.message).join('; ') ||
+          'No HUD observer is available.',
+      };
+    } catch (error) {
+      // Keep the capture for diagnosis, but failed observation cannot establish HUD proof.
+      context.signal?.throwIfAborted();
+      return { visible: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async function executeUi(
+    action: StandardUiAction,
+    node: Record<string, unknown>,
+    context: ActionExecutionContext,
+  ): Promise<ActionResult> {
+    if (action === 'ui.screenshot' && node.fullPage !== true && context.captureRecordingSnapshot) {
+      const file =
+        typeof node.path === 'string'
+          ? node.path
+          : `screenshots/${context.nodeId.replaceAll('/', '-')}.png`;
+      const capture = await context.captureRecordingSnapshot(file);
+      const artifact = {
+        path: file,
+        type: 'screenshot',
+        mimeType: 'image/png',
+        nodeId: context.nodeId,
+        label: typeof node.label === 'string' ? node.label : context.nodeId,
+        category: typeof node.category === 'string' ? node.category : 'evidence',
+        ...(Array.isArray(node.covers) ? { covers: node.covers as string[] } : {}),
+        ...(typeof node.proofTarget === 'string' ? { proofTarget: node.proofTarget } : {}),
+        // A recorder that lost its session may capture outside it (`run` reports metadata.fallbackFrom).
+        ...(typeof capture.fallbackFrom === 'string'
+          ? {
+              metadata: {
+                fallbackFrom: capture.fallbackFrom,
+                ...(typeof capture.fallbackReason === 'string'
+                  ? { fallbackReason: capture.fallbackReason }
+                  : {}),
+              },
+            }
+          : {}),
+      };
+      return {
+        output: { ...capture, captured: true, path: file, artifact },
+        artifacts: [artifact],
+      };
+    }
+    if (action === 'ui.scroll_to') return executeScrollTo(options.transport, node, context);
+    if (action === 'ui.scroll') assertScrollMovement(node);
+    return normalizeUiTransportResult(await options.transport.execute(action, node, context));
+  }
 }
 
 async function executeScrollTo(

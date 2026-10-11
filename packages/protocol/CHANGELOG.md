@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Define automatic registered claim evidence and original recording segments, with checked timeline identities and one shared acceptance validator (ADR-062).
+
 ## 0.38.0 - 2026-10-11
 
 - Declare connection-scoped node execution and cancellation support.

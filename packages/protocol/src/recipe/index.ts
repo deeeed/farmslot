@@ -41,6 +41,30 @@ export {
   validateResolvedRecipeActionNode,
 } from './document.js';
 export {
+  DEFAULT_RECORDED_EVIDENCE_POLICY,
+  EVIDENCE_PADDING_MS,
+  type EvidenceMomentRef,
+  hasUnresolvedRecipeFailure,
+  normalizeRecipeClaimId,
+  RECIPE_ASSERTION_ACTIONS,
+  RECIPE_CLAIM_KINDS,
+  RECIPE_CLAIM_VERDICTS,
+  type RecipeClaimDeclaration,
+  type RecipeClaimEvidence,
+  type RecipeClaimKind,
+  type RecipeClaimLedger,
+  type RecipeClaimProofMode,
+  type RecipeClaimVerdict,
+  type RecipeRecordingTarget,
+  type RecipeVisualJudgment,
+  type RecordedEvidencePackageInput,
+  type RecordedEvidencePolicy,
+  type RecordedEvidenceState,
+  type RecordingSegmentRef,
+  recordingTargetClaimKey,
+  validateRecipeClaimDeclarations,
+} from './evidence.js';
+export {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,
 } from './manifest.js';
@@ -51,8 +75,10 @@ export {
 } from './params.js';
 export {
   type RecipeRecordingMarker,
+  type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   type RecipeVideoTiming,
+  validateRecipeRecordingTimelineBinding,
   validateRecipeRecordingTimelineDocument,
 } from './recording.js';
 export {
@@ -100,6 +126,7 @@ export {
 } from './trust.js';
 export {
   getRecipeCallRefs,
+  getRecipeWorkflowActionEntries,
   getRecipeWorkflowActions,
   getRecipeWorkflowNodeIds,
   isDynamicRecipeRef,

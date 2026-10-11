@@ -42,7 +42,7 @@ import {
   resolveMetroRecipeBridgePort,
 } from './metro-recipe-bridge-transport.js';
 import { createRedactingCoreAdapters } from './redaction.js';
-import { createSimctlVideoRecorder } from './simctl-video-recorder.js';
+import { createIosSimulatorVideoRecorder } from './simctl-video-recorder.js';
 import { ADAPTER_RN_PACKAGE_VERSIONS } from './version.js';
 
 export interface ExpoRecipeRunOptions {
@@ -250,7 +250,7 @@ export function resolveExpoVideoRecorder(env: Record<string, string | undefined>
     return createCaptureHelperVideoRecorder();
   }
   const target = resolveExpoRecordingTarget(env);
-  if (target.kind === 'simulator') return createSimctlVideoRecorder();
+  if (target.kind === 'simulator') return createIosSimulatorVideoRecorder(target.device);
   return createCaptureHelperVideoRecorder();
 }
 

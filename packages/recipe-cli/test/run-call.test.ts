@@ -2835,7 +2835,7 @@ describe('--record-video', () => {
         async start({ outputPath }) {
           recorded.push(adapter);
           fs.writeFileSync(outputPath, 'video');
-          return { stop: async () => ({}) };
+          return { stop: async () => ({ segments: [{ path: path.basename(outputPath) }] }) };
         },
       },
     }));

@@ -1,11 +1,14 @@
 import type {
   RecipeActionManifestDocument,
   RecipeArtifactManifestEntry,
+  RecipeClaimDeclaration,
+  RecipeClaimLedger,
   RecipeExecutionApproval,
   RecipeExecutionCapability,
   RecipeExecutionPlan,
   RecipeFailureCause,
   RecipeRecordingInterruption,
+  RecipeRecordingTarget,
   RecipeResolutionDocument,
   RecipeSourceProvenance,
   UiObserverRef,
@@ -25,8 +28,10 @@ export interface RecipeRunRequest {
   /** Disable ambient process inheritance when the caller supplies the complete execution environment. */
   inheritProcessEnv?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
-  /** Caller-owned recording must finish before the run's completion HUD is drawn. */
-  finalizeRecording?: () => Promise<RecipeRunCaptureInterruption | undefined>;
+  /** Task-owned root registry. Standalone and QA runs use recipe proofTargets. */
+  claims?: readonly RecipeClaimDeclaration[];
+  /** Required whenever an operator explicitly disables UI recording. */
+  recordingReason?: string;
   /** Provenance assigned by the caller; omitted sources receive unknown trust. */
   source?: RecipeSourceProvenance;
   /** Out-of-band approval bound to the fully resolved execution-plan digest. */
@@ -104,6 +109,8 @@ export interface RecipeRunResult {
   tracePath: string;
   artifactManifestPath: string;
   recipePath: string;
+  claimsPath: string;
+  claims: RecipeClaimLedger;
   /** The run video's recording stream stopped early; the partial video was kept. */
   captureInterruption?: RecipeRunCaptureInterruption;
 }
@@ -150,10 +157,28 @@ export interface RecipeVideoRecordingOptions {
   mode?: RecipeVideoRecordingMode;
   maxFps?: number;
   maxSize?: number;
+  reason?: string;
+  maxDurationMs?: number;
+  maxBytes?: number;
   target?: RecordingTarget;
 }
 
+export interface RecordingAdmissionContext {
+  backend: string;
+  target: RecordingTarget;
+  projectRoot: string;
+  artifactsDir: string;
+}
+export interface RecordingAdmissionLease {
+  key: string;
+  release(): Promise<void>;
+}
+export interface RecordingAdmission {
+  acquire(context: RecordingAdmissionContext): Promise<RecordingAdmissionLease>;
+}
+
 export interface RecipeRecordingOptions {
+  admission?: RecordingAdmission;
   targetProvider?: RecordingTargetProvider;
   videoRecorder?: VideoRecorder;
 }
@@ -172,12 +197,7 @@ export interface RecordingTargetContext {
   scope?: 'run' | 'node';
 }
 
-export type RecordingTarget =
-  | { kind: 'android-device'; serial: string }
-  | { kind: 'window-id'; windowId: string }
-  | { kind: 'pid'; pid: number }
-  | { kind: 'app-window'; appName: string; windowName: string }
-  | { kind: 'simulator'; device: string };
+export type RecordingTarget = RecipeRecordingTarget;
 
 export interface VideoRecorderStartRequest {
   outputPath: string;
@@ -194,18 +214,27 @@ export interface ActiveVideoRecording {
   snapshot?(outputPath: string): Promise<Record<string, unknown>>;
 }
 
-export interface VideoRecordingResult {
+export interface VideoRecordingSegment {
+  /** Original media relative to the recorder's staging directory. */
+  path: string;
+  gapBefore?: boolean;
   recorder?: RecipeArtifactManifestEntry['recorder'];
   timing?: import('@farmslot/protocol').RecipeVideoTiming;
   timingUnavailableReason?: string;
   /** Raw provider timing evidence, relative to the private video staging directory. */
   timingEvidencePath?: string;
   /** The recording stream stopped early; the output holds the frames captured until then. */
+}
+
+export interface VideoRecordingResult {
+  segments: VideoRecordingSegment[];
   interruption?: RecipeRecordingInterruption;
 }
 
 export interface VideoRecorder {
   name: string;
+  /** Progressive backend keeps continuous original segment clocks without restarting capture. */
+  continuousSegments?: boolean;
   version?: string;
   platform?: string;
   doctor?(): Promise<VideoRecorderDoctorResult>;
@@ -319,6 +348,8 @@ export interface TraceEntry {
   recipe?: RecipeCallTrace;
   intent?: string;
   proves?: string[];
+  retryGroup?: string;
+  retryAttempt?: number;
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -346,6 +377,7 @@ export interface TraceWriter {
 }
 
 export interface SummaryDocument {
+  recipeRunId?: string;
   /** Digest of the retained, redacted execution inputs when recorded. */
   invocationDigest?: string;
   status: RecipeRunStatus;

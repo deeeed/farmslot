@@ -373,7 +373,8 @@
       "types": "./dist/node/pack-portability.d.ts",
       "import": "./dist/node/pack-portability.js",
       "default": "./dist/node/pack-portability.js"
-    }
+    },
+    "./scripts/acceptance.cjs": "./scripts/acceptance.cjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
@@ -419,7 +420,9 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
-    "dist/**/*.js.map"
+    "dist/**/*.js.map",
+    "scripts/acceptance.cjs",
+    "scripts/acceptance.d.cts"
   ],
   "publishConfig": {
     "access": "public"

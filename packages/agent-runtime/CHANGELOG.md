@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Consume the shared acceptance contract and engine-derived claims; automatic ledgers permit only audited untestable overrides (ADR-062).
+
 ## 0.17.5 - 2026-10-11
 
 - Align the protocol dependency with 0.37.0 so consumers resolve one copy.
