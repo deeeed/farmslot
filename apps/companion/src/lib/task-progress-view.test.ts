@@ -108,8 +108,13 @@ test('the acceptance panel view separates assessment from proof and colours bloc
   assert.equal(view.hasOpenCriteria, true);
   assert.equal(view.rows[0].color, colors.statusOk);
   assert.equal(view.rows[1].color, colors.statusFail);
-  // A phone shows evidence basenames, never the full task-dir path.
-  assert.deepEqual(view.rows[0].evidence, ['after-unlock.png']);
+  // Every criterion judged: the tally is neutral even though one verdict is weak.
+  assert.equal(view.countsColor, colors.textSecondary);
+  assert.equal(view.unassessed, 0);
+  // A phone shows evidence basenames; the task-dir path stays for opening the file.
+  assert.deepEqual(view.rows[0].evidence, [
+    { path: 'artifacts/recipe-run/screens/after-unlock.png', name: 'after-unlock.png' },
+  ]);
   assert.deepEqual(view.rows[1].evidence, []);
 });
 
@@ -131,6 +136,42 @@ test('an unjudged criterion is a neutral row counted against the registered tota
   assert.equal(view.rows[1].verdict, null);
   assert.equal(view.rows[1].color, colors.textMuted);
   assert.deepEqual(view.rows[1].evidence, []);
+  // The row stays neutral, but the header tally reads as a failure until it is judged.
+  assert.equal(view.unassessed, 1);
+  assert.equal(view.countsColor, colors.statusFail);
+});
+
+test('the header shows the proven count even before any verdict is recorded', () => {
+  const view = acceptanceLedgerView({ schemaVersion: 1, criteria: [] }, [
+    { id: 'AC-1', text: 'Not judged yet' },
+  ]);
+  assert.equal(view.counts, '0/1 assessed · 0 proven');
+  assert.equal(view.countsColor, colors.statusFail);
+});
+
+test('manifest evidence links fill an unjudged row without becoming a verdict', () => {
+  const view = acceptanceLedgerView(
+    ledger(),
+    [
+      { id: 'AC-1', text: 'Proven already' },
+      { id: 'AC-2', text: 'Weak' },
+      { id: 'AC-3', text: 'Linked only' },
+    ],
+    [
+      { id: 'AC-1', evidence: ['artifacts/ignored-because-judged.png'] },
+      { id: 'AC-3', evidence: ['artifacts/after-linked.png'] },
+    ],
+  );
+  // A recorded verdict keeps its own evidence; the manifest link does not override it.
+  assert.deepEqual(
+    view.rows[0].evidence.map((entry) => entry.name),
+    ['after-unlock.png'],
+  );
+  assert.equal(view.rows[2].verdict, null);
+  assert.deepEqual(view.rows[2].evidence, [
+    { path: 'artifacts/after-linked.png', name: 'after-linked.png' },
+  ]);
+  assert.equal(view.unassessed, 1);
 });
 
 test('verdict colours cover every vocabulary entry and the unknown fallback', () => {
