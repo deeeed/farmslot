@@ -23,11 +23,12 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
-import { getNode } from '../fleet/machine-registry.js';
-import { pairingCreate } from '../fleet/pairing.js';
-import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
-import { broadcastEvent, createWebSocketServer } from '../server.js';
-import { resolveWebhookWorkOriginator } from '../webhook.js';
+await import('../runtime/mock-pty.test-support.js');
+const { getNode } = await import('../fleet/machine-registry.js');
+const { pairingCreate } = await import('../fleet/pairing.js');
+const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
+const { broadcastEvent, createWebSocketServer } = await import('../server.js');
+const { resolveWebhookWorkOriginator } = await import('../webhook.js');
 
 test('only an authenticated node can advertise exec cancellation', { timeout: 4000 }, async () => {
   const runtime = isolatedRuntime();

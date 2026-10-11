@@ -9,14 +9,18 @@ import {
   type RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
 
-import { getOrchestratorTaskRoot, type RawProjectJson } from '../core/config.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import type { RawProjectJson } from '../core/config.js';
 import type {
   ResourcePostureRequest,
   RunResourcePostureReconciler,
 } from '../runtime-capabilities/posture.js';
 
-import {
+import type { RecipeRerunPreflightOutcome } from './recipe.js';
+
+await import('../runtime/mock-pty.test-support.js');
+const { getOrchestratorTaskRoot } = await import('../core/config.js');
+const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const {
   appendRecipePlaybackOptions,
   assertRecipeRerunProofCapabilities,
   assertSlotProjectMatchesRequestedProject,
@@ -26,7 +30,6 @@ import {
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
   recipeReplayHealthReady,
-  type RecipeRerunPreflightOutcome,
   recipeRunOptionsForProject,
   recipeRunUnsupportedOptionWarnings,
   resolveRecipeArtifactRootForSlot,
@@ -36,7 +39,7 @@ import {
   validateRecipeProjectHookOutput,
   validateRecipeRunArtifactPackageOutput,
   validateRecipeRunHookTemplate,
-} from './recipe.js';
+} = await import('./recipe.js');
 
 const projectJson = {
   task_dir: 'tasks',
