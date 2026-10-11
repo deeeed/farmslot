@@ -155,10 +155,11 @@ test('a task with no criteria completes without the acceptance flag', async () =
   }
 });
 
-test('without the project opt-in the ledger never blocks a completion', async () => {
+test('without the project opt-in the gateway leaves enforcement to the current checker', async () => {
   // The state every farm is in until its templates write a ledger: a ticket with
   // acceptance criteria, no ledger on disk, and no `acceptance.require` in the
-  // contract. Completion must pass, and the checker must not be told to demand it.
+  // contract. This mocked command-builder test checks only the compatibility flag;
+  // the real current checker refuses the missing ledger, proved through the CLI.
   const root = writeTaskDir({ require: false });
   execCalls = [];
   try {
@@ -170,10 +171,9 @@ test('without the project opt-in the ledger never blocks a completion', async ()
   }
 });
 
-test('without the opt-in an unreadable handoff is not a completion failure either', async () => {
-  // Fail-closed applies to the rule the project asked for; with no opt-in there
-  // is no rule, so a corrupt handoff is the artifact checker's problem, not a
-  // refusal invented here.
+test('without the opt-in the current checker owns unreadable handoff refusal', async () => {
+  // This mocked command-builder test observes no compatibility flag. The
+  // current checker, tested through the public CLI, rejects this unreadable handoff.
   const root = writeTaskDir({ handoff: '{ not json', require: false });
   execCalls = [];
   try {

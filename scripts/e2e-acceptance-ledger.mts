@@ -281,9 +281,7 @@ function main() {
     ].join('\n');
     assert.equal(rendered, expected, 'ac render prints the coverage table');
 
-    // 8. Without the project opt-in the same shape completes with a criterion
-    // still unjudged. This is every farm today: tickets carry criteria, no
-    // template writes a ledger, and enforcement must not fail those runs.
+    // 8. An older contract without an opt-in still refuses unassessed criteria.
     const optOutDir = path.join(work, 'temp', 'tasks', 'ci-fix', 'acceptance-opt-out');
     ok('node', taskInitArgs(optOutDir, 'Acceptance ledger opt-out'), 'task init (no opt-in)');
     const optOutMark = path.join(optOutDir, 'mark');
@@ -302,22 +300,30 @@ function main() {
     const optOutArtifacts = path.join(optOutDir, 'artifacts');
     mkdirSync(optOutArtifacts, { recursive: true });
     writeFileSync(path.join(optOutArtifacts, 'report.md'), '# Report\n\nDone.\n');
-    writeFileSync(path.join(optOutArtifacts, 'learnings.md'), '- Enforcement is opt-in.\n');
+    writeFileSync(
+      path.join(optOutArtifacts, 'learnings.md'),
+      '- Registered criteria need verdicts.\n',
+    );
     // One verdict recorded, two criteria still unjudged: the ledger is written and
-    // readable, it simply does not gate this run.
+    // readable, but incomplete verdicts still gate this run.
     ok(
       'node',
       [agentBin, 'ac', 'set', 'AC-1', 'proven', '--task-dir', optOutDir, '--proof-mode', 'state'],
       'ac set AC-1 (no opt-in)',
     );
-    ok(optOutMark, ['complete', '--mark-last'], 'parent complete without the opt-in');
-    assert.equal(readJson(path.join(optOutDir, 'SIGNAL.json')).status, 'complete');
+    refused(
+      optOutMark,
+      ['complete', '--mark-last'],
+      /AC-2 has no verdict/,
+      'parent complete without opt-in and unassessed criteria',
+    );
+    assert.notEqual(readJson(path.join(optOutDir, 'SIGNAL.json')).status, 'complete');
     const optOutLedger = readJson(path.join(optOutDir, 'artifacts', 'acceptance-status.json')) as {
       criteria: Array<Record<string, unknown>>;
     };
     assert.equal(optOutLedger.criteria.length, 1, 'the ledger holds only the recorded verdict');
     console.log(
-      'e2e:acceptance-ledger ok — 3 criteria, every refusal observed on files, and an opt-out run completes unjudged',
+      'e2e:acceptance-ledger ok — 3 criteria, every refusal observed on files, including a contract without an opt-in',
     );
   } finally {
     rmSync(work, { recursive: true, force: true });
