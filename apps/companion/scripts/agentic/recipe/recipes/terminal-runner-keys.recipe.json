@@ -32,7 +32,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/terminal-runner-keys-proof.mjs setup",
         "timeout_ms": 90000,
-        "intent": "Create two byte-recording tmux panes and check that the slot gateway derives a runner only for the one whose process is named like a runner binary.",
+        "intent": "Create two byte-recording tmux panes and check that the slot gateway derives a runner only for the one whose process is named like a runner binary, and names no linked runner for either.",
         "proves": ["gateway-process-runner"],
         "next": "hud-known"
       },
@@ -81,6 +81,12 @@
         "timeout_ms": 20000,
         "intent": "The key bar names the runner taken from the gateway process match.",
         "proves": ["runner-row"],
+        "next": "hide-hud-known"
+      },
+      "hide-hud-known": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-known-row"
       },
       "wait-known-row": {
@@ -90,12 +96,6 @@
         "timeout_ms": 10000,
         "intent": "The runner row renders below the generic keys.",
         "proves": ["runner-row"],
-        "next": "hide-hud-known"
-      },
-      "hide-hud-known": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "capture-known"
       },
       "capture-known": {
@@ -148,6 +148,12 @@
         "timeout_ms": 10000,
         "intent": "The saved choice wins over the process match.",
         "proves": ["runner-override"],
+        "next": "hide-hud-saved"
+      },
+      "hide-hud-saved": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-saved-row"
       },
       "wait-saved-row": {
@@ -157,12 +163,6 @@
         "timeout_ms": 10000,
         "intent": "The row switches to the four Pi keys.",
         "proves": ["runner-override"],
-        "next": "hide-hud-saved"
-      },
-      "hide-hud-saved": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "capture-saved"
       },
       "capture-saved": {
@@ -257,6 +257,12 @@
         "timeout_ms": 5000,
         "intent": "The generic terminal keys stay available.",
         "proves": ["generic-row"],
+        "next": "hide-hud-unknown"
+      },
+      "hide-hud-unknown": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "no-custom-row-yet"
       },
       "no-custom-row-yet": {
@@ -266,12 +272,6 @@
         "timeout_ms": 5000,
         "intent": "Start from a device with no saved keys of its own.",
         "proves": ["custom-keys"],
-        "next": "hide-hud-unknown"
-      },
-      "hide-hud-unknown": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "capture-unknown"
       },
       "capture-unknown": {
@@ -337,6 +337,12 @@
         "timeout_ms": 10000,
         "intent": "A Yours row renders even though this pane has no runner row.",
         "proves": ["custom-keys"],
+        "next": "hide-hud-custom"
+      },
+      "hide-hud-custom": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "wait-custom-label"
       },
       "wait-custom-label": {
@@ -346,12 +352,6 @@
         "timeout_ms": 5000,
         "intent": "The new key carries its trimmed label.",
         "proves": ["custom-keys"],
-        "next": "hide-hud-custom"
-      },
-      "hide-hud-custom": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "capture-custom"
       },
       "capture-custom": {
@@ -410,22 +410,23 @@
       "press-unknown-row-again": {
         "action": "ui.press",
         "intent": "Open the same pane again.",
-        "next": "wait-custom-kept",
+        "next": "hide-hud-reopened",
         "text": "{{outputs.unknown-row-again.stdout}}"
-      },
-      "wait-custom-kept": {
-        "action": "ui.wait_for",
-        "test_id": "terminal-custom-key-0",
-        "expected": "visible",
-        "timeout_ms": 20000,
-        "intent": "The saved key is still there after reopening.",
-        "proves": ["custom-keys"],
-        "next": "hide-hud-reopened"
       },
       "hide-hud-reopened": {
         "action": "app.hud",
         "clear": true,
         "intent": "Hide the HUD so every key row is fully visible in the capture.",
+        "next": "wait-custom-kept"
+      },
+      "wait-custom-kept": {
+        "action": "ui.wait_for",
+        "test_id": "terminal-custom-key-0",
+        "text": "Word back",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "After reopening, the Yours row still holds the saved key, in view for the capture.",
+        "proves": ["custom-keys"],
         "next": "capture-reopened"
       },
       "capture-reopened": {
@@ -457,6 +458,12 @@
         "action": "ui.press",
         "test_id": "terminal-custom-keys-close",
         "intent": "Return to the terminal.",
+        "next": "hide-hud-deleted"
+      },
+      "hide-hud-deleted": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "custom-row-gone"
       },
       "custom-row-gone": {
@@ -466,12 +473,6 @@
         "timeout_ms": 10000,
         "intent": "The Yours row is gone once its last key is deleted.",
         "proves": ["custom-keys"],
-        "next": "hide-hud-deleted"
-      },
-      "hide-hud-deleted": {
-        "action": "app.hud",
-        "clear": true,
-        "intent": "Hide the HUD so every key row is fully visible in the capture.",
         "next": "capture-deleted"
       },
       "capture-deleted": {

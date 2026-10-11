@@ -4,6 +4,7 @@
 //   setup                 two tmux panes that print each byte they read as hex: one runs a
 //                         binary named `claude`, one named `keysink`; waits until the slot
 //                         gateway lists both new panes and checks the processRunnerIds it derived
+//                         and that neither carries a linkedRunner
 //   row <known|unknown>   waits for that pane's row on the Terminals tab and prints its exact
 //                         accessibility label, the selector ui.press needs
 //   terminals             opens the Terminals tab
@@ -176,6 +177,8 @@ if (phase === 'setup') {
   const workers = await waitForPanes(paneIds);
   for (const [key, pane] of Object.entries(PANES)) {
     assert.deepEqual(workers[key].processRunnerIds, pane.runnerIds, `${key} processRunnerIds`);
+    // No run is linked to the fixture panes, so the gateway must not name a linked runner.
+    assert.equal(workers[key].linkedRunner, undefined, `${key} linkedRunner`);
   }
   const state = Object.fromEntries(
     Object.entries(workers).map(([key, worker]) => [key, worker.ref]),
