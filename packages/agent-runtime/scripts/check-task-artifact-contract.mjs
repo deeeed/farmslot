@@ -689,7 +689,10 @@ if (fileExists(SUBTASK_INDEX_REL)) {
 // The acceptance ledger is the run's proof record (ADR-060): every criterion task
 // init registered in inputs/handoff.json needs a verdict, and `weak` / `missing`
 // fails unless the flow's terminal contract waives it.
-if (flags.has('--require-acceptance-status')) {
+if (
+  flags.has('--require-acceptance-status') ||
+  (terminalCommand === 'complete' && !isSelfReviewTerminal)
+) {
   for (const issue of acceptanceContractIssues(taskDir, {
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
   })) {
