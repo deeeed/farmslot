@@ -135,14 +135,16 @@ if (phase === 'setup') {
   fs.writeFileSync(path.join(proofDir, 'token'), token, { mode: 0o600 });
   evidence('backlog-before', { seeded });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, seededId }));
-} else if (phase === 'relaunch') {
+} else if (phase === 'relaunch' || phase === 'relaunch-connect') {
   // Start from a fresh app process so screens from an earlier step or attempt (an open manual
   // form, a still-mounted create sheet sharing test ids) cannot receive the next step's input.
   // The recipe waits for the tab bar before deep-linking. Relaunching reuses the installed dev client.
   assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
   const bundleId = process.env.BUNDLE_ID ?? 'net.siteed.farmslot.development';
   execFileSync('xcrun', ['simctl', 'terminate', process.env.IOS_SIMULATOR, bundleId]);
-  await openSimulatorDevClient(process.env.IOS_SIMULATOR);
+  await openSimulatorDevClient(process.env.IOS_SIMULATOR, {
+    waitForBridge: phase !== 'relaunch-connect',
+  });
 } else if (phase === 'open-connection') {
   openUrl('/connection');
 } else if (phase === 'open-create') {
