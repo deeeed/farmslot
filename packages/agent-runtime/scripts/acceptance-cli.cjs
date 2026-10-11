@@ -29,6 +29,7 @@ const USAGE = [
   `      --proof-mode <${ACCEPTANCE_PROOF_MODES.join('|')}>   how the criterion is proven`,
   '      --evidence <task-dir relative path>   repeatable; the file must exist',
   '      --recipe-node <id>                    repeatable; recipe node proving it',
+  '      --actor <identity>                     required for an automatic-ledger override',
   '      --note "..."                          why, especially for untestable',
   '  ac list      every criterion with its current verdict (JSON, verdict null when unrecorded)',
   '  ac render    the coverage table, ending with the Overall recipe coverage line',
@@ -55,6 +56,7 @@ function parseArgs(argv) {
     evidence: [],
     recipeNodes: [],
     note: undefined,
+    actor: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -62,6 +64,7 @@ function parseArgs(argv) {
     else if (arg === '--proof-mode') opts.proofMode = takeValue(argv, i++, arg);
     else if (arg === '--evidence') opts.evidence.push(takeValue(argv, i++, arg));
     else if (arg === '--recipe-node') opts.recipeNodes.push(takeValue(argv, i++, arg));
+    else if (arg === '--actor') opts.actor = takeValue(argv, i++, arg);
     else if (arg === '--note') opts.note = takeValue(argv, i++, arg);
     else if (arg === '-h' || arg === '--help') usage(0);
     else if (arg.startsWith('-')) throw new AcceptanceRefusal(`unknown option ${arg}`, 2);
@@ -98,6 +101,7 @@ function main(argv) {
       evidence: opts.evidence,
       recipeNodes: opts.recipeNodes,
       note: opts.note,
+      actor: opts.actor,
     });
     const entry = ledger.criteria.find((criterion) => criterion.id === id);
     console.log(`${id}: ${entry.verdict}${entry.proofMode ? ` (${entry.proofMode})` : ''}`);

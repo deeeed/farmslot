@@ -113,6 +113,17 @@ export {
 export { RecipeTrustError } from './core/trust-error.js';
 export { RECIPE_TRUST_ENV, resolveRecipeTrustInput } from './core/trust-input.js';
 export type * from './core/types.js';
+export {
+  collectProofNodes,
+  executedProofIndex,
+  potentiallyEligibleProof,
+  type ProofDocument,
+  type ProofNode,
+  type ProofTraceEntry,
+} from './evidence/assertions.js';
+export { deriveRecipeClaims, type DeriveRecipeClaimsInput } from './evidence/claims.js';
+export { validateRecordedEvidencePackage } from './evidence/package.js';
+export { digestFileWithinRoot } from './file-digest.js';
 export { createAndroidMirrorVideoRecorder } from './recording/android-mirror.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';
 export {

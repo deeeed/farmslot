@@ -30,6 +30,7 @@ export {
   validateExpoRecipeDocument,
 } from './runner.js';
 export { installExpoRecipeScaffold, packageScripts } from './scaffold.js';
+export { createIosSimulatorVideoRecorder } from './simctl-video-recorder.js';
 export {
   recordSourceBaseline,
   sourceCheck,
@@ -45,10 +46,4 @@ export {
   resolveAndExportMobileToolPaths,
   resolveMobileToolPath,
 } from './tool-paths.js';
-export {
-  ANDROID_RECORDING_TARGET_PREFIX,
-  androidScreenrecordArgs,
-  createAndroidVideoRecorder,
-  createIosSimulatorVideoRecorder,
-  IOS_SIMULATOR_RECORDING_TARGET_PREFIX,
-} from './video-recorder.js';
+export { androidScreenrecordArgs, createAndroidVideoRecorder } from './video-recorder.js';

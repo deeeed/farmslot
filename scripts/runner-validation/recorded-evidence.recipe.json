@@ -1,0 +1,42 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Verify counter increments from zero",
+  "proofTargets": [
+    { "id": "AC-1", "claim": "Activating Increment from zero shows 1.", "proofMode": "state" },
+    { "id": "AC-2", "claim": "Activating Increment again shows 2.", "proofMode": "state" }
+  ],
+  "workflow": {
+    "entry": "increment_once",
+    "nodes": {
+      "increment_once": {
+        "action": "ui.press",
+        "intent": "Activate Increment once.",
+        "selector": "#increment",
+        "next": "check_one"
+      },
+      "check_one": {
+        "action": "ui.wait_for",
+        "intent": "The displayed count is one.",
+        "selector": "#count",
+        "text": "1",
+        "proves": ["AC-1"],
+        "next": "increment_again"
+      },
+      "increment_again": {
+        "action": "ui.press",
+        "intent": "Activate Increment again.",
+        "selector": "#increment",
+        "next": "check_two"
+      },
+      "check_two": {
+        "action": "ui.wait_for",
+        "intent": "The displayed count is two.",
+        "selector": "#count",
+        "text": "2",
+        "proves": ["AC-2"],
+        "next": "pass"
+      },
+      "pass": { "action": "end", "status": "pass" }
+    }
+  }
+}

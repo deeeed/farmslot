@@ -13,7 +13,7 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
-import { recordRecipeAcceptance } from '../acceptance-ledger.js';
+import { recordRecipeAcceptance, registeredTaskClaims, runTaskDir } from '../acceptance-ledger.js';
 import { harnessAdapter } from '../adapters.js';
 import {
   actionLibraryContextArgs,
@@ -471,12 +471,16 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       depsBlock.userAction,
     );
   }
-  let artifactsDir: string;
+  let artifactContext: RecipeExecutionArtifacts;
   try {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
-    artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
-      fresh: path.join('runs', `${stamp}-${process.pid}`),
-    });
+    artifactContext = resolveRecipeExecutionArtifacts(
+      target,
+      optionString(options, 'artifactsDir'),
+      {
+        fresh: path.join('runs', `${stamp}-${process.pid}`),
+      },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return emitRunUsageError(
@@ -489,6 +493,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
     );
   }
+  const { artifactsDir, taskDir, claims } = artifactContext;
   recordCommandEvidence(artifactsDir);
   // Reuse the sources validateRunRecipeStatic already resolved (same --library
   // input) instead of a second resolution.
@@ -498,6 +503,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     signal: commandOptions.signal,
     ...recipeRunOptionsFromCli(adapter, options),
     cli: options,
+    claims,
     params,
     ...(librarySources ? { librarySources } : {}),
     stdoutIsMachineContract: machine,
@@ -600,7 +606,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         adapter,
         result.browser ?? null,
       );
-      recordRunAcceptance(target, result);
+      recordRunAcceptance(taskDir, target, result);
       // Evidence an action produced through a fallback provider (for example a
       // screenshot from a second capture path), so an evidence gate sees it here,
       // on a failed run too.
@@ -738,41 +744,39 @@ export interface RecipeArtifactsLayout {
   taskSubdir?: string;
 }
 
-/**
- * Where a run or call writes its artifacts: `--artifacts-dir`; else, inside a
- * task (RECIPE_TASK_DIR/FARMSLOT_TASK_DIR, which must be inside the checkout),
- * the task's `artifacts` directory plus `taskSubdir`; else `fresh` under the
- * checkout's temp/recipe.
- */
-export function resolveRecipeArtifactsDir(
+export interface RecipeExecutionArtifacts {
+  artifactsDir: string;
+  taskDir: string | null;
+  claims: RecipeEngineRunOptions['claims'];
+}
+
+/** Bind artifacts and task claims once, under each command's usage-error handling. */
+export function resolveRecipeExecutionArtifacts(
   target: string,
   explicit: string | undefined,
   layout: RecipeArtifactsLayout,
-): string {
-  if (explicit !== undefined) return path.resolve(explicit);
-  const taskDir = runTaskDir(target);
-  if (taskDir) return path.join(taskDir, 'artifacts', layout.taskSubdir ?? '');
-  return path.join(target, 'temp', 'recipe', layout.fresh);
-}
-
-/** The run's task dir (RECIPE_TASK_DIR / FARMSLOT_TASK_DIR), resolved inside the checkout, or null. */
-function runTaskDir(target: string): string | null {
-  const taskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
-  if (!taskDir) return null;
-  const resolvedTask = path.resolve(target, taskDir);
-  const relative = path.relative(path.resolve(target), resolvedTask);
-  if (!relative.startsWith(`..${path.sep}`) && relative !== '..') return resolvedTask;
-  throw new Error(`task directory must be inside the target checkout: ${taskDir}`);
+): RecipeExecutionArtifacts {
+  const taskDir = runTaskDir(target, explicit !== undefined);
+  return {
+    artifactsDir:
+      explicit !== undefined
+        ? path.resolve(explicit)
+        : taskDir
+          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? '')
+          : path.join(target, 'temp', 'recipe', layout.fresh),
+    taskDir,
+    claims: registeredTaskClaims(taskDir),
+  };
 }
 
 // The task's acceptance ledger from the recipe's proof targets. The run's result
 // stands either way: a ledger the run can't write is a warning, not a failure.
 function recordRunAcceptance(
+  taskDir: string | null,
   target: string,
   result: Parameters<typeof recordRecipeAcceptance>[2],
 ): void {
   try {
-    const taskDir = runTaskDir(target);
     if (!taskDir) return;
     const { recorded, refused } = recordRecipeAcceptance(taskDir, target, result);
     for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
@@ -941,11 +945,15 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
         )
       : runPlanProbe(adapter, recipeFile);
   const nodeCount = countRecipeNodes(recipe);
-  let artifactsDir: string;
+  let artifactContext: RecipeExecutionArtifacts;
   try {
-    artifactsDir = resolveRecipeArtifactsDir(target, optionString(options, 'artifactsDir'), {
-      fresh: 'runs/planned',
-    });
+    artifactContext = resolveRecipeExecutionArtifacts(
+      target,
+      optionString(options, 'artifactsDir'),
+      {
+        fresh: 'runs/planned',
+      },
+    );
   } catch (error) {
     return emitPlanFailure(
       jsonOutput,
@@ -957,12 +965,14 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
     );
   }
+  const { artifactsDir, claims } = artifactContext;
   let execution: PreparedRecipeExecution | undefined;
   if (status === 'pass') {
     const runtimeOptions: RecipeEngineRunOptions = {
       ...recipeRunOptionsFromCli(adapter, options),
       readOnly: true,
       cli: options,
+      claims,
       params: effectiveParams,
       librarySources,
       stdoutIsMachineContract: jsonOutput || stream.enabled,

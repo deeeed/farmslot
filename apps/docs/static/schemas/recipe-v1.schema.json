@@ -40,6 +40,19 @@
             "type": "string",
             "minLength": 1,
             "description": "Human-readable statement that successful linked nodes establish."
+          },
+          "kind": {
+            "enum": ["acceptance", "qa-case", "qa-check"],
+            "description": "Acceptance criterion, QA case or QA check proved by the recipe."
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Registered parent claim whose outcome includes this required check."
+          },
+          "proofMode": {
+            "enum": ["state", "visual", "mixed"],
+            "description": "State assertions, visual review, or both are required to prove this claim."
           }
         },
         "additionalProperties": false
@@ -67,14 +80,21 @@
         "required": {
           "type": "array",
           "description": "Parameter names callers must provide when no default satisfies them.",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
         },
         "properties": {
           "type": "object",
           "description": "Named parameter definitions available to callers and call nodes.",
-          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
-          "additionalProperties": { "$ref": "#/$defs/paramSchema" }
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/paramSchema"
+          }
         }
       },
       "additionalProperties": false
@@ -86,10 +106,14 @@
         "type": {
           "description": "Allowed JSON value type or types for this parameter.",
           "oneOf": [
-            { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
+            {
+              "enum": ["string", "number", "integer", "boolean", "object", "array"]
+            },
             {
               "type": "array",
-              "items": { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
+              "items": {
+                "enum": ["string", "number", "integer", "boolean", "object", "array"]
+              },
               "minItems": 1,
               "uniqueItems": true
             }
@@ -115,14 +139,21 @@
         "required": {
           "type": "array",
           "description": "Required keys within an object parameter.",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
         },
         "properties": {
           "type": "object",
           "description": "Named child schemas for an object parameter.",
-          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
-          "additionalProperties": { "$ref": "#/$defs/paramSchema" }
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/paramSchema"
+          }
         },
         "items": {
           "$ref": "#/$defs/paramSchema",
@@ -152,7 +183,10 @@
     },
     "proofLinks": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "uniqueItems": true
     },
     "transition": {
@@ -166,7 +200,16 @@
               "description": "Node id to execute after this node succeeds."
             }
           },
-          "not": { "anyOf": [{ "required": ["cases"] }, { "required": ["default"] }] }
+          "not": {
+            "anyOf": [
+              {
+                "required": ["cases"]
+              },
+              {
+                "required": ["default"]
+              }
+            ]
+          }
         },
         {
           "required": ["cases", "default"],
@@ -174,7 +217,10 @@
             "cases": {
               "type": "object",
               "minProperties": 1,
-              "additionalProperties": { "type": "string", "minLength": 1 },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              },
               "description": "Maps an action result case to the next node id."
             },
             "default": {
@@ -183,7 +229,9 @@
               "description": "Node id used when no declared result case matches."
             }
           },
-          "not": { "required": ["next"] }
+          "not": {
+            "required": ["next"]
+          }
         }
       ]
     },
@@ -194,7 +242,9 @@
         "action": {
           "type": "string",
           "minLength": 1,
-          "not": { "enum": ["call", "end"] },
+          "not": {
+            "enum": ["call", "end"]
+          },
           "description": "Registered action name to execute; action-specific fields are declared by its manifest."
         },
         "intent": {
@@ -210,7 +260,10 @@
         "cases": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "type": "string", "minLength": 1 },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Maps an action result case to the next node id."
         },
         "default": {
@@ -225,9 +278,24 @@
         "visual_review": {
           "$ref": "#/$defs/visualReviewRelationship",
           "description": "Optional visual-review hierarchy and related-surface links for ui.capture_surface and ui.screenshot nodes."
+        },
+        "retryGroup": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Declared retry identity; earlier failed attempts remain in the trace."
+        },
+        "retryAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Maximum attempts for a declared retry, including the first execution."
         }
       },
-      "allOf": [{ "$ref": "#/$defs/transition" }],
+      "allOf": [
+        {
+          "$ref": "#/$defs/transition"
+        }
+      ],
       "additionalProperties": true
     },
     "visualReviewRelationship": {
@@ -261,7 +329,10 @@
         },
         "related": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true,
           "description": "Related visual capture node ids within this recipe."
         }
@@ -284,7 +355,9 @@
         "ref": {
           "type": "string",
           "minLength": 1,
-          "not": { "pattern": "\\{\\{\\s*(?:params|outputs)\\." },
+          "not": {
+            "pattern": "\\{\\{\\s*(?:params|outputs)\\."
+          },
           "description": "Static recipe id resolved from configured recipe libraries."
         },
         "params": {
@@ -299,6 +372,14 @@
           "type": "string",
           "minLength": 1,
           "description": "Node id to execute after the called recipe succeeds."
+        },
+        "claimBindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Map declared child claims to registered parent claims; unbound child ids are qualified by this call."
         }
       },
       "additionalProperties": false
@@ -320,9 +401,15 @@
     },
     "workflowNode": {
       "oneOf": [
-        { "$ref": "#/$defs/actionNode" },
-        { "$ref": "#/$defs/callNode" },
-        { "$ref": "#/$defs/endNode" }
+        {
+          "$ref": "#/$defs/actionNode"
+        },
+        {
+          "$ref": "#/$defs/callNode"
+        },
+        {
+          "$ref": "#/$defs/endNode"
+        }
       ]
     },
     "workflow": {
@@ -342,8 +429,12 @@
         "nodes": {
           "type": "object",
           "minProperties": 1,
-          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
-          "additionalProperties": { "$ref": "#/$defs/workflowNode" },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/workflowNode"
+          },
           "description": "Named action, recipe-call, and terminal nodes in the executable graph."
         }
       },

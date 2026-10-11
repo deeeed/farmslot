@@ -14,6 +14,7 @@ import {
 } from './common.js';
 import { digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 import { validateRecipeDocument } from './document.js';
+import { hasUnresolvedRecipeFailure } from './evidence.js';
 import { splitRecipeTemplates } from './template.js';
 import {
   getRecipeCallRefs,
@@ -652,7 +653,7 @@ function validateRunEvidence(
       );
     }
   }
-  if (failed > 0 && summaryDocument.status !== 'fail') {
+  if (hasUnresolvedRecipeFailure(entries) && summaryDocument.status !== 'fail') {
     addFinding(
       ctx,
       'error',
@@ -687,6 +688,8 @@ function validateRunEvidence(
 
 interface ExpectedTraceNode {
   action: string;
+  retryGroup?: string;
+  retryAttempts?: number;
   intent?: string;
 }
 
@@ -720,7 +723,7 @@ function validateTraceConsistency(
       .filter((artifact) => isNonEmptyString(artifact.path))
       .map((artifact) => [String(artifact.path), artifact]),
   );
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
 
   for (const [index, value] of entries.entries()) {
     const path = `trace.json${Array.isArray(trace) ? '' : '.entries'}[${index}]`;
@@ -761,7 +764,30 @@ function validateTraceConsistency(
       );
       continue;
     }
-    if (seen.has(nodeId)) {
+    const occurrence = (seen.get(nodeId) ?? 0) + 1;
+    const declaredRetry = expectedNode.retryGroup !== undefined;
+    if (
+      declaredRetry &&
+      (value.retryGroup !== expectedNode.retryGroup ||
+        value.retryAttempt !== occurrence ||
+        occurrence > (expectedNode.retryAttempts ?? 1))
+    )
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_retry_identity',
+        path,
+        'Retry identity/ordinal must match the declared node and attempt limit.',
+      );
+    if (!declaredRetry && value.retryGroup !== undefined)
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.undeclared_retry',
+        path,
+        'A trace cannot introduce an undeclared retry group.',
+      );
+    if (seen.has(nodeId) && !declaredRetry) {
       addFinding(
         ctx,
         'error',
@@ -770,7 +796,7 @@ function validateTraceConsistency(
         `Trace node ${nodeId} appears more than once.`,
       );
     }
-    seen.add(nodeId);
+    seen.set(nodeId, occurrence);
     if (value.action !== expectedNode.action) {
       addFinding(
         ctx,
@@ -881,6 +907,9 @@ function expectedLifecycleTraceNode(
   if (nodeId === 'recipe-complete:hud' && action === 'app.hud') {
     return { action: 'app.hud' };
   }
+  const stillMatch = /^(.*):still:[1-3]$/u.exec(nodeId);
+  if (stillMatch && recipeNodes.has(stillMatch[1]) && action === 'record.snapshot')
+    return { action: 'record.snapshot' };
   const hudMatch = /^(.*):hud:(?:running|pass|fail)$/u.exec(nodeId);
   return hudMatch && recipeNodes.has(hudMatch[1]) && action === 'app.hud'
     ? { action: 'app.hud' }
@@ -899,6 +928,9 @@ function collectExpectedTraceNodes(
     expected.set(traceNodeId, {
       action,
       ...(isNonEmptyString(node.intent) ? { intent: node.intent } : {}),
+      ...(isNonEmptyString(node.retryGroup)
+        ? { retryGroup: node.retryGroup, retryAttempts: Number(node.retryAttempts ?? 1) }
+        : {}),
     });
     if (action !== 'call' || !isNonEmptyString(node.ref)) continue;
     const ref = normalizeRecipeRef(node.ref);

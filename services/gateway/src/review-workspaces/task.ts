@@ -202,6 +202,10 @@ async function runtimeFiles() {
         'inputs/runtime/node_modules/@farmslot/protocol/dist',
       ),
       collectSupportFiles(
+        path.join(protocol, 'scripts'),
+        'inputs/runtime/node_modules/@farmslot/protocol/scripts',
+      ),
+      collectSupportFiles(
         path.join(protocol, 'package.json'),
         'inputs/runtime/node_modules/@farmslot/protocol/package.json',
       ),

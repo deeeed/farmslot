@@ -209,7 +209,7 @@ test('a case failed only by an interrupted recording is marked evidence_incomple
         return {
           async stop() {
             await writeFile(request.outputPath, 'partial mp4');
-            return { interruption };
+            return { segments: [{ path: path.basename(request.outputPath) }], interruption };
           },
         };
       },

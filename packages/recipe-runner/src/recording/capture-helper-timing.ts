@@ -7,12 +7,12 @@ import {
 } from '@farmslot/protocol';
 
 import { digestFileWithinRoot } from '../core/path.js';
-import type { VideoRecordingResult } from '../core/types.js';
+import type { VideoRecordingSegment } from '../core/types.js';
 
 /** Consume capture facts from the finalized native recording, not a launch-time estimate. */
 export async function readCaptureHelperTiming(
   outputPath: string,
-): Promise<Pick<VideoRecordingResult, 'timing' | 'timingUnavailableReason'>> {
+): Promise<Pick<VideoRecordingSegment, 'timing' | 'timingUnavailableReason'>> {
   try {
     const root = await realpath(path.dirname(outputPath));
     const name = path.basename(outputPath);

@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test';
 import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
+  createDefaultRecipeEngine,
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
 import {
@@ -19,11 +20,7 @@ import { configureHarnessAdapters } from '../src/harness/adapters.js';
 import { createRuntimeRecipeCatalog } from '../src/harness/catalog.js';
 import { recipeExecutionSignal, withRecipeExecutionSignal } from '../src/harness/host.js';
 import { createDefaultConsoleClassifier } from '../src/harness/run-diagnostics.js';
-import {
-  createDefaultRecipeEngine,
-  preflightRecipe,
-  runRecipe,
-} from '../src/harness/run-engine.js';
+import { preflightRecipe, runRecipe } from '../src/harness/run-engine.js';
 import { spawnScriptStreaming } from '../src/harness/shared.js';
 
 const core = JSON.parse(

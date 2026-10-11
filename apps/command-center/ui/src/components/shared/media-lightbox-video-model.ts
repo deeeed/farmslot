@@ -1,8 +1,8 @@
 import {
-  digestRecipeDocument,
   type RecipeRecordingMarker,
   type RecipeRecordingTimelineDocument,
   type RecipeVideoTiming,
+  validateRecipeRecordingTimelineBinding,
   validateRecipeRecordingTimelineDocument,
 } from '@farmslot/protocol';
 
@@ -74,42 +74,13 @@ export async function loadVideoTimeline(
   const validation = validateRecipeRecordingTimelineDocument(value);
   if (validation.status !== 'valid') throw new Error('Recording timeline is invalid.');
   const timeline = value as RecipeRecordingTimelineDocument;
-  const videoDigest = item.sha256.startsWith('sha256:') ? item.sha256 : `sha256:${item.sha256}`;
-  if (timeline.videoDigest !== videoDigest)
-    throw new Error('Recording timeline belongs to different video bytes.');
-  if (item.path !== timeline.videoPath && !item.path.endsWith(`/${timeline.videoPath}`))
-    throw new Error('Recording timeline names a different video path.');
   const root = item.path.slice(0, item.path.length - timeline.videoPath.length);
   const rawTrace = await readJson(item.resolveArtifactUrl(`${root}trace.json`));
-  const trace = Array.isArray(rawTrace)
-    ? rawTrace
-    : (rawTrace as { entries?: unknown } | null)?.entries;
-  if (!Array.isArray(trace) || digestRecipeDocument(trace) !== timeline.traceDigest)
-    throw new Error('Recording timeline belongs to a different execution trace.');
-  for (const marker of timeline.markers) {
-    const entry = trace[marker.traceIndex];
-    if (
-      !entry ||
-      entry.nodeId !== marker.nodeId ||
-      entry.action !== marker.action ||
-      entry.ok !== marker.ok ||
-      entry.intent !== marker.intent ||
-      digestRecipeDocument(entry.proves ?? []) !== digestRecipeDocument(marker.proves ?? [])
-    )
-      throw new Error('Recording marker does not match its execution trace.');
-    const { earliestZeroUnixMs: earliest, latestZeroUnixMs: latest } = timeline.clock;
-    for (const [timestamp, bounds] of [
-      [entry.startedAt, marker.startRangeMs],
-      [entry.endedAt, marker.endRangeMs],
-    ] as const) {
-      const at = Date.parse(timestamp);
-      if (
-        !Number.isFinite(at) ||
-        Math.abs(bounds[0] - (at - latest)) > 0.001 ||
-        Math.abs(bounds[1] - (at - earliest)) > 0.001
-      )
-        throw new Error('Recording marker time does not match its execution trace.');
-    }
-  }
+  const bound = validateRecipeRecordingTimelineBinding(timeline, {
+    videoPath: item.path,
+    videoDigest: item.sha256,
+    trace: rawTrace,
+  });
+  if (bound.status !== 'valid') throw new Error(bound.findings[0]!.message);
   return timeline;
 }

@@ -27,7 +27,9 @@ export function recipeRunOptionsFromCli(adapter: string, options: CliOptions): R
     watcherPort: optionString(options, 'watcherPort'),
     slot: optionString(options, 'slot'),
     validationRuntimeDir: optionString(options, 'validationRuntimeDir'),
-    recordVideo: recordVideo === 'full-run' ? 'full-run' : false,
+    recordVideo:
+      recordVideo === 'full-run' ? 'full-run' : recordVideo === 'off' ? false : undefined,
+    recordingReason: optionString(options, 'recordingReason'),
     autoHud: hud === 'show' ? true : hud === 'hide' ? false : undefined,
     ...(platform ? { platform } : {}),
     ...recipeTrustOptionsFromCli(options),

@@ -4,6 +4,8 @@ import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
 
 import {
   type ProjectResourcePostureConfig,
+  type RecipeRecordingTarget,
+  recordingTargetClaimKey,
   type RuntimeCapabilityAcquireConflict,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
@@ -24,6 +26,7 @@ import {
   type RuntimeCapabilityScopedWaitConflict,
   type RuntimeCapabilityStatusParams,
   type RuntimeCapabilityStatusResult,
+  validateRecipeRecordingTarget,
   widerRuntimeCapabilityClaimScope,
 } from '@farmslot/protocol';
 
@@ -365,15 +368,62 @@ function claimReachesSlot(
   return false;
 }
 
-/** The claims a catalog entry declares, with the `slot` default applied. */
+class InvalidRecordingClaimError extends Error {}
+
+/** Resolve declared claims from the validated, frozen acquisition parameters. */
 function claimsOfEntry(
-  entry: Pick<RuntimeCapabilityCatalogEntry, 'cost'>,
+  entry: Pick<RuntimeCapabilityCatalogEntry, 'cost' | 'parameters'>,
+  parameters: Record<string, unknown>,
 ): RuntimeCapabilityLeaseClaim[] {
-  return entry.cost.resources.map((claim) => ({
-    id: claim.id,
-    access: claim.access,
-    scope: runtimeCapabilityClaimScope(claim),
-  }));
+  return entry.cost.resources.map((claim) => {
+    const scope = runtimeCapabilityClaimScope(claim);
+    if (claim.binding !== 'recording-target') return { id: claim.id, access: claim.access, scope };
+    if (!entry.parameters)
+      throw new InvalidRecordingClaimError(
+        'Recording binding requires a declared parameter schema',
+      );
+    let validate: ValidateFunction;
+    try {
+      validate = parameterValidator(entry.parameters);
+    } catch (error) {
+      // Invalid provider schemas refuse admission before a queue place or provider exists.
+      throw new InvalidRecordingClaimError(
+        `Recording parameter schema is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!validate(parameters))
+      throw new InvalidRecordingClaimError(
+        'Recording parameters do not match the declared provider',
+      );
+    const recording = parameters.recording;
+    if (!recording || typeof recording !== 'object' || Array.isArray(recording))
+      throw new InvalidRecordingClaimError(
+        'Recording binding requires backend and target parameters',
+      );
+    const payload = recording as Record<string, unknown>;
+    if (
+      Object.keys(payload).some((field) => field !== 'backend' && field !== 'target') ||
+      typeof payload.backend !== 'string' ||
+      !payload.backend.trim()
+    )
+      throw new InvalidRecordingClaimError('Recording identity accepts only backend and target');
+    const targetValidation = validateRecipeRecordingTarget(payload.target);
+    if (targetValidation.status !== 'valid')
+      throw new InvalidRecordingClaimError(
+        'Recording target does not match the canonical target contract',
+      );
+    const target = payload.target as RecipeRecordingTarget;
+    const expectedScope = target.kind === 'android-device' ? 'fleet' : 'machine';
+    if (claim.access !== 'exclusive' || scope !== expectedScope)
+      throw new InvalidRecordingClaimError(
+        'Recording claim requires exclusive access at its target scope',
+      );
+    return {
+      id: `${claim.id}/${recordingTargetClaimKey({ backend: payload.backend, target })}`,
+      access: claim.access,
+      scope,
+    };
+  });
 }
 
 /** The wait record of a queued lease, or undefined when it is not a claim waiter. */
@@ -832,7 +882,9 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
-    const parameters = params.parameters ?? params.proofRequirement.parameters ?? {};
+    const parameters = structuredClone(
+      params.parameters ?? params.proofRequirement.parameters ?? {},
+    );
     if (entry.parameters) {
       try {
         const validate = parameterValidator(entry.parameters);
@@ -862,6 +914,46 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
+    // Validate bound identities before any target guard, proof-plan write or provider action.
+    let initialClaimConflict: ClaimConflict | null;
+    try {
+      claimsOfEntry(entry, parameters);
+      initialClaimConflict = this.findClaimConflict(
+        snapshot,
+        catalog,
+        entry,
+        params.slotId,
+        params.ownerRunId,
+        parameters,
+      );
+    } catch (error) {
+      if (!(error instanceof InvalidRecordingClaimError)) throw error;
+      return {
+        ok: false,
+        conflict: { kind: 'invalid-request', capabilityId: entry.id, reason: error.message },
+      };
+    }
+    const priorBoundLease = entry.cost.resources.some(
+      (claim) => claim.binding === 'recording-target',
+    )
+      ? snapshot.leases.find(
+          (lease) =>
+            lease.slotId === params.slotId &&
+            lease.capabilityId === entry.id &&
+            lease.owner.runId === params.ownerRunId &&
+            ACTIVE_STATES.has(lease.state),
+        )
+      : undefined;
+    if (priorBoundLease && !sameCapabilityParameters(priorBoundLease.parameters, parameters))
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: 'Existing recording lease has different frozen parameters',
+        },
+      };
+
     // Whether this acquire is heading for the claim queue below.
     //
     // The device guard refuses a second boot of one physical device outright,
@@ -872,10 +964,7 @@ export class RuntimeCapabilityRegistry {
     // queue exists to serialize, before the queue was ever consulted. With no
     // `queueOnConflict` the guard runs first and still refuses, unchanged — the
     // two rules never both answer for the same acquire.
-    const queueableConflict =
-      params.queueOnConflict === true
-        ? this.findClaimConflict(snapshot, catalog, entry, params.slotId, params.ownerRunId)
-        : null;
+    const queueableConflict = params.queueOnConflict === true ? initialClaimConflict : null;
     const willQueueOnClaim =
       queueableConflict !== null &&
       this.canQueueBehind(queueableConflict, params.ownerRunId, acquiringFamilyId) &&
@@ -1278,6 +1367,7 @@ export class RuntimeCapabilityRegistry {
       entry,
       params.slotId,
       params.ownerRunId,
+      parameters,
     );
     if (claimConflict) {
       // The proof plan is already recorded above, so a queued run's plan is
@@ -1684,7 +1774,7 @@ export class RuntimeCapabilityRegistry {
       // lease's claims from another slot later would otherwise need that
       // slot's catalog — possibly from another project, possibly mid-write.
       ...(catalog.machine ? { machine: catalog.machine } : {}),
-      claims: claimsOfEntry(entry),
+      claims: claimsOfEntry(entry, parameters),
     };
   }
 
@@ -1705,7 +1795,7 @@ export class RuntimeCapabilityRegistry {
     if (lease.claims) return lease.claims;
     if (!sameSlot || !catalog) return [];
     const holder = catalog.capabilities.find((capability) => capability.id === lease.capabilityId);
-    return holder ? claimsOfEntry(holder) : [];
+    return holder ? claimsOfEntry(holder, lease.parameters) : [];
   }
 
   /**
@@ -1752,8 +1842,9 @@ export class RuntimeCapabilityRegistry {
     slotId: string,
     /** Whose acquire this is, so its own queue place cannot block it. */
     acquiringRunId: string,
+    parameters: Record<string, unknown>,
   ): ClaimConflict | null {
-    const requested = new Map(entry.cost.resources.map((claim) => [claim.id, claim]));
+    const requested = new Map(claimsOfEntry(entry, parameters).map((claim) => [claim.id, claim]));
     if (requested.size === 0) return null;
     for (const lease of snapshot.leases) {
       const sameSlot = lease.slotId === slotId;
@@ -1898,19 +1989,43 @@ export class RuntimeCapabilityRegistry {
       ) {
         return null;
       }
-      const conflict = this.findClaimConflict(
-        snapshot,
-        catalog,
-        entry,
-        params.slotId,
-        params.ownerRunId,
+      const parameters = structuredClone(
+        params.parameters ?? params.proofRequirement.parameters ?? {},
       );
+      const priorBoundWaiter = entry.cost.resources.some(
+        (claim) => claim.binding === 'recording-target',
+      )
+        ? snapshot.leases.find(
+            (lease) =>
+              lease.slotId === params.slotId &&
+              lease.capabilityId === entry.id &&
+              lease.owner.runId === params.ownerRunId &&
+              scopedWaitOf(lease),
+          )
+        : undefined;
+      if (priorBoundWaiter && !sameCapabilityParameters(priorBoundWaiter.parameters, parameters))
+        return null;
+      let conflict: ClaimConflict | null;
+      try {
+        conflict = this.findClaimConflict(
+          snapshot,
+          catalog,
+          entry,
+          params.slotId,
+          params.ownerRunId,
+          parameters,
+        );
+      } catch (error) {
+        if (!(error instanceof InvalidRecordingClaimError)) throw error;
+        // Preflight cannot report invalid requests; acquire returns the typed refusal.
+        // It must not create a queue place for an invalid identity.
+        return null;
+      }
       if (!conflict || !this.canQueueBehind(conflict, params.ownerRunId, familyId)) return null;
       const ownedParams: RuntimeCapabilityAcquireParams = {
         ...params,
         ...(familyId ? { ownerFamilyId: familyId } : {}),
       };
-      const parameters = params.parameters ?? params.proofRequirement.parameters ?? {};
       const result = this.enqueueClaimWaiter(
         snapshot,
         catalog,

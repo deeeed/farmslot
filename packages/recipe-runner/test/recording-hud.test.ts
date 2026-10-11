@@ -10,7 +10,6 @@ import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createStandardUiAdapters } from '../src/adapters/ui.js';
 import { RecipeExecutionError, RUNTIME_CONNECTION_CLOSED } from '../src/core/failure.js';
 import { createRecipeRunner } from '../src/core/runner.js';
-import type { RecipeRunCaptureInterruption } from '../src/core/types.js';
 import { loneCaptureInterruption } from '../src/recording/capture-helper-interruption.js';
 
 const manifest = {
@@ -36,12 +35,13 @@ for (const outcome of [
   'interrupted',
   'unmeasured',
   'failed',
+  'release-failed',
   'hud-failed',
   'interrupted-hud-closed',
   'interrupted-hud-failed',
   'product-failed-hud-closed',
 ] as const) {
-  test(`completion HUD follows recorder finalization: ${outcome}`, async (t) => {
+  test(`completion HUD remains inside the recording boundary: ${outcome}`, async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'record-hud-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const events: string[] = [];
@@ -80,28 +80,49 @@ for (const outcome of [
         }),
       ],
       recording: {
+        admission: {
+          async acquire(context) {
+            events.push('acquire');
+            assert.equal(Object.isFrozen(context.target), true);
+            assert.deepEqual(context.target, { kind: 'pid', pid: 123 });
+            return {
+              key: 'recording/test/pid-123',
+              async release() {
+                events.push('release');
+                if (outcome === 'release-failed') throw new Error('Gateway disconnected.');
+              },
+            };
+          },
+        },
         videoRecorder: {
           name: 'test',
           async start(request) {
+            events.push('start');
+            assert.equal(Object.isFrozen(request.target), true);
             return {
               async stop() {
                 events.push('stop');
                 if (outcome === 'failed') throw new Error('Recorder finalization failed');
                 await writeFile(request.outputPath, 'finalized video');
                 return {
-                  ...(outcome === 'unmeasured'
-                    ? { timingUnavailableReason: 'ffprobe unavailable' }
-                    : {
-                        timing: {
-                          framesMs: [0, 33],
-                          durationMs: 66,
-                          clock: {
-                            source: 'measured-fixture',
-                            earliestZeroUnixMs: 1000,
-                            latestZeroUnixMs: 1001,
-                          },
-                        },
-                      }),
+                  segments: [
+                    {
+                      path: request.outputPath.split(/[\\/]/u).at(-1)!,
+                      ...(outcome === 'unmeasured'
+                        ? { timingUnavailableReason: 'ffprobe unavailable' }
+                        : {
+                            timing: {
+                              framesMs: [0, 33],
+                              durationMs: 66,
+                              clock: {
+                                source: 'measured-fixture',
+                                earliestZeroUnixMs: 1000,
+                                latestZeroUnixMs: 1001,
+                              },
+                            },
+                          }),
+                    },
+                  ],
                   ...(interrupted
                     ? {
                         interruption: {
@@ -134,16 +155,36 @@ for (const outcome of [
       recordVideo: { target: { kind: 'pid', pid: 123 } },
     });
     assert.deepEqual(events, [
+      'acquire',
+      'start',
+      `hud:${outcome === 'product-failed-hud-closed' ? 'fail' : 'pass'}`,
       'stop',
-      `hud:${interrupted || outcome === 'failed' ? 'fail' : 'pass'}`,
+      'release',
     ]);
     assert.equal(result.status, outcome === 'complete' ? 'pass' : 'fail');
+    if (outcome === 'release-failed') {
+      assert.equal(result.claims.recording.status, 'complete');
+      assert.equal(
+        await readFile(path.join(root, 'artifacts/videos/recipe-run.mp4'), 'utf8'),
+        'finalized video',
+      );
+      const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
+      assert.ok(
+        trace.some(
+          (entry: { error_code?: string; cause_class?: string }) =>
+            entry.error_code === 'RECORDING_ADMISSION_RELEASE_FAILED' &&
+            entry.cause_class === 'environment',
+        ),
+      );
+    }
     if (outcome === 'interrupted-hud-closed') {
       assert.ok(loneCaptureInterruption(result));
       const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
-      assert.equal(trace.at(-1).nodeId, 'recipe-complete:hud');
-      assert.equal(trace.at(-1).error_code, 'CAPTURE_INTERRUPTED');
-      assert.equal(trace.at(-1).error_details.runtime_error_code, RUNTIME_CONNECTION_CLOSED);
+      assert.equal(
+        trace.find((entry: { nodeId: string }) => entry.nodeId === 'recipe-complete:hud')
+          .error_code,
+        'CAPTURE_INTERRUPTED',
+      );
     }
     if (outcome === 'interrupted-hud-failed' || outcome === 'product-failed-hud-closed') {
       assert.equal(loneCaptureInterruption(result), undefined);
@@ -166,48 +207,65 @@ for (const outcome of [
   });
 }
 
-test('caller-owned interrupted recording determines the completion HUD and package result', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'record-external-hud-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const events: string[] = [];
-  const interruption: RecipeRunCaptureInterruption = {
-    frames: 2,
-    mediaTimeMs: 33,
-    cause: 'Window closed',
-    videoPath: 'videos/full-run.mp4',
-    message: 'CAPTURE_INTERRUPTED: partial video retained',
-  };
-  const runner = createRecipeRunner({
-    actionManifest: manifest,
-    defaultSource: { kind: 'project', trust: 'trusted', name: 'test' },
-    adapters: [
-      ...createStandardCoreAdapters({ actions: ['end'] }),
-      ...createStandardUiAdapters({
-        actions: ['app.hud'],
-        transport: {
-          async execute(_action, node) {
-            events.push(`hud:${node.status}`);
-            return {};
+for (const outcome of ['start-failed', 'cancelled', 'headless'] as const) {
+  test(`recording admission cleanup follows execution ownership: ${outcome}`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'record-admission-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const events: string[] = [];
+    const controller = new AbortController();
+    const runner = createRecipeRunner({
+      actionManifest: { ...manifest, actions: { end: manifest.actions.end! } },
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: createStandardCoreAdapters({ actions: ['end'] }),
+      recording: {
+        admission: {
+          async acquire() {
+            events.push('acquire');
+            return {
+              key: 'owned',
+              async release() {
+                events.push('release');
+              },
+            };
           },
         },
-      }),
-    ],
+        videoRecorder: {
+          name: 'fixture',
+          async start() {
+            events.push('start');
+            if (outcome === 'start-failed') throw new Error('Recorder unavailable.');
+            controller.abort();
+            return {
+              async stop() {
+                events.push('stop');
+                return { segments: [] };
+              },
+            };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts'),
+      signal: controller.signal,
+      ...(outcome === 'headless'
+        ? {}
+        : { recordVideo: { target: { kind: 'pid' as const, pid: 123 } } }),
+    });
+    assert.deepEqual(
+      events,
+      outcome === 'headless'
+        ? []
+        : outcome === 'start-failed'
+          ? ['acquire', 'start', 'release']
+          : ['acquire', 'start', 'stop', 'release'],
+    );
+    assert.equal(result.status, outcome === 'headless' ? 'pass' : 'fail');
+    assert.equal(
+      result.claims.recording.status,
+      outcome === 'headless' ? 'not-required' : 'failed',
+    );
   });
-  const result = await runner.run({
-    recipeDocument: recipe,
-    projectRoot: root,
-    artifactsDir: path.join(root, 'artifacts'),
-    finalizeRecording: async () => {
-      events.push('stop');
-      return interruption;
-    },
-  });
-  assert.deepEqual(events, ['stop', 'hud:fail']);
-  assert.equal(result.status, 'fail');
-  assert.deepEqual(result.captureInterruption, interruption);
-  const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
-  assert.equal(trace.at(-1).error_code, 'CAPTURE_INTERRUPTED');
-  const summary = JSON.parse(await readFile(result.summaryPath, 'utf8'));
-  assert.equal(summary.failed, 1);
-  assert.equal(summary.cause_counts.environment, 1);
-});
+}
