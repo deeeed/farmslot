@@ -5,7 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add `run.refreshPublishedEvidence` for refreshing a finished run's existing PR evidence through the upload/render pipeline, with selected keys, hosted URLs and a posted-body receipt.
-- `RUNNER_MOBILE_KEY_PROFILES` and `runnerMobileKeyProfile()`: the extra phone terminal keys (the Companion runner row) for claude, codex, cursor, grok and pi, each key recording the CLI version and documented binding it was checked against. `TmuxWorkerSummary.processRunnerIds` and `TmuxPane.processRunnerIds` (optional) list the runners whose process matchers hit the pane command.
+- `RUNNER_MOBILE_KEY_PROFILES` and `runnerMobileKeyProfile()`: the extra phone terminal keys (the Companion runner row) for claude, codex, cursor, grok and pi, each key recording the CLI version and documented binding it was checked against. `TmuxWorkerSummary.processRunnerIds` (optional) lists the runners whose process matchers hit the pane command, and `TmuxWorkerSummary.linkedRunner` names the linked run's runner on that worker's own pane only.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.

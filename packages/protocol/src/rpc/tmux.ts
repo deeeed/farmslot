@@ -60,6 +60,11 @@ export interface TmuxWorkerSummary {
   active?: boolean;
   linkedSlotId?: string;
   linkedRunId?: string;
+  /**
+   * Runner of the linked run (`metrics.runner`, or the agent context's runner for a review
+   * session), set only on the pane that runs that worker. Other panes in the session omit it.
+   */
+  linkedRunner?: string;
   linkedFamilyId?: string;
   branch?: string;
   lastChangedAt?: number;

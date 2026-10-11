@@ -458,6 +458,36 @@ test('tmuxWorkerFromNodePane lists only runners safe to identify from the pane c
   assert.equal(worker('zsh').processRunnerIds, undefined);
 });
 
+test('tmuxWorkerFromNodePane names the linked runner only on the worker pane', () => {
+  const correlation = {
+    slotId: 'runner-mobile-1',
+    runId: 'run-active',
+    runner: 'claude',
+    workerWindow: '3',
+    workerPaneId: '%42',
+  };
+  const summary = (paneId: string, window: string) =>
+    tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      observedAt: 2_000_000_000_000,
+      correlation,
+      pane: {
+        session: 'mm-1',
+        window,
+        pane: '0',
+        paneId,
+        target: `mm-1:${window}.${paneId}`,
+        command: 'zsh',
+      },
+    });
+
+  const worker = summary('%42', '3');
+  assert.deepEqual([worker.linkedRunId, worker.linkedRunner], ['run-active', 'claude']);
+  // A shell window in the same session belongs to the run but not to its runner.
+  const shell = summary('%43', '4');
+  assert.deepEqual([shell.linkedRunId, shell.linkedRunner], ['run-active', undefined]);
+});
+
 test('active slot correlations prevent stable panes from being misclassified as stale', () => {
   const worker = tmuxWorkerFromNodePane({
     nodeId: 'runner-local',

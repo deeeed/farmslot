@@ -108,8 +108,6 @@ export interface TmuxPane {
    * that.
    */
   currentCommand?: string;
-  /** Same contract as `TmuxWorkerSummary.processRunnerIds`, read from `currentCommand`. */
-  processRunnerIds?: string[];
   /** tmux `#{pane_id}` (`%N`) — stable pane identity. */
   paneId?: string;
   /** tmux `#{pane_pid}` — root of the pane's process tree. */

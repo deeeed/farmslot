@@ -374,6 +374,9 @@ export function tmuxWorkerFromNodePane(params: {
 }): TmuxWorkerSummary {
   const { nodeId, pane, observedAt, correlation } = params;
   const processRunnerIds = runnerIdsMatchingPaneCommand(pane.command);
+  // ADR-032 Phase 3A: only the worker's own pane inherits the runner. Other panes in the session
+  // (shell tabs, reviewer panes) stay runner-neutral.
+  const workerRunner = paneIsWorkerContext(pane, correlation) ? correlation?.runner : undefined;
   return {
     ref: {
       nodeId,
@@ -399,6 +402,7 @@ export function tmuxWorkerFromNodePane(params: {
     ...(pane.active != null ? { active: pane.active } : {}),
     ...(correlation?.slotId ? { linkedSlotId: correlation.slotId } : {}),
     ...(correlation?.runId ? { linkedRunId: correlation.runId } : {}),
+    ...(workerRunner ? { linkedRunner: workerRunner } : {}),
     ...(correlation?.familyId ? { linkedFamilyId: correlation.familyId } : {}),
     ...(pane.branch ? { branch: pane.branch } : {}),
     ...(pane.lastChangedAt != null ? { lastChangedAt: pane.lastChangedAt } : {}),
@@ -406,10 +410,9 @@ export function tmuxWorkerFromNodePane(params: {
       pane,
       observedAt,
       correlation?.activityHint,
-      // ADR-032 Phase 3A: only the worker's own pane inherits the runner for pane-retirement
-      // scoping. Other panes in the session (shell tabs, reviewer panes) stay runner-neutral so a
-      // stale non-worker pane cannot raise a false observability-degraded alert.
-      paneIsWorkerContext(pane, correlation) ? correlation?.runner : undefined,
+      // Pane-retirement scoping uses the same worker runner, so a stale non-worker pane cannot
+      // raise a false observability-degraded alert.
+      workerRunner,
     ),
   };
 }
