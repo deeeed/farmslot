@@ -44,3 +44,20 @@ and blocks invocation. The gateway verifies ownership and eligibility.
 PR alternatives set `sequenceRole: 'execution-alternatives'` and may share one
 lineage. Counted review rows cannot duplicate it. QA contexts set `workflow: 'qa'`;
 static lineage does not block QA, and QA cannot invoke `request-review`.
+
+## Source layout
+
+`src/types.ts` defines caller context; `catalog.ts` resolves supported choices.
+`validation.ts` and `provenance.ts` validate selections and retained lineage.
+`view-model.ts` owns rows; `execution.ts` serializes execution alternatives.
+`test/review-dispatch.test.ts` covers the shared contract.
+
+## Maintenance rules
+
+Keep selection state and validation here. Platform renderers display this model;
+callers supply resource, QA and publication context. Preserve saved custom model IDs.
+
+## Local quality
+
+Run `yarn workspace @farmslot/review-dispatch quality`. Build after protocol with
+`yarn workspace @farmslot/review-dispatch build`.

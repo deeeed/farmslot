@@ -397,7 +397,7 @@
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 250,
-        "intent": "Bring the first shared picker model choices into view before choosing one.",
+        "intent": "The publication review model options fit above the bottom bar so their labels can be read.",
         "next": "create-model"
       }
     }
