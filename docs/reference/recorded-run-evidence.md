@@ -1,6 +1,6 @@
 # Recorded run evidence
 
-**Status:** Proposed normative specification for [ADR-062](../adr/062-recorded-run-evidence.md).
+**Status:** Accepted normative specification for [ADR-062](../adr/062-recorded-run-evidence.md).
 **Owner:** Farmslot maintainers.
 **Scope:** Framework recording, claim evidence, review consumers and public CLI/SDK.
 
@@ -175,14 +175,14 @@ abort; local expiration does not delete independently hosted public evidence.
 
 ### CLI
 
-| Surface                                                           | Named consumer                                                                  |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| `farmslot recipe run <id                                          | file>`                                                                          | Recipe authors/custom harness users inherit evidence automatically; existing plan mode stays read-only |
-| `--record-video=off --recording-reason <text>`                    | Operator exception and performance-baseline qualification                       |
-| `farmslot recipe artifacts [dir                                   | task] --validate --format json                                                  | markdown`                                                                                              | Review gates, CI and authorized publication |
-| `artifacts --ac <id> --export-clips <dir>`                        | Engineer/release export; selector accepts the registered claim ID, including QA |
-| `artifacts <task> --refresh-published`                            | Authorized operator refresh against the approved package                        |
-| `farmslot recipe status` / `farmslot doctor --conformance --live` | Engineer readiness and maintainer conformance                                   |
+| Surface                                                                    | Named consumer                                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `farmslot recipe run <id\|file>`                                           | Recipe authors/custom harness users inherit evidence automatically; existing plan mode stays read-only |
+| `--record-video=off --recording-reason <text>`                             | Operator exception and performance-baseline qualification                                              |
+| `farmslot recipe artifacts [dir\|task] --validate --format json\|markdown` | Review gates, CI and authorized publication                                                            |
+| `artifacts --ac <id> --export-clips <dir>`                                 | Engineer/release export; selector accepts the registered claim ID, including QA                        |
+| `artifacts <task> --refresh-published`                                     | Authorized operator refresh against the approved package                                               |
+| `farmslot recipe status` / `farmslot doctor --conformance --live`          | Engineer readiness and maintainer conformance                                                          |
 
 There is no parallel recording/evidence command family or new routine worker
 configuration. SDK and CLI call the same engine. Generate reference entries from

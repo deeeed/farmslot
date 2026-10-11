@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
-**Status:** Proposed
-**Date:** 2026-10-11
+**Status:** Accepted
+**Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
 **Related:** [ADR-012](012-device-screen-streaming.md), [ADR-034](034-recipe-protocol-v1.md), [ADR-060](060-sub-task-observability.md), [Recorded run evidence specification](../reference/recorded-run-evidence.md)
