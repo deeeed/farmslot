@@ -102,6 +102,98 @@ test('project recovery hints survive the declared provider host configuration', 
   );
 });
 
+test('project host forwards recording admission only to execution, before backend start', async (t) => {
+  const options = fixture(t);
+  const file = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8').replace(
+      "runtimeStatus: async () => ({decision:'ready', reasons:[]}),",
+      `runtimeStatus: async () => ({decision:'ready', reasons:[]}),
+    recording: {
+      target: async () => ({kind:'pid',pid:123}),
+      videoRecorder: async () => ({name:'host-fixture',start:async () => {
+        fs.writeFileSync(${JSON.stringify(path.join(options.cwd, 'backend-started'))}, 'started');
+        throw new Error('Backend must not start when admission refuses');
+      }}),
+    },`,
+    ),
+  );
+  let acquired = 0;
+  await withProjectRecipeHost(
+    {
+      ...options,
+      recordingAdmission: {
+        async acquire(context) {
+          acquired++;
+          assert.equal(context.backend, 'host-fixture');
+          assert.deepEqual(context.target, { kind: 'pid', pid: 123 });
+          throw new Error('Host admission refused');
+        },
+      },
+    },
+    async (host) => {
+      assert.equal(acquired, 0, 'Host discovery must not acquire');
+      const manifest = JSON.parse(
+        fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+      );
+      const runner = await host.engine.createRunner('headless', manifest, {
+        actionSources: new Map(),
+        trustTaskActions: false,
+        autoHud: false,
+      });
+      const request = {
+        projectRoot: options.cwd,
+        artifactsDir: path.join(options.cwd, 'run-artifacts'),
+        recordVideo: 'full-run' as const,
+        recipeDocument: {
+          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+          workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+        },
+      };
+      await runner.preflight(request);
+      assert.equal(acquired, 0, 'Planning must not acquire');
+      const result = await runner.run(request);
+      assert.equal(result.status, 'fail');
+      assert.equal(acquired, 1);
+      const trace = fs.readFileSync(path.join(request.artifactsDir, 'trace.json'), 'utf8');
+      assert.match(trace, /Host admission refused/);
+      assert.equal(fs.existsSync(path.join(options.cwd, 'backend-started')), false);
+    },
+  );
+});
+
+test('project host preserves a provider-supplied engine with admission configured', async (t) => {
+  const options = fixture(t);
+  const file = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, 'utf8')
+      .replace(
+        'return {\n        runtime:',
+        'return {\n        engine: { marker: "provider-engine", bundledLibrary: { name: "provider", root: context.target.value } },\n        runtime:',
+      ),
+  );
+  await withProjectRecipeHost(
+    {
+      ...options,
+      recordingAdmission: {
+        async acquire() {
+          throw new Error('Discovery acquired a lease');
+        },
+      },
+    },
+    async (host) => {
+      assert.deepEqual(host.engine, {
+        marker: 'provider-engine',
+        bundledLibrary: { name: 'provider', root: options.cwd },
+      });
+      assert.equal(host.engine, host.provider.engine);
+    },
+  );
+});
+
 function commandFixture(t: TestContext) {
   const options = fixture(t);
   const file = path.join(options.cwd, 'provider.mjs');

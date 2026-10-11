@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   createAdapterRegistry,
   createDefaultRecipeEngine,
+  type DefaultRecipeEngineOptions,
   type RecipeEngine,
 } from '@farmslot/adapter-sdk';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
@@ -44,6 +45,7 @@ export interface ProjectRecipeHostOptions
   extends ResolveProjectContextOptions, LoadProjectProviderOptions {
   signal?: AbortSignal;
   deferOutput?: boolean;
+  recordingAdmission?: DefaultRecipeEngineOptions['recordingAdmission'];
 }
 
 export interface ProjectRecipeHost {
@@ -169,6 +171,7 @@ export function withProjectRecipeHost<T>(
             provider.engine ??
             createDefaultRecipeEngine({
               runtime: provider.runtime,
+              recordingAdmission: options.recordingAdmission,
               catalog: createRuntimeRecipeCatalog({
                 runtime: provider.runtime,
                 bundledLibrary: {

@@ -42,6 +42,8 @@ export function isRuntimeCapabilityClaimScope(
 }
 
 export interface RuntimeCapabilityResourceClaim {
+  /** Derive this exclusive, scoped claim from provider-validated recording parameters. */
+  binding?: 'recording-target';
   id: string;
   access: RuntimeCapabilitySharePolicy;
   kind?: 'port' | 'device' | 'process' | 'service' | 'other';

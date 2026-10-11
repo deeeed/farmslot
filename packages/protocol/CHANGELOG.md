@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Declare optional recording-target resource claim bindings for scoped recording admission.
+
 - Define automatic registered claim evidence and original recording segments, with checked timeline identities and one shared acceptance validator (ADR-062).
 - Expose shared snapshot and current-check views for CI decisions.
 - Carry frozen deterministic checklist commands and verified local CI receipts into publication packages.
