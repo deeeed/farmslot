@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Release protects non-terminal slot owners and rechecks the claim before teardown. Runner input verifies a live foreground process before every send, so an exited runner cannot leave task text executing in its shell.
 
+- Dispatch can release a target branch from an idle linked-worktree holder after checking configured ownership, park records, tracked changes and remote ancestry. It detaches without moving the branch; active, parked, dirty and unpushed work stays protected. Branch conflicts are local to the machine.
+
 - Keep slot readiness consistent with skills source reconciliation, additive local Git ignores and quiet live server logs, and apply the farm signing identity during health-only preparation without resetting the checkout.
 
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
