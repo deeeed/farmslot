@@ -5,7 +5,42 @@ import {
   prepareSkipReason,
   safeRecipeToolingProvenance,
   safeReferenceRepoProvenance,
+  shouldForceNewPrepareBranch,
 } from './dispatch-lifecycle-steps.js';
+import { makeRun } from './test-fixtures.js';
+
+test('fresh dev and fix-bug runs may create new work branches', () => {
+  for (const flowType of ['dev', 'fix-bug'] as const) {
+    assert.equal(shouldForceNewPrepareBranch(makeRun({ flowType })), true);
+  }
+  assert.equal(shouldForceNewPrepareBranch(makeRun({ flowType: 'review-pr' })), false);
+});
+
+test('same-run replay reuses the branch regardless of its entry step', () => {
+  for (const stepName of ['find-slot', 'grade', 'write-task', 'prepare'] as const) {
+    const run = makeRun({ flowType: 'dev' });
+    run.recoveryAttempts = [
+      {
+        id: 'retry',
+        attempt: 1,
+        stepName,
+        startedAt: run.updatedAt,
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ];
+    assert.equal(shouldForceNewPrepareBranch(run), false, stepName);
+    run.recoveryAttempts[0].status = 'completed';
+    assert.equal(shouldForceNewPrepareBranch(run), false, `completed ${stepName}`);
+  }
+});
+
+test('startup recovery and a previously prepared run never force a new branch', () => {
+  const run = makeRun({ flowType: 'dev' });
+  assert.equal(shouldForceNewPrepareBranch(run, true), false);
+  run.engineState = { prepareBranch: { slotId: run.slotId!, branch: run.branch!, started: true } };
+  assert.equal(shouldForceNewPrepareBranch(run), false);
+});
 
 test('static PR review runs minimal prepare unless the operator explicitly skips', () => {
   assert.equal(prepareSkipReason(false), null);

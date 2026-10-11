@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
 - Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
+- Run replay and startup recovery reuse the run branch. New-work prepare refuses to replace a published branch with commits outside the default branch or recorded start ref, and reports those commits before resetting or deleting any branch.
+
 - Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
 - Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
 
