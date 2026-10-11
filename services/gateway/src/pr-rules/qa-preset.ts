@@ -24,12 +24,11 @@ export function resolvePreviewQaPreset(
       ...defaults.qaInputs,
       ...options.qaInputs,
     });
-    const { validationDepth: _legacyDepth, busySession: _busySession, ...current } = options;
+    const current = options;
     const configured = prReviewPurpose(options);
     item.review = {
       ...current,
-      sessionIntent: 'reset',
-      scope: 'full',
+      mode: 'cold',
       workflow: 'qa',
       qaProfileId: selected.profile.id,
       qaInputs: selected.inputs,

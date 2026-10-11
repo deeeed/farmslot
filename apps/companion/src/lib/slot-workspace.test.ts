@@ -395,7 +395,7 @@ test('slot workspace retro summary exposes latest pending retrospective with met
           kind: 'retrospective',
           outcome: 'success',
           whatThisIs: 'retro',
-          selfReviewSummary: 'Recorded summary',
+          reviewSummary: 'Recorded summary',
           actionEffects: [],
         },
       },

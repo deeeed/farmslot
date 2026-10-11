@@ -28,9 +28,9 @@ const contexts = [
   },
   {
     id: 'reviewer',
-    role: 'self-review',
-    taskFile: `${TASK_DIR}/SELF-REVIEW.md`,
-    signalFile: `${TASK_DIR}/SELF-REVIEW-SIGNAL.json`,
+    role: 'review',
+    taskFile: `${TASK_DIR}/REVIEW.md`,
+    signalFile: `${TASK_DIR}/REVIEW-SIGNAL.json`,
   },
 ];
 let runStatus = 'blocked';
@@ -53,7 +53,7 @@ const run = () =>
 
 const files = new Map([
   [`${TASK_DIR}/TASK.md`, '# Task\n\n- [x] **1. work**\n'],
-  [`${TASK_DIR}/SELF-REVIEW.md`, '# Review\n\n- [x] **1. check**\n'],
+  [`${TASK_DIR}/REVIEW.md`, '# Review\n\n- [x] **1. check**\n'],
   [
     `${TASK_DIR}/SIGNAL.json`,
     JSON.stringify({
@@ -65,12 +65,12 @@ const files = new Map([
     }),
   ],
   [
-    `${TASK_DIR}/SELF-REVIEW-SIGNAL.json`,
+    `${TASK_DIR}/REVIEW-SIGNAL.json`,
     JSON.stringify({
       status: 'running',
       attemptId: 'r1',
       timestamp: '2026-10-09T13:11:00Z',
-      role: 'self-review',
+      role: 'review',
       contextId: 'reviewer',
     }),
   ],

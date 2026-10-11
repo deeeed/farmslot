@@ -5,7 +5,7 @@ import { gateway } from '../gateway-client.js';
 import {
   clearVisibleModels,
   onVisibleModelsChange,
-  rememberVisibleModels,
+  rememberRunnerVisibleState,
 } from './runner-visible-cache.js';
 
 const listeners = new Set<(error: string) => void>();
@@ -33,8 +33,7 @@ async function loadVisibleModels(): Promise<void> {
   }
   // A later load started after this one; its answer is the current one.
   if (load !== latestLoad) return;
-  for (const state of result.runners)
-    rememberVisibleModels(state.runner, state.models, state.defaultModel);
+  for (const state of result.runners) rememberRunnerVisibleState(state);
   for (const listener of listeners) listener('');
 }
 

@@ -4,8 +4,8 @@ import test from 'node:test';
 import type { PublicationReviewLaunchRejection, Run } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { TerminalReviewArtifactError } from '../self-review/terminal-result.js';
 
 import { BlockedRunError } from './errors.js';
 import {
@@ -45,14 +45,16 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
     slotId: 'slot-1',
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
             runner: 'codex',
             model: 'gpt-5.6-sol',
             effort: 'low',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -62,6 +64,7 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
             recoveryContinuationPending: true,
             attempts: [
               {
+                mode: 'cold' as const,
                 loopNumber: 1,
                 verdict: 'issues',
                 unresolvedCount: 1,
@@ -81,7 +84,7 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
       executeReview: async (_runId, _slotId, options) => {
         executions += 1;
         assert.ok(options);
-        assert.equal(options.artifactScope, 'independent-review-1');
+        assert.equal(options.artifactScope, 'review-1');
         assert.equal(options.effort, 'low');
         assert.equal(options.resumeFromResult?.verdict, 'issues');
         assert.equal(options.resumeFromResult?.issues?.length, 1);
@@ -94,6 +97,7 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
           validationDepth: 'static-code',
           attempts: [
             {
+              mode: 'cold' as const,
               loopNumber: 2,
               verdict: 'pass',
               unresolvedCount: 0,
@@ -105,12 +109,12 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
     });
   const [resumed, concurrent] = await Promise.all([resume(), resume()]);
 
-  assert.deepEqual(resumed, { reviewId: 'independent-review-1', verdict: 'pass' });
+  assert.deepEqual(resumed, { reviewId: 'review-1', verdict: 'pass' });
   assert.deepEqual(concurrent, resumed);
   assert.equal(executions, 1);
-  const reviews = getRun(run.id)?.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = getRun(run.id)?.engineState?.publishGate?.reviews ?? [];
   assert.equal(reviews.length, 1, 'recovery must replace the interrupted review in place');
-  assert.equal(reviews[0]?.id, 'independent-review-1');
+  assert.equal(reviews[0]?.id, 'review-1');
   assert.equal(reviews[0]?.verdict, 'pass');
   assert.equal(reviews[0]?.feedbackSent, true);
 });
@@ -129,19 +133,29 @@ test('resumeInterruptedPublicationReview resumes a review recorded without depth
     slotId: 'slot-1',
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-legacy',
+            reviewerSessionId: 'fixture-session-' + 'review-legacy',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-legacy',
             source: 'dispatch',
             runner: 'codex',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
             issues,
             feedbackSent: false,
             recoveryContinuationPending: true,
-            attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1, issues }],
+            attempts: [
+              {
+                mode: 'cold' as const,
+                loopNumber: 1,
+                verdict: 'issues',
+                unresolvedCount: 1,
+                issues,
+              },
+            ],
           },
         ],
       },
@@ -170,12 +184,14 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
     slotId: 'slot-1',
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
             runner: 'codex',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -196,10 +212,7 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
     }),
     null,
   );
-  assert.equal(
-    getRun(run.id)?.engineState?.publishGate?.independentReviews?.[0]?.feedbackSent,
-    false,
-  );
+  assert.equal(getRun(run.id)?.engineState?.publishGate?.reviews?.[0]?.feedbackSent, false);
   await assert.rejects(
     resumeInterruptedPublicationReview(run.id, 'slot-1', {
       executeReview: async () => {
@@ -324,7 +337,9 @@ test('ready-gate retains a git-probe rejection at its captured HEAD and clears i
 });
 
 test('publish-gate review orchestration preserves a recoverable gate and launches no reviewer when refused', async (t) => {
-  const pendingPlan = [{ order: 1, runner: 'codex' as const }];
+  const pendingPlan = [
+    { runner: 'codex' as const, model: null, effort: null, mode: 'cold' as const },
+  ];
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -334,8 +349,8 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
     slotId: 'test-review-launch-slot',
     engineState: {
       publishGate: {
-        pendingReviewPlan: pendingPlan,
-        pendingReviewPlanRequestedAt: '2026-08-03T00:00:00.000Z',
+        reviewSequence: pendingPlan,
+        reviewSequenceRequestedAt: '2026-08-03T00:00:00.000Z',
       },
     },
   });
@@ -366,7 +381,7 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
         });
         throw new GatewayMethodError(
           'PUBLICATION_REVIEW_LAUNCH_REJECTED',
-          'Independent review launch refused: test worktree is dirty.',
+          'Review launch refused: test worktree is dirty.',
           {
             userAction: 'Commit the validated fixes, then request re-review.',
             details: { dirtyPathCount: 1 },
@@ -385,7 +400,7 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
   assert.equal(result.rejection?.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
   assert.equal(result.rejection?.userAction, 'Commit the validated fixes, then request re-review.');
   const persisted = getRun(run.id)!;
-  assert.deepEqual(persisted.engineState?.publishGate?.pendingReviewPlan, pendingPlan);
+  assert.deepEqual(persisted.engineState?.publishGate?.reviewSequence, pendingPlan);
   assert.equal(
     persisted.engineState?.publishGate?.feedbackArtifactPath,
     'artifacts/concurrent-feedback.md',
@@ -464,4 +479,90 @@ test('a resolved publication gate fails closed when the run park freed its slot'
       `a ${phase} record must not block the gate`,
     );
   }
+});
+
+test('WARM recheck updates its existing lineage and preserves attempt provenance', async (t) => {
+  const previous = {
+    id: 'review-bound',
+    source: 'dispatch' as const,
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    mode: 'cold' as const,
+    reviewerSessionId: 'retained',
+    loopNumber: 1,
+    verdict: 'pass' as const,
+    unresolvedCount: 0,
+    reviewedHeadSha: 'old',
+    attempts: [
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'pass' as const, unresolvedCount: 0 },
+    ],
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#42',
+    runner: 'codex',
+    engineState: {
+      publishGate: {
+        reviews: [previous],
+        reviewSequenceContext: {
+          reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: previous.id }],
+        },
+      },
+    },
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  const result = await executePublishGateReviewPlan(
+    run.id,
+    'slot-1',
+    [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' }],
+    'dispatch',
+    {
+      assertLaunchAllowed: async () => {},
+      executeReview: async (_runId, _slotId, options = {}) => {
+        assert.equal(options.reviewId, previous.id);
+        assert.equal(options.priorAttempts?.length, 1);
+        return {
+          mode: 'warm',
+          reviewId: previous.id,
+          reviewerSessionId: 'retained',
+          session: {
+            mode: 'warm',
+            continuity: 'resumed',
+            reviewId: previous.id,
+            repository: 'owner/repo',
+            prNumber: 42,
+            sessionId: 'retained',
+            lastReviewedHeadSha: 'old',
+          },
+          verdict: 'pass',
+          issues: [],
+          retryCount: 0,
+          attempts: [
+            ...(options.priorAttempts ?? []),
+            {
+              mode: 'warm',
+              loopNumber: 2,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              reviewSnapshot: {
+                source: 'local-git',
+                capturedAt: '2026-10-12T00:00:00Z',
+                baseSha: 'old',
+                headSha: 'new',
+              },
+            },
+          ],
+        };
+      },
+    },
+  );
+  assert.deepEqual(result.reviewIds, [previous.id]);
+  const reviews = getRun(run.id)?.engineState?.publishGate?.reviews ?? [];
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].id, previous.id);
+  assert.equal(reviews[0].loopNumber, 1);
+  assert.equal(reviews[0].attempts?.length, 2);
+  assert.equal(reviews[0].reviewedHeadSha, 'new');
 });

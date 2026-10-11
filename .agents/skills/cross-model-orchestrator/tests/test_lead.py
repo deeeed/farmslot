@@ -289,6 +289,19 @@ class LeadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_config(path)
 
+    def test_optional_lane_model_and_effort_are_validated_and_preserved(self):
+        path = self.root / 'config.json'
+        lane = {'id': 'worker', 'runner': 'codex', 'cwd': '.', 'goal': 'GOAL.md', 'report': 'REPORT.md',
+                'model': 'chosen-model', 'effort': 'xhigh'}
+        write_json(path, {'version': 1, 'lanes': [lane]})
+        configured = load_config(path)['lanes'][0]
+        self.assertEqual((configured['model'], configured['effort']), ('chosen-model', 'xhigh'))
+        for field, bad in [('model', ''), ('model', 4), ('effort', ' '), ('effort', False)]:
+            with self.subTest(field=field, bad=bad):
+                altered = {**lane, field: bad}
+                write_json(path, {'version': 1, 'lanes': [altered]})
+                with self.assertRaisesRegex(ValueError, field):load_config(path)
+
 
 if __name__ == '__main__':
     unittest.main()

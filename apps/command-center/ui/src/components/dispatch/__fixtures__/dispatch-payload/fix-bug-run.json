@@ -7,18 +7,16 @@
   "model": "sonnet",
   "runner": "claude",
   "mode": "autonomous",
-  "reviewDepth": {
-    "minimumIndependentReviews": 1,
-    "extraLoopsRequested": 0,
-    "countingVersion": 2,
-    "requireCrossRunner": true,
+  "reviewPolicy": {
+    "minimumReviews": 1,
     "requestedBy": "dispatch"
   },
-  "pendingReviewPlan": [
+  "reviewSequence": [
     {
-      "order": 1,
       "runner": "codex",
-      "validationDepth": "static-code"
+      "model": null,
+      "effort": null,
+      "mode": "cold"
     }
   ]
 }

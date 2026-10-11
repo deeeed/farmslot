@@ -4,35 +4,33 @@ import {
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
+  effectiveRequiredReviewCount,
   type EvidenceManifestEntry,
-  type IndependentReviewAttempt,
-  independentReviewFixRetriesExhausted,
-  independentReviewRetryCapReason,
-  type IndependentReviewStatus,
   isPublishApprovalAction,
-  latestExhaustedIndependentReview,
+  isQualifyingReview,
+  latestExhaustedReview,
   type NoChangeGatePayload,
   PUBLISH_APPROVAL_ACTIONS,
+  qualifyingPassingReviews,
   type ReadyGatePrPackage,
-  type ReviewDepthPolicy,
+  type ReviewAttempt,
   type ReviewDiffSnapshot,
+  reviewFixRetriesExhausted,
+  type ReviewPolicy,
+  reviewPolicySatisfied,
+  reviewRetryCapReason,
+  type ReviewStatus,
   type Run,
   type RunDecision,
-  stampIndependentReviewRetryCap,
+  stampReviewRetryCap,
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
 
-import {
-  effectiveRequiredReviewCount,
-  independentReviewPolicySatisfied,
-  isQualifyingIndependentReview,
-} from '../quality/review-policy.js';
-import { EXTRA_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
+import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
+import type { ReviewResult } from '../review/orchestrator.js';
 import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
 import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
-import { normalizeRunner } from '../runners/registry.js';
-import type { SelfReviewResult } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { publicationReviewPolicyForRun } from './publication-policy.js';
@@ -57,11 +55,11 @@ export const CONTINUE_REVIEW_FIX_ACTION = 'continue-review-fix';
 
 export function reviewerIsActiveForReview(
   run: Pick<Run, 'agentContexts'>,
-  review: Pick<IndependentReviewStatus, 'id'>,
+  review: Pick<ReviewStatus, 'id'>,
 ): boolean {
   return (run.agentContexts ?? []).some(
     (context) =>
-      context.role === 'self-review' &&
+      context.role === 'review' &&
       ['launching', 'working', 'waiting'].includes(context.status) &&
       context.artifactScope === review.id,
   );
@@ -73,14 +71,13 @@ export function publicationGateDecisionActions(opts: {
   branchZeroAhead?: boolean;
   evidenceRefreshAction?: DecisionAction | null;
   unavailableSnapshotAction?: DecisionAction | null;
-  pendingReviewContinuation?: IndependentReviewStatus;
-  independentReviews?: IndependentReviewStatus[];
+  pendingReviewContinuation?: ReviewStatus;
+  reviews?: ReviewStatus[];
   preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
 }): DecisionAction[] {
-  const exhausted = latestExhaustedIndependentReview(opts.independentReviews);
+  const exhausted = latestExhaustedReview(opts.reviews);
   const continueFix =
-    opts.pendingReviewContinuation &&
-    !independentReviewFixRetriesExhausted(opts.pendingReviewContinuation)
+    opts.pendingReviewContinuation && !reviewFixRetriesExhausted(opts.pendingReviewContinuation)
       ? opts.pendingReviewContinuation
       : undefined;
   return [
@@ -111,19 +108,14 @@ export function publicationGateDecisionActions(opts: {
       : []),
     { id: 'hold', label: 'Hold', style: 'secondary' as const },
     {
-      id: 'request-extra-review',
-      label: 'Request Independent Review',
+      id: 'request-review',
+      label: 'Request Review',
       style: exhausted ? ('primary' as const) : ('secondary' as const),
       ...(exhausted
         ? {
-            description: 'Start a new independent review. Remaining findings are not auto-sent.',
+            description: 'Start a new review. Remaining findings are not auto-sent.',
           }
         : {}),
-    },
-    {
-      id: 'request-cross-runner-review',
-      label: 'Request Independent Review (runner diversity)',
-      style: 'secondary' as const,
     },
     ...(!opts.reviewSatisfied
       ? [
@@ -132,7 +124,7 @@ export function publicationGateDecisionActions(opts: {
             label: 'Bypass Review (dangerous)',
             style: 'danger' as const,
             description: exhausted
-              ? independentReviewRetryCapReason(exhausted)
+              ? reviewRetryCapReason(exhausted)
               : 'Publish this package despite missing, failed, or stale reviews. Package and source freshness checks still apply.',
           },
         ]
@@ -140,9 +132,9 @@ export function publicationGateDecisionActions(opts: {
   ];
 }
 
-export function independentReviewNeedsContinuation(
+export function reviewNeedsContinuation(
   review: Pick<
-    IndependentReviewStatus,
+    ReviewStatus,
     | 'source'
     | 'verdict'
     | 'feedbackSent'
@@ -156,13 +148,12 @@ export function independentReviewNeedsContinuation(
   >,
 ): boolean {
   return (
-    review.source !== 'self-review' &&
     review.verdict === 'issues' &&
     review.feedbackSent !== true &&
     review.recoveryContinuationPending === true &&
     review.unresolvedCount > 0 &&
     (review.issues?.length ?? 0) > 0 &&
-    !independentReviewFixRetriesExhausted(review)
+    !reviewFixRetriesExhausted(review)
   );
 }
 
@@ -174,18 +165,15 @@ export function independentReviewNeedsContinuation(
  * including the single-attempt case, where the loop stopped before any fix
  * generation landed and `feedbackSent: true` can only be legacy carry-over.
  */
-export function normalizeExhaustedReviewContinuation(
-  review: IndependentReviewStatus,
-): IndependentReviewStatus {
+export function normalizeExhaustedReviewContinuation(review: ReviewStatus): ReviewStatus {
   const finalAttempt = review.attempts?.at(-1);
   if (
-    review.source === 'self-review' ||
     review.verdict !== 'issues' ||
     review.unresolvedCount <= 0 ||
     (review.issues?.length ?? 0) === 0 ||
     review.feedbackSent !== true ||
     review.recoveryContinuationPending === true ||
-    independentReviewFixRetriesExhausted(review) ||
+    reviewFixRetriesExhausted(review) ||
     !finalAttempt ||
     finalAttempt.verdict !== 'issues' ||
     finalAttempt.unresolvedCount <= 0
@@ -200,17 +188,13 @@ export function normalizeExhaustedReviewContinuation(
 }
 
 /** Return the newest continuation that no later terminal review superseded. */
-export function pendingIndependentReviewContinuation(
-  reviews: readonly IndependentReviewStatus[],
-): IndependentReviewStatus | undefined {
+export function pendingReviewContinuation(
+  reviews: readonly ReviewStatus[],
+): ReviewStatus | undefined {
   const latest = [...reviews]
     .reverse()
-    .find(
-      (review) =>
-        review.source !== 'self-review' &&
-        (review.verdict === 'pass' || review.verdict === 'issues'),
-    );
-  return latest && independentReviewNeedsContinuation(latest) ? latest : undefined;
+    .find((review) => review.verdict === 'pass' || review.verdict === 'issues');
+  return latest && reviewNeedsContinuation(latest) ? latest : undefined;
 }
 
 export function isOwnPrApprovalError(err: unknown): boolean {
@@ -255,7 +239,6 @@ export function buildPublishGateReviewStatus({
   priorReviewCount,
   reviewResult,
   requestedRunner,
-  workerRunner,
   model,
   effort,
   reviewId,
@@ -263,9 +246,8 @@ export function buildPublishGateReviewStatus({
 }: {
   source: 'dispatch' | 'human-gate';
   priorReviewCount: number;
-  reviewResult: SelfReviewResult;
+  reviewResult: ReviewResult;
   requestedRunner: string | null;
-  workerRunner?: string | null;
   model?: string | null;
   effort?: string | null;
   reviewId?: string;
@@ -273,13 +255,14 @@ export function buildPublishGateReviewStatus({
     ReadyGatePrPackage,
     'headSha' | 'packageInputHash' | 'reviewSubjectHash'
   > | null;
-}): IndependentReviewStatus {
-  const attempts: IndependentReviewAttempt[] =
+}): ReviewStatus {
+  const attempts: ReviewAttempt[] =
     Array.isArray(reviewResult.attempts) && reviewResult.attempts.length
       ? reviewResult.attempts
       : [
           {
             loopNumber: 1,
+            mode: reviewResult.mode ?? 'cold',
             verdict: reviewResult.skipped
               ? 'skipped'
               : reviewResult.verdict === 'pass'
@@ -304,23 +287,26 @@ export function buildPublishGateReviewStatus({
           },
         ];
   const finalAttempt = attempts.at(-1)!;
-  const reviewRunner = reviewResult.runner ?? requestedRunner ?? workerRunner ?? null;
-  const resolvedReviewId = reviewId ?? EXTRA_REVIEW_SOURCE.artifactRefs(priorReviewCount + 1).id;
-  const status: IndependentReviewStatus = {
+  const reviewRunner = reviewResult.runner ?? requestedRunner ?? null;
+  const resolvedReviewId =
+    reviewId ?? REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviewCount + 1).id;
+  const status: ReviewStatus = {
     id: resolvedReviewId,
     source,
+    mode: finalAttempt.mode ?? reviewResult.mode ?? 'cold',
+    session: finalAttempt.session ?? reviewResult.session,
     runner: reviewRunner,
     model: reviewResult.model ?? model ?? null,
     ...(reviewResult.effort?.trim() || effort?.trim()
       ? { effort: reviewResult.effort?.trim() || effort?.trim() }
       : {}),
     reviewerSessionId:
-      finalAttempt.usage?.runnerSessionId ?? reviewResult.usage?.runnerSessionId ?? null,
-    crossRunner:
-      reviewResult.crossRunner === true ||
-      (!!requestedRunner && requestedRunner !== normalizeRunner(workerRunner)),
+      reviewResult.reviewerSessionId ??
+      finalAttempt.usage?.runnerSessionId ??
+      reviewResult.usage?.runnerSessionId ??
+      null,
     loopNumber:
-      reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, resolvedReviewId) ?? priorReviewCount + 1,
+      reviewLoopNumberFromId(REQUESTED_REVIEW_SOURCE, resolvedReviewId) ?? priorReviewCount + 1,
     verdict: finalAttempt.verdict,
     unresolvedCount: finalAttempt.unresolvedCount,
     ...((finalAttempt.reason ?? reviewResult.reason)
@@ -351,7 +337,7 @@ export function buildPublishGateReviewStatus({
     startedAt: attempts[0]?.startedAt,
     completedAt: finalAttempt.completedAt ?? new Date().toISOString(),
   };
-  const capped = stampIndependentReviewRetryCap(status, reviewResult.maxRetries);
+  const capped = stampReviewRetryCap(status, reviewResult.maxRetries);
   if (!reviewedPackage) return capped;
   const finalReviewedHeadSha = status.reviewSnapshot?.headSha ?? null;
   const reviewedPackageHeadSha = reviewedPackage.headSha ?? null;
@@ -372,9 +358,9 @@ export function buildPublishGateReviewStatus({
 }
 
 export function stampPublishGateReviewStatusForPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   reviewedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'packageInputHash' | 'reviewSubjectHash'>,
-): IndependentReviewStatus {
+): ReviewStatus {
   return {
     ...review,
     reviewedHeadSha: reviewedPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
@@ -465,7 +451,7 @@ export function validatePackageApprovalSelection(
   decision: RunDecision | undefined,
 ): void {
   const refreshGuidance =
-    preparedPackage.reviewDepth && effectiveRequiredReviewCount(preparedPackage.reviewDepth) === 0
+    preparedPackage.reviewPolicy && effectiveRequiredReviewCount(preparedPackage.reviewPolicy) === 0
       ? 'refresh package before publishing'
       : 'refresh package and re-review before publishing';
   const packageChanged = (detail: string): Error =>
@@ -534,22 +520,36 @@ function selectedEvidenceKeysMatchPackageSelection(
 }
 
 export function reviewFinalSnapshotMatchesPreparedPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): boolean {
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
   const snapshot = review.reviewSnapshot;
   if (!snapshot || snapshot.source === 'unavailable') return false;
   if (!preparedPackage.headSha || snapshot.headSha !== preparedPackage.headSha) return false;
-  return reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
+  return reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage, review);
 }
 
 function reviewSnapshotDiffMatchesPackage(
   snapshot: ReviewDiffSnapshot,
   preparedPackage: Pick<ReadyGatePrPackage, 'reviewSnapshot'>,
+  review?: ReviewStatus,
 ): boolean {
   const preparedSnapshot = preparedPackage.reviewSnapshot;
   if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
+  if (review?.mode === 'warm') {
+    const session = review.session;
+    return (
+      snapshot.source !== 'unavailable' &&
+      session?.mode === 'warm' &&
+      session.continuity === 'resumed' &&
+      session.reviewId === review.id &&
+      session.sessionId === review.reviewerSessionId &&
+      !!session.lastReviewedHeadSha &&
+      snapshot.baseSha === session.lastReviewedHeadSha &&
+      snapshot.headSha === preparedSnapshot.headSha
+    );
+  }
   return (
     snapshot.baseRef === preparedSnapshot.baseRef &&
     snapshot.baseSha === preparedSnapshot.baseSha &&
@@ -577,7 +577,7 @@ interface PublicationReviewStaleness {
 }
 
 function diagnosePublicationReviewStaleness(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   packageReviewSubjectHash: string,
   preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): PublicationReviewStaleness {
@@ -585,7 +585,8 @@ function diagnosePublicationReviewStaleness(
   const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
   const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
   const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
-  const diffDrift = !snapshot || !reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
+  const diffDrift =
+    !snapshot || !reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage, review);
   const headDrift =
     !reviewedHeadSha ||
     reviewedHeadSha !== preparedPackage.headSha ||
@@ -600,7 +601,7 @@ function diagnosePublicationReviewStaleness(
 
 /** True when a review was captured for the exact prepared package subject and HEAD. */
 export function publicationReviewMatchesPreparedPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
 ): boolean {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
@@ -610,41 +611,29 @@ export function publicationReviewMatchesPreparedPackage(
 }
 
 export function countStalePublicationReviews(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  options?: { requireCrossRunnerCertification?: boolean },
 ): number {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
-  if (!packageReviewSubjectHash)
-    return independentReviews.filter(isQualifyingIndependentReview).length;
-  const reviewDepth = {
-    minimumIndependentReviews: preparedPackage.reviewDepth?.minimumIndependentReviews ?? 1,
-    requireCrossRunner: Boolean(
-      preparedPackage.reviewDepth?.requireCrossRunner || options?.requireCrossRunnerCertification,
-    ),
-    extraLoopsRequested: preparedPackage.reviewDepth?.extraLoopsRequested ?? 0,
-    requestedBy: preparedPackage.reviewDepth?.requestedBy ?? 'dispatch',
+  if (!packageReviewSubjectHash) return reviews.filter(isQualifyingReview).length;
+  const reviewPolicy = {
+    minimumReviews: preparedPackage.reviewPolicy?.minimumReviews ?? 1,
+    requestedBy: preparedPackage.reviewPolicy?.requestedBy ?? 'dispatch',
   };
-  const freshReviews = independentReviews.filter((review) =>
+  const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>
     reviewCertifiesPreparedPackage(review, preparedPackage),
   );
-  if (freshPublicationReviewCountSatisfied(reviewDepth, freshReviews)) return 0;
-  const certifiedByFreshFixLoop = independentReviews.some(
+  if (freshPublicationReviewCountSatisfied(reviewPolicy, freshReviews)) return 0;
+  return reviews.filter(
     (review) =>
-      reviewCertifiesApprovedHeadAfterFix(review, preparedPackage) &&
-      (!options?.requireCrossRunnerCertification || review.crossRunner),
-  );
-  return independentReviews.filter(
-    (review) =>
-      isQualifyingIndependentReview(review) &&
-      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale &&
-      !certifiedByFreshFixLoop,
+      isQualifyingReview(review) &&
+      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale,
   ).length;
 }
 
 interface StaleApprovalClassification {
   /** Stale approving reviews caused purely by subject/evidence drift (HEAD unchanged). */
-  evidenceOnly: IndependentReviewStatus[];
+  evidenceOnly: ReviewStatus[];
   /** A stale approving review certified a different/missing HEAD — a real code change. */
   hasHeadDriftedApproval: boolean;
 }
@@ -659,18 +648,16 @@ interface StaleApprovalClassification {
  * criteria can never drift apart, and each review is diagnosed exactly once.
  */
 function classifyStaleApprovingReviews(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  options?: { requireCrossRunnerCertification?: boolean },
 ): StaleApprovalClassification | null {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
   if (!packageReviewSubjectHash) return null;
-  const evidenceOnly: IndependentReviewStatus[] = [];
+  const evidenceOnly: ReviewStatus[] = [];
   let hasHeadDriftedApproval = false;
-  for (const review of independentReviews) {
-    if (!isQualifyingIndependentReview(review)) continue;
+  for (const review of reviews) {
+    if (!isQualifyingReview(review)) continue;
     if (review.verdict !== 'pass' || review.unresolvedCount !== 0) continue;
-    if (options?.requireCrossRunnerCertification && !review.crossRunner) continue;
     const diagnosis = diagnosePublicationReviewStaleness(
       review,
       packageReviewSubjectHash,
@@ -695,15 +682,10 @@ function classifyStaleApprovingReviews(
  * due to HEAD drift (real code change) or when no stale approving review exists.
  */
 export function staleReviewsAreEvidenceOnly(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  options?: { requireCrossRunnerCertification?: boolean },
 ): boolean {
-  const classification = classifyStaleApprovingReviews(
-    independentReviews,
-    preparedPackage,
-    options,
-  );
+  const classification = classifyStaleApprovingReviews(reviews, preparedPackage);
   return (
     !!classification &&
     classification.evidenceOnly.length > 0 &&
@@ -718,15 +700,10 @@ export function staleReviewsAreEvidenceOnly(
  * both reject a stale-code override with identical semantics.
  */
 export function assertEvidenceRefreshOverrideAvailable(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  reviewDepth: ReviewDepthPolicy,
 ): void {
-  if (
-    !staleReviewsAreEvidenceOnly(independentReviews, preparedPackage, {
-      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-    })
-  ) {
+  if (!staleReviewsAreEvidenceOnly(reviews, preparedPackage)) {
     throw new Error(
       'Evidence-refresh override unavailable: reviewed code changed; re-review before publishing',
     );
@@ -740,15 +717,10 @@ export function assertEvidenceRefreshOverrideAvailable(
  * defined in one place.
  */
 export function buildEvidenceRefreshAction(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  reviewDepth: ReviewDepthPolicy,
 ): DecisionAction | null {
-  if (
-    !staleReviewsAreEvidenceOnly(independentReviews, preparedPackage, {
-      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-    })
-  ) {
+  if (!staleReviewsAreEvidenceOnly(reviews, preparedPackage)) {
     return null;
   }
   return {
@@ -759,13 +731,13 @@ export function buildEvidenceRefreshAction(
 }
 
 function reviewMatchesUnavailableSnapshotPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
   const certifiedSnapshotHead =
     review.reviewSnapshot?.source === 'unavailable' ? undefined : review.reviewSnapshot?.headSha;
   return (
-    isQualifyingIndependentReview(review) &&
+    isQualifyingReview(review) &&
     review.verdict === 'pass' &&
     review.unresolvedCount === 0 &&
     review.reviewedHeadSha === preparedPackage.headSha &&
@@ -775,23 +747,23 @@ function reviewMatchesUnavailableSnapshotPackage(
 }
 
 export function unavailableSnapshotOverrideAvailable(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  reviewDepth: ReviewDepthPolicy,
+  reviewPolicy: ReviewPolicy,
 ): boolean {
   if (preparedPackage.reviewSnapshot?.source !== 'unavailable') return false;
-  const matching = independentReviews.filter((review) =>
+  const matching = qualifyingPassingReviews(reviews).filter((review) =>
     reviewMatchesUnavailableSnapshotPackage(review, preparedPackage),
   );
-  return freshPublicationReviewCountSatisfied(reviewDepth, matching);
+  return freshPublicationReviewCountSatisfied(reviewPolicy, matching);
 }
 
 export function assertUnavailableSnapshotOverrideAvailable(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  reviewDepth: ReviewDepthPolicy,
+  reviewPolicy: ReviewPolicy,
 ): void {
-  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+  if (!unavailableSnapshotOverrideAvailable(reviews, preparedPackage, reviewPolicy)) {
     throw new Error(
       'Snapshot-unavailable override requires passing reviews for the exact package HEAD and subject',
     );
@@ -799,11 +771,11 @@ export function assertUnavailableSnapshotOverrideAvailable(
 }
 
 export function buildUnavailableSnapshotAction(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
-  reviewDepth: ReviewDepthPolicy,
+  reviewPolicy: ReviewPolicy,
 ): DecisionAction | null {
-  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+  if (!unavailableSnapshotOverrideAvailable(reviews, preparedPackage, reviewPolicy)) {
     return null;
   }
   return {
@@ -835,56 +807,41 @@ function snapshotUnavailableOverrideWasApproved(
  * path), gated behind the explicit human override.
  */
 export function restampStaleApprovingReviewsForEvidenceRefresh(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   approvedPackage: ReadyGatePrPackage,
-  options?: { requireCrossRunnerCertification?: boolean },
 ): {
-  reviews: IndependentReviewStatus[];
+  reviews: ReviewStatus[];
   restampedIds: string[];
   oldReviewSubjectHashes: string[];
 } {
   const restampedIds: string[] = [];
   const oldReviewSubjectHashes: string[] = [];
-  const classification = classifyStaleApprovingReviews(
-    independentReviews,
-    approvedPackage,
-    options,
-  );
+  const classification = classifyStaleApprovingReviews(reviews, approvedPackage);
   if (!classification) {
-    return { reviews: independentReviews, restampedIds, oldReviewSubjectHashes };
+    return { reviews: reviews, restampedIds, oldReviewSubjectHashes };
   }
   const evidenceOnlyIds = new Set(classification.evidenceOnly.map((review) => review.id));
-  const reviews = independentReviews.map((review) => {
+  const restampedReviews = reviews.map((review) => {
     if (!evidenceOnlyIds.has(review.id)) return review;
     restampedIds.push(review.id);
     oldReviewSubjectHashes.push(review.reviewedReviewSubjectHash ?? '');
     return stampPublishGateReviewStatusForPackage(review, approvedPackage);
   });
-  return { reviews, restampedIds, oldReviewSubjectHashes };
+  return { reviews: restampedReviews, restampedIds, oldReviewSubjectHashes };
 }
 
 function freshPublicationReviewCountSatisfied(
-  reviewDepth: ReviewDepthPolicy,
-  reviews: IndependentReviewStatus[],
+  reviewPolicy: ReviewPolicy,
+  reviews: ReviewStatus[],
 ): boolean {
-  const required = effectiveRequiredReviewCount(reviewDepth);
-  if (required === 0) return true;
-  const passing = reviews.filter(
-    (review) =>
-      isQualifyingIndependentReview(review) &&
-      review.verdict === 'pass' &&
-      review.unresolvedCount === 0,
-  );
-  if (passing.length < required) return false;
-  if (reviewDepth.requireCrossRunner && !passing.some((review) => review.crossRunner)) return false;
-  return true;
+  return reviewPolicySatisfied(reviewPolicy, reviews);
 }
 
 function reviewCertifiesPreparedPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
-  if (!isQualifyingIndependentReview(review)) return false;
+  if (!isQualifyingReview(review)) return false;
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
   return publicationReviewMatchesPreparedPackage(review, preparedPackage);
 }
@@ -893,58 +850,17 @@ export function assertPublicationReviewPolicySatisfied(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
 ): void {
-  const reviewDepth = preparedPackage.reviewDepth ?? publicationReviewPolicyForRun(current);
-  const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
-  const requiredReviewCount = effectiveRequiredReviewCount(reviewDepth);
-  const staleReviewCount =
-    requiredReviewCount > 0
-      ? countStalePublicationReviews(independentReviews, preparedPackage, {
-          requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-        })
-      : 0;
+  const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
+  const reviews = current.engineState?.publishGate?.reviews ?? [];
+  const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>
+    reviewCertifiesPreparedPackage(review, preparedPackage),
+  );
   const unavailableOverrideApproved =
     snapshotUnavailableOverrideWasApproved(current, preparedPackage) &&
-    unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth);
-  if (
-    !independentReviewPolicySatisfied(reviewDepth, independentReviews) ||
-    (staleReviewCount > 0 && !unavailableOverrideApproved)
-  ) {
+    unavailableSnapshotOverrideAvailable(reviews, preparedPackage, reviewPolicy);
+  if (!reviewPolicySatisfied(reviewPolicy, freshReviews) && !unavailableOverrideApproved) {
     throw new Error(
-      'Publication approval requires passing independent reviews for the approved package; package changed, refresh package and re-review before publishing',
+      'Publication approval requires passing reviews for the approved package; package changed, refresh package and re-review before publishing',
     );
   }
-}
-
-function reviewCertifiesApprovedHeadAfterFix(
-  review: IndependentReviewStatus,
-  preparedPackage: ReadyGatePrPackage,
-): boolean {
-  if (!preparedPackage.headSha) return false;
-  if (!isQualifyingIndependentReview(review)) return false;
-  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
-  const snapshot = review.reviewSnapshot;
-  if (
-    !snapshot ||
-    snapshot.source === 'unavailable' ||
-    snapshot.headSha !== preparedPackage.headSha
-  )
-    return false;
-  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
-  if (!packageReviewSubjectHash) return false;
-  if (review.reviewedReviewSubjectHash !== packageReviewSubjectHash) return false;
-  return reviewHasWorkerFixLoop(review);
-}
-
-function reviewHasWorkerFixLoop(review: IndependentReviewStatus): boolean {
-  if (review.feedbackSent) return true;
-  if (review.timeline?.some((segment) => segment.kind === 'worker-fix')) return true;
-  const attempts = review.attempts ?? [];
-  if (attempts.some((attempt) => attempt.fixDelta)) return true;
-  const sawIssues = attempts.some(
-    (attempt) => attempt.verdict === 'issues' && attempt.unresolvedCount > 0,
-  );
-  const sawPass = attempts.some(
-    (attempt) => attempt.verdict === 'pass' && attempt.unresolvedCount === 0,
-  );
-  return sawIssues && sawPass;
 }

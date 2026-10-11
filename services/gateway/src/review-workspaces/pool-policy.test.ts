@@ -25,7 +25,7 @@ const { bindPRExecutionProfilesToPool } = await import('./pool-policy.js');
 const portable: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool' },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 
 test('empty configured registry refuses portable workspace admission', async () => {

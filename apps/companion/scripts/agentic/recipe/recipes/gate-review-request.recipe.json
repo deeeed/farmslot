@@ -1,0 +1,148 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion shared gate review request",
+  "description": "ADR-063 live proof of the merged gate screen. Configure the single shared picker, send the confirmation, and read the persisted request through run.get. Registered fixture slots are disabled and orchestration is off, so no reviewer is launched.",
+  "workflow": {
+    "entry": "setup",
+    "teardown": "cleanup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "intent": "Start the isolated gateway with a request-review gate.",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs setup",
+        "timeout_ms": 120000,
+        "next": "relaunch"
+      },
+      "relaunch": {
+        "action": "command",
+        "intent": "Open the installed development client on the owned Metro.",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs relaunch",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "intent": "The app is ready for navigation.",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "next": "bridge-ready"
+      },
+      "bridge-ready": {
+        "action": "app.status",
+        "intent": "The source development client exposes the recipe bridge.",
+        "timeout_ms": 30000,
+        "next": "open-gate"
+      },
+      "open-gate": {
+        "action": "command",
+        "intent": "Open the fixture request-review gate.",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs open-request-gate",
+        "next": "gate-ready"
+      },
+      "gate-ready": {
+        "action": "ui.wait_for",
+        "intent": "The publication gate is loaded.",
+        "test_id": "companion-screen-gate-review",
+        "timeout_ms": 30000,
+        "next": "show-runner"
+      },
+      "show-runner": {
+        "action": "ui.scroll",
+        "intent": "Reveal the shared picker runner choices.",
+        "direction": "down",
+        "pixels": 1000,
+        "next": "choose-runner"
+      },
+      "choose-runner": {
+        "action": "ui.press",
+        "intent": "Choose the review runner in the shared picker.",
+        "test_id": "companion-publish-gate-review-runner-0-codex",
+        "next": "show-model"
+      },
+      "show-model": {
+        "action": "ui.scroll",
+        "intent": "Reveal the shared picker model and effort fields.",
+        "direction": "down",
+        "pixels": 350,
+        "next": "choose-model"
+      },
+      "choose-model": {
+        "action": "ui.press",
+        "intent": "Select the explicit review model.",
+        "test_id": "companion-publish-gate-review-model-0-gpt-6.1-sol",
+        "next": "choose-effort"
+      },
+      "choose-effort": {
+        "action": "ui.press",
+        "intent": "Select high reasoning effort.",
+        "test_id": "companion-publish-gate-review-effort-0-high",
+        "next": "choose-mode"
+      },
+      "choose-mode": {
+        "action": "ui.press",
+        "intent": "Choose a fresh COLD review.",
+        "test_id": "companion-publish-gate-review-mode-0-cold",
+        "next": "no-diversity"
+      },
+      "no-diversity": {
+        "action": "ui.wait_for",
+        "intent": "The removed runner diversity action is absent.",
+        "text_contains": ["runner diversity"],
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "next": "hud"
+      },
+      "hud": {
+        "action": "app.hud",
+        "intent": "The shared gate picker selects runner, model, effort and COLD mode.",
+        "status": "running",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "intent": "Record the configured shared picker with its evidence HUD.",
+        "path": "screenshots/shared-gate-review-picker.png",
+        "label": "Shared gate review picker",
+        "next": "request"
+      },
+      "request": {
+        "action": "ui.press",
+        "intent": "Request a review through the single action.",
+        "test_id": "companion-publish-gate-review-submit",
+        "next": "confirm"
+      },
+      "confirm": {
+        "action": "ui.wait_for",
+        "intent": "The operator confirms the selected review.",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "intent": "Send the confirmed review selection.",
+        "text": "Send",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "intent": "The gateway stores the request-review action and all four selected fields.",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-review-request",
+        "next": "done"
+      },
+      "cleanup": {
+        "action": "command",
+        "intent": "Stop only the fixture gateway.",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs cleanup",
+        "next": "cleanup-done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cleanup-done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

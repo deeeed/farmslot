@@ -61,7 +61,7 @@ export function runInventorySortValue(run: Run, key: RunInventorySortKey): strin
 
 /**
  * Compact pipeline/review label for inventory cells.
- * Active independent review must never read as a human publication gate.
+ * Active review must never read as a human publication gate.
  */
 export function compactRunPipelineLabel(run: Run): string {
   const activeReview = activePublicationReviewLabel(run);
@@ -74,12 +74,12 @@ export function compactRunPipelineLabel(run: Run): string {
 }
 
 /**
- * True when the inventory/pipeline label honestly reports independent review
+ * True when the inventory/pipeline label honestly reports review
  * work rather than collapsing it into a generic human-gate label.
  */
-export function isIndependentReviewLabel(label: string): boolean {
+export function isReviewLabel(label: string): boolean {
   const normalized = label.toLowerCase();
-  return normalized.includes('independent review');
+  return normalized.includes('review');
 }
 
 export function isHumanPublicationGateLabel(label: string): boolean {

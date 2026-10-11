@@ -51,8 +51,7 @@ function fixture() {
     workflow_defaults: {
       qa: {
         review: {
-          sessionIntent: 'resume' as const,
-          scope: 'full' as const,
+          mode: 'cold' as const,
           workflow: 'qa' as const,
           qaInputs: {} as Record<string, string>,
         },

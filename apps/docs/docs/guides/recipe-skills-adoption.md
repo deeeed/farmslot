@@ -101,7 +101,7 @@ Add `project.json` hooks so Command Center can run the recipe through a project 
 
 ### Level 4 — Full framework
 
-Adopt multi-slot dispatch, live steering, cross-runner review, Companion supervision, and retrospective improvement loops.
+Adopt multi-slot dispatch, live steering, PR review, Companion supervision, and retrospective improvement loops.
 
 ## Design constraints
 

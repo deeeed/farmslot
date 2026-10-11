@@ -192,9 +192,7 @@ async function main() {
       'review-pr': {
         execution: workspaceExecution,
         review: {
-          validationDepth: 'static-code',
-          sessionIntent: 'reset',
-          scope: 'full',
+          mode: 'cold',
           publishReview: true,
         },
       },
@@ -388,7 +386,7 @@ process.stdout.write(JSON.stringify(body));
       version: 1,
       capturedAt: runBase.createdAt,
       selection: qaSelection,
-      review: { workflow: 'qa', sessionIntent: 'reset', scope: 'full' },
+      review: { workflow: 'qa', mode: 'cold' },
       state: 'blocked',
       error: 'Automatic QA is disabled for this farm',
     },
@@ -401,7 +399,7 @@ process.stdout.write(JSON.stringify(body));
       review: {
         profile: 'fixture',
         ownerId: 'legacy-env',
-        options: { sessionIntent: 'reset', scope: 'full', publishReview: true },
+        options: { mode: 'cold', publishReview: true },
       },
       publication: {
         enabled: true,
@@ -679,7 +677,7 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(inherited.machine, true);
     assert.deepEqual(
       evaluate(
-        `const picker=find('pr-execution-picker').element.shadowRoot.querySelector('runner-model-effort-picker');return [...picker.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
+        `const picker=find('pr-execution-picker').element.shadowRoot.querySelector('review-dispatch-picker');return [...picker.shadowRoot.querySelector('[data-testid="review-dispatch-runner"]').options].map(option=>option.value);`,
       ),
       ['claude', 'codex', 'cursor', 'grok'],
       'Manual workspace review controls must retain the shared runner choices',
@@ -710,9 +708,7 @@ process.stdout.write(JSON.stringify(body));
       config: {
         ...team.config,
         review: {
-          sessionIntent: 'reset',
-          scope: 'full',
-          validationDepth: 'static-code',
+          mode: 'cold',
           publishReview: true,
         },
       },
@@ -812,7 +808,7 @@ process.stdout.write(JSON.stringify(body));
               eligible: false,
               configurationErrors: [],
               project: 'review',
-              review: { workflow: 'review', sessionIntent: 'reset', scope: 'full' },
+              review: { workflow: 'review', mode: 'cold' },
             },
           ],
         });
@@ -918,7 +914,6 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(third.request.review?.workflow, 'qa');
     assert.equal(third.request.review?.qaProfileId, 'daily');
     assert.deepEqual(third.request.review?.qaInputs, { window: '48h' });
-    assert.equal(third.request.review?.validationDepth, undefined);
     assert.equal(third.request.autoStart, false);
     await json(path.join(evidence, 'runtime-request.json'), third);
     await waitUI(
@@ -951,7 +946,6 @@ process.stdout.write(JSON.stringify(body));
     const overrideContribution = contributions.find((item) => item.submissionId === second.id)!;
     const runtimeContribution = contributions.find((item) => item.submissionId === third.id)!;
     assert.deepEqual(inheritedContribution.execution, workspaceExecution);
-    assert.equal(inheritedContribution.review?.validationDepth, 'static-code');
     assert.deepEqual(overrideContribution.execution?.workspacePolicy, {
       kind: 'exact',
       machine: 'review-two',

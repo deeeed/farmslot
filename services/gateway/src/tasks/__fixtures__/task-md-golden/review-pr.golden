@@ -102,7 +102,7 @@ dispatch-time catalog is at `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>
 
 ## Review execution contract
 
-- **Frozen scope:** `full` over `PR base..frozen current head`.
+- **Frozen scope:** `cold` over `PR base..frozen current head`.
 - **Validation depth:** `static-code`.
 - Use the normal runner review capability against the frozen files under `inputs/`.
 - Read the frozen project review guidance: `inputs/review-instructions/runtime/review-quality.md`.

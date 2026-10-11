@@ -95,12 +95,12 @@ await writeFile(
 const execution = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['review-node', 'review-other'] },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 const workflowDefaults = {
   'review-pr': {
     execution,
-    review: { sessionIntent: 'reset', scope: 'full', validationDepth: 'static-code' },
+    review: { mode: 'cold' },
   },
 };
 await json(path.join(project, 'project.json'), {

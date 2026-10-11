@@ -336,7 +336,7 @@ test('collectRunEvidenceArtifacts prefers curated package evidence and drops run
                 path: 'artifacts/runtime-relaunch/chrome-profile/cache.png',
                 purpose: 'screenshot',
               },
-              { path: 'artifacts/runner-blockers/self-review-launch.txt', purpose: 'other' },
+              { path: 'artifacts/runner-blockers/review-launch.txt', purpose: 'other' },
             ],
           },
         },

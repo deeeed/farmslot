@@ -51,7 +51,7 @@ With Farmslot, token-maxing becomes supervised capacity:
 
 ## Review capacity
 
-Review and critique are part of the capacity strategy, but the canonical cross-runner review workflow lives in [Observability and interoperability](./observability-interoperability.md#consistent-review-across-runners). This page stays focused on runner/profile selection and subscription budget discipline.
+Review and critique are part of the capacity strategy, but the canonical PR review workflow lives in [Observability and interoperability](./observability-interoperability.md#review-sessions). This page stays focused on runner/profile selection and subscription budget discipline.
 
 ## Product boundary
 

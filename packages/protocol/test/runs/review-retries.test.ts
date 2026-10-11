@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewAttempt } from '../../src/contracts/runs.js';
+import type { ReviewAttempt } from '../../src/contracts/runs.js';
 import {
-  independentReviewFixRetriesExhausted,
-  independentReviewRetryCapReason,
-  independentReviewRetryCount,
-  latestExhaustedIndependentReview,
-  stampIndependentReviewRetryCap,
+  latestExhaustedReview,
+  reviewFixRetriesExhausted,
+  reviewRetryCapReason,
+  reviewRetryCount,
+  stampReviewRetryCap,
 } from '../../src/runs/review-retries.js';
 
-const attempt = (extras: Partial<IndependentReviewAttempt> = {}): IndependentReviewAttempt => ({
+const attempt = (extras: Partial<ReviewAttempt> = {}): ReviewAttempt => ({
+  mode: 'cold',
   loopNumber: 1,
   verdict: 'issues',
   unresolvedCount: 1,
@@ -19,19 +20,16 @@ const attempt = (extras: Partial<IndependentReviewAttempt> = {}): IndependentRev
 
 test('retry count prefers the persisted field then falls back to attempts', () => {
   assert.equal(
-    independentReviewRetryCount({
+    reviewRetryCount({
       retryCount: 3,
       attempts: [attempt(), attempt(), attempt(), attempt()],
     }),
     3,
   );
+  assert.equal(reviewRetryCount({ attempts: [attempt(), attempt(), attempt(), attempt()] }), 3);
+  assert.equal(reviewRetryCount({}), 0);
   assert.equal(
-    independentReviewRetryCount({ attempts: [attempt(), attempt(), attempt(), attempt()] }),
-    3,
-  );
-  assert.equal(independentReviewRetryCount({}), 0);
-  assert.equal(
-    independentReviewRetryCount({
+    reviewRetryCount({
       retryCount: 0,
       attempts: [attempt(), attempt(), attempt(), attempt()],
     }),
@@ -41,7 +39,7 @@ test('retry count prefers the persisted field then falls back to attempts', () =
 });
 
 test('stamp repairs a wiped cap so a spent extra-review is exhausted', () => {
-  const stamped = stampIndependentReviewRetryCap(
+  const stamped = stampReviewRetryCap(
     {
       source: 'human-gate',
       verdict: 'issues',
@@ -60,7 +58,7 @@ test('stamp repairs a wiped cap so a spent extra-review is exhausted', () => {
 
 test('explicit maxRetriesExhausted wins', () => {
   assert.equal(
-    independentReviewFixRetriesExhausted({
+    reviewFixRetriesExhausted({
       source: 'human-gate',
       verdict: 'issues',
       unresolvedCount: 2,
@@ -78,10 +76,10 @@ test('compares retryCount to maxRetries when both are known', () => {
     retryCount: 3,
     maxRetries: 3,
   };
-  assert.equal(independentReviewFixRetriesExhausted(base), true);
-  assert.equal(independentReviewFixRetriesExhausted({ ...base, retryCount: 2 }), false);
+  assert.equal(reviewFixRetriesExhausted(base), true);
+  assert.equal(reviewFixRetriesExhausted({ ...base, retryCount: 2 }), false);
   assert.equal(
-    independentReviewFixRetriesExhausted({
+    reviewFixRetriesExhausted({
       ...base,
       retryCount: 2,
       maxRetriesExhausted: true,
@@ -92,7 +90,7 @@ test('compares retryCount to maxRetries when both are known', () => {
 
 test('max_retries 0 is not a cap-hit; missing maxRetries is not inferred', () => {
   assert.equal(
-    independentReviewFixRetriesExhausted({
+    reviewFixRetriesExhausted({
       source: 'human-gate',
       verdict: 'issues',
       unresolvedCount: 6,
@@ -102,7 +100,7 @@ test('max_retries 0 is not a cap-hit; missing maxRetries is not inferred', () =>
     false,
   );
   assert.equal(
-    independentReviewFixRetriesExhausted({
+    reviewFixRetriesExhausted({
       source: 'human-gate',
       verdict: 'issues',
       unresolvedCount: 6,
@@ -131,9 +129,9 @@ test('only the latest extra-review on the current package can be exhausted', () 
     maxRetries: 3,
     reviewedHeadSha: 'new',
   };
-  assert.equal(latestExhaustedIndependentReview([oldCap, laterIssues]), undefined);
+  assert.equal(latestExhaustedReview([oldCap, laterIssues]), undefined);
   assert.equal(
-    latestExhaustedIndependentReview([
+    latestExhaustedReview([
       oldCap,
       {
         source: 'human-gate',
@@ -159,7 +157,7 @@ test('exhaustion does not depend on the prepared package HEAD', () => {
     reviewedReviewSubjectHash: 'old-subject',
   };
   assert.equal(
-    latestExhaustedIndependentReview([exhausted])?.unresolvedCount,
+    latestExhaustedReview([exhausted])?.unresolvedCount,
     2,
     'HEAD drift must not hide the exhausted extra-review bypass',
   );
@@ -167,7 +165,7 @@ test('exhaustion does not depend on the prepared package HEAD', () => {
 
 test('cap copy names the remaining findings and the two unblock paths', () => {
   assert.match(
-    independentReviewRetryCapReason({
+    reviewRetryCapReason({
       verdict: 'issues',
       unresolvedCount: 6,
       retryCount: 3,
@@ -176,8 +174,8 @@ test('cap copy names the remaining findings and the two unblock paths', () => {
     /3\/3 fix attempts.*6 findings remain.*Request another review.*bypass publish/,
   );
   assert.equal(
-    latestExhaustedIndependentReview([
-      { source: 'self-review', verdict: 'pass', unresolvedCount: 0 },
+    latestExhaustedReview([
+      { source: 'pipeline', verdict: 'pass', unresolvedCount: 0 },
       {
         source: 'human-gate',
         verdict: 'issues',

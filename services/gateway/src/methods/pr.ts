@@ -317,7 +317,7 @@ async function loadPRList(
     'preparing',
     'dispatching',
     'monitoring',
-    'self-reviewing',
+    'reviewing',
     'completing',
     'ci-watching',
   ]);

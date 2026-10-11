@@ -11,8 +11,8 @@ import type {
 import {
   CI_FIX_CHECKLIST,
   INTERACTIVE_CHECKLIST_MARKDOWN,
-  SELF_REVIEW_CHECKLIST,
-  SELF_REVIEW_FIX_CHECKLIST,
+  REVIEW_CHECKLIST,
+  REVIEW_FIX_CHECKLIST,
   TASK_PROGRESS_MARKDOWN,
 } from '@farmslot/protocol/checklist-target';
 
@@ -509,7 +509,7 @@ test('runFamilyPrStatus resolves PR status from sibling runs in the same family'
   assert.equal(runFamilyPrStatus(selected, [selected], prs), null);
 });
 
-test('run detail task-progress helpers preserve worker active and self-review filtering rules', () => {
+test('run detail task-progress helpers preserve worker active and review filtering rules', () => {
   assert.equal(isTaskProgressRunActive(makeRun({ status: 'monitoring' })), true);
   assert.equal(isTaskProgressRunActive(makeRun({ status: 'human-gating' })), true);
   assert.equal(
@@ -546,7 +546,7 @@ test('run detail task-progress helpers preserve worker active and self-review fi
       makeRun({
         status: 'done',
         taskFile: TASK_PROGRESS_MARKDOWN,
-        activeTaskFile: SELF_REVIEW_CHECKLIST,
+        activeTaskFile: REVIEW_CHECKLIST,
       }),
     ),
     true,
@@ -567,29 +567,29 @@ test('run detail task-progress helpers preserve worker active and self-review fi
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_CHECKLIST }),
-      { contextId: 'self-review' },
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: REVIEW_CHECKLIST }),
+      { contextId: 'review' },
     ),
     true,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_CHECKLIST }),
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: REVIEW_CHECKLIST }),
       { contextId: 'worker' },
     ),
     false,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_FIX_CHECKLIST }),
-      { contextId: 'self-review-fix' },
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: REVIEW_FIX_CHECKLIST }),
+      { contextId: 'review-fix' },
     ),
     true,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_FIX_CHECKLIST }),
-      { contextId: 'self-review' },
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: REVIEW_FIX_CHECKLIST }),
+      { contextId: 'review' },
     ),
     false,
   );
@@ -631,7 +631,7 @@ test('interactive dev model exposes active state and stable action ordering', ()
       'detect-pr-and-ci-watch',
       'link-pr-and-ci-watch',
       'link-pr-and-pr-complete',
-      'run-self-review',
+      'run-review',
       'blocked',
       'failed',
       'abort',
@@ -776,9 +776,9 @@ test('the acceptance wrapper carries parentChecklist so a child unit update is p
     taskFile: TASK_PROGRESS_MARKDOWN,
     activeTaskFile: TASK_PROGRESS_MARKDOWN,
   });
-  const selfReviewRun = makeRun({
+  const reviewRun = makeRun({
     taskFile: TASK_PROGRESS_MARKDOWN,
-    activeTaskFile: SELF_REVIEW_CHECKLIST,
+    activeTaskFile: REVIEW_CHECKLIST,
   });
   const child = (parentChecklist: string) => ({
     role: 'subtask' as const,
@@ -793,13 +793,13 @@ test('the acceptance wrapper carries parentChecklist so a child unit update is p
     shouldAcceptTaskProgressUpdate(workerRun, child(INTERACTIVE_CHECKLIST_MARKDOWN)),
     true,
   );
-  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child(SELF_REVIEW_CHECKLIST)), true);
+  assert.equal(shouldAcceptTaskProgressUpdate(reviewRun, child(REVIEW_CHECKLIST)), true);
   // A child whose parent checklist is no longer active is not live.
   assert.equal(
-    shouldAcceptTaskProgressUpdate(selfReviewRun, child(INTERACTIVE_CHECKLIST_MARKDOWN)),
+    shouldAcceptTaskProgressUpdate(reviewRun, child(INTERACTIVE_CHECKLIST_MARKDOWN)),
     false,
   );
-  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(SELF_REVIEW_CHECKLIST)), false);
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(REVIEW_CHECKLIST)), false);
   // No parent link at all: nothing places the update, so it is dropped.
   assert.equal(
     shouldAcceptTaskProgressUpdate(workerRun, { role: 'subtask', contextId: 'perps-review' }),
@@ -946,7 +946,7 @@ test('an artifact link that cannot open says why instead of doing nothing', asyn
   assert.match(unknown.unavailable.reason, /not among this run's evidence files/);
 });
 
-test('a run cancelled or blocked during a self-review fix is not working', () => {
+test('a run cancelled or blocked during a review fix is not working', () => {
   // The fix keeps a differing active task file, which keeps progress refreshing,
   // but the run is no longer in progress.
   const fixing = { taskFile: '/t/TASK.md', activeTaskFile: '/t/fix/TASK.md' };
@@ -955,7 +955,7 @@ test('a run cancelled or blocked during a self-review fix is not working', () =>
   assert.equal(isRunWorking(makeRun({ status: 'blocked', ...fixing })), false);
   assert.equal(isRunWorking(makeRun({ status: 'failed', ...fixing })), false);
   assert.equal(isRunWorking(makeRun({ status: 'monitoring' })), true);
-  assert.equal(isRunWorking(makeRun({ status: 'self-reviewing', ...fixing })), true);
+  assert.equal(isRunWorking(makeRun({ status: 'reviewing', ...fixing })), true);
 });
 
 test('a step-owned artifact link reopens in the step inspector, or says why it cannot', () => {

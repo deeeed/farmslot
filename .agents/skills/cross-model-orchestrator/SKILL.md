@@ -37,6 +37,9 @@ Launch Codex with its native `/goal`. For Claude, install the supplied
 [goal command](templates/goal.md) as the lane checkout's `.claude/commands/goal.md`, then set
 `goal_command` to `/goal`. Restore resumes the recorded session and leaves surviving panes intact.
 
+Optional lane `model` and `effort` select the runner model and reasoning effort at launch and
+resume. Omit them to use the runner's defaults. The shared runner adapter receives both unchanged.
+
 `lanes-status` observes without persisting bindings or acknowledging receipts. Existing lanes
 may configure `pane_id` and `observability_dir`. Unhooked native sessions held open by a foreground
 process can supply observational state; that state does not authorize transport or recovery.

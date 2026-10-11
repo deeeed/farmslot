@@ -553,18 +553,17 @@ export async function buildRetrospectivePayload(
   },
 ): Promise<RetrospectivePayload> {
   const ownLearnings = await readTaskArtifactText(run, 'learnings.md');
-  const selfReviewStep = run.steps.find((step) => step.name === 'self-review');
-  const selfReviewOutputs = selfReviewStep?.outputs as
+  const reviewStep = run.steps.find((step) => step.name === 'review');
+  const reviewOutputs = reviewStep?.outputs as
     | {
         verdict?: string;
         skipped?: boolean;
         issues?: Array<{ file?: string; description?: string }>;
       }
     | undefined;
-  const selfReviewVerdict =
-    selfReviewOutputs?.verdict ?? (selfReviewOutputs?.skipped ? 'skipped' : undefined);
-  const selfReviewSummary = selfReviewOutputs?.issues?.length
-    ? selfReviewOutputs.issues
+  const reviewVerdict = reviewOutputs?.verdict ?? (reviewOutputs?.skipped ? 'skipped' : undefined);
+  const reviewSummary = reviewOutputs?.issues?.length
+    ? reviewOutputs.issues
         .map((issue) => `${issue.file ?? 'unknown'}: ${issue.description ?? 'issue'}`)
         .slice(0, 4)
         .join('; ')
@@ -614,8 +613,8 @@ export async function buildRetrospectivePayload(
     whatThisIs: context?.rootRun
       ? 'Family-level retrospective. It combines the root run, follow-up learnings, review-comment triage, and terminal PR outcome; "Accept for Learning" feeds the combined content into the improvement engine.'
       : 'Completed runs create a retrospective decision so you can decide whether this run should feed the self-improvement loop.',
-    ...(selfReviewVerdict ? { selfReviewVerdict } : {}),
-    ...(selfReviewSummary ? { selfReviewSummary } : {}),
+    ...(reviewVerdict ? { reviewVerdict } : {}),
+    ...(reviewSummary ? { reviewSummary } : {}),
     ...(composedWorkerLearnings ? { workerLearnings: composedWorkerLearnings } : {}),
     ...(rootLearnings ? { rootLearnings } : {}),
     ...(deltaLearnings ? { deltaLearnings } : {}),

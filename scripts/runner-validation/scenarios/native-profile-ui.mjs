@@ -210,12 +210,10 @@ export async function runScenario({ outDir, timeoutMs = 120000, via }) {
         timeoutMs,
       );
       cdp(
-        'eval',
+        'select',
         'native',
-        view +
-          `const picker=r.querySelector('runner-model-effort-picker');
-        const e=[...(picker.shadowRoot??picker).querySelectorAll('button')].find(e=>e.textContent.trim()==='sonnet');
-        if(!e || e.disabled)throw new Error('Sonnet option unavailable');e.click();return true;`,
+        'native-session-view >>> review-dispatch-picker >>> [data-testid=review-dispatch-model]',
+        'sonnet',
       );
       const previous = new Set(
         rpc(Methods.NATIVE_SESSION_LIST).sessions.map((session) => session.id),

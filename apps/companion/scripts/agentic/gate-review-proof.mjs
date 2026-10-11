@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
+import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-gate-review-proof');
@@ -26,6 +27,7 @@ const SLOTS = {
   'gate-review-fixture-run': 'companion-proof-slot-1',
   'gate-review-fixture-issues-run': 'companion-proof-slot-2',
   'gate-review-fixture-bypass-run': 'companion-proof-slot-3',
+  'gate-review-fixture-request-run': 'companion-proof-slot-4',
 };
 const runId = 'gate-review-fixture-run';
 const decisionId = 'gate-review-fixture-gate';
@@ -33,6 +35,8 @@ const issuesRunId = 'gate-review-fixture-issues-run';
 const issuesDecisionId = 'gate-review-fixture-issues-gate';
 const bypassRunId = 'gate-review-fixture-bypass-run';
 const bypassDecisionId = 'gate-review-fixture-bypass-gate';
+const requestRunId = 'gate-review-fixture-request-run';
+const requestDecisionId = 'gate-review-fixture-request-gate';
 const PACKET_PATH = 'artifacts/gate-approve.packet.json';
 const FIXTURE_PROFILE_ID = 'gate-review-fixture';
 const SWAPPED_PACKAGE = { id: 'fixture-package-refreshed', packageHash: 'fixture-package-hash-2' };
@@ -46,26 +50,24 @@ const CRITERIA = [
   'The fixture screen renders its recipe list',
   'The fixture publish note is reviewed by a human',
 ];
-const REVIEW_DEPTH = {
-  minimumIndependentReviews: 1,
-  requireCrossRunner: false,
-  extraLoopsRequested: 0,
+const REVIEW_POLICY = {
+  minimumReviews: 1,
   requestedBy: 'dispatch',
 };
 
-/** The actions the gateway's publish gate offers for these reviews under REVIEW_DEPTH. */
-function gatewayGateActions(independentReviews) {
+/** The actions the gateway's publish gate offers for these reviews under REVIEW_POLICY. */
+function gatewayGateActions(reviews) {
   const script = `
     import { publicationGateDecisionActions } from './services/gateway/src/run-engine/gate-policy.ts';
-    import { independentReviewPolicySatisfied } from './services/gateway/src/quality/review-policy.ts';
+    import { reviewPolicySatisfied } from './packages/protocol/src/runs/review-policy.ts';
     const { policy, reviews } = JSON.parse(process.argv[1]);
-    const reviewSatisfied = independentReviewPolicySatisfied(policy, reviews);
-    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, independentReviews: reviews })));
+    const reviewSatisfied = reviewPolicySatisfied(policy, reviews);
+    process.stdout.write(JSON.stringify(publicationGateDecisionActions({ reviewSatisfied, reviews: reviews })));
   `;
   return JSON.parse(
     execFileSync(
       path.join(root, 'node_modules/.bin/tsx'),
-      ['-e', script, JSON.stringify({ policy: REVIEW_DEPTH, reviews: independentReviews })],
+      ['-e', script, JSON.stringify({ policy: REVIEW_POLICY, reviews: reviews })],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ),
   );
@@ -124,7 +126,7 @@ function seedFixtureGateway(port) {
   });
 }
 
-function stopFixture() {
+async function stopFixture() {
   if (!fs.existsSync(statePath)) return;
   const { pid } = readState();
   try {
@@ -132,7 +134,9 @@ function stopFixture() {
   } catch (error) {
     // The owned process group already exited.
     if (error.code !== 'ESRCH') throw error;
+    return;
   }
+  await waitFor('the owned gateway process group stops', () => !groupAlive(pid), 5000);
 }
 
 /** Polls `read` until it returns a value; failures repeat until the deadline, then throw. */
@@ -249,13 +253,16 @@ function seedTask(fixture, name, provenCount) {
 
 function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, artifactManifest }) {
   const now = new Date().toISOString();
-  // Ids follow the gateway's independent-review source: `independent-review-<loop>`.
+  // Each fixture result has a separate reviewer session and captured head.
   const review = (runner, model, loopNumber, overrides = {}) => ({
-    id: `independent-review-${loopNumber}`,
+    id: `review-${loopNumber}`,
     source: 'dispatch',
     runner,
     model,
-    crossRunner: true,
+    effort: 'high',
+    mode: 'cold',
+    reviewerSessionId: `${id}-reviewer-${loopNumber}`,
+    reviewedHeadSha: '1111111111111111111111111111111111111111',
     loopNumber,
     verdict: 'pass',
     unresolvedCount: 0,
@@ -263,11 +270,8 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
     completedAt: now,
     ...overrides,
   });
-  const independentReviews = [
-    review('codex', 'gpt-5.5', 1, codex),
-    review('claude', 'opus', 2, claude),
-  ];
-  const actions = gatewayGateActions(independentReviews);
+  const reviews = [review('codex', 'gpt-5.5', 1, codex), review('claude', 'opus', 2, claude)];
+  const actions = gatewayGateActions(reviews);
   const diffStat = { files: 7, additions: 312, deletions: 41 };
   writeJson(path.join(fixture, 'runs', `${id}.json`), {
     id,
@@ -287,7 +291,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
     createdByPrincipalId: 'legacy-env',
     steps: [],
     metrics: {},
-    engineState: { publishGate: { independentReviews } },
+    engineState: { publishGate: { reviews } },
     decisions: [
       {
         id: gateId,
@@ -310,7 +314,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
           workerReport: 'Fixture worker report.',
           ...(artifactManifest ? { artifactManifest } : {}),
           publicationTarget: 'ready',
-          independentReviews,
+          reviews,
           prPackage: {
             id: 'fixture-package',
             packageHash: 'fixture-package-hash',
@@ -320,7 +324,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
             draftTitle: title,
             draftBody: 'Fixture package body.',
             reviewArtifactIds: [],
-            reviewDepth: REVIEW_DEPTH,
+            reviewPolicy: REVIEW_POLICY,
             gatePolicy: {
               owner: 'human',
               publishAuthority: 'human',
@@ -340,7 +344,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, art
 
 if (phase === 'setup') {
   // A failed earlier attempt leaves its gateway and fixture behind; replace both.
-  stopFixture();
+  await stopFixture();
   fs.rmSync(proofDir, { recursive: true, force: true });
   const fixture = path.join(proofDir, 'farm');
   const port = Number(process.env.COMPANION_PROOF_GATEWAY_PORT ?? 18795);
@@ -413,6 +417,13 @@ if (phase === 'setup') {
     codex: { verdict: 'issues', unresolvedCount: 1 },
     claude: { verdict: 'issues', unresolvedCount: 2 },
   });
+  seedRun(fixture, {
+    id: requestRunId,
+    gateId: requestDecisionId,
+    taskFile: seedTask(fixture, 'gate-review-fixture-request', 2),
+    title: 'feat(companion): fixture shared review request',
+    claude: {},
+  });
   startGateway(fixture, port);
   const seeded = await waitFor('the fixture gateway serves the gate', () => gate(), 60000);
   assert.equal(seeded?.type, 'engine_human_gate');
@@ -447,13 +458,32 @@ if (phase === 'setup') {
   // Start from a fresh app process so a screen left open by an earlier attempt cannot take input.
   assert(simulator, 'Set IOS_SIMULATOR or SIMULATOR to the leased simulator');
   seedFixtureGateway(readState().port);
-  execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', simulator, bundleId]);
+  await openSimulatorDevClient(simulator);
 } else if (phase === 'open-run') {
   openUrl(`/workspace/run/${runId}/evidence`);
 } else if (phase === 'open-issues-gate') {
   openUrl(`/gate-review/${issuesDecisionId}?runId=${issuesRunId}`);
 } else if (phase === 'open-bypass-gate') {
   openUrl(`/gate-review/${bypassDecisionId}?runId=${bypassRunId}`);
+} else if (phase === 'open-request-gate') {
+  openUrl(`/gate-review/${requestDecisionId}?runId=${requestRunId}`);
+} else if (phase === 'verify-review-request') {
+  const resolved = await waitFor(
+    'the shared review request resolves',
+    () => {
+      const current = gate(requestRunId, requestDecisionId);
+      return current?.resolvedAt ? current : null;
+    },
+    10000,
+  );
+  assert.equal(resolved.resolvedAction, 'request-review');
+  assert.deepEqual(resolved.selectionData.reviewRequest, {
+    runner: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'high',
+    mode: 'cold',
+  });
+  evidence('gate-shared-review-request', resolved);
 } else if (
   phase === 'verify-pending' ||
   phase === 'verify-issues-pending' ||
@@ -482,7 +512,7 @@ if (phase === 'setup') {
   const { fixture, port, pid } = readState();
   const before = gate(bypassRunId, bypassDecisionId).payload.prPackage;
   const authsBefore = companionAuthCount();
-  stopFixture();
+  await stopFixture();
   await waitFor('the fixture gateway exits', () => !groupAlive(pid), 15000);
   const runFile = path.join(fixture, 'runs', `${bypassRunId}.json`);
   const stored = JSON.parse(fs.readFileSync(runFile, 'utf8'));
@@ -576,7 +606,7 @@ if (phase === 'setup') {
   evidence('gate-after-hold', resolved ?? null);
   assert.equal(resolved?.resolvedAction, 'hold', 'the gate resolved with the hold action');
 } else if (phase === 'cleanup') {
-  stopFixture();
+  await stopFixture();
   fs.rmSync(proofDir, { recursive: true, force: true });
 } else {
   throw new Error(`Unknown phase ${phase}`);

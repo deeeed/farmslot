@@ -19,7 +19,6 @@ export class PRReviewOptionsPicker extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property({ attribute: false }) qa?: ProjectQaConfig;
   @property() testIdPrefix = 'pr-review';
-  @property() presentation: 'all' | 'workflow' | 'reviewer' = 'all';
   static styles = [
     prAutomationStyles,
     qaInputFieldStyles,
@@ -30,8 +29,7 @@ export class PRReviewOptionsPicker extends LitElement {
     `,
   ];
   private change(patch: Partial<PRReviewOptions>) {
-    const { validationDepth: _legacyDepth, ...current } = this.value;
-    const next = { ...current, workflow: prReviewWorkflow(this.value), ...patch };
+    const next = { ...this.value, workflow: prReviewWorkflow(this.value), ...patch };
     if (next.workflow === 'qa') {
       delete next.publishReview;
       delete next.autoFinish;
@@ -50,49 +48,9 @@ export class PRReviewOptionsPicker extends LitElement {
   }
   render() {
     const qa = prReviewWorkflow(this.value) === 'qa';
-    if (qa && this.presentation === 'reviewer') return html``;
     return html`<fieldset ?disabled=${this.disabled}>
       <div class="grid">
-        <fieldset ?hidden=${this.presentation === 'workflow' || qa}>
-          <legend>Reviewer session</legend>
-          <div class="row">
-            <button
-              type="button"
-              aria-pressed=${String(this.value.sessionIntent === 'resume')}
-              @click=${() => this.change({ sessionIntent: 'resume' })}
-            >
-              Continue
-            </button>
-            <button
-              type="button"
-              aria-pressed=${String(this.value.sessionIntent === 'reset')}
-              @click=${() => this.change({ sessionIntent: 'reset' })}
-              data-testid=${`${this.testIdPrefix}-fresh`}
-            >
-              Fresh
-            </button>
-          </div>
-        </fieldset>
-        <fieldset ?hidden=${this.presentation === 'workflow' || qa}>
-          <legend>Review scope</legend>
-          <div class="row">
-            <button
-              type="button"
-              aria-pressed=${String(this.value.scope === 'incremental')}
-              @click=${() => this.change({ scope: 'incremental' })}
-            >
-              Changes since last review
-            </button>
-            <button
-              type="button"
-              aria-pressed=${String(this.value.scope === 'full')}
-              @click=${() => this.change({ scope: 'full' })}
-            >
-              Full independent review
-            </button>
-          </div>
-        </fieldset>
-        <fieldset ?hidden=${this.presentation === 'reviewer'}>
+        <fieldset>
           <legend>Workflow</legend>
           <div class="row">
             <button
@@ -130,7 +88,7 @@ export class PRReviewOptionsPicker extends LitElement {
                 Static review uses an isolated workspace without a device slot.
               </p>`}
         </fieldset>
-        <label ?hidden=${qa || this.presentation === 'reviewer'}>
+        <label ?hidden=${qa}>
           <input
             type="checkbox"
             data-testid="pr-review-auto-finish"
@@ -143,7 +101,7 @@ export class PRReviewOptionsPicker extends LitElement {
           />
           Publish and finish automatically
         </label>
-        <label ?hidden=${qa || this.presentation === 'reviewer'}>
+        <label ?hidden=${qa}>
           Publication
           <select
             data-testid=${`${this.testIdPrefix}-publication`}
@@ -164,31 +122,7 @@ export class PRReviewOptionsPicker extends LitElement {
             <option value="results-only">Farmslot results only</option>
           </select>
         </label>
-        <fieldset ?hidden=${this.presentation === 'workflow' || qa}>
-          <legend>When the saved reviewer is unavailable</legend>
-          <div class="row">
-            <button
-              type="button"
-              aria-pressed=${String(this.value.busySession !== 'fresh')}
-              @click=${() => this.change({ busySession: 'wait' })}
-            >
-              Wait for reviewer
-            </button>
-            <button
-              type="button"
-              aria-pressed=${String(this.value.busySession === 'fresh')}
-              @click=${() => this.change({ busySession: 'fresh' })}
-            >
-              Allow fresh reviewer
-            </button>
-          </div>
-        </fieldset>
       </div>
-      <p class="muted" ?hidden=${this.presentation === 'workflow' || qa}>
-        Initial rounds start fresh. Full independent reviews reset reviewer reasoning. Between
-        rounds, compatible saved sessions can be reused. Unsupported continuation starts a fresh
-        review and keeps the previous findings.
-      </p>
     </fieldset>`;
   }
 }

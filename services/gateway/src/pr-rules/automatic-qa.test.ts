@@ -45,16 +45,11 @@ process.stdout.write(JSON.stringify({number:42,title:'Fixture',body:'',state:'op
 );
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'runtime' },
-  models: [{ runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
 };
 const defaults = {
   execution,
-  review: {
-    workflow: 'qa' as const,
-    sessionIntent: 'reset' as const,
-    scope: 'full' as const,
-    qaInputs: { environment: 'staging' },
-  },
+  review: { mode: 'cold' as const, workflow: 'qa' as const, qaInputs: { environment: 'staging' } },
 };
 const qa = {
   default_profile: 'pr',

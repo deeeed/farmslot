@@ -252,7 +252,7 @@ test('a replay already past its generation bump aborts when the archive fences t
     error: 'worker blocked',
     decisions: [],
     steps: created.steps.map((step) =>
-      step.name === 'self-review'
+      step.name === 'review'
         ? { ...step, status: 'failed' }
         : ['complete', 'human-gate', 'finalize', 'ci-watch'].includes(step.name)
           ? { ...step, status: 'skipped' }
@@ -263,7 +263,7 @@ test('a replay already past its generation bump aborts when the archive fences t
   const slotBefore = await readSlotField(slotId, 'current_run_id');
 
   await assert.rejects(
-    runReplayStep({ runId: run.id, stepName: 'self-review' }, noopEmit, {
+    runReplayStep({ runId: run.id, stepName: 'review' }, noopEmit, {
       // The archive takes the run between the replay's bump and its slot work.
       afterGenerationBump: async () => beginRunArchive(run.id),
     }),

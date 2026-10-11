@@ -381,7 +381,7 @@ export async function dispatchNativeWorker(input: {
     return runnable(
       input.runId,
       vars.slotId,
-      input.allowOperatorWait === true && input.role === 'self-review',
+      input.allowOperatorWait === true && input.role === 'review',
     );
   };
   const run = checkRun();

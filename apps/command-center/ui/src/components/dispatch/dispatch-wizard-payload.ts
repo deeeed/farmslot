@@ -7,9 +7,10 @@ import type {
   PressureAdmissionReference,
   PressureDispatchOverride,
   QaInput,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
-  ReviewScope,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   ReviewWorkspaceTarget,
   RunCreateParams,
   TaskTemplateSelection,
@@ -58,11 +59,13 @@ export interface DispatchPayloadDraft {
   skipPrepare?: boolean;
   prepareProfile?: string;
   reviewTier?: string;
-  reviewScope?: ReviewScope;
+  reviewMode?: ReviewMode;
   nudgeReuse?: boolean;
   freshReuse?: boolean;
-  reviewDepth?: ReviewDepthPolicy;
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewPolicy?: ReviewPolicy;
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
   /** Backend-rendered preview identity forwarded so execution can reject a
    * stale generation. Never computed client-side. */
   pressureAdmissionRef?: PressureAdmissionReference;
@@ -112,11 +115,13 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     mode: input.mode,
     ...devInteractiveFields(input),
     reviewTier: input.reviewTier,
-    reviewScope: input.reviewScope,
+    reviewMode: input.reviewMode,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewDepth: input.reviewDepth,
-    pendingReviewPlan: input.pendingReviewPlan,
+    reviewPolicy: input.reviewPolicy,
+    reviewSequence: input.reviewSequence,
+    reviewContext: input.reviewContext,
+    reviewSequenceContext: input.reviewSequenceContext,
     pressureAdmissionRef: input.pressureAdmissionRef,
     pressureOverride: input.pressureOverride,
     ...input.comparison,
@@ -149,11 +154,13 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     branch: input.branch,
     mode: input.mode,
     ...devInteractiveFields(input),
-    reviewScope: input.reviewScope,
+    reviewMode: input.reviewMode,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewDepth: input.reviewDepth,
-    pendingReviewPlan: input.pendingReviewPlan,
+    reviewPolicy: input.reviewPolicy,
+    reviewSequence: input.reviewSequence,
+    reviewContext: input.reviewContext,
+    reviewSequenceContext: input.reviewSequenceContext,
     ...input.comparison,
   };
 }

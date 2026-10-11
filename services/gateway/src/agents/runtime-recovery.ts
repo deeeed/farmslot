@@ -543,7 +543,7 @@ export async function restoreTmuxWorker(
     await assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch);
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
       // Retained review panes preserve the exact runner transcript just like a
-      // freshly launched self-review pane; later cleanup owns their teardown.
+      // freshly launched review pane; later cleanup owns their teardown.
       preserveWindowAfterExit: true,
       // A blind resend after a lost reply would skip the ownership check above
       // and could kill the worker of a run that took the slot meanwhile.

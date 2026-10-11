@@ -11,14 +11,14 @@ import type {
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { isTerminalRunStatus } from '@farmslot/protocol';
+import { defaultModelForRunner, modelsForRunner } from '@farmslot/review-dispatch';
 
 import {
-  defaultModelForRunner,
   EVAL_CANDIDATE_RUNNERS,
   isRestorableModelId,
-  modelsForRunner,
   runnerLabel,
 } from '../../utils/runner-options.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
 
 import type { CandidateRow, EvalReviewMode } from './eval-cockpit-url-state.js';
 import {
@@ -55,7 +55,7 @@ export const EVAL_REVIEW_MODE_OPTIONS: ReadonlyArray<{
   {
     mode: 'default',
     label: 'Default review loop',
-    description: 'Run the normal Farmslot self-review behavior after the worker pass.',
+    description: 'Run the normal Farmslot review behavior after the worker pass.',
   },
   {
     mode: 'custom',
@@ -152,7 +152,9 @@ export function defaultRows(): CandidateRow[] {
       reviewName: '',
       reviewVersion: '',
       runner: DEFAULT_EVAL_CANDIDATE_RUNNER,
-      model: defaultModelForRunner(DEFAULT_EVAL_CANDIDATE_RUNNER),
+      model:
+        defaultModelForRunner(DEFAULT_EVAL_CANDIDATE_RUNNER, rememberedReviewDispatchCatalog()) ??
+        '',
       repeat: false,
     },
   ];
@@ -176,7 +178,7 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
     const model =
       runnerRestored && isRestorableModelId(record.model)
         ? record.model
-        : defaultModelForRunner(runner) || fallback.model;
+        : defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) || fallback.model;
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
     const label = rawLabel === 'Replay candidate' || rawLabel === id ? '' : rawLabel;
     const reviewMode =
@@ -426,8 +428,14 @@ export function candidateTemplateChoices(
 
 /** Visible models for a runner. A selected model outside the visible set stays listed. */
 export function candidateModelOptions(runner: string, selected?: string): string[] {
-  const models = modelsForRunner(runner, selected);
-  return models.length > 0 ? models : [runner ? 'default' : defaultModelForRunner('codex')];
+  const models = modelsForRunner(runner, selected, rememberedReviewDispatchCatalog());
+  return models.length > 0
+    ? models
+    : [
+        runner
+          ? 'default'
+          : (defaultModelForRunner('codex', rememberedReviewDispatchCatalog()) ?? ''),
+      ];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {
@@ -438,7 +446,9 @@ export function applyCandidateRunner(row: CandidateRow, runner: string): Candida
     model:
       runner === row.runner && models.includes(row.model)
         ? row.model
-        : defaultModelForRunner(runner) || models[0] || row.model,
+        : defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ||
+          models[0] ||
+          row.model,
   };
 }
 

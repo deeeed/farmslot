@@ -16,6 +16,7 @@ import {
   reviewResultForRun,
   type Run,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -257,7 +258,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       };
       const domain =
         parent?.domain ??
-        (flowType === 'review-pr' && review.options.scope === 'incremental'
+        (flowType === 'review-pr'
           ? findLatestPriorReviewRun(
               {
                 id: workId(intent),
@@ -297,11 +298,15 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       if (!resolved.choices.length) {
         await this.store.updateDispatch(intent.id, {
           status: 'needs-configuration',
-          waitingReason: resolved.errors.join('; '),
+          waitingReason:
+            resolved.errors.join('; ') ||
+            'WARM review requires a compatible retained reviewer and explicit reviewId lineage; wait or choose COLD.',
         });
         this.changed();
         continue;
       }
+      if (flowType === 'review-pr')
+        review.options = { ...review.options, mode: resolved.choices[0].mode };
       if (getAllRuns().some((run) => run.prWork?.id === workId(intent!))) continue;
       const originator = queued ? queueRecordOriginator(queued.id) : undefined;
       if (
@@ -353,10 +358,10 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             runner: resolved.choices[0].runner,
             transport: resolved.choices[0].transport ?? (parent ? 'tmux' : undefined),
             nativeProfile: resolved.choices[0].nativeProfile,
-            model: resolved.choices[0].model,
-            effort: resolved.choices[0].effort,
+            model: executionModelFromSelection(resolved.choices[0]).model,
+            effort: executionModelFromSelection(resolved.choices[0]).effort ?? undefined,
             completionPolicy: 'artifact-only',
-            reviewScope: review.options.scope,
+            reviewMode: review.options.mode,
             qaProfileId: review.options.qaProfileId,
             qaInputs: review.options.qaInputs,
             mode: 'autonomous',
@@ -451,28 +456,36 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const latestIntent = this.store.intent(intent.id);
     if (!latestIntent || fingerprint(latestIntent) !== resolvedFingerprint)
       throw new Error('PR constraints changed during execution resolution; retry admission');
+    const execution = executionModelFromSelection({
+      runner: item.runner ?? '',
+      model: item.model ?? null,
+      effort: item.effort ?? null,
+      mode: item.reviewMode ?? 'cold',
+    });
     const selection = JSON.stringify([
       item.slotId ?? null,
       item.reviewWorkspaceTarget?.machine ?? null,
       item.runner,
-      item.model,
-      item.effort,
+      execution.model,
+      execution.effort,
       item.transport ?? 'tmux',
       item.nativeProfile ?? null,
     ]);
     if (
-      !prepared.choices.some(
-        (choice) =>
+      !prepared.choices.some((choice) => {
+        const execution = executionModelFromSelection(choice);
+        return (
           JSON.stringify([
             choice.slotId ?? null,
             choice.machine ?? null,
             choice.runner,
-            choice.model,
-            choice.effort,
+            execution.model,
+            execution.effort,
             choice.transport ?? 'tmux',
             choice.nativeProfile ?? null,
-          ]) === selection,
-      )
+          ]) === selection
+        );
+      })
     )
       throw new Error('Selected slot/model/effort is no longer authorized');
     this.proofs.set(item.id, {
@@ -486,6 +499,12 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const intent =
       item.prWork?.kind === 'review' ? this.store.intent(item.prWork.sourceId) : undefined;
     const proof = this.proofs.get(item.id);
+    const execution = executionModelFromSelection({
+      runner: item.runner ?? '',
+      model: item.model ?? null,
+      effort: item.effort ?? null,
+      mode: item.reviewMode ?? 'cold',
+    });
     if (
       !intent ||
       !proof ||
@@ -496,8 +515,8 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
           item.slotId ?? null,
           item.reviewWorkspaceTarget?.machine ?? null,
           item.runner,
-          item.model,
-          item.effort,
+          execution.model,
+          execution.effort,
           item.transport ?? 'tmux',
           item.nativeProfile ?? null,
         ])

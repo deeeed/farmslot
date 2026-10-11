@@ -590,13 +590,13 @@ if (contractPath && terminalCommand && existsSync(contractPath)) {
     issues.push(`${contractPath}: invalid worker terminal contract JSON (${error.message})`);
   }
 }
-const isSelfReviewTerminal = terminalContract?.flowType === 'self-review';
+const isReviewTerminal = terminalContract?.flowType === 'review';
 const hasRecipe = fileExists('artifacts/recipe.json');
 
 // A reviewer must be able to report ISSUES when worker-owned proof is invalid.
 // Its terminal gate validates only the reviewer-owned feedback artifact below;
 // contribution and fix flows still validate the complete proof package.
-if (!isSelfReviewTerminal) {
+if (!isReviewTerminal) {
   const hasRecipeDecision = fileExists('artifacts/recipe-decision.json');
   const recipeDecisionText = readText('artifacts/recipe-decision.json');
   if (hasRecipeDecision) {
@@ -691,7 +691,7 @@ if (fileExists(SUBTASK_INDEX_REL)) {
 // fails unless the flow's terminal contract waives it.
 if (
   flags.has('--require-acceptance-status') ||
-  (terminalCommand === 'complete' && !isSelfReviewTerminal)
+  (terminalCommand === 'complete' && !isReviewTerminal)
 ) {
   for (const issue of acceptanceContractIssues(taskDir, {
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
@@ -710,9 +710,7 @@ if (flags.has('--require-learnings')) {
 if (contractPath && terminalCommand && !existsSync(contractPath)) {
   issues.push(`${contractPath}: explicit worker terminal contract missing`);
 } else if (terminalContract && terminalCommand) {
-  const contract = isSelfReviewTerminal
-    ? { ...terminalContract, whenPresent: [] }
-    : terminalContract;
+  const contract = isReviewTerminal ? { ...terminalContract, whenPresent: [] } : terminalContract;
   const expanded = expandedArtifactsForCommand(contract, terminalCommand, fileExists);
   for (const artifactPath of expanded.artifacts) {
     if (flags.has('--skip-learnings') && artifactPath === 'artifacts/learnings.md') continue;

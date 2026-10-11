@@ -106,9 +106,7 @@ function collectTemplateIssues(displayPath, fileName, content, workerTerminal, i
     // their own header, and dev-interactive renders into TASK.md for lightweight
     // interactive dev; every other flow template must not carry one (the
     // generated TASK.md does).
-    const roleChecklist = /^(self-review|self-review-fix|ci-fix|dev-interactive)(?:[.-]|$)/.test(
-      fileName,
-    );
+    const roleChecklist = /^(review|review-fix|ci-fix|dev-interactive)(?:[.-]|$)/.test(fileName);
     for (const issue of lintWorkerTemplateStructure(content, { roleChecklist })) {
       issues.push(`${displayPath}: ${issue}`);
     }
@@ -159,8 +157,8 @@ function inferFlowTypeFromTemplate(fileName, content) {
   if (base.startsWith('pr-complete')) return { flowType: 'pr-complete', mode };
   if (base.startsWith('update-branch')) return { flowType: 'update-branch', mode };
   if (base.startsWith('dev')) return { flowType: 'dev', mode };
-  if (base.startsWith('self-review-fix')) return { flowType: 'self-review-fix', mode };
-  if (base.startsWith('self-review')) return { flowType: 'self-review', mode };
+  if (base.startsWith('review-fix')) return { flowType: 'review-fix', mode };
+  if (base.startsWith('review')) return { flowType: 'review', mode };
   if (base === 'ci-fix') return { flowType: 'ci-fix', mode };
   if (base === 'validate-dep') return { flowType: 'validate-dep', mode };
   return { flowType: base, mode };

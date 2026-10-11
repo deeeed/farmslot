@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Use WARM/COLD review defaults and minimum review counts without runner-diversity configuration.
+
 - Slot resolution and pack admission share configured pool-file reading, so a malformed file is skipped consistently without exposing its parser input.
 - Runtime namespace resolution stays consistent between project loading and slot cleanup.
 - `static_review.support.environment` accepts `{{<key>_repo}}` for each declared `reference_repos` key (`normalizeRawStaticReview` takes the project's `reference_repos`); any other placeholder is still rejected. `referenceRepoPath(slotRepo, localName)` exports the sibling-checkout rule slot templates use.

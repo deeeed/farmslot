@@ -8,11 +8,11 @@
 import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
+import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
-import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
 import { schedulerTick } from '../work-graph/store.js';
 
 import {

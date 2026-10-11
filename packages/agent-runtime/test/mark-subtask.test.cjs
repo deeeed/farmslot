@@ -23,7 +23,7 @@ const PARENT_CHECKLIST = [
   '## Checklist',
   '',
   '- [ ] **1. Prepare the branch**',
-  '- [ ] **2. Self-review the diff against the review skill** — follow the child unit',
+  '- [ ] **2. Review the diff against the review skill** — follow the child unit',
   '- [ ] **3. Ship it**',
   '',
 ].join('\n');
@@ -266,7 +266,7 @@ function index(dir) {
   );
 
   const parentChecklist = readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8');
-  assert.match(parentChecklist, /- \[x\] \*\*2\. Self-review/);
+  assert.match(parentChecklist, /- \[x\] \*\*2\. Review/);
   assert.match(parentChecklist, /- \[ \] \*\*3\. Ship it/);
   const parent = parentSignal(dir);
   assert.equal(parent.status, 'running');
@@ -275,8 +275,8 @@ function index(dir) {
   // needs no change.
   const parentEvent = parent.checklistTiming.events.find((event) => event.stepNumber === 2);
   assert.ok(parentEvent, 'child completion appends the parent timing event');
-  assert.equal(parentEvent.label, '2. Self-review the diff against the review skill');
-  assert.equal(parent.step, '2. Self-review the diff against the review skill');
+  assert.equal(parentEvent.label, '2. Review the diff against the review skill');
+  assert.equal(parent.step, '2. Review the diff against the review skill');
 
   // A later parent mark of that step is a true no-op: exit 0 and the signal file
   // is byte-identical, timestamp included. Re-marking a finished step is not
@@ -332,7 +332,7 @@ function index(dir) {
   assert.equal(parent.outcome, 'partial');
   assert.equal(parent.disposition, 'blocked');
   assert.equal(parent.reason, 'subtask perps-review: skill needs the diff');
-  assert.equal(parent.step, '2. Self-review the diff against the review skill');
+  assert.equal(parent.step, '2. Review the diff against the review skill');
 
   // A blocked child keeps ownership: it is terminal for the run, not settled.
   refused = mark(dir, '2');
@@ -351,7 +351,7 @@ function index(dir) {
   parent = parentSignal(dir);
   assert.equal(parent.status, 'running');
   assert.equal(parent.reason, undefined);
-  assert.equal(parent.step, '2. Self-review the diff against the review skill');
+  assert.equal(parent.step, '2. Review the diff against the review skill');
 
   // A child has NO flow terminal contract: no learnings.md, no pr-description.md,
   // no artifact-contract run — completing the child still succeeds.
@@ -502,12 +502,12 @@ function index(dir) {
 {
   const dir = makeTask();
   writeFileSync(
-    path.join(dir, 'SELF-REVIEW.md'),
-    ['# Worker: Self-review', '', '- [ ] **1. Review the domain patterns**', ''].join('\n'),
+    path.join(dir, 'REVIEW.md'),
+    ['# Worker: Review', '', '- [ ] **1. Review the domain patterns**', ''].join('\n'),
   );
   writeFileSync(
     path.join(dir, 'checklist-target.json'),
-    `${JSON.stringify({ checklist: 'SELF-REVIEW.md' }, null, 2)}\n`,
+    `${JSON.stringify({ checklist: 'REVIEW.md' }, null, 2)}\n`,
   );
   const started = mark(
     dir,
@@ -520,19 +520,19 @@ function index(dir) {
     'inline:- [ ] **1. read the library**\n',
   );
   assert.equal(started.status, 0, started.stderr);
-  assert.deepEqual(index(dir).units[0].parent, { checklist: 'SELF-REVIEW.md', stepNumber: 1 });
-  assert.equal(childSignal(dir, 'domain-review').parent.checklist, 'SELF-REVIEW.md');
+  assert.deepEqual(index(dir).units[0].parent, { checklist: 'REVIEW.md', stepNumber: 1 });
+  assert.equal(childSignal(dir, 'domain-review').parent.checklist, 'REVIEW.md');
 
   assert.equal(mark(dir, 'sub', 'domain-review', 'complete', '--mark-last').status, 0);
   // The role signal, not SIGNAL.json, carries the parent effect.
-  const roleSignal = readJson(path.join(dir, 'SELF-REVIEW-SIGNAL.json'));
+  const roleSignal = readJson(path.join(dir, 'REVIEW-SIGNAL.json'));
   assert.equal(roleSignal.status, 'running');
-  assert.equal(roleSignal.checklistTiming.source, 'SELF-REVIEW.md');
+  assert.equal(roleSignal.checklistTiming.source, 'REVIEW.md');
   assert.equal(roleSignal.checklistTiming.events[0].label, '1. Review the domain patterns');
   assert.ok(!existsSync(path.join(dir, 'SIGNAL.json')), 'the worker signal is untouched');
   assert.equal(
     readJson(path.join(dir, 'checklist-target.json')).checklist,
-    'SELF-REVIEW.md',
+    'REVIEW.md',
     'a child unit never rewrites the manifest',
   );
 }

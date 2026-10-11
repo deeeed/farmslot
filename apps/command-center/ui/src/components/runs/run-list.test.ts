@@ -12,7 +12,7 @@ import {
 import {
   compactRunPipelineLabel,
   isHumanPublicationGateLabel,
-  isIndependentReviewLabel,
+  isReviewLabel,
 } from './run-list-inventory.js';
 
 function run(overrides: Partial<Run> = {}): Run {
@@ -37,11 +37,11 @@ function run(overrides: Partial<Run> = {}): Run {
   } as Run;
 }
 
-test('active independent review is not displayed as a human publication gate', () => {
+test('active review is not displayed as a human publication gate', () => {
   const reviewing = run({
     agentContexts: [
       {
-        role: 'self-review',
+        role: 'review',
         status: 'working',
         runner: 'claude',
         model: 'opus',
@@ -49,16 +49,16 @@ test('active independent review is not displayed as a human publication gate', (
     ],
   });
   const label = compactRunPipelineLabel(reviewing);
-  assert.equal(isIndependentReviewLabel(label), true);
+  assert.equal(isReviewLabel(label), true);
   assert.equal(isHumanPublicationGateLabel(label), false);
   assert.notEqual(label.toLowerCase(), 'operator gate');
   assert.notEqual(label.toLowerCase(), 'human-gating');
-  assert.match(label, /independent review/i);
+  assert.match(label, /review/i);
 });
 
 test('human-gating without active review keeps an operator-gate honesty label', () => {
   const label = compactRunPipelineLabel(run());
-  assert.equal(isIndependentReviewLabel(label), false);
+  assert.equal(isReviewLabel(label), false);
   assert.ok(
     label === 'operator gate' ||
       label === 'publish ready' ||
@@ -68,18 +68,18 @@ test('human-gating without active review keeps an operator-gate honesty label', 
   );
 });
 
-test('independent review fix loop stays distinct from publication gate', () => {
+test('review fix loop stays distinct from publication gate', () => {
   const label = compactRunPipelineLabel(
     run({
       agentContexts: [
         {
-          role: 'self-review-fix',
+          role: 'review-fix',
           status: 'working',
         } as NonNullable<Run['agentContexts']>[number],
       ],
     }),
   );
-  assert.equal(label, 'Independent review fix');
+  assert.equal(label, 'Review fix');
   assert.equal(isHumanPublicationGateLabel(label), false);
 });
 

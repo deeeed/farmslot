@@ -166,6 +166,13 @@ export function registerDispatchCommand(program: Command): void {
     .option('--runner <name>', 'Runner override')
     .option('--model <name>', 'Model override')
     .option('--effort <effort>', 'Runner effort override')
+    .option('--review-mode <mode>', 'Review mode: warm or cold')
+    .option('--review-sequence <json>', 'Ordered runner/model/effort/mode review selections')
+    .option('--review-context <json>', 'Repository/PR and reviewId provenance for WARM rows')
+    .option(
+      '--review-sequence-context <json>',
+      'Lineage provenance aligned with review sequence rows',
+    )
     .option('--transport <name>', 'Worker transport: tmux or native')
     .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
     .option('--execution-template <id>', 'Exact execution-template id')

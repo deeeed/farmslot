@@ -5,7 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import { buildRerunAlongsideHref } from '../runs/run-detail-model.js';
 
-import { parseDispatchWizardHash, syncPublicationReviewsHash } from './dispatch-wizard-prefill.js';
+import { parseDispatchWizardHash, syncReviewSequenceHash } from './dispatch-wizard-prefill.js';
 
 const runners = ['claude', 'codex', 'opencode'] as const;
 
@@ -31,28 +31,30 @@ test('comparison links round-trip the baseline transport and an explicit termina
   );
 });
 
-test('parseDispatchWizardHash reads publication review runners and keeps legacy live links static', () => {
-  const result = parseDispatchWizardHash(
-    '#dispatch?flow=fix-bug&ticket=PROJ-1&project=mobile&slot=runner-a-mobile-1&publicationReviews=codex:static-code,claude:full-live',
-    runners,
+test('dispatch hash round-trips all review dimensions and rejects invalid rows', () => {
+  const sequence = [
+    { runner: 'codex', model: 'gpt-6-astra', effort: 'ultra', mode: 'warm' as const },
+    { runner: 'claude', model: null, effort: null, mode: 'cold' as const },
+  ];
+  const context = {
+    reviewLineages: [{ repository: 'fixture/repo', prNumber: 1, reviewId: 'review-1' }, null],
+  };
+  const hash = syncReviewSequenceHash('#dispatch?flow=fix-bug&ticket=PROJ-1', sequence, context)!;
+  assert.equal(parseDispatchWizardHash(hash, runners)?.ticketId, 'PROJ-1');
+  assert.deepEqual(parseDispatchWizardHash(hash, runners)?.reviewSequence, sequence);
+  assert.deepEqual(parseDispatchWizardHash(hash, runners)?.reviewSequenceContext, context);
+  assert.equal(syncReviewSequenceHash(hash, []), '#dispatch?flow=fix-bug&ticket=PROJ-1');
+  assert.throws(
+    () =>
+      parseDispatchWizardHash(
+        '#dispatch?reviewSequence=' +
+          encodeURIComponent(
+            JSON.stringify([{ runner: 'same', model: null, effort: null, mode: 'cold' }]),
+          ),
+        runners,
+      ),
+    /runner/i,
   );
-  assert.equal(result?.flowType, 'fix-bug');
-  assert.equal(result?.ticketId, 'PROJ-1');
-  assert.equal(result?.project, 'mobile');
-  assert.equal(result?.slot, 'runner-a-mobile-1');
-  assert.deepEqual(result?.publicationReviewLoops, [
-    { id: 1, runner: 'codex' },
-    { id: 2, runner: 'claude' },
-  ]);
-});
-
-test('parseDispatchWizardHash ignores invalid flow and unsupported review runners', () => {
-  const result = parseDispatchWizardHash(
-    '#dispatch?flow=unsafe&publicationReviews=missing:full-live,codex',
-    runners,
-  );
-  assert.equal(result?.flowType, undefined);
-  assert.deepEqual(result?.publicationReviewLoops, [{ id: 1, runner: 'codex' }]);
 });
 
 test('parseDispatchWizardHash returns sanitized hash when legacy startRef prefill appears', () => {
@@ -84,18 +86,7 @@ test('parseDispatchWizardHash reads comparison intent without baseline prefill',
   assert.equal(result?.comparison, undefined);
 });
 
-test('syncPublicationReviewsHash preserves unrelated query params', () => {
-  const next = syncPublicationReviewsHash('#dispatch?flow=fix-bug&ticket=PROJ-1', [
-    { id: 7, runner: 'codex' },
-  ]);
-  assert.equal(next, '#dispatch?flow=fix-bug&ticket=PROJ-1&publicationReviews=codex');
-  assert.equal(
-    syncPublicationReviewsHash('#dispatch?flow=fix-bug&publicationReviews=codex', []),
-    '#dispatch?flow=fix-bug',
-  );
-});
-
-test('QA links preserve selected profile/JSON and legacy full-live links open the QA flow', () => {
+test('QA links preserve selected profile and JSON inputs', () => {
   const inputs = '{"scope":"release"}';
   const qa = parseDispatchWizardHash(
     `#dispatch?flow=qa&project=mobile&slot=runtime-1&qaProfileId=release&qaInputs=${encodeURIComponent(inputs)}`,
@@ -105,12 +96,6 @@ test('QA links preserve selected profile/JSON and legacy full-live links open th
   assert.equal(qa?.qaProfileId, 'release');
   assert.equal(qa?.qaInputs, inputs);
   assert.equal(qa?.slot, 'runtime-1');
-  const legacy = parseDispatchWizardHash(
-    '#dispatch?flow=review-pr&validationDepth=full-live&slot=runtime-1',
-    runners,
-  );
-  assert.equal(legacy?.flowType, 'qa');
-  assert.equal(legacy?.slot, 'runtime-1');
   const staticLink = parseDispatchWizardHash(
     '#dispatch?flow=review-pr&reviewMachine=node-a',
     runners,

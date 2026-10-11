@@ -1,9 +1,9 @@
 import {
   type ExecResult,
-  independentReviewFixRetriesExhausted,
-  type IndependentReviewStatus,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
+  reviewFixRetriesExhausted,
+  type ReviewStatus,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
@@ -11,7 +11,7 @@ import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { independentReviewNeedsContinuation } from './gate-policy.js';
+import { reviewNeedsContinuation } from './gate-policy.js';
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
@@ -55,7 +55,7 @@ function assertGitProbe(
   if (result.exitCode === 0) return;
   throw new GatewayMethodError(
     PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed,
-    `Cannot verify the slot worktree before independent review: ${probe} failed (exit ${result.exitCode})`,
+    `Cannot verify the slot worktree before review: ${probe} failed (exit ${result.exitCode})`,
     {
       userAction:
         'Run `git status --short` and `git rev-parse HEAD` in the slot worktree, repair the git state, then request the review again.',
@@ -76,7 +76,7 @@ async function executeGitProbe(executeGit: GitExecutor, command: string, probe: 
     const message = error instanceof Error ? error.message : String(error);
     throw new GatewayMethodError(
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed,
-      `Cannot verify the slot worktree before independent review: ${probe} could not run`,
+      `Cannot verify the slot worktree before review: ${probe} could not run`,
       {
         userAction:
           'Restore slot and node connectivity, then run `git status --short` and `git rev-parse HEAD` in the slot worktree before requesting the review again.',
@@ -86,12 +86,10 @@ async function executeGitProbe(executeGit: GitExecutor, command: string, probe: 
   }
 }
 
-function latestLaunchIndependentReview(
-  reviews: readonly IndependentReviewStatus[],
-): IndependentReviewStatus | undefined {
+function latestLaunchReview(reviews: readonly ReviewStatus[]): ReviewStatus | undefined {
   // Failed/skipped records still occupy the launch slot, unlike protocol
-  // latestIndependentReview which only considers pass/issues.
-  return reviews.filter((review) => review.source !== 'self-review').at(-1);
+  // latestReview which only considers pass/issues.
+  return reviews.at(-1);
 }
 
 /**
@@ -99,8 +97,8 @@ function latestLaunchIndependentReview(
  * reviewer session. The caller supplies the slot git executor so this policy
  * is shared by automatic launches and synchronous decision resolution.
  */
-export async function assertIndependentReviewLaunchState(
-  reviews: readonly IndependentReviewStatus[],
+export async function assertReviewLaunchState(
+  reviews: readonly ReviewStatus[],
   executeGit: GitExecutor,
 ): Promise<void> {
   const [status, head] = await Promise.all([
@@ -113,7 +111,7 @@ export async function assertIndependentReviewLaunchState(
   if (!headSha) {
     throw new GatewayMethodError(
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed,
-      'Cannot verify the slot worktree before independent review: git rev-parse HEAD returned no commit',
+      'Cannot verify the slot worktree before review: git rev-parse HEAD returned no commit',
       {
         userAction:
           'Create or restore a valid commit in the slot worktree, verify with `git rev-parse HEAD`, then request the review again.',
@@ -127,7 +125,7 @@ export async function assertIndependentReviewLaunchState(
   if (dirtyPathCount > 0) {
     throw new GatewayMethodError(
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
-      `Independent review launch refused: the slot has a dirty tree with ${dirtyPathCount} uncommitted path(s); commit validated fixes before re-review.`,
+      `Review launch refused: the slot has a dirty tree with ${dirtyPathCount} uncommitted path(s); commit validated fixes before re-review.`,
       {
         userAction:
           'Inspect with `git status --short`, fix and validate the work, then run `git add <fixed-paths> && git commit -m "fix: address review findings"` before requesting re-review.',
@@ -142,26 +140,26 @@ export async function assertIndependentReviewLaunchState(
     );
   }
 
-  const priorReview = latestLaunchIndependentReview(reviews);
+  const priorReview = latestLaunchReview(reviews);
   const reviewedCommit =
     priorReview?.reviewSnapshot?.headSha?.trim() || priorReview?.reviewedHeadSha?.trim();
   if (
     priorReview?.verdict === 'issues' &&
     reviewedCommit === headSha &&
-    !independentReviewNeedsContinuation(priorReview) &&
-    !independentReviewFixRetriesExhausted(priorReview)
+    !reviewNeedsContinuation(priorReview) &&
+    !reviewFixRetriesExhausted(priorReview)
   ) {
     const feedbackPath =
       priorReview.artifactPaths?.find((artifactPath) =>
-        /(?:review-feedback|self-review)\.md$/u.test(artifactPath),
+        /(?:review-feedback|review)\.md$/u.test(artifactPath),
       ) ??
       priorReview.artifactPaths?.find((artifactPath) => artifactPath.endsWith('.md')) ??
       priorReview.taskProgressArtifactPath ??
       priorReview.artifactPaths?.[0] ??
-      'the prior independent-review artifact';
+      'the prior review artifact';
     throw new GatewayMethodError(
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
-      `Independent review launch refused: the prior issues review already examined commit ${reviewedCommit}. Prior feedback: ${feedbackPath}.`,
+      `Review launch refused: the prior issues review already examined commit ${reviewedCommit}. Prior feedback: ${feedbackPath}.`,
       {
         userAction: `Fix the findings in ${feedbackPath}, validate them, then run \`git add <fixed-paths> && git commit -m "fix: address review findings"\` and request re-review at a new HEAD.`,
         details: {
@@ -174,13 +172,13 @@ export async function assertIndependentReviewLaunchState(
   }
 }
 
-export async function assertIndependentReviewLaunchStateForSlot(
-  reviews: readonly IndependentReviewStatus[],
+export async function assertReviewLaunchStateForSlot(
+  reviews: readonly ReviewStatus[],
   slotId: string,
 ): Promise<void> {
   try {
     const vars = await loadSlotVars(slotId);
-    await assertIndependentReviewLaunchState(reviews, (command) =>
+    await assertReviewLaunchState(reviews, (command) =>
       execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
     );
   } catch (error) {
@@ -190,7 +188,7 @@ export async function assertIndependentReviewLaunchStateForSlot(
     const message = error instanceof Error ? error.message : String(error);
     throw new GatewayMethodError(
       PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed,
-      'Cannot verify the slot worktree before independent review: slot git probes could not start',
+      'Cannot verify the slot worktree before review: slot git probes could not start',
       {
         userAction:
           'Restore the slot and node connection, verify the worktree with `git status --short` and `git rev-parse HEAD`, then request the review again.',

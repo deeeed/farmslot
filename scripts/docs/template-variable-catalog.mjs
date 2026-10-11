@@ -86,8 +86,8 @@ export const SECONDARY_TEMPLATES = {
   syntax: 'double-brace VAR',
   groups: [
     { scope: 'ci-fix.md', vars: 'CI_ISSUES, CI_ISSUE_TYPE + worker/hook vars' },
-    { scope: 'self-review-fix.md', vars: 'ISSUES + worker/hook vars' },
-    { scope: 'self-review.static-code.md', vars: 'VALIDATION_DEPTH + worker/hook vars' },
+    { scope: 'review-fix.md', vars: 'ISSUES + worker/hook vars' },
+    { scope: 'review.static-code.md', vars: 'VALIDATION_DEPTH + worker/hook vars' },
     { scope: 'worker-dispatch nudge', vars: 'TASK_FILE, TASK_DIR' },
   ],
 };

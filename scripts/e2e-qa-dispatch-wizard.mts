@@ -26,6 +26,7 @@ import { startReviewInterfaceServers } from './e2e-static-review-interface.mts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const recipePath = path.join(root, 'docs/examples/recipes/farmslot/qa-dispatch-wizard.recipe.json');
+const reviewPickerOnly = process.argv[3] === 'review-picker';
 if (process.argv[2] === 'recipe') {
   const evidence = path.resolve(
     root,
@@ -119,7 +120,7 @@ try {
   await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated browser validation fixture\n');
   const [gatewayPort, uiPort, cdpPort] = await Promise.all([port(), port(), port()]);
   token = randomBytes(32).toString('hex');
-  const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
+  const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' }];
   for (const name of ['wizard-farm', 'workspace-only']) {
     const project = path.join(fixture, 'projects', name);
     for (const flow of ['review-pr', 'validation', 'dev', 'fix-bug']) {
@@ -197,7 +198,9 @@ try {
                 ? { kind: 'exact', machine: 'zero-node' }
                 : { kind: 'exact', machine: 'review-other' },
             transport: 'native',
-            models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+            models: [
+              { mode: 'cold', effort: null, runner: 'cursor', model: 'cursor-grok-4.6-xhigh' },
+            ],
           },
         },
         ...(name === 'wizard-farm'
@@ -297,22 +300,20 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_UI_URL: `http://127.0.0.1:${uiPort}/#dispatch`,
     FARMSLOT_CDP_HEADLESS: '1',
   };
-  // A pre-ADR-058 backlog record: its stored publication-review round still asks for full-live.
-  const legacyBacklogId = 'legacy-live-review-item';
+  // A valid backlog review sequence exercises the shared picker and persists all four choices.
+  const backlogPickerId = 'shared-review-picker-item';
   const seededAt = new Date().toISOString();
   await json(path.join(fixture, '.backlog.json'), [
     {
-      id: legacyBacklogId,
+      id: backlogPickerId,
       project: 'wizard-farm',
-      title: 'Legacy live review round',
+      title: 'Shared review picker round',
       sourceKind: 'manual',
       sourceRef: 'MANUAL-900',
       flowType: 'fix-bug',
       status: 'ready',
       priority: 10,
-      pendingReviewPlan: [
-        { order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'full-live' },
-      ],
+      reviewSequence: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' }],
       createdAt: seededAt,
       updatedAt: seededAt,
     },
@@ -464,218 +465,231 @@ process.stdout.write(JSON.stringify(body));
   );
   await noExecution();
 
-  // Same handoff as Review from the PR list: no runner/transport overrides.
-  await navigate('#dispatch?flow=review-pr&project=wizard-farm&ticket=example%2Fwizard-farm%23199');
-  await waitUI(
-    `return find('runner-model-effort-picker')?.element.runner === 'cursor' && find('runner-model-effort-picker')?.element.model === 'cursor-grok-4.6-xhigh';`,
-  );
-  assert.deepEqual(
-    evaluate(
-      `return [...find('runner-model-effort-picker').element.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
-    ),
-    ['claude', 'codex', 'cursor', 'grok', 'pi'],
-  );
-  evaluate(
-    `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();find('runner-model-effort-picker').element.shadowRoot.querySelector('details summary').click();return true;`,
-  );
-  fill('runner-custom-model', 'composer-2.5-fast');
-  evaluate(`find('[data-testid="dispatch-ticket"]').element.focus();return true;`);
-  await waitUI(`return find('runner-model-effort-picker').element.model === 'composer-2.5-fast';`);
-  for (const machine of ['review-node', 'review-other']) {
-    evaluate(
-      `const bar=find('global-filter-bar').element.shadowRoot;const button=[...bar.querySelectorAll('[data-testid="global-filter-machines"] button')].find(button=>button.textContent.trim()===${JSON.stringify(machine)});if(!button)throw new Error('Missing machine filter');button.click();return true;`,
+  if (!reviewPickerOnly) {
+    // Same handoff as Review from the PR list: no runner/transport overrides.
+    await navigate(
+      '#dispatch?flow=review-pr&project=wizard-farm&ticket=example%2Fwizard-farm%23199',
     );
-  }
-  await waitUI(
-    `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Automatic · review-other');`,
-  );
-  await waitUI(`return !find('[data-testid="dispatch-submit"]').element.disabled;`);
-  click('dispatch-submit');
-  let createdReview;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const listed = await connection.call<{
-      runs: Array<{
-        id: string;
-        ticketOrPr: string;
-        transport: string;
-        slotId: string | null;
-        reviewWorkspaceTarget?: { machine: string };
-        effort: string;
-        metrics: { runner: string; model: string };
-      }>;
-    }>('run.list');
-    createdReview = listed.runs.find((run) => run.ticketOrPr === 'example/wizard-farm#199');
-    if (createdReview) break;
-    await delay(100);
-  }
-  assert(createdReview, 'PR-list Review must dispatch using a supported farm default');
-  assert.equal(createdReview.transport, 'native');
-  assert.equal(createdReview.metrics.runner, 'cursor');
-  assert.equal(createdReview.metrics.model, 'composer-2.5-fast');
-  assert.equal(createdReview.effort, undefined);
-  assert.equal(createdReview.slotId, null);
-  assert.equal(
-    createdReview.reviewWorkspaceTarget?.machine,
-    'review-other',
-    'Automatic must preserve the matching farm machine under multiple filters',
-  );
-  await noExecution();
-  await json(path.join(evidence, 'review-handoff.json'), createdReview);
-  checkpoints.push('pr-list-review-default-dispatches-without-worker');
-  await navigate('#dispatch');
-  evaluate(
-    `find('global-filter-bar').element.shadowRoot.querySelector('.clear-btn').click();return true;`,
-  );
-
-  click('dispatch-flow-qa');
-  await waitUI(`return ${exists('dispatch-project-wizard-farm')};`);
-  click('dispatch-project-wizard-farm');
-  await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`);
-  assert.match(
-    evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
-    /Validate changes from the previous day/,
-  );
-  assert(evaluate(`return Boolean(find('slot-prepare-options'));`));
-  assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
-  fill('dispatch-ticket', 'example/wizard-farm#101');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  screenshot('qa-farm-default');
-  checkpoints.push('farm-default-and-runtime-controls');
-
-  assert.equal(
-    evaluate(`return find('[data-testid=dispatch-qa-advanced]').element.open;`),
-    false,
-    'QA input overrides must start collapsed',
-  );
-  evaluate(
-    `find('[data-testid=dispatch-qa-advanced]').element.querySelector('summary').click();return true;`,
-  );
-  for (const invalid of ['{', '[1,2]']) {
-    fill('dispatch-qa-inputs', invalid);
     await waitUI(
-      `return find('[data-testid="dispatch-queue"]').element.disabled && find('[data-testid="dispatch-submit"]').element.disabled;`,
+      `return find('[data-testid="review-dispatch-runner"]')?.element.value === 'cursor' && find('[data-testid="review-dispatch-model"]')?.element.value === 'cursor-grok-4.6-xhigh';`,
     );
-    assert.equal((await queue()).length, 0);
+    assert.deepEqual(
+      evaluate(
+        `return [...find('[data-testid="review-dispatch-runner"]').element.options].map(option=>option.value);`,
+      ),
+      ['claude', 'codex', 'cursor', 'grok', 'pi'],
+    );
+    evaluate(
+      `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();return true;`,
+    );
+    fill('review-dispatch-custom-model', 'composer-2.5-fast');
+    evaluate(`find('[data-testid="dispatch-ticket"]').element.focus();return true;`);
+    await waitUI(
+      `return find('[data-testid="review-dispatch-custom-model"]').element.value === 'composer-2.5-fast';`,
+    );
+    for (const machine of ['review-node', 'review-other']) {
+      evaluate(
+        `const bar=find('global-filter-bar').element.shadowRoot;const button=[...bar.querySelectorAll('[data-testid="global-filter-machines"] button')].find(button=>button.textContent.trim()===${JSON.stringify(machine)});if(!button)throw new Error('Missing machine filter');button.click();return true;`,
+      );
+    }
+    await waitUI(
+      `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Automatic · review-other');`,
+    );
+    await waitUI(`return !find('[data-testid="dispatch-submit"]').element.disabled;`);
+    click('dispatch-submit');
+    let createdReview;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const listed = await connection.call<{
+        runs: Array<{
+          id: string;
+          ticketOrPr: string;
+          transport: string;
+          slotId: string | null;
+          reviewWorkspaceTarget?: { machine: string };
+          effort: string;
+          metrics: { runner: string; model: string };
+        }>;
+      }>('run.list');
+      createdReview = listed.runs.find((run) => run.ticketOrPr === 'example/wizard-farm#199');
+      if (createdReview) break;
+      await delay(100);
+    }
+    assert(createdReview, 'PR-list Review must dispatch using a supported farm default');
+    assert.equal(createdReview.transport, 'native');
+    assert.equal(createdReview.metrics.runner, 'cursor');
+    assert.equal(createdReview.metrics.model, 'composer-2.5-fast');
+    assert.equal(createdReview.effort, undefined);
+    assert.equal(createdReview.slotId, null);
+    assert.equal(
+      createdReview.reviewWorkspaceTarget?.machine,
+      'review-other',
+      'Automatic must preserve the matching farm machine under multiple filters',
+    );
+    await noExecution();
+    await json(path.join(evidence, 'review-handoff.json'), createdReview);
+    checkpoints.push('pr-list-review-default-dispatches-without-worker');
+    await navigate('#dispatch');
+    evaluate(
+      `find('global-filter-bar').element.shadowRoot.querySelector('.clear-btn').click();return true;`,
+    );
+
+    click('dispatch-flow-qa');
+    await waitUI(`return ${exists('dispatch-project-wizard-farm')};`);
+    click('dispatch-project-wizard-farm');
+    await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`);
     assert.match(
-      evaluate(`return find('[data-testid="dispatch-qa-profile-controls"]').element.textContent;`),
-      /JSON|object/,
+      evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
+      /Validate changes from the previous day/,
     );
+    assert(evaluate(`return Boolean(find('slot-prepare-options'));`));
+    assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
+    fill('dispatch-ticket', 'example/wizard-farm#101');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    screenshot('qa-farm-default');
+    checkpoints.push('farm-default-and-runtime-controls');
+
+    assert.equal(
+      evaluate(`return find('[data-testid=dispatch-qa-advanced]').element.open;`),
+      false,
+      'QA input overrides must start collapsed',
+    );
+    evaluate(
+      `find('[data-testid=dispatch-qa-advanced]').element.querySelector('summary').click();return true;`,
+    );
+    for (const invalid of ['{', '[1,2]']) {
+      fill('dispatch-qa-inputs', invalid);
+      await waitUI(
+        `return find('[data-testid="dispatch-queue"]').element.disabled && find('[data-testid="dispatch-submit"]').element.disabled;`,
+      );
+      assert.equal((await queue()).length, 0);
+      assert.match(
+        evaluate(
+          `return find('[data-testid="dispatch-qa-profile-controls"]').element.textContent;`,
+        ),
+        /JSON|object/,
+      );
+    }
+    screenshot('qa-invalid-inputs');
+    checkpoints.push('invalid-json-refused-before-queue');
+    fill('dispatch-qa-inputs', '');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    click('dispatch-queue');
+    let items = await waitQueue(1);
+    assert.equal(items[0].flowType, 'qa');
+    assert.equal(items[0].qaProfileId, 'daily');
+    assert.deepEqual(items[0].qaInputs, { window: '24h', smoke: true });
+    assert.equal(items[0].slotId, 'qa-runtime');
+    assert.equal(items[0].reviewWorkspaceTarget, undefined);
+    await json(path.join(evidence, 'qa-default-item.json'), items[0]);
+
+    await choose('dispatch-qa-profile', 'pr');
+    const inputs = { scope: { from: 'base', to: 'head' }, recipes: ['smoke'], optional: null };
+    fill('dispatch-qa-inputs', JSON.stringify(inputs));
+    fill('dispatch-ticket', 'example/wizard-farm#102');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    click('dispatch-queue');
+    items = await waitQueue(2);
+    const custom = items.find((item) => item.ticketOrPr.endsWith('#102'))!;
+    assert.equal(custom.qaProfileId, 'pr');
+    assert.deepEqual(custom.qaInputs, { ...inputs, smoke: true });
+    await json(path.join(evidence, 'qa-custom-item.json'), custom);
+    checkpoints.push('typed-default-and-custom-queue-fields');
+
+    click('dispatch-flow-review-pr');
+    await waitUI(
+      `return ${exists('dispatch-review-machine')} && !${exists('dispatch-qa-profile-controls')};`,
+    );
+    assert(!evaluate(`return Boolean(find('slot-prepare-options') || find('slot-choice-list'));`));
+    assert(
+      !evaluate(
+        `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Review Tier');`,
+      ),
+    );
+    await choose('dispatch-review-machine', 'review-other');
+    fill('dispatch-ticket', 'example/wizard-farm#103');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    screenshot('static-after-qa');
+    click('dispatch-queue');
+    items = await waitQueue(3);
+    const review = items.find((item) => item.ticketOrPr.endsWith('#103'))!;
+    assert.equal(review.flowType, 'review-pr');
+    assert.deepEqual(review.reviewWorkspaceTarget, { machine: 'review-other' });
+    assert.equal(review.slotId ?? null, null);
+    assert.equal(review.allowedSlots ?? null, null);
+    assert.equal(review.qaProfileId, undefined);
+    assert.equal(review.qaInputs, undefined);
+    await json(path.join(evidence, 'review-after-qa-item.json'), review);
+    checkpoints.push('review-switch-clears-runtime-profile-fields');
+
+    click('dispatch-project-workspace-only');
+    fill('dispatch-ticket', 'example/workspace-only#104');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    screenshot('zero-slot-farm');
+    click('dispatch-queue');
+    items = await waitQueue(4);
+    const zero = items.find((item) => item.project === 'workspace-only')!;
+    assert.deepEqual(zero.reviewWorkspaceTarget, { machine: 'zero-node' });
+    assert.equal(zero.slotId ?? null, null);
+    await json(path.join(evidence, 'zero-slot-item.json'), zero);
+    checkpoints.push('zero-slot-farm-queues-static-review');
+
+    await navigate(
+      '#dispatch?flow=review-pr&validationDepth=full-live&project=wizard-farm&slot=qa-runtime-other&ticket=example%2Fwizard-farm%23105',
+    );
+    await waitUI(
+      `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`,
+    );
+    assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    click('dispatch-queue');
+    items = await waitQueue(5);
+    const legacy = items.find((item) => item.ticketOrPr.endsWith('#105'))!;
+    assert.equal(legacy.flowType, 'qa');
+    assert.equal(legacy.slotId, 'qa-runtime-other');
+    assert.equal(legacy.reviewWorkspaceTarget, undefined);
+    await json(path.join(evidence, 'legacy-link-item.json'), legacy);
+    checkpoints.push('legacy-full-live-link-preserves-runtime-slot');
+
+    await navigate(
+      '#dispatch?flow=review-pr&project=wizard-farm&slot=qa-runtime&ticket=example%2Fwizard-farm%23106',
+    );
+    await waitUI(
+      `return ${exists('dispatch-review-machine')} && find('[data-testid="dispatch-queue"]').element.disabled;`,
+    );
+    assert.match(
+      evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
+      /link selects a runtime slot/,
+    );
+    assert.equal((await queue()).length, 5);
+    click('dispatch-flow-review-pr');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    checkpoints.push('ambiguous-slot-link-requires-explicit-flow-choice');
+    click('dispatch-flow-qa');
+    await waitUI(
+      `return ${exists('dispatch-qa-profile-controls')} && Boolean(find('slot-prepare-options'));`,
+    );
+    assert.equal(evaluate(`return find('[data-testid="dispatch-qa-inputs"]').element.value;`), '');
+    click('dispatch-flow-dev');
+    await waitUI(
+      `return Boolean(find('slot-prepare-options')) && find('dispatch-wizard').element.shadowRoot.textContent.includes('Interactive dev');`,
+    );
+    assert(
+      !evaluate(
+        `return ${exists('dispatch-qa-profile-controls')} || ${exists('dispatch-review-machine')};`,
+      ),
+    );
+    screenshot('existing-dev-controls');
+    checkpoints.push('qa-return-and-existing-dev-controls');
   }
-  screenshot('qa-invalid-inputs');
-  checkpoints.push('invalid-json-refused-before-queue');
-  fill('dispatch-qa-inputs', '');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  click('dispatch-queue');
-  let items = await waitQueue(1);
-  assert.equal(items[0].flowType, 'qa');
-  assert.equal(items[0].qaProfileId, 'daily');
-  assert.deepEqual(items[0].qaInputs, { window: '24h', smoke: true });
-  assert.equal(items[0].slotId, 'qa-runtime');
-  assert.equal(items[0].reviewWorkspaceTarget, undefined);
-  await json(path.join(evidence, 'qa-default-item.json'), items[0]);
-
-  await choose('dispatch-qa-profile', 'pr');
-  const inputs = { scope: { from: 'base', to: 'head' }, recipes: ['smoke'], optional: null };
-  fill('dispatch-qa-inputs', JSON.stringify(inputs));
-  fill('dispatch-ticket', 'example/wizard-farm#102');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  click('dispatch-queue');
-  items = await waitQueue(2);
-  const custom = items.find((item) => item.ticketOrPr.endsWith('#102'))!;
-  assert.equal(custom.qaProfileId, 'pr');
-  assert.deepEqual(custom.qaInputs, { ...inputs, smoke: true });
-  await json(path.join(evidence, 'qa-custom-item.json'), custom);
-  checkpoints.push('typed-default-and-custom-queue-fields');
-
-  click('dispatch-flow-review-pr');
-  await waitUI(
-    `return ${exists('dispatch-review-machine')} && !${exists('dispatch-qa-profile-controls')};`,
-  );
-  assert(!evaluate(`return Boolean(find('slot-prepare-options') || find('slot-choice-list'));`));
-  assert(
-    !evaluate(
-      `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Review Tier');`,
-    ),
-  );
-  await choose('dispatch-review-machine', 'review-other');
-  fill('dispatch-ticket', 'example/wizard-farm#103');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  screenshot('static-after-qa');
-  click('dispatch-queue');
-  items = await waitQueue(3);
-  const review = items.find((item) => item.ticketOrPr.endsWith('#103'))!;
-  assert.equal(review.flowType, 'review-pr');
-  assert.deepEqual(review.reviewWorkspaceTarget, { machine: 'review-other' });
-  assert.equal(review.slotId ?? null, null);
-  assert.equal(review.allowedSlots ?? null, null);
-  assert.equal(review.qaProfileId, undefined);
-  assert.equal(review.qaInputs, undefined);
-  await json(path.join(evidence, 'review-after-qa-item.json'), review);
-  checkpoints.push('review-switch-clears-runtime-profile-fields');
-
-  click('dispatch-project-workspace-only');
-  fill('dispatch-ticket', 'example/workspace-only#104');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  screenshot('zero-slot-farm');
-  click('dispatch-queue');
-  items = await waitQueue(4);
-  const zero = items.find((item) => item.project === 'workspace-only')!;
-  assert.deepEqual(zero.reviewWorkspaceTarget, { machine: 'zero-node' });
-  assert.equal(zero.slotId ?? null, null);
-  await json(path.join(evidence, 'zero-slot-item.json'), zero);
-  checkpoints.push('zero-slot-farm-queues-static-review');
-
+  // Ordered review selections use the shared picker and serializer.
   await navigate(
-    '#dispatch?flow=review-pr&validationDepth=full-live&project=wizard-farm&slot=qa-runtime-other&ticket=example%2Fwizard-farm%23105',
-  );
-  await waitUI(
-    `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`,
-  );
-  assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  click('dispatch-queue');
-  items = await waitQueue(5);
-  const legacy = items.find((item) => item.ticketOrPr.endsWith('#105'))!;
-  assert.equal(legacy.flowType, 'qa');
-  assert.equal(legacy.slotId, 'qa-runtime-other');
-  assert.equal(legacy.reviewWorkspaceTarget, undefined);
-  await json(path.join(evidence, 'legacy-link-item.json'), legacy);
-  checkpoints.push('legacy-full-live-link-preserves-runtime-slot');
-
-  await navigate(
-    '#dispatch?flow=review-pr&project=wizard-farm&slot=qa-runtime&ticket=example%2Fwizard-farm%23106',
-  );
-  await waitUI(
-    `return ${exists('dispatch-review-machine')} && find('[data-testid="dispatch-queue"]').element.disabled;`,
-  );
-  assert.match(
-    evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
-    /link selects a runtime slot/,
-  );
-  assert.equal((await queue()).length, 5);
-  click('dispatch-flow-review-pr');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  checkpoints.push('ambiguous-slot-link-requires-explicit-flow-choice');
-  click('dispatch-flow-qa');
-  await waitUI(
-    `return ${exists('dispatch-qa-profile-controls')} && Boolean(find('slot-prepare-options'));`,
-  );
-  assert.equal(evaluate(`return find('[data-testid="dispatch-qa-inputs"]').element.value;`), '');
-  click('dispatch-flow-dev');
-  await waitUI(
-    `return Boolean(find('slot-prepare-options')) && find('dispatch-wizard').element.shadowRoot.textContent.includes('Interactive dev');`,
-  );
-  assert(
-    !evaluate(
-      `return ${exists('dispatch-qa-profile-controls')} || ${exists('dispatch-review-machine')};`,
-    ),
-  );
-  screenshot('existing-dev-controls');
-  checkpoints.push('qa-return-and-existing-dev-controls');
-
-  // ADR-058: independent review rounds are static; a legacy live link cannot re-enable live depth.
-  await navigate(
-    '#dispatch?flow=fix-bug&project=wizard-farm&ticket=PROJ-107&publicationReviews=codex%3Afull-live%2Cclaude',
+    '#dispatch?flow=fix-bug&project=wizard-farm&ticket=PROJ-107&reviewSequence=' +
+      encodeURIComponent(
+        JSON.stringify([
+          { runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' },
+          { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+        ]),
+      ),
   );
   await waitUI(`return find('.publication-review-panel')?.element.getClientRects().length > 0;`);
   evaluate(
@@ -683,16 +697,18 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('after-static-publication-reviews');
   const publicationPanel = evaluate(
-    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),statics:[...panel.querySelectorAll('[data-testid="publication-review-static"]')].map(e=>e.textContent.trim()),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
+    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),modes:[...panel.querySelector('review-dispatch-picker').shadowRoot.querySelectorAll('[data-testid="review-dispatch-mode"]')].map(e=>e.value),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
   );
   assert(publicationPanel.visible, 'Publication reviews panel must render');
-  assert.deepEqual(publicationPanel.statics, ['Static', 'Static']);
+  assert.deepEqual(publicationPanel.modes, ['cold', 'cold']);
   assert(
     !publicationPanel.buttons.some((label: string) => /full.?live/i.test(label)),
     `Publication reviews must not offer a full-live button: ${publicationPanel.buttons.join(', ')}`,
   );
-  assert.match(publicationPanel.text, /Runtime validation runs separately with the QA flow/);
-  assert.match(publicationPanel.text, /Farm QA preset: Daily changes/);
+  assert.match(publicationPanel.text, /Runtime validation runs separately with QA/);
+  await waitUI(
+    `return find('.publication-review-panel')?.element.textContent.includes('Farm QA preset: Daily changes');`,
+  );
   assert(
     !evaluate(`return /full.?live/i.test(find('dispatch-wizard').element.shadowRoot.textContent);`),
     'No full-live review choice anywhere in Dispatch config',
@@ -704,10 +720,10 @@ process.stdout.write(JSON.stringify(body));
   const staticRequest = staticItems.find((item) => item.ticketOrPr === 'PROJ-107')!;
   assert.equal(staticRequest.flowType, 'fix-bug');
   assert.deepEqual(
-    staticRequest.pendingReviewPlan?.map((loop) => [loop.runner, loop.validationDepth]),
+    staticRequest.reviewSequence?.map((row) => [row.runner, row.model, row.effort, row.mode]),
     [
-      ['codex', 'static-code'],
-      ['claude', 'static-code'],
+      ['codex', 'gpt-5.6-luna', 'low', 'cold'],
+      ['claude', 'opus', null, 'cold'],
     ],
   );
   await json(path.join(evidence, 'static-publication-review-item.json'), staticRequest);
@@ -717,13 +733,15 @@ process.stdout.write(JSON.stringify(body));
     flowType: 'fix-bug',
     project: 'wizard-farm',
     ticketOrPr: 'PROJ-108',
-    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+    reviewSequence: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
   };
   const refusals: Record<string, string> = {};
   for (const method of ['dispatch.queue.add', 'run.create']) {
     await assert.rejects(connection.call(method, liveLoopRequest), (error: Error) => {
       refusals[method] = error.message;
-      return /independent reviews are static.*QA flow/.test(error.message);
+      return /Review selection contains unsupported property: (order|validationDepth)|validationDepth|reviews are static|reviewSequence.*unsupported/.test(
+        error.message,
+      );
     });
   }
   await assert.rejects(
@@ -732,11 +750,13 @@ process.stdout.write(JSON.stringify(body));
       title: 'Legacy live review loop',
       sourceKind: 'manual',
       flowType: 'fix-bug',
-      pendingReviewPlan: liveLoopRequest.pendingReviewPlan,
+      reviewSequence: liveLoopRequest.reviewSequence,
     }),
     (error: Error) => {
       refusals['backlog.create'] = error.message;
-      return /independent reviews are static.*QA flow/.test(error.message);
+      return /Review selection contains unsupported property: (order|validationDepth)|validationDepth|reviews are static|reviewSequence.*unsupported/.test(
+        error.message,
+      );
     },
   );
   assert(
@@ -754,102 +774,93 @@ process.stdout.write(JSON.stringify(body));
   );
   await json(path.join(evidence, 'full-live-review-loop-refusals.json'), refusals);
   checkpoints.push('gateway-refuses-new-full-live-review-loops');
-  await navigate('#dispatch?flow=qa&project=wizard-farm&ticket=changes-since-yesterday');
-  await waitUI(`return Boolean(find('[data-testid="dispatch-qa-domain"]'));`);
-  await choose('dispatch-qa-domain', 'payments');
-  const chooseField = async (field: string, value: string) => {
-    const selector = `[data-qa-input="${field}"]`;
-    evaluate(
-      `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('.trigger').click();return true;`,
+  if (!reviewPickerOnly) {
+    await navigate('#dispatch?flow=qa&project=wizard-farm&ticket=changes-since-yesterday');
+    await waitUI(`return Boolean(find('[data-testid="dispatch-qa-domain"]'));`);
+    await choose('dispatch-qa-domain', 'payments');
+    const chooseField = async (field: string, value: string) => {
+      const selector = `[data-qa-input="${field}"]`;
+      evaluate(
+        `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('.trigger').click();return true;`,
+      );
+      await waitUI(
+        `return Boolean(find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]'));`,
+      );
+      evaluate(
+        `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]').click();return true;`,
+      );
+    };
+    await chooseField('window', '48h');
+    count = (await queue()).length;
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    click('dispatch-queue');
+    let actionItems = await waitQueue(count + 1);
+    const daily = actionItems.at(-1)!;
+    assert.equal(daily.domain, 'payments');
+    assert.equal(daily.qaInputs?.window, '48h');
+    assert.equal(daily.ticketOrPr, 'changes-since-yesterday');
+    await choose('dispatch-qa-profile', 'release');
+    fill('dispatch-ticket', 'release/1.2.3');
+    await waitUI(`return find('[data-testid="dispatch-queue"]').element.disabled;`);
+    const scopeControl = evaluate(`return find('[data-qa-input="scope"]').path;`);
+    cdp('fill', activeRoute, scopeControl, '   ');
+    await chooseField('lane', 'source');
+    assert(
+      evaluate(`return find('[data-testid="dispatch-queue"]').element.disabled;`),
+      'Whitespace is not a release scope',
     );
-    await waitUI(
-      `return Boolean(find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]'));`,
-    );
-    evaluate(
-      `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]').click();return true;`,
-    );
-  };
-  await chooseField('window', '48h');
-  count = (await queue()).length;
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  click('dispatch-queue');
-  let actionItems = await waitQueue(count + 1);
-  const daily = actionItems.at(-1)!;
-  assert.equal(daily.domain, 'payments');
-  assert.equal(daily.qaInputs?.window, '48h');
-  assert.equal(daily.ticketOrPr, 'changes-since-yesterday');
-  await choose('dispatch-qa-profile', 'release');
-  fill('dispatch-ticket', 'release/1.2.3');
-  await waitUI(`return find('[data-testid="dispatch-queue"]').element.disabled;`);
-  const scopeControl = evaluate(`return find('[data-qa-input="scope"]').path;`);
-  cdp('fill', activeRoute, scopeControl, '   ');
-  await chooseField('lane', 'source');
-  assert(
-    evaluate(`return find('[data-testid="dispatch-queue"]').element.disabled;`),
-    'Whitespace is not a release scope',
-  );
-  cdp('fill', activeRoute, scopeControl, 'payments');
-  await chooseField('lane', 'source');
-  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
-  screenshot('qa-release-inputs');
-  count = (await queue()).length;
-  click('dispatch-queue');
-  actionItems = await waitQueue(count + 1);
-  const release = actionItems.at(-1)!;
-  assert.equal(release.qaProfileId, 'release');
-  assert.equal(release.ticketOrPr, 'release/1.2.3');
-  assert.equal(release.domain, 'payments');
-  assert.deepEqual(release.qaInputs, { scope: 'payments', lane: 'source' });
-  await json(path.join(evidence, 'qa-dynamic-actions.json'), { daily, release });
-  checkpoints.push('farm-fields-domain-and-non-pr-qa-actions');
-
-  // The shared dispatch-config editor (Backlog and Work Graph) shows a stored legacy round as
-  // legacy and repairs it to static only when the operator asks.
+    cdp('fill', activeRoute, scopeControl, 'payments');
+    await chooseField('lane', 'source');
+    await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+    screenshot('qa-release-inputs');
+    count = (await queue()).length;
+    click('dispatch-queue');
+    actionItems = await waitQueue(count + 1);
+    const release = actionItems.at(-1)!;
+    assert.equal(release.qaProfileId, 'release');
+    assert.equal(release.ticketOrPr, 'release/1.2.3');
+    assert.equal(release.domain, 'payments');
+    assert.deepEqual(release.qaInputs, { scope: 'payments', lane: 'source' });
+    await json(path.join(evidence, 'qa-dynamic-actions.json'), { daily, release });
+    checkpoints.push('farm-fields-domain-and-non-pr-qa-actions');
+  }
   const backlogPlan = async () =>
     (
       await connection!.call<{
-        items: Array<{ id: string; pendingReviewPlan?: QueueItem['pendingReviewPlan'] }>;
+        items: Array<{ id: string; reviewSequence?: QueueItem['reviewSequence'] }>;
       }>('backlog.list', {})
-    ).items.find((item) => item.id === legacyBacklogId)?.pendingReviewPlan;
-  assert.equal((await backlogPlan())?.[0]?.validationDepth, 'full-live');
+    ).items.find((item) => item.id === backlogPickerId)?.reviewSequence;
+  assert.deepEqual(await backlogPlan(), [
+    { runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' },
+  ]);
   cdp('goto', '#fleet');
-  cdp('goto', `#backlog?item=${legacyBacklogId}&dispatchConfig=1`);
+  cdp('goto', `#backlog?item=${backlogPickerId}&dispatchConfig=1`);
   activeRoute = 'backlog';
-  const makeStatic = `find('[data-testid="dispatch-config-review-make-static"]')?.element`;
-  await waitUI(`return Boolean(${makeStatic}?.getClientRects().length);`);
-  evaluate(`${makeStatic}.scrollIntoView({block:'center'});return true;`);
-  screenshot('backlog-legacy-review-round');
-  const legacyLabel = evaluate(
-    `return {button:${makeStatic}.textContent.trim(),statics:Boolean(find('[data-testid="dispatch-config-review-depth"]'))};`,
+  await waitUI(
+    `return Boolean(find('dispatch-config-editor')?.element.shadowRoot.querySelector('.group.wide review-dispatch-picker'));`,
   );
-  assert.match(legacyLabel.button, /Legacy full live · make static/);
-  assert.equal(legacyLabel.statics, false, 'A legacy round must not be labelled Static');
-  click('dispatch-config-review-make-static');
-  const repairedUntil = Date.now() + 30000;
-  let repairedPlan = await backlogPlan();
-  while (repairedPlan?.[0]?.validationDepth !== 'static-code' && Date.now() < repairedUntil) {
+  const pickerPath =
+    evaluate(`return find('dispatch-config-editor').path;`) +
+    ' >>> .group.wide review-dispatch-picker >>> ';
+  cdp('select', activeRoute, pickerPath + '[data-testid="review-dispatch-effort"]', 'high');
+  const changedUntil = Date.now() + 30_000;
+  let changedPlan = await backlogPlan();
+  while (changedPlan?.[0]?.effort !== 'high' && Date.now() < changedUntil) {
     await delay(250);
-    repairedPlan = await backlogPlan();
+    changedPlan = await backlogPlan();
   }
   assert.deepEqual(
-    repairedPlan,
-    [{ order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'static-code' }],
-    'make static persists a static round and keeps the runner and model',
+    changedPlan,
+    [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'high', mode: 'cold' }],
+    'Backlog picker preserves the selection and persists changed effort',
   );
-  await waitUI(
-    `return !${makeStatic} && find('[data-testid="dispatch-config-review-depth"]')?.element.textContent.trim()==='Static';`,
-  );
-  evaluate(
-    `find('[data-testid="dispatch-config-review-depth"]').element.scrollIntoView({block:'center'});return true;`,
-  );
-  screenshot('backlog-review-round-made-static');
-  await json(path.join(evidence, 'backlog-legacy-review-repair.json'), {
-    itemId: legacyBacklogId,
-    before: 'full-live',
-    label: legacyLabel,
-    after: repairedPlan,
+  evaluate(`find('dispatch-config-editor').element.scrollIntoView({block:'center'});return true;`);
+  screenshot('backlog-shared-review-picker');
+  await json(path.join(evidence, 'backlog-review-picker.json'), {
+    itemId: backlogPickerId,
+    sequence: changedPlan,
   });
-  checkpoints.push('backlog-editor-repairs-legacy-review-round');
+  checkpoints.push('backlog-shared-picker-persists-model-effort-mode');
 
   await noExecution();
   await json(path.join(evidence, 'queue.json'), {

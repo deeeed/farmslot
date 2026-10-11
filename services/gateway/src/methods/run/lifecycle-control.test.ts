@@ -466,10 +466,10 @@ test('runForceComplete marks a failed run done and can persist a PR number', asy
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     engineState: { generation: 2 },
     steps: [
-      { name: 'self-review', status: 'failed' },
+      { name: 'review', status: 'failed' },
       { name: 'complete', status: 'skipped' },
       { name: 'human-gate', status: 'skipped' },
     ],
@@ -485,9 +485,9 @@ test('runForceComplete marks a failed run done and can persist a PR number', asy
   assert.equal(result.run.engineState?.operatorForceCompleted, true);
   assert.equal(result.run.recoveryProposal?.status, 'idle');
   assert.equal(result.run.backlogReconcilePending, undefined);
-  const selfReview = result.run.steps.find((step) => step.name === 'self-review');
-  assert.equal(selfReview?.status, 'skipped');
-  assert.equal(selfReview?.outputs?.source, 'operator');
+  const review = result.run.steps.find((step) => step.name === 'review');
+  assert.equal(review?.status, 'skipped');
+  assert.equal(review?.outputs?.source, 'operator');
 });
 
 test('runForceComplete supersedes unresolved operational decisions and keeps retrospectives', async (t) => {
@@ -499,7 +499,7 @@ test('runForceComplete supersedes unresolved operational decisions and keeps ret
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     decisions: [
       {
         id: 'gate-1',
@@ -554,9 +554,9 @@ test('runForceComplete fences a failed run before attaching the PR', async (t) =
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     engineState: { generation: 2 },
-    steps: [{ name: 'self-review', status: 'failed' }],
+    steps: [{ name: 'review', status: 'failed' }],
   });
 
   let cancelled = false;
@@ -625,7 +625,7 @@ test('runForceComplete still returns done when publication after-effects throw',
     ticketOrPr: `PROJ-${Date.now()}-force-publish`,
   });
   t.after(() => cleanupRun(run.id));
-  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+  updateRun(run.id, { status: 'failed', error: 'review exhausted' });
 
   const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
     cancelEngine: () => {},
@@ -669,7 +669,7 @@ test('runForceComplete publishes terminal state before slot release and reports 
     slotId: 'force-complete-slot',
   });
   t.after(() => cleanupRun(run.id));
-  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+  updateRun(run.id, { status: 'failed', error: 'review exhausted' });
 
   const order: string[] = [];
   const result = await runForceComplete({ runId: run.id }, () => {}, {

@@ -18,6 +18,7 @@
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/credential-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",
     "@sinclair/typebox": "^0.34.49",

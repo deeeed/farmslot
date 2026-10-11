@@ -63,6 +63,7 @@
     "@expo/vector-icons": "^15.0.3",
     "@farmslot/adapter-rn": "workspace:*",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",

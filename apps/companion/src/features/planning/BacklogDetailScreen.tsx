@@ -57,7 +57,10 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
     ['App', item.app],
     ['Prepare profile', item.prepareProfile],
     ['Interactive profile', item.devInteractiveProfile],
-    ['Review loops', item.pendingReviewPlan?.length ?? 0],
+    ['Reviews', item.reviewSequence?.length ?? 0],
+    ...(item.flowType === 'review-pr'
+      ? [['Review mode', item.reviewMode?.toUpperCase() ?? 'COLD'] as [string, unknown]]
+      : []),
   ];
   const editable =
     (item.status === 'candidate' || item.status === 'ready') &&
@@ -125,12 +128,12 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
             <Text style={styles.dataValue}>{value(rowValue)}</Text>
           </View>
         ))}
-        {item.pendingReviewPlan?.map((review) => (
-          <View key={review.order} style={styles.reviewRow}>
-            <Text style={styles.reviewOrder}>{review.order}</Text>
+        {item.reviewSequence?.map((review, index) => (
+          <View key={index} style={styles.reviewRow}>
+            <Text style={styles.reviewOrder}>{index + 1}</Text>
             <Text style={styles.reviewValue}>
               {review.runner} · {review.model || 'default model'} ·{' '}
-              {review.validationDepth || 'static-code'}
+              {review.effort || 'default effort'} · {review.mode.toUpperCase()}
             </Text>
           </View>
         ))}

@@ -77,12 +77,12 @@ beforeEach(() => {
 });
 
 test('a slot session lost to a reboot is created with the window, in the slot checkout', async () => {
-  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'review');
 
   assert.equal(ensured.disposition, 'created');
-  assert.deepEqual(sessions.get('mm-1'), ['self-review']);
+  assert.deepEqual(sessions.get('mm-1'), ['review']);
   assert.ok(
-    issued.includes(`new-session -d -s 'mm-1' -n 'self-review' -c '/tmp/repo' 2>&1`),
+    issued.includes(`new-session -d -s 'mm-1' -n 'review' -c '/tmp/repo' 2>&1`),
     issued.join('\n'),
   );
   assert.ok(
@@ -94,18 +94,18 @@ test('a slot session lost to a reboot is created with the window, in the slot ch
 test('a live session gets the window added, with no new session', async () => {
   sessions.set('mm-1', ['dev']);
 
-  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'review');
 
   assert.equal(ensured.disposition, 'created');
-  assert.deepEqual(sessions.get('mm-1'), ['dev', 'self-review']);
-  assert.ok(issued.includes(`new-window -t '=mm-1' -n 'self-review' -d 2>&1`), issued.join('\n'));
+  assert.deepEqual(sessions.get('mm-1'), ['dev', 'review']);
+  assert.ok(issued.includes(`new-window -t '=mm-1' -n 'review' -d 2>&1`), issued.join('\n'));
   assert.ok(!issued.some((args) => args.startsWith('new-session')));
 });
 
 test('an existing window is reused without probing or creating', async () => {
-  sessions.set('mm-1', ['self-review']);
+  sessions.set('mm-1', ['review']);
 
-  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'review');
 
   assert.equal(ensured.disposition, 'existing');
   assert.deepEqual(
@@ -117,26 +117,26 @@ test('an existing window is reused without probing or creating', async () => {
 test('a session whose name only starts with the slot session does not count', async () => {
   sessions.set('mm-10', ['other']);
 
-  await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+  await ensureTmuxWindow(vars, 'mm-1', 'review');
 
   assert.deepEqual(sessions.get('mm-10'), ['other']);
-  assert.deepEqual(sessions.get('mm-1'), ['self-review']);
+  assert.deepEqual(sessions.get('mm-1'), ['review']);
 });
 
 test('losing the create race to another caller still adds this window to its session', async () => {
   racedBy = 'dev';
 
-  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'self-review');
+  const ensured = await ensureTmuxWindow(vars, 'mm-1', 'review');
 
   assert.equal(ensured.disposition, 'created');
-  assert.deepEqual(sessions.get('mm-1'), ['dev', 'self-review']);
-  assert.ok(issued.includes(`new-window -t '=mm-1' -n 'self-review' -d 2>&1`), issued.join('\n'));
+  assert.deepEqual(sessions.get('mm-1'), ['dev', 'review']);
+  assert.ok(issued.includes(`new-window -t '=mm-1' -n 'review' -d 2>&1`), issued.join('\n'));
 });
 
 test('a has-session probe that times out fails instead of creating a duplicate session', async () => {
   hasSessionExit = 124;
 
-  await assert.rejects(ensureTmuxWindow(vars, 'mm-1', 'self-review'), /timed out/);
+  await assert.rejects(ensureTmuxWindow(vars, 'mm-1', 'review'), /timed out/);
   assert.ok(!issued.some((args) => args.startsWith('new-')));
 });
 
@@ -144,7 +144,7 @@ test('a create that tmux refuses is reported with its output', async () => {
   createFails = true;
 
   await assert.rejects(
-    ensureTmuxWindow(vars, 'mm-1', 'self-review'),
-    /Failed to create tmux window mm-1:self-review: no server running on \/tmp\/tmux-501\/default \(then /,
+    ensureTmuxWindow(vars, 'mm-1', 'review'),
+    /Failed to create tmux window mm-1:review: no server running on \/tmp\/tmux-501\/default \(then /,
   );
 });

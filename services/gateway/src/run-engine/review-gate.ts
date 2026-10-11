@@ -1,5 +1,4 @@
 // review-gate.ts — Review-posting gate orchestration and refresh
-
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -49,6 +48,7 @@ import { BlockedRunError } from './errors.js';
 import { isOwnPrApprovalError } from './gate-policy.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
+import { completedReviewSessionTrace } from './review-result.js';
 import { readTaskArtifactText } from './task-artifacts.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -270,6 +270,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     artifactManifest: artifactManifest.length > 0 ? artifactManifest : undefined,
     artifactUrls: reviewArtifactUrls.size > 0 ? Object.fromEntries(reviewArtifactUrls) : undefined,
     reviewSnapshot,
+    session: await completedReviewSessionTrace(getRun(runId)!, reviewSnapshot),
     reviewInputArtifactPaths: reviewInputArtifactPaths.length
       ? reviewInputArtifactPaths
       : undefined,

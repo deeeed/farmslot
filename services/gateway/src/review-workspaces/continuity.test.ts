@@ -1,88 +1,95 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import test from 'node:test';
 
-import { DEFAULT_PR_REVIEW_OPTIONS, type RepeatReviewContext, type Run } from '@farmslot/protocol';
+import type { RepeatReviewContext, Run } from '@farmslot/protocol';
 
 import { configureWorkspaceContinuity } from './continuity.js';
 
 const prior = {
   id: 'prior',
+  project: 'farm',
+  ticketOrPr: 'example/app#42',
   status: 'done',
   transport: 'tmux',
   createdByPrincipalId: 'owner',
   nativeOwnerPrincipalId: 'owner',
   reviewWorkspace: { machine: 'machine' },
-  agentContexts: [{ id: 'review', runner: 'cursor', model: 'model', runnerSessionId: 'chat' }],
+  agentContexts: [
+    {
+      id: 'review',
+      role: 'review',
+      status: 'complete',
+      runner: 'cursor',
+      model: 'model',
+      runnerSessionId: 'chat',
+      reviewId: 'lineage',
+    },
+  ],
 } as Run;
 const current = {
-  reviewScope: 'incremental',
+  project: 'farm',
+  ticketOrPr: 'example/app#42',
+  reviewMode: 'warm',
   transport: 'tmux',
   createdByPrincipalId: 'owner',
   nativeOwnerPrincipalId: 'owner',
   reviewWorkspaceTarget: { machine: 'machine' },
   metrics: { runner: 'cursor', model: 'model' },
 } as Run;
-const context = () => ({ priorReviewedHeadSha: 'a'.repeat(40) }) as RepeatReviewContext;
+const context = () =>
+  ({
+    repository: 'example/app',
+    prNumber: 42,
+    priorReviewedHeadSha: 'a'.repeat(40),
+    session: { reviewId: 'lineage' },
+  }) as RepeatReviewContext;
 
-test('same owner, machine and reviewer carries its exact chat into an incremental round', () => {
+test('verified WARM workspace continuity retains exact PR lineage, session and last head', () => {
   const result = context();
   configureWorkspaceContinuity(current, prior, result);
-  assert.equal(result.reviewScope, 'incremental');
-  assert.equal(result.session?.continuity, 'resumed');
-  assert.equal(result.session?.priorSessionId, 'chat');
+  assert.equal(result.mode, 'warm');
+  assert.deepEqual(result.session, {
+    mode: 'warm',
+    continuity: 'resumed',
+    reviewId: 'lineage',
+    repository: 'example/app',
+    prNumber: 42,
+    lastReviewedHeadSha: 'a'.repeat(40),
+    priorRunId: 'prior',
+    priorSessionId: 'chat',
+    sessionId: 'chat',
+  });
 });
 
-test('identity changes and active predecessors reuse findings without borrowing a chat', () => {
+test('unavailable WARM refuses instead of changing mode', () => {
   for (const other of [
     { ...prior, nativeOwnerPrincipalId: 'other' },
-    { ...prior, createdByPrincipalId: 'other' },
+    { ...prior, project: 'other' },
     { ...prior, status: 'monitoring' },
-    { ...prior, reviewWorkspace: { machine: 'elsewhere' } },
+    { ...prior, ticketOrPr: 'example/foreign#42' },
     { ...prior, agentContexts: [] },
+    { ...prior, agentContexts: [{ ...prior.agentContexts![0], reviewId: 'foreign' }] },
     { ...prior, agentContexts: [{ ...prior.agentContexts![0], model: 'other' }] },
   ]) {
     const result = context();
-    configureWorkspaceContinuity(current, other as Run, result);
-    assert.equal(result.session?.continuity, 'fallback-fresh');
-    assert.equal(result.session?.priorSessionId, undefined);
-    assert.equal(result.reviewScope, 'incremental');
+    assert.throws(
+      () => configureWorkspaceContinuity(current, other as Run, result),
+      /WARM review unavailable/,
+    );
+    assert.equal(result.mode, 'warm');
   }
+  assert.throws(
+    () =>
+      configureWorkspaceContinuity(current, prior, {
+        ...context(),
+        warmUnavailableReason: 'Rebased head',
+      }),
+    /Rebased head/,
+  );
 });
 
-test('a requested full review does not resume the previous chat', () => {
+test('COLD records fresh continuity without a retained lineage', () => {
   const result = context();
-  configureWorkspaceContinuity({ ...current, reviewScope: 'full' }, prior, result);
-  assert.equal(result.reviewScope, 'full');
-  assert.equal(result.sessionIntent, 'reset');
-  assert.equal(result.session?.continuity, 'fresh');
-});
-
-test('an explicit fresh-session choice still preserves incremental findings context', () => {
-  const run = structuredClone(current);
-  run.prWork = {
-    kind: 'review',
-    id: 'work',
-    sourceId: 'request',
-    pr: { host: 'github.com', repo: 'example/app', number: 42 },
-    headSha: 'b'.repeat(40),
-    review: {
-      profile: 'standard',
-      ownerId: 'owner',
-      options: { ...DEFAULT_PR_REVIEW_OPTIONS, sessionIntent: 'reset', scope: 'incremental' },
-    },
-  };
-  const result = context();
-  configureWorkspaceContinuity(run, prior, result);
-  assert.equal(result.reviewScope, 'incremental');
-  assert.equal(result.sessionIntent, 'reset');
-  assert.equal(result.session?.continuity, 'fresh');
-});
-
-test('a rebased prior head keeps the round full even when incremental was requested', () => {
-  const result = {
-    ...context(),
-    incrementalUnavailableReason: 'Prior reviewed head is not an ancestor (rebase or force-push).',
-  } as RepeatReviewContext;
-  configureWorkspaceContinuity(current, prior, result);
-  assert.equal(result.reviewScope, 'full');
+  configureWorkspaceContinuity({ ...current, reviewMode: 'cold' }, prior, result);
+  assert.deepEqual(result.session, { mode: 'cold', continuity: 'fresh', priorRunId: 'prior' });
 });

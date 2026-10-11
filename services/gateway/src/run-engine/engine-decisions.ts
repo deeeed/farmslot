@@ -1,5 +1,4 @@
 // engine-decisions.ts — Engine-level decisions, auto-resolution, and collision redirects
-
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -32,6 +31,7 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
+import { assertPrimaryReviewContext } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -142,10 +142,17 @@ function terminalReviewTimestamp(run: Run): string {
 }
 
 export function findLatestPriorReviewRun(
-  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType' | 'prWork'>,
+  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType' | 'prWork' | 'reviewContext'>,
   allRuns: readonly Run[],
 ): Run | null {
   const identity = canonicalReviewIdentity(current);
+  const requestedLineages =
+    current.reviewContext?.reviewLineages ??
+    current.prWork?.review?.options.reviewContext?.reviewLineages;
+  const lineageIds = [
+    ...new Set(requestedLineages?.flatMap((lineage) => (lineage ? [lineage.reviewId] : [])) ?? []),
+  ];
+  if (lineageIds.length > 1) return null;
   if (!identity) return null;
   return (
     allRuns
@@ -167,6 +174,13 @@ export function findLatestPriorReviewRun(
           candidate.prWork?.kind === 'review' &&
           (candidate.prWork.review?.ownerId !== requested.ownerId ||
             candidate.prWork.review.profile !== requested.profile)
+        )
+          return false;
+        if (
+          lineageIds.length &&
+          !candidate.agentContexts?.some(
+            (context) => context.role === 'review' && context.reviewId === lineageIds[0],
+          )
         )
           return false;
         const candidateIdentity = canonicalReviewIdentity(candidate);
@@ -241,7 +255,7 @@ function priorReviewChain(
       prNumber: subject.prNumber,
       ...(payload?.reviewSnapshot?.baseSha ? { baseSha: payload.reviewSnapshot.baseSha } : {}),
       ...(payload?.reviewSnapshot?.headSha ? { headSha: payload.reviewSnapshot.headSha } : {}),
-      reviewScope: prior.reviewScope ?? 'full',
+      mode: prior.reviewMode ?? 'cold',
       validationDepth: prior.reviewValidationDepth ?? 'static-code',
       verdict: payload?.recommendation?.trim() || 'pending',
       unresolvedCount: payload ? payload.lineComments.length : null,
@@ -255,7 +269,7 @@ function priorReviewChain(
 }
 
 export function buildRepeatReviewContext(
-  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType'>,
+  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType' | 'prWork' | 'reviewContext'>,
   prior: Run,
   subject: CurrentReviewSubject,
   allRuns: readonly Run[],
@@ -271,11 +285,25 @@ export function buildRepeatReviewContext(
   ]);
   const origin = farmslotOriginForReview(prior, allRuns);
   const priorGeneration = prior.repeatReviewContext?.generation ?? 1;
+  const priorReviewers = (prior.agentContexts ?? []).filter(
+    (context) => context.role === 'review' && context.status === 'complete' && context.reviewId,
+  );
+  const requestedLineages =
+    current.reviewContext?.reviewLineages ??
+    current.prWork?.review?.options.reviewContext?.reviewLineages;
+  const requestedIds = [
+    ...new Set(requestedLineages?.flatMap((lineage) => (lineage ? [lineage.reviewId] : [])) ?? []),
+  ];
+  const priorReviewId =
+    requestedIds.length === 1
+      ? requestedIds[0]
+      : priorReviewers.length === 1
+        ? priorReviewers[0].reviewId
+        : undefined;
   return {
     version: 1,
     chainId: prior.repeatReviewContext?.chainId ?? prior.id,
     generation: priorGeneration + 1,
-    contextMode: 'reuse',
     priorRunId: prior.id,
     priorFamilyId: prior.familyId,
     repository: subject.repository,
@@ -292,21 +320,26 @@ export function buildRepeatReviewContext(
     artifactRefs,
     farmslotEvidenceRefs: origin.refs,
     ...(origin.runId ? { originatingRunId: origin.runId } : {}),
-    reviewScope: priorHead ? 'incremental' : 'full',
+    mode: priorHead ? 'warm' : 'cold',
     validationDepth: 'static-code',
     ...(!priorHead
-      ? { incrementalUnavailableReason: 'Prior review did not record a reviewed head SHA.' }
+      ? { warmUnavailableReason: 'Prior review did not record a reviewed head SHA.' }
       : {}),
-    sessionIntent: priorHead ? 'resume' : 'reset',
+    session: {
+      mode: priorHead ? 'warm' : 'cold',
+      continuity: 'resume-unconfirmed',
+      priorRunId: prior.id,
+      reviewId: priorReviewId,
+    },
     priorGenerations: priorReviewChain(prior, subject, payload, artifactRefs),
   };
 }
 
 /** Incremental scope needs a recorded prior head that is still part of the current history. */
 export function incrementalReviewAvailable(
-  context: Pick<RepeatReviewContext, 'priorReviewedHeadSha' | 'incrementalUnavailableReason'>,
+  context: Pick<RepeatReviewContext, 'priorReviewedHeadSha' | 'warmUnavailableReason'>,
 ): boolean {
-  return Boolean(context.priorReviewedHeadSha) && !context.incrementalUnavailableReason;
+  return Boolean(context.priorReviewedHeadSha) && !context.warmUnavailableReason;
 }
 
 /**
@@ -332,57 +365,47 @@ export async function confirmIncrementalAncestry(
   if (!reason) return context;
   return {
     ...context,
-    reviewScope: 'full',
-    sessionIntent: 'reset',
-    incrementalUnavailableReason: reason,
+    warmUnavailableReason: reason,
   };
 }
 
 export function repeatReviewDecisionActions(context: RepeatReviewContext): DecisionAction[] {
-  const incrementalAvailable = incrementalReviewAvailable(context);
-  const actions: DecisionAction[] = [
-    ...(incrementalAvailable
+  return [
+    ...(incrementalReviewAvailable(context)
       ? [
           {
-            id: 'reuse-incremental-static',
-            label: 'Continue — incremental static',
+            id: 'warm',
+            label: 'WARM review',
             style: 'primary' as const,
             description:
-              'Load the latest review context and review only the prior reviewed head → current head delta, while rechecking unresolved findings.',
+              'Reuse the verified reviewer session and review the changes since its last reviewed head.',
           },
         ]
       : []),
     {
-      id: 'reuse-full-static',
-      label: incrementalAvailable ? 'Load context — full static' : 'Continue — full static',
-      style: incrementalAvailable ? ('secondary' as const) : ('primary' as const),
-      description:
-        'Load the latest review context but review the complete current PR against its base.',
-    },
-    {
-      id: 'fresh-full-static',
-      label: 'Fresh context — full static',
+      id: 'cold',
+      label: 'COLD review',
       style: 'secondary',
-      description: 'Start a cold full review without inheriting prior findings or artifacts.',
+      description: 'Create a fresh reviewer session and review the complete captured PR diff.',
     },
   ];
-  // Runtime validation is a separate QA run (ADR-058); review continuation stays static.
-  return actions;
 }
 
 export function applyRepeatReviewSelection(
   context: RepeatReviewContext,
   actionId: string,
 ): RepeatReviewContext {
-  const reuse = actionId.startsWith('reuse-');
+  if (actionId !== 'warm' && actionId !== 'cold')
+    throw new Error(`Unknown review mode: ${actionId}`);
+  if (actionId === 'warm' && !incrementalReviewAvailable(context))
+    throw new Error(
+      `WARM review unavailable: ${context.warmUnavailableReason ?? 'missing prior reviewed head'}`,
+    );
   return {
     ...context,
-    contextMode: reuse ? 'reuse' : 'fresh',
-    reviewScope: actionId === 'reuse-incremental-static' ? 'incremental' : 'full',
-    // Only a decision created before ADR-058 can still carry the live escalation action.
-    validationDepth: actionId === 'fresh-full-live' ? 'full-live' : 'static-code',
-    sessionIntent: actionId === 'reuse-incremental-static' ? 'resume' : 'reset',
-    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
+    mode: actionId,
+    validationDepth: 'static-code',
+    ...(actionId === 'cold' ? { unresolvedFindings: [], artifactRefs: [] } : {}),
   };
 }
 
@@ -392,6 +415,14 @@ export async function handleRepeatReviewDecision(
   subject: Omit<CurrentReviewSubject, 'project'>,
 ): Promise<RepeatReviewContext | null> {
   if (current.flowType !== 'review-pr') return null;
+  assertPrimaryReviewContext(current);
+  const requestedMode = current.reviewMode ?? current.prWork?.review?.options.mode ?? 'cold';
+  const requestContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
+  if (
+    requestedMode === 'warm' &&
+    !requestContext?.reviewLineages.some((lineage) => lineage?.reviewId)
+  )
+    throw new Error('WARM review unavailable: explicit reviewId lineage context is required');
   if (
     current.repeatReviewContext?.currentHeadSha === subject.headSha &&
     current.repeatReviewContext.repository === subject.repository.toLowerCase() &&
@@ -402,8 +433,10 @@ export async function handleRepeatReviewDecision(
   const allRuns = listRuns({}).runs;
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
+    if (current.reviewMode === 'warm')
+      throw new Error('WARM review unavailable: no previous review session for this repository/PR');
     updateRun(runId, {
-      reviewScope: 'full',
+      reviewMode: 'cold',
       reviewValidationDepth: current.reviewValidationDepth ?? 'static-code',
     });
     return null;
@@ -421,45 +454,11 @@ export async function handleRepeatReviewDecision(
   // a decision would revive it as blocked. The engine keeps the operator state.
   if (runSupersededSince(getRun(runId), generation))
     throw new Error(`Run ${runId.slice(0, 8)} changed during the review ancestry lookup`);
-  if (current.prWork?.kind === 'review' && current.prWork.review) {
-    const selected = automatedRepeatReviewSelection(context, current.prWork.review.options);
-    updateRun(runId, {
-      repeatReviewContext: selected,
-      reviewScope: selected.reviewScope,
-      reviewValidationDepth: selected.validationDepth,
-    });
-    return selected;
-  }
-  const actions = repeatReviewDecisionActions(context);
-  const recommendedActionId = incrementalReviewAvailable(context)
-    ? 'reuse-incremental-static'
-    : 'reuse-full-static';
-  const actionId = await createEngineDecision(
-    runId,
-    'review_continuation',
-    `A prior terminal review exists for ${context.repository}#${context.prNumber}. Choose the context and scope for static review generation ${context.generation}.`,
-    actions,
-    {
-      kind: 'review_continuation',
-      recommendedActionId,
-      prior: context,
-    },
-    {
-      canReplay: (existing) => {
-        const existingPayload = existing.payload;
-        return (
-          existingPayload?.kind === 'review_continuation' &&
-          existingPayload.prior.repository === context.repository &&
-          existingPayload.prior.prNumber === context.prNumber &&
-          existingPayload.prior.currentHeadSha === context.currentHeadSha
-        );
-      },
-    },
-  );
-  const selected = applyRepeatReviewSelection(context, actionId);
+  const options = current.prWork?.review?.options ?? { mode: requestedMode };
+  const selected = automatedRepeatReviewSelection(context, { ...options, mode: requestedMode });
   updateRun(runId, {
     repeatReviewContext: selected,
-    reviewScope: selected.reviewScope,
+    reviewMode: selected.mode,
     reviewValidationDepth: selected.validationDepth,
   });
   return selected;
@@ -470,16 +469,15 @@ export function automatedRepeatReviewSelection(
   context: RepeatReviewContext,
   options: PRReviewOptions,
 ): RepeatReviewContext {
-  const reuse = options.sessionIntent === 'resume';
-  const incremental =
-    reuse && options.scope === 'incremental' && incrementalReviewAvailable(context);
+  if (options.mode === 'warm' && !incrementalReviewAvailable(context))
+    throw new Error(
+      `WARM review unavailable: ${context.warmUnavailableReason ?? 'missing prior reviewed head'}`,
+    );
   return {
     ...context,
-    contextMode: reuse ? 'reuse' : 'fresh',
-    reviewScope: incremental ? 'incremental' : 'full',
+    mode: options.mode,
     validationDepth: prReviewWorkflow(options) === 'qa' ? 'full-live' : 'static-code',
-    sessionIntent: incremental ? 'resume' : 'reset',
-    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
+    ...(options.mode === 'cold' ? { unresolvedFindings: [], artifactRefs: [] } : {}),
   };
 }
 
@@ -497,7 +495,7 @@ export function autoResolveEngineDecision(
   if (reason === 'human_gate') {
     return null;
   }
-  if (reason === 'self_review_complete') {
+  if (reason === 'review_complete') {
     if (ids.has('skip')) return 'skip';
     if (ids.has('send_feedback')) return 'send_feedback';
   }

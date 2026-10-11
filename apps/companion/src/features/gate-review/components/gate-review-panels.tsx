@@ -1,6 +1,7 @@
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { RunDecision } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type ArtifactHttpHeaders, artifactSource } from '../../../lib/artifact-url';
 import type {
@@ -8,6 +9,7 @@ import type {
   GateReviewSummary,
   GateReviewVerdict,
 } from '../../../lib/gate-review';
+import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { gateReviewStyles as styles } from '../styles/gate-review.styles';
 import type { GateReviewEvidenceThumb } from '../use-gate-review-controller';
 
@@ -71,12 +73,12 @@ export function GateReviewVerdicts({ reviews }: { reviews: GateReviewVerdict[] }
     <View style={styles.section} testID="companion-gate-review-verdicts">
       <Text style={styles.sectionTitle}>Review verdicts</Text>
       {reviews.length === 0 ? (
-        <Text style={styles.muted}>No independent review has finished yet.</Text>
+        <Text style={styles.muted}>No review has finished yet.</Text>
       ) : (
         <View style={styles.verdictRow}>
           {reviews.map((review) => (
             <View
-              key={review.runner}
+              key={review.id}
               style={[styles.verdictCard, { borderColor: review.color + '80' }]}
               testID={`companion-gate-review-verdict-${review.runner}`}
             >
@@ -169,11 +171,13 @@ export function GateActions({
   actions,
   sendingActionId,
   onResolve,
+  reviewPicker,
 }: {
+  reviewPicker: ReviewDispatchViewModel;
   decision: RunDecision;
   actions: GateReviewAction[];
   sendingActionId: string | null;
-  onResolve: (action: GateReviewAction) => void;
+  onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
 }) {
   if (decision.resolvedAt) {
     return (
@@ -190,6 +194,18 @@ export function GateActions({
       <PublishGuardNotice actions={actions} testID="companion-gate-review-approve-reason" />
       {actions.map((action) => {
         const disabled = Boolean(action.disabledReason) || sendingActionId !== null;
+        if (action.id === 'request-review')
+          return (
+            <ReviewDispatchPicker
+              key={action.id}
+              model={reviewPicker}
+              disabled={disabled}
+              testID="companion-publish-gate-review"
+              action="request-review"
+              actionLabel={action.label}
+              onInvoke={(_actionId, payload) => onResolve(action, { reviewRequest: payload })}
+            />
+          );
         return (
           <Pressable
             key={action.id}

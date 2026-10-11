@@ -160,7 +160,7 @@ test('run.sessionCommand selects the requested role instead of the primary worke
       agentContext(),
       agentContext({
         id: 'rev1-ctx',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer',
         runner: 'claude',
         model: 'sonnet',
@@ -171,11 +171,11 @@ test('run.sessionCommand selects the requested role instead of the primary worke
     ],
   });
 
-  const result = await runSessionCommand({ runId: 'run-1', role: 'self-review' }, deps(run));
+  const result = await runSessionCommand({ runId: 'run-1', role: 'review' }, deps(run));
 
   assert.equal(result.supported, true);
   if (!result.supported) return;
-  assert.equal(result.role, 'self-review');
+  assert.equal(result.role, 'review');
   assert.equal(result.runner, 'claude');
   assert.equal(result.sessionId, 'claude-session-9');
   // The wrapper escapes the payload's own quotes, so assert on the resume flag
@@ -269,7 +269,7 @@ function twoReviewerRun(): Run {
       agentContext(),
       agentContext({
         id: 'rev-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer 1',
         runnerSessionId: 'reviewer-session-1',
         runnerSessionPath: '/repo/.agent/codex/sessions/reviewer-session-1.jsonl',
@@ -278,7 +278,7 @@ function twoReviewerRun(): Run {
       }),
       agentContext({
         id: 'rev2-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer 2',
         runnerSessionId: 'reviewer-session-2',
         runnerSessionPath: '/repo/.agent/codex/sessions/reviewer-session-2.jsonl',
@@ -311,16 +311,16 @@ test('role alone still resolves, and contextId overrides a conflicting role', as
   const run = twoReviewerRun();
 
   // Role-only picks the newest reviewer — the historical ambiguity.
-  const byRole = await runSessionCommand({ runId: 'run-1', role: 'self-review' }, deps(run));
+  const byRole = await runSessionCommand({ runId: 'run-1', role: 'review' }, deps(run));
   assert.equal(byRole.supported && byRole.contextId, 'rev2-codex');
 
   // An explicit id wins over a role that would have chosen differently.
   const byId = await runSessionCommand(
-    { runId: 'run-1', contextId: 'rev-codex', role: 'self-review' },
+    { runId: 'run-1', contextId: 'rev-codex', role: 'review' },
     deps(run),
   );
   assert.equal(byId.supported && byId.contextId, 'rev-codex');
-  assert.equal(byId.supported && byId.role, 'self-review');
+  assert.equal(byId.supported && byId.role, 'review');
 });
 
 test('an unknown contextId is a typed miss naming the id, not a silent role fallback', async () => {

@@ -174,7 +174,7 @@ test('work acquiring the PR during observation discards the response and refuses
       project: 'project',
       execution: {
         slotPolicy: { kind: 'exact', slotId: 'slot-b' },
-        models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+        models: [{ effort: null, mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra' }],
       },
     }),
     /work is ongoing/,
@@ -290,7 +290,7 @@ test('repair-journal updates do not discard an in-flight provider observation', 
       mode: 'automatic-repair',
       execution: {
         slotPolicy: { kind: 'exact', slotId: 'slot' },
-        models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+        models: [{ effort: null, mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra' }],
       },
     },
   });

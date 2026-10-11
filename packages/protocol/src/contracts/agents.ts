@@ -62,8 +62,7 @@ export const AGENT_ROLES = [
   'dev',
   'fix-bug',
   'review',
-  'self-review',
-  'self-review-fix',
+  'review-fix',
   'ci-fix',
   // A child checklist unit under `subtasks/` (ADR-060). Farmslot materializes
   // its files and reads its signal; it never spawns or owns a session, so it is
@@ -122,6 +121,8 @@ export interface AgentContext {
   /** Artifact directory scope owned by this reviewer attempt (for restart recovery). */
   artifactScope?: string | null;
   /** Review loop that owns the persisted launch snapshot. */
+  /** Durable reviewer lineage, supplied by the review runtime. */
+  reviewId?: string;
   reviewLoopNumber?: number | null;
   /** Gateway validation completed for the structured reviewer result and archived artifacts. */
   reviewResultValidatedAt?: string;
@@ -248,7 +249,7 @@ export interface ExecutorRef {
 
 export interface ExecutorPolicy {
   worker?: ExecutorRef;
-  selfReview?: ExecutorRef;
+  review?: ExecutorRef;
   ciRepair?: ExecutorRef;
   validation?: ExecutorRef;
 }

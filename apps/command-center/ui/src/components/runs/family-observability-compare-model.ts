@@ -43,12 +43,12 @@ export function crossComparePrompt(
       const diff = run.diffStat.available
         ? `${run.diffStat.files} files +${run.diffStat.additions}/-${run.diffStat.deletions}`
         : 'diff unavailable';
-      return `- ${familyRunLabel(run)} (${run.runId}): status=${run.status}, runner=${run.metrics?.runner ?? '-'}, model=${run.metrics?.model ?? '-'}, slot=${run.slotId ?? '-'}, PR=${run.prNumber ?? '-'}, diff=${diff}, recipe=${run.recipeQuality.semantic}, evidence=${evidence}, selfReview=${run.selfReview.verdict ?? '-'}`;
+      return `- ${familyRunLabel(run)} (${run.runId}): status=${run.status}, runner=${run.metrics?.runner ?? '-'}, model=${run.metrics?.model ?? '-'}, slot=${run.slotId ?? '-'}, PR=${run.prNumber ?? '-'}, diff=${diff}, recipe=${run.recipeQuality.semantic}, evidence=${evidence}, review=${run.review.verdict ?? '-'}`;
     })
     .join('\n');
   return [
     `Cross-compare comparison family ${snapshot.familyId} for ${snapshot.familyRootTicketOrPr}.`,
-    'Compare the candidate solutions by code delta, PR output, recipe/evidence quality, self-review findings, runtime risks, and missing data.',
+    'Compare the candidate solutions by code delta, PR output, recipe/evidence quality, review findings, runtime risks, and missing data.',
     'Elect a winner if one is clearly safer; otherwise identify what evidence or cross-review is needed next.',
     '',
     rows,
@@ -105,8 +105,8 @@ function recipeOrdinal(run: FamilyObservabilityRunSummary): number | null {
   }
 }
 
-function selfReviewOrdinal(run: FamilyObservabilityRunSummary): number | null {
-  switch (run.selfReview.verdict) {
+function reviewOrdinal(run: FamilyObservabilityRunSummary): number | null {
+  switch (run.review.verdict) {
     case 'pass':
       return 2;
     case 'issues':
@@ -197,12 +197,12 @@ export const COMPARE_METRIC_COLUMNS: CompareMetricColumn[] = [
     format: (run) => run.recipeQuality.semantic,
   },
   {
-    key: 'selfReview',
-    label: 'Self-review',
+    key: 'review',
+    label: 'Review',
     direction: 'higher-better',
     scored: false,
-    value: selfReviewOrdinal,
-    format: (run) => run.selfReview.verdict ?? EM_DASH,
+    value: reviewOrdinal,
+    format: (run) => run.review.verdict ?? EM_DASH,
   },
   {
     key: 'ci',

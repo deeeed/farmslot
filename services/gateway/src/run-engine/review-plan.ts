@@ -1,187 +1,128 @@
+import path from 'node:path';
+
 import {
   type AgentContext,
-  type IndependentReviewStatus,
-  isReviewValidationDepth,
-  type ReviewDepthPolicy,
-  type ReviewLoopRequest,
-  type ReviewRunnerId,
-  reviewValidationDepthForLoop,
+  effectiveRequiredReviewCount,
+  isQualifyingReview,
+  parseGitHubRef,
+  qualifyingPassingReviews,
+  type ReviewPolicy,
+  type ReviewSelection,
+  type ReviewSequence,
+  type ReviewStatus,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
+import {
+  assertWarmReviewContext,
+  executionModelFromSelection,
+  parseReviewRequestContext,
+  parseReviewSelection,
+  resolveReviewDispatchDefaults,
+  reviewContextFromRequest,
+  reviewSequenceFromRequest,
+} from '@farmslot/review-dispatch';
 
 import {
-  effectiveRequiredReviewCount,
-  isQualifyingIndependentReview,
-} from '../quality/review-policy.js';
-import { defaultAlternateReviewRunner, normalizeRunner } from '../runners/registry.js';
+  resolveWarmReviewerSession,
+  reviewPRIdentity,
+  WarmReviewRefusal,
+} from '../review/session-mode.js';
+import { runnerSupportsSessionReload } from '../runners/launch-command.js';
+import { normalizeRunner } from '../runners/registry.js';
 
 import { isHumanGateReviewRequestAction } from './decision-replay.js';
 
+export const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;
+
 export function reviewPlanFromSelection(
   selectionData: Record<string, unknown> | undefined,
-): ReviewLoopRequest[] {
-  const request =
-    selectionData?.reviewRequest && typeof selectionData.reviewRequest === 'object'
-      ? (selectionData.reviewRequest as Record<string, unknown>)
-      : {};
-  const rawLoops = (Array.isArray(request.loops) ? request.loops : []).slice(
-    0,
-    MAX_PUBLISH_GATE_REVIEW_LOOPS,
-  );
-  const loops = rawLoops.flatMap((raw, index): ReviewLoopRequest[] => {
-    if (!raw || typeof raw !== 'object') return [];
-    const record = raw as Record<string, unknown>;
-    const runner =
-      typeof record.runner === 'string' && record.runner.trim() ? record.runner.trim() : 'same';
-    const model =
-      typeof record.model === 'string' && record.model.trim() ? record.model.trim() : null;
-    const effort =
-      typeof record.effort === 'string' && record.effort.trim() ? record.effort.trim() : null;
-    const validationDepth = isReviewValidationDepth(record.validationDepth)
-      ? record.validationDepth
-      : reviewValidationDepthForLoop(index, rawLoops.length);
-    const sessionIntent =
-      record.sessionIntent === 'resume' || record.sessionIntent === 'reset'
-        ? record.sessionIntent
-        : undefined;
-    return [
-      {
-        order: index + 1,
-        runner: runner as ReviewLoopRequest['runner'],
-        model,
-        ...(effort ? { effort } : {}),
-        validationDepth,
-        ...(sessionIntent ? { sessionIntent } : {}),
-      },
-    ];
+): ReviewSequence {
+  if (!selectionData?.reviewRequest) return [];
+  return reviewSequenceFromRequest(selectionData.reviewRequest, {
+    maxRows: MAX_PUBLISH_GATE_REVIEW_LOOPS,
   });
-  if (loops.length) return loops;
-  const requestedLoops = Number(request.extraLoopsRequested);
-  const count = Number.isFinite(requestedLoops)
-    ? Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, Math.round(requestedLoops)))
-    : 1;
-  return Array.from({ length: count }, (_, index) => ({
-    order: index + 1,
-    runner: 'same',
-    validationDepth: reviewValidationDepthForLoop(index, count),
-  }));
 }
-export function effectiveReviewRunner(loop: ReviewLoopRequest): string | null {
-  return loop.runner && loop.runner !== 'same' ? normalizeRunner(loop.runner) : null;
+
+export function effectiveReviewRunner(selection: ReviewSelection): string {
+  return normalizeRunner(selection.runner);
 }
 
 export function reviewerContextEffort(
   context: Pick<AgentContext, 'effort'> & { nativeSession?: { effort?: string } },
 ): string | null {
-  const value = context.effort?.trim() || context.nativeSession?.effort?.trim();
-  return value || null;
+  return context.effort?.trim() || context.nativeSession?.effort?.trim() || null;
 }
 
 export function requestedReviewLoopCount(
-  reviewRequest: Record<string, unknown>,
+  request: Record<string, unknown>,
   fallbackCount = 1,
 ): number {
-  const rawLoops = Array.isArray(reviewRequest.loops) ? reviewRequest.loops : [];
-  if (rawLoops.length > 0)
-    return Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, rawLoops.length));
-  const requestedLoops = Number(reviewRequest.extraLoopsRequested);
-  return Number.isFinite(requestedLoops)
-    ? Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, Math.round(requestedLoops)))
-    : Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, fallbackCount));
+  return Object.keys(request).length
+    ? reviewSequenceFromRequest(request, { maxRows: MAX_PUBLISH_GATE_REVIEW_LOOPS }).length
+    : fallbackCount;
 }
 
-/**
- * Materialize the configured publication-review minimum into executable work.
- * A pipeline self-review is useful worker feedback, but it is not independent
- * and therefore never consumes this budget. New publication reviews are static
- * (ADR-058); started and completed reviews keep their recorded depth.
- */
+/** Pipeline and gate reviews consume the same separate-session review budget. */
 export function automaticPublicationReviewPlan(
-  policy: ReviewDepthPolicy,
-  reviews: IndependentReviewStatus[],
-  workerRunner?: string | null,
-): ReviewLoopRequest[] {
-  const passing = reviews.filter(
-    (review) =>
-      isQualifyingIndependentReview(review) &&
-      review.verdict === 'pass' &&
-      review.unresolvedCount === 0,
+  policy: ReviewPolicy,
+  reviews: ReviewStatus[],
+  defaults = resolveReviewDispatchDefaults(undefined, 'review-pr'),
+): ReviewSequence {
+  const passingSessions = new Set(
+    qualifyingPassingReviews(reviews).map((review) => review.reviewerSessionId),
   );
-  const crossRunnerAlreadySatisfied =
-    !policy.requireCrossRunner || passing.some((review) => review.crossRunner);
-  const missing = Math.max(
-    Math.max(0, effectiveRequiredReviewCount(policy) - passing.length),
-    crossRunnerAlreadySatisfied ? 0 : 1,
-  );
-
-  return Array.from({ length: missing }, (_, index) => ({
-    order: index + 1,
-    runner:
-      policy.requireCrossRunner && !crossRunnerAlreadySatisfied && index === 0
-        ? (defaultAlternateReviewRunner(workerRunner) as ReviewLoopRequest['runner'])
-        : 'same',
-    validationDepth: 'static-code',
-  }));
+  const missing = Math.max(0, effectiveRequiredReviewCount(policy) - passingSessions.size);
+  const selection = parseReviewSelection({ ...defaults, mode: 'cold' });
+  return Array.from({ length: missing }, () => ({ ...selection }));
 }
 
 export function remainingExplicitReviewPlan(
-  plan: ReviewLoopRequest[],
-  reviews: IndependentReviewStatus[],
-  scope: {
-    requestedAt?: string;
-    source?: IndependentReviewStatus['source'];
-  } = {},
-): ReviewLoopRequest[] {
+  plan: ReviewSequence,
+  reviews: ReviewStatus[],
+  scope: { requestedAt?: string; source?: ReviewStatus['source'] } = {},
+): ReviewSequence {
   const requestedAt = scope.requestedAt ? Date.parse(scope.requestedAt) : Number.NaN;
-  const passingReviews = reviews.filter(
-    (review) =>
-      isQualifyingIndependentReview(review) &&
-      review.verdict === 'pass' &&
-      review.unresolvedCount === 0 &&
-      (!scope.source || (review.source ?? 'dispatch') === scope.source) &&
-      (!Number.isFinite(requestedAt) ||
-        Date.parse(review.completedAt ?? review.startedAt ?? '') >= requestedAt),
-  );
-  let completedPrefix = 0;
-  const unusedPassingReviews = [...passingReviews];
-  for (const planStep of plan) {
-    const matchingIndex = unusedPassingReviews.findIndex(
+  const sessions = new Set<string>();
+  const passing = reviews.filter((review) => {
+    if (
+      !isQualifyingReview(review) ||
+      review.verdict !== 'pass' ||
+      review.unresolvedCount !== 0 ||
+      (scope.source && review.source !== scope.source) ||
+      (Number.isFinite(requestedAt) && Date.parse(review.completedAt ?? '') < requestedAt) ||
+      sessions.has(review.reviewerSessionId!)
+    )
+      return false;
+    sessions.add(review.reviewerSessionId!);
+    return true;
+  });
+  let completed = 0;
+  for (const selection of plan) {
+    const execution = executionModelFromSelection(selection);
+    const index = passing.findIndex(
       (review) =>
-        planStep.runner === 'same' ||
-        normalizeRunner(review.runner) === normalizeRunner(planStep.runner),
+        normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
+        (review.model ?? execution.model) === execution.model &&
+        (review.effort ?? execution.effort) === execution.effort,
     );
-    if (matchingIndex < 0) break;
-    unusedPassingReviews.splice(matchingIndex, 1);
-    completedPrefix += 1;
+    if (index < 0) break;
+    passing.splice(index, 1);
+    completed++;
   }
-  return plan.slice(completedPrefix);
+  return plan.slice(completed);
 }
 
-export function humanGateReviewDepth(
-  basePolicy: ReviewDepthPolicy,
-  reviewRequest: Record<string, unknown>,
-  options: {
-    actionId?: string;
-    fallbackLoopCount?: number;
-  } = {},
-): ReviewDepthPolicy {
-  const loopsToRequire = requestedReviewLoopCount(reviewRequest, options.fallbackLoopCount ?? 1);
-  const requiresCrossRunner =
-    basePolicy.requireCrossRunner ||
-    options.actionId === 'request-cross-runner-review' ||
-    reviewRequest.requireCrossRunner === true;
+export function humanGateReviewPolicy(
+  basePolicy: ReviewPolicy,
+  request: Record<string, unknown>,
+  options: { actionId?: string; fallbackLoopCount?: number } = {},
+): ReviewPolicy {
   return {
-    minimumIndependentReviews: Math.max(
-      basePolicy.minimumIndependentReviews,
-      requiresCrossRunner ? 1 : 0,
-      loopsToRequire,
+    minimumReviews: Math.max(
+      basePolicy.minimumReviews,
+      requestedReviewLoopCount(request, options.fallbackLoopCount),
     ),
-    requireCrossRunner: requiresCrossRunner,
-    // Human gate review requests are work orders, not permanent additive
-    // policy. The requested reviews must pass before the gate re-opens, but a
-    // second click must not inflate required reviews forever.
-    extraLoopsRequested: 0,
     requestedBy: 'human-gate',
   };
 }
@@ -189,18 +130,9 @@ export function humanGateReviewDepth(
 export function humanGateReviewRequestFromDecision(
   decision: RunDecision | undefined,
 ): Record<string, unknown> {
-  const selectionData = decision?.selectionData;
-  return selectionData?.reviewRequest && typeof selectionData.reviewRequest === 'object'
-    ? (selectionData.reviewRequest as Record<string, unknown>)
-    : {};
+  return (decision?.selectionData?.reviewRequest as Record<string, unknown>) ?? {};
 }
 
-/**
- * Latest resolved human-gate decision whose action was a review request
- * (not an approval). Used when building the executable review plan so a
- * second request-extra-review with a different runner is not ignored in
- * favor of a stale pending plan or an approval-only lookup.
- */
 export function latestResolvedHumanGateReviewRequestDecision(
   decisions: readonly RunDecision[],
   gateAction?: string,
@@ -216,94 +148,139 @@ export function latestResolvedHumanGateReviewRequestDecision(
     .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
 }
 
-/**
- * Choose the plan the publish-gate loop will execute after a human-gate
- * review request.
- *
- * Live bug (MANUAL-000087 / run 71803bd2): operator requested codex on the
- * second request-extra-review, but the loop preferred a stale pending plan
- * (claude) and/or fell back via approval-only decision lookup, so Claude
- * launched. The latest review-request decision's selectionData is
- * authoritative when it carries explicit loops.
- */
 export function resolveHumanGateReviewExecutionPlan(input: {
   gateAction: string;
-  pendingPlan: readonly ReviewLoopRequest[];
+  pendingPlan: readonly ReviewSelection[];
   decisions: readonly RunDecision[];
-}): ReviewLoopRequest[] {
-  const { gateAction, pendingPlan, decisions } = input;
-  if (!isHumanGateReviewRequestAction(gateAction)) {
-    return pendingPlan.length ? [...pendingPlan] : [];
-  }
-
-  const latestRequest =
-    latestResolvedHumanGateReviewRequestDecision(decisions, gateAction) ??
-    latestResolvedHumanGateReviewRequestDecision(decisions);
-  const fromDecision = reviewPlanFromSelection(latestRequest?.selectionData);
-  const decisionHasExplicitRunner = fromDecision.some((loop) => effectiveReviewRunner(loop));
-  if (decisionHasExplicitRunner) return fromDecision;
-
-  if (pendingPlan.length > 0) return [...pendingPlan];
-  return fromDecision;
+}): ReviewSequence {
+  if (!isHumanGateReviewRequestAction(input.gateAction)) return [...input.pendingPlan];
+  const decision = latestResolvedHumanGateReviewRequestDecision(input.decisions, input.gateAction);
+  return decision ? reviewPlanFromSelection(decision.selectionData) : [...input.pendingPlan];
 }
 
-const REVIEW_RUNNERS = new Set<ReviewRunnerId>([
-  'claude',
-  'codex',
-  'cursor',
-  'grok',
-  'opencode',
-  'pi',
-]);
-
-function contextTimestamp(context: AgentContext): number {
-  const value =
-    context.attemptStartedAt ?? context.completedAt ?? context.updatedAt ?? context.startedAt ?? '';
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-/**
- * Reconstruct the review work order when a gateway restart interrupted an
- * independent-review fix pass after the gate had already consumed its pending
- * plan. The latest reviewer context identifies the runner/model that must
- * re-enter executeSelfReview, whose fix-pass recovery resumes the live worker.
- */
 export function recoveryReviewPlanForActiveFix(
   run: Pick<Run, 'agentContexts' | 'engineState'>,
-): ReviewLoopRequest[] {
+): ReviewSequence {
   const contexts = run.agentContexts ?? [];
-  const activeFix = contexts.some(
-    (context) =>
-      context.role === 'self-review-fix' &&
-      (context.status === 'launching' ||
-        context.status === 'working' ||
-        context.status === 'waiting'),
-  );
-  if (!activeFix) return [];
-
+  if (
+    !contexts.some(
+      (context) =>
+        context.role === 'review-fix' &&
+        ['launching', 'working', 'waiting'].includes(context.status),
+    )
+  )
+    return [];
   const reviewer = contexts
-    .filter((context) => context.role === 'self-review' && context.runner)
-    .sort((left, right) => contextTimestamp(right) - contextTimestamp(left))[0];
-  if (!reviewer) return [];
-
-  const normalizedRunner = normalizeRunner(reviewer.runner);
-  const runner = REVIEW_RUNNERS.has(normalizedRunner as ReviewRunnerId)
-    ? (normalizedRunner as ReviewRunnerId)
-    : 'same';
-  const matchingReview = [...(run.engineState?.publishGate?.independentReviews ?? [])]
+    .filter((context) => context.role === 'review' && context.runner)
+    .sort((a, b) =>
+      (b.attemptStartedAt ?? b.updatedAt ?? '').localeCompare(
+        a.attemptStartedAt ?? a.updatedAt ?? '',
+      ),
+    )[0];
+  if (!reviewer?.runner) return [];
+  const prior = [...(run.engineState?.publishGate?.reviews ?? [])]
     .reverse()
-    .find((review) => normalizeRunner(review.runner) === normalizedRunner);
-  const effort = reviewerContextEffort(reviewer) ?? (matchingReview?.effort?.trim() || null);
+    .find((review) => review.reviewerSessionId === reviewer.runnerSessionId);
   return [
     {
-      order: 1,
-      runner,
-      model: reviewer.model ?? matchingReview?.model ?? null,
-      ...(effort ? { effort } : {}),
-      validationDepth: matchingReview?.validationDepth ?? 'full-live',
+      runner: normalizeRunner(reviewer.runner),
+      model: reviewer.model ?? prior?.model ?? null,
+      effort: reviewerContextEffort(reviewer) ?? prior?.effort ?? null,
+      mode: 'warm',
     },
   ];
 }
 
-export const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;
+/** Request refusal happens before a parked run is restored or a gate receipt consumed. */
+export function assertWarmReviewRequestAvailable(
+  run: Run,
+  request: unknown,
+  runs: readonly Run[],
+): void {
+  const sequence = reviewSequenceFromRequest(request);
+  const context = reviewContextFromRequest(request);
+  const identity = reviewPRIdentity(run);
+  assertWarmReviewContext(sequence, context);
+  for (const [index, row] of sequence.entries()) {
+    if (row.mode !== 'warm') continue;
+    const lineage = context?.reviewLineages[index];
+    if (!lineage)
+      throw new WarmReviewRefusal(
+        'missing-session',
+        'the requested row has no reviewId lineage context',
+      );
+    if (
+      !identity ||
+      lineage.repository.toLowerCase() !== identity.repository.toLowerCase() ||
+      lineage.prNumber !== identity.prNumber
+    )
+      throw new WarmReviewRefusal(
+        'pr-mismatch',
+        'the requested lineage belongs to a different repository/PR',
+      );
+    if (run.transport !== 'native' && !runnerSupportsSessionReload(row.runner))
+      throw new WarmReviewRefusal(
+        'unsupported-runner',
+        'the selected runner cannot reload a reviewer',
+      );
+    const execution = executionModelFromSelection(row);
+    const retained = resolveWarmReviewerSession(
+      {
+        runId: run.id,
+        reviewId: lineage.reviewId,
+        project: run.project,
+        ownerPrincipalId: run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+        transport: run.transport ?? 'tmux',
+        taskDir: run.taskFile ? path.dirname(run.taskFile) : '',
+        artifactScope: lineage.reviewId,
+        runner: execution.runner,
+        model: execution.model,
+        effort: execution.effort,
+        repository: identity.repository,
+        prNumber: identity.prNumber,
+      },
+      runs,
+    );
+    if (!retained)
+      throw new WarmReviewRefusal(
+        'missing-session',
+        'the reviewId has no verified retained session and reviewed head',
+      );
+  }
+}
+
+export function assertPrimaryReviewContext(
+  input: Pick<Run, 'flowType' | 'ticketOrPr' | 'reviewMode' | 'reviewContext' | 'prWork'>,
+): void {
+  const mode = input.reviewMode ?? input.prWork?.review?.options.mode ?? 'cold';
+  if (mode !== 'warm') return;
+  const raw = input.reviewContext ?? input.prWork?.review?.options.reviewContext;
+  if (!raw)
+    throw new WarmReviewRefusal(
+      'missing-session',
+      'WARM requires explicit reviewId lineage context',
+    );
+  const context = parseReviewRequestContext(raw);
+  const bindings = context.reviewLineages.filter(
+    (binding): binding is NonNullable<typeof binding> => !!binding,
+  );
+  if (!bindings.length || new Set(bindings.map((binding) => binding.reviewId)).size !== 1)
+    throw new WarmReviewRefusal(
+      'missing-session',
+      'the requested primary review lineage is missing or ambiguous',
+    );
+  if (input.flowType !== 'review-pr') return;
+  const pr = input.prWork?.pr ?? parseGitHubRef(input.ticketOrPr);
+  if (
+    !pr ||
+    bindings.some(
+      (binding) =>
+        binding.repository.toLowerCase() !== pr.repo.toLowerCase() ||
+        binding.prNumber !== pr.number,
+    )
+  )
+    throw new WarmReviewRefusal(
+      'pr-mismatch',
+      'the requested review lineage belongs to a different repository/PR',
+    );
+}

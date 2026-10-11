@@ -88,7 +88,7 @@ async function fixture() {
       version: 1,
       chainId: 'chain',
       generation: 2,
-      contextMode: 'fresh',
+
       priorRunId: 'previous',
       priorFamilyId: 'family',
       repository: subject.repository,
@@ -98,7 +98,7 @@ async function fixture() {
       unresolvedFindings: [{ file: 'src/file.ts', line: 1, description: 'Earlier finding' }],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      reviewScope: 'incremental',
+      mode: 'warm',
       validationDepth: 'static-code',
     },
   };

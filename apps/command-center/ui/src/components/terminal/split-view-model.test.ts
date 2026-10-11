@@ -189,21 +189,21 @@ test('selectActiveRunSlotIds ignores stale manual task files without live worker
   const runs = [
     makeRun('run-mm-3', {
       slotId: 'macwork-mm-3',
-      status: 'self-reviewing',
+      status: 'reviewing',
       ticketOrPr: 'TAT-3393',
       updatedAt: '2026-06-24T18:00:00.000Z',
     }),
     makeRun('run-mme-1', {
       slotId: 'macwork-mme-1',
       project: 'metamask-extension-farm',
-      status: 'self-reviewing',
+      status: 'reviewing',
       ticketOrPr: 'TAT-3394',
       updatedAt: '2026-06-24T17:00:00.000Z',
     }),
     makeRun('run-mme-2', {
       slotId: 'macwork-mme-2',
       project: 'metamask-extension-farm',
-      status: 'self-reviewing',
+      status: 'reviewing',
       ticketOrPr: 'TAT-3407',
       updatedAt: '2026-06-24T19:00:00.000Z',
     }),

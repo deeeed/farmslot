@@ -25,8 +25,7 @@ test('automatic QA is absent by default and snapshots one enabled profile withou
   const snapshot = captureQaAfterReview(enabled, {
     review: {
       workflow: 'qa',
-      sessionIntent: 'reset',
-      scope: 'full',
+      mode: 'cold' as const,
       qaInputs: { environment: 'staging' },
     },
   })!;

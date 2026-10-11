@@ -549,7 +549,7 @@ test('archiveRun accepts a settled blocked run and refuses one with a pending de
     error: 'Cannot reproduce',
     steps: [
       { name: 'monitor', status: 'done' },
-      { name: 'self-review', status: 'skipped' },
+      { name: 'review', status: 'skipped' },
     ],
     decisions: [
       {

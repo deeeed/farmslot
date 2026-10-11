@@ -66,6 +66,9 @@ function graphContext(
     item.runner || item.model || item.effort
       ? `exec:${[item.runner, item.model, item.effort].filter(Boolean).join('/')}`
       : '',
+    item.reviewSequence?.length
+      ? `reviews:${item.reviewSequence.map((review) => [review.runner, review.model ?? 'default model', review.effort ?? 'default effort', review.mode.toUpperCase()].join('/')).join(', ')}`
+      : '',
   ].filter(Boolean);
   return parts.join(' · ');
 }

@@ -212,7 +212,7 @@ test('digest-required handoff rejects generic hook activity and accepts only the
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-digest-handoff-'));
   const observabilityDir = join(dir, '.agent', '.observability');
   const hooksPath = join(observabilityDir, 'hooks.jsonl');
-  const prompt = 'Read SELF-REVIEW.md';
+  const prompt = 'Read REVIEW.md';
   const sinceMs = Date.now() - 1_000;
   const vars = makeVars({ repo: dir, remoteRepo: dir, projectName: 'missing-project-xyz' });
   try {

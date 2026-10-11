@@ -1,13 +1,12 @@
 import { html, nothing } from 'lit';
 
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import '../shared/runner-model-effort-picker.js';
+import '../shared/review-dispatch-picker.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { type EffortLevel } from '../../utils/runner-options.js';
-import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
@@ -48,9 +47,8 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   selectedDispatchApp: string | undefined;
   interstitialContent: unknown;
   taskTemplateSelector: unknown;
-  runner: string;
-  model: string;
-  effort: EffortLevel;
+  executionPicker: ReviewDispatchViewModel;
+  executionChanged: () => void;
   workflowControls: unknown;
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
@@ -63,9 +61,6 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   selectFlowType: (flowType: FlowType) => void;
   selectProject: (project: string) => void;
   setApp: (app: string) => void;
-  setRunner: (runner: string) => void;
-  setModel: (model: string) => void;
-  setEffort: (effort: EffortLevel) => void;
   setPrepareOptions: (options: { skipPrepare: boolean; prepareProfile: string }) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
 }
@@ -79,7 +74,8 @@ export function renderDispatchWizardPrimaryControls(
     ${ctx.workflowControls}
     <details class="config-group" data-testid="dispatch-execution-options">
       <summary data-testid="dispatch-execution-summary">
-        Execution options · ${ctx.runner} / ${ctx.model}
+        Execution options · ${ctx.executionPicker.selection!.runner} /
+        ${ctx.executionPicker.selection!.model ?? 'default model'}
       </summary>
       ${renderRunnerModelConfig(ctx)}
       ${html`<div>
@@ -245,19 +241,13 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 }
 
 function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext) {
-  return html`
-    <runner-model-effort-picker
-      .discover=${ctx.discoverModels !== false}
-      .runner=${ctx.runner}
-      .model=${ctx.model}
-      .effort=${ctx.effort}
-      @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) => {
-        ctx.setRunner(event.detail.runner);
-        ctx.setModel(event.detail.model);
-        ctx.setEffort(event.detail.effort);
-      }}
-    ></runner-model-effort-picker>
-  `;
+  return html`<review-dispatch-picker
+    .viewModel=${ctx.executionPicker}
+    .review=${ctx.flowType === 'review-pr'}
+    .discover=${ctx.discoverModels !== false}
+    @review-dispatch-change=${ctx.executionChanged}
+    @review-dispatch-status-change=${ctx.executionChanged}
+  ></review-dispatch-picker>`;
 }
 
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
@@ -293,7 +283,7 @@ function renderInteractiveDevProfile(ctx: DispatchWizardPrimaryControlsRenderCon
       <div class="pill-row">
         <button
           class="pill ${ctx.devInteractiveProfile === 'lightweight' ? 'selected' : ''}"
-          title="Skip self-review and human gate by default; finish through operator actions."
+          title="Skip review and human gate by default; finish through operator actions."
           @click=${() => ctx.setDevInteractiveProfile('lightweight')}
         >
           Lightweight
@@ -308,7 +298,7 @@ function renderInteractiveDevProfile(ctx: DispatchWizardPrimaryControlsRenderCon
       </div>
       <div class="section-help">
         ${ctx.devInteractiveProfile === 'lightweight'
-          ? 'Initial context accepted; self-review and human gate are recorded as policy skips.'
+          ? 'Initial context accepted; review and human gate are recorded as policy skips.'
           : 'Uses the dev lane with interactive review checkpoints enabled.'}
       </div>
     </div>

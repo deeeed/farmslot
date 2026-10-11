@@ -33,7 +33,7 @@ async function runCursorArgvRelaunch({ runnerAdapter, timeoutMs, keepSession, ou
   fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
   const tempRoot = fs.mkdtempSync(path.join(ROOT, 'temp', 'cursor-argv-relaunch-'));
   const replacementReadySignalPath = path.join(tempRoot, 'PRIOR-TASK-SIGNAL.json');
-  const signalPath = path.join(tempRoot, 'SELF-REVIEW-SIGNAL.json');
+  const signalPath = path.join(tempRoot, 'REVIEW-SIGNAL.json');
   const attemptId = `cursor-argv-relaunch-${process.pid}`;
   const report = {
     runner,
@@ -134,10 +134,10 @@ async function runCursorArgvRelaunch({ runnerAdapter, timeoutMs, keepSession, ou
   return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
 }
 
-function resolveLiveResetPlan(runner) {
+function resolveLiveColdPlan(runner) {
   const snippet = `
 import { retainedReviewerDeliveryPlan } from './services/gateway/src/runners/registry.ts';
-console.log(JSON.stringify(retainedReviewerDeliveryPlan(${JSON.stringify(runner)}, 'reset', 1)));
+console.log(JSON.stringify(retainedReviewerDeliveryPlan(${JSON.stringify(runner)}, 'cold', 1)));
 `;
   const stdout = execFileSync('yarn', ['exec', 'tsx', '-e', snippet], {
     cwd: process.cwd(),
@@ -197,10 +197,10 @@ export async function runScenario({
     handoffDelivered: false,
     repeatReviewSessionTrace: null,
     repeatReviewResumePlan: null,
-    repeatReviewResetPlan: null,
+    repeatReviewColdPlan: null,
     repeatReviewSlotMismatchPlan: null,
     repeatReviewUnavailablePlan: null,
-    liveReviewerResetPlan: null,
+    liveReviewerColdPlan: null,
     paneReplacedBeforeResume: false,
     pass: false,
     error: null,
@@ -217,7 +217,7 @@ export async function runScenario({
     const dispatchMs = Date.now();
 
     const model = requestedModel ?? (runner === 'claude' ? 'opus' : undefined);
-    report.liveReviewerResetPlan = resolveLiveResetPlan(runner);
+    report.liveReviewerColdPlan = resolveLiveColdPlan(runner);
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model });
     const binding = waitForSessionBinding(
       { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
@@ -246,7 +246,7 @@ export async function runScenario({
     if (!report.initialCompleted)
       throw new Error('Initial reviewer did not reach a structured terminal state');
 
-    const repeatReviewReset = runGatewayRepeatReviewResume({
+    const repeatReviewCold = runGatewayRepeatReviewResume({
       repo,
       target,
       runner,
@@ -256,12 +256,12 @@ export async function runScenario({
       runnerPath: runnerAdapter.binaryPath(),
       model,
       slotId,
-      sessionIntent: 'reset',
+      mode: 'cold',
       expectedKind: 'not-resumed',
     });
-    report.repeatReviewResetPlan = repeatReviewReset.result?.plan ?? null;
-    if (repeatReviewReset.result?.plan?.kind !== 'reset') {
-      throw new Error(repeatReviewReset.error || 'repeat-review policy did not honor reset');
+    report.repeatReviewColdPlan = repeatReviewCold.result?.plan ?? null;
+    if (repeatReviewCold.result?.plan?.kind !== 'fresh') {
+      throw new Error(repeatReviewCold.error || 'COLD review must request a fresh session');
     }
     const repeatReviewSlotMismatch = runGatewayRepeatReviewResume({
       repo,
@@ -278,7 +278,7 @@ export async function runScenario({
     });
     report.repeatReviewSlotMismatchPlan = repeatReviewSlotMismatch.result?.plan ?? null;
     if (
-      repeatReviewSlotMismatch.result?.plan?.kind !== 'fallback' ||
+      repeatReviewSlotMismatch.result?.plan?.kind !== 'refused' ||
       repeatReviewSlotMismatch.result?.plan?.reason !== 'slot-mismatch'
     ) {
       throw new Error(
@@ -295,13 +295,11 @@ export async function runScenario({
       runnerPath: runnerAdapter.binaryPath(),
       model,
       slotId,
-      expectedKind: 'fallback',
+      expectedKind: 'refused',
     });
     report.repeatReviewUnavailablePlan = repeatReviewUnavailable.result?.plan ?? null;
     if (repeatReviewUnavailable.result?.plan?.reason !== 'session-unavailable') {
-      throw new Error(
-        repeatReviewUnavailable.error || 'repeat-review policy did not safely fall back',
-      );
+      throw new Error(repeatReviewUnavailable.error || 'Unavailable WARM session must be refused');
     }
 
     const priorPaneId = paneId;
@@ -386,10 +384,10 @@ export async function runScenario({
       report.initialCompleted &&
       report.interleavedCompleted &&
       report.repeatReviewResumePlan?.kind === 'resume' &&
-      report.repeatReviewResetPlan?.kind === 'reset' &&
+      report.repeatReviewColdPlan?.kind === 'fresh' &&
       report.repeatReviewSlotMismatchPlan?.reason === 'slot-mismatch' &&
       report.repeatReviewUnavailablePlan?.reason === 'session-unavailable' &&
-      report.liveReviewerResetPlan?.kind === (runner === 'claude' ? 'in-place' : 'cold-relaunch') &&
+      report.liveReviewerColdPlan?.kind === 'cold-relaunch' &&
       report.paneReplacedBeforeResume &&
       report.handoffDelivered;
   } catch (error) {

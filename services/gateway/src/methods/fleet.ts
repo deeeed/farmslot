@@ -165,7 +165,7 @@ const ACTIVE_SLOT_STATUS_PRIORITY: Partial<Record<RunStatus, number>> = {
   preparing: 4,
   dispatching: 5,
   monitoring: 6,
-  'self-reviewing': 5,
+  reviewing: 5,
   completing: 5,
   'human-gating': 4,
   'ci-watching': 3,

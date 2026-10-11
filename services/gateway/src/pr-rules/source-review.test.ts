@@ -14,7 +14,7 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'runtime' },
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 writeFileSync(
   path.join(root, 'projects/farm/project.json'),
@@ -160,7 +160,7 @@ async function fixture(t: TestContext) {
     pr,
     idempotencyKey: 'linked',
     autoStart: true,
-    review: { sessionIntent: 'reset', scope: 'full', workflow: 'qa' },
+    review: { mode: 'cold' as const, workflow: 'qa' },
     source: { client: 'test' },
   };
   return {

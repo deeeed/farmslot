@@ -99,7 +99,7 @@ import {
   executeCompleteStep,
   executeHumanGateStep,
   executeMonitorStep,
-  executeSelfReviewStep,
+  executeReviewStep,
 } from './post-dispatch-steps.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { setPublishPackageRefreshBroadcast } from './publish-package-refresh.js';
@@ -308,7 +308,7 @@ const STEP_TO_STATUS: Record<string, RunStatus> = {
   [S.PREPARE]: 'preparing',
   [S.DISPATCH]: 'dispatching',
   [S.MONITOR]: 'monitoring',
-  [S.SELF_REVIEW]: 'self-reviewing',
+  [S.REVIEW]: 'reviewing',
   [S.HUMAN_GATE]: 'human-gating',
   [S.FINALIZE]: 'completing',
   [S.COMPLETE]: 'completing',
@@ -1553,8 +1553,8 @@ async function executeStep(runId: string, step: string, generation: number): Pro
         stepPartialIO,
         deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
-    case S.SELF_REVIEW:
-      return executeSelfReviewStep(runId, {
+    case S.REVIEW:
+      return executeReviewStep(runId, {
         activeMonitors,
         blockedRunError: (message, reason) => new BlockedRunError(message, reason),
         broadcastFn,

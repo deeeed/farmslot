@@ -5,12 +5,14 @@ import type {
   PressureAdmissionReference,
   PressureDispatchOverride,
   QaInput,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   RunCreateResult,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { defaultModelForRunner, type ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 
@@ -49,11 +51,29 @@ export interface DispatchPayloadDraftInput {
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   reviewTier?: '' | 'light' | 'standard' | 'full';
-  reviewDepth?: ReviewDepthPolicy;
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewPolicy?: ReviewPolicy;
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
+  reviewMode?: import('@farmslot/protocol').ReviewMode;
   pressureAdmissionRef?: PressureAdmissionReference;
   pressureOverride?: PressureDispatchOverride;
   comparison: Partial<ComparisonRunParams>;
+}
+
+export function dispatchWizardExecutionOptions(
+  flowType: FlowType | null,
+  picker: ReviewDispatchViewModel,
+): Pick<DispatchPayloadDraftInput, 'runner' | 'model' | 'effort' | 'reviewMode' | 'reviewContext'> {
+  const selection = picker.toSelection();
+  return {
+    runner: selection.runner,
+    model: selection.model ?? defaultModelForRunner(selection.runner, picker.catalog) ?? '',
+    effort: selection.effort ?? '',
+    ...(flowType === 'review-pr'
+      ? { reviewMode: selection.mode, reviewContext: picker.toReviewContext() }
+      : {}),
+  };
 }
 
 export function buildDispatchWizardPayloadDraft(
@@ -100,9 +120,11 @@ export function buildDispatchWizardPayloadDraft(
     reviewTier: input.reviewTier || undefined,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewScope: input.flowType === 'review-pr' ? 'full' : undefined,
-    reviewDepth: input.reviewDepth,
-    pendingReviewPlan: input.pendingReviewPlan,
+    reviewMode: input.reviewMode,
+    reviewPolicy: input.reviewPolicy,
+    reviewSequence: input.reviewSequence,
+    reviewContext: input.reviewContext,
+    reviewSequenceContext: input.reviewSequenceContext,
     pressureAdmissionRef: workspace ? undefined : input.pressureAdmissionRef,
     pressureOverride: workspace ? undefined : input.pressureOverride,
     comparison: input.comparison,

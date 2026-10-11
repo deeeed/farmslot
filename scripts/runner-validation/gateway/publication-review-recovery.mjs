@@ -34,8 +34,8 @@ assert.ok(
 assert.equal(gate.payload.stale, false);
 const summary = gate.payload.gateSummary.review;
 assert.ok(summary.passingReviews >= summary.requiredReviews);
-const review = run.engineState.publishGate.independentReviews.find(
-  (r) => r.source !== 'self-review' && r.verdict === 'pass',
+const review = run.engineState.publishGate.reviews.find(
+  (r) => r.source !== 'review' && r.verdict === 'pass',
 );
 assert.ok(review);
 assert.equal(review.reviewSnapshot.diffHash, gate.payload.prPackage.reviewSnapshot.diffHash);

@@ -32,7 +32,7 @@ test('snapshot backfills retrospective payload for unresolved legacy decisions',
       ticketOrPr: 'owner/repo#42',
       taskFile: path.join(taskDir, 'TASK.md'),
       steps: [
-        { name: 'self-review', status: 'done', outputs: { verdict: 'pass' } },
+        { name: 'review', status: 'done', outputs: { verdict: 'pass' } },
         {
           name: 'ci-watch',
           status: 'done',
@@ -66,12 +66,12 @@ test('snapshot backfills retrospective payload for unresolved legacy decisions',
     outcome?: string;
     workerLearnings?: string;
     reportExcerpt?: string;
-    selfReviewVerdict?: string;
+    reviewVerdict?: string;
     ciWatch?: { result?: string };
   };
   assert.equal(payload.kind, 'retrospective');
   assert.equal(payload.outcome, 'success');
-  assert.equal(payload.selfReviewVerdict, 'pass');
+  assert.equal(payload.reviewVerdict, 'pass');
   assert.equal(payload.workerLearnings, 'Legacy learning');
   assert.match(payload.reportExcerpt ?? '', /Legacy report summary/);
   assert.equal(payload.ciWatch?.result, 'passed');

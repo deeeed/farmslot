@@ -14,7 +14,7 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'runtime' },
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 const config = {
   name: 'farm',
@@ -106,11 +106,7 @@ const subject: PRRuleSubject = {
   },
 };
 const scan = { subjects: [subject], complete: true, errors: [], ignoredItems: 0 };
-const review = {
-  sessionIntent: 'resume' as const,
-  scope: 'full' as const,
-  workflow: 'qa' as const,
-};
+const review = { mode: 'cold' as const, workflow: 'qa' as const };
 
 async function fixture(t: TestContext) {
   const store = await PRRuleStore.load(path.join(root, `rules-${Math.random()}.json`));

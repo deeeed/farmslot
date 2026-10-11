@@ -124,6 +124,17 @@ class LaneTests(unittest.TestCase):
         with patch.dict('os.environ', {'TMUX_MODEL_DRIVER_READ_ONLY': '1'}):
             self.assertNotIn('TMUX_MODEL_DRIVER_READ_ONLY', lanes._env(self.config, self.config['lanes'][0], {}))
 
+    def test_lane_model_and_effort_reach_shared_launch_and_resume_adapter(self):
+        lane = self.config['lanes'][0]
+        lane.update(model='chosen-model', effort='xhigh')
+        def adapter(argv, **kwargs):
+            request = json.loads(kwargs['input'])
+            self.assertEqual((request['model'], request['effort']), ('chosen-model', 'xhigh'))
+            return result(json.dumps({'command': 'configured-runner', 'runtime_dir': request['runtime_dir']}))
+        with patch.object(lanes, 'run', side_effect=adapter):
+            lanes._runner_adapter(self.config, lane, {})
+            lanes._runner_adapter(self.config, lane, {'session_id': 'retained-session'})
+
     def test_send_refuses_shell_and_never_uses_raw_tmux_send(self):
         def command(argv, **kwargs):
             if "list-panes" in argv:

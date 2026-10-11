@@ -64,9 +64,9 @@ test('recordRunnerSessionForRole writes the binding onto the requested role', as
   await recordRunnerSessionForRole(
     {
       runId: 'run-1',
-      role: 'self-review-fix',
+      role: 'review-fix',
       session: { runnerSessionId: 'sess-2', runnerSessionPath: '/sessions/sess-2.jsonl' },
-      captureLabel: 'self-review fix relaunch',
+      captureLabel: 'review fix relaunch',
       now: FIXED_NOW,
     },
     { upsert },
@@ -74,7 +74,7 @@ test('recordRunnerSessionForRole writes the binding onto the requested role', as
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.runId, 'run-1');
-  assert.equal(calls[0]?.role, 'self-review-fix');
+  assert.equal(calls[0]?.role, 'review-fix');
   assert.deepEqual(calls[0]?.patch, {
     runnerSessionId: 'sess-2',
     runnerSessionPath: '/sessions/sess-2.jsonl',
@@ -160,7 +160,7 @@ test('a non-canonical context id targets that exact reviewer context', async () 
   await recordRunnerSessionForRole(
     {
       runId: 'run-1',
-      role: 'self-review',
+      role: 'review',
       contextId: 'rev2-codex',
       label: 'Reviewer 2',
       session: { runnerSessionId: 'sess-9', runnerSessionPath: '/sessions/sess-9.jsonl' },
@@ -171,9 +171,9 @@ test('a non-canonical context id targets that exact reviewer context', async () 
   );
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.role, 'self-review');
+  assert.equal(calls[0]?.role, 'review');
   // Without the id the hook would collapse every reviewer generation onto the
-  // canonical `self-review` context and lose the individual sessions.
+  // canonical `review` context and lose the individual sessions.
   assert.equal(calls[0]?.patch.id, 'rev2-codex');
   assert.equal(calls[0]?.patch.label, 'Reviewer 2');
   assert.equal(calls[0]?.patch.runnerSessionId, 'sess-9');
@@ -214,7 +214,7 @@ test('the branch-affinity nudge records its retained binding through the hook', 
 });
 
 test('reviewer session binding goes through the hook with its allocated context id', () => {
-  const source = gatewaySource('self-review/review-agent.ts');
+  const source = gatewaySource('review/review-agent.ts');
 
   assert.match(source, /recordRunnerSessionForRole\(\{/);
   assert.match(source, /contextId: allocated\.id/);
@@ -226,7 +226,7 @@ test('reviewer session binding goes through the hook with its allocated context 
 });
 
 test('a failed reviewer rebind clears the capture stamp with the id and path', () => {
-  const source = gatewaySource('self-review/review-agent.ts');
+  const source = gatewaySource('review/review-agent.ts');
 
   assert.match(source, /clearedRunnerSessionContextPatch\(\)/);
   // The old shape nulled id/path under the allocated context and left the
@@ -241,7 +241,7 @@ test('every runner-respawn site clears the session identity as one unit', () => 
   for (const file of [
     'methods/dispatch/execute.ts',
     'ci-monitor/inline-fix.ts',
-    'self-review/orchestrator.ts',
+    'review/orchestrator.ts',
   ]) {
     const source = gatewaySource(file);
     assert.match(source, /clearedRunnerSessionContextPatch\(\)/, `${file} must clear via the hook`);

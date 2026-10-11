@@ -8,7 +8,7 @@ type DispatchConfigItem = Pick<
   | 'effort'
   | 'mode'
   | 'model'
-  | 'pendingReviewPlan'
+  | 'reviewSequence'
   | 'prepareProfile'
   | 'runner'
   | 'taskTemplate'
@@ -53,10 +53,19 @@ export function dispatchTemplateLabel(item: DispatchConfigItem): string {
 }
 
 export function dispatchReviewLabel(item: DispatchConfigItem): string {
-  const plan = item.pendingReviewPlan ?? [];
+  const plan = item.reviewSequence ?? [];
   if (plan.length === 0) return '';
   return plan
-    .map((loop) => [loop.runner, loop.model, loop.validationDepth].filter(Boolean).join('/'))
+    .map((loop) =>
+      [
+        loop.runner,
+        loop.model ?? 'default model',
+        loop.effort ?? 'default effort',
+        loop.mode.toUpperCase(),
+      ]
+        .filter(Boolean)
+        .join('/'),
+    )
     .join(', ');
 }
 
@@ -134,17 +143,21 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
     { label: 'Slots', value: slots },
   ];
   if (reviews) meta.push({ label: 'Reviews', value: reviews });
-  const reviewSteps: DispatchConfigReviewStep[] = (item.pendingReviewPlan ?? []).map(
-    (loop, index) => {
-      const runnerLabel = loop.runner || 'same';
-      const detail = [loop.model, loop.effort, loop.validationDepth].filter(Boolean).join(' / ');
-      return {
-        label: `review ${index + 1}`,
-        runner: runnerLabel,
-        detail,
-      };
-    },
-  );
+  const reviewSteps: DispatchConfigReviewStep[] = (item.reviewSequence ?? []).map((loop, index) => {
+    const runnerLabel = loop.runner;
+    const detail = [
+      loop.model ?? 'default model',
+      loop.effort ?? 'default effort',
+      loop.mode.toUpperCase(),
+    ]
+      .filter(Boolean)
+      .join(' / ');
+    return {
+      label: `review ${index + 1}`,
+      runner: runnerLabel,
+      detail,
+    };
+  });
 
   const visible = Boolean(
     item.workGraphId ||
@@ -155,7 +168,7 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
     item.effort ||
     item.prepareProfile ||
     item.allowedSlots?.length ||
-    item.pendingReviewPlan?.length ||
+    item.reviewSequence?.length ||
     item.devInteractiveProfile ||
     item.waitPolicy,
   );

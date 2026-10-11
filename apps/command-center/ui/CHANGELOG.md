@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Show retained check metadata in CI decisions without changing timeout auto-resume.
+- Review and dispatch choices share runner, model, effort and WARM/COLD controls across gates, dispatch, backlog and PR workflows.
 
 - Share decision candidate selection and improvement Apply routing and validation results with Companion.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.

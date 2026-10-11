@@ -58,12 +58,12 @@ test('resolveCollisionDirOwners honors gateway supplied dir owners', () => {
 test('review continuation summary exposes generation, heads, verdict, and evidence provenance', () => {
   const payload: ReviewContinuationPayload = {
     kind: 'review_continuation',
-    recommendedActionId: 'reuse-incremental-static',
+    recommendedActionId: 'warm',
     prior: {
       version: 1,
       chainId: 'chain-1',
       generation: 2,
-      contextMode: 'reuse',
+
       priorRunId: 'prior-run-1234',
       priorFamilyId: 'family-1',
       repository: 'owner/repo',
@@ -74,9 +74,9 @@ test('review continuation summary exposes generation, heads, verdict, and eviden
       unresolvedFindings: [{ file: 'src/a.ts', line: 3, description: 'Fix this' }],
       artifactRefs: [{ path: 'review.md', purpose: 'review' }],
       farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe' }],
-      reviewScope: 'incremental',
+      mode: 'warm',
       validationDepth: 'static-code',
-      sessionIntent: 'resume',
+
       priorGenerations: [],
     },
   };

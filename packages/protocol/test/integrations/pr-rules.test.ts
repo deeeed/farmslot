@@ -49,7 +49,7 @@ test('automatic repair rules cannot consume a static review workspace policy', (
           execution: {
             workspacePolicy: { kind: 'exact', machine: 'review-node' },
             transport: 'native',
-            models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+            models: [{ effort: null, mode: 'cold', runner: 'codex', model: 'gpt-6-astra' }],
           },
         },
       },
@@ -61,25 +61,16 @@ test('automatic repair rules cannot consume a static review workspace policy', (
   assert.throws(() => assertPRTriggerRuleConfig(rule), /slot/);
 });
 
-test('review configuration validates explicit session, scope and QA choices', () => {
-  const options = { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' };
+test('review configuration accepts modes and rejects removed session/scope controls', () => {
+  const options = { mode: 'warm' as const };
   assert.doesNotThrow(() => assertPRReviewOptions(options));
-  assert.throws(
-    () => assertPRReviewOptions({ ...options, sessionIntent: 'maybe' }),
-    /Continue or Fresh/,
-  );
-  assert.throws(() => assertPRReviewOptions({ ...options, scope: 'changed-files' }), /scope/);
-  assert.throws(
-    () => assertPRReviewOptions({ ...options, validationDepth: 'sometimes-live' }),
-    /validation/,
-  );
-  assert.doesNotThrow(() =>
-    assertPRReviewOptions({ ...options, validationDepth: undefined, workflow: 'qa' }),
-  );
-  assert.throws(
-    () => assertPRReviewOptions({ ...options, sessionId: 'untrusted-session' }),
-    /Unsupported property/,
-  );
+  assert.throws(() => assertPRReviewOptions({ ...options, mode: 'resume' }), /warm or cold/);
+  for (const field of ['sessionIntent', 'scope', 'validationDepth', 'busySession', 'sessionId'])
+    assert.throws(
+      () => assertPRReviewOptions({ ...options, [field]: 'removed' }),
+      /Unsupported property/,
+    );
+  assert.doesNotThrow(() => assertPRReviewOptions({ ...options, workflow: 'qa' }));
 });
 
 test('unknown facts stay unknown under negation and only decisive known branches resolve composites', () => {

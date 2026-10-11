@@ -1,7 +1,14 @@
 import path from 'node:path';
 
-import type { RunReviewResult } from '@farmslot/protocol';
+import type {
+  ReviewDiffSnapshot,
+  ReviewSessionTrace,
+  Run,
+  RunReviewResult,
+} from '@farmslot/protocol';
 
+import { upsertAgentContext } from '../agents/contexts.js';
+import { reviewPRIdentity } from '../review/session-mode.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
@@ -48,7 +55,55 @@ export async function recordArtifactOnlyReviewResult(runId: string): Promise<Run
     reviewSnapshot: input.snapshot,
     reviewInputArtifactPaths: input.artifactPaths,
     artifactManifest: await scanArtifacts(path.dirname(run.taskFile)),
+    session: await completedReviewSessionTrace(run, input.snapshot),
   };
   await persistRunNow(updateRun(runId, { reviewResult: result }), 'artifact-only review evidence');
   return result;
+}
+
+/** Bind a completed primary review to captured session and immutable PR input facts. */
+export async function completedReviewSessionTrace(
+  run: Run,
+  snapshot: ReviewDiffSnapshot | undefined,
+): Promise<ReviewSessionTrace | undefined> {
+  const identity = reviewPRIdentity(run);
+  const reviewers = (run.agentContexts ?? []).filter(
+    (context) =>
+      context.role === 'review' &&
+      context.status === 'complete' &&
+      context.reviewId &&
+      context.runnerSessionId &&
+      (context.runnerSessionCapturedAt || context.nativeSession?.acceptedAt),
+  );
+  if (
+    !identity ||
+    !snapshot?.headSha ||
+    snapshot.source === 'unavailable' ||
+    reviewers.length !== 1
+  )
+    return undefined;
+  const reviewer = reviewers[0];
+  const mode = run.reviewMode ?? 'cold';
+  const prior = run.repeatReviewContext?.session;
+  if (
+    mode === 'warm' &&
+    (prior?.continuity !== 'resumed' ||
+      prior.reviewId !== reviewer.reviewId ||
+      prior.sessionId !== reviewer.runnerSessionId)
+  )
+    return undefined;
+  await upsertAgentContext(run.id, 'review', {
+    id: reviewer.id,
+    reviewResultValidatedAt: new Date().toISOString(),
+  });
+  return {
+    ...(mode === 'warm' ? prior : {}),
+    mode,
+    continuity: mode === 'warm' ? 'resumed' : 'fresh',
+    repository: identity.repository,
+    prNumber: identity.prNumber,
+    reviewId: reviewer.reviewId,
+    sessionId: reviewer.runnerSessionId!,
+    lastReviewedHeadSha: mode === 'warm' ? prior?.lastReviewedHeadSha : snapshot.headSha,
+  };
 }

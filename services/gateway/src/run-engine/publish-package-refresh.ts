@@ -1,23 +1,21 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
+  effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
-  independentReviewRetryCapReason,
-  type IndependentReviewStatus,
-  latestExhaustedIndependentReview,
+  latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  reviewPolicySatisfied,
+  reviewRetryCapReason,
+  type ReviewStatus,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
-import {
-  effectiveRequiredReviewCount,
-  independentReviewPolicySatisfied,
-  repairLegacyDispatchReviewDepth,
-} from '../quality/review-policy.js';
+import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
   prepareCompletionPackage,
@@ -25,7 +23,6 @@ import {
 } from '../run-completion/orchestrator.js';
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun } from '../runs/store.js';
-import { reviewedInputsChanged } from '../self-review/reviewed-inputs.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -35,7 +32,7 @@ import {
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
-  pendingIndependentReviewContinuation,
+  pendingReviewContinuation,
   publicationGateDecisionActions,
   reviewerIsActiveForReview,
   reviewFinalSnapshotMatchesPreparedPackage,
@@ -95,26 +92,20 @@ export function summarizePublishPackageRefreshEvidence(
   return { preservedEvidenceKeys, droppedEvidence, droppedEvidenceKeys, addedEvidenceKeys };
 }
 
-export function reviewDepthForPublishPackageRefresh(
+export function reviewPolicyForPublishPackageRefresh(
   run: Run,
   projectConfig: Parameters<typeof publicationReviewPolicyForRun>[1],
-  oldPayload: Pick<ReadyGatePayload, 'reviewDepth'>,
-): ReadyGatePayload['reviewDepth'] {
-  const reviewDepth =
-    oldPayload.reviewDepth?.requestedBy === 'human-gate'
+  oldPayload: Pick<ReadyGatePayload, 'reviewPolicy'>,
+): ReadyGatePayload['reviewPolicy'] {
+  const reviewPolicy =
+    oldPayload.reviewPolicy?.requestedBy === 'human-gate'
       ? publicationReviewPolicyForRun(run, projectConfig)
-      : oldPayload.reviewDepth;
-  return reviewDepth
-    ? repairLegacyDispatchReviewDepth(
-        reviewDepth,
-        run.engineState?.publishGate?.independentReviews ?? [],
-        run.engineState?.publishGate?.pendingReviewPlan?.length ?? 0,
-      )
-    : reviewDepth;
+      : oldPayload.reviewPolicy;
+  return reviewPolicy;
 }
 
 function reviewWasStampedForPackage(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   reviewedPackage: ReadyGatePrPackage,
 ): boolean {
   const reviewedHeadSha = review.reviewedHeadSha ?? review.reviewSnapshot?.headSha ?? null;
@@ -135,11 +126,11 @@ function reviewWasStampedForPackage(
 }
 
 function restampReviewsForRefreshedPackage(
-  independentReviews: IndependentReviewStatus[],
+  reviews: ReviewStatus[],
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
-): IndependentReviewStatus[] {
-  return independentReviews.map((review) => {
+): ReviewStatus[] {
+  return reviews.map((review) => {
     if (!reviewFinalSnapshotMatchesPreparedPackage(review, refreshedPackage)) return review;
     const canRestamp =
       review.source === 'dispatch' ||
@@ -207,10 +198,14 @@ export async function refreshPublishPackage(params: {
     }
   }
   const projectConfig =
-    oldPayload.reviewDepth?.requestedBy === 'human-gate'
+    oldPayload.reviewPolicy?.requestedBy === 'human-gate'
       ? (await loadProjectVars(run.project)).projectJson
       : undefined;
-  const reviewDepthForRefresh = reviewDepthForPublishPackageRefresh(run, projectConfig, oldPayload);
+  const reviewPolicyForRefresh = reviewPolicyForPublishPackageRefresh(
+    run,
+    projectConfig,
+    oldPayload,
+  );
 
   // A refresh must describe the current HEAD, not the durable snapshot captured
   // before later review-fix commits changed the contribution.
@@ -218,7 +213,7 @@ export async function refreshPublishPackage(params: {
   const prepared = await prepareCompletionPackage(params.runId, {
     diffStat,
     publicationTarget: target,
-    reviewDepth: reviewDepthForRefresh,
+    reviewPolicy: reviewPolicyForRefresh,
     selectedEvidenceKeys: selectedBefore,
     priorEvidenceManifest: oldPayload.prPackage?.evidenceManifest,
     stampReviews: false,
@@ -229,41 +224,35 @@ export async function refreshPublishPackage(params: {
   const prPackage = prepared.prPackage;
   const { preservedEvidenceKeys, droppedEvidence, droppedEvidenceKeys, addedEvidenceKeys } =
     summarizePublishPackageRefreshEvidence(oldPayload.prPackage, prPackage, selectedBefore);
-  const reviewDepth =
-    prPackage.reviewDepth ?? reviewDepthForRefresh ?? publicationReviewPolicyForRun(refreshedRun);
+  const reviewPolicy =
+    prPackage.reviewPolicy ?? reviewPolicyForRefresh ?? publicationReviewPolicyForRun(refreshedRun);
   const historicalReadyGatePackages = refreshedRun.decisions
     .map((entry) => (entry.payload as ReadyGatePayload | undefined)?.prPackage)
     .filter((entry): entry is ReadyGatePrPackage => Boolean(entry));
-  const independentReviews = restampReviewsForRefreshedPackage(
+  const reviews = restampReviewsForRefreshedPackage(
     await refreshReviewDiffIdentities(
       refreshedRun,
-      refreshedRun.engineState?.publishGate?.independentReviews ?? [],
+      refreshedRun.engineState?.publishGate?.reviews ?? [],
     ),
     [oldPayload.prPackage, ...historicalReadyGatePackages],
     prPackage,
   );
-  const requiredReviewCount = effectiveRequiredReviewCount(reviewDepth);
+  const requiredReviewCount = effectiveRequiredReviewCount(reviewPolicy);
   const staleReviewCount =
-    requiredReviewCount > 0
-      ? countStalePublicationReviews(independentReviews, prPackage, {
-          requireCrossRunnerCertification: reviewDepth?.requireCrossRunner,
-        })
-      : 0;
+    requiredReviewCount > 0 ? countStalePublicationReviews(reviews, prPackage) : 0;
   // A refresh after the evidence or HEAD changed needs a new review; a
   // description edit does not.
   const reviewedInputsStale = await reviewedInputsChanged(refreshedRun);
   const reviewSatisfied =
-    independentReviewPolicySatisfied(reviewDepth, independentReviews) &&
-    staleReviewCount === 0 &&
-    !reviewedInputsStale;
+    reviewPolicySatisfied(reviewPolicy, reviews) && staleReviewCount === 0 && !reviewedInputsStale;
   // Offer the human evidence-refresh override only when the refresh regenerated
   // evidence digests but the reviewed HEAD is unchanged — never on code drift,
   // and never when what the last review judged has changed since.
   const evidenceRefreshAction = reviewedInputsStale
     ? null
-    : buildEvidenceRefreshAction(independentReviews, prPackage, reviewDepth);
-  const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
-  const pendingReview = pendingIndependentReviewContinuation(independentReviews);
+    : buildEvidenceRefreshAction(reviews, prPackage);
+  const exhaustedReview = latestExhaustedReview(reviews);
+  const pendingReview = pendingReviewContinuation(reviews);
   const actions = publicationGateDecisionActions({
     reviewSatisfied,
     evidenceRefreshAction,
@@ -271,14 +260,14 @@ export async function refreshPublishPackage(params: {
       pendingReview && !reviewerIsActiveForReview(refreshedRun, pendingReview)
         ? pendingReview
         : undefined,
-    independentReviews,
+    reviews,
     preparedPackage: prPackage,
   });
   const nextEngineState = {
     ...refreshedRun.engineState,
     publishGate: {
       ...refreshedRun.engineState?.publishGate,
-      independentReviews,
+      reviews,
     },
   };
   // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
@@ -326,8 +315,8 @@ export async function refreshPublishPackage(params: {
       prPackage,
       // The refreshed package carries the current description itself.
       currentDescription: undefined,
-      reviewDepth,
-      independentReviews,
+      reviewPolicy,
+      reviews,
       gatePolicy: prPackage.gatePolicy,
       gateSummary: buildGateSummary(
         { ...refreshedRun, engineState: nextEngineState },
@@ -349,7 +338,7 @@ export async function refreshPublishPackage(params: {
     ...decision,
     actions,
     payload: nextPayload,
-    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${independentReviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
+    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${reviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
   };
   updateRun(params.runId, {
     engineState: nextEngineState,

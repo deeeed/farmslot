@@ -122,7 +122,7 @@ const BUILTIN_FLOW_COMMANDS = {
   // reviewer evaluates someone else's work, so the learnings requirement that
   // applies to contribution flows does not apply here (matches the templates
   // and the runtime FLOW_REPORT_ARTIFACTS mapping).
-  'self-review': {
+  review: {
     complete: {
       report: 'artifacts/review-feedback.md',
       artifacts: ['artifacts/review-feedback.md'],
@@ -133,7 +133,7 @@ const BUILTIN_FLOW_COMMANDS = {
     },
     blocked: { artifacts: [] },
   },
-  'self-review-fix': {
+  'review-fix': {
     complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
     'no-change': {
       report: 'artifacts/no-change-report.md',
@@ -319,7 +319,7 @@ function templateBodyScope(content) {
  * Deterministic structure checks beyond terminal artifact contract.
  * @param {string} templateContent
  * @param {{ roleChecklist?: boolean }} [options] roleChecklist: a nested-loop role
- *   checklist (self-review, self-review-fix, ci-fix) rendered beside an existing
+ *   checklist (review, review-fix, ci-fix) rendered beside an existing
  *   task dir; it may keep its own `## Task` block.
  */
 function lintWorkerTemplateStructure(templateContent, options = {}) {

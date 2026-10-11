@@ -139,7 +139,7 @@ export function selectAgentContext(run: Run, selector?: AgentContextSelector): A
       null
     );
   }
-  // Explicit non-primary role: exact match only. For self-review / reviewer tabs,
+  // Explicit non-primary role: exact match only. For review / reviewer tabs,
   // prefer the latest reviewer when multiple coexist on the same run.
   if (selector?.role && selector.role !== 'primary') {
     if (isReviewerAgentRole(selector.role)) {
@@ -196,7 +196,7 @@ function assertSelectorTargetMatchesRole(selector: AgentContextSelector): void {
       isReviewerAgentRole(selector.role) &&
       (selector.contextId.startsWith('rev-') ||
         /^rev\d+-/.test(selector.contextId) ||
-        selector.contextId === contextIdFor('self-review'));
+        selector.contextId === contextIdFor('review'));
     if (!roleMatchesCanonical && !reviewerOk) {
       throw new Error(
         `Agent target selector mismatch: context ${selector.contextId} does not match role ${selector.role}`,

@@ -60,7 +60,7 @@ function snapshot(
         steps: [],
         acceptanceCriteria: [],
         ciChecks: [],
-        selfReview: { verdict: null, summary: null, issues: [] },
+        review: { verdict: null, summary: null, issues: [] },
         familyScope: null,
         decisions: [
           {

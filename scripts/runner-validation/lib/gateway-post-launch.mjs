@@ -797,7 +797,9 @@ export function runGatewayRepeatReviewResume({
   model,
   slotId = 'runner-validate-local',
   currentSlotId = slotId,
-  sessionIntent = 'resume',
+  mode = 'warm',
+  effort,
+  reviewId = 'review-lineage-1',
   expectedKind = 'resumed',
   probeOnly = false,
   timeoutMs = 120_000,
@@ -850,10 +852,9 @@ const current = {
     unresolvedFindings: [],
     artifactRefs: [],
     farmslotEvidenceRefs: [],
-    contextMode: 'reuse',
-    reviewScope: 'incremental',
+    mode: ${JSON.stringify(mode)},
+    session: { mode: ${JSON.stringify(mode)}, reviewId: ${JSON.stringify(reviewId)}, continuity: 'resumed' },
     validationDepth: 'static-code',
-    sessionIntent: ${JSON.stringify(sessionIntent)},
     priorGenerations: [],
   },
 };
@@ -868,8 +869,10 @@ const prior = {
   repeatReviewContext: null,
   agentContexts: [{
     id: 'review-context-1',
+    effort: ${JSON.stringify(effort ?? null)},
     role: 'review',
-    label: 'Independent review',
+    label: 'Review',
+    reviewId: ${JSON.stringify(reviewId)},
     runner: ${JSON.stringify(runner)},
     model: ${JSON.stringify(model)},
     slotId: ${JSON.stringify(slotId)},
@@ -880,7 +883,7 @@ const prior = {
     startedAt: new Date().toISOString(),
   }],
 };
-const reviewOptions = { sessionIntent: ${JSON.stringify(sessionIntent)}, scope: 'incremental', validationDepth: 'full-live' };
+const reviewOptions = { mode: ${JSON.stringify(mode)} };
 if (${JSON.stringify(probeOnly)}) {
   const state = await getRunnerObservability(${JSON.stringify(runner)}).getSessionDeliveryState(vars, ${JSON.stringify(target)}, ${JSON.stringify(sessionId)}, ${JSON.stringify(sessionPath)});
   console.log(JSON.stringify({ kind: 'state', state }));
@@ -894,8 +897,9 @@ const prWork = {
 current.prWork = prWork;
 prior.prWork = { ...prWork, id: 'review:prior-validation', headSha: '1111111' };
 current.repeatReviewContext = automatedRepeatReviewSelection(current.repeatReviewContext, reviewOptions);
-if (current.repeatReviewContext.validationDepth !== 'full-live') throw new Error('Review policy lost live QA depth');
-const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)}, ${JSON.stringify(model)});
+if (current.repeatReviewContext.mode !== ${JSON.stringify(mode)}) throw new Error('Review policy lost the requested mode');
+prior.engineState = { publishGate: { reviews: [{ reviewerSessionId: ${JSON.stringify(sessionId)}, reviewedHeadSha: '1111111', verdict: 'pass' }] } };
+const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)}, ${JSON.stringify(model)}, ${JSON.stringify(effort ?? null)});
 if (plan.kind !== 'resume') {
   console.log(JSON.stringify({ kind: 'not-resumed', plan }));
   process.exit(${JSON.stringify(expectedKind)} === 'not-resumed' ? 0 : 1);
@@ -904,6 +908,7 @@ const result = await attemptRepeatReviewResume(plan, ${JSON.stringify(runner)}, 
   vars,
   target: ${JSON.stringify(target)},
   model: ${JSON.stringify(model)},
+  effort: ${JSON.stringify(effort)},
   prompt: ${JSON.stringify(prompt)},
   runtimeDir: '.agent',
   timeoutMs: ${timeoutMs},

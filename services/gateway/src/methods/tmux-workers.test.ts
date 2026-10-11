@@ -121,7 +121,7 @@ test('buildSessionCorrelation falls back to active run store data when fleet slo
       {
         id: 'run-active',
         familyId: 'family-active',
-        status: 'self-reviewing',
+        status: 'reviewing',
         slotId: 'runner-mobile-1',
       } as Run,
     ])
@@ -165,7 +165,7 @@ test('buildSessionCorrelation captures the active run runner for per-runner pane
   const correlation = buildSessionCorrelation(pools, staleFleet, [
     {
       id: 'run-active',
-      status: 'self-reviewing',
+      status: 'reviewing',
       slotId: 'runner-mobile-1',
       metrics: { runner: 'claude' },
     } as Run,
@@ -205,7 +205,7 @@ test('buildSessionCorrelation records the worker pane from the primary agent con
   const correlation = buildSessionCorrelation(pools, staleFleet, [
     {
       id: 'run-active',
-      status: 'self-reviewing',
+      status: 'reviewing',
       slotId: 'runner-mobile-1',
       metrics: { runner: 'claude' },
       agentContexts: [

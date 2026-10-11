@@ -95,7 +95,7 @@ export interface RunAnalyticsRecord {
   idleMs: number | null;
   nudgeCount: number;
   /** Self-review attempt count when captured, else null. */
-  selfReviewLoops: number | null;
+  reviewLoops: number | null;
   ciResult: string | null;
   ciPollCount: number | null;
   ciInlineFixAttempts: number | null;
@@ -200,7 +200,7 @@ export interface AnalyticsQueryResult {
   idle: DurationStats;
   failureByStep: Record<string, number>;
   failureByReason: Record<string, number>;
-  selfReviewLoops: LoopStats;
+  reviewLoops: LoopStats;
   ci: CiStats;
   nudges: NudgeStats;
   dimensions: AnalyticsDimensions;

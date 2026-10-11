@@ -15,14 +15,14 @@ import type {
   ExecutionTemplateSource,
 } from './types.js';
 
-/** Longest-first so `fix-bug` / `pr-complete` / `self-review` win over shorter prefixes. */
+/** Longest-first so `fix-bug` / `pr-complete` / `review` win over shorter prefixes. */
 export const FARMSLOT_FLOW_PREFIXES = [
-  'self-review-fix',
+  'review-fix',
   'pr-complete',
   'fix-bug',
   'review-pr',
   'update-branch',
-  'self-review',
+  'review',
   'validate-dep',
   'ci-fix',
   'dev',

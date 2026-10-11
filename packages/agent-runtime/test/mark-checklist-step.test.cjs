@@ -277,14 +277,14 @@ assert.match(result.stdout, /mark no-change/);
 assert.match(result.stdout, /mark blocked/);
 assert.doesNotMatch(result.stdout, /Explicit mode/);
 
-const { SELF_REVIEW_CHECKLIST_TARGET } = require('../scripts/checklist-target.cjs');
+const { REVIEW_CHECKLIST_TARGET } = require('../scripts/checklist-target.cjs');
 const manifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-manifest-'));
-const reviewTask = path.join(manifestDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
-const reviewSignal = path.join(manifestDir, SELF_REVIEW_CHECKLIST_TARGET.signal);
+const reviewTask = path.join(manifestDir, REVIEW_CHECKLIST_TARGET.checklist);
+const reviewSignal = path.join(manifestDir, REVIEW_CHECKLIST_TARGET.signal);
 writeFileSync(reviewTask, '- [ ] **1. Review step** — inspect diff');
 writeFileSync(
   path.join(manifestDir, CHECKLIST_TARGET_MANIFEST),
-  JSON.stringify(SELF_REVIEW_CHECKLIST_TARGET, null, 2),
+  JSON.stringify(REVIEW_CHECKLIST_TARGET, null, 2),
 );
 result = spawnSync(process.execPath, [helper, manifestDir, 'start'], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
@@ -295,13 +295,13 @@ assert.equal(result.status, 0, result.stderr);
 assert.match(readFileSync(reviewTask, 'utf8'), /- \[x\] \*\*1\. Review step\*\*/);
 
 const overrideDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-override-'));
-const overrideTask = path.join(overrideDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
-const overrideSignal = path.join(overrideDir, SELF_REVIEW_CHECKLIST_TARGET.signal);
+const overrideTask = path.join(overrideDir, REVIEW_CHECKLIST_TARGET.checklist);
+const overrideSignal = path.join(overrideDir, REVIEW_CHECKLIST_TARGET.signal);
 writeFileSync(overrideTask, '- [ ] **1. Override step** — review');
 writeFileSync(path.join(overrideDir, 'TASK.md'), '- [ ] worker step');
 result = spawnSync(
   process.execPath,
-  [helper, overrideDir, '--checklist', SELF_REVIEW_CHECKLIST_TARGET.checklist, '1'],
+  [helper, overrideDir, '--checklist', REVIEW_CHECKLIST_TARGET.checklist, '1'],
   {
     encoding: 'utf8',
   },
@@ -313,7 +313,7 @@ parsed = JSON.parse(readFileSync(overrideSignal, 'utf8'));
 assert.equal(parsed.status, 'running');
 
 const scopedContractDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-scoped-contract-'));
-const scopedChecklist = 'SELF-REVIEW.rev-codex.md';
+const scopedChecklist = 'REVIEW.rev-codex.md';
 const scopedReport = 'artifacts/review-feedback.rev-codex.md';
 writeManifest(scopedContractDir, 'TASK.md');
 mkdirSync(path.join(scopedContractDir, 'inputs'), { recursive: true });
@@ -341,10 +341,10 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  path.join(scopedContractDir, 'inputs', 'worker-terminal-contract.SELF-REVIEW.rev-codex.json'),
+  path.join(scopedContractDir, 'inputs', 'worker-terminal-contract.REVIEW.rev-codex.json'),
   JSON.stringify({
     schemaVersion: 1,
-    flowType: 'self-review',
+    flowType: 'review',
     requireSignal: true,
     commands: {
       complete: { report: scopedReport, artifacts: [scopedReport] },
@@ -363,7 +363,7 @@ result = spawnSync(
 );
 assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(
-  readFileSync(path.join(scopedContractDir, 'SELF-REVIEW.rev-codex-SIGNAL.json'), 'utf8'),
+  readFileSync(path.join(scopedContractDir, 'REVIEW.rev-codex-SIGNAL.json'), 'utf8'),
 );
 assert.equal(parsed.evidence.reportPath, scopedReport);
 

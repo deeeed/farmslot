@@ -4,10 +4,10 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   type ArtifactRef,
   deriveChecklistStepDurations,
-  type IndependentReviewAttempt,
-  type IndependentReviewStatus,
+  type ReviewAttempt,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
+  type ReviewStatus,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
@@ -19,7 +19,6 @@ import {
   hasMeaningfulReviewFixDelta,
   reviewAttemptLabel,
   reviewHasPendingContinuationPhases,
-  reviewPolicyLabel,
   reviewRetryCapPhaseLabel,
   reviewSourceLabel,
 } from '../../utils/review-gate-display.js';
@@ -42,7 +41,7 @@ function snapshotDiffArtifact(
   return snapshot?.diffPath ? { path: snapshot.diffPath, purpose } : null;
 }
 
-function issueAttemptCount(review: IndependentReviewStatus): number {
+function issueAttemptCount(review: ReviewStatus): number {
   return (review.attempts ?? []).reduce((sum, attempt) => sum + (attempt.issues?.length ?? 0), 0);
 }
 
@@ -57,17 +56,17 @@ function formatRunnerUsage(usage: RunnerSessionUsage | undefined): string {
   return parts.length ? parts.join(' · ') : 'usage measured';
 }
 
-function attemptDuration(attempt: IndependentReviewAttempt | undefined): string | null {
+function attemptDuration(attempt: ReviewAttempt | undefined): string | null {
   if (!attempt?.startedAt || !attempt.completedAt) return null;
   const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
   return Number.isFinite(durationMs) && durationMs >= 0 ? formatDurationMs(durationMs) : null;
 }
 
-function reviewUsage(review: IndependentReviewStatus) {
+function reviewUsage(review: ReviewStatus) {
   return review.usage ?? review.attempts?.at(-1)?.usage;
 }
 
-function reviewDisplayLabel(review: IndependentReviewStatus): string {
+function reviewDisplayLabel(review: ReviewStatus): string {
   return reviewSourceLabel(review);
 }
 
@@ -89,7 +88,7 @@ function formatFixDeltaStat(delta: ReviewFixDeltaSnapshot | undefined): string |
 }
 
 function reviewAttemptHeading(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   attemptIndex: number,
   attemptCount: number,
 ): string {
@@ -124,7 +123,7 @@ function parseReviewFeedbackIssues(markdown: string): ParsedIssue[] {
 
 @customElement('review-loop-timeline')
 export class ReviewLoopTimeline extends LitElement {
-  @property({ attribute: false }) reviews: IndependentReviewStatus[] = [];
+  @property({ attribute: false }) reviews: ReviewStatus[] = [];
   @property({ type: Boolean }) compact = false;
   @property({ attribute: false }) artifactUrl?: (artifact: ArtifactRef) => string;
 
@@ -326,7 +325,7 @@ export class ReviewLoopTimeline extends LitElement {
 
   override render() {
     if (!this.reviews.length) {
-      return html`<div class="empty">Independent review pending</div>`;
+      return html`<div class="empty">Review pending</div>`;
     }
     return html`
       <div class="timeline" aria-label="Review loop results">
@@ -335,7 +334,7 @@ export class ReviewLoopTimeline extends LitElement {
     `;
   }
 
-  private _renderReviewRows(review: IndependentReviewStatus, reviewIndex: number) {
+  private _renderReviewRows(review: ReviewStatus, reviewIndex: number) {
     const attempts = review.attempts ?? [];
     return html`
       <div class="review-group">
@@ -353,7 +352,7 @@ export class ReviewLoopTimeline extends LitElement {
     `;
   }
 
-  private _renderPhaseStrip(review: IndependentReviewStatus, attempts: IndependentReviewAttempt[]) {
+  private _renderPhaseStrip(review: ReviewStatus, attempts: ReviewAttempt[]) {
     if (!attempts.length) return nothing;
     const phases = attempts.flatMap((attempt, index) => {
       const pass = attempt.verdict === 'pass' && attempt.unresolvedCount === 0;
@@ -410,8 +409,8 @@ export class ReviewLoopTimeline extends LitElement {
   }
 
   private _renderReview(
-    review: IndependentReviewStatus,
-    attempt?: IndependentReviewAttempt,
+    review: ReviewStatus,
+    attempt?: ReviewAttempt,
     attemptIndex = 0,
     attemptCount = 1,
   ) {
@@ -468,11 +467,7 @@ export class ReviewLoopTimeline extends LitElement {
       <section class="card ${pass ? 'pass' : warn ? 'warn' : ''}">
         <div class="head">
           <strong>${heading}</strong>
-          <span class="pill ${pass ? 'pass' : warn ? 'warn' : ''}"
-            >${verdict}${reviewPolicyLabel(review)
-              ? ` \u00b7 ${reviewPolicyLabel(review)}`
-              : ''}</span
-          >
+          <span class="pill ${pass ? 'pass' : warn ? 'warn' : ''}">${verdict}</span>
         </div>
         <div class="meta-row">
           <span class="meta"
@@ -622,10 +617,10 @@ export class ReviewLoopTimeline extends LitElement {
   }
 
   private _legacyIssueLoad(
-    review: IndependentReviewStatus,
+    review: ReviewStatus,
     artifacts: ArtifactRef[],
     row: {
-      issues?: IndependentReviewAttempt['issues'];
+      issues?: ReviewAttempt['issues'];
       loopNumber: number;
       unresolvedCount: number;
     },
@@ -685,7 +680,7 @@ export class ReviewLoopTimeline extends LitElement {
 
   private _emitArtifact(
     artifact: ArtifactRef,
-    review: IndependentReviewStatus,
+    review: ReviewStatus,
     artifacts: ArtifactRef[],
     loopNumber: number,
   ) {
@@ -705,7 +700,7 @@ export class ReviewLoopTimeline extends LitElement {
 
   private _emitDiff(
     artifact: ArtifactRef,
-    review: IndependentReviewStatus,
+    review: ReviewStatus,
     artifacts: ArtifactRef[],
     loopNumber: number,
   ) {
