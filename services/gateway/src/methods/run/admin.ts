@@ -180,7 +180,7 @@ async function releaseBlockedRunSlot(
   if (preflight.unmergedWork) {
     const { branch, details } = preflight.unmergedWork;
     throw new Error(
-      `Cannot archive blocked run ${run.id}: slot ${slotId} has work on '${branch}' (${details}) that releasing it would lose. Push it, or release the slot with Force Reset, then archive.`,
+      `Cannot archive blocked run ${run.id}: slot ${slotId} has work on '${branch}' (${details}) that releasing it would lose. Push or preserve it, then cancel the run with farmslot run cancel ${run.id} before releasing and archiving.`,
     );
   }
   const { released } = await slot.release({ slotId, expectedRunId: run.id }, emit);

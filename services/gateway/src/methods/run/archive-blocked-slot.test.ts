@@ -15,7 +15,7 @@ import {
 } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, getRunWithArchived, updateRun } from '../../runs/store.js';
-import type { SlotReleasePreflight } from '../slot/release.js';
+import { type SlotReleasePreflight, slotReleasePreflight } from '../slot/release.js';
 import { detachRunsForReleasedSlot } from '../slot/release-run-ownership.js';
 
 import { type ArchiveSlotRelease, runArchive } from './admin.js';
@@ -60,6 +60,22 @@ function blockedRun(t: test.TestContext, label: string, steps: Run['steps']): Ru
 }
 
 const clean = { unmergedWork: null } as SlotReleasePreflight;
+
+test('blocked archive authority permits only its owner-bound release preflight', async (t) => {
+  const run = blockedRun(t, 'archive-owner-preflight', [{ name: 'monitor', status: 'done' }]);
+  await holdSlotFor(t, run.id);
+  const params = { slotId, expectedRunId: run.id, keepWork: true };
+  await assert.rejects(slotReleasePreflight(params), /non-terminal run/);
+  beginRunArchive(run.id);
+  try {
+    await assert.rejects(slotReleasePreflight({ slotId, keepWork: true }), /non-terminal run/);
+    // The demo fixture is the operator root. Passing the owner guard must still
+    // reach and retain that independent destructive-operation refusal.
+    await assert.rejects(slotReleasePreflight(params), /operator root/);
+  } finally {
+    endRunArchive(run.id);
+  }
+});
 
 /** Stubbed release that ends where the real one does: slot ready, runs detached. */
 function recordingSlot(preflight: SlotReleasePreflight | null = clean) {

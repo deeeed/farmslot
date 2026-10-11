@@ -45,7 +45,7 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
 
 ### Slot release guard
 
-`slot.release` rejects release when `blocksGateHeldSlotRelease` is true for an active run on the slot (open publication gate, or post-approval until FINALIZE completes), unless `forceReset` / `preserveAgents`, because detach + agent kill breaks finalize/publish.
+`slot.release` rejects active gate-held runs because detach and agent kill break finalize/publish. Ordinary release also refuses any non-terminal owner. `forceReset` and `preserveAgents` alone do not bypass ownership. Cancel the owning run with `farmslot run cancel <runId>` before releasing its slot.
 
 ### API surface
 
