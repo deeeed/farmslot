@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "state_dir": "state",
+  "tmux": { "socket": "cross-model-demo" },
+  "lanes": [
+    {
+      "id": "worker",
+      "runner": "codex",
+      "cwd": "worker/checkout",
+      "goal": "worker/GOAL.md",
+      "report": "worker/REPORT.md",
+      "reservations": ["src/feature"]
+    },
+    {
+      "id": "docs",
+      "runner": "claude",
+      "cwd": "docs/checkout",
+      "goal": "docs/GOAL.md",
+      "report": "docs/REPORT.md",
+      "goal_command": "/goal",
+      "reservations": ["docs"]
+    }
+  ],
+  "projects": {
+    "example/project": {
+      "auto_merge": false,
+      "hooks": {},
+      "forbidden_patterns": [],
+      "expected_nodes": []
+    }
+  }
+}

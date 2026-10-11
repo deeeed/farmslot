@@ -5,13 +5,19 @@
   "updatedAt": null,
   "task": null,
   "artifactDir": null,
-  "maxCycles": 3,
+  "maxCycles": 5,
   "cycles": 0,
   "requiredReviewers": [
     {
-      "id": "same-runner",
-      "label": "Same/similar-runner reviewer",
-      "runnerType": null,
+      "id": "codex",
+      "label": "Codex reviewer",
+      "runnerType": "codex",
+      "paneId": null
+    },
+    {
+      "id": "claude",
+      "label": "Claude reviewer",
+      "runnerType": "claude",
       "paneId": null
     }
   ],

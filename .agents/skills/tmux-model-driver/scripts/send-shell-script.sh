@@ -22,26 +22,7 @@ cleanup_undispatched() {
 }
 trap cleanup_undispatched EXIT
 
-wait_for_shell_state() {
-  local deadline=$((SECONDS + 20))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    local state
-    state="$(python3 - <<'PY' "$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
-import json, sys
-print(json.loads(sys.argv[1])["state"])
-PY
-)"
-    if [ "$state" = "shell" ]; then
-      return 0
-    fi
-    sleep 0.5
-  done
-  echo "{\"error\":\"shell_not_ready\",\"pane_id\":\"$pane_id\"}" >&2
-  return 1
-}
-
-wait_for_shell_state
-
+# send-and-verify performs the process-based shell guard immediately before delivery.
 mkdir -p "$stage_root"
 stage_dir="$(mktemp -d "$stage_root/tmux-model-driver.XXXXXX")"
 chmod 700 "$stage_dir"

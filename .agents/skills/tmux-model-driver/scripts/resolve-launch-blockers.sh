@@ -16,6 +16,11 @@ project_selected=false
 
 while [ "$SECONDS" -lt "$deadline" ]; do
   state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id" "$runner_id")"
+  actual_runner="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["state"])' "$state_json")"
+  if [ "$actual_runner" != "$runner_id" ]; then
+    printf '%s\n' "$state_json"
+    exit 2
+  fi
   blocker_kind="$(python3 - <<'PY' "$state_json"
 import json, sys
 print(json.loads(sys.argv[1]).get("launch_blocker") or "")
@@ -28,16 +33,16 @@ PY
 )"
 
   if [ "$auto_action" = "cursor-trust-workspace" ] && [ "$trust_answered" = false ]; then
-    tmux send-keys -t "$pane_id" a
+    "$skill_dir/scripts/tmux.sh" send-keys -t "$pane_id" a
     trust_answered=true
-    sleep 1.5
+    sleep 0.05
     continue
   fi
 
   if [ "$auto_action" = "grok-select-current-project" ] && [ "$project_selected" = false ]; then
-    tmux send-keys -t "$pane_id" Enter
+    "$skill_dir/scripts/tmux.sh" send-keys -t "$pane_id" Enter
     project_selected=true
-    sleep 1.5
+    sleep 0.05
     continue
   fi
 
