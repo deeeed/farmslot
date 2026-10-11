@@ -274,7 +274,13 @@ function acceptanceStatusList(taskDir) {
  * (`acceptance.allowWeak`). Returns an empty array when the run has no criteria.
  */
 function acceptanceContractIssues(taskDir, options = {}) {
-  const criteria = handoffAcceptanceCriteria(taskDir);
+  let criteria;
+  try {
+    criteria = requireHandoffAcceptanceCriteria(taskDir);
+  } catch (err) {
+    if (!(err instanceof AcceptanceRefusal)) throw err;
+    return [err.message];
+  }
   if (criteria.length === 0) return [];
   let stored;
   try {

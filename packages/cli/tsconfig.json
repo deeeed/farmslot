@@ -11,6 +11,7 @@
       "@farmslot/recipe-runner/*": ["../recipe-runner/src/*"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
+      "@farmslot/review-dispatch": ["../review-dispatch/src/index.ts"],
       "@farmslot/run-bundle": ["../run-bundle/src/index.ts"],
       "@farmslot/slot-config": ["../slot-config/src/index.ts"],
       "@farmslot/slot-config/*": ["../slot-config/src/*"],

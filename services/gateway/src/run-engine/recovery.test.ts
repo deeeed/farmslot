@@ -24,22 +24,24 @@ test('recoveryHealthIsReady requires configured ready indicator to match', () =>
 test('hasRecoverablePublicationReviewer ignores an already-ingested completed context', () => {
   const context = {
     id: 'rev7-codex',
-    role: 'self-review' as const,
+    role: 'review' as const,
     label: 'Reviewer',
     status: 'complete' as const,
     slotId: 'macwork-ff-2',
     runId: 'run-1',
-    artifactScope: 'independent-review-7',
+    artifactScope: 'review-7',
   };
   const run = minimalActiveRun({
     agentContexts: [context],
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-7',
+            reviewerSessionId: 'fixture-session-' + 'review-7',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-7',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 7,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -53,7 +55,7 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
   assert.equal(
     hasRecoverablePublicationReviewer({
       ...run,
-      engineState: { publishGate: { independentReviews: [] } },
+      engineState: { publishGate: { reviews: [] } },
     }),
     true,
   );
@@ -64,9 +66,9 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
       agentContexts: [{ ...context, status: 'failed' }],
       engineState: {
         publishGate: {
-          independentReviews: [
+          reviews: [
             {
-              ...run.engineState!.publishGate!.independentReviews![0]!,
+              ...run.engineState!.publishGate!.reviews![0]!,
               verdict: 'failed',
               unresolvedCount: 0,
               feedbackSent: false,
@@ -84,9 +86,9 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
       agentContexts: [{ ...context, status: 'failed' }],
       engineState: {
         publishGate: {
-          independentReviews: [
+          reviews: [
             {
-              ...run.engineState!.publishGate!.independentReviews![0]!,
+              ...run.engineState!.publishGate!.reviews![0]!,
               verdict: 'failed',
               unresolvedCount: 0,
               feedbackSent: false,
@@ -105,11 +107,13 @@ test('hasPendingPublicationReviewContinuation requires the explicit recovery mar
   const run = minimalActiveRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -121,7 +125,7 @@ test('hasPendingPublicationReviewContinuation requires the explicit recovery mar
     },
   });
   assert.equal(hasPendingPublicationReviewContinuation(run), true);
-  run.engineState!.publishGate!.independentReviews![0]!.recoveryContinuationPending = false;
+  run.engineState!.publishGate!.reviews![0]!.recoveryContinuationPending = false;
   assert.equal(hasPendingPublicationReviewContinuation(run), false);
 });
 
@@ -129,11 +133,13 @@ test('a later passing review supersedes an older pending continuation', () => {
   const run = minimalActiveRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-3',
+            reviewerSessionId: 'fixture-session-' + 'review-3',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-3',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 3,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -141,9 +147,11 @@ test('a later passing review supersedes an older pending continuation', () => {
             recoveryContinuationPending: true,
           },
           {
-            id: 'independent-review-4',
+            reviewerSessionId: 'fixture-session-' + 'review-4',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-4',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 4,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -160,12 +168,12 @@ test('a later passing review supersedes an older pending continuation', () => {
       agentContexts: [
         {
           id: 'rev-old',
-          role: 'self-review',
+          role: 'review',
           label: 'Reviewer',
           status: 'complete',
           slotId: 'slot-1',
           runId: run.id,
-          artifactScope: 'independent-review-3',
+          artifactScope: 'review-3',
         },
       ],
     }),
@@ -193,21 +201,23 @@ test('recoverActiveRuns re-presents a blocked gate after its completed review wa
     agentContexts: [
       {
         id: 'rev7-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer',
         status: 'complete',
         slotId: 'macwork-ff-2',
         runId: 'run-1',
-        artifactScope: 'independent-review-7',
+        artifactScope: 'review-7',
       },
     ],
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-7',
+            reviewerSessionId: 'fixture-session-' + 'review-7',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-7',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 7,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -502,7 +512,7 @@ test('recoverActiveRuns keeps a worker-signal blocked run blocked after restart'
     error: 'Cannot reproduce',
     steps: [
       { name: 'monitor', status: 'done' },
-      { name: 'self-review', status: 'skipped' },
+      { name: 'review', status: 'skipped' },
       { name: 'complete', status: 'skipped' },
     ],
     decisions: [
@@ -558,7 +568,7 @@ test('recoverActiveRuns keeps an uncertain-prompt-delivery blocked run blocked a
     steps: [
       { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
       { name: 'monitor', status: 'skipped' },
-      { name: 'self-review', status: 'skipped' },
+      { name: 'review', status: 'skipped' },
     ],
     decisions: [
       {
@@ -698,13 +708,13 @@ function withRecoverableReviewer(run: Run): Run {
     agentContexts: [
       {
         id: 'rev3-claude',
-        role: 'self-review',
+        role: 'review',
         label: 'rev3-claude',
         status: 'working',
         slotId: run.slotId!,
         runId: run.id,
-        taskFile: 'temp/tasks/fix/recovery/SELF-REVIEW.rev3-claude.md',
-        signalFile: 'temp/tasks/fix/recovery/SELF-REVIEW.rev3-claude-SIGNAL.json',
+        taskFile: 'temp/tasks/fix/recovery/REVIEW.rev3-claude.md',
+        signalFile: 'temp/tasks/fix/recovery/REVIEW.rev3-claude-SIGNAL.json',
         runner: 'claude',
         model: 'opus',
         attemptStartedAt: '2026-07-18T10:01:00.000Z',
@@ -829,11 +839,13 @@ test('recovery immediately replays a persisted review continuation', async () =>
     decisions: [humanGateDecision('gate-review-continuation')],
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -885,11 +897,13 @@ test('recovery restores and replays a review plan for an active fix pass', async
     // recovery must still re-arm the loop for that shape.
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'warm' as const,
+            id: 'review-1',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 2,
@@ -905,7 +919,7 @@ test('recovery restores and replays a review plan for an active fix pass', async
     agentContexts: [
       {
         id: 'rev-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer',
         status: 'complete',
         slotId: 'slot-1',
@@ -915,8 +929,8 @@ test('recovery restores and replays a review plan for an active fix pass', async
         attemptStartedAt: '2026-07-30T03:24:00.000Z',
       },
       {
-        id: 'self-review-fix',
-        role: 'self-review-fix',
+        id: 'review-fix',
+        role: 'review-fix',
         label: 'Review fix',
         status: 'working',
         slotId: 'slot-1',
@@ -928,18 +942,13 @@ test('recovery restores and replays a review plan for an active fix pass', async
   const { deps, calls } = publicationReviewRecoveryDeps(run);
   let restoredPlan: unknown;
   deps.updateRun = (_runId, fields) => {
-    restoredPlan = fields.engineState?.publishGate?.pendingReviewPlan;
+    restoredPlan = fields.engineState?.publishGate?.reviewSequence;
   };
 
   await recoverActiveRuns(deps);
 
   assert.deepEqual(restoredPlan, [
-    {
-      order: 1,
-      runner: 'codex',
-      model: 'gpt-5.6-sol',
-      validationDepth: 'full-live',
-    },
+    { runner: 'codex', model: 'gpt-5.6-sol', effort: null, mode: 'warm' as const },
   ]);
   assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: true }]);
   assert.deepEqual(calls.replayed, []);
@@ -1016,7 +1025,7 @@ test('recovery replays valid siblings before parking accumulated terminal errors
     }),
   );
   const { deps, calls } = publicationReviewRecoveryDeps(run, {
-    recovered: ['independent-review-2'],
+    recovered: ['review-2'],
     terminalErrors: [
       {
         contextId: 'rev-invalid',

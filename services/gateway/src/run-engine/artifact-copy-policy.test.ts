@@ -12,23 +12,20 @@ import {
 test('gateway-owned artifact predicates cover package and review artifacts consistently', () => {
   assert.equal(isGatewayOwnedArtifactMirrorEntry('pr-package.json'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('review-loop-1'), true);
-  assert.equal(isGatewayOwnedArtifactMirrorEntry('independent-review-2'), true);
+  assert.equal(isGatewayOwnedArtifactMirrorEntry('review-2'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('publication-gate-ready.md'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('session-metrics.json'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('worker-report.md'), false);
   assert.equal(isGatewayOwnedArtifactPath('artifacts/pr-package.json'), true);
   assert.equal(isGatewayOwnedArtifactPath('artifacts/session-metrics.json'), true);
   assert.equal(isGatewayOwnedArtifactPath('artifacts/review-loop-1/review.diff'), true);
-  assert.equal(
-    isGatewayOwnedArtifactPath('artifacts/independent-review-2/review-loop-1/review.diff'),
-    true,
-  );
+  assert.equal(isGatewayOwnedArtifactPath('artifacts/review-2/review-loop-1/review.diff'), true);
   assert.equal(isGatewayOwnedArtifactPath('artifacts/screenshots/after.png'), false);
   // Only the numbered review directories are the gateway's.
-  assert.equal(isGatewayOwnedArtifactMirrorEntry('self-review-fix-20261009'), false);
+  assert.equal(isGatewayOwnedArtifactMirrorEntry('review-fix-20261009'), false);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('review-loop-'), false);
   assert.equal(
-    isGatewayOwnedArtifactPath('artifacts/self-review-fix-20261009/after-flag-off/trace.json'),
+    isGatewayOwnedArtifactPath('artifacts/review-fix-20261009/after-flag-off/trace.json'),
     false,
   );
 });

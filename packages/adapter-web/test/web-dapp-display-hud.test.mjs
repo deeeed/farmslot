@@ -337,15 +337,14 @@ describe('web-dapp HUD drawing', () => {
     assert.ok(!page.text(page.document.body).includes('Submit the market order'));
   });
 
-  it('caps recipe text at 180 characters and draws it as text beside the RUN badge and step label', () => {
+  it('preserves full recipe text until two-line layout and draws it as inert text', () => {
     const intent = `<img src=x onerror="alert(1)"> ${'a'.repeat(400)}`;
     const capped = nextHudState(
       null,
       { status: 'running', intent, progress: { current: 2, total: 5 } },
       'step',
     );
-    assert.equal(capped.current.intent.length, 180);
-    assert.ok(capped.current.intent.endsWith('…'));
+    assert.equal(capped.current.intent, intent);
     const expression = hudRenderExpression(capped, 'http://localhost:9341');
     assert.ok(!expression.includes('innerHTML'));
     const page = fakeDocument('http://localhost:9341');
@@ -357,6 +356,9 @@ describe('web-dapp HUD drawing', () => {
     const [badge] = line.children;
     assert.deepEqual([badge.className, badge.textContent], ['badge running', 'RUN']);
     assert.equal(line.textContent, ` ${capped.current.intent}`);
+    assert.equal(line.style.WebkitLineClamp, '2');
+    assert.equal(line.style.whiteSpace, 'normal');
+    assert.equal(line.style.overflowWrap, 'anywhere');
   });
 
   it('is a no-op for the same state, replaces a newer one and clears on null', () => {

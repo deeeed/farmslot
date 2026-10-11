@@ -8,13 +8,13 @@
       "live-prepare": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/prepare-cwd-recovery.mjs",
-        "intent": "Read the replayed production run through run.get and verify prepare completed and fresh run-specific logs prove fixture files were copied.",
+        "intent": "Replayed preparation copies fixtures into the current run directory.",
         "next": "directory-regressions"
       },
       "directory-regressions": {
         "action": "command",
         "cmd": "node --import tsx --test --test-name-pattern='prepare enters|prepare reports' services/gateway/src/methods/slot/prepare-command.test.ts",
-        "intent": "Exercise a deleted inherited cwd and a missing requested directory in real child processes, including sentinel and hook execution checks.",
+        "intent": "Preparation handles deleted and missing directories without using stale paths.",
         "next": "replay-recovery"
       },
       "done": {
@@ -25,7 +25,7 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/prepare-replay-recovery.mjs",
         "timeout_ms": 360000,
-        "intent": "Through run.create and run.replayStep, prove a missing-simulator failure retries without assuming a branch exists, preserves committed and dirty work on later retries, and blocks a lost previously established branch. Temporary slots, projects, runs and Git repos are cleaned up.",
+        "intent": "Preparation retries preserve existing work and reject a lost established branch.",
         "next": "done"
       }
     }

@@ -8,7 +8,7 @@
       "transitions": {
         "action": "command",
         "cmd": "yarn exec node scripts/agentic/native-owner-transition-proof.mjs",
-        "intent": "Populate real farm history, remove admin access, select an owned native conversation, switch saved accounts, refuse a protected route, revoke the credential and verify state/request isolation. Restore the original account and role.",
+        "intent": "Owner controls preserve the active workspace and its retained native session.",
         "next": "done"
       },
       "done": {

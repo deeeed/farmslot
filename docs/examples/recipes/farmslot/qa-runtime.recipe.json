@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-qa-runtime.mts",
         "timeout_ms": 900000,
-        "intent": "Verify generated autonomous task text preserves approval boundaries, passing controller smoke, six incomplete or failing evidence cases, and refusal of force completion through gateway RPC.",
+        "intent": "QA task completion requires the declared evidence and approval boundaries.",
         "next": "done"
       },
       "done": {

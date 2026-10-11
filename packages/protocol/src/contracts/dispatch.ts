@@ -2,9 +2,10 @@ import type { TaskTemplateSelection } from './evals.js';
 import type {
   DevInteractiveProfile,
   FlowType,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
-  ReviewScope,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   ReviewValidationDepth,
   RunCompletionPolicy,
   RunLane,
@@ -104,14 +105,16 @@ export interface QueueItem {
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */
-  reviewDepth?: ReviewDepthPolicy;
+  reviewPolicy?: ReviewPolicy;
   /** Explicitly finish static review without waiting for operator questions/publication. */
   reviewAutoFinish?: boolean;
   publishReview?: boolean;
-  reviewScope?: ReviewScope;
+  reviewMode?: ReviewMode;
   reviewValidationDepth?: ReviewValidationDepth;
   /** Ordered independent review loops to run before the first ready gate. */
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
   evalCell?: EvalQueueCell;
   priority: number; // lower = higher priority, default 10
   createdAt: string;

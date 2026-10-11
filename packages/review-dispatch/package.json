@@ -1,0 +1,60 @@
+{
+  "name": "@farmslot/review-dispatch",
+  "version": "0.1.0",
+  "description": "Shared review and dispatch selection, validation, and view model",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.js.map"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --noEmit --project test/tsconfig.json",
+    "format": "prettier --write --ignore-path ../../.prettierignore .",
+    "format:check": "prettier --check --ignore-path ../../.prettierignore .",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig test/tsconfig.json test",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"test/**/*.ts\" && yarn typecheck && yarn test",
+    "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/review-dispatch && yarn workspace @farmslot/review-dispatch build",
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/review-dispatch"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deeeed/farmslot.git",
+    "directory": "packages/review-dispatch"
+  },
+  "bugs": {
+    "url": "https://github.com/deeeed/farmslot/issues"
+  },
+  "homepage": "https://farmslot.io/docs/reference/review-modes-warm-cold",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

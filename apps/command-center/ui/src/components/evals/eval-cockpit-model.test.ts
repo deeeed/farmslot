@@ -296,11 +296,11 @@ test('candidate review mode maps to replay review axes', () => {
     axesForCandidateRow(
       makeRow({
         reviewMode: 'custom',
-        reviewName: 'external-self-review',
+        reviewName: 'external-review',
         reviewVersion: 'r2',
       }),
     ).review,
-    { name: 'external-self-review', version: 'r2' },
+    { name: 'external-review', version: 'r2' },
   );
 });
 

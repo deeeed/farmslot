@@ -11,6 +11,7 @@ import {
   type PRTeamSaveResult,
   type PRRulesListResult,
   type Run,
+  type ReviewRequestContext,
 } from '../packages/protocol/src/index.js';
 
 loadCheckoutEnv(fileURLToPath(new URL('../', import.meta.url)));
@@ -47,11 +48,24 @@ try {
   if (process.env.INTAKE_TEAM_ID) {
     assert(saved, 'Existing team must be accessible');
     assert.equal(saved.config.account.login, login);
-    assert.equal(saved.config.execution?.slotPolicy.kind, 'exact');
+    assert.equal(saved.config.execution?.slotPolicy?.kind, 'exact');
     assert(
-      saved.config.execution?.slotPolicy.kind === 'exact' &&
+      saved.config.execution?.slotPolicy?.kind === 'exact' &&
         saved.config.execution.slotPolicy.slotId === slotId,
     );
+  }
+  let reviewContext: ReviewRequestContext | undefined;
+  if (process.env.INTAKE_PRIOR_RUN_ID) {
+    const { run: prior } = await connection.call<{ run: Run }>('run.get', {
+      runId: process.env.INTAKE_PRIOR_RUN_ID,
+    });
+    const lineage =
+      prior.reviewResult?.session?.reviewId ??
+      prior.agentContexts?.find((context) => context.id === 'review')?.reviewId;
+    assert(lineage, 'WARM execution proof requires the prior review lineage');
+    reviewContext = {
+      reviewLineages: [{ repository: parsed.repo, prNumber: parsed.number, reviewId: lineage }],
+    };
   }
   const { team } = saved
     ? { team: saved }
@@ -71,7 +85,7 @@ try {
           ],
           execution: {
             slotPolicy: { kind: 'exact', slotId },
-            models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+            models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
           },
           githubTeams: [],
           notificationPrincipalIds: [],
@@ -84,10 +98,8 @@ try {
       idempotencyKey: randomUUID(),
       autoStart: true,
       review: {
-        sessionIntent: process.env.INTAKE_PRIOR_RUN_ID ? 'resume' : 'reset',
-        scope: process.env.INTAKE_PRIOR_RUN_ID ? 'incremental' : 'full',
-        validationDepth: 'static-code',
-        busySession: 'wait',
+        mode: process.env.INTAKE_PRIOR_RUN_ID ? 'warm' : 'cold',
+        ...(reviewContext ? { reviewContext } : {}),
       },
       source: { client: 'integrated-execution-validation', requester: 'local-artifact-review' },
     },
@@ -109,7 +121,7 @@ try {
       id: receipt.submission.id,
     });
     if (receipt.submission.error) throw new Error(receipt.submission.error);
-    const runId = receipt.intent?.runId;
+    const runId: string | undefined = receipt.intent?.runId;
     let run: Run | undefined;
     if (runId) ({ run } = await connection.call<{ run: Run }>('run.get', { runId }));
     const progress = JSON.stringify({
@@ -146,6 +158,11 @@ try {
         if (process.env.INTAKE_PRIOR_RUN_ID) {
           assert.equal(run.repeatReviewContext?.priorRunId, process.env.INTAKE_PRIOR_RUN_ID);
           assert.equal(run.repeatReviewContext?.session?.continuity, 'resumed');
+          assert.equal(
+            run.repeatReviewContext?.session?.reviewId,
+            reviewContext!.reviewLineages[0]!.reviewId,
+          );
+          assert.equal(run.repeatReviewContext?.mode, 'warm');
           assert(
             run.repeatReviewContext?.unresolvedFindings.length,
             'Prior findings must reach the reviewer',

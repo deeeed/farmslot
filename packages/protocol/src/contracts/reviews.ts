@@ -4,6 +4,22 @@ export interface CICheck {
   watchName: string;
 }
 
+/** Read-only provider metadata; timestamps describe activity, not duration. */
+export interface PRCheckDetail {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  timestamp: string | null;
+  detailsUrl: string | null;
+}
+
+export interface PRCheckSnapshot {
+  pr: number;
+  repo: string;
+  fetchedAt: string;
+  checks: PRCheckDetail[];
+}
+
 export interface BotComment {
   author: string;
   label: string;
@@ -52,6 +68,8 @@ export interface PRStatus {
   slot: string | null;
   session: string | null;
   checks: CICheck[];
+  /** Complete successful check read. pr.status only; omitted from list projections. */
+  checkSnapshot?: PRCheckSnapshot;
   checkSummary: {
     passed: number;
     failed: number;
@@ -130,31 +148,43 @@ export interface PRReviewComment {
 // Review contracts collect publication, review-gate, and cross-review shapes.
 export {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  independentReviewFixRetriesExhausted,
-  independentReviewRetryCapReason,
-  independentReviewRetryCount,
-  latestExhaustedIndependentReview,
-  latestIndependentReview,
-  stampIndependentReviewRetryCap,
+  latestExhaustedReview,
+  latestReview,
+  reviewFixRetriesExhausted,
+  reviewRetryCapReason,
+  reviewRetryCount,
+  stampReviewRetryCap,
 } from '../runs/review-retries.js';
 export type {
   CommentsTriageSummary,
-  IndependentReviewAttempt,
-  IndependentReviewStatus,
   PublicationStatus,
   PublicationTarget,
+  ReviewAttempt,
+  ReviewContinuationContext,
   ReviewDiffSnapshot,
   ReviewFixDeltaSnapshot,
   ReviewGatePayload,
   ReviewLineComment,
   ReviewLoopTimelineSegment,
   ReviewLoopTimelineSegmentKind,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewRequestPayload,
   ReviewRunnerId,
+  ReviewSelection,
+  ReviewSequence,
+  ReviewSessionRefusalReason,
+  ReviewSessionTrace,
+  ReviewStatus,
   ReviewValidationDepth,
   RunnerSessionUsage,
 } from './runs.js';
 export {
+  DEFAULT_REVIEW_MODE,
+  isReviewMode,
   isReviewValidationDepth,
+  REVIEW_MODES,
   REVIEW_VALIDATION_DEPTHS,
   reviewValidationDepthForLoop,
 } from './runs.js';

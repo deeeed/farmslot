@@ -1,5 +1,9 @@
+import type { RunnerVisibleModelState } from '@farmslot/protocol';
+import { createReviewDispatchCatalog, type ReviewDispatchCatalog } from '@farmslot/review-dispatch';
+
 const visibleByRunner = new Map<string, string[]>();
 const defaultByRunner = new Map<string, string>();
+const fullStates = new Map<string, RunnerVisibleModelState>();
 const listeners = new Set<() => void>();
 
 export function onVisibleModelsChange(listener: () => void): () => void {
@@ -12,6 +16,7 @@ export function onVisibleModelsChange(listener: () => void): () => void {
 export function clearVisibleModels(): void {
   visibleByRunner.clear();
   defaultByRunner.clear();
+  fullStates.clear();
   for (const listener of listeners) listener();
 }
 
@@ -37,4 +42,29 @@ export function rememberedDefaultModel(runner: string): string | undefined {
 export function rememberedVisibleModels(runner: string): string[] | null {
   const models = visibleByRunner.get(runner);
   return models ? [...models] : null;
+}
+
+/** Raw gateway preference data; choice/default resolution stays in the shared package. */
+export function rememberRunnerVisibleState(state: RunnerVisibleModelState): void {
+  fullStates.set(state.runner, structuredClone(state));
+  rememberVisibleModels(state.runner, state.models, state.defaultModel);
+}
+
+export function rememberedReviewDispatchCatalog(): ReviewDispatchCatalog {
+  const fallback = createReviewDispatchCatalog();
+  const visibleModels = [...visibleByRunner.entries()].map(
+    ([runner, models]): RunnerVisibleModelState =>
+      fullStates.get(runner) ?? {
+        runner,
+        models,
+        pickerModels: models,
+        defaultModel:
+          defaultByRunner.get(runner) ??
+          fallback.runners.find((option) => option.id === runner)?.defaultModel ??
+          '',
+        defaultConfigured: defaultByRunner.has(runner),
+        configured: true,
+      },
+  );
+  return createReviewDispatchCatalog({ visibleModels });
 }

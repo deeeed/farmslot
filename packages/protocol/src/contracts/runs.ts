@@ -1,4 +1,4 @@
-import type { ArtifactRef, SelfReviewIssue } from '../recipes/step-io.js';
+import type { ArtifactRef, ReviewIssue } from '../recipes/step-io.js';
 import type {
   WorkerSignalChecklistEvent,
   WorkerSignalChecklistTiming,
@@ -24,6 +24,7 @@ import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.j
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
 import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
+import type { DeterministicChecklistCheck } from './worker-terminal.js';
 
 // ─── Runs ───
 
@@ -35,7 +36,7 @@ export type RunStatus =
   | 'preparing'
   | 'dispatching'
   | 'monitoring'
-  | 'self-reviewing'
+  | 'reviewing'
   | 'completing'
   | 'human-gating'
   | 'ci-watching'
@@ -54,7 +55,7 @@ export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
   'preparing',
   'dispatching',
   'monitoring',
-  'self-reviewing',
+  'reviewing',
   'completing',
   'ci-watching',
 ];
@@ -226,6 +227,7 @@ export interface EvidenceManifestStandalone {
 
 export interface ReviewGatePayload {
   kind: 'review';
+  session?: ReviewSessionTrace;
   prNumber: number | null;
   repo: string | null;
   /** PR/project base branch used by the review diff workspace. */
@@ -249,6 +251,7 @@ export interface ReviewGatePayload {
 export type RunReviewResult = Pick<
   ReviewGatePayload,
   | 'recommendation'
+  | 'session'
   | 'reviewMd'
   | 'lineComments'
   | 'reviewSnapshot'
@@ -264,42 +267,50 @@ export type PublicationStatus =
   | 'published_ready'
   | 'publish_failed';
 
-export interface ReviewDepthPolicy {
-  minimumIndependentReviews: number;
-  requireCrossRunner: boolean;
-  /** Independent review loops required beyond `minimumIndependentReviews`. */
-  extraLoopsRequested: number;
-  /** V2 counts the first configured loop in the minimum, not again as an extra. */
-  countingVersion?: 2;
+/** Publication count policy. Rechecking a review never creates another counted review. */
+export interface ReviewPolicy {
+  minimumReviews: number;
   requestedBy: 'dispatch' | 'human-gate' | 'agent-gate';
 }
 
-/**
- * Reviewer session lifecycle across one run's review loops:
- * `fresh-per-pass` relaunches a cold reviewer every pass; `warm-per-reviewer`
- * resumes the same reviewer runner session for re-reviews within the run.
- * Warm is the default: after the worker fixes findings, the re-review resumes
- * the reviewer's context instead of rebuilding the whole review. First passes
- * are always cold; runners without session reload fall back to cold.
- */
-export type ReviewSessionPolicy = 'fresh-per-pass' | 'warm-per-reviewer';
+/** Session and diff range are selected together. A first review is COLD. */
+export type ReviewMode = 'warm' | 'cold';
+export const REVIEW_MODES: readonly ReviewMode[] = ['warm', 'cold'];
+export const DEFAULT_REVIEW_MODE: ReviewMode = 'cold';
+export function isReviewMode(value: unknown): value is ReviewMode {
+  return value === 'warm' || value === 'cold';
+}
 
-export const REVIEW_SESSION_POLICIES: readonly ReviewSessionPolicy[] = [
-  'fresh-per-pass',
-  'warm-per-reviewer',
-];
+/** The only configurable review dimensions. Null explicitly selects the runner default. */
+export interface ReviewSelection {
+  runner: string;
+  model: string | null;
+  effort: string | null;
+  mode: ReviewMode;
+}
 
-export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'warm-per-reviewer';
+/** Ordered reviewer selections. Array order is the execution order. */
+export type ReviewSequence = ReviewSelection[];
+
+/** Trusted request provenance, separate from the four configurable choices. */
+export interface ReviewContinuationContext {
+  repository: string;
+  prNumber: number;
+  reviewId: string;
+}
+
+/** Context rows align with the complete sequence, including the first request row. */
+export interface ReviewRequestContext {
+  reviewLineages: Array<ReviewContinuationContext | null>;
+}
+
+/** One gate receipt contains the first selection and any remaining ordered selections. */
+export interface ReviewRequestPayload extends ReviewSelection {
+  sequence?: ReviewSequence;
+  context?: ReviewRequestContext;
+}
 
 export type ReviewValidationDepth = 'static-code' | 'full-live';
-
-export type ReviewScope = 'incremental' | 'full';
-
-export const REVIEW_SCOPES: readonly ReviewScope[] = ['incremental', 'full'];
-
-export function isReviewScope(value: unknown): value is ReviewScope {
-  return typeof value === 'string' && (REVIEW_SCOPES as readonly string[]).includes(value);
-}
 
 export const REVIEW_VALIDATION_DEPTHS: readonly ReviewValidationDepth[] = [
   'static-code',
@@ -319,27 +330,37 @@ export function reviewValidationDepthForLoop(
   return 'static-code';
 }
 
-/** Whether a repeat review should resume prior reviewer reasoning or start clean. */
-export type ReviewSessionIntent = 'resume' | 'reset';
+/** Observed launch provenance, kept separate from user selection. */
+export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'resume-unconfirmed' | 'refused';
 
-/** What actually happened when the reviewer generation launched. */
-export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'fallback-fresh' | 'resume-unconfirmed';
-
-export type ReviewSessionFallbackReason =
+export type ReviewSessionRefusalReason =
   | 'unsupported-runner'
+  | 'repository-mismatch'
+  | 'pr-mismatch'
   | 'slot-mismatch'
   | 'runner-mismatch'
   | 'model-mismatch'
+  | 'effort-mismatch'
   | 'missing-session'
+  | 'missing-reviewed-head'
+  | 'session-busy'
   | 'session-unavailable';
 
 export interface ReviewSessionTrace {
-  intent: ReviewSessionIntent;
+  mode: ReviewMode;
   continuity: ReviewSessionContinuity;
+  /** Durable reviewer lineage, independent of retry and run IDs. */
+  reviewId?: string;
+  repository?: string;
+  prNumber?: number;
+  lastReviewedHeadSha?: string;
+  runner?: string;
+  model?: string | null;
+  effort?: string | null;
   priorRunId?: string;
   priorSessionId?: string;
   sessionId?: string;
-  fallbackReason?: ReviewSessionFallbackReason;
+  refusalReason?: ReviewSessionRefusalReason;
 }
 
 /** Frozen summary for one run in a repeated-PR review chain. */
@@ -352,7 +373,7 @@ export interface ReviewChainEntry {
   prNumber: number;
   baseSha?: string;
   headSha?: string;
-  reviewScope: ReviewScope;
+  mode: ReviewMode;
   validationDepth: ReviewValidationDepth;
   verdict: string;
   unresolvedCount: number | null;
@@ -368,7 +389,6 @@ export interface RepeatReviewContext {
   version: 1;
   chainId: string;
   generation: number;
-  contextMode: 'reuse' | 'fresh';
   priorRunId: string;
   priorFamilyId: string;
   repository: string;
@@ -377,33 +397,20 @@ export interface RepeatReviewContext {
   currentHeadSha: string;
   baseRef?: string;
   verdict: string;
-  unresolvedFindings: SelfReviewIssue[];
+  unresolvedFindings: ReviewIssue[];
   artifactRefs: EvidenceManifestEntry[];
   farmslotEvidenceRefs: EvidenceManifestEntry[];
   originatingRunId?: string;
-  reviewScope: ReviewScope;
+  mode: ReviewMode;
   validationDepth: ReviewValidationDepth;
-  incrementalUnavailableReason?: string;
-  /** Incremental may resume; every full review resets reviewer reasoning. */
-  sessionIntent?: ReviewSessionIntent;
+  warmUnavailableReason?: string;
   /** Dispatch-time observation of the requested reviewer-session transition. */
   session?: ReviewSessionTrace;
   /** Completed predecessors, oldest first. The current run is derived from this Run record. */
   priorGenerations?: ReviewChainEntry[];
 }
 
-export interface ReviewLoopRequest {
-  order: number;
-  runner: 'same' | ReviewRunnerId;
-  model?: string | null;
-  /** Reasoning / thinking level for this reviewer. Runner-specific (Codex, Grok, PI). */
-  effort?: string | null;
-  validationDepth?: ReviewValidationDepth;
-  /** Resume this run's reviewer context, or reset it before this review generation. */
-  sessionIntent?: ReviewSessionIntent;
-}
-
-export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'grok' | 'opencode' | 'pi';
+export type ReviewRunnerId = string;
 export interface DiffStat {
   files: number;
   additions: number;
@@ -470,18 +477,20 @@ export interface ReviewLoopTimelineSegment {
   startedAt: string;
   completedAt?: string;
   durationMs?: number;
-  verdict?: IndependentReviewAttempt['verdict'];
+  verdict?: ReviewAttempt['verdict'];
   unresolvedCount?: number;
   artifactPaths?: string[];
 }
 
-export interface IndependentReviewAttempt {
+export interface ReviewAttempt {
+  mode: ReviewMode;
+  session?: ReviewSessionTrace;
   loopNumber: number;
   verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
   unresolvedCount: number;
   /** Transport/lifecycle explanation when a review did not complete normally. */
   reason?: string;
-  issues?: SelfReviewIssue[];
+  issues?: ReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
   /** Checklist marks and timings captured from this review round's role-scoped signal. */
@@ -495,21 +504,23 @@ export interface IndependentReviewAttempt {
   completedAt?: string;
 }
 
-export interface IndependentReviewStatus {
+export interface ReviewStatus {
   id: string;
-  source?: 'dispatch' | 'human-gate' | 'self-review';
+  source?: 'dispatch' | 'human-gate' | 'pipeline';
   runner?: string | null;
   model?: string | null;
   /** Reasoning / thinking level this reviewer launched with. */
   effort?: string | null;
+  mode: ReviewMode;
+  /** Verified review-session and exact-PR provenance, supplied by the runtime. */
+  session?: ReviewSessionTrace;
   reviewerSessionId?: string | null;
-  crossRunner: boolean;
   loopNumber: number;
   verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
   unresolvedCount: number;
   /** Transport/lifecycle explanation when a review did not complete normally. */
   reason?: string;
-  issues?: SelfReviewIssue[];
+  issues?: ReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
   feedbackSent?: boolean;
@@ -517,11 +528,11 @@ export interface IndependentReviewStatus {
   recoveryContinuationPending?: boolean;
   /** Worker-fix attempts already consumed in this review loop. */
   retryCount?: number;
-  /** Effective worker-fix cap for this loop (`self_review.max_retries`, raised if Continue Fixing authorizes another pass). */
+  /** Effective worker-fix cap for this loop (`review.max_retries`, raised if Continue Fixing authorizes another pass). */
   maxRetries?: number;
   /** True when the loop stopped because retryCount reached maxRetries with findings still open. */
   maxRetriesExhausted?: boolean;
-  attempts?: IndependentReviewAttempt[];
+  attempts?: ReviewAttempt[];
   artifactPaths?: string[];
   taskProgressArtifactPath?: string;
   timeline?: ReviewLoopTimelineSegment[];
@@ -582,7 +593,7 @@ export type GateSummaryKind = (typeof GATE_SUMMARY_KINDS)[keyof typeof GATE_SUMM
  * review outcomes are the headline; token cost is a supporting section.
  *
  * Built by `buildGateSummary` in the gateway by *projecting* already-captured
- * state ({@link IndependentReviewStatus}, {@link RunMetrics}, family runs) — it
+ * state ({@link ReviewStatus}, {@link RunMetrics}, family runs) — it
  * does not re-derive review state or re-read artifacts.
  */
 export interface GateSummary {
@@ -591,7 +602,7 @@ export interface GateSummary {
   flowType?: FlowType;
   /** Who owns/authorizes the gate and why (reused from the gate policy). */
   gatePolicy?: GatePolicy;
-  /** One-line human narrative, e.g. "Worker done in 55 turns; self-review skipped (lightweight dev); 0 reviews triggered re-work." */
+  /** One-line human narrative, e.g. "Worker done in 55 turns; review skipped (lightweight dev); 0 reviews triggered re-work." */
   headline?: string;
   worker: {
     model: string | null;
@@ -627,9 +638,9 @@ export interface GateSummary {
   capturedAt?: string;
 }
 
-/** Review outcomes for a gate, projected from self-review + independent reviews. */
+/** Review outcomes for a gate, projected from review + reviews. */
 export interface ReviewSummary {
-  selfReview?: {
+  review?: {
     status: 'skipped' | 'done' | 'failed' | 'pending';
     /** Descriptive reason when skipped/failed, e.g. "disabled-lightweight-dev-flow". */
     reason?: string;
@@ -639,13 +650,12 @@ export interface ReviewSummary {
     triggeredReWork: boolean;
     artifactPaths?: string[];
   };
-  /** Projected from {@link IndependentReviewStatus} — outcome-first, no raw artifacts. */
-  independentReviews: Array<{
+  /** Projected from {@link ReviewStatus} — outcome-first, no raw artifacts. */
+  reviews: Array<{
     id: string;
-    source?: 'dispatch' | 'human-gate' | 'self-review';
+    source?: 'dispatch' | 'human-gate' | 'pipeline';
     runner?: string | null;
     model?: string | null;
-    crossRunner: boolean;
     loopNumber: number;
     verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
     unresolvedCount: number;
@@ -657,7 +667,7 @@ export interface ReviewSummary {
     startedAt?: string;
     completedAt?: string;
   }>;
-  /** Reviews required by the gate's {@link ReviewDepthPolicy}, if any. */
+  /** Reviews required by the gate's {@link ReviewPolicy}, if any. */
   requiredReviews?: number;
   passingReviews: number;
   totalUnresolved: number;
@@ -677,7 +687,7 @@ export interface GateTokenSummary {
     turns: number;
   };
   /**
-   * Per independent review (from {@link IndependentReviewStatus.usage}). The
+   * Per review (from {@link ReviewStatus.usage}). The
    * input/output/cache split is present when the review's usage record carried
    * it; older entries may only have `total`.
    */
@@ -749,7 +759,7 @@ export interface ReadyGatePrPackage {
   remoteBranchRef?: string | null;
   headSha?: string;
   diffStat: DiffStat;
-  /** Exact worktree diff identity captured with the same scope as independent reviews. */
+  /** Exact worktree diff identity captured with the same scope as reviews. */
   reviewSnapshot?: ReviewDiffSnapshot;
   draftTitle: string;
   draftBody: string;
@@ -757,11 +767,13 @@ export interface ReadyGatePrPackage {
   selectedEvidenceKeys?: string[];
   validationSummaryPath?: string | null;
   validationSummaryHash?: string | null;
+  /** Verified local command receipts for this package's source inputs, ADR-064. */
+  deterministicChecks?: DeterministicChecklistCheck[];
   reviewArtifactIds: string[];
   dispatchMode?: 'interactive' | 'autonomous' | 'validation';
   gatePolicy: GatePolicy;
   /** Frozen at package preparation time so approval/review policy cannot drift with config edits. */
-  reviewDepth?: ReviewDepthPolicy;
+  reviewPolicy?: ReviewPolicy;
   publicationTarget: PublicationTarget;
   publicationStatus: PublicationStatus;
   supersededByPackageId?: string | null;
@@ -798,8 +810,8 @@ export interface ReadyGatePayload {
   recipeQualityArtifact?: RecipeQualityArtifact | null;
   qualityReport?: EvidenceQualityReport | null;
   artifactManifest?: EvidenceManifestEntry[];
-  selfReviewVerdict?: string;
-  selfReviewSummary?: string;
+  reviewVerdict?: string;
+  reviewSummary?: string;
   workerLearnings?: string;
   ciChecks?: Array<{ name: string; status: string; conclusion: string | null }>;
   acceptanceCriteria?: string[];
@@ -821,8 +833,8 @@ export interface ReadyGatePayload {
    * approval identity stays the reviewed package. Absent on older gates.
    */
   currentDescription?: { title: string; body: string; publishedAt?: string };
-  reviewDepth?: ReviewDepthPolicy;
-  independentReviews?: IndependentReviewStatus[];
+  reviewPolicy?: ReviewPolicy;
+  reviews?: ReviewStatus[];
   reviewLaunchRejection?: PublicationReviewLaunchRejection;
   gatePolicy?: GatePolicy;
   /** Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost). */
@@ -1070,8 +1082,8 @@ export interface RetrospectivePayload {
   kind: 'retrospective';
   outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unknown';
   whatThisIs: string;
-  selfReviewVerdict?: string;
-  selfReviewSummary?: string;
+  reviewVerdict?: string;
+  reviewSummary?: string;
   workerLearnings?: string;
   reportExcerpt?: string;
   ciWatch?: {
@@ -1249,10 +1261,11 @@ export interface RunDecision {
   triageAssessmentId?: string;
   payload?: RunDecisionPayload;
   /**
-   * Payload keys `run.list` left out because their values are large (review
+   * Detail keys `run.list` left out because their values are large (review
    * markdown, input snapshots, PR packages, artifact manifests). Absent on
    * `run.get`, `run.forSlot` and every run event, which carry the full
-   * payload; a reader that needs one of these keys fetches the run directly.
+   * payload/context; `context.checkSnapshot` also names omitted CI context.
+   * A reader that needs one of these keys fetches the run directly.
    */
   payloadTrimmed?: string[];
   selectionData?: Record<string, unknown>;
@@ -2450,7 +2463,7 @@ export interface Run {
   /** Gateway-captured template provenance for the rendered worker task. */
   templateProvenance?: TemplateProvenance | null;
   taskFile: string | null;
-  activeTaskFile?: string; // currently active task md (TASK.md, SELF-REVIEW.md, SELF-REVIEW-FIX.md)
+  activeTaskFile?: string; // currently active task md (TASK.md, REVIEW.md, REVIEW-FIX.md)
   agentContexts?: AgentContext[];
   prNumber?: number;
   /**
@@ -2487,7 +2500,8 @@ export interface Run {
   /** Code breadth for review-pr. Independent from runtime validation depth. */
   /** Explicitly finish static review without waiting for operator questions/publication. */
   reviewAutoFinish?: boolean;
-  reviewScope?: ReviewScope;
+  reviewMode?: ReviewMode;
+  reviewContext?: ReviewRequestContext;
   /** Static by default; full-live is an explicit operator escalation. */
   reviewValidationDepth?: ReviewValidationDepth;
   /** Frozen provenance for a repeated review of the same canonical PR. */
@@ -2570,13 +2584,13 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 /** Persisted run-engine state — see ADR-027. */
 export interface RunEngineState {
   /**
-   * What the last passing review (pipeline self-review or a publication review)
+   * What the last passing review (pipeline review or a publication review)
    * judged on the slot: HEAD, the evidence manifest and the evidence files. When
-   * any of them changes, self-review must run again before publication is
+   * any of them changes, review must run again before publication is
    * approved; the PR description is not part of it. Records taken while the
    * description was still included keep matching until HEAD or evidence changes,
-   * except that a description edit on such a record re-runs self-review once.
-   * `rerunFor` is the changed state self-review already ran again for, so it runs
+   * except that a description edit on such a record re-runs review once.
+   * `rerunFor` is the changed state review already ran again for, so it runs
    * once per change.
    */
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
@@ -2636,11 +2650,12 @@ export interface RunEngineState {
     publicationTarget?: PublicationTarget;
     publicationStatus?: PublicationStatus;
     prNumber?: number | null;
-    reviewDepth?: ReviewDepthPolicy;
-    pendingReviewPlan?: ReviewLoopRequest[];
+    reviewPolicy?: ReviewPolicy;
+    reviewSequence?: ReviewSequence;
+    reviewSequenceContext?: ReviewRequestContext;
     /** Creation time for the current pending plan, used to ignore reviews from earlier work orders. */
-    pendingReviewPlanRequestedAt?: string;
-    independentReviews?: IndependentReviewStatus[];
+    reviewSequenceRequestedAt?: string;
+    reviews?: ReviewStatus[];
     /** Latest recoverable refusal to launch a publication reviewer. */
     reviewLaunchRejection?: PublicationReviewLaunchRejection;
     supersededPackageIds?: string[];
@@ -2731,7 +2746,7 @@ export interface FamilyDiffProvenance {
   error?: string;
   repository?: string;
   prNumber?: number;
-  reviewScope?: ReviewScope;
+  reviewMode?: ReviewMode;
 }
 
 export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProvenance {
@@ -2769,7 +2784,7 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
     isOptionalString(rec.baseSha) &&
     isOptionalString(rec.headRef) &&
     isOptionalString(rec.headSha) &&
-    (rec.reviewScope == null || isReviewScope(rec.reviewScope)) &&
+    (rec.reviewMode == null || isReviewMode(rec.reviewMode)) &&
     isOptionalString(rec.capturedAt) &&
     isOptionalString(rec.configFallbackReason) &&
     isOptionalString(rec.configFallbackError) &&
@@ -2787,7 +2802,7 @@ export interface FamilyInputCommitMetadata {
   baseSha?: string;
   headRef?: string;
   headSha?: string;
-  reviewScope?: ReviewScope;
+  reviewMode?: ReviewMode;
   capturedAt: string;
   source: 'github-pr' | 'local-git' | 'unavailable';
   missingReason?: string;
@@ -2955,7 +2970,7 @@ export type DevInteractiveCompletionAction =
   | 'detect-pr-and-ci-watch'
   | 'link-pr-and-ci-watch'
   | 'link-pr-and-pr-complete'
-  | 'run-self-review'
+  | 'run-review'
   | 'blocked'
   | 'failed'
   | 'abort';
@@ -2976,7 +2991,7 @@ export const PipelineSteps = {
   PREPARE: 'prepare',
   DISPATCH: 'dispatch',
   MONITOR: 'monitor',
-  SELF_REVIEW: 'self-review',
+  REVIEW: 'review',
   COMPLETE: 'complete',
   HUMAN_GATE: 'human-gate',
   FINALIZE: 'finalize',
@@ -2996,7 +3011,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
     S.PREPARE,
     S.DISPATCH,
     S.MONITOR,
-    S.SELF_REVIEW,
+    S.REVIEW,
     S.COMPLETE,
     S.HUMAN_GATE,
     S.FINALIZE,
@@ -3017,7 +3032,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
     S.PREPARE,
     S.DISPATCH,
     S.MONITOR,
-    S.SELF_REVIEW,
+    S.REVIEW,
     S.COMPLETE,
     S.HUMAN_GATE,
     S.FINALIZE,
@@ -3037,7 +3052,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
     S.WRITE_TASK,
     S.DISPATCH,
     S.MONITOR,
-    S.SELF_REVIEW,
+    S.REVIEW,
     S.COMPLETE,
     S.FINALIZE,
     S.CI_WATCH,

@@ -47,6 +47,24 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
         ? html`<gate-summary-panel .summary=${ctx.payload.gateSummary}></gate-summary-panel>`
         : nothing}
       <div class="rdy-package-summary">
+        ${(ctx.payload.prPackage?.deterministicChecks ?? []).map(
+          (check) =>
+            html` <div class="rdy-package-facts" data-ci-parity-status=${check.status}>
+              <strong>CI parity</strong>
+              <code>${check.command ?? check.reference}</code>
+              <span>${check.status} · exit ${check.exitCode ?? '-'}</span>
+              ${check.logPath
+                ? html`<button
+                    class="rdy-cockpit-link"
+                    @click=${() =>
+                      ctx.openPackageArtifact({ path: check.logPath!, purpose: 'ci-parity-log' })}
+                  >
+                    View log
+                  </button>`
+                : nothing}
+              ${check.message ? html`<span>${check.message}</span>` : nothing}
+            </div>`,
+        )}
         <div class="rdy-package-header">
           <div class="rdy-package-title">
             <strong>Pre-publication cockpit</strong>
@@ -99,15 +117,8 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           >
         </div>
         <div class="rdy-package-facts">
-          ${reviewSummary.fixLoopCertified ? html`<span>Fix loop certified</span>` : nothing}
           ${reviewSummary.staleIgnoredReviews
             ? html`<span>${reviewSummary.staleIgnoredReviews} stale ignored</span>`
-            : nothing}
-          ${reviewSummary.externalRequired
-            ? html`<span
-                >Runner diversity
-                ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
-              >`
             : nothing}
           ${ctx.publishEvidence.length
             ? html`<span>Evidence ${selectedEvidenceCount}/${ctx.publishEvidence.length}</span>`

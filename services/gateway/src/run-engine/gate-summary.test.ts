@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus, RunMetrics } from '@farmslot/protocol';
+import type { ReviewStatus, RunMetrics } from '@farmslot/protocol';
 
 import {
   aggregateFamilyChainedLoops,
@@ -23,27 +23,31 @@ function metrics(overrides: Partial<RunMetrics> = {}): RunMetrics {
   };
 }
 
-const passingSelfReview: IndependentReviewStatus = {
-  id: 'self-review-1',
-  source: 'self-review',
-  crossRunner: false,
+const passingReview: ReviewStatus = {
+  reviewerSessionId: 'fixture-session-' + 'pipeline-review-1',
+  reviewedHeadSha: 'fixture-head',
+  mode: 'cold' as const,
+  id: 'pipeline-review-1',
+  source: 'pipeline',
   loopNumber: 1,
   verdict: 'pass',
   unresolvedCount: 0,
   feedbackSent: false,
 };
 
-const reworkingExtraReview: IndependentReviewStatus = {
-  id: 'independent-review-1',
+const reworkingExtraReview: ReviewStatus = {
+  reviewerSessionId: 'fixture-session-' + 'review-1',
+  reviewedHeadSha: 'fixture-head',
+  mode: 'cold' as const,
+  id: 'review-1',
   source: 'human-gate',
-  crossRunner: true,
   loopNumber: 2,
   verdict: 'issues',
   unresolvedCount: 2,
   feedbackSent: true,
   attempts: [
-    { loopNumber: 1, verdict: 'issues', unresolvedCount: 2 },
-    { loopNumber: 2, verdict: 'issues', unresolvedCount: 2 },
+    { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 2 },
+    { mode: 'cold' as const, loopNumber: 2, verdict: 'issues', unresolvedCount: 2 },
   ],
 };
 
@@ -51,33 +55,31 @@ test('buildReviewSummary projects verdicts and flags feedback-driven re-work', (
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'human-gate',
         },
-        independentReviews: [passingSelfReview, reworkingExtraReview],
+        reviews: [passingReview, reworkingExtraReview],
       },
     },
   });
 
   const summary = buildReviewSummary(run);
 
-  // Self-review split out of the independent list.
-  assert.equal(summary.independentReviews.length, 1);
-  assert.equal(summary.selfReview?.status, 'done');
-  assert.equal(summary.selfReview?.verdict, 'pass');
-  assert.equal(summary.selfReview?.triggeredReWork, false);
+  // Pipeline and requested reviews share the review list.
+  assert.equal(summary.reviews.length, 2);
+  assert.equal(summary.review?.status, 'done');
+  assert.equal(summary.review?.verdict, 'pass');
+  assert.equal(summary.review?.triggeredReWork, false);
 
-  const extra = summary.independentReviews[0];
-  assert.equal(extra.id, 'independent-review-1');
+  const extra = summary.reviews.find((review) => review.source === 'human-gate')!;
+  assert.equal(extra.id, 'review-1');
   assert.equal(extra.verdict, 'issues');
   assert.equal(extra.attempts, 2);
   assert.equal(extra.triggeredReWork, true); // feedbackSent + a second attempt
 
   assert.equal(summary.requiredReviews, 1);
-  assert.equal(summary.passingReviews, 0); // the one independent review found issues
+  assert.equal(summary.passingReviews, 1); // pipeline passed; the requested review found issues
   assert.equal(summary.totalUnresolved, 2);
   assert.equal(summary.didAnyReviewTriggerReWork, true);
 });
@@ -86,11 +88,12 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
   const run = makeRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-old',
+            reviewerSessionId: 'fixture-session-' + 'review-old',
+            mode: 'cold' as const,
+            id: 'review-old',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 2,
             verdict: 'issues',
             unresolvedCount: 7,
@@ -110,9 +113,10 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
             reviewedHeadSha: 'current-head',
           },
           {
-            id: 'independent-review-current',
+            reviewerSessionId: 'fixture-session-' + 'review-current',
+            mode: 'cold' as const,
+            id: 'review-current',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 3,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -137,8 +141,8 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
   const summary = buildReviewSummary(run);
 
   assert.deepEqual(
-    summary.independentReviews.map((review) => review.id),
-    ['independent-review-current'],
+    summary.reviews.map((review) => review.id),
+    ['review-current'],
   );
   assert.equal(summary.passingReviews, 1);
   assert.equal(summary.totalUnresolved, 0);
@@ -148,17 +152,16 @@ test('buildGateSummary does not count a pass from an older prepared package', ()
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'human-gate',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-pass',
+            reviewerSessionId: 'fixture-session-' + 'review-pass',
+            mode: 'cold' as const,
+            id: 'review-pass',
             source: 'human-gate',
-            crossRunner: false,
             loopNumber: 3,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -199,19 +202,20 @@ test('buildGateSummary does not count a pass from an older prepared package', ()
   });
 
   assert.equal(summary.review.passingReviews, 0);
-  assert.equal(summary.review.independentReviews[0]?.stale, true);
-  assert.match(summary.headline ?? '', /0\/1 independent reviews passing/);
+  assert.equal(summary.review.reviews[0]?.stale, true);
+  assert.match(summary.headline ?? '', /0\/1 reviews passing/);
 });
 
 test('buildReviewSummary keeps a newer snapshot-less review failure visible', () => {
   const run = makeRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-pass',
+            reviewerSessionId: 'fixture-session-' + 'review-pass',
+            mode: 'cold' as const,
+            id: 'review-pass',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 2,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -229,9 +233,10 @@ test('buildReviewSummary keeps a newer snapshot-less review failure visible', ()
             },
           },
           {
-            id: 'independent-review-launch-failure',
+            reviewerSessionId: 'fixture-session-' + 'review-launch-failure',
+            mode: 'cold' as const,
+            id: 'review-launch-failure',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 3,
             verdict: 'failed',
             unresolvedCount: 1,
@@ -245,8 +250,8 @@ test('buildReviewSummary keeps a newer snapshot-less review failure visible', ()
   const summary = buildReviewSummary(run);
 
   assert.deepEqual(
-    summary.independentReviews.map((review) => review.id),
-    ['independent-review-pass', 'independent-review-launch-failure'],
+    summary.reviews.map((review) => review.id),
+    ['review-pass', 'review-launch-failure'],
   );
   assert.equal(summary.passingReviews, 1);
   assert.equal(summary.totalUnresolved, 1);
@@ -256,20 +261,22 @@ test('buildReviewSummary excludes snapshot-less findings restamped to the curren
   const run = makeRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-restamped-issues',
+            reviewerSessionId: 'fixture-session-' + 'review-restamped-issues',
+            mode: 'cold' as const,
+            id: 'review-restamped-issues',
             source: 'human-gate',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 4,
             reviewedHeadSha: 'current-head',
           },
           {
-            id: 'independent-review-current',
+            reviewerSessionId: 'fixture-session-' + 'review-current',
+            mode: 'cold' as const,
+            id: 'review-current',
             source: 'human-gate',
-            crossRunner: false,
             loopNumber: 2,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -294,18 +301,18 @@ test('buildReviewSummary excludes snapshot-less findings restamped to the curren
   const summary = buildReviewSummary(run);
 
   assert.deepEqual(
-    summary.independentReviews.map((review) => review.id),
-    ['independent-review-current'],
+    summary.reviews.map((review) => review.id),
+    ['review-current'],
   );
   assert.equal(summary.passingReviews, 1);
   assert.equal(summary.totalUnresolved, 0);
 });
 
-test('buildReviewSummary surfaces self-review skip reason from the pipeline step', () => {
+test('buildReviewSummary surfaces review skip reason from the pipeline step', () => {
   const run = makeRun({
     steps: [
       {
-        name: 'self-review',
+        name: 'review',
         status: 'skipped',
         outputs: { skipped: true, reason: 'interactive-lightweight-policy' },
       },
@@ -313,29 +320,31 @@ test('buildReviewSummary surfaces self-review skip reason from the pipeline step
   });
 
   const summary = buildReviewSummary(run);
-  assert.equal(summary.selfReview?.status, 'skipped');
-  assert.equal(summary.selfReview?.reason, 'interactive-lightweight-policy');
-  assert.equal(summary.independentReviews.length, 0);
+  assert.equal(summary.review?.status, 'skipped');
+  assert.equal(summary.review?.reason, 'interactive-lightweight-policy');
+  assert.equal(summary.reviews.length, 0);
 });
 
-test('buildReviewSummary surfaces skip reason when self-review is a skipped entry', () => {
-  // Mirrors a real dev run: self-review recorded as a `skipped` entry AND a step
+test('buildReviewSummary surfaces skip reason when review is a skipped entry', () => {
+  // Mirrors a real dev run: review recorded as a `skipped` entry AND a step
   // carrying the reason. The reason must surface from the step.
   const run = makeRun({
     steps: [
       {
-        name: 'self-review',
+        name: 'review',
         status: 'skipped',
         outputs: { skipped: true, reason: 'disabled-for-project' },
       },
     ],
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'self-review-1',
-            source: 'self-review',
-            crossRunner: false,
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
+            source: 'pipeline',
             loopNumber: 1,
             verdict: 'skipped',
             unresolvedCount: 0,
@@ -347,9 +356,9 @@ test('buildReviewSummary surfaces skip reason when self-review is a skipped entr
   });
 
   const summary = buildReviewSummary(run);
-  assert.equal(summary.selfReview?.status, 'skipped');
-  assert.equal(summary.selfReview?.reason, 'disabled-for-project');
-  assert.equal(summary.independentReviews.length, 0);
+  assert.equal(summary.review?.status, 'skipped');
+  assert.equal(summary.review?.reason, 'disabled-for-project');
+  assert.equal(summary.reviews.length, 1);
 });
 
 test('aggregateFamilyChainedLoops rolls up pr-complete/update-branch loops only', () => {
@@ -524,11 +533,13 @@ test('buildTokenSummary rolls up tokens by model, reads the review usage split, 
     }),
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'human-gate',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,

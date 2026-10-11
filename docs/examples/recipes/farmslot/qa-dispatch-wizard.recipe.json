@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-qa-dispatch-wizard.mts",
         "timeout_ms": 240000,
-        "intent": "Drive actual wizard controls, inspect stored queue requests via gateway RPC and retain screenshots while asserting no model runs launch. Select a farm domain and field-defined daily/release actions without a PR; required inputs block submission and valid values survive in queue records.",
+        "intent": "QA wizard choices persist without launching model work.",
         "next": "done"
       },
       "done": {

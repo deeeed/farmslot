@@ -17,11 +17,31 @@ function runs() {
       ticketOrPr: 'deeeed/farmslot#1',
       slotId: 'slot-1',
     }),
+    decisions: [
+      {
+        id: 'result',
+        type: 'engine_review_posting',
+        title: 'Review',
+        description: 'Result',
+        actions: [],
+        createdAt: '2026-08-07',
+        payload: {
+          kind: 'review',
+          repo: 'deeeed/farmslot',
+          prNumber: 1,
+          recommendation: 'issues',
+          reviewMd: 'review.md',
+          lineComments: [],
+          reviewSnapshot: { headSha: '1111111', capturedAt: '2026-08-07', source: 'github-pr' },
+        },
+      },
+    ],
     agentContexts: [
       {
         id: 'review-context-1',
+        reviewId: 'review-lineage-1',
         role: 'review',
-        label: 'Independent review',
+        label: 'Review',
         runner: 'codex',
         model: 'gpt-6-astra',
         slotId: 'slot-1',
@@ -53,10 +73,9 @@ function runs() {
       unresolvedFindings: [],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      contextMode: 'reuse',
-      reviewScope: 'incremental',
+      mode: 'warm',
+      session: { mode: 'warm', continuity: 'resumed', reviewId: 'review-lineage-1' },
       validationDepth: 'static-code',
-      sessionIntent: 'resume',
       priorGenerations: [],
     },
   });
@@ -68,6 +87,10 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
   assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'codex'), {
     kind: 'resume',
     binding: {
+      reviewId: 'review-lineage-1',
+      repository: 'deeeed/farmslot',
+      prNumber: 1,
+      lastReviewedHeadSha: '1111111',
       priorRunId: 'review-1',
       contextId: 'review-context-1',
       runnerSessionId: 'session-1',
@@ -76,11 +99,46 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
   });
   assert.deepEqual(
     resolveRepeatReviewResumePlan({ ...current, slotId: 'slot-2' } as Run, prior, 'codex'),
-    { kind: 'fallback', reason: 'slot-mismatch' },
+    { kind: 'refused', reason: 'slot-mismatch' },
   );
   assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'claude'), {
-    kind: 'fallback',
+    kind: 'refused',
     reason: 'runner-mismatch',
+  });
+});
+
+test('an artifact-only primary review resumes from its immutable result without a posting gate', () => {
+  const { current, prior } = runs();
+  const payload = prior.decisions[0].payload;
+  assert.equal(payload?.kind, 'review');
+  if (payload?.kind !== 'review') throw new Error('fixture review result missing');
+  const standalone: Run = {
+    ...prior,
+    decisions: [],
+    reviewResult: {
+      ...payload,
+      session: {
+        mode: 'cold',
+        continuity: 'fresh',
+        reviewId: 'review-lineage-1',
+        sessionId: 'session-1',
+        repository: 'deeeed/farmslot',
+        prNumber: 1,
+        lastReviewedHeadSha: '1111111',
+      },
+    },
+  };
+  assert.equal(resolveRepeatReviewResumePlan(current, standalone, 'codex').kind, 'resume');
+  const foreign: Run = {
+    ...standalone,
+    reviewResult: {
+      ...standalone.reviewResult!,
+      session: { ...standalone.reviewResult!.session!, repository: 'foreign/repo' },
+    },
+  };
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, foreign, 'codex'), {
+    kind: 'refused',
+    reason: 'missing-session',
   });
 });
 
@@ -91,7 +149,7 @@ test('reviewer continuity does not cross models or automation owners', () => {
     'resume',
   );
   assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'codex', 'different-model'), {
-    kind: 'fallback',
+    kind: 'refused',
     reason: 'model-mismatch',
   });
   const work = {
@@ -104,14 +162,12 @@ test('reviewer continuity does not cross models or automation owners', () => {
       ownerId: 'owner',
       profile: 'standard',
       options: {
-        sessionIntent: 'resume' as const,
-        scope: 'incremental' as const,
-        validationDepth: 'static-code' as const,
+        mode: 'warm' as const,
       },
     },
   };
   assert.deepEqual(resolveRepeatReviewResumePlan({ ...current, prWork: work }, prior, 'codex'), {
-    kind: 'fallback',
+    kind: 'refused',
     reason: 'missing-session',
   });
   assert.deepEqual(
@@ -123,7 +179,7 @@ test('reviewer continuity does not cross models or automation owners', () => {
       },
       'codex',
     ),
-    { kind: 'fallback', reason: 'missing-session' },
+    { kind: 'refused', reason: 'missing-session' },
   );
 });
 
@@ -153,6 +209,10 @@ test('native review continuity uses its owned stopped session without a tmux tra
     {
       kind: 'native-resume',
       binding: {
+        reviewId: 'review-lineage-1',
+        repository: 'deeeed/farmslot',
+        prNumber: 1,
+        lastReviewedHeadSha: '1111111',
         priorRunId: prior.id,
         contextId: prior.agentContexts![0].id,
         runnerSessionId: 'session-1',
@@ -167,13 +227,71 @@ test('native review continuity uses its owned stopped session without a tmux tra
       repeatReviewContext: { ...nativeCurrent.repeatReviewContext!, priorFamilyId: 'other' },
     },
   ])
-    assert.equal(resolveRepeatReviewResumePlan(wrong, nativePrior, 'codex').kind, 'fallback');
+    assert.equal(resolveRepeatReviewResumePlan(wrong, nativePrior, 'codex').kind, 'refused');
   const transferred = {
     ...nativePrior,
     agentContexts: [
       { ...nativePrior.agentContexts![0], nativeSession: { ...binding, releasedAt: 'released' } },
     ],
   };
-  assert.equal(resolveRepeatReviewResumePlan(nativeCurrent, transferred, 'codex').kind, 'fallback');
-  assert.equal(resolveRepeatReviewResumePlan(current, nativePrior, 'codex').kind, 'fallback');
+  assert.equal(resolveRepeatReviewResumePlan(nativeCurrent, transferred, 'codex').kind, 'refused');
+  assert.equal(resolveRepeatReviewResumePlan(current, nativePrior, 'codex').kind, 'refused');
+});
+
+test('COLD never resolves a retained session, and WARM without head evidence refuses', () => {
+  const { current, prior } = runs();
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      { ...current, repeatReviewContext: { ...current.repeatReviewContext!, mode: 'cold' } },
+      prior,
+      'codex',
+    ),
+    { kind: 'fresh' },
+  );
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, { ...prior, decisions: [] }, 'codex'), {
+    kind: 'refused',
+    reason: 'missing-session',
+  });
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'codex', 'gpt-6-astra', 'high'), {
+    kind: 'refused',
+    reason: 'effort-mismatch',
+  });
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan({ ...current, ticketOrPr: 'deeeed/farmslot#2' }, prior, 'codex'),
+    { kind: 'refused', reason: 'pr-mismatch' },
+  );
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      current,
+      { ...prior, agentContexts: [{ ...prior.agentContexts![0], role: 'primary' }] },
+      'codex',
+    ),
+    { kind: 'refused', reason: 'missing-session' },
+  );
+});
+
+test('WARM requires explicit lineage and refuses an unrelated sibling reviewer', () => {
+  const { current, prior } = runs();
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      { ...current, repeatReviewContext: { ...current.repeatReviewContext!, session: undefined } },
+      prior,
+      'codex',
+    ),
+    { kind: 'refused', reason: 'missing-session' },
+  );
+  const sibling = {
+    ...prior.agentContexts![0],
+    id: 'sibling',
+    reviewId: 'another-review',
+    runnerSessionId: 'sibling-session',
+    completedAt: '2099-01-01',
+  };
+  const plan = resolveRepeatReviewResumePlan(
+    current,
+    { ...prior, agentContexts: [...prior.agentContexts!, sibling] },
+    'codex',
+  );
+  assert.equal(plan.kind, 'resume');
+  if (plan.kind === 'resume') assert.equal(plan.binding.runnerSessionId, 'session-1');
 });

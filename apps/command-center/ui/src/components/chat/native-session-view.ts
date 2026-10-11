@@ -19,15 +19,15 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
+import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import '../shared/runner-model-effort-picker.js';
+import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
 import './native-workspace.js';
 import './native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
-import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
@@ -76,8 +76,21 @@ export class NativeSessionView extends LitElement {
   @state() private profile?: NativeProfileInfo;
   @state() private profileReady = true;
   private profileNodeId = 'local';
-  @state() private runner = '';
-  @state() private model = '';
+  private executionPicker = new ReviewDispatchViewModel({ context: { allowedActions: ['chat'] } });
+  private get runner() {
+    return this.executionPicker.selection!.runner;
+  }
+  private set runner(value: string) {
+    this.executionPicker.setRunner(this.executionPicker.rows[0].id, value);
+    this.requestUpdate();
+  }
+  private get model() {
+    return this.executionPicker.selection!.model ?? '';
+  }
+  private set model(value: string) {
+    this.executionPicker.setModel(this.executionPicker.rows[0].id, value || null);
+    this.requestUpdate();
+  }
   @state() private mode: 'default' | 'plan' = 'default';
   @state() private cwd = '';
   @state() private customCwd = false;
@@ -129,6 +142,15 @@ export class NativeSessionView extends LitElement {
   static styles = nativeSessionStyles;
 
   protected updated(changed: PropertyValues) {
+    if ((changed.has('profile') || changed.has('catalog')) && this.catalog) {
+      this.executionPicker.setCatalog(
+        catalogForNativeRunners(
+          this.catalog.runners.filter(
+            (runner) => !this.profile || runner.runner === this.profile.runner,
+          ),
+        ),
+      );
+    }
     if (!changed.has('worker') || !this.isConnected) return;
     const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;
     if (
@@ -324,7 +346,8 @@ export class NativeSessionView extends LitElement {
       )
         this.select('');
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
-      if (!this.runner) {
+      this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+      if (!catalog.runners.some((option) => option.runner === this.runner)) {
         this.runner = catalog.runners[0]?.runner ?? '';
         this.model = catalog.runners[0]?.defaultModel ?? '';
       }
@@ -492,6 +515,7 @@ export class NativeSessionView extends LitElement {
           executionNodeId: this.executionNodeId,
           runner: this.runner,
           model: this.model || undefined,
+          effort: this.executionPicker.toSelection().effort ?? undefined,
           mode: this.mode,
           cwd: this.cwd,
           ...(this.profile
@@ -712,22 +736,15 @@ export class NativeSessionView extends LitElement {
       ${this.creating
         ? html`<section class="new-session">
             <p>Start an agent workspace using an installed runner and its own account.</p>
-            <runner-model-effort-picker
-              .catalog=${this.profile
-                ? (this.catalog?.runners ?? []).filter(
-                    (option) => option.runner === this.profile!.runner,
-                  )
-                : (this.catalog?.runners ?? [])}
-              .runner=${this.runner}
-              .model=${this.model}
-              .showEffort=${false}
+            <review-dispatch-picker
+              .viewModel=${this.executionPicker}
+              .discover=${false}
               .disabled=${this.busy}
-              @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) => {
-                this.runner = event.detail.runner;
-                this.model = event.detail.model;
+              @review-dispatch-change=${() => {
                 this.mode = 'default';
+                this.requestUpdate();
               }}
-            ></runner-model-effort-picker>
+            ></review-dispatch-picker>
             <label
               >Working directory<select
                 data-testid="native-context"

@@ -18,7 +18,7 @@ const RUN_ID = 'run-blocked-reconnect';
 const REPO = '/remote/farmslot-1';
 const TASK_DIR = `${REPO}/.task/dev/PROJ-RECONNECT`;
 const PRIMARY_SIGNAL = `${TASK_DIR}/SIGNAL.json`;
-const REVIEW_SIGNAL = `${TASK_DIR}/SELF-REVIEW-SIGNAL.json`;
+const REVIEW_SIGNAL = `${TASK_DIR}/REVIEW-SIGNAL.json`;
 const INDEX_FILE = `${TASK_DIR}/subtasks/index.json`;
 const contexts = [
   {
@@ -29,8 +29,8 @@ const contexts = [
   },
   {
     id: 'reviewer',
-    role: 'self-review',
-    taskFile: `${TASK_DIR}/SELF-REVIEW.md`,
+    role: 'review',
+    taskFile: `${TASK_DIR}/REVIEW.md`,
     signalFile: REVIEW_SIGNAL,
   },
 ];
@@ -51,13 +51,13 @@ const run = () =>
 const signal = (contextId: string, status: 'blocked' | 'running'): WorkerSignal => ({
   status,
   attemptId: contextId === 'worker' ? 'a1' : 'r1',
-  role: contextId === 'worker' ? 'primary' : 'self-review',
+  role: contextId === 'worker' ? 'primary' : 'review',
   contextId,
   timestamp: status === 'blocked' ? '2026-10-09T13:10:00Z' : '2026-10-09T13:11:00Z',
 });
 const files = new Map([
   [`${TASK_DIR}/TASK.md`, '# Task\n\n- [x] **1. work**\n'],
-  [`${TASK_DIR}/SELF-REVIEW.md`, '# Review\n\n- [x] **1. check**\n'],
+  [`${TASK_DIR}/REVIEW.md`, '# Review\n\n- [x] **1. check**\n'],
   [PRIMARY_SIGNAL, JSON.stringify(signal('worker', 'blocked'))],
   [REVIEW_SIGNAL, JSON.stringify(signal('reviewer', 'blocked'))],
 ]);

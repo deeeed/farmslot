@@ -16,7 +16,7 @@ import {
 } from './codex-observability.js';
 import { makeVars } from './test-fixtures.js';
 
-const prompt = 'Read SELF-REVIEW-FIX.md';
+const prompt = 'Read REVIEW-FIX.md';
 
 test('retained delivery uses native completion without bypassing ownership or newer prompt evidence', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'codex-retained-state-'));

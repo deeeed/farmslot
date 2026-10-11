@@ -66,6 +66,8 @@ STATUS: pending
 
 ### Commit & Reply (steps 7-8)
 
+{{CI_PARITY_STEP}}
+
 - [ ] **7. Commit and push:**
   ```bash
   cd {{REPO}}
@@ -82,6 +84,7 @@ STATUS: pending
 ### Package & Signal (steps 9-10)
 
 - [ ] **9. Write packaged evidence:**
+
   ```bash
   mkdir -p {{TASK_DIR}}/artifacts
   # Write exactly one outcome report with real, reviewable content:
@@ -89,12 +92,23 @@ STATUS: pending
   # - no-change-report.md when no code change was needed
   # Include the issue, what changed or why no change was needed, validation commands + results, and commit SHA if any.
   # Also write learnings.md with any reusable lesson, or a one-line "No reusable lesson" note.
-  {{TASK_DIR}}/mark --checklist CI-FIX.md 9
+  # Mark this item using its visible step number.
   ```
-- [ ] **10. Write CI-FIX-SIGNAL.json:**
+
+  - [ ] **10. Write CI-FIX-SIGNAL.json:**
+
   ```bash
   {{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last
   # If no code change was needed:
   {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "already fixed or not reproducible" --mark-last
   ```
+
   **Do NOT `/exit`. Stay alive — CI-watch may nudge you again if new issues appear.**
+
+## Acceptance verdicts + recipe coverage
+
+Use the installed public `farmslot-agent` command. If it is absent from PATH, use the deployed `node …/packages/agent-runtime/bin/farmslot-agent.mjs` command shown in TASK.md; application dependencies do not need to install it.
+
+Before successful completion or handing off this PR, set `export TASK_DIR="{{TASK_DIR}}"` and run `farmslot-agent ac list`. For every registered AC, record an honest verdict with `farmslot-agent ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>`. Use the actual state, visual or mixed mode and existing evidence; omit the recipe node when no recipe applies. Use `untestable --note <reason>` only when proof is unavailable. Check `ac list` again.
+
+When `artifacts/recipe.json` exists, derive `artifacts/recipe-coverage.md` with `farmslot-agent ac render > "{{TASK_DIR}}/artifacts/recipe-coverage.md"`. Before `mark complete`, run `farmslot-agent artifact-check "{{TASK_DIR}}" --require-recipe-coverage-if-recipe --require-acceptance-status`. Refresh affected verdicts and coverage after the final proof run. Checklist completion alone does not assess an AC.

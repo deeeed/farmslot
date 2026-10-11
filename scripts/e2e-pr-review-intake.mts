@@ -74,7 +74,7 @@ try {
       ],
       execution: {
         slotPolicy: { kind: 'exact', slotId },
-        models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+        models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
       },
       githubTeams: [],
       notificationPrincipalIds: [],
@@ -86,10 +86,7 @@ try {
     idempotencyKey: randomUUID(),
     autoStart: true,
     review: {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      validationDepth: 'full-live',
-      busySession: 'wait',
+      mode: 'warm',
     },
     source: { client: 'gateway-validation', requester: 'external-user-reference' },
   };
@@ -125,8 +122,7 @@ try {
     const queued = items.find((item) => item.id === receipt?.intent?.queueItemId);
     assert(queued);
     assert.deepEqual(queued.allowedSlots, [slotId]);
-    assert.equal(queued.reviewValidationDepth, 'full-live');
-    assert.equal(queued.prWork?.review?.options.sessionIntent, 'resume');
+    assert.equal(queued.prWork?.review?.options.mode, 'warm');
     assert.equal(queued.model, 'gpt-6-astra');
     assert.equal(queued.effort, 'high');
     assert.equal(queued.runId, undefined);

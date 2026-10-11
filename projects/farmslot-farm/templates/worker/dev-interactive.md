@@ -1,6 +1,7 @@
 ---
 checklist: none
 ---
+
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
@@ -39,7 +40,7 @@ SLOT: {{SLOT}}
 
 ## Checklist
 
-These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to *this* task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
+These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to _this_ task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
 
 {{INTERACTIVE_CHECKLIST}}
 
@@ -80,6 +81,10 @@ bash {{recipe_validate_wrapper}} \
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 
+## CI parity
+
+{{CI_PARITY_STEP}}
+
 ## Completion signal
 
 When the operator says the interactive session is complete:
@@ -103,3 +108,31 @@ When the operator says the interactive session is complete:
 **Publication may be worker-owned; final disposition remains operator-owned.** In an interactive session the worker may commit, push, and create the PR only after explicit operator approval. Once that PR exists, `mark complete --mark-last` is a handoff signal, not permission to publish: the monitor pauses the run and Farmslot presents actions such as "PR Complete" or "Detect PR + CI". Never use it with uncommitted or unpublished approved work—the unsafe failure mode from run `32909fa2`.
 
 **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
+
+## Acceptance verdicts + recipe coverage
+
+Before successful completion or handing off this PR, set `export TASK_DIR="{{TASK_DIR}}"`. Use the deployed agent runtime, not the application checkout's dependencies:
+
+```bash
+FARMSLOT_ACCEPTANCE_ROOT="{{farmslot_dir}}"
+case "$FARMSLOT_ACCEPTANCE_ROOT" in
+  "~/"*) FARMSLOT_ACCEPTANCE_ROOT="$HOME/${FARMSLOT_ACCEPTANCE_ROOT#\~/}" ;;
+esac
+node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac list
+```
+
+If `ac list` has no registered criteria, skip ledger recording/rendering and retain the task's existing recipe-coverage workflow. Otherwise, record an honest verdict for each AC with `node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>`. Use the actual state, visual or mixed mode and existing evidence; omit the recipe node when no recipe applies. Use `untestable --note <reason>` only when proof is unavailable. Check `ac list` again.
+
+When a recipe exists and ACs are registered, render coverage to a temporary file and replace the existing coverage only after success:
+
+```bash
+coverage_tmp=$(mktemp "{{TASK_DIR}}/artifacts/recipe-coverage.XXXXXX")
+if node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac render > "$coverage_tmp"; then
+  mv "$coverage_tmp" "{{TASK_DIR}}/artifacts/recipe-coverage.md"
+else
+  rm -f "$coverage_tmp"
+  exit 1
+fi
+```
+
+Before `mark complete`, run `node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" artifact-check "{{TASK_DIR}}" --require-recipe-coverage-if-recipe --require-acceptance-status`. Refresh affected verdicts and coverage after the final proof run. Checklist completion alone does not assess an AC.

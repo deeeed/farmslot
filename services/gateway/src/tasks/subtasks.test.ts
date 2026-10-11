@@ -126,7 +126,7 @@ test('subtaskUnitsForParentChecklist keeps only the children of one checklist', 
       unit(),
       unit({
         id: 'domain-patterns',
-        parent: { checklist: 'SELF-REVIEW.md', stepNumber: 3 },
+        parent: { checklist: 'REVIEW.md', stepNumber: 3 },
         checklist: 'subtasks/domain-patterns.md',
         signal: 'subtasks/domain-patterns-SIGNAL.json',
       }),
@@ -137,7 +137,7 @@ test('subtaskUnitsForParentChecklist keeps only the children of one checklist', 
     ['ci-parity'],
   );
   assert.deepEqual(
-    subtaskUnitsForParentChecklist(index, 'SELF-REVIEW.md').map((entry) => entry.id),
+    subtaskUnitsForParentChecklist(index, 'REVIEW.md').map((entry) => entry.id),
     ['domain-patterns'],
   );
   assert.deepEqual(subtaskUnitsForParentChecklist(null, 'CHECKLIST.md'), []);
@@ -308,7 +308,7 @@ test('listOpenSubtaskUnits treats blocked as open and complete as settled', asyn
       id: 'done-one',
       checklist: 'subtasks/done-one.md',
       signal: 'subtasks/done-one-SIGNAL.json',
-      parent: { checklist: 'SELF-REVIEW.md', stepNumber: 1 },
+      parent: { checklist: 'REVIEW.md', stepNumber: 1 },
     }),
   ];
   const dir = makeTaskDir({

@@ -14,8 +14,8 @@ const SUBTASKS_DIR = 'subtasks';
 const SUBTASK_INDEX_FILE = 'index.json';
 const SUBTASK_ID_PATTERN = /^[a-z0-9-]+$/;
 
-const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
-const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
+const REVIEW_CHECKLIST = 'REVIEW.md';
+const REVIEW_FIX_CHECKLIST = 'REVIEW-FIX.md';
 const CI_FIX_CHECKLIST = 'CI-FIX.md';
 // Sections whose checkboxes are informational (ACs, descriptions, upstream
 // PR-template fields) — not task steps. Canonical copy lives in
@@ -181,13 +181,13 @@ function defaultWorkerTarget(taskDir) {
   return targetForChecklistBasename(checklist);
 }
 
-const SELF_REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_CHECKLIST);
-const SELF_REVIEW_FIX_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_FIX_CHECKLIST);
+const REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(REVIEW_CHECKLIST);
+const REVIEW_FIX_CHECKLIST_TARGET = targetForChecklistBasename(REVIEW_FIX_CHECKLIST);
 const CI_FIX_CHECKLIST_TARGET = targetForChecklistBasename(CI_FIX_CHECKLIST);
 
 const CHECKLIST_TARGET_BY_AGENT_ROLE = {
-  'self-review': SELF_REVIEW_CHECKLIST_TARGET,
-  'self-review-fix': SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  review: REVIEW_CHECKLIST_TARGET,
+  'review-fix': REVIEW_FIX_CHECKLIST_TARGET,
   'ci-fix': CI_FIX_CHECKLIST_TARGET,
 };
 
@@ -338,11 +338,11 @@ module.exports = {
   INTERACTIVE_CHECKLIST_MARKDOWN,
   WORKER_SIGNAL_FILE,
   ROLE_SIGNAL_SUFFIX,
-  SELF_REVIEW_CHECKLIST,
-  SELF_REVIEW_FIX_CHECKLIST,
+  REVIEW_CHECKLIST,
+  REVIEW_FIX_CHECKLIST,
   CI_FIX_CHECKLIST,
-  SELF_REVIEW_CHECKLIST_TARGET,
-  SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  REVIEW_CHECKLIST_TARGET,
+  REVIEW_FIX_CHECKLIST_TARGET,
   CI_FIX_CHECKLIST_TARGET,
   CHECKLIST_TARGET_BY_AGENT_ROLE,
   DEFAULT_CHECKLIST_TARGET_REGISTRY,

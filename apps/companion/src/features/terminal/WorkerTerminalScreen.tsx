@@ -825,6 +825,7 @@ export default function WorkerTerminalScreen() {
         <View style={styles.keyBar}>
           <TerminalControlKeyBar
             label={null}
+            runnerPane={worker}
             touchKeyboardEnabled={allowTerminalTouchKeyboard}
             onPress={(control) => sendInput(control.data)}
             onToggleTouchKeyboard={() => setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)}

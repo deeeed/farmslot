@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-desktop-preferences.mts",
         "timeout_ms": 180000,
-        "intent": "Remembered credentials survive app replacement with route, bounds and shortcut. Session-only credentials survive reload but not quit. Shared desktop login uses the same Remember me preference.",
+        "intent": "Desktop login preferences preserve only the requested credential lifetime.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

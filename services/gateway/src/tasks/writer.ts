@@ -28,7 +28,6 @@ import {
   type PlanningContextProjection,
   renderTemplatePlaceholders,
   type RepeatReviewContext,
-  reviewSessionIntentForContext,
   type Run,
   type TaskSchema,
   type TaskSchemaPhase,
@@ -36,7 +35,12 @@ import {
 } from '@farmslot/protocol';
 import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
-import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+} from '../core/config.js';
 import { collectPlaceholderTokens, expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
@@ -172,11 +176,9 @@ function previousReviewMarkdown(context: RepeatReviewContext): string {
 - Prior reviewed head: \`${context.priorReviewedHeadSha ?? 'unavailable'}\`
 - Current head: \`${context.currentHeadSha}\`
 - Prior verdict: ${context.verdict}
-- Context: ${context.contextMode}
-- Scope: ${context.reviewScope}
+- Review mode: ${context.mode}
 - Validation depth: ${context.validationDepth}
-- Session intent: ${reviewSessionIntentForContext(context)}
-${context.incrementalUnavailableReason ? `- Incremental unavailable: ${context.incrementalUnavailableReason}\n` : ''}
+${context.warmUnavailableReason ? `- Incremental unavailable: ${context.warmUnavailableReason}\n` : ''}
 ## Unresolved findings
 
 ${findings}
@@ -195,7 +197,7 @@ export async function writePreviousReviewInputs(
   taskAbsDir: string,
   context: RepeatReviewContext | undefined,
 ): Promise<string[]> {
-  if (!context || context.contextMode !== 'reuse') return [];
+  if (!context || context.mode !== 'warm') return [];
   await writeFile(
     path.join(taskAbsDir, PREVIOUS_REVIEW_JSON_INPUT),
     `${JSON.stringify(context, null, 2)}\n`,
@@ -241,10 +243,10 @@ function buildReviewExecutionContract(
   instructionPaths: readonly string[],
 ): string {
   if (run.flowType !== 'review-pr') return '';
-  const scope = run.reviewScope ?? 'full';
+  const scope = run.reviewMode ?? 'cold';
   const depth = run.reviewValidationDepth ?? 'static-code';
   const range =
-    scope === 'incremental' && run.repeatReviewContext?.priorReviewedHeadSha
+    scope === 'warm' && run.repeatReviewContext?.priorReviewedHeadSha
       ? `${run.repeatReviewContext.priorReviewedHeadSha}..${run.repeatReviewContext.currentHeadSha}`
       : `PR base..${run.repeatReviewContext?.currentHeadSha ?? 'frozen current head'}`;
   const inherited = previousReviewPaths.length
@@ -254,8 +256,8 @@ function buildReviewExecutionContract(
     ? `Read the frozen project review guidance: ${instructionPaths.map((item) => `\`${item}\``).join(', ')}.`
     : 'No additional project review guidance was configured.';
   const session =
-    reviewSessionIntentForContext(run.repeatReviewContext) === 'resume'
-      ? 'Resume the same-PR reviewer session when the gateway confirms the exact persisted session binding; otherwise continue from the frozen prior-review inputs with fresh context.'
+    (run.reviewMode ?? 'cold') === 'warm'
+      ? 'Resume the same-PR reviewer session when the gateway confirms the exact persisted session binding; refuse if the verified session cannot be resumed.'
       : 'Start with fresh reviewer context.';
   return `
 ## Review execution contract
@@ -1222,6 +1224,8 @@ export async function writeTaskFile(
     name: 'render-template',
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
+  vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
+  vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
   const content = renderTemplatePlaceholders(
     template,
     vars,
@@ -1244,7 +1248,7 @@ export async function writeTaskFile(
         ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
         : withInheritedContext;
     // Related planning context is frozen into inputs/ before it is rendered, so the
-    // independent-review brief can quote the same snapshot hash the worker saw.
+    // review brief can quote the same snapshot hash the worker saw.
     if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
     const withRuntimeContext = appendRuntimeCapabilityAndPlanningContext(
       withInteractivePrCompleteHandoff,
@@ -1368,6 +1372,7 @@ export async function writeTaskFile(
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    deterministicCommands: vars,
   });
   await writeQaInput(taskAbsDir, {
     ...run,

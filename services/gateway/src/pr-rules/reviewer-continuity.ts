@@ -7,11 +7,15 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { configureWorkspaceContinuity } from '../review-workspaces/continuity.js';
+import {
+  compatibleWorkspaceReviewer,
+  configureWorkspaceContinuity,
+} from '../review-workspaces/continuity.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
   findLatestPriorReviewRun,
+  incrementalReviewAvailable,
 } from '../run-engine/engine-decisions.js';
 import { resolveRepeatReviewResumePlan } from '../run-engine/review-session-chain.js';
 
@@ -24,14 +28,19 @@ export function preferRetainedReviewer(
 ): PRExecutionChoice[] {
   const source = intent.contributions.find((item) => item.eligible);
   if (!source) return [];
-  const options = source.review ?? DEFAULT_PR_REVIEW_OPTIONS;
-  if (prReviewWorkflow(options) === 'qa') return choices;
-  if (options.sessionIntent !== 'resume' || options.scope !== 'incremental') return choices;
+  const configured = source.review ?? DEFAULT_PR_REVIEW_OPTIONS;
+  if (prReviewWorkflow(configured) === 'qa' || choices.every((choice) => choice.mode === 'cold'))
+    return choices;
+  const coldChoices = choices.filter((choice) => choice.mode === 'cold');
+  const options = { ...configured, mode: 'warm' as const };
+  if (!options.reviewContext?.reviewLineages.some((lineage) => lineage?.reviewId))
+    return coldChoices;
   const identity = {
     id: `review:${intent.id}`,
     project,
     flowType: 'review-pr' as const,
     ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
+    reviewContext: options.reviewContext,
     prWork: {
       kind: 'review' as const,
       id: `review:${intent.id}`,
@@ -42,39 +51,38 @@ export function preferRetainedReviewer(
     },
   };
   const prior = findLatestPriorReviewRun(identity, runs);
-  if (!prior) return choices;
+  if (!prior) return coldChoices;
   // Only picks a retained reviewer. The run's own context build confirms the
   // prior head is an ancestor before it settles on incremental scope.
-  const context = automatedRepeatReviewSelection(
-    buildRepeatReviewContext(
-      identity,
-      prior,
-      {
-        project,
-        repository: intent.pr.repo,
-        prNumber: intent.pr.number,
-        headSha: intent.headSha,
-      },
-      runs,
-    ),
-    options,
+  const previousContext = buildRepeatReviewContext(
+    identity,
+    prior,
+    {
+      project,
+      repository: intent.pr.repo,
+      prNumber: intent.pr.number,
+      headSha: intent.headSha,
+    },
+    runs,
   );
+  if (!incrementalReviewAvailable(previousContext)) return coldChoices;
+  const context = automatedRepeatReviewSelection(previousContext, options);
   const retained = choices.filter((choice) => {
+    if (choice.mode === 'cold') return true;
     if (isPRWorkspaceExecutionChoice(choice)) {
       const selected = structuredClone(context);
-      configureWorkspaceContinuity(
-        {
-          ...identity,
-          reviewScope: options.scope,
-          transport: choice.transport ?? 'tmux',
-          nativeOwnerPrincipalId: source.ownerId,
-          createdByPrincipalId: source.ownerId,
-          reviewWorkspaceTarget: { machine: choice.machine },
-          metrics: { runner: choice.runner, model: choice.model },
-        },
-        prior,
-        selected,
-      );
+      const workspaceRun = {
+        ...identity,
+        reviewMode: options.mode,
+        transport: choice.transport ?? 'tmux',
+        nativeOwnerPrincipalId: source.ownerId,
+        createdByPrincipalId: source.ownerId,
+        reviewWorkspaceTarget: { machine: choice.machine },
+        effort: choice.effort ?? undefined,
+        metrics: { runner: choice.runner, model: choice.model },
+      };
+      if (!compatibleWorkspaceReviewer(workspaceRun, prior)) return false;
+      configureWorkspaceContinuity(workspaceRun, prior, selected);
       return selected.session?.continuity === 'resumed';
     }
     return (
@@ -87,10 +95,9 @@ export function preferRetainedReviewer(
         prior,
         choice.runner,
         choice.model,
+        choice.effort,
       ).kind === 'resume'
     );
   });
-  if (!retained.length) return choices;
-  if (options.busySession !== 'fresh') return retained;
-  return [...retained, ...choices.filter((choice) => !retained.includes(choice))];
+  return retained;
 }

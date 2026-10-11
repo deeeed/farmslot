@@ -13,14 +13,19 @@ import {
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
+  isReviewMode,
   Methods,
   observedReviewSessionContinuity,
   type ReviewChainEntry,
   reviewChainForRun,
+  type ReviewMode,
   reviewPublicationPolicyForRun,
+  type ReviewRequestContext,
+  type ReviewSequence,
   type Run,
   type RunCancelEffect,
   type RunCreateParams,
+  type RunDecision,
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
@@ -31,6 +36,13 @@ import {
   runStepQueuedMs,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
+import {
+  parseReviewRequestContext,
+  parseReviewSelection,
+  parseReviewSequence,
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+} from '@farmslot/review-dispatch';
 
 import { bold, cyan, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
@@ -67,12 +79,67 @@ export function assertRunGateActionAvailable(
   );
 }
 
+export interface RunGateCliOptions {
+  action?: string;
+  decision?: string;
+  runner?: string;
+  model?: string;
+  effort?: string;
+  reviewMode?: string;
+  reviewSequence?: string;
+  reviewContext?: string;
+}
+
+export function buildRunGateParams(
+  run: Run,
+  decision: RunDecision,
+  actionId: string,
+  options: RunGateCliOptions,
+) {
+  let selectionData: Record<string, unknown> | undefined;
+  if (actionId === 'request-review') {
+    const model = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['request-review'],
+        allowSequence: true,
+        reviewLineages: reviewLineagesForRun(run),
+        ...(options.reviewContext
+          ? { reviewContext: parseReviewRequestContext(JSON.parse(options.reviewContext)) }
+          : {}),
+      },
+    });
+    model.setSequence([
+      parseReviewSelection({
+        ...model.toSelection(),
+        ...(options.runner ? { runner: options.runner } : {}),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.reviewMode ? { mode: options.reviewMode } : {}),
+      }),
+      ...(options.reviewSequence
+        ? parseReviewSequence(JSON.parse(options.reviewSequence), { allowEmpty: true })
+        : []),
+    ]);
+    selectionData = { reviewRequest: model.toRequestPayload() };
+  } else if (
+    options.runner ||
+    options.model ||
+    options.effort ||
+    options.reviewMode ||
+    options.reviewSequence ||
+    options.reviewContext
+  ) {
+    throw new Error('Review selection options require --action request-review');
+  }
+  return buildRunResolveDecisionParams({ runId: run.id, decision, actionId, selectionData });
+}
+
 export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } {
   return { chain: reviewChainForRun(run) };
 }
 
 export function formatReviewChainLine(entry: ReviewChainEntry): string {
-  return `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.reviewScope}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}`;
+  return `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.mode}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}`;
 }
 
 /** The run.create pipeline shared by the flag path and the wizard entry points. */
@@ -251,6 +318,10 @@ export interface RunCreateCliOptions {
   qaProfile?: string;
   qaInputs?: string;
   effort?: string;
+  reviewMode?: string;
+  reviewSequence?: string;
+  reviewContext?: string;
+  reviewSequenceContext?: string;
   skipPrepare?: boolean;
   prepareProfile?: string;
   mode?: string;
@@ -337,11 +408,58 @@ function buildPressureAdmissionParams(opts: RunCreateCliOptions): Record<string,
 
 /** Typed flags share the same wire placement as preview and direct run creation. */
 export function buildReviewDispatchParams(
-  opts: Pick<RunCreateCliOptions, 'slot' | 'reviewMachine'>,
+  opts: Pick<
+    RunCreateCliOptions,
+    | 'slot'
+    | 'reviewMachine'
+    | 'reviewMode'
+    | 'reviewSequence'
+    | 'reviewContext'
+    | 'reviewSequenceContext'
+  >,
 ) {
   if (opts.reviewMachine && opts.slot)
     throw new Error('--review-machine cannot be combined with --slot');
-  return opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {};
+  if (opts.reviewMode !== undefined && !isReviewMode(opts.reviewMode))
+    throw new Error('--review-mode must be warm or cold');
+  let reviewSequence: ReviewSequence | undefined;
+  if (opts.reviewSequence !== undefined) {
+    let value: unknown;
+    try {
+      value = JSON.parse(opts.reviewSequence);
+    } catch {
+      throw new Error('--review-sequence must be a valid JSON array');
+    }
+    reviewSequence = parseReviewSequence(value);
+  }
+  let reviewContext: ReviewRequestContext | undefined;
+  if (opts.reviewContext !== undefined) {
+    let value: unknown;
+    try {
+      value = JSON.parse(opts.reviewContext);
+    } catch {
+      throw new Error('--review-context must be valid JSON');
+    }
+    reviewContext = parseReviewRequestContext(value, 1);
+  }
+  let reviewSequenceContext: ReviewRequestContext | undefined;
+  if (opts.reviewSequenceContext !== undefined) {
+    if (!reviewSequence) throw new Error('--review-sequence-context requires --review-sequence');
+    let value: unknown;
+    try {
+      value = JSON.parse(opts.reviewSequenceContext);
+    } catch {
+      throw new Error('--review-sequence-context must be valid JSON');
+    }
+    reviewSequenceContext = parseReviewRequestContext(value, reviewSequence.length);
+  }
+  return {
+    ...(opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {}),
+    ...(opts.reviewMode !== undefined ? { reviewMode: opts.reviewMode as ReviewMode } : {}),
+    ...(reviewSequence ? { reviewSequence } : {}),
+    ...(reviewContext ? { reviewContext } : {}),
+    ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
+  };
 }
 
 /** Farm selection stays on the gateway; the CLI validates and forwards explicit QA inputs. */
@@ -368,10 +486,9 @@ export function buildQaDispatchParams(
     }
   }
   // Reuse the protocol's QA field validation without selecting a farm preset here.
-  // Session/scope selectors belong only to this validation envelope, not the RPC.
+  // This validation envelope carries QA fields, not a reviewer-session request.
   const review: unknown = {
-    sessionIntent: 'reset',
-    scope: 'full',
+    mode: 'cold',
     workflow: 'qa',
     ...(opts.qaProfile !== undefined ? { qaProfileId: opts.qaProfile } : {}),
     ...(opts.qaInputs !== undefined ? { qaInputs: inputs } : {}),
@@ -655,7 +772,13 @@ export function registerRunCommand(program: Command): void {
       'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
-    .action(async (runId: string, opts: { action?: string; decision?: string }, cmd: Command) => {
+    .option('--runner <runner>', 'Review runner for request-review')
+    .option('--model <model>', 'Review model for request-review')
+    .option('--effort <level>', 'Review reasoning effort for request-review')
+    .option('--review-mode <mode>', 'Review mode: warm or cold (default: cold)')
+    .option('--review-sequence <json>', 'Additional ordered review selections as JSON')
+    .option('--review-context <json>', 'Retained review lineage context as JSON')
+    .action(async (runId: string, opts: RunGateCliOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
@@ -702,11 +825,7 @@ export function registerRunCommand(program: Command): void {
           () =>
             client.call(
               'run.resolveDecision',
-              buildRunResolveDecisionParams({
-                runId,
-                decision,
-                actionId,
-              }),
+              buildRunGateParams(current, decision, actionId, opts),
             ),
           !emit.machine,
         );
@@ -952,6 +1071,13 @@ export function registerRunCommand(program: Command): void {
     )
     .option('--qa-inputs <json>', 'JSON object of skill inputs for --flow-type qa')
     .option('--effort <effort>', 'Runner effort override')
+    .option('--review-mode <mode>', 'Review mode: warm or cold')
+    .option('--review-sequence <json>', 'Ordered runner/model/effort/mode review selections')
+    .option('--review-context <json>', 'Repository/PR and reviewId provenance for WARM rows')
+    .option(
+      '--review-sequence-context <json>',
+      'Lineage provenance aligned with review sequence rows',
+    )
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(
       '--prepare-profile <name>',

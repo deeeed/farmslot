@@ -106,7 +106,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   // Resolve paths using slot.taskFile (relative dir, e.g. "fix/proj-2796-0403-1242")
   const { vars, taskDirName, taskMdPath } = await resolveTaskPaths(params.slotId, slot.taskFile);
 
-  // Use activeTaskFile if the run has declared a variant (e.g. SELF-REVIEW.md)
+  // Use activeTaskFile if the run has declared a variant (e.g. REVIEW.md)
   // activeTaskFile is absolute — extract just the filename and resolve within the task dir
   const activeRun = params.runId
     ? getRun(params.runId)

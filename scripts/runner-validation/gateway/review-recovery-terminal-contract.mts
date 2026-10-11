@@ -210,7 +210,7 @@ function terminalSignal(
   timestamp = completedAt,
 ): object {
   return {
-    role: 'self-review',
+    role: 'review',
     status,
     outcome: status === 'complete' ? 'success' : status === 'blocked' ? 'partial' : 'failure',
     disposition: status === 'complete' ? 'fixed' : status,
@@ -225,13 +225,13 @@ function reviewerContext(
 ): AgentContext {
   return {
     id,
-    role: 'self-review',
+    role: 'review',
     label: id,
     status: options.status,
     slotId,
     runId: recoveryRunId,
-    taskFile: `tasks/recovery/SELF-REVIEW.${id}.md`,
-    signalFile: `tasks/recovery/SELF-REVIEW.${id}-SIGNAL.json`,
+    taskFile: `tasks/recovery/REVIEW.${id}.md`,
+    signalFile: `tasks/recovery/REVIEW.${id}-SIGNAL.json`,
     reviewResultFile: `artifacts/review-result.${id}.json`,
     artifactScope,
     runner: 'scripted',
@@ -244,10 +244,10 @@ function reviewerContext(
 }
 
 function contextForRun(id: string, runId: string, taskName: string): AgentContext {
-  const context = reviewerContext(id, `independent-${id}`);
+  const context = reviewerContext(id, `review-${id}`);
   context.runId = runId;
-  context.taskFile = `tasks/${taskName}/SELF-REVIEW.${id}.md`;
-  context.signalFile = `tasks/${taskName}/SELF-REVIEW.${id}-SIGNAL.json`;
+  context.taskFile = `tasks/${taskName}/REVIEW.${id}.md`;
+  context.signalFile = `tasks/${taskName}/REVIEW.${id}-SIGNAL.json`;
   context.reviewResultFile = `artifacts/review-result.${id}.json`;
   return context;
 }
@@ -304,7 +304,7 @@ function runRecord(
     agentContexts: contexts,
     engineState: {
       publishGate: {
-        independentReviews: [],
+        reviews: [],
         ...(reviewRecovery ? { reviewRecovery } : {}),
       },
     },
@@ -343,7 +343,7 @@ function seedFixture(): void {
   writeJson(path.join(projectsDir, project, 'project.json'), {
     name: project,
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
-    self_review: { enabled: true, max_retries: 0, review_timeout_min: 1 },
+    review: { enabled: true, max_retries: 0, review_timeout_min: 1 },
   });
 
   for (const taskDir of [recoveryTaskDir, pipelineTaskDir, waitTaskDir]) {
@@ -359,7 +359,7 @@ function seedFixture(): void {
     'rev-no-signal-invalid',
   ];
   for (const id of recoveryCases) {
-    writeText(path.join(recoveryTaskDir, `SELF-REVIEW.${id}.md`), `# Reviewer ${id}\n`);
+    writeText(path.join(recoveryTaskDir, `REVIEW.${id}.md`), `# Reviewer ${id}\n`);
   }
   for (const id of ['rev-missing', 'rev-invalid', 'rev-valid', 'rev-no-signal-invalid']) {
     writeText(
@@ -368,11 +368,11 @@ function seedFixture(): void {
     );
   }
   writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-missing-SIGNAL.json'),
+    path.join(recoveryTaskDir, 'REVIEW.rev-missing-SIGNAL.json'),
     terminalSignal('complete'),
   );
   writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-invalid-SIGNAL.json'),
+    path.join(recoveryTaskDir, 'REVIEW.rev-invalid-SIGNAL.json'),
     terminalSignal('complete'),
   );
   writeText(
@@ -384,20 +384,14 @@ function seedFixture(): void {
     verdict: 'pass',
     issues: [],
   });
+  writeJson(path.join(recoveryTaskDir, 'REVIEW.rev-valid-SIGNAL.json'), terminalSignal('complete'));
+  writeJson(path.join(recoveryTaskDir, 'REVIEW.rev-failed-SIGNAL.json'), terminalSignal('failed'));
   writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-valid-SIGNAL.json'),
-    terminalSignal('complete'),
-  );
-  writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-failed-SIGNAL.json'),
-    terminalSignal('failed'),
-  );
-  writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-blocked-SIGNAL.json'),
+    path.join(recoveryTaskDir, 'REVIEW.rev-blocked-SIGNAL.json'),
     terminalSignal('blocked'),
   );
   writeJson(
-    path.join(recoveryTaskDir, 'SELF-REVIEW.rev-stale-SIGNAL.json'),
+    path.join(recoveryTaskDir, 'REVIEW.rev-stale-SIGNAL.json'),
     terminalSignal('failed', staleSignalAt),
   );
   writeText(
@@ -406,13 +400,13 @@ function seedFixture(): void {
   );
 
   const recoveryContexts = [
-    reviewerContext('rev-missing', 'independent-review-1'),
-    reviewerContext('rev-invalid', 'independent-review-2'),
-    reviewerContext('rev-valid', 'independent-review-3'),
-    reviewerContext('rev-failed', 'independent-review-4'),
-    reviewerContext('rev-blocked', 'independent-review-5'),
-    reviewerContext('rev-stale', 'independent-review-6'),
-    reviewerContext('rev-no-signal-invalid', 'independent-review-7', {
+    reviewerContext('rev-missing', 'review-1'),
+    reviewerContext('rev-invalid', 'review-2'),
+    reviewerContext('rev-valid', 'review-3'),
+    reviewerContext('rev-failed', 'review-4'),
+    reviewerContext('rev-blocked', 'review-5'),
+    reviewerContext('rev-stale', 'review-6'),
+    reviewerContext('rev-no-signal-invalid', 'review-7', {
       status: 'complete',
       completedAt,
     }),
@@ -428,18 +422,18 @@ function seedFixture(): void {
     }),
   );
 
-  const pipelineContext = reviewerContext('pipeline-invalid', 'independent-review-1');
+  const pipelineContext = reviewerContext('pipeline-invalid', 'review-1');
   pipelineContext.runId = pipelineRunId;
-  pipelineContext.taskFile = 'tasks/pipeline/SELF-REVIEW.pipeline-invalid.md';
-  pipelineContext.signalFile = 'tasks/pipeline/SELF-REVIEW.pipeline-invalid-SIGNAL.json';
+  pipelineContext.taskFile = 'tasks/pipeline/REVIEW.pipeline-invalid.md';
+  pipelineContext.signalFile = 'tasks/pipeline/REVIEW.pipeline-invalid-SIGNAL.json';
   pipelineContext.reviewResultFile = 'artifacts/review-result.pipeline-invalid.json';
-  writeText(path.join(pipelineTaskDir, 'SELF-REVIEW.pipeline-invalid.md'), '# Pipeline reviewer\n');
+  writeText(path.join(pipelineTaskDir, 'REVIEW.pipeline-invalid.md'), '# Pipeline reviewer\n');
   writeText(
     path.join(pipelineTaskDir, 'artifacts', 'review-feedback.pipeline-invalid.md'),
     '# Review\n\nVERDICT: PASS\n',
   );
   writeJson(
-    path.join(pipelineTaskDir, 'SELF-REVIEW.pipeline-invalid-SIGNAL.json'),
+    path.join(pipelineTaskDir, 'REVIEW.pipeline-invalid-SIGNAL.json'),
     terminalSignal('complete'),
   );
   writeJson(
@@ -506,7 +500,7 @@ function seedFixture(): void {
 }
 
 function recoverySnapshot(run: Run): RecoverySnapshot {
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   const recovery = run.engineState?.publishGate?.reviewRecovery;
   return {
     recoveryStatus: recovery?.status ?? null,
@@ -809,7 +803,7 @@ function tmuxWindowExists(windowId: string): boolean {
 }
 
 function writeWaitSignal(id: string, status: 'complete' | 'failed' | 'blocked'): void {
-  writeJson(path.join(waitTaskDir, `SELF-REVIEW.${id}-SIGNAL.json`), terminalSignal(status));
+  writeJson(path.join(waitTaskDir, `REVIEW.${id}-SIGNAL.json`), terminalSignal(status));
 }
 
 async function runWaitBehaviorContract(
@@ -831,7 +825,7 @@ async function runWaitBehaviorContract(
         waitRunId,
         'scripted',
         id,
-        `SELF-REVIEW.${id}-SIGNAL.json`,
+        `REVIEW.${id}-SIGNAL.json`,
         `artifacts/review-feedback.${id}.md`,
         `artifacts/review-result.${id}.json`,
         25,
@@ -919,7 +913,7 @@ async function runWaitBehaviorContract(
           waitRunId,
           'scripted',
           'wait-overdue',
-          'SELF-REVIEW.wait-overdue-SIGNAL.json',
+          'REVIEW.wait-overdue-SIGNAL.json',
           'artifacts/review-feedback.wait-overdue.md',
           'artifacts/review-result.wait-overdue.json',
           25,
@@ -971,7 +965,7 @@ function readSlotSnapshot(): { lifecycle: string | null; currentRunId: string | 
   };
 }
 
-async function main(): Promise<void> {
+async function main(resultPath: string): Promise<void> {
   seedFixture();
   mkdirSync(path.dirname(runnerPath), { recursive: true });
   symlinkSync('/bin/sleep', runnerPath);
@@ -1004,7 +998,7 @@ async function main(): Promise<void> {
     moduleUrl('services/gateway/src/methods/run/replay-step.ts')
   )) as unknown as ReplayModule;
   const reviewAgent = (await import(
-    moduleUrl('services/gateway/src/self-review/review-agent.ts')
+    moduleUrl('services/gateway/src/review/review-agent.ts')
   )) as unknown as ReviewAgentModule;
   const sessionProcess = (await import(
     moduleUrl('services/gateway/src/runners/session-process.ts')
@@ -1077,12 +1071,12 @@ async function main(): Promise<void> {
     recovered.recoveryStartedAt === startedAt &&
     !recovered.nextRetryAtPresent &&
     recovered.gateReplayed &&
-    recovered.reviewVerdicts['independent-review-3'] === 'pass' &&
-    recovered.reviewVerdicts['independent-review-4'] === 'failed' &&
-    recovered.reviewVerdicts['independent-review-5'] === 'failed' &&
-    recovered.reviewRecoveryPending['independent-review-4'] === false &&
-    recovered.reviewRecoveryPending['independent-review-5'] === false &&
-    recovered.reviewVerdicts['independent-review-6'] === undefined &&
+    recovered.reviewVerdicts['review-3'] === 'pass' &&
+    recovered.reviewVerdicts['review-4'] === 'failed' &&
+    recovered.reviewVerdicts['review-5'] === 'failed' &&
+    recovered.reviewRecoveryPending['review-4'] === false &&
+    recovered.reviewRecoveryPending['review-5'] === false &&
+    recovered.reviewVerdicts['review-6'] === undefined &&
     recovered.contextLastSignalAt['rev-stale'] !== staleSignalAt &&
     closedEpisodeReset.status === 'watching' &&
     closedEpisodeReset.attempts === 0 &&
@@ -1119,7 +1113,7 @@ async function main(): Promise<void> {
   writeJson(resultPath, result);
 }
 
-main()
+main(resultPath)
   .catch((error: unknown) => {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     writeJson(resultPath, { sourceSha, fatalError: message, contractSatisfied: false });

@@ -1,5 +1,4 @@
 import {
-  assertStaticReviewLoopRequests,
   type DispatchQueueAddParams,
   type DispatchQueueAddResult,
   type DispatchQueueListResult,
@@ -12,6 +11,12 @@ import {
   type DispatchQueueUpdateParams,
   type DispatchQueueUpdateResult,
 } from '@farmslot/protocol';
+import {
+  assertReviewPolicy,
+  assertReviewSequence,
+  assertWarmReviewContext,
+  parseReviewRequestContext,
+} from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -77,7 +82,13 @@ export async function dispatchQueueAdd(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );
   }
-  assertStaticReviewLoopRequests(params.pendingReviewPlan);
+  if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
+  if (params.reviewSequenceContext)
+    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewContext) parseReviewRequestContext(params.reviewContext, 1);
+  if (params.reviewSequence)
+    assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
   const projectVars = await loadProjectVars(params.project);
   if (params.flowType === 'review-pr') {
     const repo = projectVars.projectJson.ci?.repo;
@@ -204,7 +215,7 @@ export async function dispatchQueueUpdate(
   const previous = queueRecordOriginator(params.itemId);
   const originator = currentSessionOriginator();
   const item = updateItem(params, originator);
-  if (params.pendingReviewPlan !== undefined) await recheckRepairedReviewPlan();
+  if (params.reviewSequence !== undefined) await recheckRepairedReviewPlan();
   const authorshipNotice = workAuthorshipNotice(previous, originator);
   return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
 }

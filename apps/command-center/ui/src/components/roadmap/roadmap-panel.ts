@@ -31,19 +31,15 @@ import {
   ROADMAP_ITEM_STAGES,
   ROADMAP_UNASSIGNED_PROJECT,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import './roadmap-graph-composer.js';
+import '../shared/review-dispatch-picker.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import {
-  defaultModelForRunner,
-  modelForRunnerChange,
-  modelsForRunner,
-  RUNNER_OPTIONS,
-} from '../../utils/runner-options.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import {
@@ -103,7 +99,6 @@ import {
 const STAGES: Array<RoadmapItemStage | 'all'> = ['all', ...ROADMAP_ITEM_STAGES];
 const CUSTOM_PROJECT = '__custom__';
 const DEFAULT_REFINEMENT_CHOICE = '__default__';
-const CUSTOM_REFINEMENT_CHOICE = '__custom__';
 const SAFETY_TIERS: SafetyTier[] = ['sandboxed', 'full-auto', 'dangerous'];
 const ROADMAP_ITEM_PARAM = 'item';
 const ROADMAP_MODE_PARAM = 'mode';
@@ -254,8 +249,15 @@ export class RoadmapPanel extends LitElement {
   @state() private _editTags = '';
   @state() private _editBody = '';
   @state() private _editHash = '';
-  @state() private _refineRunner = '';
-  @state() private _refineModel = '';
+  private _refinementPicker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['dispatch'],
+      defaults: {
+        runner: DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+        model: DEFAULT_ROADMAP_REFINEMENT_MODEL,
+      },
+    },
+  });
   @state() private _refineCommand = '';
   @state() private _refineSafetyTier = '';
   @state() private _runnerPickerOpen = false;
@@ -1067,36 +1069,6 @@ export class RoadmapPanel extends LitElement {
     return this._items.find((item) => item.id === this._selectedId) ?? this._items[0] ?? null;
   }
 
-  private get _runnerOptions(): string[] {
-    return [
-      ...new Set(
-        this._slots
-          .map((slot) => slot.runner)
-          .filter((runner): runner is string => Boolean(runner)),
-      ),
-    ].sort();
-  }
-
-  private get _refinementRunnerOptions(): string[] {
-    return [...new Set([...RUNNER_OPTIONS, ...this._runnerOptions])].sort();
-  }
-
-  /** Models for the selected (or default) runner only — never fleet-wide cross-runner models. */
-  private get _refinementModelOptions(): string[] {
-    const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    return modelsForRunner(runner, this._refineModel);
-  }
-
-  private get _refinementDefaultModelLabel(): string {
-    const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    return defaultModelForRunner(runner) || DEFAULT_ROADMAP_REFINEMENT_MODEL;
-  }
-
-  private _refinementChoiceValue(value: string, options: string[]): string {
-    if (!value) return DEFAULT_REFINEMENT_CHOICE;
-    return options.includes(value) ? value : CUSTOM_REFINEMENT_CHOICE;
-  }
-
   private _openRunnerPicker() {
     this._runnerPickerOpen = true;
     if (this._selected) void this._loadRefinementSessionStatus(this._selected);
@@ -1132,8 +1104,15 @@ export class RoadmapPanel extends LitElement {
       this._editTags = '';
       this._editBody = '';
       this._editHash = '';
-      this._refineRunner = '';
-      this._refineModel = '';
+      this._refinementPicker = new ReviewDispatchViewModel({
+        context: {
+          allowedActions: ['dispatch'],
+          defaults: {
+            runner: DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+            model: DEFAULT_ROADMAP_REFINEMENT_MODEL,
+          },
+        },
+      });
       this._refineCommand = '';
       this._refineSafetyTier = '';
       this._refinementSessionLoading = '';
@@ -1155,8 +1134,15 @@ export class RoadmapPanel extends LitElement {
     this._editTags = tagsToInput(item.tags);
     this._editBody = item.body;
     this._editHash = item.fileHash;
-    this._refineRunner = '';
-    this._refineModel = '';
+    this._refinementPicker = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['dispatch'],
+        defaults: {
+          runner: DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+          model: DEFAULT_ROADMAP_REFINEMENT_MODEL,
+        },
+      },
+    });
     this._refineCommand = '';
     this._refineSafetyTier = '';
     this._refinementSessionLoading = '';
@@ -1360,8 +1346,9 @@ export class RoadmapPanel extends LitElement {
         itemId: this._selected.id,
         expectedHash: this._editHash,
         launch,
-        ...(this._refineRunner.trim() ? { runner: this._refineRunner.trim() } : {}),
-        ...(this._refineModel.trim() ? { model: this._refineModel.trim() } : {}),
+        runner: this._refinementPicker.toSelection().runner,
+        model: this._refinementPicker.toSelection().model ?? undefined,
+        effort: this._refinementPicker.toSelection().effort ?? undefined,
         ...(this._refineCommand.trim() ? { runnerCommand: this._refineCommand.trim() } : {}),
         ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
       });
@@ -2004,41 +1991,6 @@ export class RoadmapPanel extends LitElement {
     });
   }
 
-  private _renderRefinementChoice(args: {
-    label: string;
-    defaultLabel: string;
-    testId: string;
-    value: string;
-    options: string[];
-    onChange: (value: string) => void;
-  }) {
-    const choiceValue = this._refinementChoiceValue(args.value, args.options);
-    return html`<div class="field">
-      ${args.label}
-      ${renderChoiceButtons({
-        options: [DEFAULT_REFINEMENT_CHOICE, ...args.options, CUSTOM_REFINEMENT_CHOICE],
-        value: choiceValue,
-        labels: {
-          [DEFAULT_REFINEMENT_CHOICE]: args.defaultLabel,
-          [CUSTOM_REFINEMENT_CHOICE]: 'Custom',
-        },
-        onSelect: (choice) => {
-          if (choice === DEFAULT_REFINEMENT_CHOICE) args.onChange('');
-          else if (choice !== CUSTOM_REFINEMENT_CHOICE) args.onChange(choice);
-        },
-        testId: `${args.testId}-choices`,
-      })}
-      ${choiceValue === CUSTOM_REFINEMENT_CHOICE
-        ? html`<input
-            data-testid=${args.testId}
-            placeholder=${args.label.toLowerCase()}
-            .value=${args.value}
-            @input=${(event: Event) => args.onChange((event.target as HTMLInputElement).value)}
-          />`
-        : nothing}
-    </div>`;
-  }
-
   private _renderRunnerPicker() {
     if (!this._runnerPickerOpen || !this._selected) return nothing;
     const loadingSession = this._refinementSessionLoading === this._selected.id;
@@ -2091,36 +2043,10 @@ export class RoadmapPanel extends LitElement {
             : nothing}
         <div class="grid">
           <div class="full">
-            ${this._renderRefinementChoice({
-              label: 'Runner',
-              defaultLabel: `Default (${DEFAULT_ROADMAP_REFINEMENT_RUNNER})`,
-              testId: 'roadmap-refine-runner',
-              value: this._refineRunner,
-              options: this._refinementRunnerOptions,
-              onChange: (runner) => {
-                this._refineRunner = runner;
-                this._refineModel = modelForRunnerChange(runner, this._refineModel, {
-                  defaultRunner: DEFAULT_ROADMAP_REFINEMENT_RUNNER,
-                });
-              },
-            })}
-          </div>
-          <div class="full">
-            ${this._renderRefinementChoice({
-              label: 'Model',
-              defaultLabel: `Default (${this._refinementDefaultModelLabel})`,
-              testId: 'roadmap-refine-model',
-              value: this._refineModel,
-              options: this._refinementModelOptions,
-              onChange: (model) => {
-                this._refineModel = model;
-              },
-            })}
-            ${this._visibleModelsError
-              ? html`<div class="muted" role="status" data-testid="roadmap-visible-models-error">
-                  Saved visible models could not be loaded: ${this._visibleModelsError}
-                </div>`
-              : nothing}
+            <review-dispatch-picker
+              .viewModel=${this._refinementPicker}
+              @review-dispatch-change=${() => this.requestUpdate()}
+            ></review-dispatch-picker>
           </div>
           <div class="field full">
             Permission mode

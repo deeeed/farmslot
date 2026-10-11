@@ -6,9 +6,10 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  buildRunResolveDecisionParams,
   type DecisionListResult,
   Events,
+  improvementApplyOutcome,
+  type ImprovementApplyResult,
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
@@ -21,15 +22,23 @@ import {
   type RunRecipeRunsForRunResult,
   type RuntimePosturePreviewResult,
   type RuntimePostureStatusResult,
+  slotPickerViewModel,
   type TaskProgressResult,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import {
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+  reviewRequestContextForRun,
+} from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
   type ArtifactManifestEntry,
@@ -42,8 +51,10 @@ import {
 } from '../../lib/artifact-url';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
+import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import {
@@ -91,6 +102,12 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import {
+  GateReviewEntryCard,
+  PublishGuardNotice,
+} from '../gate-review/components/gate-review-panels';
+import { PlanningChoices } from '../planning/PlanningControls';
+import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
 
@@ -113,6 +130,7 @@ import {
   RunGateParkNotice,
 } from './components/ResourcePostureGatePanel';
 import { decisionWorkspaceStyles as styles } from './styles/decision-workspace.styles';
+import { useDecisionCIContext } from './use-decision-ci-context';
 
 const TONE_COLORS = {
   ok: colors.statusOk,
@@ -142,11 +160,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     artifact?: string | string[];
   }>();
   const resolvedDecisionId = routeParamString(decisionId) || routeParamString(id);
+  const reviewPicker = useMemo(
+    () =>
+      new ReviewDispatchViewModel({
+        context: { allowedActions: ['request-review'], allowSequence: true },
+      }),
+    [resolvedDecisionId],
+  );
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const connection = useConnectedTransport();
   const storeDecision = useDecisionStore((s) =>
     s.decisions.find((d) => d.id === resolvedDecisionId),
   );
@@ -159,12 +185,22 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     null,
   );
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
+  useEffect(() => {
+    reviewPicker.setContext({
+      ...reviewPicker.context,
+      reviewLineages: reviewLineagesForRun(sourceRun),
+      reviewContext: reviewRequestContextForRun(sourceRun),
+    });
+  }, [reviewPicker, sourceRun]);
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
   const [recipeArtifactCount, setRecipeArtifactCount] = useState<number | null>(null);
   const [recipeAvailabilityError, setRecipeAvailabilityError] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<{ decisionId: string; slotId: string } | null>(
+    null,
+  );
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsetsRef = useRef<Partial<Record<DecisionSectionKey, number>>>({});
   const documentAbortRef = useRef<AbortController | null>(null);
@@ -237,6 +273,22 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     () => (decisionWithRunContext ? presentDecision(decisionWithRunContext) : null),
     [decisionWithRunContext],
   );
+  const ciContext = useDecisionCIContext(
+    decisionWithRunContext,
+    presentation?.prNumber ?? null,
+    sourceRun?.project ?? presentation?.project ?? null,
+    presentation?.repo ?? null,
+  );
+  const slotPicker = useMemo(
+    () =>
+      decision?.payload?.kind === 'slot_picker'
+        ? slotPickerViewModel(
+            decision.payload,
+            selectedSlot?.decisionId === decision.id ? selectedSlot.slotId : null,
+          )
+        : null,
+    [decision, selectedSlot],
+  );
   const decisionRouteContext = useMemo(
     () => decisionWorkspaceRouteParams(presentation?.kind),
     [presentation?.kind],
@@ -251,6 +303,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     sourceRun?.updatedAt ?? '',
   );
   const runPosture = runPostureStatus.state?.posture;
+  // The gate review's publish guard applies here too: this tab sends the same actions.
+  const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const withheldActions = useMemo(
+    () =>
+      new Map(
+        (humanGate?.actions ?? []).flatMap((action) =>
+          action.disabledReason ? [[action.id, action.disabledReason] as const] : [],
+        ),
+      ),
+    [humanGate],
+  );
+  const withheldActionsRef = useRef(withheldActions);
+  withheldActionsRef.current = withheldActions;
   // Only `run.resolveDecision` carries a typed `resourcePosture`. A decision
   // reached through the route or `context.runId` alone resolves through
   // `decision.resolve`, which has nowhere to put a choice, so the choices must
@@ -428,8 +493,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       setSourceRun(null);
       return;
     }
-    void refreshSourceRun('initial load');
-  }, [refreshSourceRun, sourceRunId]);
+    // Each reconnect re-reads: the publish guard judges this run's reviews.
+    if (connection === null) return;
+    void refreshSourceRun('connect');
+  }, [connection, refreshSourceRun, sourceRunId]);
 
   useEffect(() => {
     if (!sourceRunId) {
@@ -514,30 +581,36 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     return () => clearInterval(timer);
   }, [fetchTaskProgress, sourceRun]);
   const resolveAction = useCallback(
-    (actionId: string) => {
+    (actionId: string, selectionData?: Record<string, unknown>) => {
       if (!client || !decision) return;
+      if (slotPicker && actionId === 'pick' && !slotPicker.selectedSlotId) {
+        Alert.alert('Choose a slot', 'Select an available candidate before using this action.');
+        return;
+      }
       // A choice the Gateway already refused, or one whose effect is still
       // unproven, must not be sent: the decision would be consumed and the
       // refusal repeated with nothing left to undo.
       // Re-derived here rather than trusting the effect to have run: a decision
       // that cannot carry a choice, or a run that has left the wait, must not be
       // blocked by a verdict about a choice that no longer applies to it.
+      const withheld = withheldActionsRef.current.get(actionId);
+      if (withheld) {
+        Alert.alert('Publish approval is disabled', withheld);
+        return;
+      }
       const gate = runPostureGateForContext(postureGate, { gateKey, ...postureAvailability });
       const postureBlock = postureResolveBlock(gate, postureAvailability);
       if (!canResolveWithPostureChoice(gate, postureAvailability)) {
         Alert.alert('Resource posture', postureBlock.message);
         return;
       }
-      const method = decision.runMeta ? 'run.resolveDecision' : 'decision.resolve';
       const resourcePosture = postureChoiceForResolve(gate, postureAvailability);
-      const params = decision.runMeta
-        ? buildRunResolveDecisionParams({
-            runId: decision.runMeta.runId,
-            decision,
-            actionId,
-            ...(resourcePosture ? { resourcePosture } : {}),
-          })
-        : { decisionId: decision.id, actionId };
+      const { method, params } = decisionResolveRequest(
+        decision,
+        actionId,
+        resourcePosture,
+        slotPicker && actionId === 'pick' ? { slotId: slotPicker.selectedSlotId } : selectionData,
+      );
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -553,9 +626,22 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         {
           text: 'Send',
           onPress: () => {
+            // The guard may have changed while the confirmation was open.
+            const withheldNow = withheldActionsRef.current.get(actionId);
+            if (withheldNow) {
+              Alert.alert('Publish approval is disabled', withheldNow);
+              return;
+            }
             client
               .request(method, params)
-              .then(() => {
+              .then((result) => {
+                if (method === Methods.IMPROVEMENT_APPLY) {
+                  const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
+                  if (!outcome.passed) {
+                    Alert.alert('Improvement remains pending', outcome.message);
+                    return;
+                  }
+                }
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 removeDecision(decision.id);
                 if (embedded && sourceRunId) {
@@ -614,6 +700,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       router,
       runPostureStatus.state,
       sourceRunId,
+      slotPicker,
     ],
   );
 
@@ -877,6 +964,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             </View>
           ) : null}
         </View>
+
+        {decision.type === HUMAN_GATE_DECISION_TYPE && !decision.resolvedAt && sourceRunId ? (
+          <GateReviewEntryCard
+            testID="companion-decision-open-gate-review"
+            onOpen={() => router.push(gateReviewHref(sourceRunId, decision.id))}
+          />
+        ) : null}
 
         {!embedded && requestedArtifactPath ? (
           <DecisionFocusedArtifactCard
@@ -1184,8 +1278,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           />
         ) : null}
 
-        {!embedded ? (
+        {!embedded || ciContext.view ? (
           <DecisionWorkspaceCockpit
+            ci={ciContext.view}
+            ciBusy={ciContext.busy}
+            ciError={ciContext.error}
+            onRefreshCI={ciContext.refresh}
+            onOpenCILink={ciContext.openLink}
+            compact={embedded}
             presentation={presentation}
             currentDecisionId={decision.id}
             readyDecisionId={readyDecisionId}
@@ -1507,6 +1607,31 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           {decision.resolvedAt ? null : (
             <RunGateParkNotice view={sourceRun ? liveGateParkView(sourceRun) : null} />
           )}
+          {decision.resolvedAt || !slotPicker ? null : (
+            <View>
+              <PlanningChoices
+                label="Candidate slot"
+                testID="companion-decision-slot-picker"
+                options={slotPicker.candidates.map((candidate) => ({
+                  value: candidate.slotId,
+                  label: `${candidate.slotId}\n${candidate.branch || 'default branch'} · ${candidate.machine} · ${candidate.lifecycle} · score ${candidate.score}`,
+                }))}
+                value={slotPicker.selectedSlotId ?? ''}
+                disabled={!client}
+                onChange={(slotId) => setSelectedSlot({ decisionId: decision.id, slotId })}
+              />
+              {slotPicker.candidates.length === 0 ? (
+                <Text style={styles.safetyText}>
+                  No available candidates. Wait for a slot or abort.
+                </Text>
+              ) : null}
+              {slotPicker.unavailableCount > 0 ? (
+                <Text style={styles.safetyText}>
+                  {slotPicker.unavailableCount} busy or disabled slot(s) cannot be selected.
+                </Text>
+              ) : null}
+            </View>
+          )}
           {decision.resolvedAt ? (
             <View style={styles.resolvedDecisionCard}>
               <Text style={styles.safetyTitle}>Already resolved</Text>
@@ -1516,22 +1641,54 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               </Text>
             </View>
           ) : (
-            presentation.actions.map((action) => (
-              <Pressable
-                key={action.id}
-                style={[
-                  styles.actionButton,
-                  action.style === 'primary' && { backgroundColor: colors.accent },
-                  action.style === 'danger' && { backgroundColor: colors.statusFail },
-                ]}
-                onPress={() => resolveAction(action.id)}
-              >
-                <Text style={styles.actionText}>{action.label}</Text>
-                {action.description && (
-                  <Text style={styles.actionDescription}>{action.description}</Text>
-                )}
-              </Pressable>
-            ))
+            <>
+              {humanGate ? (
+                <PublishGuardNotice
+                  actions={humanGate.actions}
+                  testID="companion-decision-publish-guard"
+                />
+              ) : null}
+              {presentation.actions.map((action) => {
+                const disabled =
+                  withheldActions.has(action.id) ||
+                  (!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId);
+                if (action.id === 'request-review') {
+                  return (
+                    <ReviewDispatchPicker
+                      key={action.id}
+                      model={reviewPicker}
+                      testID="companion-gate-review"
+                      disabled={!client || disabled}
+                      action="request-review"
+                      actionLabel={action.label}
+                      onInvoke={(actionId, payload) =>
+                        resolveAction(actionId, { reviewRequest: payload })
+                      }
+                    />
+                  );
+                }
+                return (
+                  <Pressable
+                    key={action.id}
+                    testID={`companion-decision-action-${action.id}`}
+                    disabled={disabled}
+                    accessibilityState={{ disabled }}
+                    style={[
+                      styles.actionButton,
+                      action.style === 'primary' && { backgroundColor: colors.accent },
+                      action.style === 'danger' && { backgroundColor: colors.statusFail },
+                      disabled && styles.actionButtonDisabled,
+                    ]}
+                    onPress={() => resolveAction(action.id)}
+                  >
+                    <Text style={styles.actionText}>{action.label}</Text>
+                    {action.description && (
+                      <Text style={styles.actionDescription}>{action.description}</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </>
           )}
           <View
             testID="companion-screen-decision-workspace-end"

@@ -29,6 +29,15 @@ const packages = [
       "const m = await import('./packages/protocol/dist/index.js'); if (!m.PROTOCOL_VERSION) throw new Error('missing PROTOCOL_VERSION export');",
   },
   {
+    name: '@farmslot/review-dispatch',
+    dir: 'packages/review-dispatch',
+    publicDoc: 'https://farmslot.io/docs/reference/review-modes-warm-cold',
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts'],
+    packRequiredFiles: ['README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts'],
+    importCheck:
+      "const m = await import('./packages/review-dispatch/dist/index.js'); if (typeof m.ReviewDispatchViewModel !== 'function' || typeof m.parseReviewSequence !== 'function') throw new Error('missing shared review picker exports');",
+  },
+  {
     name: '@farmslot/recipe-runner',
     dir: 'packages/recipe-runner',
     publicDoc: 'https://farmslot.io/docs/architecture/recipe-runner',

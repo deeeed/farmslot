@@ -69,3 +69,6 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [060](060-sub-task-observability.md)                     | Sub-task observability through child checklist units                    | Accepted |
 | [061](061-structured-assessment-providers.md)            | Structured assessment providers                                         | Accepted |
 | [062](062-recorded-run-evidence.md)                      | Recorded run evidence                                                   | Accepted |
+| [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Accepted |
+| [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks before publication                       | Accepted |
+| [065](065-fail-closed-run-lifecycle.md)                  | Fail-closed run lifecycle                                               | Accepted |

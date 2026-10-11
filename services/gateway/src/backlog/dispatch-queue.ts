@@ -1,6 +1,5 @@
 // dispatch-queue.ts — In-memory queue + JSON file persistence
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
-
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import path from 'node:path';
 
 import {
   assertPRExecutionProfile,
-  assertStaticReviewLoopRequests,
   type DispatchQueueUpdateParams,
   isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
@@ -24,6 +22,13 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
+import {
+  assertReviewPolicy,
+  assertReviewSequence,
+  assertWarmReviewContext,
+  executionModelFromSelection,
+  parseReviewRequestContext,
+} from '@farmslot/review-dispatch';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
@@ -41,6 +46,7 @@ import {
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
@@ -299,6 +305,8 @@ export async function loadQueue(
     const migrationOpen = !existsSync(QUEUE_PROVENANCE_MARKER);
     let migrated = 0;
     for (const item of items) {
+      assertCurrentReviewConfiguration(item, 'queued dispatch');
+      if (item.reviewSequence) assertReviewSequence(item.reviewSequence, { maxRows: 5 });
       const { originator: storedOriginator, ...publicItem } = item;
       const normalized: QueueRecord = {
         ...publicItem,
@@ -405,7 +413,7 @@ export async function loadQueue(
       await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
       console.log('[provenance] dispatch queue migrated 0 item(s)');
     } else if (code !== 'ENOENT') {
-      console.warn(`[dispatch-queue] failed to load queue: ${(err as Error).message}`);
+      throw err;
     }
   }
 }
@@ -438,6 +446,13 @@ export function addItem(
   params: InternalDispatchQueueAddParams,
   originator: WorkOriginator,
 ): QueueItem {
+  assertCurrentReviewConfiguration(params, 'dispatch');
+  if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  if (params.reviewSequenceContext)
+    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
+  if (params.reviewSequence)
+    assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
   if (params.workflowExecution) assertPRExecutionProfile(params.workflowExecution);
   const transport =
     params.transport ?? (params.parentRunId ? getRun(params.parentRunId)?.transport : undefined);
@@ -549,12 +564,14 @@ export function addItem(
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
     startRef,
-    reviewDepth: params.reviewDepth,
-    reviewScope: params.reviewScope,
+    reviewPolicy: params.reviewPolicy,
+    reviewMode: params.reviewMode,
     reviewValidationDepth: params.reviewValidationDepth,
     reviewAutoFinish: params.reviewAutoFinish,
     publishReview: params.publishReview,
-    pendingReviewPlan: params.pendingReviewPlan,
+    reviewSequence: params.reviewSequence,
+    reviewSequenceContext: params.reviewSequenceContext,
+    reviewContext: params.reviewContext,
     evalCell: params.evalCell,
     priority: params.priority ?? 10,
     createdAt: new Date().toISOString(),
@@ -867,8 +884,17 @@ export function updateItem(
   if (item.status !== 'queued') {
     throw new Error(`Cannot update queue item ${params.itemId}: item is ${item.status}`);
   }
-  if (params.pendingReviewPlan !== undefined)
-    assertStaticReviewLoopRequests(params.pendingReviewPlan);
+  if (params.reviewSequence !== undefined)
+    if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  const nextSequence =
+    params.reviewSequence === undefined ? item.reviewSequence : (params.reviewSequence ?? []);
+  const nextContext =
+    params.reviewSequenceContext === undefined
+      ? item.reviewSequenceContext
+      : (params.reviewSequenceContext ?? undefined);
+  if (nextContext) parseReviewRequestContext(nextContext, nextSequence?.length ?? 0);
+  if (nextSequence) assertWarmReviewContext(nextSequence, nextContext);
+  if (params.reviewContext) parseReviewRequestContext(params.reviewContext, 1);
   const workflowExecution =
     item.workflowExecution && (params.slotId !== undefined || params.allowedSlots !== undefined)
       ? constrainDirectWorkflowExecution(item.workflowExecution, {
@@ -886,13 +912,25 @@ export function updateItem(
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
   }
   if (workflowExecution) item.workflowExecution = workflowExecution;
-  if (params.pendingReviewPlan !== undefined) {
-    if (params.pendingReviewPlan?.length)
-      item.pendingReviewPlan = structuredClone(params.pendingReviewPlan);
-    else delete item.pendingReviewPlan;
+  if (params.reviewSequence !== undefined) {
+    if (params.reviewSequence?.length) item.reviewSequence = structuredClone(params.reviewSequence);
+    else delete item.reviewSequence;
     // The dispatch cycle re-checks every migration constraint and holds the row again if one remains.
     if (item.waitingReason?.startsWith(REVIEW_QA_MIGRATION_HOLD)) delete item.waitingReason;
   }
+  if (params.reviewContext !== undefined) {
+    if (params.reviewContext === null) delete item.reviewContext;
+    else item.reviewContext = parseReviewRequestContext(params.reviewContext, 1);
+  }
+  if (params.reviewSequenceContext !== undefined) {
+    if (params.reviewSequenceContext === null) delete item.reviewSequenceContext;
+    else
+      item.reviewSequenceContext = parseReviewRequestContext(
+        params.reviewSequenceContext,
+        item.reviewSequence?.length ?? 0,
+      );
+  }
+  if (item.reviewSequence) assertWarmReviewContext(item.reviewSequence, item.reviewSequenceContext);
   setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();
@@ -1166,6 +1204,7 @@ export async function selectPRQueueExecution(
   }
   for (const group of groups.values()) {
     const model = group[0];
+    const execution = executionModelFromSelection(model);
     const allowedSlots = [
       ...new Set(
         group
@@ -1193,15 +1232,15 @@ export async function selectPRQueueExecution(
       slotId: undefined,
       allowedSlots,
       runner: model.runner,
-      model: model.model,
-      effort: model.effort,
+      model: execution.model,
+      effort: execution.effort ?? undefined,
     };
     const slotId = await selectQueueDispatchSlot(slots, proposed);
     if (slotId) {
       item.allowedSlots = allowedSlots;
       item.runner = model.runner;
-      item.model = model.model;
-      item.effort = model.effort;
+      item.model = execution.model;
+      item.effort = execution.effort ?? undefined;
       return slotId;
     }
   }
@@ -1226,7 +1265,8 @@ async function selectQueuedReviewWorkspace(
             machine: item.reviewWorkspaceTarget.machine,
             runner: item.runner ?? '',
             model: item.model ?? '',
-            effort: item.effort,
+            effort: item.effort ?? null,
+            mode: item.reviewMode ?? 'cold',
             transport: item.transport,
             nativeProfile: item.nativeProfile,
           },
@@ -1242,6 +1282,7 @@ async function selectQueuedReviewWorkspace(
   for (const choice of candidates) {
     let eligible = false;
     try {
+      const execution = executionModelFromSelection(choice);
       const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
       assertReviewWorkspacePlacement(proposed);
       const admission = await inspectReviewWorkspaceTarget(
@@ -1249,8 +1290,8 @@ async function selectQueuedReviewWorkspace(
           project: item.project,
           machine: choice.machine,
           runner: choice.runner,
-          model: choice.model,
-          effort: choice.effort,
+          model: execution.model,
+          effort: execution.effort ?? undefined,
           transport: choice.transport,
           nativeProfile: choice.nativeProfile,
         },
@@ -1261,8 +1302,8 @@ async function selectQueuedReviewWorkspace(
       assertReviewWorkspaceAdmitted(admission);
       item.reviewWorkspaceTarget = { machine: choice.machine };
       item.runner = choice.runner;
-      item.model = choice.model;
-      item.effort = choice.effort;
+      item.model = execution.model;
+      item.effort = execution.effort ?? undefined;
       item.transport = choice.transport;
       item.nativeProfile = choice.nativeProfile;
       item.executionTemplateId = admission.project.staticReview!.templateId;
@@ -1384,7 +1425,7 @@ async function tryDispatchNextOnce(): Promise<void> {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
     try {
-      assertStaticReviewLoopRequests(item.pendingReviewPlan);
+      if (item.reviewSequence) assertReviewSequence(item.reviewSequence, { maxRows: 5 });
     } catch (error) {
       if (!(error instanceof ReviewQaConfigurationError)) throw error;
       // A queued legacy live review loop needs an operator choice: dispatch.queue.update replaces

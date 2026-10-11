@@ -26,7 +26,9 @@ import {
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
+import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   artifactsForRecipeRun,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -35,6 +37,7 @@ import {
 } from '../../lib/artifact-url';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { gateReviewHref, openHumanGateDecision } from '../../lib/gate-review';
 import { nativeRunConversationParams } from '../../lib/native-worker-target';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
@@ -67,6 +70,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
+import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
@@ -114,6 +118,7 @@ export default function RunDetailScreen() {
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
   const connectionStatus = useConnectionStore((s) => s.status);
+  const connection = useConnectedTransport();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
@@ -216,8 +221,10 @@ export default function RunDetailScreen() {
   }, [client, resolvedRunId]);
 
   useEffect(() => {
+    // Each reconnect re-reads: the operator packets' publish guard judges this run.
+    if (connection === null) return;
     void loadRun();
-  }, [loadRun]);
+  }, [connection, loadRun]);
 
   const noteRecipeRunsUnavailable = useCallback((err: Error) => {
     if (isGatewayBackgroundPauseError(err)) {
@@ -529,6 +536,7 @@ export default function RunDetailScreen() {
     });
   };
   const reviewPackageActiveTab = isTimelineTab ? 'timeline' : 'evidence';
+  const openGate = openHumanGateDecision(run);
   const standaloneDecisions = (run.decisions ?? []).filter(
     (decision) => workspaceDecisionKind(decision) === 'retrospective',
   );
@@ -574,6 +582,13 @@ export default function RunDetailScreen() {
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
+
+        {openGate ? (
+          <GateReviewEntryCard
+            testID="companion-open-gate-review"
+            onOpen={() => router.push(gateReviewHref(run.id, openGate.id))}
+          />
+        ) : null}
 
         {reviewPackageActiveTab === 'timeline' && run.transport === 'native' ? (
           <NativeWorkerLinks run={run} />
@@ -975,6 +990,9 @@ export default function RunDetailScreen() {
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
+                onOpenEvidence={(criterionId, path) =>
+                  router.push(acceptanceEvidenceHref(run.id, criterionId, path))
+                }
               />
             ) : null}
             {activeTaskProgress ? (

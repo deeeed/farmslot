@@ -44,7 +44,7 @@ function run(
     steps: [],
     acceptanceCriteria: [],
     ciChecks: [],
-    selfReview: { available: false },
+    review: { available: false },
     familyScope: 'production',
     humanGrade: { available: false },
     proofTargets: [],
@@ -141,7 +141,7 @@ test('buildRunTokenSummary prefers gate summary roles and byModel', () => {
     kind: 'ready',
     worker: { model: 'claude-sonnet', turns: 12 },
     review: {
-      independentReviews: [],
+      reviews: [],
       passingReviews: 0,
       totalUnresolved: 0,
       didAnyReviewTriggerReWork: false,

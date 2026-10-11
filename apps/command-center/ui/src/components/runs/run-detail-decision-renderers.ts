@@ -5,6 +5,7 @@ import { marked } from 'marked';
 
 import {
   type BranchAffinityNudgePayload,
+  ciDecisionCheckView,
   DEFAULT_BRANCH,
   interactiveHandoffAllowsExtend,
   isDispatchScoreStale,
@@ -16,6 +17,7 @@ import {
   type RunDecision,
   runOutputCloseUnavailableReason,
   type SlotPickerPayload,
+  slotPickerViewModel,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -138,12 +140,12 @@ export interface RunDecisionRenderContext {
 
 export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions'>): string {
   const ids = new Set((decision.actions ?? []).map((action) => action.id));
-  if (ids.has('continue-review-fix')) return 'Independent review found issues';
+  if (ids.has('continue-review-fix')) return 'Review found issues';
   if (ids.has('approve-publish-unresolved')) return 'Publication gate: review blocked';
   if (ids.has('approve-publish') || ids.has('ready')) {
     return 'Worker finished — verify before marking ready';
   }
-  if (ids.has('request-extra-review')) return 'Publication gate — review required';
+  if (ids.has('request-review')) return 'Publication gate — review required';
   return 'Action required';
 }
 
@@ -454,6 +456,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                                   )}
                                 </div>
                               `}
+                        ${renderCIDecisionChecks(pending, run, context)}
                         ${isCollision
                           ? renderCollisionPriorRuns(pending, context.allRuns)
                           : isReviewContinuation
@@ -515,6 +518,56 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   `;
 }
 
+function renderCIDecisionChecks(
+  decision: RunDecision,
+  run: Run,
+  context: RunDecisionRenderContext,
+) {
+  const timeout = decision.type === 'ci_ci_timeout';
+  const view = ciDecisionCheckView({
+    decision,
+    pr: run.prNumber,
+    current: timeout ? context.liveTimeoutPrStatus : null,
+    currentState: !timeout
+      ? 'not-requested'
+      : context.liveTimeoutPrStatusRefreshing
+        ? 'loading'
+        : context.liveTimeoutPrStatusFailed
+          ? 'error'
+          : context.liveTimeoutPrStatus
+            ? 'ready'
+            : 'loading',
+  });
+  if (!view) return nothing;
+  return html`<div class="gate-description" data-testid="decision-ci-context">
+    ${[view.snapshot, view.current].map((group) =>
+      group
+        ? html`<section>
+            <strong>${group.label}</strong>
+            <p>Fetched: ${group.age}${group.note ? ` · ${group.note}` : ''}</p>
+            ${group.state === 'available' && !group.rows.length
+              ? html`<p>No checks reported.</p>`
+              : nothing}
+            ${group.rows.map(
+              (check) =>
+                html`<p>
+                  <strong>${check.name}</strong><br />
+                  Status: ${check.status} · Conclusion: ${check.conclusion} · Check activity:
+                  ${check.age}
+                  ${check.detailsUrl
+                    ? html` ·
+                        <a href=${check.detailsUrl} target="_blank" rel="noopener noreferrer"
+                          >Open check</a
+                        >`
+                    : ' · Link: Not recorded'}
+                </p>`,
+            )}
+          </section>`
+        : nothing,
+    )}
+  </div>`;
+}
+
 function renderCITimeoutDecisionDescription(
   decision: RunDecision,
   context: RunDecisionRenderContext,
@@ -559,7 +612,7 @@ function renderCITimeoutDecisionDescription(
           <div
             style="color:${colors.textMuted}; font-size:${fonts.sizeXs}; text-transform:uppercase; margin-bottom:4px"
           >
-            Timeout snapshot
+            Monitor reason
           </div>
           <pre style="white-space:pre-wrap; margin:0">${description}</pre>
         </div>
@@ -581,9 +634,11 @@ function renderCITimeoutDecisionDescription(
 
 function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionRenderContext) {
   const payload = decision.payload as SlotPickerPayload;
-  const candidates = payload.candidates;
-  const freeOnes = candidates.filter((c) => c.score >= 0);
-  const busyOnes = candidates.filter((c) => c.score < 0);
+  const {
+    candidates: freeOnes,
+    unavailableCount,
+    selectedSlotId,
+  } = slotPickerViewModel(payload, context.selectedSlotId);
 
   return html`
     <style>
@@ -659,7 +714,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
     <div class="sp-list">
       ${freeOnes.map((c) => {
         const isStale = isDispatchScoreStale(c.score);
-        const selected = context.selectedSlotId === c.slotId;
+        const selected = selectedSlotId === c.slotId;
         return html`
           <div
             class="sp-slot ${selected ? 'selected' : ''}"
@@ -677,10 +732,10 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
           </div>
         `;
       })}
-      ${busyOnes.length > 0
+      ${unavailableCount > 0
         ? html`
             <div style="font-size:10px;color:${colors.textMuted};padding:8px 12px">
-              ${busyOnes.length} busy/disabled slot(s) not shown
+              ${unavailableCount} busy/disabled slot(s) not shown
             </div>
           `
         : nothing}
@@ -689,10 +744,10 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
       <button
         class="gate-action-btn"
         style="background:${colors.accent}; border-color:${colors.accent}; color:#fff"
-        ?disabled=${!context.selectedSlotId || context.actionsBlocked}
+        ?disabled=${!selectedSlotId || context.actionsBlocked}
         @click=${() => context.resolveSlotPick(run.id, decision.id)}
       >
-        ${context.selectedSlotId ? `Use ${context.selectedSlotId}` : 'Select a slot'}
+        ${selectedSlotId ? `Use ${selectedSlotId}` : 'Select a slot'}
       </button>
       ${context.selectedSlotId && context.resetBranch
         ? html`

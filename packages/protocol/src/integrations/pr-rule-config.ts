@@ -43,57 +43,42 @@ function integer(value: unknown, name: string, min: number, max: number): void {
 export function assertPRReviewOptions(value: unknown): asserts value is PRReviewOptions {
   record(value, 'review options');
   keys(value, [
-    'sessionIntent',
-    'scope',
+    'mode',
+    'reviewContext',
     'workflow',
     'qaProfileId',
     'qaInputs',
-    'validationDepth',
-    'busySession',
     'publishReview',
     'autoFinish',
   ]);
-  if (value.sessionIntent !== 'resume' && value.sessionIntent !== 'reset')
-    throw new Error('Review session must be Continue or Fresh');
-  if (value.scope !== 'incremental' && value.scope !== 'full')
-    throw new Error('Review scope must be incremental or full');
-  if (
-    value.validationDepth !== undefined &&
-    value.validationDepth !== 'static-code' &&
-    value.validationDepth !== 'full-live'
-  )
-    throw new Error('Review validation must be static-code or full-live');
+  if (value.mode !== 'warm' && value.mode !== 'cold')
+    throw new Error('Review mode must be warm or cold');
+  if (value.reviewContext !== undefined) {
+    record(value.reviewContext, 'review context');
+    keys(value.reviewContext, ['reviewLineages']);
+    if (!Array.isArray(value.reviewContext.reviewLineages))
+      throw new Error('reviewLineages must be an array');
+    for (const lineage of value.reviewContext.reviewLineages) {
+      if (lineage === null) continue;
+      record(lineage, 'review lineage');
+      keys(lineage, ['repository', 'prNumber', 'reviewId']);
+      text(lineage.repository, 'review repository');
+      text(lineage.reviewId, 'reviewId');
+      integer(lineage.prNumber, 'review PR number', 1, Number.MAX_SAFE_INTEGER);
+    }
+  }
   if (value.workflow !== undefined && value.workflow !== 'review' && value.workflow !== 'qa')
     throw new Error('Review workflow must be review or qa');
-  if (
-    value.workflow &&
-    value.validationDepth &&
-    (value.workflow === 'qa') !== (value.validationDepth === 'full-live')
-  )
-    throw new Error('Review workflow conflicts with legacy validation depth');
   if (value.autoFinish !== undefined && typeof value.autoFinish !== 'boolean')
     throw new Error('autoFinish must be boolean');
   if (value.publishReview !== undefined && typeof value.publishReview !== 'boolean')
     throw new Error('publishReview must be boolean');
-  if (
-    value.publishReview === true &&
-    (value.workflow === 'qa' || value.validationDepth === 'full-live')
-  )
+  if (value.publishReview === true && value.workflow === 'qa')
     throw new Error('QA cannot publish a static PR review');
   if (value.qaProfileId !== undefined) text(value.qaProfileId, 'QA preset id');
   if (value.qaInputs !== undefined) record(value.qaInputs, 'QA inputs');
-  if (
-    (value.qaProfileId !== undefined || value.qaInputs !== undefined) &&
-    value.workflow !== 'qa' &&
-    value.validationDepth !== 'full-live'
-  )
+  if ((value.qaProfileId !== undefined || value.qaInputs !== undefined) && value.workflow !== 'qa')
     throw new Error('QA preset inputs require the QA workflow');
-  if (
-    value.busySession !== undefined &&
-    value.busySession !== 'wait' &&
-    value.busySession !== 'fresh'
-  )
-    throw new Error('Busy reviewer policy must be wait or fresh');
 }
 
 export function assertPRReviewRequest(value: unknown): asserts value is PRReviewRequest {

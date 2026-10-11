@@ -8,10 +8,13 @@
       "saved-report": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/review-report-recovery.mjs",
-        "intent": "Verify recovery after checkout cleanup preserves the exact report hash and commit, completes monitor without another dispatch and presents the original report for a publication decision.",
+        "intent": "Saved review recovery retains the original report without another dispatch.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

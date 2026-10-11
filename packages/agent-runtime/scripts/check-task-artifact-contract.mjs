@@ -5,7 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
+const {
+  expandedArtifactsForCommand,
+  deterministicChecks,
+} = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
 const { acceptanceContractIssues } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -590,13 +593,13 @@ if (contractPath && terminalCommand && existsSync(contractPath)) {
     issues.push(`${contractPath}: invalid worker terminal contract JSON (${error.message})`);
   }
 }
-const isSelfReviewTerminal = terminalContract?.flowType === 'self-review';
+const isReviewTerminal = terminalContract?.flowType === 'review';
 const hasRecipe = fileExists('artifacts/recipe.json');
 
 // A reviewer must be able to report ISSUES when worker-owned proof is invalid.
 // Its terminal gate validates only the reviewer-owned feedback artifact below;
 // contribution and fix flows still validate the complete proof package.
-if (!isSelfReviewTerminal) {
+if (!isReviewTerminal) {
   const hasRecipeDecision = fileExists('artifacts/recipe-decision.json');
   const recipeDecisionText = readText('artifacts/recipe-decision.json');
   if (hasRecipeDecision) {
@@ -689,7 +692,10 @@ if (fileExists(SUBTASK_INDEX_REL)) {
 // The acceptance ledger is the run's proof record (ADR-060): every criterion task
 // init registered in inputs/handoff.json needs a verdict, and `weak` / `missing`
 // fails unless the flow's terminal contract waives it.
-if (flags.has('--require-acceptance-status')) {
+if (
+  flags.has('--require-acceptance-status') ||
+  (terminalCommand === 'complete' && !isReviewTerminal)
+) {
   for (const issue of acceptanceContractIssues(taskDir, {
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
   })) {
@@ -707,9 +713,7 @@ if (flags.has('--require-learnings')) {
 if (contractPath && terminalCommand && !existsSync(contractPath)) {
   issues.push(`${contractPath}: explicit worker terminal contract missing`);
 } else if (terminalContract && terminalCommand) {
-  const contract = isSelfReviewTerminal
-    ? { ...terminalContract, whenPresent: [] }
-    : terminalContract;
+  const contract = isReviewTerminal ? { ...terminalContract, whenPresent: [] } : terminalContract;
   const expanded = expandedArtifactsForCommand(contract, terminalCommand, fileExists);
   for (const artifactPath of expanded.artifacts) {
     if (flags.has('--skip-learnings') && artifactPath === 'artifacts/learnings.md') continue;
@@ -728,9 +732,29 @@ if (contractPath && terminalCommand && !existsSync(contractPath)) {
   }
 }
 
+const deterministicResults = [];
+if (terminalCommand !== 'blocked') {
+  const checklists = new Set(
+    (terminalContract?.deterministicChecks ?? []).map((step) => step.checklist),
+  );
+  if (checklists.size === 0) checklists.add(undefined);
+  for (const checklist of checklists) {
+    try {
+      const result = deterministicChecks.evaluate(taskDir, checklist);
+      issues.push(...result.issues);
+      deterministicResults.push(...result.checks);
+    } catch (error) {
+      issues.push(`Deterministic checks cannot be validated: ${error.message}`);
+    }
+  }
+}
+
 if (issues.length > 0) {
   console.error('TASK_ARTIFACT_CONTRACT_FAIL');
   for (const issue of issues) console.error(`- ${issue}`);
   process.exit(1);
 }
 console.log('TASK_ARTIFACT_CONTRACT_PASS');
+if (deterministicResults.length > 0) {
+  console.log(`${deterministicChecks.outputPrefix}${JSON.stringify(deterministicResults)}`);
+}

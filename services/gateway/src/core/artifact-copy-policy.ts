@@ -43,8 +43,8 @@ export const ARTIFACT_COPY_EXCLUDED_DIR_NAMES = ['node_modules', '.git'] as cons
 
 // Review output directories the gateway writes at the top of artifacts/: a
 // prefix followed by the loop number only. A worker directory that merely
-// starts with a prefix (self-review-fix-20261009/) is the worker's.
-const GATEWAY_OWNED_REVIEW_DIR_PREFIXES = ['review-loop-', 'self-review-', 'independent-review-'];
+// starts with a prefix (review-fix-20261009/) is the worker's.
+const GATEWAY_OWNED_REVIEW_DIR_PREFIXES = ['review-loop-', 'review-', 'review-'];
 
 function gatewayOwnedReviewDirNumber(name: string): string | null {
   const prefix = GATEWAY_OWNED_REVIEW_DIR_PREFIXES.find((candidate) => name.startsWith(candidate));
@@ -71,7 +71,7 @@ export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
     (GATEWAY_OWNED_RUN_ARTIFACTS as readonly string[]).includes(name) ||
     name.startsWith('diff.txt.previous.') ||
     isGatewayOwnedReviewDirName(name) ||
-    /^(self-review|independent-review)-\d+\.(json|md)$/.test(name) ||
+    /^(review|review)-\d+\.(json|md)$/.test(name) ||
     /^publication-gate-[a-z0-9-]+\.md$/i.test(name) ||
     /^pr-package\.(json|md)$/.test(name) ||
     name === 'workflow.mmd'

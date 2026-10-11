@@ -81,7 +81,7 @@ export async function prepareNativeReviewerRestart({
       assert.ok(!['failed', 'cancelled'].includes(run.status), run.error);
       return run.agentContexts.some(
         (context) =>
-          context.role === 'self-review' &&
+          context.role === 'review' &&
           (replyFault
             ? context.nativeSession?.generation && fs.existsSync(`${replyFault}.applied`)
             : context.nativeSession?.acceptedAt &&
@@ -91,7 +91,7 @@ export async function prepareNativeReviewerRestart({
     },
     timeoutMs,
   );
-  const context = run.agentContexts.find((context) => context.role === 'self-review');
+  const context = run.agentContexts.find((context) => context.role === 'review');
   const before = rpc('native.session.read', {
     ...pinnedWorkerTarget(runId, context.id, context.nativeSession.leaseId),
     limit: 1,
@@ -201,7 +201,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, explicit, 
         fs.readFileSync(path.join(state.cwd, state.context.signalFile), 'utf8'),
       );
       assert.equal(signal.status, 'complete');
-      assert.equal(rpc('run.get', { runId: state.runId }).run.status, 'self-reviewing');
+      assert.equal(rpc('run.get', { runId: state.runId }).run.status, 'reviewing');
       const binding = state.context.nativeSession;
       const closed = rpc('native.session.close', {
         sessionId,
@@ -234,7 +234,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, explicit, 
       () => rpc('run.get', { runId: state.runId }).run,
       (run) => {
         assert.ok(!['failed', 'cancelled'].includes(run.status), run.error);
-        const contexts = run.agentContexts.filter((context) => context.role === 'self-review');
+        const contexts = run.agentContexts.filter((context) => context.role === 'review');
         assert.equal(contexts.length, 1, 'Restart must not create another reviewer attempt');
         const context = contexts[0];
         assert.equal(context.id, state.context.id);
@@ -247,7 +247,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, explicit, 
         if (state.completedWhileOffline) return run.status === 'done';
         if (needsResume && read.session.generation === state.before.generation) return false;
         return (
-          run.status === 'self-reviewing' &&
+          run.status === 'reviewing' &&
           context.status === 'working' &&
           (!state.lostSendReply || context.nativeSession?.acceptedAt) &&
           read.commands.some(
@@ -294,7 +294,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, explicit, 
     const reviewer = done.agentContexts.find((context) => context.id === state.context.id);
     assert.equal(reviewer.status, 'complete');
     assert.ok(reviewer.reviewResultValidatedAt);
-    assert.equal(done.steps.find((step) => step.name === 'self-review').outputs.verdict, 'pass');
+    assert.equal(done.steps.find((step) => step.name === 'review').outputs.verdict, 'pass');
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(state.cwd, reviewer.signalFile), 'utf8')).status,
       'complete',

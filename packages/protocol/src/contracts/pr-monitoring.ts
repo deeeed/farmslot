@@ -2,6 +2,7 @@ import type { NativeProfileReference } from '../rpc/native-profile.js';
 
 import type { WorkerTransport } from './agents.js';
 import type { BacklogLaunchSlotPolicy } from './backlog.js';
+import type { ReviewSelection } from './runs.js';
 
 export interface MonitoredPRIdentity {
   host: string;
@@ -15,10 +16,7 @@ export interface PRSourceAccount {
   login: string;
 }
 
-export interface PRExecutionModel {
-  runner: string;
-  model: string;
-  effort?: string;
+export interface PRExecutionModel extends ReviewSelection {
   /** Further restrict this model to slots within the profile's slot policy. */
   allowedSlots?: string[];
   /** Further restrict this model to machines within the profile's workspace policy. */
@@ -29,8 +27,9 @@ export interface PRSlotExecutionChoice {
   slotId: string;
   machine?: never;
   runner: string;
-  model: string;
-  effort?: string;
+  model: string | null;
+  effort: string | null;
+  mode: import('./runs.js').ReviewMode;
   transport?: never;
   nativeProfile?: never;
 }
@@ -39,8 +38,9 @@ export interface PRWorkspaceExecutionChoice {
   machine: string;
   slotId?: never;
   runner: string;
-  model: string;
-  effort?: string;
+  model: string | null;
+  effort: string | null;
+  mode: import('./runs.js').ReviewMode;
   transport?: WorkerTransport;
   nativeProfile?: NativeProfileReference;
 }

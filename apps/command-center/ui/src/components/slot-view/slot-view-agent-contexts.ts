@@ -202,7 +202,7 @@ export function selectSlotViewAgentContext(
   }
   const exact = contexts.find((ctx) => ctx.id === selectedAgentContextId);
   if (exact) return exact;
-  if (selectedAgentContextId === 'self-review') {
+  if (selectedAgentContextId === 'review') {
     return selectLatestReviewerContext(contexts) ?? null;
   }
   return contexts.find((ctx) => ctx.role === 'primary') ?? contexts[0] ?? null;
@@ -242,6 +242,9 @@ export function selectSlotViewTaskContext(
 ): AgentContextSummary | null {
   const active = contexts.find((ctx) => taskFilesMatch(ctx, activeTaskFile));
   if (active) return active;
+  // A known task path that matches no context cannot identify a reviewer by role alone.
+  const explicitPrimary = contexts.find((ctx) => ctx.role === 'primary');
+  if (activeTaskFile && explicitPrimary) return explicitPrimary;
   const primaryRole = primaryRoleForFlow(flowType);
   return (
     contexts.find((ctx) => ctx.role === primaryRole) ??
@@ -251,7 +254,7 @@ export function selectSlotViewTaskContext(
   );
 }
 
-/** Chip / breadcrumb label: prefer short reviewer tab id over generic Self-review. */
+/** Chip / breadcrumb label: prefer short reviewer tab id over generic Review. */
 export function slotViewAgentContextChipLabel(ctx: AgentContextSummary): string {
   if (isReviewerAgentContext(ctx)) {
     const window = ctx.target?.window?.trim();

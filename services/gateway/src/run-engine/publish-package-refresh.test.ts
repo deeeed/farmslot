@@ -7,10 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type {
-  IndependentReviewStatus,
   ReadyGatePayload,
   ReadyGatePrPackage,
   ReviewGatePayload,
+  ReviewStatus,
   RunDecision,
 } from '@farmslot/protocol';
 
@@ -22,7 +22,7 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 import { APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION } from './gate-policy.js';
 import {
   refreshPublishPackage,
-  reviewDepthForPublishPackageRefresh,
+  reviewPolicyForPublishPackageRefresh,
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
@@ -88,46 +88,42 @@ test('publish package refresh evidence summary uses shared path variants', () =>
   assert.deepEqual(summary.addedEvidenceKeys, ['artifacts/screenshots/new.png']);
 });
 
-test('reviewDepthForPublishPackageRefresh drops ad hoc human-gate review requirements', () => {
+test('reviewPolicyForPublishPackageRefresh drops ad hoc human-gate review requirements', () => {
   const run = makeRun({ flowType: 'dev', mode: 'autonomous' });
   const humanGatePayload = {
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: true,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'human-gate' as const,
     },
   };
 
-  assert.deepEqual(reviewDepthForPublishPackageRefresh(run, undefined, humanGatePayload), {
-    minimumIndependentReviews: 0,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  assert.deepEqual(reviewPolicyForPublishPackageRefresh(run, undefined, humanGatePayload), {
+    minimumReviews: 0,
     requestedBy: 'dispatch',
   });
 
   const dispatchPayload = {
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'dispatch' as const,
     },
   };
   assert.deepEqual(
-    reviewDepthForPublishPackageRefresh(run, undefined, dispatchPayload),
-    dispatchPayload.reviewDepth,
+    reviewPolicyForPublishPackageRefresh(run, undefined, dispatchPayload),
+    dispatchPayload.reviewPolicy,
   );
 
   const legacyDispatchRun = makeRun({
     engineState: {
       publishGate: {
-        pendingReviewPlan: [],
-        independentReviews: [
+        reviewSequence: [],
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -137,16 +133,14 @@ test('reviewDepthForPublishPackageRefresh drops ad hoc human-gate review require
     },
   });
   const legacyDispatchPayload = {
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: true,
-      extraLoopsRequested: 1,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'dispatch' as const,
     },
   };
   assert.deepEqual(
-    reviewDepthForPublishPackageRefresh(legacyDispatchRun, undefined, legacyDispatchPayload),
-    { ...legacyDispatchPayload.reviewDepth, extraLoopsRequested: 0, countingVersion: 2 },
+    reviewPolicyForPublishPackageRefresh(legacyDispatchRun, undefined, legacyDispatchPayload),
+    { ...legacyDispatchPayload.reviewPolicy },
   );
 });
 
@@ -169,16 +163,16 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
 
   await mkdir(path.join(workerTaskDir, 'artifacts/screenshots'), { recursive: true });
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
-  await mkdir(path.join(taskDir, 'artifacts/independent-review-2/review-loop-1'), {
+  await mkdir(path.join(taskDir, 'artifacts/review-2/review-loop-1'), {
     recursive: true,
   });
   await mkdir(path.join(taskDir, 'artifacts/review-loop-1'), { recursive: true });
   await writeFile(path.join(taskDir, 'TASK.md'), '# refresh package test\n');
   await writeFile(
-    path.join(taskDir, 'artifacts/independent-review-2/review-loop-1/review.diff'),
+    path.join(taskDir, 'artifacts/review-2/review-loop-1/review.diff'),
     'review diff\n',
   );
-  await writeFile(path.join(taskDir, 'artifacts/review-loop-1/self-review.md'), 'self review\n');
+  await writeFile(path.join(taskDir, 'artifacts/review-loop-1/review.md'), 'self review\n');
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# refresh package test\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/report.md'), 'Worker report\n');
   await writeFile(
@@ -236,10 +230,8 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     ),
   );
 
-  const reviewDepth = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  const reviewPolicy = {
+    minimumReviews: 1,
     requestedBy: 'dispatch' as const,
   };
   const oldReviewSubjectHash = 'old-review-subject';
@@ -250,7 +242,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       { path: 'artifacts/old.png', purpose: 'debug-screenshot', sizeBytes: 8 },
     ],
     selectedEvidenceKeys: ['artifacts/keep.png', 'artifacts/old.png'],
-    reviewDepth,
+    reviewPolicy,
     reviewSubjectHash: oldReviewSubjectHash,
   });
   const decision: RunDecision = {
@@ -263,7 +255,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     payload: {
       kind: 'ready',
       prPackage: oldPackage,
-      reviewDepth,
+      reviewPolicy,
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
       // Stale soft-chip fields from a prior probe — refresh must replace, not partial-spread.
@@ -286,15 +278,17 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     branch: 'main',
     steps: [
       {
-        name: 'self-review',
+        name: 'review',
         status: 'done',
         startedAt: '2026-05-17T00:10:00.000Z',
         completedAt: '2026-05-17T00:12:00.000Z',
         outputs: {
+          reviewId: 'pipeline-review-2',
+          mode: 'cold',
           verdict: 'pass',
           unresolvedCount: 0,
           reviewSnapshot: {
-            headSha,
+            headSha: 'stale-pipeline-head',
             capturedAt: '2026-05-17T00:12:00.000Z',
             source: 'local-git',
           },
@@ -304,18 +298,32 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     decisions: [decision],
     engineState: {
       publishGate: {
-        reviewDepth,
+        reviewPolicy,
         publicationTarget: 'ready',
         publicationStatus: 'not_published',
-        independentReviews: [
+        reviews: [
           {
-            id: 'self-review-2',
-            source: 'self-review',
-            crossRunner: false,
+            reviewerSessionId: 'fixture-session-' + 'review-2',
+            mode: 'warm' as const,
+            id: 'pipeline-review-2',
+            source: 'pipeline',
             loopNumber: 2,
             verdict: 'pass',
             unresolvedCount: 0,
+            completedAt: '2026-05-17T00:14:00.000Z',
+            session: {
+              mode: 'warm',
+              continuity: 'resumed',
+              reviewId: 'pipeline-review-2',
+              sessionId: 'fixture-session-review-2',
+              lastReviewedHeadSha: 'stale-pipeline-head',
+            },
+            attempts: [
+              { mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0 },
+              { mode: 'warm', loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
+            ],
             reviewSnapshot: {
+              baseSha: 'stale-pipeline-head',
               headSha,
               capturedAt: '2026-05-17T00:12:00.000Z',
               source: 'local-git',
@@ -346,6 +354,12 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const refreshedDecision = getRun(run.id)!.decisions[0];
   const refreshedPayload = refreshedDecision.payload as ReadyGatePayload;
   assert.equal(refreshedPayload.publicationTarget, 'draft');
+  const refreshedReview = getRun(run.id)!.engineState!.publishGate!.reviews![0]!;
+  assert.equal(getRun(run.id)!.engineState!.publishGate!.reviews!.length, 1);
+  assert.equal(refreshedReview.mode, 'warm');
+  assert.equal(refreshedReview.reviewSnapshot?.headSha, headSha);
+  assert.equal(refreshedReview.session?.lastReviewedHeadSha, 'stale-pipeline-head');
+  assert.equal(refreshedReview.attempts?.length, 2);
   assert.equal(refreshedPayload.gateSummary?.review.passingReviews, 0);
   // Wiring: soft fields are re-probed on the live slot repo (clean main) and must
   // not keep stale mergeConflictPaths / hints from the prior payload.
@@ -381,7 +395,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     false,
   );
   assert.equal(
-    getRun(run.id)!.engineState?.publishGate?.independentReviews?.[0]?.reviewedReviewSubjectHash,
+    getRun(run.id)!.engineState?.publishGate?.reviews?.[0]?.reviewedReviewSubjectHash,
     oldReviewSubjectHash,
   );
   assert.equal(refreshedDecision.resolvedAt, undefined);
@@ -418,7 +432,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   );
   assert.equal(
     packageJson.evidenceManifest.some((artifact) =>
-      artifact.path.startsWith('artifacts/independent-review-2/'),
+      artifact.path.startsWith('artifacts/review-2/'),
     ),
     false,
   );
@@ -439,7 +453,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   assert.equal(second.reviewSubjectHash, first.reviewSubjectHash);
   assert.deepEqual(second.droppedEvidenceKeys, []);
   assert.equal(
-    getRun(run.id)!.engineState?.publishGate?.independentReviews?.[0]?.reviewedReviewSubjectHash,
+    getRun(run.id)!.engineState?.publishGate?.reviews?.[0]?.reviewedReviewSubjectHash,
     oldReviewSubjectHash,
   );
 
@@ -482,10 +496,11 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   assert.equal(afterRelease.prPackage?.reviewSnapshot?.missingReason, 'slot-load-error');
 
   const unavailablePackage = afterRelease.prPackage!;
-  const exactReview: IndependentReviewStatus = {
-    id: 'independent-review-removed-slot',
+  const exactReview: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-removed-slot',
+    mode: 'cold' as const,
+    id: 'review-removed-slot',
     source: 'dispatch',
-    crossRunner: false,
     loopNumber: 1,
     verdict: 'pass',
     unresolvedCount: 0,
@@ -500,8 +515,8 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       ...beforeApproval.engineState,
       publishGate: {
         ...beforeApproval.engineState?.publishGate,
-        reviewDepth,
-        independentReviews: [exactReview],
+        reviewPolicy,
+        reviews: [exactReview],
       },
     },
     decisions: beforeApproval.decisions.map((entry) =>
@@ -556,16 +571,13 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
   });
 
   await mkdir(taskDir, { recursive: true });
-  await mkdir(path.join(taskDir, 'artifacts/independent-review-1/review-loop-1'), {
+  await mkdir(path.join(taskDir, 'artifacts/review-1/review-loop-1'), {
     recursive: true,
   });
   const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   await mkdir(path.join(workerTaskDir, 'artifacts'), { recursive: true });
   await writeFile(taskFile, '# refresh package fail test\n');
-  const preservedReviewDiff = path.join(
-    taskDir,
-    'artifacts/independent-review-1/review-loop-1/review.diff',
-  );
+  const preservedReviewDiff = path.join(taskDir, 'artifacts/review-1/review-loop-1/review.diff');
   await writeFile(preservedReviewDiff, 'preserved review diff\n');
   await writeFile(path.join(workerRepo, 'README.md'), 'worker repo\n');
   await execLocal(
@@ -612,7 +624,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
     taskFile,
     branch: 'main',
     decisions: [decision],
-    engineState: { publishGate: { publicationStatus: 'not_published', independentReviews: [] } },
+    engineState: { publishGate: { publicationStatus: 'not_published', reviews: [] } },
   });
 
   await assert.rejects(

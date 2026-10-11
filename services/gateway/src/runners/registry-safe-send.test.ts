@@ -247,7 +247,7 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: paneText, stderr: '' };
       }
       if (cmd.includes('list-windows')) {
-        return { exitCode: 0, stdout: '1 rev-codex\n2 self-review\n3 dev\n', stderr: '' };
+        return { exitCode: 0, stdout: '1 rev-codex\n2 review\n3 dev\n', stderr: '' };
       }
       if (cmd.includes("python3 - <<'PY'")) {
         callOrder.push('python:write');
@@ -450,7 +450,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
   paneCaptureCount = 0;
   acceptDigestHandoff = true;
 
-  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'SELF-REVIEW.md', '[test]', {
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'REVIEW.md', '[test]', {
     readyTimeoutMs: 100,
     stabilityPolls: 1,
     pollIntervalMs: 0,
@@ -461,7 +461,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
 
   assert.ok(
     handoffRequirePromptDigestValues.some((value) => value === true),
-    'self-review sends can require prompt digest explicitly',
+    'review sends can require prompt digest explicitly',
   );
   acceptDigestHandoff = false;
 });
@@ -473,7 +473,7 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
     paneTextAfterBareSend = null;
     paneClearsAfterSubmit = true;
   });
-  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
@@ -496,22 +496,14 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
         callOrder.push('mutation:start');
       },
       () =>
-        sendRunnerPostLaunchPrompt(
-          vars,
-          target,
-          'claude',
-          reviewMessage,
-          'SELF-REVIEW.md',
-          '[test]',
-          {
-            readyTimeoutMs: 100,
-            stabilityPolls: 1,
-            pollIntervalMs: 0,
-            verifyWaitMs: 0,
-            maxAttempts: 2,
-            requirePromptDigest: true,
-          },
-        ),
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          verifyWaitMs: 0,
+          maxAttempts: 2,
+          requirePromptDigest: true,
+        }),
     ),
     PromptDeliveryUncertainError,
   );
@@ -533,7 +525,7 @@ test('digest-required prompt delivery rejects text left in the runner queue', as
     paneTextAfterBareSend = null;
     paneClearsAfterSubmit = true;
   });
-  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
@@ -550,7 +542,7 @@ test('digest-required prompt delivery rejects text left in the runner queue', as
   };
 
   await assert.rejects(
-    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
       readyTimeoutMs: 100,
       stabilityPolls: 1,
       pollIntervalMs: 0,
@@ -563,7 +555,7 @@ test('digest-required prompt delivery rejects text left in the runner queue', as
 });
 
 test('digest-required prompt delivery does not accept pane-only task progress', async (t) => {
-  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
@@ -588,7 +580,7 @@ test('digest-required prompt delivery does not accept pane-only task progress', 
   });
 
   await assert.rejects(
-    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
       readyTimeoutMs: 20,
       stabilityPolls: 1,
       pollIntervalMs: 0,
@@ -606,7 +598,7 @@ test('digest-required prompt delivery does not accept pane-only task progress', 
 });
 
 test('digest-required delivery waits for a delayed exact acknowledgement without spending send attempts', async (t) => {
-  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
   handoffProbeCalls = 0;
@@ -631,22 +623,14 @@ test('digest-required delivery waits for a delayed exact acknowledgement without
     paneText = '❯\nctx:12%\n';
   });
 
-  await sendRunnerPostLaunchPrompt(
-    vars,
-    target,
-    'claude',
-    reviewMessage,
-    'SELF-REVIEW.md',
-    '[test]',
-    {
-      readyTimeoutMs: 100,
-      stabilityPolls: 1,
-      pollIntervalMs: 1,
-      verifyWaitMs: 0,
-      maxAttempts: 1,
-      requirePromptDigest: true,
-    },
-  );
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 1,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+    requirePromptDigest: true,
+  });
 
   assert.equal(
     callOrder.filter((entry) => entry === 'tmux:send').length,
@@ -657,7 +641,7 @@ test('digest-required delivery waits for a delayed exact acknowledgement without
 });
 
 test('digest-required delivery accepts acknowledgement that arrives during retry ready wait', async (t) => {
-  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
   handoffProbeCalls = 0;
@@ -688,22 +672,14 @@ test('digest-required delivery accepts acknowledgement that arrives during retry
     paneClearsAfterSubmit = true;
   });
 
-  await sendRunnerPostLaunchPrompt(
-    vars,
-    target,
-    'claude',
-    reviewMessage,
-    'SELF-REVIEW.md',
-    '[test]',
-    {
-      readyTimeoutMs: 100,
-      stabilityPolls: 1,
-      pollIntervalMs: 1,
-      verifyWaitMs: 0,
-      maxAttempts: 2,
-      requirePromptDigest: true,
-    },
-  );
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'REVIEW.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 1,
+    verifyWaitMs: 0,
+    maxAttempts: 2,
+    requirePromptDigest: true,
+  });
 
   assert.equal(
     callOrder.filter((entry) => entry === 'tmux:send-literal').length,
@@ -1457,7 +1433,7 @@ test('historical Grok progress does not suppress an identical new fix-pass promp
   grokActivitySequence = ['idle'];
   paneText = [
     `#1 ${message}`,
-    'Read SELF-REVIEW-FIX.md',
+    'Read REVIEW-FIX.md',
     'Implemented the previous review findings.',
     '',
     '╭────────────────╮',

@@ -84,6 +84,7 @@
   },
   "dependencies": {
     "@farmslot/adapter-sdk": "workspace:*",
+    "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-runner": "workspace:*",
     "ws": "^8.18.0"
   },

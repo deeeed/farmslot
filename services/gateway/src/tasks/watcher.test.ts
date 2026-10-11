@@ -111,38 +111,38 @@ test('watch identity rebinds when a slot/context is reused by another run', () =
 
 test('bindWorkerSignalToWatch keeps watcher role/context authoritative', () => {
   const bound = bindWorkerSignalToWatch(
-    'runner-browser-1:self-review-fix',
+    'runner-browser-1:review-fix',
     {
       status: 'complete',
       timestamp: '2026-04-26T00:00:00Z',
       role: undefined,
       contextId: undefined,
     },
-    'self-review-fix',
-    'self-review-fix',
+    'review-fix',
+    'review-fix',
   );
-  assert.equal(bound?.role, 'self-review-fix');
-  assert.equal(bound?.contextId, 'self-review-fix');
-  assert.equal(bound?.signal.role, 'self-review-fix');
-  assert.equal(bound?.signal.contextId, 'self-review-fix');
+  assert.equal(bound?.role, 'review-fix');
+  assert.equal(bound?.contextId, 'review-fix');
+  assert.equal(bound?.signal.role, 'review-fix');
+  assert.equal(bound?.signal.contextId, 'review-fix');
 });
 
 test('bindWorkerSignalToWatch rejects mismatched worker role/context tags', () => {
   assert.equal(
     bindWorkerSignalToWatch(
-      'runner-browser-1:self-review-fix',
+      'runner-browser-1:review-fix',
       { status: 'complete', timestamp: '2026-04-26T00:00:00Z', role: 'primary' },
-      'self-review-fix',
-      'self-review-fix',
+      'review-fix',
+      'review-fix',
     ),
     null,
   );
   assert.equal(
     bindWorkerSignalToWatch(
-      'runner-browser-1:self-review-fix',
+      'runner-browser-1:review-fix',
       { status: 'complete', timestamp: '2026-04-26T00:00:00Z', contextId: 'review' },
-      'self-review-fix',
-      'self-review-fix',
+      'review-fix',
+      'review-fix',
     ),
     null,
   );

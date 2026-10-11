@@ -49,17 +49,11 @@ flowchart LR
 
 The operator can intervene from Command Center at the desk or from Mobile Companion away from the desk. Steering can be a typed instruction, a structured action, or a spoken nudge that the companion turns into a bounded worker message.
 
-## Consistent review across runners
+## Review sessions
 
-Different runners and models often have different strengths. One may be better at architecture review, another at UI edge cases, another at CI/log triage, and another at mechanical cleanup.
+Each review runs in its own session. Runner choice does not change whether the review qualifies. Configure runner, model, effort and mode in the shared review-and-dispatch picker.
 
-Farmslot should make those differences useful instead of chaotic:
-
-- run the same review target through multiple runners;
-- collect separate findings into one review workspace;
-- preserve which runner found which issue;
-- deduplicate or reconcile findings;
-- use recipe/evidence results as the shared truth when reviewers disagree.
+COLD opens a fresh session for the whole diff. WARM resumes the identified prior reviewer session for the delta since its last reviewed head. The request carries that lineage separately from selection; missing or ambiguous WARM context is refused. Findings keep their session provenance and use recipe evidence to resolve disagreements.
 
 ```mermaid
 flowchart TD

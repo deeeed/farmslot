@@ -11,13 +11,13 @@ test('sourceReviewRunId is an explicit QA-only request field; frozen provenance 
     autoStart: false,
     source: { client: 'test' },
     sourceReviewRunId: 'source-run',
-    review: { sessionIntent: 'reset', scope: 'full', workflow: 'qa' },
+    review: { mode: 'cold' as const, workflow: 'qa' },
   };
   assert.doesNotThrow(() => assertPRReviewRequest(request));
   assert.doesNotThrow(() =>
     assertPRReviewRequest({ ...request, sourceReviewRunId: undefined, review: undefined }),
   );
-  for (const review of [undefined, { sessionIntent: 'reset', scope: 'full', workflow: 'review' }])
+  for (const review of [undefined, { mode: 'cold' as const, workflow: 'review' }])
     assert.throws(() => assertPRReviewRequest({ ...request, review }), /only allowed for QA/);
   for (const sourceReviewRunId of ['', ' source', 'source '])
     assert.throws(() => assertPRReviewRequest({ ...request, sourceReviewRunId }));

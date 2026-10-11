@@ -26,7 +26,7 @@ test('isRetryableTerminalSubscribeError treats worker-window startup as retryabl
   assert.equal(
     isRetryableTerminalSubscribeError(
       new Error(
-        'Tmux target mm-1:self-review for role self-review is not available yet; wait for that worker window to start and reopen the terminal.',
+        'Tmux target mm-1:review for role review is not available yet; wait for that worker window to start and reopen the terminal.',
       ),
     ),
     true,

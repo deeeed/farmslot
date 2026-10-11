@@ -30,16 +30,14 @@ test('buildPublishPackageScanCommand lists the scope in one worker-side command'
   assert.ok(lines.includes(`find . -mindepth 1 -maxdepth 1 ${list} ${keep}`));
   assert.ok(
     lines.includes(
-      `  for p in './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
+      `  for p in './deterministic-checks' './recipe-library' './recipe-harness' './recipe-run' './recipe-run-baseline' './recipe-run-repro' './recipe-rerun' './recipe-baseline-run' './review-recipe-run' './perps-smoke' './check-diff' './check-diff-final' './evidence' './goal/a b/shot.png'; do if [ -e "$p" ] || [ -L "$p" ]; then printf 'R %s\\n' "$p"; fi; done`,
     ),
   );
   const markerFind = lines.find((line) => line.startsWith('  find . -maxdepth 4 '));
   assert.ok(markerFind, command);
   // Gateway review directories are the numbered ones only, from the shared policy.
   assert.ok(
-    markerFind.includes(
-      String.raw`\( -path './self-review-[0-9]*' ! -path './self-review-*[!0-9]*' \)`,
-    ),
+    markerFind.includes(String.raw`\( -path './review-[0-9]*' ! -path './review-*[!0-9]*' \)`),
   );
   assert.ok(markerFind.includes(`-path './recipe-runs' -o -path './screenshots'`));
   assert.ok(
@@ -59,6 +57,23 @@ test('buildPublishPackageScanCommand lists the scope in one worker-side command'
     ),
   );
   assert.equal(lines.at(-2), 'echo "S $scan_status"');
+});
+
+test('the bounded worker scan includes command receipts and execution logs', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ci-mirror-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'deterministic-checks', 'CHECKLIST.md');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, '1.json'), '{}\n');
+  await writeFile(path.join(dir, 'run.log'), 'local check passed\n');
+  const command = buildPublishPackageScanCommand(root, { namedPaths: [], snapshotRoot: null });
+  const scanned = parsePublishPackageScan(
+    execFileSync('bash', ['-c', command], { encoding: 'utf8' }),
+  );
+  assert.deepEqual(scanned.entries.map((entry) => entry.path).sort(), [
+    'deterministic-checks/CHECKLIST.md/1.json',
+    'deterministic-checks/CHECKLIST.md/run.log',
+  ]);
 });
 
 test('the scan command finds recipe packages by marker within the depth bound, prunes excluded trees and lists links', async (t) => {
@@ -92,9 +107,9 @@ test('the scan command finds recipe packages by marker within the depth bound, p
   // A top-level marker does not make artifacts/ itself a package.
   await put('artifact-manifest.json', '{}');
   // A worker directory that only starts with a review prefix is the worker's.
-  await put('self-review-fix-20261009/after-flag-off/artifact-manifest.json', '{}');
-  await put('self-review-fix-20261009/after-flag-off/trace.json', '[]');
-  await put('self-review-2/run/artifact-manifest.json', '{}');
+  await put('review-fix-20261009/after-flag-off/artifact-manifest.json', '{}');
+  await put('review-fix-20261009/after-flag-off/trace.json', '[]');
+  await put('review-2/run/artifact-manifest.json', '{}');
   // A step directory that is also a package with both markers is listed once.
   await put('recipe-run/summary.json', '{}');
   await put('recipe-run/trace.json', '[]');
@@ -136,8 +151,8 @@ test('the scan command finds recipe packages by marker within the depth bound, p
         { path: 'recipe-runs/r1/summary.json', bytes: 7 },
         { path: 'report.md', bytes: 5 },
         { path: 'repro/before.json', bytes: 2 },
-        { path: 'self-review-fix-20261009/after-flag-off/artifact-manifest.json', bytes: 2 },
-        { path: 'self-review-fix-20261009/after-flag-off/trace.json', bytes: 2 },
+        { path: 'review-fix-20261009/after-flag-off/artifact-manifest.json', bytes: 2 },
+        { path: 'review-fix-20261009/after-flag-off/trace.json', bytes: 2 },
       ],
       shell,
     );

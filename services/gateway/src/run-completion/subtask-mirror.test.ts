@@ -134,7 +134,7 @@ test('isGatewayOwnedArtifactMirrorEntry never claims a child unit file', () => {
     'ci-parity.md',
     'ci-parity-SIGNAL.json',
     'ci-parity.md.worker',
-    'self-review-1.md.worker',
+    'review-1.md.worker',
   ]) {
     assert.equal(
       isGatewayOwnedArtifactMirrorEntry(name),
@@ -144,7 +144,7 @@ test('isGatewayOwnedArtifactMirrorEntry never claims a child unit file', () => {
   }
   // Sanity: the predicate still recognises what it owns.
   assert.equal(isGatewayOwnedArtifactMirrorEntry('session-metrics.json'), true);
-  assert.equal(isGatewayOwnedArtifactMirrorEntry('self-review-1.md'), true);
+  assert.equal(isGatewayOwnedArtifactMirrorEntry('review-1.md'), true);
 });
 
 test('mirrorWorkerSubtasks propagates a stat failure that is not a vanished entry', async () => {

@@ -7,7 +7,7 @@ import { selectDirectReviewPublication } from './direct.js';
 const request = { flowType: 'review-pr' as const, project: 'farm', ticketOrPr: 'example/app#42' };
 const project = {
   workflowDefaults: {
-    'review-pr': { review: { sessionIntent: 'reset', scope: 'full', publishReview: true } },
+    'review-pr': { review: { mode: 'cold' as const, publishReview: true } },
   },
 } as ProjectConfig;
 const team = {

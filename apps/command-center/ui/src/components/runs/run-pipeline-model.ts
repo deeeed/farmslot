@@ -8,7 +8,7 @@ import {
 
 type UnknownRecord = Record<string, unknown>;
 type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
-type PublicationReviewStatus = NonNullable<PublishGate['independentReviews']>[number];
+type PublicationReviewStatus = NonNullable<PublishGate['reviews']>[number];
 
 function recordValue(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -79,12 +79,12 @@ export function effectiveTaskProgress(
 export function activeTaskProgressStepId(
   run: Run | undefined,
   taskProgress: TaskProgressStructured | undefined,
-): 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null {
+): 'monitor' | 'review' | 'ci-watch' | 'human-gate' | null {
   if (isInteractiveCompletionAwaitingOperator(run)) return null;
   const progress = effectiveTaskProgressForRun(run, taskProgress);
   if (!progress?.totalSteps) return null;
   if (isPublicationReviewProgressActive(run)) return 'human-gate';
-  if (isSelfReviewProgressActive(run)) return 'self-review';
+  if (isReviewProgressActive(run)) return 'review';
   const monitorStep = run?.steps.find((step) => step.name === 'monitor');
   if (isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run))) return 'ci-watch';
   if (monitorStep?.status === 'running') return 'monitor';
@@ -96,11 +96,7 @@ function reviewerChecklistBasename(run: Run | undefined): string {
 }
 
 function isReviewerChecklistFile(basename: string): boolean {
-  return (
-    basename === 'SELF-REVIEW.md' ||
-    basename === 'SELF-REVIEW-FIX.md' ||
-    basename.startsWith('SELF-REVIEW.')
-  );
+  return basename === 'REVIEW.md' || basename === 'REVIEW-FIX.md' || basename.startsWith('REVIEW.');
 }
 
 export function isPublicationReviewProgressActive(run: Run | undefined): boolean {
@@ -116,7 +112,7 @@ export function isPublicationReviewProgressActive(run: Run | undefined): boolean
   if (!humanGating) return false;
   const reviewerWorking = run.agentContexts?.some(
     (context) =>
-      (context.role === 'self-review' || context.role === 'self-review-fix') &&
+      (context.role === 'review' || context.role === 'review-fix') &&
       (context.status === 'working' || context.status === 'launching'),
   );
   return isReviewerChecklistFile(reviewerChecklistBasename(run)) || Boolean(reviewerWorking);
@@ -138,13 +134,13 @@ export function currentPipelineNodeId(run: Run | undefined): string | null {
   return running?.name ?? null;
 }
 
-function isSelfReviewProgressActive(run: Run | undefined): boolean {
+function isReviewProgressActive(run: Run | undefined): boolean {
   if (isPublicationReviewProgressActive(run)) return false;
-  const selfReviewStep = run?.steps.find((step) => step.name === 'self-review');
-  if (!selfReviewStep) return false;
+  const reviewStep = run?.steps.find((step) => step.name === 'review');
+  if (!reviewStep) return false;
   return (
-    selfReviewStep.status === 'running' ||
-    run?.status === 'self-reviewing' ||
+    reviewStep.status === 'running' ||
+    run?.status === 'reviewing' ||
     isReviewerChecklistFile(reviewerChecklistBasename(run))
   );
 }
@@ -155,7 +151,7 @@ export function selectedStepShowsLiveTaskProgress(
 ): boolean {
   if (!stepName) return false;
   if (stepName === 'monitor') return true;
-  if (stepName === 'self-review') return isSelfReviewProgressActive(run);
+  if (stepName === 'review') return isReviewProgressActive(run);
   if (stepName === 'ci-watch') return isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run));
   if (stepName === 'human-gate' || stepName === 'package-refresh') {
     return isPublicationReviewProgressActive(run);
@@ -198,7 +194,7 @@ const PAD_Y = 6;
 
 export type Lane = 'orch' | 'worker' | 'post';
 
-const LOOP_HEADROOM = 30; // extra space above worker lane for self-review loop arrow
+const LOOP_HEADROOM = 30; // extra space above worker lane for review loop arrow
 export const LANE_Y: Record<Lane, number> = {
   orch: PAD_Y + 30,
   worker: PAD_Y + 30 + LANE_GAP + LOOP_HEADROOM,
@@ -227,7 +223,7 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
     prepare: { col: 3, lane: 'orch' },
     dispatch: { col: 2, lane: 'worker' },
     monitor: { col: 3, lane: 'worker', width: MONITOR_W },
-    'self-review': { col: 4, lane: 'worker', width: MONITOR_W },
+    review: { col: 4, lane: 'worker', width: MONITOR_W },
     complete: { col: 2, lane: 'post', width: MONITOR_W },
     'human-gate': { col: 3, lane: 'post', width: MONITOR_W },
     finalize: { col: 4, lane: 'post', width: MONITOR_W },
@@ -241,7 +237,7 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
     prepare: { col: 2, lane: 'orch' },
     dispatch: { col: 1, lane: 'worker' },
     monitor: { col: 2, lane: 'worker', width: MONITOR_W },
-    'self-review': { col: 3, lane: 'worker', width: MONITOR_W },
+    review: { col: 3, lane: 'worker', width: MONITOR_W },
     complete: { col: 1, lane: 'post', width: MONITOR_W },
     'human-gate': { col: 2, lane: 'post', width: MONITOR_W },
     finalize: { col: 3, lane: 'post', width: MONITOR_W },
@@ -282,7 +278,7 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
     'write-task': { col: 0, lane: 'orch' },
     dispatch: { col: 0, lane: 'worker' },
     monitor: { col: 1, lane: 'worker', width: MONITOR_W },
-    'self-review': { col: 2, lane: 'worker', width: MONITOR_W },
+    review: { col: 2, lane: 'worker', width: MONITOR_W },
     complete: { col: 0, lane: 'post', width: MONITOR_W },
     finalize: { col: 1, lane: 'post', width: MONITOR_W },
     'ci-watch': { col: 2, lane: 'post' },
@@ -338,12 +334,12 @@ export function computeLayout(run: Run): PipelineLayout {
   const waitingForPreGateReviews = preGateReviewPlan.some(
     (node) => node.step.status === 'running' || node.step.status === 'pending',
   );
-  const selfReviewPos = positions['self-review'];
+  const reviewPos = positions['review'];
   const completePos = positions.complete;
   const humanGatePos = positions['human-gate'];
   const preGateShift =
-    preGateReviewPlan.length > 0 && selfReviewPos && completePos
-      ? Math.max(0, selfReviewPos.col + preGateReviewPlan.length + 1 - completePos.col)
+    preGateReviewPlan.length > 0 && reviewPos && completePos
+      ? Math.max(0, reviewPos.col + preGateReviewPlan.length + 1 - completePos.col)
       : 0;
   const humanGateAdjustedCol = humanGatePos
     ? adjustedStepPos('human-gate', humanGatePos, preGateShift, 0)?.col
@@ -352,9 +348,7 @@ export function computeLayout(run: Run): PipelineLayout {
     ...Object.values(positions)
       .filter((pos) => pos.lane === 'worker')
       .map((pos) => pos.col),
-    selfReviewPos && preGateReviewPlan.length > 0
-      ? selfReviewPos.col + preGateReviewPlan.length
-      : -1,
+    reviewPos && preGateReviewPlan.length > 0 ? reviewPos.col + preGateReviewPlan.length : -1,
   );
   const postGateReviewStartCol =
     postGateReviewPlan.length > 0 && humanGateAdjustedCol !== undefined
@@ -391,10 +385,10 @@ export function computeLayout(run: Run): PipelineLayout {
     });
     lanesUsed.add(pos.lane);
     if (pos.col > maxCol) maxCol = pos.col;
-    if (step.name === 'self-review' && preGateReviewPlan.length > 0 && selfReviewPos) {
+    if (step.name === 'review' && preGateReviewPlan.length > 0 && reviewPos) {
       for (const planNode of preGateReviewPlan) {
         const planPos = {
-          col: selfReviewPos.col + planNode.order,
+          col: reviewPos.col + planNode.order,
           lane: 'worker' as const,
           width: MONITOR_W,
         };
@@ -582,14 +576,12 @@ function publicationReviewPlanNodes(
   if (run.flowType !== 'fix-bug' && run.flowType !== 'dev') return [];
   const publishGate = run.engineState?.publishGate;
   if (!publishGate) return [];
-  const reviewDepth = recordValue(publishGate.reviewDepth);
-  const requestedBy = reviewDepth?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
-  const minimum = Number(reviewDepth?.minimumIndependentReviews ?? 1);
+  const reviewPolicy = recordValue(publishGate.reviewPolicy);
+  const requestedBy = reviewPolicy?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
+  const minimum = Number(reviewPolicy?.minimumReviews ?? 1);
   const nodesByOrder = new Map<number, PublicationReviewPlanNode>();
 
-  const pendingPlan = Array.isArray(publishGate.pendingReviewPlan)
-    ? publishGate.pendingReviewPlan
-    : [];
+  const pendingPlan = Array.isArray(publishGate.reviewSequence) ? publishGate.reviewSequence : [];
   if (pendingPlan.length > 0 && (phase === 'post-gate') === (requestedBy === 'human-gate')) {
     for (const [index, plan] of pendingPlan.slice(0, 5).entries()) {
       const planRecord = recordValue(plan);
@@ -620,15 +612,12 @@ function publicationReviewPlanNodes(
     }
   }
 
-  const reviews = Array.isArray(publishGate.independentReviews)
-    ? publishGate.independentReviews
-    : [];
+  const reviews = Array.isArray(publishGate.reviews) ? publishGate.reviews : [];
   reviews
     .filter((review) => {
       if (phase === 'post-gate') return review.source === 'human-gate';
       if (review.source === 'human-gate') return false;
-      const loopNumber = Number(review.loopNumber ?? 0);
-      return review.source === 'dispatch' || loopNumber > minimum || review.crossRunner === true;
+      return true;
     })
     .slice(0, 5)
     .map((review, index: number) => {
@@ -732,9 +721,9 @@ function activeReviewFromHumanGateDetail(
   run: Run,
   phase: 'pre-gate' | 'post-gate',
 ): PublicationReviewPlanNode | null {
-  const selfReview = run.steps.find((step) => step.name === 'self-review');
+  const review = run.steps.find((step) => step.name === 'review');
   const humanGate = run.steps.find((step) => step.name === 'human-gate');
-  const candidates = [selfReview, humanGate].filter(
+  const candidates = [review, humanGate].filter(
     (step): step is RunStep => step?.status === 'running' && typeof step.detail === 'string',
   );
 
@@ -777,7 +766,7 @@ function activeReviewFromHumanGateDetail(
     if (status !== 'launching' && status !== 'working' && status !== 'waiting') return false;
     const id = String(agent.id ?? '');
     const role = String(agent.role ?? '');
-    return role === 'self-review' || role === 'self-review-fix' || /^rev/i.test(id);
+    return role === 'review' || role === 'review-fix' || /^rev/i.test(id);
   });
   if (!hasLiveReviewAgent) return null;
   const informal = humanGate.detail.match(
@@ -787,7 +776,7 @@ function activeReviewFromHumanGateDetail(
   const runner = informal[1];
   // Layout order is index-based among post-gate nodes; place after existing completed
   // reviews rather than trusting the detail's loop counter (avoids colliding with order 1).
-  const completedPostGate = (run.engineState?.publishGate?.independentReviews ?? []).filter(
+  const completedPostGate = (run.engineState?.publishGate?.reviews ?? []).filter(
     (review) => review.source === 'human-gate',
   ).length;
   const order = Math.max(1, completedPostGate + 1);

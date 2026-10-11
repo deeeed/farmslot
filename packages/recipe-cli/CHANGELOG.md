@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - **BREAKING:** Use the SDK engine and runner-owned capture lifecycle; task ledgers receive derived claims rather than action-success verdicts. Move only the engine factory/options exports and remove replaced framed-recording exports from `/harness` (ADR-062).
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 
 ## 0.13.0 - 2026-10-11
 

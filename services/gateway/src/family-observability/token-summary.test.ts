@@ -43,7 +43,7 @@ test('buildFamilyObservabilityTokenSummary rolls worker and review tokens withou
         },
         engineState: {
           publishGate: {
-            independentReviews: [
+            reviews: [
               {
                 id: 'review-a',
                 model: 'gpt-5',

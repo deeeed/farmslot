@@ -7,16 +7,17 @@ import {
   type ProjectQaConfig,
   type PRReviewOptions,
   prReviewWorkflow,
+  type ReviewContinuationContext,
+  type ReviewMode,
+  type ReviewRequestContext,
   type SlotStatus,
 } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import {
-  newPRExecution,
-  prExecutionText,
-  togglePRSlot,
-  updatePRReviewOptions,
-} from '../../../lib/pr-automation';
+import { prExecutionText, togglePRSlot, updatePRReviewOptions } from '../../../lib/pr-automation';
+import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { styles } from '../styles/pr-automation-styles';
+import { usePRExecutionPicker } from '../use-pr-execution-picker';
 
 import { PRButton, PRInput } from './PRControls';
 
@@ -93,42 +94,6 @@ export function PRReviewFields({
               />
             ))}
           </View>
-          <Text style={styles.muted}>Reviewer session</Text>
-          <View style={styles.row}>
-            {(['resume', 'reset'] as const).map((sessionIntent) => (
-              <PRButton
-                key={sessionIntent}
-                label={sessionIntent === 'resume' ? 'Continue' : 'Fresh'}
-                selected={value.sessionIntent === sessionIntent}
-                disabled={disabled}
-                onPress={() => change({ sessionIntent })}
-              />
-            ))}
-          </View>
-          <Text style={styles.muted}>Review scope</Text>
-          <View style={styles.row}>
-            {(['incremental', 'full'] as const).map((scope) => (
-              <PRButton
-                key={scope}
-                label={scope === 'full' ? 'Full independent review' : 'Changes since last review'}
-                selected={value.scope === scope}
-                disabled={disabled}
-                onPress={() => change({ scope })}
-              />
-            ))}
-          </View>
-          <Text style={styles.muted}>When the saved reviewer is busy</Text>
-          <View style={styles.row}>
-            {(['wait', 'fresh'] as const).map((busySession) => (
-              <PRButton
-                key={busySession}
-                label={busySession === 'wait' ? 'Wait for reviewer' : 'Allow fresh reviewer'}
-                selected={(value.busySession ?? 'wait') === busySession}
-                disabled={disabled}
-                onPress={() => change({ busySession })}
-              />
-            ))}
-          </View>
         </>
       )}
     </View>
@@ -140,18 +105,66 @@ export function PRExecutionFields({
   slots,
   project,
   disabled,
+  reviewMode,
+  onReviewModeChange,
+  onPickerReady,
+  reviewContext,
+  reviewLineages,
+  workflow,
 }: {
   value: PRExecutionProfile;
   onChange: (value: PRExecutionProfile) => void;
   slots: SlotStatus[];
   project: string;
   disabled: boolean;
+  reviewMode?: ReviewMode;
+  onReviewModeChange?: (mode: ReviewMode, context: ReviewRequestContext | undefined) => void;
+  onPickerReady?: (picker: ReviewDispatchViewModel | undefined) => void;
+  reviewContext?: ReviewRequestContext;
+  reviewLineages?: readonly ReviewContinuationContext[];
+  workflow?: 'review' | 'qa';
 }) {
+  const { picker, resources, changed } = usePRExecutionPicker(
+    value,
+    onChange,
+    reviewMode,
+    onReviewModeChange,
+    onPickerReady,
+    reviewContext,
+    reviewLineages,
+    workflow,
+  );
+  const selection = (
+    <ReviewDispatchPicker
+      model={picker}
+      review={reviewMode !== undefined}
+      disabled={disabled}
+      testID="companion-pr-execution"
+      onChange={changed}
+      renderRowResources={(row) =>
+        !isPRWorkspaceExecutionProfile(value) && (
+          <PRInput
+            label="Limit model to slots, comma-separated"
+            value={resources.get(row.id)?.allowedSlots?.join(',') ?? ''}
+            disabled={disabled || !picker.valid}
+            onChange={(text) => {
+              resources.set(row.id, {
+                ...resources.get(row.id),
+                allowedSlots: text ? text.split(',') : undefined,
+              });
+              changed();
+            }}
+          />
+        )
+      }
+    />
+  );
   if (isPRWorkspaceExecutionProfile(value)) {
     return (
       <View style={styles.card}>
         <Text style={styles.title}>Review workspace</Text>
         <Text style={styles.text}>{prExecutionText(value)}</Text>
+        {selection}
       </View>
     );
   }
@@ -184,64 +197,7 @@ export function PRExecutionFields({
             onPress={() => onChange(togglePRSlot(value, id))}
           />
         ))}
-      {value.models.map((model, index) => {
-        const update = (patch: Partial<typeof model>) =>
-          onChange({
-            ...value,
-            models: value.models.map((item, i) => (i === index ? { ...item, ...patch } : item)),
-          });
-        return (
-          <View key={index} style={styles.card}>
-            <Text style={styles.muted}>
-              {index === 0 ? 'Preferred model' : `Alternative ${index}`}
-            </Text>
-            <PRInput
-              label="Runner"
-              value={model.runner}
-              disabled={disabled}
-              onChange={(runner) => update({ runner })}
-            />
-            <PRInput
-              label="Model"
-              value={model.model}
-              disabled={disabled}
-              onChange={(model) => update({ model })}
-            />
-            <PRInput
-              label="Reasoning effort, optional"
-              value={model.effort ?? ''}
-              disabled={disabled}
-              onChange={(effort) => update({ effort: effort || undefined })}
-            />
-            <PRInput
-              label="Limit model to slots, comma-separated"
-              value={model.allowedSlots?.join(',') ?? ''}
-              disabled={disabled}
-              onChange={(text) =>
-                update({
-                  allowedSlots: text ? text.split(',') : undefined,
-                })
-              }
-            />
-            {value.models.length > 1 && (
-              <PRButton
-                label="Remove model alternative"
-                disabled={disabled}
-                onPress={() =>
-                  onChange({ ...value, models: value.models.filter((_, i) => i !== index) })
-                }
-              />
-            )}
-          </View>
-        );
-      })}
-      <PRButton
-        label="Add model alternative"
-        disabled={disabled}
-        onPress={() =>
-          onChange({ ...value, models: [...value.models, newPRExecution().models[0]] })
-        }
-      />
+      {selection}
       <Text style={styles.muted}>
         One allowed slot/model combination runs the work. The gateway reports unsupported choices;
         it cannot choose an unlisted fallback.

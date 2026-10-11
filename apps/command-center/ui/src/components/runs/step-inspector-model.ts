@@ -1,9 +1,4 @@
-import type {
-  FamilyObservabilityArtifact,
-  Run,
-  RunStep,
-  SelfReviewIssue,
-} from '@farmslot/protocol';
+import type { FamilyObservabilityArtifact, ReviewIssue, Run, RunStep } from '@farmslot/protocol';
 import {
   parseGitHubPullUrl,
   parseGitHubRef,
@@ -81,7 +76,7 @@ export interface ReviewLoopAttempt {
   loopNumber: number;
   verdict: string;
   unresolvedCount: number;
-  issues: SelfReviewIssue[];
+  issues: ReviewIssue[];
   completedAt: string;
   hasFixDelta: boolean;
   fixDeltaPath: string | null;
@@ -89,11 +84,11 @@ export interface ReviewLoopAttempt {
 
 /**
  * Steps that emit a per-loop review convergence trace in their outputs. Both
- * the publication-review steps and the self-review loop write `attempts[]` /
+ * the publication-review steps and the review loop write `attempts[]` /
  * `timeline[]` describing each review→fix→re-review iteration.
  */
 export function stepHasReviewLoop(step: RunStep): boolean {
-  if (!step.name.includes('publication-review-') && step.name !== 'self-review') return false;
+  if (!step.name.includes('publication-review-') && step.name !== 'review') return false;
   const out = (step.outputs ?? {}) as Record<string, unknown>;
   const attempts = Array.isArray(out.attempts) ? out.attempts : [];
   const timeline = Array.isArray(out.timeline) ? out.timeline : [];
@@ -102,7 +97,7 @@ export function stepHasReviewLoop(step: RunStep): boolean {
 
 /**
  * Normalize the free-form `outputs.attempts` blob into the per-loop rows the
- * inspector renders. self-review and publication-review share this shape
+ * inspector renders. review and publication-review share this shape
  * (`loopNumber`, `verdict`, `unresolvedCount`, `issues[]`, optional `fixDelta`).
  */
 export function reviewLoopAttempts(step: RunStep): ReviewLoopAttempt[] {

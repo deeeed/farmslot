@@ -23,6 +23,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@farmslot/protocol': resolve(__dirname, '../../../packages/protocol/src'),
+      '@farmslot/review-dispatch': resolve(__dirname, '../../../packages/review-dispatch/src'),
       '@farmslot/theme': resolve(__dirname, '../../../packages/theme/src'),
     },
   },

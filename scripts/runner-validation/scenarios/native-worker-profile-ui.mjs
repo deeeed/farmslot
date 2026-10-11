@@ -58,10 +58,9 @@ export async function runScenario({
       'dispatch',
       `const root=document.querySelector('dispatch-wizard')?.shadowRoot;const control=${expression};if(!control||control.disabled)throw new Error('Control unavailable');control.scrollIntoView({block:'center'});const rect=control.getBoundingClientRect();let hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);while(hit?.shadowRoot){const next=hit.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);if(!next||next===hit)break;hit=next;}if(!control.contains(hit))throw new Error('Control is covered');control.click();return true;`,
     );
+  const pickerPath = 'dispatch-wizard >>> review-dispatch-picker >>> ';
   const clickRunner = (runner) =>
-    click(
-      `Array.from(root.querySelector('runner-model-effort-picker').shadowRoot.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(runner)})`,
-    );
+    cdp('select', 'dispatch', pickerPath + '[data-testid=review-dispatch-runner]', runner);
   const signedOutId = `worker-ui-${randomUUID().slice(0, 8)}`;
   let signedOut;
   let node;
@@ -139,10 +138,7 @@ export async function runScenario({
       timeoutMs,
     );
     clickRunner(report.runner);
-    if (model)
-      click(
-        `Array.from(root.querySelector('runner-model-effort-picker').shadowRoot.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(model)})`,
-      );
+    if (model) cdp('select', 'dispatch', pickerPath + '[data-testid=review-dispatch-model]', model);
     click(
       "Array.from(root.querySelector('slot-prepare-options').shadowRoot.querySelectorAll('button')).find(e=>e.textContent.trim()==='Skip Prepare')",
     );

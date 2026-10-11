@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Derive claim verdicts, measured moments and source-frame stills automatically; bound recording and preserve original segments and partial capture (ADR-062).
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 
 ## 0.29.0 - 2026-10-11
 

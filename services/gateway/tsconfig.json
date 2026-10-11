@@ -11,7 +11,8 @@
       "@farmslot/capabilities/*": ["../../packages/capabilities/src/*"],
       "@farmslot/credential-store": ["../../packages/credential-store/src/index.ts"],
       "@farmslot/slot-config": ["../../packages/slot-config/src/index.ts"],
-      "@farmslot/slot-config/*": ["../../packages/slot-config/src/*"]
+      "@farmslot/slot-config/*": ["../../packages/slot-config/src/*"],
+      "@farmslot/review-dispatch": ["../../packages/review-dispatch/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

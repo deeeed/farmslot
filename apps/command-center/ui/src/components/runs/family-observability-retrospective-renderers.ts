@@ -123,14 +123,14 @@ export function renderPendingRetrospectiveDecision(options: PendingRetrospective
         ${ciWatchLabel
           ? html`<div><span class="muted">CI Watch</span><strong>${ciWatchLabel}</strong></div>`
           : nothing}
-        ${payload?.selfReviewVerdict
+        ${payload?.reviewVerdict
           ? html`<div>
-              <span class="muted">Self Review</span><strong>${payload.selfReviewVerdict}</strong>
+              <span class="muted">Review</span><strong>${payload.reviewVerdict}</strong>
             </div>`
           : nothing}
       </div>
-      ${payload?.selfReviewSummary
-        ? html`<div class="retro-copy">${payload.selfReviewSummary}</div>`
+      ${payload?.reviewSummary
+        ? html`<div class="retro-copy">${payload.reviewSummary}</div>`
         : nothing}
       ${commentsSummary
         ? html`

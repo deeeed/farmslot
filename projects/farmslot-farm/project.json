@@ -158,21 +158,22 @@
     "mock_mode": true,
     "fixtures_dir": "test-data"
   },
-  "self_review": {
+  "review": {
     "enabled": false,
     "max_retries": 3,
     "review_timeout_min": 75
   },
   "ci": {
     "enabled": true,
+    "local_check": "yarn ci:local",
     "repo": "deeeed/farmslot"
   },
   "publication_review": {
     "fix-bug": {
-      "minimum_independent_reviews": 1
+      "minimum_reviews": 1
     },
     "dev": {
-      "minimum_independent_reviews": 0
+      "minimum_reviews": 0
     }
   },
   "platforms": {

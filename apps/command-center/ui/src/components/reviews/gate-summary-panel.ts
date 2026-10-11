@@ -151,16 +151,14 @@ export class GateSummaryPanel extends LitElement {
         </div>
 
         <div class="gs-section-title">Reviews</div>
-        ${d.selfReview
+        ${d.review
           ? html`<div class="gs-row">
               <span
                 class="gs-badge"
-                style="color:${verdictColor(d.selfReview.verdict ?? d.selfReview.status)}"
-                >Self-review ${d.selfReview.status}</span
+                style="color:${verdictColor(d.review.verdict ?? d.review.status)}"
+                >Review ${d.review.status}</span
               >
-              ${d.selfReview.reason
-                ? html`<span class="gs-dim">${d.selfReview.reason}</span>`
-                : nothing}
+              ${d.review.reason ? html`<span class="gs-dim">${d.review.reason}</span>` : nothing}
             </div>`
           : nothing}
         ${d.reviews.length
@@ -179,7 +177,7 @@ export class GateSummaryPanel extends LitElement {
                     : nothing}
                 </div>`,
             )
-          : html`<div class="gs-dim">No independent reviews</div>`}
+          : html`<div class="gs-dim">No reviews</div>`}
         <div class="gs-row gs-dim">
           <span>${d.passingLabel}</span>
           <span>${d.reWorkCount} review${d.reWorkCount === 1 ? '' : 's'} triggered re-work</span>

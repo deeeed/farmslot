@@ -14,6 +14,7 @@ import {
   isSlotRefreshStaleBranch,
   isTerminalRunStatus,
   type MonitoredPRIdentity,
+  normalizeCICheckDetail,
   type PRForSlotParams,
   type PRForSlotResult,
   type PRListParams,
@@ -115,6 +116,8 @@ interface FetchPRDataOptions {
   rejectIncomplete?: boolean;
   /** Dashboard list may use truncated GraphQL first pages; pr.status must not. */
   allowPartial?: boolean;
+  /** Detail-only metadata must not change dashboard list/backoff payloads. */
+  includeCheckSnapshot?: boolean;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -167,6 +170,7 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
     runs: getAllRuns(),
     project: params.project,
     force: params.force,
+    includeCheckSnapshot: true,
   });
   return { pr };
 }
@@ -313,7 +317,7 @@ async function loadPRList(
     'preparing',
     'dispatching',
     'monitoring',
-    'self-reviewing',
+    'reviewing',
     'completing',
     'ci-watching',
   ]);
@@ -646,6 +650,16 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
       status: w.status === 'not_found' ? ('pending' as const) : w.status,
       watchName: w.watchName,
     })),
+    ...(opts.includeCheckSnapshot && raw.checksAvailable && !raw.partial
+      ? {
+          checkSnapshot: {
+            pr: prNum,
+            repo: ghRepo,
+            fetchedAt: new Date(raw.fetchedAt).toISOString(),
+            checks: allChecks.map(normalizeCICheckDetail),
+          },
+        }
+      : {}),
     checkSummary: {
       passed: passed.length,
       failed: failed.length,
@@ -761,6 +775,8 @@ interface ParsedCheck {
   status: string;
   startedAt: string;
   completedAt: string;
+  state?: string;
+  detailsUrl?: string;
   index: number;
 }
 
@@ -782,6 +798,8 @@ function parseChecksOutput(output: string): ParsedCheck[] {
         status: parts[1].trim().toLowerCase(),
         startedAt: parts[2]?.trim() ?? '',
         completedAt: parts[3]?.trim() ?? '',
+        state: parts[4]?.trim(),
+        detailsUrl: parts[5]?.trim(),
         index: index++,
       });
     }

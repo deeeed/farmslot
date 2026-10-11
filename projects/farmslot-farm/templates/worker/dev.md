@@ -20,7 +20,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - `gateway-cli` — backend/gateway only. **Still needs a recipe** via CLI/RPC/logs (Phase 2).
   - `command-center` — Command Center browser UI (CDP / Vite)
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
-  Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
+    Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
 - [ ] **3. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
@@ -58,7 +58,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 (`command` → `farmslot …`), gateway RPC (`command` → `cdp.mjs gateway …`), logs (`watch_logs`), or
 Companion. Not UI-only. Assert at the level that proves the claim: screenshots for rendering, log/RPC
 reads for state and cross-store effects. Never proof: "backend-only"; mocked unit tests; a `#dev/*`
-fixture when the claim is that the gateway *derives* the value; asserting a call returned when the
+fixture when the claim is that the gateway _derives_ the value; asserting a call returned when the
 claim is its side effect. Endpoint/assertion table: `{{recipe_quality_path}}`.
 
 Skip Phase 2 only when no manifest action reaches the change through **any** endpoint above; state
@@ -127,6 +127,8 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - [ ] **13. Validate screenshots (HARD GATE)** — Read each promoted `artifacts/before-*.png` and `artifacts/after-*.png` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
 - [ ] **14. Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — gateway uses this to embed screenshots + `after.mp4` in the created PR. Follow `{{recipe_quality_path}}` (before/after pairs + `videos.after: artifacts/after.mp4`).
 - [ ] **15. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
+      {{CI_PARITY_STEP}}
+
 - [ ] **16. Artifact contract**:
   ```bash
   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
@@ -134,13 +136,13 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 
 ### Phase 6: Report + package
 
-- [ ] **17. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
+- [ ] **17. Review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
 - [ ] **18. Blast radius** — for each thing you changed, list every caller, other reader/writer of the
-  same state, schema/doc describing it, and its tests; verify each. If one site had the bug, fix its
-  siblings in the same pass rather than waiting for review to find them.
-- [ ] **19. Extend + re-run the recipe for anything you changed since Phase 2** — every review or self-review fix
-  needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
-  assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
+      same state, schema/doc describing it, and its tests; verify each. If one site had the bug, fix its
+      siblings in the same pass rather than waiting for review to find them.
+- [ ] **19. Extend + re-run the recipe for anything you changed since Phase 2** — every review or review fix
+      needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
+      assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
@@ -158,3 +160,31 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - If you remove your code, the recipe must fail.
 - Boot/install only surfaces step 1 required — no opportunistic Companion or CC bring-up.
 - Companion/mobile ACs (`companion-device`): app must be installed on the slot device before proof; use the same `{{recipe_validate_wrapper}}` / companion capture path for device evidence, not catalog-only stubs.
+
+## Acceptance verdicts + recipe coverage
+
+Before successful completion or handing off this PR, set `export TASK_DIR="{{TASK_DIR}}"`. Use the deployed agent runtime, not the application checkout's dependencies:
+
+```bash
+FARMSLOT_ACCEPTANCE_ROOT="{{farmslot_dir}}"
+case "$FARMSLOT_ACCEPTANCE_ROOT" in
+  "~/"*) FARMSLOT_ACCEPTANCE_ROOT="$HOME/${FARMSLOT_ACCEPTANCE_ROOT#\~/}" ;;
+esac
+node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac list
+```
+
+If `ac list` has no registered criteria, skip ledger recording/rendering and retain the task's existing recipe-coverage workflow. Otherwise, record an honest verdict for each AC with `node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>`. Use the actual state, visual or mixed mode and existing evidence; omit the recipe node when no recipe applies. Use `untestable --note <reason>` only when proof is unavailable. Check `ac list` again.
+
+When a recipe exists and ACs are registered, render coverage to a temporary file and replace the existing coverage only after success:
+
+```bash
+coverage_tmp=$(mktemp "{{TASK_DIR}}/artifacts/recipe-coverage.XXXXXX")
+if node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" ac render > "$coverage_tmp"; then
+  mv "$coverage_tmp" "{{TASK_DIR}}/artifacts/recipe-coverage.md"
+else
+  rm -f "$coverage_tmp"
+  exit 1
+fi
+```
+
+Before `mark complete`, run `node "$FARMSLOT_ACCEPTANCE_ROOT/packages/agent-runtime/bin/farmslot-agent.mjs" artifact-check "{{TASK_DIR}}" --require-recipe-coverage-if-recipe --require-acceptance-status`. Refresh affected verdicts and coverage after the final proof run. Checklist completion alone does not assess an AC.

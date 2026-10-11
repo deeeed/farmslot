@@ -116,7 +116,7 @@ test('latestResolvedHumanGateDecision prefers latest approval after review reque
       actions: [],
       createdAt: '2026-05-07T00:00:00.000Z',
       resolvedAt: '2026-05-07T00:01:00.000Z',
-      resolvedAction: 'request-extra-review',
+      resolvedAction: 'request-review',
       selectionData: { feedback: 'please review again' },
     },
     {
@@ -146,11 +146,11 @@ test('human gate review requests replay once after stale engine resume', () => {
     actions: [],
     createdAt: '2026-05-07T00:00:00.000Z',
     resolvedAt: '2026-05-07T00:01:00.000Z',
-    resolvedAction: 'request-extra-review',
-    selectionData: { reviewRequest: { extraLoopsRequested: 1 } },
+    resolvedAction: 'request-review',
+    selectionData: { reviewRequest: {} },
   };
   const actions: RunDecision['actions'] = [
-    { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
+    { id: 'request-review', label: 'Request Extra Review', style: 'secondary' },
   ];
 
   assert.equal(isReplayableResolvedHumanGateDecision(decision, actions), true);

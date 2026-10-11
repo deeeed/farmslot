@@ -4,6 +4,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the shared review picker and COLD/WARM session rules.
+
+- Registered acceptance criteria require verdicts before successful task completion, including contracts without an opt-in.
 - Explain hosted recipe binding, remote cancellation and recovery from unconfirmed process closeout.
 
 - Gateway API reference includes the supported finished-run evidence refresh operation.

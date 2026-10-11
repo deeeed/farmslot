@@ -155,7 +155,7 @@ export async function sendNativeWorkerInstruction(input: {
       throw new Error('Native subtask instruction changed');
   };
   assertInstruction(context);
-  const allowOperatorWait = input.allowOperatorWait && context?.role === 'self-review-fix';
+  const allowOperatorWait = input.allowOperatorWait && context?.role === 'review-fix';
   if (
     run.slotId !== input.slotId ||
     isTerminalRunStatus(run.status) ||

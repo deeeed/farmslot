@@ -7,10 +7,10 @@
  *
  * This is a PROJECTION layer. It reads already-captured state and never
  * re-derives review outcomes or re-reads artifacts:
- *   - review outcomes  ← engineState.publishGate.independentReviews
- *                         (materialized by run-completion/independent-reviews.ts)
+ *   - review outcomes  ← engineState.publishGate.reviews
+ *                         (materialized by run-completion/reviews.ts)
  *   - self/extra split  ← quality/review-sources.ts (inferReviewSourceKind)
- *   - self-review skip  ← the SELF_REVIEW pipeline step's outputs.reason
+ *   - review skip  ← the REVIEW pipeline step's outputs.reason
  *   - worker tokens     ← run.metrics (populated at finalize)
  *   - family fix-loops  ← listRuns({ familyId })
  */
@@ -22,9 +22,9 @@ import {
   type GatePolicy,
   type GateSummary,
   type GateTokenSummary,
-  type IndependentReviewStatus,
   PipelineSteps,
   type ReadyGatePrPackage,
+  type ReviewStatus,
   type ReviewSummary,
   type Run,
 } from '@farmslot/protocol';
@@ -109,19 +109,17 @@ function buildChecklistSubtasks(run: Run): NonNullable<GateSummary['checklist']>
   return rows.length > 0 ? rows : undefined;
 }
 
-function isSelfReviewEntry(review: IndependentReviewStatus): boolean {
+function isReviewEntry(review: ReviewStatus): boolean {
   // `source` is the explicit signal; fall back to the id-prefix registry.
-  if (review.source === 'self-review') return true;
-  return inferReviewSourceKind(review) === 'self-review';
+  if (review.source === 'pipeline') return true;
+  return inferReviewSourceKind(review) === 'pipeline';
 }
 
-function effectiveReviewedHead(review: IndependentReviewStatus): string | null {
+function effectiveReviewedHead(review: ReviewStatus): string | null {
   return review.reviewSnapshot?.headSha?.trim() || review.reviewedHeadSha?.trim() || null;
 }
 
-function reviewsForLatestReviewedHead(
-  reviews: readonly IndependentReviewStatus[],
-): IndependentReviewStatus[] {
+function reviewsForLatestReviewedHead(reviews: readonly ReviewStatus[]): ReviewStatus[] {
   // Prefer immutable snapshots when any review has one. Package refresh may
   // restamp the compatibility `reviewedHeadSha` on older snapshot-less entries;
   // letting those entries join the current snapshot makes resolved findings
@@ -153,19 +151,16 @@ function reviewsForLatestReviewedHead(
  * A review caused re-work when it sent feedback AND something ran afterwards —
  * either a second attempt on the same review, or a later review loop.
  */
-function triggeredReWork(
-  review: IndependentReviewStatus,
-  allReviews: readonly IndependentReviewStatus[],
-): boolean {
+function triggeredReWork(review: ReviewStatus, allReviews: readonly ReviewStatus[]): boolean {
   if (review.feedbackSent !== true) return false;
   const moreAttempts = (review.attempts?.length ?? 1) > 1;
   const laterLoop = allReviews.some((other) => other.loopNumber > review.loopNumber);
   return moreAttempts || laterLoop;
 }
 
-function selfReviewStatus(
-  verdict: IndependentReviewStatus['verdict'],
-): NonNullable<ReviewSummary['selfReview']>['status'] {
+function reviewStatus(
+  verdict: ReviewStatus['verdict'],
+): NonNullable<ReviewSummary['review']>['status'] {
   switch (verdict) {
     case 'pass':
     case 'issues':
@@ -184,20 +179,20 @@ function workerModel(run: Run): string | null {
   return run.metrics.actualModel ?? run.metrics.model ?? null;
 }
 
-/** Project the self-review block from review entries, falling back to the skip step. */
-function buildSelfReview(
+/** Project the review block from review entries, falling back to the skip step. */
+function buildReview(
   run: Run,
-  selfEntries: readonly IndependentReviewStatus[],
-  allReviews: readonly IndependentReviewStatus[],
-): ReviewSummary['selfReview'] {
+  selfEntries: readonly ReviewStatus[],
+  allReviews: readonly ReviewStatus[],
+): ReviewSummary['review'] {
   // The skip reason lives on the pipeline step, not the review entry — a skipped
-  // self-review can be recorded as both an entry (verdict 'skipped') and a step.
-  const step = run.steps.find((s) => s.name === PipelineSteps.SELF_REVIEW);
+  // review can be recorded as both an entry (verdict 'skipped') and a step.
+  const step = run.steps.find((s) => s.name === PipelineSteps.REVIEW);
   const stepReason = typeof step?.outputs?.reason === 'string' ? step.outputs.reason : undefined;
 
   const latest = selfEntries.at(-1);
   if (latest) {
-    const status = selfReviewStatus(latest.verdict);
+    const status = reviewStatus(latest.verdict);
     return {
       status,
       ...(status === 'skipped' && stepReason ? { reason: stepReason } : {}),
@@ -208,7 +203,7 @@ function buildSelfReview(
       ...(latest.artifactPaths?.length ? { artifactPaths: latest.artifactPaths } : {}),
     };
   }
-  // No self-review entry — fall back to the step alone for the skip reason.
+  // No review entry — fall back to the step alone for the skip reason.
   if (!step) return undefined;
   return {
     status: step.outputs?.skipped === true ? 'skipped' : 'pending',
@@ -219,25 +214,22 @@ function buildSelfReview(
   };
 }
 
-/** Build the review-outcomes section (self-review + independent reviews). */
+/** Build the review-outcomes section (review + reviews). */
 export function buildReviewSummary(
   run: Run,
   preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
 ): ReviewSummary {
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
-  const selfEntries = reviews.filter(isSelfReviewEntry);
-  const independentEntries = reviewsForLatestReviewedHead(
-    reviews.filter((r) => !isSelfReviewEntry(r)),
-  );
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  const selfEntries = reviews.filter(isReviewEntry);
+  const requestedEntries = reviewsForLatestReviewedHead(reviews);
 
-  const selfReview = buildSelfReview(run, selfEntries, reviews);
+  const review = buildReview(run, selfEntries, reviews);
 
-  const independentReviews = independentEntries.map((r) => ({
+  const summaries = requestedEntries.map((r) => ({
     id: r.id,
     ...(r.source ? { source: r.source } : {}),
     runner: r.runner ?? null,
     model: r.model ?? null,
-    crossRunner: r.crossRunner,
     loopNumber: r.loopNumber,
     verdict: r.verdict,
     unresolvedCount: r.unresolvedCount,
@@ -253,49 +245,47 @@ export function buildReviewSummary(
     ...(r.completedAt ? { completedAt: r.completedAt } : {}),
   }));
 
-  const passingReviews = independentEntries.filter(
+  const passingReviews = requestedEntries.filter(
     (r) =>
       r.verdict === 'pass' &&
       (!preparedPackage ||
         (r.unresolvedCount === 0 && publicationReviewMatchesPreparedPackage(r, preparedPackage))),
   ).length;
-  const totalUnresolved =
-    num(selfReview?.unresolvedCount) +
-    independentEntries.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
+  const totalUnresolved = requestedEntries.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
   const didAnyReviewTriggerReWork =
-    selfReview?.triggeredReWork === true || independentReviews.some((r) => r.triggeredReWork);
-  const requiredReviews = run.engineState?.publishGate?.reviewDepth?.minimumIndependentReviews;
+    review?.triggeredReWork === true || summaries.some((r) => r.triggeredReWork);
+  const requiredReviews = run.engineState?.publishGate?.reviewPolicy?.minimumReviews;
 
   return {
-    ...(selfReview ? { selfReview } : {}),
-    independentReviews,
+    ...(review ? { review } : {}),
+    reviews: summaries,
     ...(requiredReviews != null ? { requiredReviews } : {}),
     passingReviews,
     totalUnresolved,
     didAnyReviewTriggerReWork,
-    summaryText: buildReviewSummaryText(selfReview, independentReviews, passingReviews),
+    summaryText: buildReviewSummaryText(review, summaries, passingReviews),
   };
 }
 
 function buildReviewSummaryText(
-  selfReview: ReviewSummary['selfReview'],
-  independentReviews: ReviewSummary['independentReviews'],
+  review: ReviewSummary['review'],
+  reviews: ReviewSummary['reviews'],
   passingReviews: number,
 ): string {
   const parts: string[] = [];
-  if (selfReview) {
+  if (review) {
     parts.push(
-      selfReview.status === 'skipped'
-        ? `self-review skipped (${selfReview.reason ?? 'no reason recorded'})`
-        : `self-review ${selfReview.verdict ?? selfReview.status}`,
+      review.status === 'skipped'
+        ? `review skipped (${review.reason ?? 'no reason recorded'})`
+        : `review ${review.verdict ?? review.status}`,
     );
   }
-  if (independentReviews.length) {
-    parts.push(`${passingReviews}/${independentReviews.length} independent reviews passing`);
+  if (reviews.length) {
+    parts.push(`${passingReviews}/${reviews.length} reviews passing`);
   } else {
-    parts.push('no independent reviews');
+    parts.push('no reviews');
   }
-  const reWork = independentReviews.filter((r) => r.triggeredReWork).length;
+  const reWork = reviews.filter((r) => r.triggeredReWork).length;
   parts.push(reWork ? `${reWork} triggered re-work` : 'no re-work triggered');
   return parts.join('; ');
 }
@@ -349,7 +339,7 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
     turns: num(m.sessionTurns),
   };
 
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   const reviewTokens = reviews
     .filter((r) => r.usage && num(r.usage.totalTokens) > 0)
     .map((r) => ({

@@ -16,6 +16,18 @@ function payload(overrides: Record<string, unknown>): ReadyGatePayload {
   return overrides as unknown as ReadyGatePayload;
 }
 
+test('CI execution logs use the existing artifact collection and viewer path', () => {
+  const path = 'artifacts/deterministic-checks/CHECKLIST.md/check.log';
+  const artifacts = readyWorkspaceAllArtifacts(
+    payload({
+      prPackage: {
+        deterministicChecks: [{ logPath: path, status: 'passed', exitCode: 0 }],
+      },
+    }),
+  );
+  assert.deepEqual(artifacts, [{ path, purpose: 'ci-parity-log' }]);
+});
+
 test('ready workspace artifact model merges package, evidence, and review artifacts', () => {
   const artifacts = readyWorkspaceAllArtifacts(
     payload({
@@ -23,7 +35,7 @@ test('ready workspace artifact model merges package, evidence, and review artifa
         { path: 'artifacts/diff.txt', purpose: 'diff' },
         { path: 'artifacts/after.png', purpose: 'screenshot' },
       ],
-      independentReviews: [{ loopNumber: 2, artifactPaths: ['reviews/review.md'] }],
+      reviews: [{ loopNumber: 2, mode: 'cold', artifactPaths: ['reviews/review.md'] }],
       prPackage: {
         artifactPath: 'artifacts/pr-package.json',
         validationSummaryPath: 'artifacts/validation.md',
@@ -95,8 +107,8 @@ test('ready workspace evidence model preserves selected package media under scre
 test('ready workspace artifact model exposes review, package preview, and diff helpers', () => {
   const input = payload({
     artifactManifest: [{ path: 'reports/changes.diff', purpose: 'review patch' }],
-    independentReviews: [
-      { loopNumber: 1, artifactPaths: ['reviews/notes.md', 'reviews/diff.txt'] },
+    reviews: [
+      { loopNumber: 1, mode: 'cold', artifactPaths: ['reviews/notes.md', 'reviews/diff.txt'] },
     ],
     prPackage: { artifactPath: 'artifacts/pr-package.json' },
   });

@@ -22,6 +22,7 @@ export interface NativeSessionCreateParams {
   runner: string;
   cwd: string;
   model?: string;
+  effort?: string;
   mode?: 'default' | 'plan';
   /** Exact native identity, never a live TUI takeover. */
   resumeSessionId?: string;

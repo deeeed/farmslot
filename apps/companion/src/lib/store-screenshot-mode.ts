@@ -416,7 +416,7 @@ function storeScreenshotCopilotRuntime(
       severity: 'normal',
       totals: {
         implementation: 0,
-        independentReview: 0,
+        review: 0,
         reviewRework: 0,
         ciFix: 0,
         fullQa: 0,

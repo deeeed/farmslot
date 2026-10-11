@@ -1,5 +1,6 @@
 import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
 import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
@@ -65,7 +66,8 @@ export function RecipeBridgeProvider({
           return { ok: true, bridge: bridgeName, platform: Platform.OS, hud: true };
         }
         if (command.command === 'hud') {
-          setHud(normalizeHudState(command.payload));
+          // `clear` is part of the app.hud action manifest; it hides the HUD.
+          setHud(command.payload?.clear === true ? null : normalizeHudState(command.payload));
           return { ok: true };
         }
         if (command.command === 'trace') {
@@ -105,7 +107,7 @@ export function RecipeBridgeProvider({
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
       <View style={{ flex: 1 }}>
         {children}
-        {renderHud ? renderHud(hud) : <RecipeHud state={hud} />}
+        {renderHud ? renderHud(hud) : <RecipeHud state={hud} overlay={FullWindowOverlay} />}
       </View>
     </FarmslotRecipeBridgeContext.Provider>
   );

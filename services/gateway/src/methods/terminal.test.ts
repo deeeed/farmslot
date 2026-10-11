@@ -21,7 +21,7 @@ test('parseTerminalKey maps role context ids to roles', () => {
 test('selectPtyKey does not route role-scoped input into the bare-slot PTY', () => {
   const active = new Set(['runner-browser-4']);
   assert.equal(
-    selectPtyKey('runner-browser-4', 'runner-browser-4:self-review', (key) => active.has(key)),
+    selectPtyKey('runner-browser-4', 'runner-browser-4:review', (key) => active.has(key)),
     null,
   );
 });
@@ -35,9 +35,9 @@ test('selectPtyKey preserves legacy slot PTY routing for unscoped terminals', ()
 });
 
 test('selectPtyKey prefers the resolved role key when present', () => {
-  const active = new Set(['runner-browser-4', 'runner-browser-4:self-review']);
+  const active = new Set(['runner-browser-4', 'runner-browser-4:review']);
   assert.equal(
-    selectPtyKey('runner-browser-4', 'runner-browser-4:self-review', (key) => active.has(key)),
-    'runner-browser-4:self-review',
+    selectPtyKey('runner-browser-4', 'runner-browser-4:review', (key) => active.has(key)),
+    'runner-browser-4:review',
   );
 });

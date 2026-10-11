@@ -1,6 +1,7 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Image,
   Modal,
   Platform,
@@ -27,10 +28,21 @@ import {
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
+import { gatewayFetch } from '../lib/gateway-http-auth';
+import {
+  TEXT_PREVIEW_MAX_BYTES,
+  TEXT_PREVIEW_RANGE,
+  textPreviewChunks,
+  textPreviewTotalBytes,
+} from '../lib/text-preview';
+import { fonts } from '../lib/theme';
 
 export interface MediaViewerItem {
   uri: string;
   title?: string;
+  /** Second caption line, e.g. the verdict of the criterion this evidence proves. */
+  detail?: string;
+  /** `document` renders the file as text. */
   mediaType?: ArtifactMediaType;
   authHeaders?: ArtifactHttpHeaders;
 }
@@ -117,10 +129,23 @@ export function MediaViewer({
             ))}
           </ScrollView>
           <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
-            <Text style={styles.captionText} numberOfLines={1}>
+            <Text
+              style={styles.captionText}
+              numberOfLines={1}
+              testID={testID ? `${testID}-title` : undefined}
+            >
               {current?.title ?? 'Evidence'}
             </Text>
-            <Text style={styles.indexText}>
+            {current?.detail ? (
+              <Text
+                style={styles.detailText}
+                numberOfLines={2}
+                testID={testID ? `${testID}-detail` : undefined}
+              >
+                {current.detail}
+              </Text>
+            ) : null}
+            <Text style={styles.indexText} testID={testID ? `${testID}-index` : undefined}>
               {currentIndex + 1}/{viewerItems.length}
             </Text>
           </View>
@@ -174,6 +199,17 @@ function MediaSlide({
   onZoomChange?: (zoomed: boolean) => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
+  if (mediaType === 'document') {
+    return (
+      <TextSlide
+        uri={item.uri}
+        width={width}
+        height={height}
+        authHeaders={item.authHeaders}
+        isActive={isActive}
+      />
+    );
+  }
   if (mediaType === 'video') {
     return (
       <FullscreenVideo
@@ -347,6 +383,73 @@ function FullscreenVideo({
   );
 }
 
+interface TextSlideProps {
+  uri: string;
+  width: number;
+  height: number;
+  authHeaders?: ArtifactHttpHeaders;
+  isActive: boolean;
+}
+
+type TextSlideContent = { body: string; totalBytes: number } | { error: string };
+
+function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps) {
+  const [content, setContent] = useState<TextSlideContent | null>(null);
+  useEffect(() => {
+    setContent(null);
+  }, [authHeaders, uri]);
+  // The viewer mounts every slide; only the one on screen downloads.
+  const load = isActive && content === null;
+  useEffect(() => {
+    if (!load) return;
+    const controller = new AbortController();
+    gatewayFetch(uri, authHeaders, {
+      signal: controller.signal,
+      headers: { Range: TEXT_PREVIEW_RANGE },
+    })
+      .then(async (res) => {
+        const totalBytes = textPreviewTotalBytes(res.status, res.headers.get('Content-Range'));
+        setContent({ body: totalBytes ? await res.text() : '', totalBytes });
+      })
+      .catch((err: Error) => {
+        // Abort is the expected cleanup when the slide leaves the screen mid-fetch.
+        if (err.name === 'AbortError') return;
+        setContent({ error: err.message });
+      });
+    return () => controller.abort();
+  }, [authHeaders, load, uri]);
+  const chunks = useMemo(
+    () => (content && 'body' in content ? textPreviewChunks(content.body) : []),
+    [content],
+  );
+  return (
+    <FlatList
+      style={[styles.textSlide, { width, height }]}
+      contentContainerStyle={styles.textContent}
+      data={chunks}
+      keyExtractor={(_, index) => String(index)}
+      ListHeaderComponent={
+        content === null ? (
+          <Text style={styles.textBody}>Loading…</Text>
+        ) : 'error' in content ? (
+          <Text style={styles.textError}>Failed to load: {content.error}</Text>
+        ) : content.totalBytes > TEXT_PREVIEW_MAX_BYTES ? (
+          <Text style={styles.textError}>
+            Showing the first {TEXT_PREVIEW_MAX_BYTES.toLocaleString()} of{' '}
+            {content.totalBytes.toLocaleString()} bytes.
+          </Text>
+        ) : null
+      }
+      renderItem={({ item }) => (
+        // Blocks follow one another, so the newline that ends a block is not drawn twice.
+        <Text selectable style={styles.textBody}>
+          {item.endsWith('\n') ? item.slice(0, -1) : item}
+        </Text>
+      )}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   modalRoot: {
     flex: 1,
@@ -376,8 +479,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  detailText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   indexText: {
     color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+  },
+  textSlide: {
+    flexGrow: 0,
+    backgroundColor: '#0b0b10',
+  },
+  textContent: {
+    padding: 16,
+  },
+  textBody: {
+    color: '#e6e6f0',
+    fontSize: 12,
+    fontFamily: fonts.mono,
+  },
+  textError: {
+    color: '#ff6b6b',
     fontSize: 12,
   },
   navBar: {
