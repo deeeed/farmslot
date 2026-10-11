@@ -4,7 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- Reject project packs with private home paths or fixed machine references before project add or update. Validation, registration and update migrations use the same configured pool file.
+- Reject project packs with private home paths or fixed machine references before project add or update. Validation, registration and update migrations use the same configured pool file. Project copies preserve relative links, and unchanged add/update repairs only recognized links converted by older copies.
 - Add checkout-local `doctor --conformance` with authorized provider loading, read-only policy preflight and a report bound to source and selected runtime configuration. Validate recipe declarations when registering packs. Require `--conformance` for project/recipe options and `--recipe` when supplying parameters.
 - Explicit gateway URLs reuse their URL-matched profile credential even when another profile is active. Matching ignores host case, default ports and trailing slashes; a profile without a secret disables discovery. Inherited `GW_URL` and checkout-derived remote URLs require a matching profile and report a corrupt profile store; locally derived loopback sandbox URLs retain local discovery. File gateway secrets stay out of the exported environment. Gateway health recognizes all loopbacks, and `credential issue` updates the URL-matched profile.
 - Export node pool environment and machine identity when bootstrap loads local slot variables, preserving operator tool paths when resolving remote slots.

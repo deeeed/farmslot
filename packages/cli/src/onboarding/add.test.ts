@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,6 +24,7 @@ import {
   operatorAddedFiles,
   projectAdd,
   registerProject,
+  repairRegisteredProjectLinks,
 } from './add.js';
 import type { PackJson, PackProject } from './pack.js';
 import type { PoolConfig } from './pool-config.js';
@@ -462,4 +466,41 @@ test('projectAdd refuses an existing single-branch slot clone that cannot check 
     result.failures[0],
     /^app-farm: slot repo .*app-1: origin fetch refspec \+refs\/heads\/release\/8\.14\.0:refs\/remotes\/origin\/release\/8\.14\.0 does not fetch default branch 'main'/,
   );
+});
+
+test('registration preserves relative tool pins and repairs only previously converted owned links', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-relative-pins-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const ws = workspaceAt(join(root, 'ws'));
+  const packDir = join(root, 'pack');
+  const proj: PackProject = { dir: 'projects/app-farm', platform: 'cli', slots: 1 };
+  const src = join(packDir, proj.dir);
+  mkdirSync(join(src, 'fixtures'), { recursive: true });
+  mkdirSync(join(src, 'setup'));
+  writeFileSync(
+    join(src, 'project.json'),
+    JSON.stringify({ repo_url: 'https://example.invalid/app.git' }),
+  );
+  writeFileSync(join(src, 'setup/node-tool-versions'), 'nodejs 22.22.1\n');
+  symlinkSync('../setup/node-tool-versions', join(src, 'fixtures/.tool-versions'));
+  const state = stateWith({
+    p: { source: packDir, hash: 'same', projects: ['app-farm'], slots: [] },
+  });
+  const progress = { step: () => {}, info: () => {} };
+  registerProject(proj, packDir, ws, state, 'p', progress);
+  const dest = join(ws.farmslotDir, 'projects/app-farm');
+  const pin = join(dest, 'fixtures/.tool-versions');
+  assert.equal(readlinkSync(pin), '../setup/node-tool-versions');
+  rmSync(dest, { recursive: true });
+  cpSync(src, dest, { recursive: true });
+  assert.equal(readlinkSync(pin), realpathSync(join(src, 'setup/node-tool-versions')));
+  writeFileSync(join(dest, 'operator.private'), 'operator value');
+  assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 1);
+  assert.equal(readlinkSync(pin), '../setup/node-tool-versions');
+  assert.equal(readFileSync(join(dest, 'operator.private'), 'utf8'), 'operator value');
+  assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 0);
+  rmSync(pin);
+  symlinkSync(join(root, 'operator-pin'), pin);
+  assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 0);
+  assert.equal(readlinkSync(pin), join(root, 'operator-pin'));
 });

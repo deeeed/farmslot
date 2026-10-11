@@ -6,7 +6,13 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { AddError, assertProjectOwnership, resolvePackSource, syncPackProjects } from './add.js';
+import {
+  AddError,
+  assertProjectOwnership,
+  repairRegisteredProjectLinks,
+  resolvePackSource,
+  syncPackProjects,
+} from './add.js';
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
@@ -169,6 +175,11 @@ export async function farmslotUpdate(
     if (!pack) throw new AddError(`pack ${name} is invalid:\n  - ${errors.join('\n  - ')}`);
     const hash = hashPackDir(packDir);
     if (hash === packState.hash) {
+      for (const proj of pack.projects) {
+        const repaired = repairRegisteredProjectLinks(proj, packDir, ws, state, name);
+        if (repaired)
+          progress.info(`restored ${repaired} relative pack link(s) in ${projectName(proj)}`);
+      }
       progress.info(`pack ${name} unchanged`);
       continue;
     }
