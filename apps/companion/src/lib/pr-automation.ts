@@ -24,6 +24,7 @@ import {
   resolvePRWorkflowDefaults,
   reviewResultForRun,
   type Run,
+  workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
 
 export function newPRExecution(): PRSlotExecutionProfile {
@@ -240,10 +241,7 @@ export function togglePRSlot(execution: PRExecutionProfile, slotId: string): PRE
 export function prExecutionText(profile?: PRExecutionProfile): string {
   if (!profile) return 'No execution profile configured';
   if (isPRWorkspaceExecutionProfile(profile)) {
-    const machines =
-      profile.workspacePolicy.kind === 'exact'
-        ? profile.workspacePolicy.machine
-        : profile.workspacePolicy.allowedMachines.join(', ');
+    const machines = workspacePolicyTargetLabel(profile.workspacePolicy);
     return `Review machines: ${machines} · ${profile.models.map((model) => `${model.runner}/${model.model}`).join(' or ')}`;
   }
   return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model}${model.effort ? `/${model.effort}` : ''}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;

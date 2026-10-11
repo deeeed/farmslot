@@ -15,6 +15,7 @@ import { shellQuote } from '../core/tmux.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import { inspectReviewWorkspaceTarget } from '../review-workspaces/admission.js';
+import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
 import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
 
 export interface PRExecutionContext {
@@ -42,7 +43,14 @@ export async function resolvePRExecution(
   const config = await loadProjectConfig(project);
   if (!config || config.ci.repo.toLowerCase() !== repo.toLowerCase())
     return { choices: [], errors: ['Project does not map to the PR repository'] };
-  const choices = intersectPRExecutionProfiles(profiles);
+  let boundProfiles: PRExecutionProfile[];
+  try {
+    boundProfiles = await bindPRExecutionProfilesToPool(profiles);
+  } catch (error) {
+    if (!(error instanceof GatewayMethodError)) throw error;
+    return { choices: [], errors: [error.message] };
+  }
+  const choices = intersectPRExecutionProfiles(boundProfiles);
   if (!choices.length)
     return {
       choices: [],

@@ -12,6 +12,7 @@ import {
   type PRTeamProfile,
   type QueueItem,
   type Run,
+  workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
 
 import { reviewRunLabel } from './pr-review-status.js';
@@ -380,9 +381,7 @@ export function reviewCard(
             ? html`<p class="muted">
                 ${execution.workspacePolicy ? 'Review machines:' : 'Slots:'}
                 ${execution.workspacePolicy
-                  ? execution.workspacePolicy.kind === 'exact'
-                    ? execution.workspacePolicy.machine
-                    : execution.workspacePolicy.allowedMachines.join(', ')
+                  ? workspacePolicyTargetLabel(execution.workspacePolicy)
                   : execution.slotPolicy.kind === 'exact'
                     ? execution.slotPolicy.slotId
                     : execution.slotPolicy.allowedSlots.join(', ')}<br />Models:
