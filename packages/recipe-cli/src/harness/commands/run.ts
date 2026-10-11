@@ -31,6 +31,7 @@ import {
   optionFlag,
   optionString,
   parseArgs,
+  type ParsedArgs,
   parseRecipeParamAssignments,
   resolveAdapter,
   shellQuote,
@@ -91,6 +92,13 @@ export interface RunPlanStep {
 
 export interface RunCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
   engine: RecipeEngine<TMutation, TAllowlist>;
+  /** Already checked against the bound provider's command grammar. */
+  parsed?: ParsedArgs;
+  librarySources?: RecipeLibrarySource[];
+  /** Shared with the outer host so binding and finalization failures use the same terminal. */
+  stream?: JsonStreamWriter;
+  signal?: AbortSignal;
+  beforeResult?(): Promise<void>;
   targetDevice?: DeviceTargeting;
   // `run --plan`: the host's own static steps after validation, and how it
   // words the app launch a non-headless run performs.
@@ -138,18 +146,21 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
   argv: string[],
   commandOptions: RunCommandOptions<TMutation, TAllowlist>,
 ): Promise<number> {
-  const parsed = parseArgs(argv);
+  const parsed = commandOptions.parsed ?? parseArgs(argv);
   const host = harnessHost().name;
-  const stream = new JsonStreamWriter('run', optionFlag(parsed.options, 'jsonStream'));
+  const stream =
+    commandOptions.stream ?? new JsonStreamWriter('run', optionFlag(parsed.options, 'jsonStream'));
   const restoreStdout = stream.isolateStdout();
   const target = targetPath(parsed.options);
+  let resultReady: Promise<void> | undefined;
+  const beforeResult = () =>
+    (resultReady ??= Promise.resolve().then(() => commandOptions.beforeResult?.()));
   try {
-    const exitCode = await handleRunInner(
-      parsed.positional,
-      parsed.options,
-      stream,
-      commandOptions,
-    );
+    const exitCode = await handleRunInner(parsed.positional, parsed.options, stream, {
+      ...commandOptions,
+      beforeResult,
+    });
+    await beforeResult();
     stream.complete(exitCode === EXIT.ok ? 'pass' : 'fail', exitCode);
     return exitCode;
   } catch (error) {
@@ -157,6 +168,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       const failure = provenanceFailure(error);
       if (stream.enabled) {
         stream.error(failure);
+        await beforeResult();
         stream.complete('fail', error.exitCode);
       } else if (optionFlag(parsed.options, 'json')) {
         console.log(
@@ -183,6 +195,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     if (trustFailure) {
       if (stream.enabled) {
         stream.error(trustFailure);
+        await beforeResult();
         stream.complete('fail', EXIT.validation);
       } else {
         reportTrustFailure('run', trustFailure, optionFlag(parsed.options, 'json'));
@@ -202,6 +215,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       userAction: `${host} doctor --target ${shellQuote(target)} --json`,
     });
     stream.complete('fail', exitCode);
+    // The owning host finalizes after a throw and retains both failure causes.
     throw error;
   } finally {
     restoreStdout();
@@ -299,7 +313,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return handleListExecutables('run', options, { catalog: engine });
+    return handleListExecutables('run', options, {
+      catalog: engine,
+      librarySources: commandOptions.librarySources,
+    });
   }
   const targetRecipe = positional[0];
   if (!targetRecipe) throw usageError('run requires <recipe.json>.');
@@ -319,7 +336,10 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       });
       return EXIT.usage;
     }
-    return handleDescribeRecipe(targetRecipe, options, { catalog: engine });
+    return handleDescribeRecipe(targetRecipe, options, {
+      catalog: engine,
+      librarySources: commandOptions.librarySources,
+    });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
   // The runtime directory names where the slot's context and the run's runtime
@@ -375,7 +395,14 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   if (recipeRunning(target)) return emitRunRecipeRunning(jsonOutput, stream, target);
 
   stream.phase('validate');
-  const validated = await validateRunRecipeStatic(engine, targetRecipe, adapter, options, params);
+  const validated = await validateRunRecipeStatic(
+    engine,
+    targetRecipe,
+    adapter,
+    options,
+    params,
+    commandOptions.librarySources,
+  );
   if (validated.usageError) {
     const userAction = runUsageRecovery(
       validated.usageError.code,
@@ -453,6 +480,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   const librarySources = validated.librarySources;
   let observers: RunObservers | undefined;
   const runtimeOptions: RecipeEngineRunOptions = {
+    signal: commandOptions.signal,
     ...recipeRunOptionsFromCli(adapter, options),
     cli: options,
     params,
@@ -545,6 +573,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       const { result, violation } = executionResult;
       await started.finalize(result.artifactManifestPath);
       observers = undefined;
+      await commandOptions.beforeResult?.();
       for (const mutation of state.mutations) stream.mutation(mutation);
       for (const recovery of state.recovered) stream.recovery(recovery);
       persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
@@ -845,7 +874,14 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
     );
   }
   stream.phase('validate');
-  const validated = await validateRunRecipeStatic(engine, recipeArg, adapter, options, params);
+  const validated = await validateRunRecipeStatic(
+    engine,
+    recipeArg,
+    adapter,
+    options,
+    params,
+    commandOptions.librarySources,
+  );
   if (validated.usageError) {
     const userAction = runUsageRecovery(
       validated.usageError.code,
@@ -1022,6 +1058,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
     },
   ];
 
+  await commandOptions.beforeResult?.();
   const payload: Record<string, unknown> = {
     schemaVersion: 1,
     command: 'run',

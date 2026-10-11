@@ -43,7 +43,7 @@ import {
   harnessAdapters,
   isPlatformTarget,
 } from './adapters.js';
-import { optionValues } from './command-contract.js';
+import { type ContractedCommand, optionValues } from './command-contract.js';
 import {
   type ContextPortName,
   type ContextSource,
@@ -59,13 +59,14 @@ import {
   validateRelativeRecipePath,
 } from './host.js';
 import { gitLibraryProvenance } from './library-provenance.js';
-import type { CliOptions } from './parse-args.js';
+import type { CliOptions, ParsedArgs } from './parse-args.js';
 import {
   DEFAULT_RECIPE_RUNTIME_DIR,
   isPathWithin as within,
   recipeOutputRoots,
   recipeRuntimeDir,
 } from './paths.js';
+import { parseProjectInvocation, type ProjectCommandInvocation } from './project-command.js';
 import type { RecipeEngine } from './run-engine.js';
 
 export interface ResolveHarnessContextOptions {
@@ -138,19 +139,23 @@ export async function resolveHarnessContext(
   const pool = options.slotPoolDir
     ? { dir: options.slotPoolDir, source: 'option' as const }
     : resolveSlotPoolDir();
+  const requestedSlot =
+    options.slotSelection === 'identity'
+      ? undefined
+      : optionValues(options.tokens, '--slot').at(-1);
   const pooled = pool
     ? await poolSlot(
         root,
         pool.dir,
         pool.source === 'farmslot-node' ? 'slot-config (~/farmslot-node/pool)' : 'slot-config',
-        options.slotSelection === 'identity'
-          ? undefined
-          : optionValues(options.tokens, '--slot').at(-1),
+        requestedSlot,
         options.strictSlot ?? true,
         options.slotSelection,
       )
     : 'no-pool-dir';
   const pooledSlot = typeof pooled === 'object' ? pooled : undefined;
+  if (requestedSlot && options.strictSlot !== false && !pooledSlot)
+    throw new SlotByRepoError([], requestedSlot);
   // The pool's slot keeps the owned runtime context's ports beside its own
   // (camelCase runtime keys, snake_case pool keys), so they can win the fill.
   const owned = runtimeSlot(runtime);
@@ -591,6 +596,10 @@ export interface LoadProjectProviderOptions {
   host?: HarnessHostConfig;
   command?: string;
   options?: CliOptions;
+  /** Target and paths already resolved by the shared host, authoritative over raw input. */
+  resolvedOptions?: CliOptions;
+  invocation?: ProjectCommandInvocation;
+  onParsedInvocation?(invocation: ParsedArgs): void;
 }
 
 // Authority and the checked source identity cannot be supplied by discovered JSON
@@ -1008,11 +1017,28 @@ export async function loadProjectProvider(
         } as HarnessHostConfig)
       : undefined;
   if (host) configureHarnessHost(host);
+  let providerOptions = { ...options.options, ...options.resolvedOptions };
+  if (options.invocation && options.command) {
+    if (module.providerCommands !== undefined && !Array.isArray(module.providerCommands)) {
+      throw new ProjectBindingError(
+        'PROVIDER_INVALID',
+        `Provider ${provider.ref} has an invalid command grammar.`,
+        'export providerCommands as an array of command contracts',
+      );
+    }
+    const parsed = parseProjectInvocation(
+      options.command,
+      options.invocation,
+      module.providerCommands as readonly ContractedCommand[] | undefined,
+    );
+    providerOptions = { ...options.options, ...parsed.options, ...options.resolvedOptions };
+    options.onParsedInvocation?.({ ...parsed, options: providerOptions });
+  }
   const result = (await createProvider({
     ...context,
     ...(host ? { host } : {}),
     command: options.command,
-    options: options.options,
+    options: providerOptions,
     libraries: authorizedProjectLibraries(context),
   })) as ProjectProvider;
   if (!result?.runtime || typeof result.runtime.id !== 'string') {

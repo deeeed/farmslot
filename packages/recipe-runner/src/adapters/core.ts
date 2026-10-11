@@ -1,10 +1,12 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { RecipeArtifactManifestEntry } from '@farmslot/protocol';
 
-import { RecipeExecutionError } from '../core/failure.js';
+import { assertRecipeActive, recipeAbortError, RecipeExecutionError } from '../core/failure.js';
 import {
   asNumber,
   asOptionalString,
@@ -13,7 +15,12 @@ import {
   normalizeRelativePath,
 } from '../core/json.js';
 import { copyFileWithinRoots, readFileWithinRoot, statFileWithinRoot } from '../core/path.js';
-import type { ActionAdapter } from '../core/types.js';
+import type { ActionAdapter, ActionExecutionContext } from '../core/types.js';
+
+export { recipeExecutionSignal, withRecipeExecutionSignal } from '../core/execution-signal.js';
+export { assertRecipeActive } from '../core/failure.js';
+
+export const RECIPE_PROCESS_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
 
 export function createStandardCoreAdapters(
   options: { actions?: Iterable<string> } = {},
@@ -47,13 +54,13 @@ export function createStandardCoreAdapters(
 function defineWaitAdapter(): ActionAdapter {
   return {
     action: 'wait',
-    async execute(node) {
+    async execute(node, context) {
       const durationMs = node.duration_ms ?? node.ms;
       const duration = asNumber(durationMs, 'wait.duration_ms');
       if (!Number.isInteger(duration) || duration < 0 || duration > 60_000) {
         throw new Error('wait.duration_ms must be an integer from 0 through 60000.');
       }
-      await new Promise((resolve) => setTimeout(resolve, duration));
+      await delay(duration, undefined, { signal: context.signal });
       return { output: { durationMs: duration } };
     },
   };
@@ -71,6 +78,7 @@ function defineCommandAdapter(): ActionAdapter {
         cwd: cwd ? context.resolveProjectPath(cwd) : context.projectRoot,
         env: context.env,
         timeoutMs,
+        signal: context.signal,
       });
       if (node.allow_failure !== true && result.exitCode !== 0) {
         throw new Error(`Command exited with ${result.exitCode}: ${command}\n${result.stderr}`);
@@ -311,50 +319,172 @@ interface CommandOutput {
   stderr: string;
 }
 
-function runShellCommand(
+export interface RecipeProcessOptions {
+  cwd: string;
+  env?: ActionExecutionContext['env'];
+  shell?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  ownProcessGroup?: boolean;
+  stdin?: 'ignore' | 'inherit';
+  input?: string;
+  capture?: boolean;
+  onOutput?(chunk: Uint8Array, stream: 'stdout' | 'stderr'): void;
+  onSpawnError?(error: RecipeProcessError): void;
+  onSpawn?(pid: number, ownsProcessGroup: boolean): (() => void) | undefined;
+}
+
+export interface RecipeProcessError extends Error {
+  code?: string;
+}
+
+export interface RecipeProcessResult extends CommandOutput {
+  signal: string | null;
+  timedOut: boolean;
+}
+
+/** Own the spawned group through cancellation/timeout; normal exits may retain background services. */
+export function runOwnedRecipeProcess(
   command: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number },
-): Promise<CommandOutput> {
+  args: string[],
+  options: RecipeProcessOptions,
+): Promise<RecipeProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, {
+    assertRecipeActive(options.signal);
+    const ownsProcessGroup = options.ownProcessGroup !== false && process.platform !== 'win32';
+    const child: ChildProcess = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: options.shell,
+      stdio: [options.input === undefined ? (options.stdin ?? 'ignore') : 'pipe', 'pipe', 'pipe'],
+      detached: ownsProcessGroup,
     });
-    let stdout = '';
-    let stderr = '';
+    let timedOut = false;
+    let stopping = false;
     let settled = false;
-    const timer = options.timeoutMs
-      ? setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          child.kill('SIGTERM');
-          reject(new Error(`Command timed out after ${options.timeoutMs}ms: ${command}`));
-        }, options.timeoutMs)
-      : undefined;
-
-    child.stdout.setEncoding('utf-8');
-    child.stderr.setEncoding('utf-8');
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
+    let leafExited = false;
+    let groupKilled = false;
+    let failure: unknown;
+    let timeout: NodeJS.Timeout | undefined;
+    let escalation: NodeJS.Timeout | undefined;
+    let untrack: (() => void) | undefined;
+    const output = { stdout: '', stderr: '' };
+    const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+    const signalTree = (signal: NodeJS.Signals): void => {
+      try {
+        if (ownsProcessGroup && child.pid) {
+          process.kill(-child.pid, signal);
+          if (signal === 'SIGKILL') groupKilled = true;
+        } else child.kill(signal);
+      } catch (error) {
+        const { code } = error as NodeJS.ErrnoException;
+        // A reaped group is absent; macOS also refuses signals to zombie-only groups.
+        if (code !== 'ESRCH' && !(code === 'EPERM' && (groupKilled || leafExited))) {
+          failure ??= error;
+        }
+      }
+    };
+    const finishStopping = (): void => {
+      signalTree('SIGKILL');
+      // Foreground callers cannot kill the shared group. Descendants must not
+      // hold this timed-out invocation open through inherited output pipes.
+      if (!ownsProcessGroup) {
+        child.stdout!.destroy();
+        child.stderr!.destroy();
+      }
+    };
+    const stop = (signal: NodeJS.Signals): void => {
+      if (stopping || settled) return;
+      stopping = true;
+      signalTree(signal);
+      if (leafExited) finishStopping();
+      else escalation = setTimeout(finishStopping, 1000);
+    };
+    const abort = (): void => {
+      const reason: unknown = options.signal?.reason;
+      stop(
+        RECIPE_PROCESS_SIGNALS.some((name) => name === reason)
+          ? (reason as NodeJS.Signals)
+          : 'SIGTERM',
+      );
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    child.once('error', (error) => {
+      failure ??= error;
+      options.onSpawnError?.(error);
+      stop('SIGKILL');
     });
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
+    child.once('exit', () => {
+      leafExited = true;
+      // A shell may exit while a descendant still holds the output pipe open.
+      if (stopping) finishStopping();
     });
-    child.on('error', (error) => {
-      if (settled) return;
+    child.once('close', (code, signal) => {
+      if (stopping) signalTree('SIGKILL');
       settled = true;
-      if (timer) clearTimeout(timer);
-      reject(error);
+      if (timeout) clearTimeout(timeout);
+      if (escalation) clearTimeout(escalation);
+      options.signal?.removeEventListener('abort', abort);
+      if (code !== null) untrack?.();
+      for (const stream of ['stdout', 'stderr'] as const) {
+        if (options.capture !== false) output[stream] += decoders[stream].end();
+      }
+      if (failure !== undefined) reject(failure);
+      else if (options.signal?.aborted) reject(recipeAbortError(options.signal));
+      else resolve({ exitCode: code ?? 1, signal, ...output, timedOut });
     });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, stdout, stderr });
-    });
+    for (const stream of ['stdout', 'stderr'] as const) {
+      child[stream]!.on('data', (chunk: Buffer) => {
+        if (options.capture !== false) output[stream] += decoders[stream].write(chunk);
+        try {
+          options.onOutput?.(chunk, stream);
+        } catch (error) {
+          failure ??= error;
+          stop('SIGKILL');
+        }
+      });
+    }
+    if (child.pid) {
+      try {
+        untrack = options.onSpawn?.(child.pid, ownsProcessGroup);
+      } catch (error) {
+        failure ??= error;
+        stop('SIGKILL');
+      }
+    }
+    if (options.input !== undefined) {
+      child.stdin!.on('error', (error: NodeJS.ErrnoException) => {
+        // Early stdin closure is represented by the child's exit result; a settled run is final.
+        if (error.code === 'EPIPE' || settled) return;
+        failure ??= error;
+        stop('SIGKILL');
+      });
+      child.stdin!.end(options.input);
+    }
+    if (Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        stop('SIGTERM');
+      }, options.timeoutMs);
+    }
+    // The owner callback may have cancelled before it returned.
+    if (options.signal?.aborted) abort();
   });
+}
+
+async function runShellCommand(
+  command: string,
+  options: RecipeProcessOptions,
+): Promise<CommandOutput> {
+  const result = await runOwnedRecipeProcess(command, [], {
+    ...options,
+    shell: true,
+    // Legacy hosts without signal transport still rely on their foreground process group.
+    ownProcessGroup: options.signal !== undefined,
+  });
+  if (result.timedOut)
+    throw new Error(`Command timed out after ${options.timeoutMs}ms: ${command}`);
+  return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 }
 
 interface ParsedAssertion {

@@ -3,7 +3,6 @@
 // reads its input from the file in `<recipeEnvPrefix>_ADAPTER_INPUT` (also
 // argv[2]) and writes JSON to the `outputPath` it names. A prepared script is
 // bundled once so the approved bytes are the ones that run.
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -14,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import type { Plugin, PluginBuild } from 'esbuild';
 
 import type { ActionExecutionContext } from '@farmslot/recipe-runner';
+import { runOwnedRecipeProcess } from '@farmslot/recipe-runner/adapters/core';
 
 import { harnessAdapter, harnessAdapters } from './adapters.js';
 import { trackCheckoutChild } from './checkout-lock.js';
@@ -160,66 +160,6 @@ async function firstExecutablePath(paths: string[]) {
     }
   }
   return null;
-}
-
-function runProcess(
-  command: string,
-  args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number; stdin?: string },
-): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: [options.stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-    });
-    if (child.pid) trackCheckoutChild(options.cwd, child.pid);
-    if (options.stdin != null) {
-      child.stdin!.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'EPIPE' || settled) return;
-        settled = true;
-        reject(error);
-      });
-      child.stdin!.end(options.stdin);
-    }
-    let stdout = '';
-    let stderr = '';
-    child.stdout!.on('data', (chunk) => {
-      stdout += chunk;
-      recordCommandOutput(chunk);
-    });
-    child.stderr!.on('data', (chunk) => {
-      stderr += chunk;
-      recordCommandOutput(chunk);
-    });
-    const timeout = options.timeoutMs
-      ? setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          child.kill('SIGTERM');
-          // Always escalate after the grace period: child.killed only records
-          // that kill() was CALLED, not that the process exited, so gating
-          // SIGKILL on it never fires and a SIGTERM-ignoring child leaks. The
-          // close listener cancels the escalation when the child exits in time.
-          const killTimer = setTimeout(() => child.kill('SIGKILL'), 1000);
-          child.once('close', () => clearTimeout(killTimer));
-          resolve({ exitCode: null, stdout, stderr, timedOut: true });
-        }, options.timeoutMs)
-      : undefined;
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      reject(error);
-    });
-    child.on('close', (exitCode) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve({ exitCode, stdout, stderr, timedOut: false });
-    });
-  });
 }
 
 export interface PreparedLiveAdapter {
@@ -427,7 +367,7 @@ export interface LiveAdapterRun {
   node: Record<string, unknown>;
   context: Pick<
     ActionExecutionContext,
-    'nodeId' | 'projectRoot' | 'artifactsDir' | 'env' | 'registerArtifact'
+    'nodeId' | 'projectRoot' | 'artifactsDir' | 'env' | 'registerArtifact' | 'signal'
   >;
   prepared?: PreparedLiveAdapter;
   // Fields the script's input context carries after nodeId, projectRoot and artifactsDir.
@@ -451,40 +391,44 @@ export async function runLiveAdapterScript({
   if (!script) return null;
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), `${harnessHost().name}-live-adapter-`));
-  const inputPath = path.join(tempDir, 'input.json');
-  const outputPath = path.join(tempDir, 'output.json');
-  const input = {
-    schemaVersion: 1,
-    platform,
-    action,
-    node,
-    context: {
-      nodeId: context.nodeId,
-      projectRoot: context.projectRoot,
-      artifactsDir: context.artifactsDir,
-      ...contextExtras,
-    },
-    outputPath,
-  };
-  await writeFile(inputPath, `${JSON.stringify(input, null, 2)}\n`);
-  const command = prepared
-    ? commandForPrepared(context.projectRoot, platform, tsxCandidates)
-    : commandFor(script, tsxCandidates, context.projectRoot, platform);
-  const platformEnv = (await tsxLiveScripts(platform)?.env(context.projectRoot, tempDir)) ?? {};
-  const processTimeoutMs = liveAdapterProcessTimeoutMs(node);
-  const result = await runProcess(command.command, [...command.args, inputPath], {
-    cwd: context.projectRoot,
-    env: {
-      ...process.env,
-      ...context.env,
-      ...platformEnv,
-      [recipeEnvName('ADAPTER_INPUT')]: inputPath,
-      [recipeEnvName('ADAPTER_OUTPUT')]: outputPath,
-    },
-    timeoutMs: processTimeoutMs,
-    ...(prepared ? { stdin: prepared.sourceText } : {}),
-  });
   try {
+    const inputPath = path.join(tempDir, 'input.json');
+    const outputPath = path.join(tempDir, 'output.json');
+    const input = {
+      schemaVersion: 1,
+      platform,
+      action,
+      node,
+      context: {
+        nodeId: context.nodeId,
+        projectRoot: context.projectRoot,
+        artifactsDir: context.artifactsDir,
+        ...contextExtras,
+      },
+      outputPath,
+    };
+    await writeFile(inputPath, `${JSON.stringify(input, null, 2)}\n`);
+    const command = prepared
+      ? commandForPrepared(context.projectRoot, platform, tsxCandidates)
+      : commandFor(script, tsxCandidates, context.projectRoot, platform);
+    const platformEnv = (await tsxLiveScripts(platform)?.env(context.projectRoot, tempDir)) ?? {};
+    const processTimeoutMs = liveAdapterProcessTimeoutMs(node);
+    const result = await runOwnedRecipeProcess(command.command, [...command.args, inputPath], {
+      cwd: context.projectRoot,
+      env: {
+        ...process.env,
+        ...context.env,
+        ...platformEnv,
+        [recipeEnvName('ADAPTER_INPUT')]: inputPath,
+        [recipeEnvName('ADAPTER_OUTPUT')]: outputPath,
+      },
+      timeoutMs: processTimeoutMs,
+      signal: context.signal,
+      ownProcessGroup: context.signal !== undefined,
+      onSpawn: (pid, ownsGroup) => trackCheckoutChild(context.projectRoot, pid, ownsGroup),
+      onOutput: (chunk) => recordCommandOutput(chunk),
+      ...(prepared ? { input: prepared.sourceText } : {}),
+    });
     if (result.timedOut) {
       throw new Error(`Live adapter ${script} timed out after ${processTimeoutMs}ms.`);
     }

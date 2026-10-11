@@ -6,10 +6,11 @@
 //   For node invocations (bin === process.execPath) the stem is derived from the
 //   script path in args[0], e.g. <envPrefix>_SCRIPT_BIN_OPEN_DEBUG_MJS.
 
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
+import { runOwnedRecipeProcess } from '@farmslot/recipe-runner/adapters/core';
 import { OperationOutputTail } from '@farmslot/recipe-runner/runtime/operation';
 
 import { adapterForPlatform, harnessAdapters } from './adapters.js';
@@ -17,7 +18,7 @@ import { trackCheckoutChild } from './checkout-lock.js';
 import { colorHumanMessage } from './cli-color.js';
 import { recordCommandOutput, recordCommandStage } from './command-journal.js';
 import { contextAdapter, harnessContextField } from './context-state.js';
-import { harnessHost, hostEnvName } from './host.js';
+import { harnessHost, hostEnvName, recipeExecutionSignal, withRecipeSignals } from './host.js';
 import { leafStartFailureMessage, resolveLeafInvoke, shellLeafMissing } from './leaf-invoke.js';
 
 // Stable public exit-code taxonomy.
@@ -114,6 +115,7 @@ export interface ScriptResult {
 }
 
 export interface StreamingSpawnOptions {
+  signal?: AbortSignal;
   stage?: string;
   capture?: boolean;
   stdin?: 'ignore' | 'inherit';
@@ -247,7 +249,8 @@ export function spawnScriptStreaming(
       'forward' in options ||
       'capture' in options ||
       'stdin' in options ||
-      'stage' in options)
+      'stage' in options ||
+      'signal' in options)
       ? (options as StreamingSpawnOptions)
       : { env: options as Record<string, string> | undefined };
   const isNodeScript = script === process.execPath && args.length > 0;
@@ -272,178 +275,68 @@ export function spawnScriptStreaming(
 
   const { bin: invokeBin, args: spawnArgs } = resolveLeafInvoke(bin, directArgs);
   recordCommandStage(spawnOptions.stage ?? path.basename(isNodeScript ? args[0] : script));
-  return new Promise<ScriptResult>((resolve, reject) => {
-    const ownsProcessGroup = process.platform !== 'win32';
-    // Listen for parent signals before the spawn. Node runs a listener only after
-    // this synchronous section, when child is set; a signal that arrived with no
-    // listener yet would end this process and leave the detached tree running.
-    let child: ChildProcess;
-    let forwardedParentSignal: NodeJS.Signals | undefined;
-    let parentSignalFallback: NodeJS.Timeout | undefined;
-    const parentSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
-    const removeParentSignalHandlers = (): void => {
-      for (const signal of parentSignals)
-        process.removeListener(signal, parentSignalHandlers[signal]);
-    };
-    let groupKilled = false;
-    let leafExited = false;
-    const signalChildTree = (signal: NodeJS.Signals): void => {
-      try {
-        if (ownsProcessGroup && child.pid) {
-          process.kill(-child.pid, signal);
-          if (signal === 'SIGKILL') groupKilled = true;
-        } else child.kill(signal);
-      } catch (error) {
-        const { code } = error as NodeJS.ErrnoException;
-        // ESRCH: the owned child tree already exited. EPERM once this group was
-        // SIGKILLed, or once the leaf has exited: macOS refuses to signal a
-        // group whose only members are zombies not yet reaped, so the group is
-        // gone. After the leaf exits it can also mean a descendant left in the
-        // group runs as another user; this process could not signal it either,
-        // and a throw here would crash from an exit handler. Any other EPERM
-        // still throws.
-        if (code !== 'ESRCH' && !(code === 'EPERM' && (groupKilled || leafExited))) throw error;
-      }
-    };
-    const exitFromForwardedSignal = (): void => {
-      if (!forwardedParentSignal) return;
-      const signal = forwardedParentSignal;
-      forwardedParentSignal = undefined;
-      if (parentSignalFallback) clearTimeout(parentSignalFallback);
-      process.kill(process.pid, signal);
-    };
-    const parentSignalHandlers = Object.fromEntries(
-      parentSignals.map((signal) => [
-        signal,
-        () => {
-          if (forwardedParentSignal) return;
-          forwardedParentSignal = signal;
-          signalChildTree(signal);
-          removeParentSignalHandlers();
-          // Let a cooperative leaf finish its signal trap before this process exits.
-          // The bound prevents an uncooperative child tree from holding Ctrl+C open.
-          if (Number(spawnOptions.timeoutMs) > 0)
-            parentSignalFallback = setTimeout(() => {
-              signalChildTree('SIGKILL');
-              exitFromForwardedSignal();
-            }, 1000);
-        },
-      ]),
-    ) as Record<NodeJS.Signals, () => void>;
-    if (ownsProcessGroup) {
-      for (const signal of parentSignals) process.once(signal, parentSignalHandlers[signal]);
-    }
-    try {
-      child = spawn(invokeBin, spawnArgs, {
+  const signal = spawnOptions.signal ?? recipeExecutionSignal();
+  let forwardedParentSignal: NodeJS.Signals | undefined;
+  const captured = new OperationOutputTail();
+  let spawnError: NodeJS.ErrnoException | undefined;
+  const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+  return withRecipeSignals(
+    (scoped) =>
+      runOwnedRecipeProcess(invokeBin, spawnArgs, {
         cwd,
         env: spawnOptions.env ? { ...process.env, ...spawnOptions.env } : process.env,
-        stdio: [spawnOptions.stdin ?? 'ignore', 'pipe', 'pipe'],
-        detached: ownsProcessGroup,
-      });
-    } catch (error) {
-      // spawn threw before any child existed (an invalid argument): stop
-      // listening, so a later signal takes its default action again.
-      removeParentSignalHandlers();
-      reject(error);
-      return;
-    }
-    let untrack: (() => void) | undefined;
-    try {
-      untrack = child.pid ? trackCheckoutChild(cwd, child.pid, ownsProcessGroup) : undefined;
-    } catch (error) {
-      removeParentSignalHandlers();
-      child.once('error', reject);
-      child.once('close', () => reject(error));
-      try {
-        if (ownsProcessGroup && child.pid) process.kill(-child.pid, 'SIGKILL');
-        else child.kill('SIGKILL');
-      } catch (killError) {
-        if ((killError as NodeJS.ErrnoException).code !== 'ESRCH') reject(killError);
-      }
-      return;
-    }
-    const captured = new OperationOutputTail();
-    let settled = false;
-    let didTimeout = false;
-    let escalation: NodeJS.Timeout | undefined;
-    const finish = (result: ScriptResult): void => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (escalation) clearTimeout(escalation);
-      if (parentSignalFallback) clearTimeout(parentSignalFallback);
-      removeParentSignalHandlers();
-      resolve(result);
-    };
-    const timeoutMs = spawnOptions.timeoutMs;
-    const timer =
-      Number.isFinite(timeoutMs) && Number(timeoutMs) > 0
-        ? setTimeout(() => {
-            didTimeout = true;
-            const message = `leaf timed out after ${String(timeoutMs)}ms: ${path.basename(script)}`;
+        signal: scoped,
+        timeoutMs: spawnOptions.timeoutMs,
+        stdin: spawnOptions.stdin,
+        capture: false,
+        onSpawn: (pid, ownsGroup) => trackCheckoutChild(cwd, pid, ownsGroup),
+        onSpawnError: (error) => {
+          spawnError = error;
+        },
+        onOutput: (chunk, stream) => {
+          if (spawnOptions.capture !== false) captured.append(decoders[stream].write(chunk));
+          recordCommandOutput(chunk);
+          if (spawnOptions.forward !== 'none') {
+            (stream === 'stdout' && spawnOptions.forward === 'original'
+              ? process.stdout
+              : process.stderr
+            ).write(chunk);
+          }
+        },
+      })
+        .then((result) => {
+          if (spawnOptions.capture !== false) {
+            captured.append(decoders.stdout.end());
+            captured.append(decoders.stderr.end());
+          }
+          if (result.timedOut) {
+            const message = `leaf timed out after ${String(spawnOptions.timeoutMs)}ms: ${path.basename(script)}`;
             captured.append(`\n${message}\n`);
             if (spawnOptions.forward !== 'none') process.stderr.write(`${message}\n`);
-            signalChildTree('SIGTERM');
-            escalation = setTimeout(() => {
-              signalChildTree('SIGKILL');
-              finish({
-                status: 1,
-                output: captured.toString(),
-                timedOut: true,
-                timeoutMs: Number(timeoutMs),
-              });
-            }, 1000);
-          }, Number(timeoutMs))
-        : undefined;
-    // Route BOTH child streams to the parent's stderr, live: stdout is reserved
-    // for the harness --json envelope, so all human/leaf progress goes to stderr.
-    const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8')];
-    const tee = (chunk: Buffer, stdout = false): void => {
-      if (spawnOptions.capture !== false) captured.append(decoders[stdout ? 0 : 1].write(chunk));
-      recordCommandOutput(chunk);
-      if (spawnOptions.forward !== 'none') {
-        (stdout && spawnOptions.forward === 'original' ? process.stdout : process.stderr).write(
-          chunk,
-        );
-      }
-    };
-    child.stdout?.on('data', (chunk) => tee(chunk, true));
-    child.stderr?.on('data', tee);
-    child.on('error', (error: NodeJS.ErrnoException) => {
-      const leaf = isNodeScript ? path.basename(args[0]) : path.basename(script);
-      const code = error.code ?? 'ESPAWN';
-      const message = leafStartFailureMessage(leaf, code);
-      if (spawnOptions.forward !== 'none') process.stderr.write(`${message}\n`);
-      finish({ status: 1, output: message, error });
-    });
-    child.on('exit', () => {
-      leafExited = true;
-      if (forwardedParentSignal) {
-        exitFromForwardedSignal();
-        return;
-      }
-      if (!didTimeout) return;
-      signalChildTree('SIGKILL');
-      finish({
-        status: 1,
-        output: captured.toString(),
-        timedOut: true,
-        timeoutMs: Number(timeoutMs),
-      });
-    });
-    child.on('close', (status) => {
-      // A normal leaf exit may intentionally leave a dev server running.
-      // A signal/crash keeps group ownership until every member exits.
-      if (status !== null) untrack?.();
-      if (spawnOptions.capture !== false)
-        captured.append(decoders.map((decoder) => decoder.end()).join(''));
-      if (didTimeout) signalChildTree('SIGKILL');
-      finish({
-        status: didTimeout ? 1 : (status ?? 1),
-        output: captured.toString(),
-        ...(didTimeout ? { timedOut: true, timeoutMs: Number(timeoutMs) } : {}),
-      });
-    });
+          }
+          return {
+            status: result.timedOut ? 1 : result.exitCode,
+            output: captured.toString(),
+            ...(result.timedOut
+              ? { timedOut: true, timeoutMs: Number(spawnOptions.timeoutMs) }
+              : {}),
+          };
+        })
+        .catch((error: NodeJS.ErrnoException) => {
+          if (signal?.aborted) throw error;
+          if (scoped.aborted) {
+            forwardedParentSignal = scoped.reason as NodeJS.Signals;
+            return { status: 1, output: captured.toString() };
+          }
+          if (error !== spawnError) throw error;
+          const leaf = isNodeScript ? path.basename(args[0]) : path.basename(script);
+          const message = leafStartFailureMessage(leaf, error.code ?? 'ESPAWN');
+          if (spawnOptions.forward !== 'none') process.stderr.write(`${message}\n`);
+          return { status: 1, output: message, error };
+        }),
+    signal ?? (process.platform === 'win32' ? new AbortController().signal : undefined),
+  ).finally(() => {
+    if (forwardedParentSignal) process.kill(process.pid, forwardedParentSignal);
   });
 }
 

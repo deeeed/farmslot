@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+## 0.19.10 - 2026-10-11
+
+- Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.
+
 ## 0.19.9 - 2026-10-11
 
 - Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.

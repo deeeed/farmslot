@@ -1,0 +1,134 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "ui.press": {
+      "description": "Press a visible browser control.",
+      "examples": [
+        {
+          "action": "ui.press",
+          "selector": "a[href='#details']",
+          "intent": "Open the details view",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": ["selector"]
+      }
+    },
+    "ui.screenshot": {
+      "description": "Capture the actual page and its recipe HUD.",
+      "examples": [
+        {
+          "action": "ui.screenshot",
+          "path": "screenshots/page.png",
+          "intent": "Record the destination view",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": ["path"]
+      }
+    },
+    "app.status": {
+      "description": "Read the selected page URL and title.",
+      "examples": [
+        {
+          "action": "app.status",
+          "intent": "Read browser navigation state",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    "app.hud": {
+      "description": "Show the current recipe intent on the selected page.",
+      "examples": [
+        {
+          "action": "app.hud",
+          "text": "Inspect the destination view",
+          "intent": "Label the evidence",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assert_output": {
+      "description": "Check an observed action result.",
+      "examples": [
+        {
+          "action": "assert_output",
+          "source": "status",
+          "assert": {
+            "path": "$.url",
+            "operator": "eq",
+            "value": "https://example.test/#details"
+          },
+          "intent": "Verify browser navigation",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": ["eq"]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": ["path", "operator", "value"]
+          }
+        },
+        "additionalProperties": false,
+        "required": ["source", "assert"]
+      }
+    },
+    "end": {
+      "description": "Finish the recipe.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    }
+  }
+}
