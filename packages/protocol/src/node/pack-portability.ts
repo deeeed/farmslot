@@ -28,6 +28,11 @@ export interface PackOwnedEntry {
   content: Buffer | string;
 }
 
+/** The owned-entry encoding belongs beside its producer and validators. */
+export function packEntryLinkTarget(entry: PackOwnedEntry): string | undefined {
+  return typeof entry.content === 'string' ? entry.content.slice('symlink:'.length) : undefined;
+}
+
 /** A copied pack still owns its ignore rules, even without its original Git index. */
 function listUnindexedPackFiles(dir: string, prefix: string): string[] {
   const gitDir = mkdtempSync(path.join(tmpdir(), 'pack-ignore-'));
@@ -203,8 +208,13 @@ export function validatePackPortability(
 ): string[] {
   return listPackOwnedEntries(root).flatMap(({ rel, content }) => {
     const file = prefix ? `${prefix}/${rel}` : rel;
-    return typeof content === 'string'
-      ? validatePackFilePortability(file, content.slice('symlink:'.length), machines)
-      : validatePackBytesPortability(file, content, machines);
+    const target = packEntryLinkTarget({ rel, content });
+    return target !== undefined
+      ? validatePackFilePortability(file, target, machines)
+      : validatePackBytesPortability(
+          file,
+          typeof content === 'string' ? Buffer.from(content) : content,
+          machines,
+        );
   });
 }

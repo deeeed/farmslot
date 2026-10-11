@@ -500,6 +500,10 @@ test('registration preserves relative tool pins and repairs only previously conv
   assert.equal(readFileSync(join(dest, 'operator.private'), 'utf8'), 'operator value');
   assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 0);
   rmSync(pin);
+  symlinkSync(join(src, 'setup/node-tool-versions'), pin);
+  assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 1);
+  assert.equal(readlinkSync(pin), '../setup/node-tool-versions');
+  rmSync(pin);
   symlinkSync(join(root, 'operator-pin'), pin);
   assert.equal(repairRegisteredProjectLinks(proj, packDir, ws, state, 'p'), 0);
   assert.equal(readlinkSync(pin), join(root, 'operator-pin'));

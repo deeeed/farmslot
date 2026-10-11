@@ -30,7 +30,10 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { defaultBranchProbeCommand, readDefaultBranchProbe } from '@farmslot/protocol';
-import { listPackOwnedEntries } from '@farmslot/protocol/node/pack-portability';
+import {
+  listPackOwnedEntries,
+  packEntryLinkTarget,
+} from '@farmslot/protocol/node/pack-portability';
 
 import {
   decideAddAction,
@@ -327,9 +330,8 @@ export function repairRegisteredProjectLinks(
   const root = realpathSync(dest);
   let repaired = 0;
   for (const entry of listPackOwnedEntries(src)) {
-    if (typeof entry.content !== 'string') continue;
-    const relative = entry.content.slice('symlink:'.length);
-    if (isAbsolute(relative)) continue;
+    const relative = packEntryLinkTarget(entry);
+    if (relative === undefined || isAbsolute(relative)) continue;
     const target = join(dest, entry.rel);
     let installed: string;
     try {
@@ -338,7 +340,12 @@ export function repairRegisteredProjectLinks(
       if (['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
       throw error;
     }
-    if (installed !== resolve(realpathSync(dirname(join(src, entry.rel))), relative)) continue;
+    const sourceParent = dirname(join(src, entry.rel));
+    if (
+      installed !== resolve(sourceParent, relative) &&
+      installed !== resolve(realpathSync(sourceParent), relative)
+    )
+      continue;
     const parent = realpathSync(dirname(target));
     if (parent !== root && !parent.startsWith(root + sep))
       throw new AddError(`Cannot repair pack link outside project: ${entry.rel}`);
