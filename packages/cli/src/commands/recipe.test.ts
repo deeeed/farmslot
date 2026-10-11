@@ -517,7 +517,8 @@ for (const stream of [false, true]) {
       assert.equal(events.filter((event) => event.event === 'complete').length, 1);
       assert.equal(events.at(-1).status, 'fail');
       assert.equal(events.at(-1).exitCode, result.status);
-      assert.ok(events.some((event) => event.error?.code === 'RECIPE_TRUST_REQUIRED'));
+      assert.equal(events.filter((event) => event.event === 'error').length, 1);
+      assert.match(result.stderr, /RECIPE_TRUST_REQUIRED/u);
       assert.ok(events.some((event) => event.error?.message === 'finalization failed'));
     } else {
       const output = JSON.parse(result.stdout);

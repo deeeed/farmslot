@@ -18,7 +18,7 @@ import {
 import { recipeConformanceIdentity } from '../src/harness/conformance.js';
 import { harnessContext } from '../src/harness/context-state.js';
 import { sourceSnapshot } from '../src/harness/execution-provenance.js';
-import { harnessHost } from '../src/harness/host.js';
+import { harnessHost, recipeExecutionSignal } from '../src/harness/host.js';
 import { recipeOutputRoots } from '../src/harness/paths.js';
 import { withProjectRecipeHost } from '../src/harness/project-host.js';
 
@@ -154,6 +154,10 @@ test('read-only run modes do not acquire an execution signal', async (t) => {
       { ...options, command: 'run', options: { [flag]: true } },
       async (host) => {
         assert.equal(host.signal, undefined);
+        host.provider.finalize = async () => {
+          assert.equal(recipeExecutionSignal(), undefined);
+        };
+        await host.finalize();
       },
     );
   }

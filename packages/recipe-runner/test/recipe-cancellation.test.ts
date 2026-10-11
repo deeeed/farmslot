@@ -11,7 +11,7 @@ import {
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
 
-import { runOwnedRecipeProcess } from '../src/adapters/core.js';
+import { recipeExecutionSignal, runOwnedRecipeProcess } from '../src/adapters/core.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 
 const actionManifest: RecipeActionManifestDocument = {
@@ -108,6 +108,7 @@ for (const nested of [false, true]) {
               action: 'command',
               source: { kind: 'bundled', trust: 'trusted' },
               async execute(node, context) {
+                assert.equal(recipeExecutionSignal(), context.signal);
                 const command = String(node.cmd);
                 executed.push(command);
                 if (command === 'cleanup') {

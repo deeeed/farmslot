@@ -79,25 +79,26 @@ export function withProjectRecipeHost<T>(
             (reason: unknown) => ({ status: 'rejected' as const, reason }),
           );
       };
+      const closeProvider = async (): Promise<void> => {
+        const initialCancellation = cancellation;
+        const outcome = await initialCancellation;
+        const failures: unknown[] = outcome?.status === 'rejected' ? [outcome.reason] : [];
+        try {
+          await provider?.finalize?.();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (!initialCancellation) {
+          const lateCancellation = await cancellation;
+          if (lateCancellation?.status === 'rejected') failures.push(lateCancellation.reason);
+        }
+        closed = true;
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1)
+          throw new AggregateError(failures, 'Recipe cancellation and finalization failed.');
+      };
       const finalize = (): Promise<void> =>
-        (finalization ??= withRecipeCleanup(async () => {
-          const initialCancellation = cancellation;
-          const outcome = await initialCancellation;
-          const failures: unknown[] = outcome?.status === 'rejected' ? [outcome.reason] : [];
-          try {
-            await provider?.finalize?.();
-          } catch (error) {
-            failures.push(error);
-          }
-          if (!initialCancellation) {
-            const lateCancellation = await cancellation;
-            if (lateCancellation?.status === 'rejected') failures.push(lateCancellation.reason);
-          }
-          closed = true;
-          if (failures.length === 1) throw failures[0];
-          if (failures.length > 1)
-            throw new AggregateError(failures, 'Recipe cancellation and finalization failed.');
-        }));
+        (finalization ??= signal ? withRecipeCleanup(closeProvider) : closeProvider());
       signal?.addEventListener('abort', cancel, { once: true });
       try {
         let outcome: PromiseSettledResult<T>;

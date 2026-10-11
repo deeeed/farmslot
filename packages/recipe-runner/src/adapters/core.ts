@@ -17,6 +17,7 @@ import {
 import { copyFileWithinRoots, readFileWithinRoot, statFileWithinRoot } from '../core/path.js';
 import type { ActionAdapter, ActionExecutionContext } from '../core/types.js';
 
+export { recipeExecutionSignal, withRecipeExecutionSignal } from '../core/execution-signal.js';
 export { assertRecipeActive } from '../core/failure.js';
 
 export const RECIPE_PROCESS_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;

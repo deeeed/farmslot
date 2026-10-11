@@ -155,6 +155,16 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
   let resultReady: Promise<void> | undefined;
   const beforeResult = () =>
     (resultReady ??= Promise.resolve().then(() => commandOptions.beforeResult?.()));
+  const streamFailure = async (failure: Record<string, unknown>): Promise<void> => {
+    try {
+      await beforeResult();
+    } catch (error) {
+      // Closeout owns the terminal failure; retain the original refusal as diagnostics.
+      console.error(JSON.stringify(failure));
+      throw error;
+    }
+    stream.error(failure);
+  };
   try {
     const exitCode = await handleRunInner(parsed.positional, parsed.options, stream, {
       ...commandOptions,
@@ -167,8 +177,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     if (error instanceof ProvenanceDriftError) {
       const failure = provenanceFailure(error);
       if (stream.enabled) {
-        stream.error(failure);
-        await beforeResult();
+        await streamFailure(failure);
         stream.complete('fail', error.exitCode);
       } else if (optionFlag(parsed.options, 'json')) {
         console.log(
@@ -194,8 +203,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     const trustFailure = recipeTrustFailure(error);
     if (trustFailure) {
       if (stream.enabled) {
-        stream.error(trustFailure);
-        await beforeResult();
+        await streamFailure(trustFailure);
         stream.complete('fail', EXIT.validation);
       } else {
         reportTrustFailure('run', trustFailure, optionFlag(parsed.options, 'json'));
@@ -209,8 +217,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       typeof (error as { exitCode?: unknown }).exitCode === 'number'
         ? (error as { exitCode: number }).exitCode
         : EXIT.runtime;
-    await beforeResult();
-    stream.error({
+    await streamFailure({
       code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
       message: error instanceof Error ? error.message : String(error),
       userAction: `${host} doctor --target ${shellQuote(target)} --json`,

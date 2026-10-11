@@ -5,6 +5,7 @@ import {
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
+import { withRecipeExecutionSignal } from './execution-signal.js';
 import {
   assertRecipeActive,
   recipeAbortError,
@@ -389,18 +390,14 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     return 'fail';
   };
 
-  const mainStatus = await runGraph(
-    graph.entry,
-    graph.mainNodeCount,
-    options.stopAfterNode,
-    options.signal,
+  const mainStatus = await withRecipeExecutionSignal(options.signal, () =>
+    runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode, options.signal),
   );
-  const teardownStatus = graph.teardownEntry
-    ? await runGraph(
-        graph.teardownEntry,
-        graph.teardownNodeCount,
-        undefined,
-        options.signal ? new AbortController().signal : undefined,
+  const teardownSignal = options.signal ? new AbortController().signal : undefined;
+  const teardownEntry = graph.teardownEntry;
+  const teardownStatus = teardownEntry
+    ? await withRecipeExecutionSignal(teardownSignal, () =>
+        runGraph(teardownEntry, graph.teardownNodeCount, undefined, teardownSignal),
       )
     : 'pass';
   const status = combineStatuses(mainStatus, teardownStatus);

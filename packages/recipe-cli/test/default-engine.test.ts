@@ -17,12 +17,14 @@ import { type ActionAdapter, RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { configureHarnessAdapters } from '../src/harness/adapters.js';
 import { createRuntimeRecipeCatalog } from '../src/harness/catalog.js';
+import { recipeExecutionSignal, withRecipeExecutionSignal } from '../src/harness/host.js';
 import { createDefaultConsoleClassifier } from '../src/harness/run-diagnostics.js';
 import {
   createDefaultRecipeEngine,
   preflightRecipe,
   runRecipe,
 } from '../src/harness/run-engine.js';
+import { spawnScriptStreaming } from '../src/harness/shared.js';
 
 const core = JSON.parse(
   fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
@@ -99,6 +101,64 @@ const runnerOptions = (
     ReturnType<ReturnType<typeof createRuntimeRecipeCatalog>['resolveActionManifest']>
   >['actionSources'],
 ) => ({ actionSources, trustTaskActions: false, autoHud: false });
+
+test('authored teardown streams a real child with its fresh graph signal after cancellation', async (t) => {
+  const controller = new AbortController();
+  const { root, catalog, engine } = setup(
+    t,
+    {
+      'example.cancel': declaration('example.cancel'),
+      'example.cleanup': declaration('example.cleanup'),
+    },
+    [
+      {
+        action: 'example.cancel',
+        source: { kind: 'bundled', trust: 'trusted' },
+        async execute(_node, context) {
+          assert.equal(recipeExecutionSignal(), context.signal);
+          controller.abort('SIGTERM');
+          return {};
+        },
+      },
+      {
+        action: 'example.cleanup',
+        source: { kind: 'bundled', trust: 'trusted' },
+        async execute(_node, context) {
+          assert.equal(recipeExecutionSignal(), context.signal);
+          assert.equal(context.signal?.aborted, false);
+          const result = await spawnScriptStreaming(
+            process.execPath,
+            ['-e', "require('node:fs').writeFileSync('cleaned.txt', 'cleanup ran')"],
+            context.projectRoot,
+            { forward: 'none', timeoutMs: 500 },
+          );
+          assert.equal(result.status, 0);
+          return {};
+        },
+      },
+    ],
+  );
+  const { manifest, actionSources } = await catalog.resolveActionManifest('api');
+  const runner = await engine.createRunner('api', manifest, runnerOptions(actionSources));
+  const document = recipe({
+    cancel: { action: 'example.cancel', intent: 'Cancel before later actions', next: 'done' },
+    done: { action: 'end', status: 'pass' },
+    cleanup: { action: 'example.cleanup', intent: 'Run authored child cleanup', next: 'closed' },
+    closed: { action: 'end', status: 'pass' },
+  });
+  const result = await withRecipeExecutionSignal(controller.signal, () =>
+    runner.run({
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts'),
+      source: { kind: 'operator', trust: 'trusted' },
+      recipeDocument: { ...document, workflow: { ...document.workflow, teardown: 'cleanup' } },
+      signal: controller.signal,
+    }),
+  );
+  assert.equal(result.status, 'fail');
+  assert.equal(fs.readFileSync(path.join(root, 'cleaned.txt'), 'utf8'), 'cleanup ran');
+  assert.equal(recipeExecutionSignal(), undefined);
+});
 
 test('headless SDK runtime executes a real command and retains the artifact package', async (t) => {
   const { root, catalog, engine } = setup(t, {

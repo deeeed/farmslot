@@ -1,8 +1,15 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { RECIPE_PROCESS_SIGNALS } from '@farmslot/recipe-runner/adapters/core';
+import {
+  RECIPE_PROCESS_SIGNALS,
+  withRecipeExecutionSignal,
+} from '@farmslot/recipe-runner/adapters/core';
+
+export {
+  recipeExecutionSignal,
+  withRecipeExecutionSignal,
+} from '@farmslot/recipe-runner/adapters/core';
 
 /**
  * Who is running the generic harness commands. A product harness (`mm-harness`)
@@ -46,15 +53,6 @@ const defaultHost: HarnessHost = {
 };
 
 let current: HarnessHost = defaultHost;
-const executionSignal = new AsyncLocalStorage<AbortSignal | undefined>();
-
-export function withRecipeExecutionSignal<T>(signal: AbortSignal | undefined, invoke: () => T): T {
-  return executionSignal.run(signal, invoke);
-}
-
-export function recipeExecutionSignal(): AbortSignal | undefined {
-  return executionSignal.getStore();
-}
 
 /** Cleanup keeps host signal ownership but cannot inherit an already aborted action signal. */
 export function withRecipeCleanup<T>(invoke: () => T): T {

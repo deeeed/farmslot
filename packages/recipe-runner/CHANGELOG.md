@@ -6,7 +6,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.29.0 - 2026-10-11
 
-- Accept a caller cancellation signal, stop later recipe nodes after cancellation, and record `RECIPE_ABORTED` while still running authored teardown. Signal-aware commands and timeouts clean their owned process groups; callers without signal transport retain their existing foreground-group behavior and bounded timeouts even when descendants hold output pipes.
+- Accept a caller cancellation signal, stop later recipe nodes after cancellation, and record `RECIPE_ABORTED` while still running authored teardown. Graph execution scopes shared leaf helpers to each phase's signal, including nested calls and fresh teardown signals. Signal-aware commands and timeouts clean their owned process groups; callers without signal transport retain their existing foreground-group behavior and bounded timeouts even when descendants hold output pipes.
 
 ## 0.28.5 - 2026-10-11
 
