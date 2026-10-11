@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Native proof for the Companion gate review: a private fixture gateway holds two runs parked at a
-// publish gate under a one-review policy. On the first, one criterion is proven with a screenshot
-// and a text check, one has no verdict, and both reviewers passed. On the second, every criterion
-// is proven and codex passed, but the latest claude review has open findings: the gateway still
-// counts the policy satisfied and offers approve-publish. Each gate's actions come from the
-// gateway's own policy functions. The recipe drives the Companion UI; these phases only own the
+// Native proof for the Companion gate review: a private fixture gateway holds three runs parked at
+// a publish gate under a one-review policy. On the first, one criterion is proven with a screenshot
+// and a text check, one has no verdict, both reviewers passed, and a worker packet asks to approve
+// the gate. On the second, every criterion is proven and codex passed, but the latest claude review
+// has open findings: the gateway still counts the policy satisfied and offers approve-publish. On
+// the third, every criterion is proven and no review passed, so the gateway offers only the review
+// bypass. Each gate's actions come from the gateway's own policy functions. The recipe drives the Companion UI; these phases only own the
 // fixture gateway and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -22,6 +23,9 @@ const runId = 'gate-review-fixture-run';
 const decisionId = 'gate-review-fixture-gate';
 const issuesRunId = 'gate-review-fixture-issues-run';
 const issuesDecisionId = 'gate-review-fixture-issues-gate';
+const bypassRunId = 'gate-review-fixture-bypass-run';
+const bypassDecisionId = 'gate-review-fixture-bypass-gate';
+const PACKET_PATH = 'artifacts/gate-approve.packet.json';
 const phase = process.argv[2];
 // The recipe runner passes the slot's device as SIMULATOR and the app as FARMSLOT_RECIPE_APP_ID.
 const simulator = process.env.IOS_SIMULATOR || process.env.SIMULATOR;
@@ -125,6 +129,7 @@ function forgetSavedGateways() {
     'RCTAsyncLocalStorage_V1',
   );
   const manifestPath = path.join(storage, 'manifest.json');
+  // A fresh install has written nothing yet, so there is nothing to forget.
   if (!fs.existsSync(manifestPath)) return;
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   for (const key of [
@@ -185,7 +190,7 @@ function seedTask(fixture, name, provenCount) {
   return path.join(taskDir, 'TASK.md');
 }
 
-function seedRun(fixture, { id, gateId, taskFile, title, claude }) {
+function seedRun(fixture, { id, gateId, taskFile, title, codex = {}, claude, artifactManifest }) {
   const now = new Date().toISOString();
   // Ids follow the gateway's independent-review source: `independent-review-<loop>`.
   const review = (runner, model, loopNumber, overrides = {}) => ({
@@ -201,7 +206,10 @@ function seedRun(fixture, { id, gateId, taskFile, title, claude }) {
     completedAt: now,
     ...overrides,
   });
-  const independentReviews = [review('codex', 'gpt-5.5', 1), review('claude', 'opus', 2, claude)];
+  const independentReviews = [
+    review('codex', 'gpt-5.5', 1, codex),
+    review('claude', 'opus', 2, claude),
+  ];
   const actions = gatewayGateActions(independentReviews);
   const diffStat = { files: 7, additions: 312, deletions: 41 };
   writeJson(path.join(fixture, 'runs', `${id}.json`), {
@@ -243,6 +251,7 @@ function seedRun(fixture, { id, gateId, taskFile, title, claude }) {
           branch: 'feat/fixture-gate-review',
           diffStat,
           workerReport: 'Fixture worker report.',
+          ...(artifactManifest ? { artifactManifest } : {}),
           publicationTarget: 'ready',
           independentReviews,
           prPackage: {
@@ -289,18 +298,47 @@ if (phase === 'setup') {
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
   });
   fs.mkdirSync(path.join(fixture, 'pool'));
+  const taskFile = seedTask(fixture, 'gate-review-fixture', 1);
+  // A worker packet asking the operator to approve this gate from run detail.
+  writeJson(path.join(path.dirname(taskFile), PACKET_PATH), {
+    schema: 'farmslot.interactive.operator-packet.v1',
+    id: 'fixture-approve-packet',
+    runId,
+    title: 'Fixture publish request',
+    intent: 'decision',
+    body: { format: 'markdown', text: 'The worker asks to publish the fixture package.' },
+    actions: [
+      {
+        id: 'approve',
+        label: 'Approve publish from packet',
+        kind: 'decision.resolve',
+        safety: 'operator-confirmed',
+        payload: { decisionId, actionId: 'approve-publish' },
+      },
+    ],
+    createdAt: new Date().toISOString(),
+  });
   seedRun(fixture, {
     id: runId,
     gateId: decisionId,
-    taskFile: seedTask(fixture, 'gate-review-fixture', 1),
+    taskFile,
     title: 'feat(companion): fixture gate review package',
     claude: {},
+    artifactManifest: [{ path: PACKET_PATH, purpose: 'interactive-packet' }],
   });
   seedRun(fixture, {
     id: issuesRunId,
     gateId: issuesDecisionId,
     taskFile: seedTask(fixture, 'gate-review-fixture-issues', 2),
     title: 'feat(companion): fixture review findings package',
+    claude: { verdict: 'issues', unresolvedCount: 2 },
+  });
+  seedRun(fixture, {
+    id: bypassRunId,
+    gateId: bypassDecisionId,
+    taskFile: seedTask(fixture, 'gate-review-fixture-bypass', 2),
+    title: 'feat(companion): fixture review bypass package',
+    codex: { verdict: 'issues', unresolvedCount: 1 },
     claude: { verdict: 'issues', unresolvedCount: 2 },
   });
   const log = fs.openSync(path.join(proofDir, 'gateway.log'), 'a', 0o600);
@@ -358,6 +396,12 @@ if (phase === 'setup') {
       'one passing review satisfies the policy, so the gateway offers approve-publish',
     );
   }
+  const bypass = gate(bypassRunId, bypassDecisionId);
+  assert.ok(
+    bypass?.actions.some((action) => action.id === 'approve-publish-unresolved') &&
+      !bypass.actions.some((action) => action.id === 'approve-publish'),
+    'with no passing review the gateway offers only the review bypass',
+  );
   evidence('gate-before', { gate: seeded, acceptance: progress.acceptanceStatus, issues });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, runId, issuesRunId }));
 } else if (phase === 'gateway-url') {
@@ -376,9 +420,20 @@ if (phase === 'setup') {
   openUrl(`/workspace/run/${runId}/evidence`);
 } else if (phase === 'open-issues-gate') {
   openUrl(`/gate-review/${issuesDecisionId}?runId=${issuesRunId}`);
-} else if (phase === 'verify-pending' || phase === 'verify-issues-pending') {
-  // Pressing a withheld publish approval must not reach the gateway.
-  const pending = phase === 'verify-pending' ? gate() : gate(issuesRunId, issuesDecisionId);
+} else if (phase === 'open-bypass-gate') {
+  openUrl(`/gate-review/${bypassDecisionId}?runId=${bypassRunId}`);
+} else if (
+  phase === 'verify-pending' ||
+  phase === 'verify-issues-pending' ||
+  phase === 'verify-bypass-pending'
+) {
+  // A withheld approval, or a confirmation the operator cancelled, must not reach the gateway.
+  const pending =
+    phase === 'verify-pending'
+      ? gate()
+      : phase === 'verify-issues-pending'
+        ? gate(issuesRunId, issuesDecisionId)
+        : gate(bypassRunId, bypassDecisionId);
   evidence(`gate-after-approval-press-${phase}`, pending);
   assert.equal(pending.resolvedAt, undefined, 'the gate is still open after the approval press');
 } else if (phase === 'verify-hold') {

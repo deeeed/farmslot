@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion publish gate review",
-  "description": "Opens two runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, and passing reviewers: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on both while hold and review requests stay enabled, the criterion's evidence opens in the artifact viewer and swipes within that criterion, and holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish, and the gate review keeps it disabled with the review as its reason. Requires the leased iOS simulator and the dev client with the recipe bridge.",
+  "description": "Opens three runs parked at a publish gate under a one-review policy on a private fixture gateway; each gate's actions come from the gateway's own policy functions. The first has one proven criterion (a screenshot and a text check), one criterion with no verdict, passing reviewers and a worker packet asking to approve: run detail and the decision workspace both reach the gate review, approve-publish is disabled with its reason on the gate review, the Gate tab and for the packet, while hold and review requests stay enabled; the criterion's evidence opens in the artifact viewer and swipes within that criterion; holding the gate resolves it on the gateway. The second has every criterion proven but a claude review with open findings: the gateway still offers approve-publish and the gate review withholds it. The third has every criterion proven and no passing review: the gateway's review bypass stays enabled. Requires the leased iOS simulator and the dev client with the recipe bridge; the relaunch step forgets the gateway profiles the app saved before the run.",
   "proofTargets": [
     {
       "id": "gate-review-screen",
@@ -9,7 +9,7 @@
     },
     {
       "id": "approve-guard",
-      "claim": "Approve-publish is disabled with a visible reason while a registered criterion has no verdict or a reviewer's latest verdict is not an approval, on the gate review and the decision workspace; hold and review requests stay enabled."
+      "claim": "Approve-publish is disabled with a visible reason while a registered criterion has no verdict or a reviewer's latest verdict is not an approval, on the gate review, the decision workspace and for worker packets; hold, review requests and, once every criterion is judged, the gateway's review bypass stay enabled."
     },
     {
       "id": "ac-evidence-viewer",
@@ -204,6 +204,65 @@
         "timeout_ms": 30000,
         "intent": "Run detail offers the gate review because the run has an open human gate.",
         "proves": ["gate-review-screen"],
+        "next": "open-timeline-tab"
+      },
+      "open-timeline-tab": {
+        "action": "ui.press",
+        "test_id": "companion-run-tab-timeline",
+        "intent": "Go to the run's Timeline, where worker packets are listed.",
+        "next": "wait-packet"
+      },
+      "wait-packet": {
+        "action": "ui.wait_for",
+        "text": "Approve publish from packet",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "The worker packet asking to approve the gate is listed.",
+        "next": "press-packet-approve"
+      },
+      "press-packet-approve": {
+        "action": "ui.press",
+        "text": "Approve publish from packet",
+        "intent": "The operator runs the packet's approve action.",
+        "proves": ["approve-guard"],
+        "next": "wait-packet-refused"
+      },
+      "wait-packet-refused": {
+        "action": "ui.wait_for",
+        "text_contains": ["Publish approval is disabled: AC-2 has no verdict"],
+        "timeout_ms": 10000,
+        "intent": "The packet's approval is refused for the same reason as the gate review's.",
+        "proves": ["approve-guard"],
+        "next": "no-packet-confirm"
+      },
+      "no-packet-confirm": {
+        "action": "ui.wait_for",
+        "text": "Run packet action?",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "No confirmation opens for a withheld packet approval.",
+        "proves": ["approve-guard"],
+        "next": "verify-packet-pending"
+      },
+      "verify-packet-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-pending",
+        "intent": "The gateway still holds the gate open after the packet press.",
+        "proves": ["approve-guard"],
+        "next": "hud-packet"
+      },
+      "hud-packet": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "A worker packet cannot approve past the guard.",
+        "next": "capture-packet"
+      },
+      "capture-packet": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-packet-guard.png",
+        "label": "Packet approval refused with the guard's reason",
+        "covers": ["approve-guard"],
+        "intent": "Record the refused packet approval.",
         "next": "open-gate-tab"
       },
       "open-gate-tab": {
@@ -676,6 +735,86 @@
         "action": "command",
         "cmd": "node scripts/agentic/gate-review-proof.mjs verify-issues-pending",
         "intent": "The gateway still holds the second gate open.",
+        "proves": ["approve-guard"],
+        "next": "open-bypass-gate"
+      },
+      "open-bypass-gate": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs open-bypass-gate",
+        "intent": "Open the third gate, where no review passed and every criterion is judged.",
+        "next": "wait-bypass-summary"
+      },
+      "wait-bypass-summary": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-summary",
+        "text_contains": ["feat(companion): fixture review bypass package"],
+        "timeout_ms": 30000,
+        "intent": "The third gate's package is on screen.",
+        "next": "scroll-bypass-actions"
+      },
+      "scroll-bypass-actions": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the third gate's actions below its evidence.",
+        "next": "wait-bypass-action"
+      },
+      "wait-bypass-action": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-action-approve-publish-unresolved",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The gateway's review bypass is offered.",
+        "next": "no-bypass-notice"
+      },
+      "no-bypass-notice": {
+        "action": "ui.wait_for",
+        "test_id": "companion-gate-review-approve-reason",
+        "expected": "absent",
+        "timeout_ms": 3000,
+        "intent": "Nothing is withheld once every criterion is judged and only the bypass is offered.",
+        "proves": ["approve-guard"],
+        "next": "hud-bypass"
+      },
+      "hud-bypass": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Review bypass stays available once criteria are judged.",
+        "next": "capture-bypass"
+      },
+      "capture-bypass": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-gate-review-bypass-enabled.png",
+        "label": "Review bypass enabled",
+        "covers": ["approve-guard"],
+        "intent": "Record the enabled review bypass.",
+        "next": "press-bypass"
+      },
+      "press-bypass": {
+        "action": "ui.press",
+        "selector": "id=\"companion-gate-review-action-approve-publish-unresolved\" enabled=true",
+        "intent": "The operator tries the review bypass, which matches only while it is enabled.",
+        "proves": ["approve-guard"],
+        "next": "bypass-confirm"
+      },
+      "bypass-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "intent": "The enabled bypass asks for confirmation.",
+        "proves": ["approve-guard"],
+        "next": "cancel-bypass"
+      },
+      "cancel-bypass": {
+        "action": "ui.press",
+        "text": "Cancel",
+        "intent": "Cancel so nothing is published from the fixture.",
+        "next": "verify-bypass-pending"
+      },
+      "verify-bypass-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/gate-review-proof.mjs verify-bypass-pending",
+        "intent": "The gateway still holds the third gate open after the cancel.",
         "proves": ["approve-guard"],
         "next": "cleanup"
       },
