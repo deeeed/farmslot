@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
@@ -11,6 +11,7 @@ await import('../../runtime/mock-pty.test-support.js');
 const { assertSlotHealthForRecipeRerun } = await import('../recipe.js');
 
 const {
+  checkDevServer,
   checkDefaultBranch,
   checkHealth,
   checkRunnerLaunch,
@@ -47,6 +48,27 @@ function makeSlotVars(remoteRepo: string): SlotVars {
     resourceVars: {},
   };
 }
+
+test('quiet live server logs pass; missing logs and an old log without a live server fail', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-quiet-log-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const log = path.join(repo, 'server.log');
+  await writeFile(log, 'server started\n');
+  await utimes(log, new Date(0), new Date(0));
+  const vars = makeSlotVars(repo);
+  const check = (command: string) =>
+    checkDevServer(
+      vars,
+      { hooks: { dev_server_check: command } },
+      undefined,
+      'Server',
+      'server.log',
+    );
+  assert.equal((await check('true')).find((s) => s.name === 'devserver.log')?.status, 'pass');
+  assert.equal((await check('false')).find((s) => s.name === 'devserver.log')?.status, 'warn');
+  await rm(log);
+  assert.equal((await check('true')).find((s) => s.name === 'devserver.log')?.status, 'warn');
+});
 
 test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-'));
