@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-FARMSLOT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEV_FRAMEWORK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FARMSLOT_ROOT="${FARMSLOT_SLOT_REPO:-$DEV_FRAMEWORK_ROOT}"
 PORT_ENV_FILE="$FARMSLOT_ROOT/.env.ports"
 AUTH_ENV_FILE="$FARMSLOT_ROOT/.env.local-auth"
 
@@ -46,9 +47,11 @@ load_simple_env_file() {
 # Load port overrides. Caller-set GATEWAY_PORT/VITE_PORT (sandbox prepare) win over file values.
 _gateway_override="${GATEWAY_PORT:-}"
 _vite_override="${VITE_PORT:-}"
+_sandbox_home_override="${FARMSLOT_SANDBOX_HOME:-}"
+_sandbox_guard_override="${FARMSLOT_SANDBOX_HOME_GUARD:-}"
 # Stack ports select an independent auth and bind scope. Clear inherited
 # credentials, auth mode and bind host before this checkout loads its files.
-source "$FARMSLOT_ROOT/scripts/lib/stack-credentials.sh"
+source "$DEV_FRAMEWORK_ROOT/scripts/lib/stack-credentials.sh"
 clear_inherited_gateway_credentials
 
 if [ -f "$PORT_ENV_FILE" ]; then
@@ -78,6 +81,10 @@ fi
 
 # Sandbox wrappers select a private home for gateway, node and child clients.
 # Checkout files may name the operator home; they cannot override that scope.
+if [ -n "$_sandbox_home_override" ]; then
+  export FARMSLOT_SANDBOX_HOME="$_sandbox_home_override"
+  export FARMSLOT_SANDBOX_HOME_GUARD="$_sandbox_guard_override"
+fi
 pin_sandbox_home
 
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then

@@ -373,11 +373,6 @@
       "types": "./dist/node/pack-portability.d.ts",
       "import": "./dist/node/pack-portability.js",
       "default": "./dist/node/pack-portability.js"
-    },
-    "./node/farm-support": {
-      "types": "./dist/node/farm-support.d.ts",
-      "import": "./dist/node/farm-support.js",
-      "default": "./dist/node/farm-support.js"
     }
   },
   "scripts": {

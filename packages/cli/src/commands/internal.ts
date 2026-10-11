@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
 // internal.ts — gateway-free plumbing verbs for lifecycle scripts (Phase 2 of
 // the CLI closeout). scripts/lib/slot-common.sh delegates slot resolution and
 // hook expansion here, so the {{var}} vocabulary has exactly one
 // implementation (@farmslot/slot-config, shared with the gateway) and works
 // even when the gateway is down (teardown-slot.sh contract).
+
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -15,14 +15,6 @@ import {
   parseBugInput,
   validateBugScore,
 } from '@farmslot/protocol';
-import {
-  hasRemoteFarmRef,
-  NODE_SUPPORT_HASH_FILENAME,
-  NODE_SUPPORT_ROOT,
-  nodeSupportDir,
-  remapRemoteFarmRefs,
-  selectedSupportHashPath,
-} from '@farmslot/protocol/node/farm-support';
 import {
   computeFixturePlan,
   expandDispatchCmd,
@@ -163,68 +155,10 @@ function parseExtraVars(extras: string[]): Record<string, string> {
   return out;
 }
 
-export function selectedNodeSupportProbe(): string {
-  return `
-const fs = require('node:fs'), path = require('node:path');
-const NODE_SUPPORT_ROOT = ${JSON.stringify(NODE_SUPPORT_ROOT)};
-const nodeSupportDir = ${nodeSupportDir.toString()};
-const NODE_SUPPORT_HASH_FILENAME = ${JSON.stringify(NODE_SUPPORT_HASH_FILENAME)};
-const selectedSupportHashPath = ${selectedSupportHashPath.toString()};
-const file = selectedSupportHashPath(process.argv[1], process.argv[2]);
-if (!fs.existsSync(file)) { process.stdout.write('null'); } else {
-  const hash = fs.readFileSync(file, 'utf8').trim();
-  const dir = nodeSupportDir(hash, require('node:os').homedir());
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
-  if (manifest.hash !== hash || !Array.isArray(manifest.paths) || !manifest.paths.every(p => typeof p === 'string')) throw new Error('Selected node support manifest is invalid');
-  process.stdout.write(JSON.stringify({ dir, paths: manifest.paths }));
-}`;
-}
-
 export function registerInternalCommand(program: Command): void {
   const internal = program
     .command('internal')
     .description('Gateway-free plumbing for lifecycle scripts (stable output contracts)');
-
-  internal
-    .command('resolve-farm-command <slotId> <command>')
-    .description('Resolve remote lifecycle hooks through the slot-selected support bundle')
-    .action(async (slotId: string, command: string) => {
-      try {
-        if (!hasRemoteFarmRef(command)) {
-          process.stdout.write(command + '\n');
-          return;
-        }
-        const vars = await loadSlotVars(slotId);
-        const project = await loadProjectVars(vars.projectName);
-        const query = [
-          'node',
-          '-e',
-          selectedNodeSupportProbe(),
-          vars.remoteRepo,
-          project.runtimeDir,
-        ];
-        const output = isLocalPool(vars)
-          ? execFileSync(process.execPath, query.slice(1), { encoding: 'utf8', timeout: 15000 })
-          : execFileSync(
-              'ssh',
-              [
-                '-o',
-                'BatchMode=yes',
-                '-o',
-                'ConnectTimeout=10',
-                vars.sshTarget,
-                query.map(shellQuote).join(' '),
-              ],
-              { encoding: 'utf8', timeout: 15000 },
-            );
-        const selected: { dir: string; paths: string[] } | null = JSON.parse(output);
-        process.stdout.write(
-          (selected ? remapRemoteFarmRefs(command, selected.dir, selected.paths) : command) + '\n',
-        );
-      } catch (error) {
-        rawFail(error);
-      }
-    });
 
   internal
     .command('slot-vars <slotId>')

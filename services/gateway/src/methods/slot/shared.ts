@@ -24,13 +24,10 @@ export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
   duringRelease?: boolean;
   stripClean?: boolean;
-  /** Reuse existing run work. Clean review/QA retries may preserve old tips and
-   * reset to the current published or frozen head; dirty trees remain untouched. */
+  /** Reuse the run's existing work branch without resetting or cleaning it. */
   preserveBranch?: boolean;
-  /** Only with durable evidence that this run's worker has never launched. */
+  /** Only with durable evidence that this run has not started branch setup. */
   allowMissingReplayBranch?: boolean;
-  /** Cross-slot replay must verify original work before touching the replacement. */
-  recoverySourceSlotId?: string;
   beforeBranchSetup?: () => Promise<void>;
   startRef?: { requestedRef: string };
   /** Stacked run: create a new work branch from this pushed ref instead of the default branch. */

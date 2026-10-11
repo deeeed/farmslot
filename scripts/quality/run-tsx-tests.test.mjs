@@ -317,8 +317,6 @@ export function reachesSharedState(source) {
 // accessors above must be serial, which is why the guard matches the accessor
 // rather than the write.
 const SHARED_STATE_READ_ONLY = {
-  'src/methods/slot/prepare-preserve-branch.test.ts':
-    'redirects root, pool, projects, runs, home and fleet status to its process-unique mkdtemp fixture before dynamic imports',
   'src/backlog/store.test.ts':
     'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
   'src/intelligence/improvement-apply.test.ts':

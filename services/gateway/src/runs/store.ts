@@ -895,7 +895,7 @@ export function createRun(
         ? (params.reviewValidationDepth ?? 'static-code')
         : undefined,
     safetyTier: resolvedTier,
-    engineState: { workerLaunchStarted: false, ...engineState },
+    engineState,
     ticketData: params.ticketData,
     ...(normalizeRunTags(params.tags).length > 0 ? { tags: normalizeRunTags(params.tags) } : {}),
     createdAt: now,
@@ -1101,25 +1101,6 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
-  // Replay/flags replacements retain original work identity and cannot erase
-  // proof a worker may have run. Prepare can explicitly update its identity.
-  if ('engineState' in partial && (run.engineState || partial.engineState)) {
-    const workerLaunchStarted =
-      run.engineState?.workerLaunchStarted === true ||
-      partial.engineState?.workerLaunchStarted === true
-        ? true
-        : run.engineState?.workerLaunchStarted;
-    partial = {
-      ...partial,
-      engineState: {
-        ...partial.engineState,
-        workerLaunchStarted,
-        ...(run.engineState?.prepareBranch && !partial.engineState?.prepareBranch
-          ? { prepareBranch: run.engineState?.prepareBranch }
-          : {}),
-      },
-    };
-  }
   if (
     'reviewPublication' in partial &&
     !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)

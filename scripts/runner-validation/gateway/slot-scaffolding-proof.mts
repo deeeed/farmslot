@@ -91,11 +91,8 @@ if (mode === 'baseline') {
   const priorFile = path.join(root, 'baseline.mts');
   writeFileSync(priorFile, prior);
   const base = await import(priorFile);
-  const current = await import(
-    path.join(code, 'services/gateway/src/methods/slot/unmerged-work.ts')
-  );
   mock.module(path.join(code, 'services/gateway/src/methods/slot/unmerged-work.ts'), {
-    namedExports: { ...current, findUnmergedSlotWork: base.findUnmergedSlotWork },
+    namedExports: { findUnmergedSlotWork: base.findUnmergedSlotWork },
   });
 }
 const repo = path.join(root, 'repo');

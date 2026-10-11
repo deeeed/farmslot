@@ -1,53 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '@farmslot/slot-config';
 
-import {
-  buildFixtureSelectionVars,
-  selectedNodeSupportProbe,
-  slotVarsShellLines,
-} from './internal.js';
-
-test('offline support probe resolves the selected bundle and fails closed on invalid pointers', (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'offline-support-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const hash = 'a'.repeat(64);
-  const runtime = 'agent';
-  const home = path.join(root, 'node-home');
-  const bundle = path.join(home, 'farmslot-node/support', hash);
-  const pointer = path.join(root, runtime, '.observability/node-support-hash');
-  mkdirSync(path.dirname(pointer), { recursive: true });
-  mkdirSync(bundle, { recursive: true });
-  // Mock only the remote OS home; do not change the invoking process's HOME.
-  const probe = `require('node:os').homedir = () => ${JSON.stringify(home)};\n${selectedNodeSupportProbe()}`;
-  const query = () =>
-    execFileSync(process.execPath, ['-e', probe, root, runtime], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-  assert.equal(query(), 'null');
-  writeFileSync(pointer, hash);
-  writeFileSync(path.join(bundle, 'manifest.json'), JSON.stringify({ hash, paths: ['scripts'] }));
-  assert.deepEqual(JSON.parse(query()), { dir: bundle, paths: ['scripts'] });
-  writeFileSync(
-    path.join(bundle, 'manifest.json'),
-    JSON.stringify({ hash: 'b'.repeat(64), paths: ['scripts'] }),
-  );
-  assert.throws(query, (error: unknown) =>
-    String((error as { stderr?: Buffer }).stderr).includes(
-      'Selected node support manifest is invalid',
-    ),
-  );
-  writeFileSync(pointer, '../other-bundle');
-  assert.throws(query, (error: unknown) =>
-    String((error as { stderr?: Buffer }).stderr).includes('Invalid selected node support hash'),
-  );
-});
+import { buildFixtureSelectionVars, slotVarsShellLines } from './internal.js';
 
 test('buildFixtureSelectionVars picks up an env var named by a non-standard compose.var', () => {
   // A project with `compose.var: "TARGET"` relies on bash `${!TARGET}` reach:

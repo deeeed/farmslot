@@ -29,13 +29,6 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
-import {
-  prepareReusesRunBranch,
-  recordInitialPrepareBranchState,
-  recordWorkerLaunchStarting,
-  recoveryMayInitializeBranch,
-  recoverySourceNeedsVerification,
-} from './prepare-branch-state.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
@@ -61,8 +54,6 @@ function copyDefinedKeys(
   }
   return safe;
 }
-
-export { prepareReusesRunBranch } from './prepare-branch-state.js';
 
 export function safeRecipeToolingProvenance(
   provenance: Record<string, unknown>,
@@ -312,31 +303,6 @@ export async function executePrepareStep(
     return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
 
-  // A new fix-bug/dev run owns a fresh branch. A recovery of that run owns the
-  // existing branch instead: recreating it from main discards the very commits
-  // and local evidence the operator is trying to recover.
-  const isRecoveryPrepare = prepareReusesRunBranch(current);
-  if (isRecoveryPrepare && !current.branch && ['fix-bug', 'dev'].includes(current.flowType)) {
-    throw new Error(
-      'Replay cannot prepare without a run branch. Replay from grade or write-task to assign it first; existing work was preserved.',
-    );
-  }
-  const branchIdentity = current.branch
-    ? { slotId: current.slotId, branch: current.branch }
-    : undefined;
-  await recordInitialPrepareBranchState(runId);
-  const branchState = getRun(runId)?.engineState?.prepareBranch;
-  const recoveryRun = getRun(runId)!;
-  const allowMissingReplayBranch = isRecoveryPrepare && recoveryMayInitializeBranch(recoveryRun);
-  const verifyRecoverySource = isRecoveryPrepare && recoverySourceNeedsVerification(recoveryRun);
-  if (verifyRecoverySource && current.branch && !branchState?.slotId) {
-    throw new Error(
-      `Replay cannot preserve ${current.branch}: original slot identity is unknown. Restore the run's source binding before retrying; no branch was reset or deleted.`,
-    );
-  }
-  const forceNewBranch =
-    !isRecoveryPrepare && (current.flowType === 'fix-bug' || current.flowType === 'dev');
-
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
   // prepare.outputs.hostLoad. Captured only once prepare actually runs (skip-prepare does no
   // work, so there's no cost to correlate load against). Threaded through every outputs rebuild
@@ -382,6 +348,37 @@ export async function executePrepareStep(
   // a slot that cannot launch the selected worker binary.
   assertRunnerLaunchPrerequisites(await loadSlotVars(current.slotId), current.metrics.runner);
 
+  // A new fix-bug/dev run owns a fresh branch. A replay from PREPARE owns the
+  // existing branch instead: recreating it from main discards the very commits
+  // and local evidence the operator is trying to recover.
+  const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
+  const isPrepareReplay =
+    activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
+  const branchIdentity = current.branch
+    ? { slotId: current.slotId, branch: current.branch }
+    : undefined;
+  if (!isPrepareReplay && branchIdentity && !current.engineState?.prepareBranch) {
+    await persistRunNow(
+      updateRun(runId, {
+        engineState: {
+          ...current.engineState,
+          prepareBranch: {
+            ...branchIdentity,
+            started: false,
+          },
+        },
+      }),
+      'prepare branch intent',
+    );
+  }
+  const branchState = current.engineState?.prepareBranch;
+  const allowMissingReplayBranch =
+    isPrepareReplay &&
+    branchState?.slotId === current.slotId &&
+    branchState.branch === current.branch &&
+    branchState.started === false;
+  const forceNewBranch =
+    !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
   const prepareController = new AbortController();
   // activeMonitors[runId] is exclusively owned for the duration of one
   // step; an existing entry orphans the prior controller from cancellation.
@@ -411,9 +408,8 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
-        ...(isRecoveryPrepare ? { preserveBranch: true } : {}),
+        ...(isPrepareReplay ? { preserveBranch: true } : {}),
         allowMissingReplayBranch,
-        recoverySourceSlotId: verifyRecoverySource ? branchState?.slotId : undefined,
         beforeBranchSetup: branchIdentity
           ? async () => {
               const latest = getRun(runId);
@@ -586,7 +582,6 @@ export async function executeDispatchStep(
     } else {
       const collector = createSubStepCollector();
       const dispatchStart = Date.now();
-      await recordWorkerLaunchStarting(runId);
       const result = await warmSessionHandoffDispatch(
         {
           slotId: current.slotId,
@@ -674,7 +669,6 @@ export async function executeDispatchStep(
     }
     const collector = createSubStepCollector();
     const dispatchStart = Date.now();
-    await recordWorkerLaunchStarting(runId);
     if (current.transport === 'native') {
       const result = await nudgeNativeWorker(runId, collector.emit);
       updateRun(runId, { activeTaskFile: result.taskFile ?? undefined });
@@ -797,7 +791,6 @@ export async function executeDispatchStep(
   for (;;) {
     if (forcedLabel) triedLabels.push(forcedLabel);
     try {
-      await recordWorkerLaunchStarting(runId);
       dispatchResult = await dispatchExecute(
         {
           slotId: current.slotId,

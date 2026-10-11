@@ -1,6 +1,3 @@
-import { hasRemoteFarmRef, remapRemoteFarmRefs } from '@farmslot/protocol/node/farm-support';
-export { hasRemoteFarmRef, remapRemoteFarmRefs } from '@farmslot/protocol/node/farm-support';
-
 // node-support/remote-command.ts — run remote farm scripts from the bundle that
 // matches the config the command was expanded from.
 //
@@ -22,6 +19,14 @@ import {
   type NodeSupportBundleState,
   type NodeSupportIo,
 } from './ensure.js';
+
+/**
+ * A remote farm reference, as `{{farmslot_dir}}` expands on a node: a file
+ * under `projects/` or `scripts/`, or the bare root handed to a farm script
+ * that builds those paths itself (mobile preflight takes it as an argument).
+ */
+const REMOTE_FARM_REF =
+  /~\/farmslot-node(?:\/((?:projects|scripts)\/[^\s'"`;&|()<>{},:]+)|(?=$|[\s'"`;&|()<>{},:]))/g;
 
 /**
  * How long a bundle this process verified on a slot is trusted without asking
@@ -62,6 +67,27 @@ const localBundles = new Map<string, { at: number; bundle: Promise<LocalBundle> 
  * never read as a stopped resource.
  */
 export class NodeSupportPendingError extends Error {}
+
+const HAS_REMOTE_FARM_REF = new RegExp(REMOTE_FARM_REF.source);
+
+export function hasRemoteFarmRef(command: string): boolean {
+  return HAS_REMOTE_FARM_REF.test(command);
+}
+
+/**
+ * Point every reference the bundle carries at the bundle; leave the rest alone.
+ * The bare root moves only when the bundle carries `scripts`: farm scripts
+ * reach `scripts/` and `projects/<name>/` from it, which is what a bundle with
+ * project support holds (ADR-035's `{{node_support_dir}}`).
+ */
+export function remapRemoteFarmRefs(command: string, supportDir: string, paths: string[]): string {
+  return command.replace(REMOTE_FARM_REF, (whole, relative: string | undefined) => {
+    if (relative === undefined) return paths.includes('scripts') ? supportDir : whole;
+    return paths.some((covered) => relative === covered || relative.startsWith(`${covered}/`))
+      ? `${supportDir}/${relative}`
+      : whole;
+  });
+}
 
 async function currentLocalBundle(
   projectName: string,

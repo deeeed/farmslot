@@ -1,6 +1,5 @@
 import type { ExecResult } from '@farmslot/protocol';
 
-import { fetchRemoteBranch, probeRemoteBranch } from '../core/git-remote.js';
 import { shellQuote } from '../core/tmux.js';
 
 const MIN_SHORT_SHA_LENGTH = 7;
@@ -142,12 +141,12 @@ async function remoteHeadExists(
   headRef: string,
   remote: string,
 ): Promise<boolean> {
-  const probe = await probeRemoteBranch(repo, remote, headRef.slice('refs/heads/'.length), exec);
-  if (probe.presence === 'unknown')
-    throw new Error(
-      `Cannot inspect startRef remote head ${headRef}: ${probe.result.stderr || probe.result.stdout}`,
-    );
-  return probe.presence === 'present';
+  const head = await runGit(
+    repo,
+    exec,
+    `git ls-remote --exit-code --heads ${shellQuote(remote)} ${shellQuote(headRef)}`,
+  );
+  return head.exitCode === 0 && head.stdout.trim().length > 0;
 }
 
 async function fetchRemoteHead(
@@ -157,7 +156,11 @@ async function fetchRemoteHead(
   remote: string,
 ): Promise<string> {
   const remoteTrackingRef = remoteTrackingRefFromHeadRef(headRef, remote);
-  const fetch = await fetchRemoteBranch(repo, remote, headRef.slice('refs/heads/'.length), exec);
+  const fetch = await runGit(
+    repo,
+    exec,
+    `git fetch --no-tags ${shellQuote(remote)} ${shellQuote(`+${headRef}:${remoteTrackingRef}`)}`,
+  );
   if (fetch.exitCode !== 0) {
     throw new Error(
       `git fetch ${remote} ${headRef} for startRef failed: ${fetch.stderr.slice(-200) || fetch.stdout.slice(-200)}`,

@@ -4,7 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Recovery retains branches and legacy source identity, checks only the run's work in reused slots, and initializes a missing branch only with durable proof that no worker launched. Worker-launch history survives replay step resets. Published review branches can safely advance; clean stale review and QA retries preserve old tips before updating. Destructive prepare verifies backing Git refs and refuses unpublished commits. Fresh dispatch can reuse detached slots whose parked work is preserved. Sandbox hooks use current node support, and health/attach refuse stale launches. Node processes retain their private runtime home when older checkouts reload configuration. Unreadable gateway configuration stops startup before credentials are selected.
+- Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
+- Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
+
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
 - Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.

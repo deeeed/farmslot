@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -57,6 +57,11 @@ async function fixture(t) {
       `GATEWAY_PORT=${ports[0]}\nVITE_PORT=${ports[1]}\n`,
     );
   }
+  mkdirSync(path.join(root, 'runtime/home'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'runtime/isolated-home'),
+    realpathSync(path.join(root, 'runtime/home')) + '\n',
+  );
 
   async function health(repo) {
     const { stdout } = await exec('bash', [script, 'health', '--gateway-port', String(ports[0])], {
@@ -80,13 +85,11 @@ test('primary checkout is recognized without a configured personal path', async 
   assert.match(await f.health(f.primary), /primary checkout.*operator gateway/);
 });
 
-test('linked worktree health requires launch provenance without the operator exemption', async (t) => {
+test('linked worktree retains its isolated gateway classification', async (t) => {
   const f = await fixture(t);
-  await assert.rejects(f.health(f.linked), (error) => {
-    assert.match(error.stderr, /stack launch is stale/);
-    assert.doesNotMatch(error.stdout + error.stderr, /primary checkout/);
-    return true;
-  });
+  const output = await f.health(f.linked);
+  assert.match(output, /gateway healthy on/);
+  assert.doesNotMatch(output, /primary checkout/);
 });
 
 test('an explicit primary_repo still overrides Git discovery', async (t) => {

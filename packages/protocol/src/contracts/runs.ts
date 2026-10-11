@@ -2582,16 +2582,9 @@ export interface RunEngineState {
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
   /** The same fingerprint, taken when the latest review document was written. */
   reviewInputsAtLaunch?: string;
-  /** Persisted before branch mutations. started=false for the same branch proves
-   * setup never began; absent historical state is unknown. First branch assignment
-   * can precede slot binding. slotId identifies original work which cross-slot
-   * replay must verify before changing the replacement clone. The branch name
-   * may still be unassigned when historical slot identity is captured. */
-  prepareBranch?: { slotId?: string; branch?: string; started?: boolean };
-  /** Durable worker-launch history. False only for a newly created run, true
-   * before any dispatch/handoff; absent historical history is unknown. Replay
-   * clears step timestamps but must never clear this marker. */
-  workerLaunchStarted?: boolean;
+  /** Persisted before branch mutations. A matching false value proves an early
+   * prepare failure never reached branch setup; absent historical state is unknown. */
+  prepareBranch?: { slotId: string; branch: string; started: boolean };
   /** Runtime hints set by dispatch UI (e.g. skipPrepare) or engine (warmRecovery on crash resume).
    * `nudgeReuse` is set when the operator picks "Nudge worker" in the dispatch wizard or the
    * branch-affinity decision card; FIND_SLOT honors it to bind the busy slot, and DISPATCH

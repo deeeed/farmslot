@@ -22,3 +22,8 @@ sandbox_is_primary_checkout() {
   primary_repo="$(sandbox_primary_repo "$1")" || return 1
   [[ "$(cd "$1" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
 }
+
+sandbox_runtime_dir() {
+  printf '%s\n' "${FARMSLOT_RUNTIME_DIR:-$1/.sandbox/farmslot-farm/agent}"
+}
+

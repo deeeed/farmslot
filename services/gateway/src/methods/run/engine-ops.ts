@@ -21,7 +21,6 @@ import { pokeCIPoll } from '../../ci-monitor/service.js';
 import { claimSlotStatusIf, updateSlotStatusIf } from '../../core/index.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { captureRunOutput, failRunOutputCapture } from '../../run-completion/output.js';
-import { recordRecoveryBranchSource } from '../../run-engine/prepare-branch-state.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { getRun, updateRun } from '../../runs/store.js';
@@ -202,7 +201,6 @@ export async function runActivateOnSlot(
     if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
   }
 
-  await recordRecoveryBranchSource(params.runId);
   const priorRunId = slot.currentRunId ?? null;
   const priorSlotId = run.slotId;
   console.log(

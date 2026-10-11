@@ -3,20 +3,24 @@ import { execFile, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mock } from 'node:test';
+import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
-// Manual live proof uses an existing guarded server and owns only its fixture sessions:
+// Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
 // no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
-export const tmuxSandbox =
+const tmuxSandbox =
   !process.env.TMUX &&
   process.env.TMUX_TMPDIR &&
   process.env.FARMSLOT_TMUX_SANDBOX ===
     `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
     ? process.env.FARMSLOT_TMUX_SANDBOX
     : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
 const execFileAsync = promisify(execFile);
 
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
@@ -35,11 +39,11 @@ mock.module('../methods/slot/fixtures.js', {
   namedExports: { ...realFixtures, runFixtureSync: async () => undefined },
 });
 
-export const { slotPrepare } = await import('../methods/slot.js');
+const { slotPrepare } = await import('../methods/slot.js');
 
 const gitEnv = ['-c', 'user.name=Farmslot Test', '-c', 'user.email=farmslot-test@example.invalid'];
 
-export async function git(repo: string, ...args: string[]): Promise<string> {
+async function git(repo: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', repo, ...gitEnv, ...args]);
   return stdout.trim();
 }
@@ -49,7 +53,7 @@ export async function git(repo: string, ...args: string[]): Promise<string> {
  * way another slot or node publishes it. The slot itself has never seen that
  * branch: origin is the only way to reach it.
  */
-export async function stackFixture(
+async function stackFixture(
   t: import('node:test').TestContext,
   label: string,
   port: number,
@@ -64,11 +68,11 @@ export async function stackFixture(
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
     // Prepare's tmux phase opens a real session named after the slot.
-    spawnSync('tmux', ['-N', '-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
       stdio: 'ignore',
     });
     assert.notEqual(
-      spawnSync('tmux', ['-N', '-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
+      spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
         stdio: 'ignore',
       }).status,
       0,
@@ -87,14 +91,13 @@ export async function stackFixture(
   const mainHead = await git(otherSlot, 'rev-parse', 'HEAD');
   if (options.linkedWorktreeOn) {
     // The slot is a linked worktree of another clone, still on the branch a
-    // previous run used, with a published stale commit of its own.
+    // previous run used, with a stale commit of its own.
     const primary = path.join(fixtureRoot, 'primary');
     await execFileAsync('git', ['clone', originRepo, primary]);
     await git(primary, 'worktree', 'add', '-b', options.linkedWorktreeOn, slotRepo, 'origin/main');
     await writeFile(path.join(slotRepo, 'stale.txt'), 'stale\n');
     await git(slotRepo, 'add', 'stale.txt');
     await git(slotRepo, 'commit', '-m', 'stale work from an earlier run');
-    await git(slotRepo, 'push', 'origin', options.linkedWorktreeOn);
   } else {
     await execFileAsync('git', ['clone', originRepo, slotRepo]);
   }
@@ -129,3 +132,82 @@ export async function stackFixture(
   );
   return { slotId, slotRepo, mainHead, upstreamHead };
 }
+
+test(
+  'a stacked fix-bug branch starts from the upstream PR head fetched from origin',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'stacked', 48830);
+    const events: unknown[] = [];
+    const recorded: string[] = [];
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/stacked',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
+      },
+      (_event, payload) => events.push(payload),
+      undefined,
+      {
+        stackBase: { requestedRef: 'refs/heads/feat/upstream' },
+        onStackBaseResolved: async (resolution) => {
+          recorded.push(resolution.resolvedSha);
+        },
+      },
+    );
+    assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+    assert.deepEqual(recorded, [upstreamHead], 'provenance is handed over as soon as it resolves');
+    assert.equal(result.startRef, undefined, 'a stack base is not a replay start ref');
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
+    assert.match(JSON.stringify(events), /Created feat\/stacked from refs\/heads\/feat\/upstream/);
+  },
+);
+
+test(
+  'a reused linked worktree on the work branch still lands on the stack base',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {
+      linkedWorktreeOn: 'feat/stacked',
+    });
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/stacked',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
+      },
+      () => undefined,
+      undefined,
+      { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
+    );
+    assert.equal(result.stackBase?.resolvedSha, upstreamHead);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
+  },
+);
+
+test(
+  'without a stack base the same prepare branches from the default branch',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'plain', 48832);
+    const result = await slotPrepare(
+      {
+        slotId,
+        branch: 'feat/plain',
+        prepareProfile: 'core',
+        flowType: 'fix-bug',
+        forceNewBranch: true,
+      },
+      () => undefined,
+    );
+    assert.equal(result.stackBase, undefined);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/plain');
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead);
+  },
+);

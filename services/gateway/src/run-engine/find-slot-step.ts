@@ -84,10 +84,6 @@ import {
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
 import { BlockedRunError } from './errors.js';
-import {
-  recordInitialPrepareBranchState,
-  recoveryWorkAffinitySlot,
-} from './prepare-branch-state.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -229,7 +225,6 @@ async function claimSelectedSlot(
   }
 
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
-  await recordInitialPrepareBranchState(runId);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
   }
@@ -905,20 +900,14 @@ export async function executeFindSlotStep(
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
-  // Keep recovery on its original unpublished branch; PR flows retain held-slot affinity.
-  const recoveringWorkSlot = recoveryWorkAffinitySlot(run, eligibleFreeSlots);
-  if (
-    !run.slotId &&
-    (recoveringWorkSlot || run.flowType === 'review-pr' || run.flowType === 'pr-complete')
-  ) {
-    const affinitySlot =
-      recoveringWorkSlot ??
-      findAffinitySlot(fleet.slots, run.project, run.ticketOrPr, {
-        familyId: run.familyId,
-        lane: run.lane,
-        variant: run.variant ?? null,
-        allowedSlots: run.allowedSlots ?? null,
-      });
+  // Affinity: for review-pr and pr-complete, prefer the held slot already on this branch
+  if (!run.slotId && (run.flowType === 'review-pr' || run.flowType === 'pr-complete')) {
+    const affinitySlot = findAffinitySlot(fleet.slots, run.project, run.ticketOrPr, {
+      familyId: run.familyId,
+      lane: run.lane,
+      variant: run.variant ?? null,
+      allowedSlots: run.allowedSlots ?? null,
+    });
     if (
       affinitySlot &&
       !validateSlotForDispatch(affinitySlot, fleet.slots, {

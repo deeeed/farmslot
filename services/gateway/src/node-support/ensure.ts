@@ -9,14 +9,10 @@
 // slot prepared earlier on a bundle that could not launch the runner. Every
 // launch path now calls ensureNodeSupportBundle first, which is a no-op when the
 // slot already points at the current bundle.
+
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  NODE_SUPPORT_ROOT as REMOTE_SUPPORT_ROOT,
-  nodeSupportDir,
-  selectedSupportHashPath,
-} from '@farmslot/protocol/node/farm-support';
 import {
   packMachineNames,
   validatePackBytesPortability,
@@ -39,7 +35,10 @@ import {
   slotWriteFiles,
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
-import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observability.js';
+import {
+  NODE_SUPPORT_HASH_FILENAME,
+  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+} from '../runners/runner-observability.js';
 
 import { collectSupportFiles, type NodeSupportFile, supportHash } from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
@@ -47,6 +46,8 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
+
+const REMOTE_SUPPORT_ROOT = '~/farmslot-node/support';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -166,6 +167,11 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
   return { files, manifest };
 }
 
+/** Where a bundle lives on a node. */
+function nodeSupportDir(hash: string): string {
+  return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
+}
+
 /**
  * Make sure `vars`' slot runs its hooks and runner installer from the bundle
  * that matches this gateway's tree. Local slots use the checkout directly.
@@ -222,10 +228,9 @@ export async function ensureNodeSupportBundle(
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
   const persistSelection = async (how: 'published' | 'current') => {
-    const selectionPath = selectedSupportHashPath(vars.remoteRepo, runtimeDir);
-    await io.writeFiles(vars, path.posix.dirname(selectionPath), [
+    await io.writeFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
       {
-        path: path.posix.basename(selectionPath),
+        path: NODE_SUPPORT_HASH_FILENAME,
         content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
         mode: 0o644,
       },

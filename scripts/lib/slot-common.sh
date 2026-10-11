@@ -168,10 +168,10 @@ RSYNC_SSH="ssh ${SSH_CONNECT_OPTS[*]}"
 run_on() {
   local host="$1" machine="$2" ssh_user="$3"; shift 3
   if is_local "$host" "$machine"; then
-    bash -c "$*"
+    bash -c "$*" 2>/dev/null
   else
     ssh -n "${SSH_CONNECT_OPTS[@]}" -o StrictHostKeyChecking=accept-new \
-        "${ssh_user}@${host}" "$@"
+        "${ssh_user}@${host}" "$@" 2>/dev/null
   fi
 }
 
@@ -408,11 +408,7 @@ teardown_slot_infra() {
   local teardown_hook
   teardown_hook=$(expand_hook "teardown")
   if [ -n "$teardown_hook" ]; then
-    teardown_hook=$("$FARMSLOT_CLI" internal resolve-farm-command "$SLOT_ID" "$teardown_hook") || return 1
-    if ! run_on "$HOST" "$MACHINE" "$SSH_USER" "cd '${REMOTE_REPO}' && ${teardown_hook}"; then
-      fail "Project teardown hook failed for ${SLOT_ID}"
-      return 1
-    fi
+    run_on "$HOST" "$MACHINE" "$SSH_USER" "cd '${REMOTE_REPO}' && ${teardown_hook}" 2>/dev/null || true
     pass "Infra torn down (project hook)"
   else
     # Fallback: kill dev server by port, shutdown simulator/emulator

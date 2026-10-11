@@ -4,7 +4,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Preserve branch intent, original slot identity and worker-launch history across recovery, and share targeted publication checks and selected support-bundle paths with gateway-free lifecycle commands.
 - Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
 
 - Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.
