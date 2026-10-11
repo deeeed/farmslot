@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { type Command, Option } from 'commander';
+import { Command, Option } from 'commander';
 
 import { resolveSlotPoolDir } from '@farmslot/protocol/node/slot-by-repo';
 import type {
@@ -272,6 +272,13 @@ export async function projectRecipeHostOptions(
   const registry =
     shared.optionString(options, 'projectsDir') ??
     path.join(workspace?.farmslotDir ?? process.env.FARMSLOT_ROOT ?? repoRoot, 'projects');
+  const diagnosis = recipeProjectOptions(new Command());
+  for (const option of diagnosis.options)
+    diagnosis.setOptionValue(option.attributeName(), options[option.attributeName()]);
+  diagnosis.setOptionValue('projectsDir', existsSync(registry) ? registry : undefined);
+  diagnosis.setOptionValue('json', true);
+  diagnosis.args = [path.resolve(target ?? process.cwd())];
+  const doctorArgs = projectCommandInvocation(diagnosis, {}).argv;
   return {
     tokens,
     projectsDir: existsSync(registry) ? registry : undefined,
@@ -280,6 +287,10 @@ export async function projectRecipeHostOptions(
     options,
     deferOutput: options.json === true && options.jsonStream !== true,
     authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
+    hostHints: {
+      supportsLast: false,
+      doctorHint: `farmslot doctor --conformance ${doctorArgs.map(shared.shellQuoteArg).join(' ')}`,
+    },
   };
 }
 

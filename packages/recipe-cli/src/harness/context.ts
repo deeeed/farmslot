@@ -594,6 +594,7 @@ export interface LoadProjectProviderOptions {
   /** Exact module paths or declared refs authorized by this invocation's operator. */
   authorizedProviders?: readonly string[];
   host?: HarnessHostConfig;
+  hostHints?: Pick<HarnessHostConfig, 'doctorHint' | 'supportsLast'>;
   command?: string;
   options?: CliOptions;
   /** Target and paths already resolved by the shared host, authoritative over raw input. */
@@ -1013,6 +1014,7 @@ export async function loadProjectProvider(
       ? ({
           ...providerHost,
           ...options.host,
+          ...options.hostHints,
           name: options.host?.name ?? 'farmslot recipe',
         } as HarnessHostConfig)
       : undefined;

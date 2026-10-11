@@ -32,6 +32,7 @@ function fixture(t: TestContext, cleanup = true) {
     import fs from 'node:fs';
     export function createProvider(context) {
       if (context.options.factoryLog) fs.appendFileSync(context.options.factoryLog, JSON.stringify(context.options) + '\\n');
+      if (context.options.hostLog) fs.writeFileSync(context.options.hostLog, JSON.stringify(context.host));
       process.env.GOAL3_SCOPE_TEST = context.options.scope;
       return {
         runtime: {
@@ -72,6 +73,34 @@ const invocationContract: CommandContract = {
   positionals: [{ label: 'recipe' }],
   minimumPositionals: 1,
 };
+
+test('project recovery hints survive the declared provider host configuration', async (t) => {
+  const options = fixture(t);
+  fs.appendFileSync(
+    path.join(options.cwd, 'provider.mjs'),
+    `
+    export const providerHost = {
+      name: 'example-harness', product: 'Example', envPrefix: 'EXAMPLE', recipeEnvPrefix: 'RECIPE',
+      packageName: '@example/provider', packageRoot: ${JSON.stringify(options.cwd)}, bin: 'provider.mjs',
+      journaledCommands: [],
+    };
+  `,
+  );
+  const hostLog = path.join(options.cwd, 'factory-host.json');
+  const doctorHint = 'farmslot doctor --conformance --json';
+  await withProjectRecipeHost(
+    { ...options, hostHints: { doctorHint }, options: { hostLog } },
+    async () => {
+      const host = harnessHost();
+      assert.equal(host.packageName, '@example/provider');
+      assert.equal(host.envPrefix, 'EXAMPLE');
+      assert.equal(host.name, 'farmslot recipe');
+      assert.equal(host.doctorHint, doctorHint);
+      assert.equal(host.supportsLast, false);
+      assert.equal(JSON.parse(fs.readFileSync(hostLog, 'utf8')).doctorHint, doctorHint);
+    },
+  );
+});
 
 function commandFixture(t: TestContext) {
   const options = fixture(t);

@@ -6,6 +6,12 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Command } from 'commander';
+
+import { shellQuote } from '@farmslot/recipe-cli/harness';
+
+import { registerDoctorCommand } from './doctor.js';
+
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 const driver = `
   import { Command } from 'commander';
@@ -397,6 +403,91 @@ test('public project run plans without executing a command', (t) => {
   const plan = JSON.parse(result.stdout);
   assert.equal(plan.status, 'pass');
   assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+});
+
+for (const operation of ['run', 'call'] as const) {
+  test(`public ${operation} transport failure points to retained evidence instead of an unavailable last command`, (t) => {
+    const { root, file } = runFixture(t);
+    const provider = path.join(root, 'projects/example/provider.mjs');
+    fs.writeFileSync(
+      provider,
+      fs
+        .readFileSync(provider, 'utf8')
+        .replace(
+          "id: 'headless', sdkVersion:",
+          "failurePatterns: { transport: /ECONNREFUSED/u }, id: 'headless', sdkVersion:",
+        ),
+    );
+    const script =
+      "require('node:net').connect(1,'127.0.0.1').on('error', error => { console.error(error.code); process.exitCode=1; })";
+    const command = `${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
+    if (operation === 'run') {
+      const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+      document.workflow.nodes.effect.cmd = command;
+      fs.writeFileSync(file, JSON.stringify(document));
+    }
+    const result = callPublic(
+      root,
+      operation === 'run' ? [file] : ['command', `cmd=${command}`],
+      operation,
+    );
+    assert.notEqual(result.status, 0);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.status, 'fail');
+    assert.equal(
+      output.error.code,
+      operation === 'run' ? 'RECIPE_EXECUTION_FAILED' : 'ACTION_EXECUTION_FAILED',
+    );
+    const evidence = output.result ?? output;
+    assert.match(output.error.userAction, /^inspect /u);
+    for (const field of ['summaryPath', 'tracePath']) {
+      assert.ok(fs.statSync(evidence[field]).isFile());
+      assert.ok(output.error.userAction.includes(evidence[field]));
+    }
+    assert.doesNotMatch(output.error.userAction, /recipe last/u);
+  });
+}
+
+test('public-bin failure diagnostics name the registered doctor command with valid project options', (t) => {
+  const { root, file } = runFixture(t);
+  const provider = path.join(root, 'projects/example/provider.mjs');
+  const source = fs.readFileSync(provider, 'utf8');
+  const marker = 'actions: {manifestPath:';
+  assert.ok(source.includes(marker));
+  fs.writeFileSync(
+    provider,
+    source.replace(
+      marker,
+      "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
+    ),
+  );
+  const invocation = publicCall(root, [file, '--json-stream', '--finalize-fail'], 'run');
+  const args = invocation.args.slice(invocation.args.indexOf('--') + 1);
+  const result = spawnSync(
+    process.execPath,
+    [path.join(packageRoot, 'bin/farmslot.mjs'), ...args],
+    { ...invocation.options, timeout: 4900 },
+  );
+  assert.ifError(result.error);
+  assert.notEqual(result.status, 0);
+  const diagnostic = result.stderr
+    .split('\n')
+    .filter((line) => line.startsWith('{"code":'))
+    .map((line) => JSON.parse(line))
+    .find((entry) => entry.message === 'adapter construction failed');
+  assert.ok(diagnostic, result.stderr);
+  assert.match(diagnostic.userAction, /^farmslot doctor --conformance /u);
+  const program = new Command('farmslot').option('--json');
+  registerDoctorCommand(program);
+  const doctor = program.commands.find((command) => command.name() === 'doctor');
+  assert.ok(doctor);
+  const supported = new Set([...doctor.options, ...program.options].map((option) => option.long));
+  for (const flag of diagnostic.userAction.match(/--[a-z-]+/gu))
+    assert.ok(supported.has(flag), flag);
+  assert.ok(diagnostic.userAction.includes(root));
+  assert.ok(diagnostic.userAction.includes('--project example'));
+  assert.ok(diagnostic.userAction.includes('--projects-dir'));
+  assert.doesNotMatch(diagnostic.userAction, /--target|--fix|recipe doctor/u);
 });
 
 test('public run refuses proof without plan before provider construction', (t) => {

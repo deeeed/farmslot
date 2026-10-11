@@ -77,6 +77,7 @@ import {
   type RecipeArtifactsLayout,
   reportTrustFailure,
   resolveRecipeArtifactsDir,
+  runFailureUserAction,
 } from './run.js';
 
 export interface CallCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
@@ -610,7 +611,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       const callOutput = readCallOutput(result.tracePath);
       const safeArgs = redactCallValue(args);
       const safeCallOutput = redactCallValue(callOutput);
-      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+      const failureUserAction = runFailureUserAction(target, result);
 
       if (json) {
         console.log(

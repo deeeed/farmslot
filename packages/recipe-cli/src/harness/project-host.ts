@@ -75,6 +75,11 @@ export function withProjectRecipeHost<T>(
       const previousContext = harnessContext();
       const previousAdapters = harnessAdapters();
       const previousEnv = { ...process.env };
+      const hostHints = {
+        supportsLast: false,
+        doctorHint: 'farmslot doctor --conformance --json',
+        ...options.hostHints,
+      };
       let provider: ProjectProvider | undefined;
       let cancellation: Promise<PromiseSettledResult<void>> | undefined;
       let finalization: Promise<void> | undefined;
@@ -113,7 +118,11 @@ export function withProjectRecipeHost<T>(
         try {
           assertRecipeActive(signal);
           configureHarnessAdapters(createAdapterRegistry());
-          configureHarnessHost({ ...previousHost, name: 'farmslot recipe' });
+          configureHarnessHost({
+            ...previousHost,
+            ...hostHints,
+            name: 'farmslot recipe',
+          });
           applyRuntimeDirOption(options.options ?? {});
           const context = await resolveProjectContext(options);
           const binding = context.project!;
@@ -137,6 +146,7 @@ export function withProjectRecipeHost<T>(
           let invocation: ParsedArgs | undefined;
           provider = await loadProjectProvider(context, {
             ...options,
+            hostHints,
             resolvedOptions,
             onParsedInvocation: (parsed) => {
               invocation = parsed;

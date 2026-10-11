@@ -38,6 +38,10 @@ export interface HarnessHost {
   bin: string;
   /** Commands the resumability journal records. */
   journaledCommands: readonly string[];
+  /** A complete diagnostic command when the host exposes different doctor syntax. */
+  doctorHint?: string;
+  /** False when failures should point to evidence instead of a journal `last` command. */
+  supportsLast?: boolean;
 }
 
 const defaultHost: HarnessHost = {
@@ -100,6 +104,10 @@ export function configureHarnessHost(host: HarnessHostConfig): HarnessHost {
 
 export function harnessHost(): HarnessHost {
   return current;
+}
+
+export function harnessDoctorHint(fallback: string): string {
+  return current.doctorHint ?? fallback;
 }
 
 /** The host-owned environment variable `<envPrefix>_<suffix>`. */

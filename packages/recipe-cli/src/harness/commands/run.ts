@@ -6,7 +6,11 @@ import path from 'node:path';
 
 import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
 import type { RecipeValidationFinding } from '@farmslot/protocol';
-import { type RecipeLibrarySource, redactRecipeParams } from '@farmslot/recipe-runner';
+import {
+  type RecipeLibrarySource,
+  type RecipeRunResult,
+  redactRecipeParams,
+} from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
 import { recordRecipeAcceptance } from '../acceptance-ledger.js';
@@ -22,7 +26,7 @@ import { recordCommandEvidence } from '../command-journal.js';
 import { harnessContextField } from '../context-state.js';
 import { ProvenanceDriftError } from '../execution-provenance.js';
 import { recipeRunning, recipeRunningRefusal } from '../heal-bounds.js';
-import { harnessHost } from '../host.js';
+import { harnessDoctorHint, harnessHost } from '../host.js';
 import { JsonStreamWriter } from '../json-stream.js';
 import {
   applyRuntimeDirOption,
@@ -88,6 +92,14 @@ export interface RunPlanStep {
   confidence: 'static' | 'conditional';
   status: 'ok' | 'error' | 'planned';
   detail: string;
+}
+
+/** A host without the journal command still exposes the retained run evidence. */
+export function runFailureUserAction(target: string, result: RecipeRunResult): string {
+  const host = harnessHost();
+  return host.supportsLast === false
+    ? `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}`
+    : `${host.name} last --target ${shellQuote(target)} --json`;
 }
 
 export interface RunCommandOptions<TMutation, TAllowlist extends ConsoleAllowlist> {
@@ -212,7 +224,7 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
     stream.error({
       code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
       message: error instanceof Error ? error.message : String(error),
-      userAction: `${host} doctor --target ${shellQuote(target)} --json`,
+      userAction: harnessDoctorHint(`${host} doctor --target ${shellQuote(target)} --json`),
     });
     stream.complete('fail', exitCode);
     // The owning host finalizes after a throw and retains both failure causes.
@@ -524,7 +536,9 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         stream.error({
           code: 'RUN_PREPARE_FAILED',
           message: 'runtime preparation failed; inspect stderr for the exact probe',
-          userAction: `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
+          userAction: harnessDoctorHint(
+            `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`,
+          ),
         });
         return prepared;
       }
@@ -621,7 +635,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       // Listed after the report is indexed, so the human list includes it.
       const artifacts = runArtifactInventory(result.artifactManifestPath);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
-      const failureUserAction = `${host} last --target ${shellQuote(target)} --json`;
+      const failureUserAction = runFailureUserAction(target, result);
       if (stream.enabled) {
         if (result.status === 'fail') {
           stream.error({
