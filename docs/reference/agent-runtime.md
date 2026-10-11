@@ -89,10 +89,12 @@ Ownership rules, all enforced by `mark`:
 `artifacts/acceptance-status.json`, through one module. `ac set` records one
 verdict per criterion (`proven`, `weak`, `missing`, `untestable`)
 with evidence paths and recipe nodes, and `ac render` prints the coverage table
-the PR body reads. Enforcement is a per-project opt-in through
-`worker_terminal.acceptance`; see the [Task directory
-contract](task-directory-contract.md) for that rule and the file's place in the
-layout.
+the PR body reads. Successful completion requires every registered criterion to have a verdict,
+including contracts without an opt-in. Missing ledgers or unreadable handoffs
+refuse, and weak or missing verdicts refuse unless `acceptance.allowWeak` is set.
+No-change and self-review keep their existing outcome contracts. The legacy
+`acceptance.require` setting requests explicit checking from older callers;
+it cannot turn off current successful-completion enforcement.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 

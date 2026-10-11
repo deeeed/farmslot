@@ -126,10 +126,12 @@ slot-free static review workspaces do not do so yet.
 `artifacts/acceptance-status.json`, through one module. `ac set` records one
 verdict per criterion (`proven`, `weak`, `missing`, `untestable`) with
 evidence paths and recipe nodes, and `ac render` prints the coverage table the PR
-body reads. Enforcement is a per-project opt-in through
-`worker_terminal.acceptance`: with it, every criterion needs a verdict before a
-terminal success mark and `weak` or `missing` fails unless the contract also sets
-`acceptance.allowWeak`. Without it the ledger is informational.
+body reads. Successful completion requires every registered criterion to have a verdict,
+including contracts without an opt-in. Missing ledgers or unreadable handoffs
+refuse, and weak or missing verdicts refuse unless `acceptance.allowWeak` is set.
+No-change and self-review keep their existing outcome contracts. The legacy
+`acceptance.require` setting requests explicit checking from older callers;
+it cannot turn off current successful-completion enforcement.
 
 ## Compatibility
 

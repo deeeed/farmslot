@@ -6,9 +6,11 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  buildRunResolveDecisionParams,
+  buildRunDecisionActionRequest,
   type DecisionListResult,
   Events,
+  improvementApplyOutcome,
+  type ImprovementApplyResult,
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
@@ -21,6 +23,7 @@ import {
   type RunRecipeRunsForRunResult,
   type RuntimePosturePreviewResult,
   type RuntimePostureStatusResult,
+  slotPickerViewModel,
   type TaskProgressResult,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
@@ -91,6 +94,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
 
@@ -165,6 +169,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<{ decisionId: string; slotId: string } | null>(
+    null,
+  );
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsetsRef = useRef<Partial<Record<DecisionSectionKey, number>>>({});
   const documentAbortRef = useRef<AbortController | null>(null);
@@ -236,6 +243,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const presentation = useMemo(
     () => (decisionWithRunContext ? presentDecision(decisionWithRunContext) : null),
     [decisionWithRunContext],
+  );
+  const slotPicker = useMemo(
+    () =>
+      decision?.payload?.kind === 'slot_picker'
+        ? slotPickerViewModel(
+            decision.payload,
+            selectedSlot?.decisionId === decision.id ? selectedSlot.slotId : null,
+          )
+        : null,
+    [decision, selectedSlot],
   );
   const decisionRouteContext = useMemo(
     () => decisionWorkspaceRouteParams(presentation?.kind),
@@ -516,6 +533,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const resolveAction = useCallback(
     (actionId: string) => {
       if (!client || !decision) return;
+      if (slotPicker && actionId === 'pick' && !slotPicker.selectedSlotId) {
+        Alert.alert('Choose a slot', 'Select an available candidate before using this action.');
+        return;
+      }
       // A choice the Gateway already refused, or one whose effect is still
       // unproven, must not be sent: the decision would be consumed and the
       // refusal repeated with nothing left to undo.
@@ -528,16 +549,18 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         Alert.alert('Resource posture', postureBlock.message);
         return;
       }
-      const method = decision.runMeta ? 'run.resolveDecision' : 'decision.resolve';
       const resourcePosture = postureChoiceForResolve(gate, postureAvailability);
-      const params = decision.runMeta
-        ? buildRunResolveDecisionParams({
+      const { method, params } = decision.runMeta
+        ? buildRunDecisionActionRequest({
             runId: decision.runMeta.runId,
             decision,
             actionId,
+            ...(slotPicker && actionId === 'pick'
+              ? { selectionData: { slotId: slotPicker.selectedSlotId } }
+              : {}),
             ...(resourcePosture ? { resourcePosture } : {}),
           })
-        : { decisionId: decision.id, actionId };
+        : { method: Methods.DECISION_RESOLVE, params: { decisionId: decision.id, actionId } };
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -555,7 +578,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           onPress: () => {
             client
               .request(method, params)
-              .then(() => {
+              .then((result) => {
+                if (method === Methods.IMPROVEMENT_APPLY) {
+                  const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
+                  if (!outcome.passed) {
+                    Alert.alert('Improvement remains pending', outcome.message);
+                    return;
+                  }
+                }
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 removeDecision(decision.id);
                 if (embedded && sourceRunId) {
@@ -614,6 +644,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       router,
       runPostureStatus.state,
       sourceRunId,
+      slotPicker,
     ],
   );
 
@@ -1507,6 +1538,31 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           {decision.resolvedAt ? null : (
             <RunGateParkNotice view={sourceRun ? liveGateParkView(sourceRun) : null} />
           )}
+          {decision.resolvedAt || !slotPicker ? null : (
+            <View>
+              <PlanningChoices
+                label="Candidate slot"
+                testID="companion-decision-slot-picker"
+                options={slotPicker.candidates.map((candidate) => ({
+                  value: candidate.slotId,
+                  label: `${candidate.slotId}\n${candidate.branch || 'default branch'} · ${candidate.machine} · ${candidate.lifecycle} · score ${candidate.score}`,
+                }))}
+                value={slotPicker.selectedSlotId ?? ''}
+                disabled={!client}
+                onChange={(slotId) => setSelectedSlot({ decisionId: decision.id, slotId })}
+              />
+              {slotPicker.candidates.length === 0 ? (
+                <Text style={styles.safetyText}>
+                  No available candidates. Wait for a slot or abort.
+                </Text>
+              ) : null}
+              {slotPicker.unavailableCount > 0 ? (
+                <Text style={styles.safetyText}>
+                  {slotPicker.unavailableCount} busy or disabled slot(s) cannot be selected.
+                </Text>
+              ) : null}
+            </View>
+          )}
           {decision.resolvedAt ? (
             <View style={styles.resolvedDecisionCard}>
               <Text style={styles.safetyTitle}>Already resolved</Text>
@@ -1519,11 +1575,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             presentation.actions.map((action) => (
               <Pressable
                 key={action.id}
+                testID={`companion-decision-action-${action.id}`}
                 style={[
                   styles.actionButton,
                   action.style === 'primary' && { backgroundColor: colors.accent },
                   action.style === 'danger' && { backgroundColor: colors.statusFail },
+                  slotPicker &&
+                    action.id === 'pick' &&
+                    !slotPicker.selectedSlotId && { opacity: 0.4 },
                 ]}
+                disabled={!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId}
                 onPress={() => resolveAction(action.id)}
               >
                 <Text style={styles.actionText}>{action.label}</Text>
