@@ -77,9 +77,11 @@ class LeadTests(unittest.TestCase):
         self.assertFalse(any(call.kwargs.get('write') for call in self.mock_gh.mock_calls))
         self.assertEqual(lead.merge_watch(self.config, True)[0]['action'], 'LEAD-MERGE-REQUIRED')
         self.config['projects']['owner/repo']['auto_merge'] = True
+        self.config['projects']['owner/repo']['merge_admin'] = True
         self.assertEqual(lead.merge_watch(self.config, True)[0]['action'], 'MERGED')
         call = self.mock_gh.call_args
         self.assertTrue(call.kwargs['write'])
+        self.assertIn('--admin', call.args[0])
         self.assertEqual(call.args[0][-2:], ['--match-head-commit', SHA])
 
     def test_merge_marker_must_be_full_line_full_sha(self):

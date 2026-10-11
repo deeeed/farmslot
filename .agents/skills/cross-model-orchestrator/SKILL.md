@@ -98,7 +98,8 @@ JSON. Failed, blocked, or stale active runs raise one alert per changed state an
 
 Run `ready <owner/repo> <n> <sha> <REPORT.md>` to validate and write MERGE-READY.
 `merge-watch` is a dry run. `merge-watch --execute --watch` polls every minute and merges only
-repositories with `auto_merge: true`. Require an open non-draft PR at the reported head, both latest
+repositories with `auto_merge: true`. An explicitly authorized project can set `merge_admin: true`
+for its existing GitHub approval override. Every readiness gate still applies. Require an open non-draft PR at the reported head, both latest
 approvals, at least one CI check, every check finished without failure, at least one successful check, no unresolved threads,
 confirmed mergeability, and a clean portability grep. The merge command pins the head SHA.
 Completed skipped or neutral path-filtered jobs are allowed alongside a successful check.

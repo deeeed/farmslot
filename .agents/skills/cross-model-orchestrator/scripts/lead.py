@@ -115,6 +115,7 @@ def merge_watch(config, execute=False):
                 result["action"] = "LEAD-MERGE-REQUIRED"
             else:
                 gh(["pr", "merge", str(number), "-R", repo, "--squash",
+                    *(["--admin"] if config["projects"][repo].get("merge_admin") is True else []),
                     "--match-head-commit", sha], write=True)
                 result["action"] = "MERGED"
                 append_report(lane["report"], f"MERGED {repo}#{number} {sha}")

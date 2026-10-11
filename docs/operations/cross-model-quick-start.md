@@ -80,7 +80,8 @@ python3 .agents/skills/cross-model-orchestrator/scripts/orchestrate.py --config 
 ```
 
 `ready` writes `MERGE-READY` only after all gates pass. Keep `auto_merge` false for
-rollout proof. For an authorized repository, enable it and run
+rollout proof. If the project already authorizes an admin merge after these gates, set
+`merge_admin: true` in its local config. For an authorized repository, enable auto-merge and run
 `merge-watch --execute --watch` to poll every minute. Record later ideas under `FOLLOW-UPS`.
 Round 4 writes `ESCALATE`; round 5 writes `STOPPED` and requires a lead decision.
 
