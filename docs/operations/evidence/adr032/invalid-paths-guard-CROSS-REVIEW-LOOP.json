@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "$schema": "../../../../.agents/skills/cross-model-orchestrator/templates/CROSS-REVIEW-LOOP.schema.json",
   "status": "clean",
   "startedAt": "2026-06-27T12:00:00.000Z",
   "updatedAt": "2026-06-27T12:30:00.000Z",

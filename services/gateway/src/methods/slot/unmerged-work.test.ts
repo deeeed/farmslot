@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 
-import { findUnmergedSlotWork } from './unmerged-work.js';
+import { assertPrepareCommitsPublished, findUnmergedSlotWork } from './unmerged-work.js';
 
 const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
 
@@ -166,4 +166,98 @@ test('tracked edits inside a reserved namespace remain protected', async (t) => 
   git(repo, 'push', '-q', '-u', 'origin', BRANCH);
   writeFileSync(path.join(repo, '.task/tracked.md'), 'user edit');
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'dirty files');
+});
+
+test('prepare refuses two unpublished worker commits and names them without moving refs', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const first = git(repo, 'rev-parse', '--short', 'HEAD');
+  commit(repo, 'second-worker.txt');
+  const second = git(repo, 'rev-parse', '--short', 'HEAD');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), (error: Error) => {
+    assert.match(error.message, /unpushed commits/);
+    assert.ok(error.message.includes(first));
+    assert.ok(error.message.includes(second));
+    assert.match(error.message, /Push or preserve them before retrying/);
+    return true;
+  });
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'rev-parse', BRANCH), head);
+});
+
+test('prepare protects an unpublished requested branch even when HEAD is on main', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const branchHead = git(repo, 'rev-parse', BRANCH);
+  git(repo, 'checkout', '-q', 'main');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /refs\/heads\/.*unpushed commits/,
+  );
+  assert.equal(git(repo, 'rev-parse', BRANCH), branchHead);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('prepare refreshes remote refs and allows commits published from another checkout', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const author = path.join(repo, '..', 'author');
+  git(repo, 'clone', '-q', repo, author);
+  git(author, 'remote', 'set-url', 'origin', git(repo, 'remote', 'get-url', 'origin'));
+  git(author, 'push', '-q', 'origin', BRANCH);
+  assert.equal(git(repo, 'log', '--oneline', 'HEAD', '--not', '--remotes').split('\n').length, 1);
+  await assertPrepareCommitsPublished(vars, BRANCH, bash);
+  assert.equal(git(repo, 'log', '--oneline', 'HEAD', '--not', '--remotes'), '');
+  await assertPrepareCommitsPublished(vars, 'new-run-branch', bash);
+});
+
+test('prepare fails closed when a remote cannot be refreshed', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', 'origin', BRANCH);
+  git(repo, 'remote', 'set-url', 'origin', path.join(repo, 'missing.git'));
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /Cannot verify remote commits.*branches untouched/,
+  );
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+test('prepare refuses an unreadable commit graph rather than assuming no work', async (t) => {
+  const { vars } = slotRepo(t, ['origin']);
+  const exec: typeof bash = async (slot, command) =>
+    command.includes(' log ')
+      ? { stdout: '', stderr: 'fatal: unreadable commit graph', exitCode: 128 }
+      : bash(slot, command);
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, exec),
+    /Cannot verify commits.*unreadable commit graph/,
+  );
+});
+
+test('prepare can reuse detached parked work while protecting its saved branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const saved = git(repo, 'rev-parse', BRANCH);
+  git(repo, 'checkout', '--detach', '-q', 'HEAD');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', BRANCH), saved);
+  git(repo, 'branch', '-D', BRANCH);
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), saved);
+});
+
+test('prepare retains published tips after remote deletion and still refuses later unpublished work', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const published = git(repo, 'rev-parse', BRANCH);
+  const origin = git(repo, 'remote', 'get-url', 'origin');
+  // GitHub deletes the merged branch independently of this slot's refs.
+  git(origin, 'update-ref', '-d', `refs/heads/${BRANCH}`);
+  git(repo, 'config', 'fetch.prune', 'true');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+  assert.equal(git(repo, 'rev-parse', `origin/${BRANCH}`), published);
+  commit(repo, 'unpublished-after-merge.txt');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
 });

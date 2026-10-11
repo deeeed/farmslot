@@ -1,14 +1,16 @@
 # Cross-Review Loop
 
+Coordination history only. Top-level verdict files remain authoritative for live approval.
+
 ## Setup
 
 - Status: running
 - Task:
 - Artifact directory:
-- Max cycles: 3
+- Max cycles: 5
 - Worker pane:
-- Same/similar reviewer pane:
-- Different-runner reviewer pane: skipped
+- Codex reviewer pane:
+- Claude reviewer pane:
 - Recipe/evidence review in scope:
 - Reviewer command policy:
 
@@ -17,12 +19,13 @@
 ### Cycle 1
 
 - Worker ready signal:
-- Reviewers reset from fresh context:
+- Reviewed head and delta base:
+- Reviewer session identities and recovery:
 
 #### Reviewer Verdicts
 
-- Same/similar reviewer: pending
-- Different-runner reviewer: skipped
+- Codex reviewer: pending
+- Claude reviewer: pending
 
 #### Findings Sent To Worker
 

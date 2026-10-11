@@ -6,6 +6,16 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
 - Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
+- Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
+- Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
+
+- Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
+
+- Release protects non-terminal slot owners and rechecks the claim before teardown. Runner input verifies a live foreground process before every send, so an exited runner cannot leave task text executing in its shell.
+
+- Dispatch can release a target branch from an idle linked-worktree holder after checking configured ownership, park records, tracked changes and remote ancestry. It detaches without moving the branch; active, parked, dirty and unpushed work stays protected. Branch conflicts are local to the machine.
+
+- Keep slot readiness consistent with skills source reconciliation, additive local Git ignores and quiet live server logs, and apply the farm signing identity during health-only preparation without resetting the checkout.
 
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
@@ -13,6 +23,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Release ignores untracked task/runtime scaffolding, protects tracked edits and unpublished commits, and collects owned files into private run archives before cleanup. Prepare keeps those namespaces in the repository Git exclude file.
 - Check node prerequisites before prepare changes and during slot.check, preserving support selection and reporting transport errors as failed check steps. Pool environment reaches recipe project hooks, slot health/unlock probes, prepare-profile artifact/dev-server probes, slot actions and resource control/health shells.
 - Resolve remote node support bundle paths against the node home before rendering quoted project hooks, including cached commands.
+- Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates and includes them automatically on completion without an approval gate. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
 
 - Publishing no longer fails when local evidence links leave filenames in the PR body. Bare evidence names in prose are removed; table columns, code spans, fenced examples and hosted evidence links remain intact.
 

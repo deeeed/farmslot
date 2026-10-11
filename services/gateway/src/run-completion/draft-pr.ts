@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-import { type ArtifactRef, isPublishEvidenceArtifact, type Run } from '@farmslot/protocol';
+import { type ArtifactRef, type Run } from '@farmslot/protocol';
 
 import { getProjectField, inferArtifactPurpose } from '../core/index.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
@@ -141,23 +141,10 @@ export function mergeEvidenceManifestArtifactRefs(
   return [...merged.values()];
 }
 
-export function isEvidenceManifestReferencedArtifact(
-  artifactPath: string,
-  manifest: EvidenceManifest | null | undefined,
-): boolean {
-  const referenced = new Set(evidenceManifestArtifactPaths(manifest).flatMap(exactEvidenceKeys));
-  return exactEvidenceKeys(artifactPath).some((variant) => referenced.has(variant));
-}
-
-export function isPackageSelectableEvidenceArtifact(
-  artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
-  manifest: EvidenceManifest | null | undefined,
-): boolean {
-  return (
-    isPublishEvidenceArtifact(artifact) ||
-    isEvidenceManifestReferencedArtifact(artifact.path, manifest)
-  );
-}
+export {
+  isEvidenceManifestReferencedArtifact,
+  isPackageSelectableEvidenceArtifact,
+} from './publication-evidence-policy.js';
 
 // Without an artifacts repo nothing gets uploaded, so a local image preview
 // would publish as broken images. Unknown config keeps the image preview.

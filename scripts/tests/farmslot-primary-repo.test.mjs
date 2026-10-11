@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -57,6 +57,11 @@ async function fixture(t) {
       `GATEWAY_PORT=${ports[0]}\nVITE_PORT=${ports[1]}\n`,
     );
   }
+  mkdirSync(path.join(root, 'runtime/home'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'runtime/isolated-home'),
+    realpathSync(path.join(root, 'runtime/home')) + '\n',
+  );
 
   async function health(repo) {
     const { stdout } = await exec('bash', [script, 'health', '--gateway-port', String(ports[0])], {

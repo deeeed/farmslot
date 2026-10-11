@@ -167,27 +167,30 @@ test(
 );
 
 test(
-  'a reused linked worktree on the work branch still lands on the stack base',
+  'a reused linked worktree refuses to reset unpublished work to the stack base',
   needsTmuxSandbox,
   async (t) => {
-    const { slotId, slotRepo, upstreamHead } = await stackFixture(t, 'linked', 48834, {
+    const { slotId, slotRepo } = await stackFixture(t, 'linked', 48834, {
       linkedWorktreeOn: 'feat/stacked',
     });
-    const result = await slotPrepare(
-      {
-        slotId,
-        branch: 'feat/stacked',
-        prepareProfile: 'core',
-        flowType: 'fix-bug',
-        forceNewBranch: true,
-      },
-      () => undefined,
-      undefined,
-      { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
+    const head = await git(slotRepo, 'rev-parse', 'HEAD');
+    await assert.rejects(
+      slotPrepare(
+        {
+          slotId,
+          branch: 'feat/stacked',
+          prepareProfile: 'core',
+          flowType: 'fix-bug',
+          forceNewBranch: true,
+        },
+        () => undefined,
+        undefined,
+        { stackBase: { requestedRef: 'refs/heads/feat/upstream' } },
+      ),
+      /unpushed commits/,
     );
-    assert.equal(result.stackBase?.resolvedSha, upstreamHead);
     assert.equal(await git(slotRepo, 'branch', '--show-current'), 'feat/stacked');
-    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), upstreamHead);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), head);
   },
 );
 

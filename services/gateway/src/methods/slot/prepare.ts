@@ -117,6 +117,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import { assertPrepareCommitsPublished } from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -464,6 +465,22 @@ async function slotPrepareInner(
   await ensureSlotReachable(vars, step);
   await materializeHookSupport();
 
+  // Signing is slot configuration, independent of refs or runtime readiness.
+  // Sync before profile preconditions so a cold attach can repair signing
+  // without entering a git phase or discarding working-tree files.
+  // A sync failure remains visible in slot check without blocking preparation.
+  try {
+    const identity = loadGitIdentity();
+    step(
+      'git-identity',
+      identity
+        ? await syncGitIdentity(vars, identity)
+        : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
+    );
+  } catch (err) {
+    step('git-identity', `Git identity not synced: ${(err as Error).message}`);
+  }
+
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
   // implicit full. Precondition failures walk the project's declared fallback
   // chain; every check and transition is logged as a prepare sub-step.
@@ -558,6 +575,10 @@ async function slotPrepareInner(
     )
   ).stdout.trim();
 
+  // The existing preserveBranch path never resets or deletes the branch.
+  if (phaseEnabled('git') && !opts?.preserveBranch)
+    await assertPrepareCommitsPublished(vars, branch || '');
+
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch
     // and mergeMain runs can never reach here — selection forces git on for them.
@@ -632,21 +653,6 @@ async function slotPrepareInner(
       );
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
-
-    // Every slot pushes as the farm's one identity and signing key, so branch
-    // rules requiring signed commits accept it. A sync failure does not stop
-    // prepare; `slot check` reports a slot that cannot sign.
-    try {
-      const identity = loadGitIdentity();
-      step(
-        'git-identity',
-        identity
-          ? await syncGitIdentity(vars, identity)
-          : `No farm git identity at ${gitIdentityConfigPath()}; nothing copied`,
-      );
-    } catch (err) {
-      step('git-identity', `Git identity not synced: ${(err as Error).message}`);
-    }
   }
 
   // A requested start ref must resolve to structured provenance on every branch

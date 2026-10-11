@@ -37,6 +37,8 @@ const SPAWN_TMUX = new RegExp(
 // path, anywhere) must be followed by exactly the sandbox socket. Words that
 // only contain tmux (fs-tmux-, tmux_sandbox_close, tmux-model-driver/) do not count.
 const SHELL_TMUX = /(?:(?<![\w./-])|(?<=\/))tmux\s+(?!-S "\$FARMSLOT_TMUX_SANDBOX"\s)/u;
+const DRIVER_SHELL_TMUX =
+  /(?:(?<![\w./-])|(?<=\/))tmux\s+(?!-S "\$FARMSLOT_TMUX_SANDBOX"\s|-L "\$TMUX_MODEL_DRIVER_SOCKET"\s)/u;
 
 const lineOf = (source, index) => source.slice(0, index).split('\n').length;
 
@@ -49,10 +51,20 @@ export function tmuxRuleViolations(rel, source) {
       .filter((line) => !line.trimStart().startsWith('#'))
       .join('\n');
     if (!/(?:^|[^-\w])tmux\b/mu.test(code)) return violations;
-    const unsandboxed = SHELL_TMUX.exec(code);
+    const driverPrivate =
+      /^\s*unset TMUX TMUX_PANE\b/mu.test(code) &&
+      /TMUX_MODEL_DRIVER_SOCKET="[^"\n]*\$\$"/u.test(code) &&
+      /^export TMUX_MODEL_DRIVER_SOCKET$/mu.test(code) &&
+      /tmux_private\(\)\s*\{\s*tmux -L "\$TMUX_MODEL_DRIVER_SOCKET" "\$@";\s*\}/u.test(code) &&
+      /trap cleanup EXIT/u.test(code) &&
+      /tmux_sandbox_close/u.test(code);
+    const unsandboxed = (driverPrivate ? DRIVER_SHELL_TMUX : SHELL_TMUX).exec(code);
     if (unsandboxed)
       violations.push(`runs tmux without -S "$FARMSLOT_TMUX_SANDBOX": ${unsandboxed[0].trim()}`);
-    if (!/^\s*unset TMUX TMUX_PANE\b/mu.test(code) || !/FARMSLOT_TMUX_SANDBOX=/u.test(code)) {
+    if (
+      !driverPrivate &&
+      (!/^\s*unset TMUX TMUX_PANE\b/mu.test(code) || !/FARMSLOT_TMUX_SANDBOX=/u.test(code))
+    ) {
       violations.push(
         'runs tmux without the private-server setup (unset TMUX, FARMSLOT_TMUX_SANDBOX)',
       );
@@ -60,27 +72,43 @@ export function tmuxRuleViolations(rel, source) {
     for (const line of code.split('\n')) {
       if (
         /kill-server/u.test(line) &&
-        !/tmux -S "\$FARMSLOT_TMUX_SANDBOX" kill-server/u.test(line)
+        !/tmux -S "\$FARMSLOT_TMUX_SANDBOX" kill-server/u.test(line) &&
+        !(driverPrivate && /tmux_private kill-server/u.test(line))
       ) {
         violations.push(`kill-server outside the sandbox socket: ${line.trim()}`);
       }
     }
     return violations;
   }
+  const driverPrivate =
+    /socket\s*=\s*`[^`]*\$\{process\.pid\}`/u.test(source) &&
+    /TMUX_MODEL_DRIVER_SOCKET:\s*socket/u.test(source) &&
+    /delete process\.env\.TMUX\b/u.test(source) &&
+    /\bafter\(\(\)\s*=>/u.test(source);
   const spawns = [...source.matchAll(SPAWN_TMUX)];
   for (const spawn of spawns) {
     const after = source.slice(spawn.index, spawn.index + spawn[0].length + 60);
-    if (!/['"`]tmux['"`],\s*\[\s*'-S',\s*tmuxSandbox!?,/u.test(after)) {
+    if (
+      !/['"`]tmux['"`],\s*\[\s*'-S',\s*tmuxSandbox!?,/u.test(after) &&
+      !(driverPrivate && /['"`]tmux['"`],\s*\[\s*'-L',\s*socket,/u.test(after))
+    ) {
       violations.push(
         `line ${lineOf(source, spawn.index)}: spawns tmux without -S tmuxSandbox: ${spawn[0]}`,
       );
     }
   }
-  if (spawns.length > 0 && !source.includes('process.env.FARMSLOT_TMUX_SANDBOX')) {
+  if (
+    spawns.length > 0 &&
+    !driverPrivate &&
+    !source.includes('process.env.FARMSLOT_TMUX_SANDBOX')
+  ) {
     violations.push('runs tmux without requiring the test runner sandbox (FARMSLOT_TMUX_SANDBOX)');
   }
   const killServer = /['"`]kill-server['"`]/u.exec(source);
-  if (killServer) {
+  if (
+    killServer &&
+    !(driverPrivate && /execFileSync\('tmux',\s*\['-L',\s*socket,\s*'kill-server'\]/u.test(source))
+  ) {
     violations.push(
       `line ${lineOf(source, killServer.index)}: passes kill-server (the runner ends its own server)`,
     );
@@ -106,6 +134,30 @@ test('no test file can reach a tmux server other than its private sandbox', () =
     offenders,
     [],
     'Run real tmux only on the private sandbox server (see the header of this file), or mock the exec layer.',
+  );
+});
+
+test('driver tests may own a unique private -L socket with teardown', () => {
+  const shell =
+    'unset TMUX TMUX_PANE\nTMUX_MODEL_DRIVER_SOCKET="driver-test-$$"\nexport TMUX_MODEL_DRIVER_SOCKET\n' +
+    'tmux_private() { tmux -L "$TMUX_MODEL_DRIVER_SOCKET" "$@"; }\n' +
+    'tmux_sandbox_close() { tmux_private kill-server; }\ntrap cleanup EXIT\ntmux_private new-session -d -s fixture\n';
+  assert.deepEqual(tmuxRuleViolations('driver.test.sh', shell), []);
+  assert.ok(
+    tmuxRuleViolations('driver.test.sh', shell.replace('driver-test-$$', 'default')).length > 0,
+  );
+  assert.ok(tmuxRuleViolations('driver.test.sh', shell + 'tmux kill-server\n').length > 0);
+  const js =
+    'let socket; socket = `driver-test-${process.pid}`;\n' +
+    'Object.assign(process.env, { TMUX_MODEL_DRIVER_SOCKET: socket }); delete process.env.TMUX;\n' +
+    "after(() => { execFileSync('tmux', ['-L', socket, 'kill-server']); });\n";
+  assert.deepEqual(tmuxRuleViolations('driver.test.mjs', js), []);
+  assert.ok(
+    tmuxRuleViolations('driver.test.mjs', js.replace('driver-test-${process.pid}', 'default'))
+      .length > 0,
+  );
+  assert.ok(
+    tmuxRuleViolations('driver.test.mjs', js + "execFileSync('tmux', ['kill-server'])").length > 0,
   );
 });
 

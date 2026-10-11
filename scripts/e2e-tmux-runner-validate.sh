@@ -7,6 +7,14 @@ SKILL="$ROOT/.agents/skills/tmux-model-driver"
 HOST="$(hostname -s 2>/dev/null || hostname | sed 's/\.local$//')"
 EVIDENCE_DIR="$ROOT/docs/operations/evidence"
 OPTIONAL_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/runner-e2e-optional-XXXXXX")"
+# The driver and the older harness helpers must share one disposable server.
+# Helpers using plain tmux resolve to this private TMUX_TMPDIR default socket.
+unset TMUX TMUX_PANE
+TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/runner-e2e-tmux-XXXXXX")"
+export TMUX_TMPDIR
+TMUX_MODEL_DRIVER_SOCKET=default
+export TMUX_MODEL_DRIVER_SOCKET
+tmux_private() { tmux -f /dev/null -L "$TMUX_MODEL_DRIVER_SOCKET" "$@"; }
 FAIL=0
 HOOK_RAN=false
 HOOK_PASSED=false
@@ -34,6 +42,8 @@ runner_available() {
 
 mkdir -p "$EVIDENCE_DIR"
 cleanup_optional_evidence() {
+  tmux_private kill-server 2>/dev/null || true
+  rm -rf "$TMUX_TMPDIR"
   rm -rf "$OPTIONAL_EVIDENCE_DIR"
 }
 trap cleanup_optional_evidence EXIT
@@ -47,9 +57,9 @@ for _attempt in 1 2; do
   REPO="$(mktemp -d "${TMPDIR:-/tmp}/e2e-send-XXXXXX")"
   git -C "$REPO" init -q >/dev/null 2>&1
   # zsh/oh-my-zsh in default tmux sessions often ignores send-keys Enter; bash is reliable.
-  tmux new-session -d -s "$SESSION" -c "$REPO" bash --noprofile --norc
+  tmux_private new-session -d -s "$SESSION" -c "$REPO" bash --noprofile --norc
   sleep 1
-  PANE="$(tmux display-message -p -t "$SESSION" '#{pane_id}')"
+  PANE="$(tmux_private display-message -p -t "$SESSION" '#{pane_id}')"
   printf '%s\n' "echo TMUX_DRIVER_SCRIPT_OK > '$REPO/marker.txt'" | bash "$SKILL/scripts/send-shell-script.sh" "$PANE" "$REPO" >/dev/null
   sleep 1
   for _ in $(seq 1 30); do
@@ -60,9 +70,9 @@ for _attempt in 1 2; do
     _send_shell_script_ok=true
   elif [ "$_attempt" -eq 2 ]; then
     fail "send-shell-script (marker missing)"
-    tmux capture-pane -pt "$PANE" -S -12 || true
+    tmux_private capture-pane -pt "$PANE" -S -12 || true
   fi
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  tmux_private kill-session -t "$SESSION" 2>/dev/null || true
   rm -rf "$REPO"
   $_send_shell_script_ok && break
   sleep 2
@@ -74,22 +84,31 @@ fi
 echo "-- skill: resolve-launch-blockers idle shell --"
 SESSION="e2e-blocker-$$"
 REPO="$(mktemp -d "${TMPDIR:-/tmp}/e2e-blocker-XXXXXX")"
-tmux new-session -d -s "$SESSION" -c "$REPO"
-PANE="$(tmux display-message -p -t "$SESSION" '#{pane_id}')"
+tmux_private new-session -d -s "$SESSION" -c "$REPO" bash --noprofile --norc
+PANE="$(tmux_private display-message -p -t "$SESSION" '#{pane_id}')"
 sleep 2
-OUT="$(bash "$SKILL/scripts/resolve-launch-blockers.sh" "$PANE" grok 5)"
+set +e
+OUT="$(bash "$SKILL/scripts/resolve-launch-blockers.sh" "$PANE" grok 2)"
+BLOCKER_RC=$?
+set -e
 if python3 - <<'PY' "$OUT"
 import json, sys
-if not json.loads(sys.argv[1]).get("resolved"):
+state = json.loads(sys.argv[1])
+if state.get("resolved") or state.get("state") != "shell" or "timed out" not in state.get("error", ""):
     raise SystemExit(1)
 PY
 then
-  pass "resolve-launch-blockers idle shell"
+  [ "$BLOCKER_RC" -eq 2 ] && pass "resolve-launch-blockers waits and refuses idle shell" || fail "resolver exit=$BLOCKER_RC"
 else
   fail "resolve-launch-blockers idle shell: $OUT"
 fi
-tmux kill-session -t "$SESSION" 2>/dev/null || true
+tmux_private kill-session -t "$SESSION" 2>/dev/null || true
 rm -rf "$REPO"
+
+# Focused live validation of the driver entry points, without the full runner matrix.
+if [ "${1:-}" = --driver-only ]; then
+  exit "$FAIL"
+fi
 
 run_harness() {
   local runner="$1"
