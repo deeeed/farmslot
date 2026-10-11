@@ -24,8 +24,9 @@ Launch syntax, resume, hooks, and acceptance evidence come from the shared runne
 Submit with named Enter. Never queue with Tab, resend buffered text, or send a model prompt to
 a shell. A send succeeds only with structured exact-prompt acceptance evidence.
 
-Read and surface pending questions before answering. A blocked question, busy turn, unknown
-state, shell, or foreign queue stops a send. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
+Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
+phases accept steering with exact native or submitted-queue proof; other runners
+still require idle readiness. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
 with an explicit JSON key list on stdin. It refuses if the pane, session, or question changed.
 A response acknowledgement does not itself prove a new turn. Interactive attachment is also available. Flush only driver-owned buffered input with `flush <lane>`.
 It sends Enter without adding text and verifies acceptance again.

@@ -65,6 +65,14 @@ test('Codex exact native prompt and new-turn boundary override digest or token a
       acceptedPrompt(meta, 'codex', dir, { ...receipt, before_turn_token: 'new-turn' }),
       null,
     );
+    assert.equal(
+      acceptedPrompt(meta, 'codex', dir, {
+        ...receipt,
+        before_turn_token: 'new-turn',
+        steering: true,
+      }).source,
+      'native-steering',
+    );
     assert.equal(nativeState(meta, 'codex', dir).phase, 'busy');
     records.push({
       type: 'event_msg',

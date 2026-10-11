@@ -62,6 +62,8 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
+  /** Enter-submitted input may steer an active turn with exact queue/native proof. */
+  supportsMidTurnPrompt?: boolean;
   /** How this provider proves that the exact prompt was accepted. */
   promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;

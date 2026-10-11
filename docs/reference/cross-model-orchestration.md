@@ -14,7 +14,9 @@ Project configuration supplies merge permission, hooks, portability patterns,
 and expected node IDs. Keep local config and state outside the tracked tree.
 
 All lane messages use `tmux-model-driver`. The runner adapter owns launch syntax
-and structured acceptance signals. Questions and queued input stop ordinary delivery.
+and structured acceptance signals. Questions and foreign queued input stop ordinary delivery. Codex accepts busy/unknown
+steering when the driver proves the exact native message or complete submitted queue.
+A steering acknowledgement does not claim a new turn started.
 `restore` recovers missing sessions, leaving surviving sessions alone.
 `reserve` and `transfer` persist ownership changes without reapplying old config reservations.
 Status reads neither persist lane bindings nor acknowledge delivery receipts. Configure existing

@@ -7,6 +7,7 @@ import {
   buildCodexSessionBindingProbeCommand,
   buildCodexTurnStateProbeCommand,
   buildRunnerOpenFileProbeCommand,
+  codexSessionObservability,
   parseCodexPromptProbe,
   parseCodexSessionBindingProbe,
   parseCodexTurnStateProbe,
@@ -24,6 +25,7 @@ import {
   instructionNeedle,
   runnerPromptDigest,
 } from '../../../../services/gateway/src/runners/observability-prompt-digest.ts';
+import { runnerPaneHasQueuedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 export function readOptional(file) {
   try {
@@ -33,6 +35,15 @@ export function readOptional(file) {
     throw error;
   }
 }
+
+export const supportsMidTurnPrompt = (runner) =>
+  runner === 'codex' && codexSessionObservability.supportsMidTurnPrompt === true;
+
+export const hasSubmittedQueue = (runner, tail) =>
+  supportsMidTurnPrompt(runner) && runnerPaneHasQueuedInstruction(tail);
+
+export const paneIdentity = (meta) =>
+  JSON.stringify([meta.pane_pid, meta.process_started_at, meta.runner_pids]);
 
 function runProbe(command, parse) {
   return parse(execFileSync('bash', ['-c', command], { encoding: 'utf8', timeout: 3000 }));
@@ -118,41 +129,33 @@ export function transcriptQuestion(transcriptPath) {
   return [...unresolved.values()].at(-1) || null;
 }
 
-export function nativeState(meta, runner, obsDir) {
+function sessionBinding(meta, runner, obsDir) {
   const bound = hookSnapshot(meta, runner, obsDir);
-  // Existing manual lanes have native transcripts but no installed hooks. Observation only:
-  // require kernel ownership of one rollout file, never guess from pane text or newest files.
-  if (!bound && runner === 'codex' && process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1') {
-    const paths = new Set();
-    for (const pid of meta.runner_pids || []) {
-      for (const file of runProbe(buildRunnerOpenFileProbeCommand(pid), parseOpenFilePaths)) {
-        if (/\/rollout-[^/]+\.jsonl$/.test(file)) paths.add(file);
-      }
-    }
-    if (paths.size === 1) {
-      const binding = runProbe(
-        buildCodexSessionBindingProbeCommand([...paths][0]),
-        parseCodexSessionBindingProbe,
-      );
-      if (binding.status === 'matched') {
-        const turn = runProbe(
-          buildCodexTurnStateProbeCommand(binding.sessionId, binding.sessionPath),
-          parseCodexTurnStateProbe,
-        );
-        if (turn.status === 'matched') {
-          return {
-            phase: turn.state === 'active' ? 'busy' : 'idle',
-            source: 'native-session-read-only',
-            session_id: binding.sessionId,
-            session_path: binding.sessionPath,
-            turn_token: turn.turnId,
-            observed_at: turn.observedAt,
-            question: transcriptQuestion(binding.sessionPath),
-          };
-        }
-      }
+  if (bound || runner !== 'codex') return bound;
+  const paths = new Set();
+  for (const pid of meta.runner_pids || []) {
+    for (const file of runProbe(buildRunnerOpenFileProbeCommand(pid), parseOpenFilePaths)) {
+      if (/\/rollout-[^/]+\.jsonl$/.test(file)) paths.add(file);
     }
   }
+  if (paths.size !== 1) return null;
+  const binding = runProbe(
+    buildCodexSessionBindingProbeCommand([...paths][0]),
+    parseCodexSessionBindingProbe,
+  );
+  return binding.status === 'matched'
+    ? {
+        sessionId: binding.sessionId,
+        sessionPath: binding.sessionPath,
+        hooks: [],
+        snapshot: {},
+        processBound: true,
+      }
+    : null;
+}
+
+export function nativeState(meta, runner, obsDir) {
+  const bound = sessionBinding(meta, runner, obsDir);
   if (!bound)
     return {
       phase: 'unknown',
@@ -171,6 +174,7 @@ export function nativeState(meta, runner, obsDir) {
           : 'unknown';
   let turnToken = bound.turn?.turnToken || null;
   let source = 'hook';
+  let observedAt = observedAtFromRecord(bound.snapshot);
   if (runner === 'codex' && bound.sessionPath) {
     const probe = runProbe(
       buildCodexTurnStateProbeCommand(bound.sessionId, bound.sessionPath),
@@ -179,7 +183,11 @@ export function nativeState(meta, runner, obsDir) {
     if (probe.status === 'matched') {
       phase = probe.state === 'active' ? 'busy' : 'idle';
       turnToken = probe.turnId;
-      source = 'native-session';
+      source =
+        bound.processBound && process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1'
+          ? 'native-session-read-only'
+          : 'native-session';
+      observedAt = probe.observedAt;
     }
   }
   const question =
@@ -190,7 +198,7 @@ export function nativeState(meta, runner, obsDir) {
     session_id: bound.sessionId,
     session_path: bound.sessionPath,
     turn_token: turnToken,
-    observed_at: observedAtFromRecord(bound.snapshot),
+    observed_at: observedAt,
     question,
   };
 }
@@ -211,7 +219,21 @@ export function writeSentinel(obsDir, payload, sentAt) {
 }
 
 export function acceptedPrompt(meta, runner, obsDir, receipt) {
-  const bound = hookSnapshot(meta, runner, obsDir);
+  // The operator explicitly permits Enter-submitted steering. A fresh queue marker
+  // and the complete queued text acknowledge this receipt, without claiming a new turn.
+  if (
+    receipt.submitted_at &&
+    receipt.pane_identity === paneIdentity(meta) &&
+    supportsMidTurnPrompt(runner) &&
+    runnerPaneHasQueuedInstruction(meta.tail || '', receipt.payload, true)
+  )
+    return {
+      source: 'runner-queue',
+      session_id: receipt.session_id,
+      turn_token: null,
+      observed_at: Date.now(),
+    };
+  const bound = sessionBinding(meta, runner, obsDir);
   if (!bound || bound.sessionId !== receipt.session_id) return null;
   if (runner === 'codex' && bound.sessionPath) {
     const goal = acceptedCodexGoal(bound.sessionPath, bound.sessionId, receipt);
@@ -225,9 +247,12 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
       ),
       parseCodexPromptProbe,
     );
-    if (probe.status === 'matched' && probe.turnId !== receipt.before_turn_token) {
+    if (
+      probe.status === 'matched' &&
+      (probe.turnId !== receipt.before_turn_token || receipt.steering)
+    ) {
       return {
-        source: 'native-session',
+        source: probe.turnId === receipt.before_turn_token ? 'native-steering' : 'native-session',
         session_id: bound.sessionId,
         turn_token: probe.turnId,
         observed_at: probe.observedAt,

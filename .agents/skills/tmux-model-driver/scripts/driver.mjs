@@ -8,7 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
 
-import { acceptedPrompt, nativeState, readOptional, writeSentinel } from './native-evidence.mjs';
+import {
+  acceptedPrompt,
+  hasSubmittedQueue,
+  nativeState,
+  paneIdentity,
+  readOptional,
+  supportsMidTurnPrompt,
+  writeSentinel,
+} from './native-evidence.mjs';
 
 const runners = new Set(['codex', 'claude', 'cursor', 'gemini', 'grok']);
 const shellNames = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
@@ -136,13 +144,15 @@ export function paneSafety(tail, runner) {
     /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
       active,
     );
-  const queued = lines
-    .slice(-5)
-    .some((line) =>
-      /^\s*[│┃║]?\s*(?:\d+\s+queued messages?|message queued|queued messages?)\s*[│┃║]?\s*$/i.test(
-        line,
-      ),
-    );
+  const queued =
+    hasSubmittedQueue(runner, tail) ||
+    lines
+      .slice(-5)
+      .some((line) =>
+        /^\s*[│┃║]?\s*(?:\d+\s+queued messages?|message queued|queued messages?)\s*[│┃║]?\s*$/i.test(
+          line,
+        ),
+      );
   const busy = /tab to queue message/i.test(tail);
   const blocker = readPaneStateFromCapture(tail, runner);
   return {
@@ -231,7 +241,7 @@ export function paneState(pane, expectedRunner) {
     accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
-      accepted = acceptedPrompt(meta, state, obs, receipt);
+      accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
         accepted.receipt_id = receiptIdentity(receipt);
@@ -433,8 +443,10 @@ export function refusal(before, runner, flush = false) {
   if (before.pending_question) return 'pending_question';
   if (before.launch_blocker) return 'launch_blocker';
   if (before.accepted) return 'acceptance_unacknowledged';
-  if (before.delivery_phase === 'busy' || before.phase === 'busy') return 'busy';
-  if (before.delivery_phase !== 'idle') return 'observability_unavailable';
+  if (flush || !supportsMidTurnPrompt(runner)) {
+    if (before.delivery_phase === 'busy' || before.phase === 'busy') return 'busy';
+    if (before.delivery_phase !== 'idle') return 'observability_unavailable';
+  }
   if (flush) return before.queue_kind === 'driver-buffer' ? null : 'queue_not_owned';
   return before.queued ? 'queued_input' : null;
 }
@@ -479,6 +491,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             sent_at: sentAt,
             session_id: before.session_id,
             before_turn_token: before.turn_token,
+            steering: supportsMidTurnPrompt(runner) && before.delivery_phase !== 'idle',
+            pane_identity: paneIdentity(before),
             typed: false,
           };
           durableWrite(files.receipt, receipt);
@@ -510,10 +524,16 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           ? 'pending_question'
           : after.state !== runner
             ? 'wrong_runner'
-            : after.delivery_phase === 'busy'
+            : after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner)
               ? 'busy'
               : null;
-        if (!verification) tmux(['send-keys', '-t', pane, 'Enter']);
+        if (!verification) {
+          tmux(['send-keys', '-t', pane, 'Enter']);
+          if (receipt) {
+            receipt.submitted_at = Date.now();
+            durableWrite(files.receipt, receipt);
+          }
+        }
         verification ||= 'unverified';
         const deadline = Date.now() + timeout;
         if (verification === 'unverified') {

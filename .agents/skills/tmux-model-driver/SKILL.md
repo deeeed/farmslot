@@ -26,15 +26,20 @@ records and pane-bound hooks establish idle or active turns. Missing or stale
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
-It refuses the wrong runner, a shell when a model is expected, a busy turn,
-a pending question, an existing queue or unavailable native readiness evidence.
+It refuses the wrong runner, a shell when a model is expected, a pending question
+or an existing queue. Codex accepts Enter-submitted steering during busy or unknown
+phases. Other runners and explicit flush still require idle native readiness.
 It pastes the payload once and submits with `Enter`. It never answers a question.
 
-`submitted` requires a matching structured prompt receipt and a new turn token.
+`submitted` requires exact acceptance of the owned prompt. Codex native history
+can prove steering within the active turn, without claiming a new turn started.
+A fresh Enter-submitted queue block can acknowledge the complete payload for the
+same pane process; a marker or a shared prefix alone is insufficient.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.
-Rendered output is only a fail-closed veto for questions, queues and launch gates.
+Rendered output vetoes questions, foreign queues and launch gates; the explicit
+queue acknowledgement above is the bounded steering exception.
 Cursor, Gemini and Grok identities can be detected, but sends fail closed unless
 compatible structured observability is installed.
 
