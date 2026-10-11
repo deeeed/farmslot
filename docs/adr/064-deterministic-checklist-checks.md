@@ -1,7 +1,7 @@
 # ADR-064: Deterministic checklist checks before publication
 
-**Status:** Proposed
-**Date:** 2026-10-11
+**Status:** Accepted
+**Date:** 2026-10-11, accepted 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Extends [ADR-060](060-sub-task-observability.md) and the [task directory contract](../reference/task-directory-contract.md).
 
@@ -23,8 +23,18 @@ Receipts identify checklist, step, command, source inputs, timestamps, exit code
 - **Gate display:** both operator clients consume one `@farmslot/protocol` projection showing command, status, exit code and log link. Approval requires every declared check to pass.
 - **Harness consumption:** harnesses supply configuration, invoke generated mark and read shared artifacts. They inherit enforcement.
 
-## CI parity and approval
+## Alternatives considered
+
+- An instruction asking the worker to run the command. Rejected because it can be skipped without an execution receipt.
+- A separate gateway execution step. Rejected because the mark receipt supplies the execution result and publication precondition.
+
+## Consequences
+
+- Deterministic checks add local execution time and durable logs. Failed checks stop completion and publication with a command and log to inspect.
+- Shared commands prevent local/CI drift; harnesses and operator clients use the same receipts and gate rules.
+
+## CI parity and implementation
 
 Local checks and CI call the same script. Remote-only checks remain in CI. Undeclared steps retain existing behavior.
 
-This is a proposal. Approval and an independently reviewed normative specification precede implementation.
+The implementation PR adds normative rules to the existing [task directory contract](../reference/task-directory-contract.md).

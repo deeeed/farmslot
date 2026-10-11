@@ -16,6 +16,7 @@ import {
   type RunDecision,
   runOutputCloseUnavailableReason,
   type SlotPickerPayload,
+  slotPickerViewModel,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -581,9 +582,11 @@ function renderCITimeoutDecisionDescription(
 
 function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionRenderContext) {
   const payload = decision.payload as SlotPickerPayload;
-  const candidates = payload.candidates;
-  const freeOnes = candidates.filter((c) => c.score >= 0);
-  const busyOnes = candidates.filter((c) => c.score < 0);
+  const {
+    candidates: freeOnes,
+    unavailableCount,
+    selectedSlotId,
+  } = slotPickerViewModel(payload, context.selectedSlotId);
 
   return html`
     <style>
@@ -659,7 +662,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
     <div class="sp-list">
       ${freeOnes.map((c) => {
         const isStale = isDispatchScoreStale(c.score);
-        const selected = context.selectedSlotId === c.slotId;
+        const selected = selectedSlotId === c.slotId;
         return html`
           <div
             class="sp-slot ${selected ? 'selected' : ''}"
@@ -677,10 +680,10 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
           </div>
         `;
       })}
-      ${busyOnes.length > 0
+      ${unavailableCount > 0
         ? html`
             <div style="font-size:10px;color:${colors.textMuted};padding:8px 12px">
-              ${busyOnes.length} busy/disabled slot(s) not shown
+              ${unavailableCount} busy/disabled slot(s) not shown
             </div>
           `
         : nothing}
@@ -689,10 +692,10 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
       <button
         class="gate-action-btn"
         style="background:${colors.accent}; border-color:${colors.accent}; color:#fff"
-        ?disabled=${!context.selectedSlotId || context.actionsBlocked}
+        ?disabled=${!selectedSlotId || context.actionsBlocked}
         @click=${() => context.resolveSlotPick(run.id, decision.id)}
       >
-        ${context.selectedSlotId ? `Use ${context.selectedSlotId}` : 'Select a slot'}
+        ${selectedSlotId ? `Use ${selectedSlotId}` : 'Select a slot'}
       </button>
       ${context.selectedSlotId && context.resetBranch
         ? html`
