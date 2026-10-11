@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Support targeted Git publication checks and initial branch intent before slot binding.
+
 ## 0.37.0 - 2026-10-11
 
 - Declare portable project providers and ordered libraries, and record recipe conformance evidence bound to source, target selection, trust, invocation parameters and effective library paths. Slot reverse lookup refuses ambiguity and supports explicit selection while preserving local-host preference.

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Sandboxes use a private runtime home for gateway, node and child clients, with empty credentials, LLM/provider configuration, Git identity, policies and pressure state. Configure sandbox-specific accounts for LLM validation. Warm starts compare stack-local launch configuration and script fingerprints before reuse; stale stacks restart.
 - Clarify stored-profile requirements for shell-exported CLI gateway URLs.
 - Dev and sandbox stacks discard inherited node/gateway credentials, auth mode and bind host before loading checkout-local configuration, so an auth-free sandbox cannot reuse its parent gateway token. Physical-device LAN sandboxes need their own local-auth configuration.
 - Active-development baseline; add user-facing changes here before release or package publication.

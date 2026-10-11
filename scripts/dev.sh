@@ -76,6 +76,10 @@ if [ -f "$CHECKOUT_ENV_FILE" ]; then
   echo "[dev] Loaded checkout env from $CHECKOUT_ENV_FILE"
 fi
 
+# Sandbox wrappers select a private home for gateway, node and child clients.
+# Checkout files may name the operator home; they cannot override that scope.
+pin_sandbox_home
+
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then
   echo "[dev] ERROR: GATEWAY_PORT and VITE_PORT must come from .env.ports or explicit environment values." >&2
   exit 1

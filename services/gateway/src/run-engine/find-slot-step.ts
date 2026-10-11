@@ -84,6 +84,7 @@ import {
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
 import { BlockedRunError } from './errors.js';
+import { recordInitialPrepareBranchState } from './prepare-branch-state.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -225,6 +226,7 @@ async function claimSelectedSlot(
   }
 
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
+  await recordInitialPrepareBranchState(runId);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
   }

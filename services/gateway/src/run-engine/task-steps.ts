@@ -60,6 +60,10 @@ import {
   handleRepeatReviewDecision,
 } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
+import {
+  recordInitialPrepareBranchState,
+  updateRunSummaryAndBranch,
+} from './prepare-branch-state.js';
 import { detectProfileFit, FARMSLOT_PROJECT } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -267,6 +271,7 @@ export async function executeGradeStep(
     updateRun(runId, { ticketData });
     await refreshRunLinks(runId);
   }
+  let summaryBranchUpdate: Pick<Partial<Run>, 'summary' | 'branch'> | undefined;
   if (ticketData) {
     inputs.ticketSource = ticketData.source;
   }
@@ -471,7 +476,7 @@ export async function executeGradeStep(
             bf,
           );
         }
-        updateRun(runId, branchUpdate);
+        summaryBranchUpdate = branchUpdate;
         outputs.summary = summaryResult.summary;
         outputs.branchSlug = summaryResult.branchSlug;
         outputs.summaryLlm = summaryResult.usage;
@@ -483,6 +488,8 @@ export async function executeGradeStep(
       }
     }
   }
+  if (summaryBranchUpdate) await updateRunSummaryAndBranch(runId, summaryBranchUpdate);
+  await recordInitialPrepareBranchState(runId);
   return { inputs, outputs };
 }
 
@@ -652,6 +659,7 @@ export async function executeWriteTaskStep(
 
   // Generate summary if not already set (GRADE step sets it for fix-bug flows)
   const afterFetch = getRun(runId)!;
+  let summaryBranchUpdate: Pick<Partial<Run>, 'summary' | 'branch'> | undefined;
   if (!afterFetch.summary && afterFetch.ticketData) {
     try {
       if (afterFetch.flowType === 'review-pr' || afterFetch.flowType === 'pr-complete') {
@@ -685,13 +693,16 @@ export async function executeWriteTaskStep(
             bf,
           );
         }
-        updateRun(runId, branchUpdate);
+        summaryBranchUpdate = branchUpdate;
         console.log(`[run-engine] summary for ${runId.slice(0, 8)}: "${summaryResult.summary}"`);
       }
     } catch (err) {
       console.warn(`[run-engine] write-task summary failed (non-fatal): ${(err as Error).message}`);
     }
   }
+
+  if (summaryBranchUpdate) await updateRunSummaryAndBranch(runId, summaryBranchUpdate);
+  await recordInitialPrepareBranchState(runId);
 
   // Template name mapping
   const FLOW_TO_TEMPLATE: Record<string, string> = {

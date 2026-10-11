@@ -12,8 +12,8 @@ export interface ResetSlotRepoToIdleOptions {
   linkedWorktree?: boolean;
 }
 
-export function remoteBranchRefspec(name: string): string {
-  return `+refs/heads/${name}:refs/remotes/origin/${name}`;
+export function remoteBranchRefspec(name: string, remote = 'origin'): string {
+  return `+refs/heads/${name}:refs/remotes/${remote}/${name}`;
 }
 
 /** The refs that hold a default branch: the local branch and its origin remote-tracking ref. */

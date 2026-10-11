@@ -42,17 +42,47 @@ SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Use the helper beside this support bundle, even when the slot checkout is older.
-source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+source "$SCRIPT_DIR/sandbox-common.sh"
 clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
+RUNTIME_DIR="$(sandbox_runtime_dir "$REPO_ROOT")"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
+LAUNCH_FINGERPRINT_FILE="$RUNTIME_DIR/launch-fingerprint"
 SHARED_RUNS_MARKER="$RUNTIME_DIR/shared-runs-dir"
 SHARED_RUNS_MARKER_LOCK="$RUNTIME_DIR/shared-runs-dir.lock.d"
 PORT_ENV="$REPO_ROOT/.env.ports"
 
 mkdir -p "$RUNTIME_DIR"
+
+# Hash only this stack's files and launch inputs. Parent credentials were cleared
+# above, and credential values never leave the hash process or appear in logs.
+stack_launch_fingerprint() {
+  node - "$REPO_ROOT" "$SCRIPT_DIR" "$GATEWAY_PORT" "$VITE_PORT" "${MACHINE_NAME:-farmslot-demo}" "$FARMSLOT_HOME" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const [root, scriptDir, gatewayPort, vitePort, machine, home] = process.argv.slice(2);
+const hash = crypto.createHash('sha256');
+hash.update(JSON.stringify({ gatewayPort, vitePort, machine, home }));
+const files = [
+  ...['scripts/dev.sh', 'scripts/lib/stack-credentials.sh', '.env.ports', '.env.local-auth', '.env'].map(file => path.join(root, file)),
+  path.join(scriptDir, 'sandbox-dev.sh'),
+  path.join(scriptDir, 'sandbox-common.sh'),
+  path.join(scriptDir, '../../../scripts/lib/stack-credentials.sh'),
+  path.join(scriptDir, '../../../scripts/lib/sandbox-home.cjs'),
+];
+for (const file of new Set(files.map(file => path.resolve(file)))) {
+  hash.update(file + '\0');
+  hash.update(fs.existsSync(file) ? fs.readFileSync(file) : '<absent>');
+}
+process.stdout.write(hash.digest('hex'));
+NODE
+}
+
+write_launch_fingerprint() {
+  (umask 077; printf '%s\n' "$1" >"${LAUNCH_FINGERPRINT_FILE}.tmp"; mv "${LAUNCH_FINGERPRINT_FILE}.tmp" "$LAUNCH_FINGERPRINT_FILE")
+}
 
 acquire_shared_runs_marker_lock() {
   local i=0
@@ -118,29 +148,8 @@ fi
 OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-}"
 OPERATOR_VITE_PORT="${VITE_PORT:-}"
 
-read_primary_repo() {
-  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
-  [[ -f "$project_json" ]] || return 1
-  node -e "
-    const fs = require('fs');
-    const { execFileSync } = require('node:child_process');
-    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    const configured = String(project.primary_repo || '').trim();
-    const primary = configured || execFileSync('git',
-      ['-C', process.argv[2], 'worktree', 'list', '--porcelain', '-z'],
-      { encoding: 'utf8' }).split('\0')[0].slice('worktree '.length);
-    process.stdout.write(primary);
-  " "$project_json" "$REPO_ROOT"
-}
-
-is_primary_checkout() {
-  local primary_repo
-  primary_repo="$(read_primary_repo)" || return 1
-  [[ "$(cd "$REPO_ROOT" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
-}
-
 PRIMARY_CHECKOUT=0
-if is_primary_checkout; then
+if sandbox_is_primary_checkout "$REPO_ROOT"; then
   PRIMARY_CHECKOUT=1
   # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
   if [[ ! "$OPERATOR_GATEWAY_PORT" =~ ^[0-9]+$ || ! "$OPERATOR_VITE_PORT" =~ ^[0-9]+$ ]]; then
@@ -151,6 +160,7 @@ if is_primary_checkout; then
   VITE_PORT="$OPERATOR_VITE_PORT"
 else
   # Worktree sandboxes get isolated ports from their own .env.ports.
+  isolate_sandbox_home "$RUNTIME_DIR"
   GATEWAY_PORT="$SLOT_GATEWAY_PORT"
   VITE_PORT="${VITE_PORT:-}"
   if [[ -z "$VITE_PORT" || "$VITE_PORT" == "5174" ]]; then
@@ -169,7 +179,7 @@ resolve_primary_runs_dir() {
     return 0
   fi
   local primary_repo
-  primary_repo="$(read_primary_repo)" || return 0
+  primary_repo="$(sandbox_primary_repo "$REPO_ROOT")" || return 0
   local primary_runs="$primary_repo/.runs"
   if [[ -d "$primary_runs" ]]; then
     export FARMSLOT_RUNS_DIR="$primary_runs"
@@ -208,6 +218,7 @@ stop_sandbox_dev() {
   kill_port_listeners "$GATEWAY_PORT"
   kill_port_listeners "$VITE_PORT"
   clear_shared_runs_marker
+  rm -f "$LAUNCH_FINGERPRINT_FILE"
 }
 
 wait_for_gateway() {
@@ -287,7 +298,9 @@ case "$ACTION" in
 
     resolve_primary_runs_dir
 
-    if gateway_health && ui_health; then
+    launch_fingerprint="$(stack_launch_fingerprint)"
+    previous_launch_fingerprint="$(cat "$LAUNCH_FINGERPRINT_FILE" 2>/dev/null || true)"
+    if gateway_health && ui_health && [[ "$previous_launch_fingerprint" == "$launch_fingerprint" ]]; then
       if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
@@ -305,6 +318,9 @@ case "$ACTION" in
       echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
     fi
 
+    if [[ "$previous_launch_fingerprint" != "$launch_fingerprint" ]]; then
+      echo "[sandbox-dev] restarting stack for changed launch configuration or scripts"
+    fi
     stop_sandbox_dev
 
     echo "[sandbox-dev] starting gateway :${GATEWAY_PORT} ui :${VITE_PORT} (tsx watch)"
@@ -332,6 +348,7 @@ case "$ACTION" in
     echo $! >"$PID_FILE"
 
     if wait_for_gateway 90 && wait_for_ui 90; then
+      write_launch_fingerprint "$launch_fingerprint"
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
         write_shared_runs_marker "$FARMSLOT_RUNS_DIR"
       else

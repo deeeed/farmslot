@@ -100,6 +100,21 @@ The Companion wrapper reads `.env.local-auth`. Inherited
 node/gateway credentials, auth mode and bind host are cleared before checkout
 configuration is loaded; shell-exported credentials do not configure a new stack.
 
+Sandbox wrappers give the gateway, co-launched node and child clients their own
+`FARMSLOT_HOME` at `<runtime_dir>/home`. Without an explicit runtime directory,
+it is `<slot_repo>/.sandbox/farmslot-farm/agent/home`. No operator credentials
+are copied. Checkout home settings cannot override this selection. Direct
+sandbox CLI probes must set `FARMSLOT_HOME` to that same home and pass the
+sandbox gateway URL. Operator control-plane workers keep their operator profile.
+Warm starts restart when launch configuration or stack scripts change.
+
+The private home also starts with empty LLM configuration, provider accounts,
+Git identity, decision/triage/assessment policies and pressure state. For LLM
+validation, configure models and policies through the sandbox gateway's settings,
+then authenticate a sandbox-specific provider account there. Run any setup CLI
+with the sandbox's home and URL. Seed only the non-secret configuration needed
+for the test; never copy operator tokens, auth profiles or credential stores.
+
 For physical-device LAN mode, each sandbox needs its own token and bind settings
 in `.env.local-auth`; it cannot borrow the operator gateway's credentials.
 A sandbox with no local auth file binds loopback and does not support LAN

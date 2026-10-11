@@ -7,7 +7,11 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
 
-import { findUnmergedSlotWork } from './unmerged-work.js';
+import {
+  assertPrepareCommitsPublished,
+  findUnmergedSlotWork,
+  findUnpushedSlotCommits,
+} from './unmerged-work.js';
 
 const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
 
@@ -132,6 +136,130 @@ test('unpushed work stays protected when its remote cannot be asked', async (t) 
   git(repo, 'remote', 'set-url', 'fork', path.join(repo, 'missing.git'));
 
   assert.equal(await findUnmergedSlotWork(vars, BRANCH, bash), 'unpushed commits');
+});
+
+test('destructive prepare refuses two unpushed linked-worktree commits without moving the branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  commit(repo, 'second-worker-commit.txt');
+  const tip = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', 'main');
+  const linked = path.join(path.dirname(repo), 'linked-slot');
+  git(repo, 'worktree', 'add', '-q', linked, BRANCH);
+  const linkedVars = { ...vars, remoteRepo: linked };
+  await assert.rejects(
+    assertPrepareCommitsPublished(linkedVars, BRANCH, bash),
+    /unpushed commits.*Push or preserve/,
+  );
+  assert.equal(git(linked, 'rev-parse', 'HEAD'), tip);
+  assert.equal(git(repo, 'rev-parse', BRANCH), tip);
+  git(linked, 'push', '-q', 'origin', BRANCH);
+  await assertPrepareCommitsPublished(linkedVars, BRANCH, bash);
+});
+
+test('prepare protects an unchecked-out requested branch and fails closed on unreadable Git', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const tip = git(repo, 'rev-parse', BRANCH);
+  git(repo, 'checkout', '-q', 'main');
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /refs\/heads\/.*unpushed commits/,
+  );
+  assert.equal(git(repo, 'rev-parse', BRANCH), tip);
+  await assert.rejects(
+    assertPrepareCommitsPublished({ ...vars, remoteRepo: path.dirname(repo) }, BRANCH, bash),
+    /Cannot inspect local branch/,
+  );
+});
+
+test('a deleted branch cached outside a narrow fetch refspec cannot vouch for worker commits', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+  const remote = git(repo, 'remote', 'get-url', 'origin');
+  git(repo, '--git-dir=' + remote, 'update-ref', '-d', 'refs/heads/' + BRANCH);
+  assert.equal(git(repo, 'rev-parse', 'origin/' + BRANCH), head);
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'rev-parse', BRANCH), head);
+  assert.throws(() => git(repo, 'rev-parse', '--verify', 'origin/' + BRANCH));
+});
+
+test('prepare fetches only possible backing refs and keeps timeout diagnostics', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const commands: string[] = [];
+  await assertPrepareCommitsPublished(vars, BRANCH, async (slot, command) => {
+    commands.push(command);
+    return bash(slot, command);
+  });
+  assert.ok(
+    commands.some((command) => command.includes('fetch') && command.includes('refs/heads/')),
+  );
+  assert.ok(commands.every((command) => !command.includes('--all')));
+  assert.equal(commands.filter((command) => command.includes('ls-remote')).length, 1);
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
+      if (command.includes('show-ref'))
+        return { exitCode: 124, stdout: '', stderr: 'fixture Git probe timed out' };
+      return bash(vars, command);
+    }),
+    /timeout 124.*fixture Git probe timed out/,
+  );
+});
+
+test('review refresh preserves an unpublished old tip in a durable ref before reset', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const tip = git(repo, 'rev-parse', 'HEAD');
+  const preserved: string[] = [];
+  await assertPrepareCommitsPublished(vars, BRANCH, bash, 'main', true, (ref) =>
+    preserved.push(ref),
+  );
+  assert.deepEqual(preserved, ['refs/farmslot/preserved/' + tip]);
+  assert.equal(git(repo, 'rev-parse', 'refs/farmslot/preserved/' + tip), tip);
+  git(repo, 'reset', '--hard', 'origin/main');
+  assert.equal(git(repo, 'show', 'refs/farmslot/preserved/' + tip + ':fix.txt'), 'fix.txt');
+});
+
+for (const backing of ['requested', 'default', 'none'])
+  test(`detached unpublished work backed only by ${backing} is still refused`, async (t) => {
+    const { repo, vars } = slotRepo(t, ['origin']);
+    const tip = git(repo, 'rev-parse', 'HEAD');
+    if (backing === 'default') git(repo, 'branch', '-f', 'main', tip);
+    git(repo, 'checkout', '--detach');
+    if (backing !== 'requested') git(repo, 'branch', '-D', BRANCH);
+    await assert.rejects(
+      assertPrepareCommitsPublished(vars, backing === 'requested' ? BRANCH : 'next', bash),
+      /unpushed commits/,
+    );
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), tip);
+  });
+
+test('an unreachable upstream cannot override fresh origin publication proof', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  git(repo, 'remote', 'add', 'upstream', path.join(repo, 'deleted-fork.git'));
+  await assertPrepareCommitsPublished(vars, BRANCH, bash);
+  const failures = async (_vars: SlotVars, command: string) =>
+    command.includes('rev-list')
+      ? { exitCode: 124, stdout: '', stderr: 'fixture revision walk timed out' }
+      : bash(vars, command);
+  await assert.rejects(
+    findUnpushedSlotCommits(vars, 'HEAD', failures),
+    /timeout 124.*revision walk timed out/,
+  );
+});
+
+test('a failed candidate cannot hide fresh publication proof from another remote', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin', 'upstream']);
+  git(repo, 'push', '-q', '-u', 'upstream', BRANCH);
+  git(repo, 'remote', 'set-url', 'origin', path.join(repo, 'unavailable-origin.git'));
+  await assertPrepareCommitsPublished(vars, BRANCH, bash);
+  git(repo, 'remote', 'set-url', 'upstream', path.join(repo, 'unavailable-upstream.git'));
+  await assert.rejects(
+    assertPrepareCommitsPublished(vars, BRANCH, bash),
+    /Cannot verify publication ref.*exit 128.*repository/,
+  );
 });
 
 test('owned task and observability scaffolding does not block a published slot', async (t) => {

@@ -29,6 +29,7 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { recordInitialPrepareBranchState } from './prepare-branch-state.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
@@ -53,6 +54,13 @@ function copyDefinedKeys(
     if (source[key] !== undefined) safe[key] = source[key];
   }
   return safe;
+}
+
+/** Recovery continues worker-owned work in every flow. Non-review flows,
+ * including update-branch, retain the local tip; integration uses mergeMain or
+ * the worker's workflow. Review/QA prepare can refresh a clean tree safely. */
+export function prepareReusesRunBranch(run: Pick<Run, 'recoveryAttempts'>): boolean {
+  return run.recoveryAttempts?.at(-1)?.status === 'started';
 }
 
 export function safeRecipeToolingProvenance(
@@ -303,6 +311,20 @@ export async function executePrepareStep(
     return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
 
+  // A new fix-bug/dev run owns a fresh branch. A recovery of that run owns the
+  // existing branch instead: recreating it from main discards the very commits
+  // and local evidence the operator is trying to recover.
+  const isRecoveryPrepare = prepareReusesRunBranch(current);
+  const branchIdentity = current.branch
+    ? { slotId: current.slotId, branch: current.branch }
+    : undefined;
+  await recordInitialPrepareBranchState(runId);
+  const branchState = getRun(runId)?.engineState?.prepareBranch;
+  const allowMissingReplayBranch =
+    isRecoveryPrepare && branchState?.started === false && branchState.branch === current.branch;
+  const forceNewBranch =
+    !isRecoveryPrepare && (current.flowType === 'fix-bug' || current.flowType === 'dev');
+
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
   // prepare.outputs.hostLoad. Captured only once prepare actually runs (skip-prepare does no
   // work, so there's no cost to correlate load against). Threaded through every outputs rebuild
@@ -348,37 +370,6 @@ export async function executePrepareStep(
   // a slot that cannot launch the selected worker binary.
   assertRunnerLaunchPrerequisites(await loadSlotVars(current.slotId), current.metrics.runner);
 
-  // A new fix-bug/dev run owns a fresh branch. A replay from PREPARE owns the
-  // existing branch instead: recreating it from main discards the very commits
-  // and local evidence the operator is trying to recover.
-  const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
-  const isPrepareReplay =
-    activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
-  const branchIdentity = current.branch
-    ? { slotId: current.slotId, branch: current.branch }
-    : undefined;
-  if (!isPrepareReplay && branchIdentity && !current.engineState?.prepareBranch) {
-    await persistRunNow(
-      updateRun(runId, {
-        engineState: {
-          ...current.engineState,
-          prepareBranch: {
-            ...branchIdentity,
-            started: false,
-          },
-        },
-      }),
-      'prepare branch intent',
-    );
-  }
-  const branchState = current.engineState?.prepareBranch;
-  const allowMissingReplayBranch =
-    isPrepareReplay &&
-    branchState?.slotId === current.slotId &&
-    branchState.branch === current.branch &&
-    branchState.started === false;
-  const forceNewBranch =
-    !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
   const prepareController = new AbortController();
   // activeMonitors[runId] is exclusively owned for the duration of one
   // step; an existing entry orphans the prior controller from cancellation.
@@ -408,7 +399,7 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
-        ...(isPrepareReplay ? { preserveBranch: true } : {}),
+        ...(isRecoveryPrepare ? { preserveBranch: true } : {}),
         allowMissingReplayBranch,
         beforeBranchSetup: branchIdentity
           ? async () => {

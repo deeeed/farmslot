@@ -51,6 +51,7 @@ import { getAllSessions, initChatStore } from './chat/chat-store.js';
 import { initCopilotObserver, routeEventToObserver } from './chat/copilot-observer.js';
 import { initCIMonitor } from './ci-monitor/service.js';
 import { initCopilotRuntime } from './copilot-runtime/controller.js';
+import { loadGatewayEnvFiles } from './core/gateway-env.js';
 import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
@@ -240,33 +241,7 @@ async function main(): Promise<void> {
     process.exit(143);
   });
 
-  // Load env files from farmslot root — force-override existing env vars
-  // (Node --env-file won't override, causing stale values after tsx watch reload).
-  // .env.local-auth holds FARMSLOT_GATEWAY_TOKEN; without it the gateway falls
-  // back to auth=none and binds to 127.0.0.1, breaking remote node connections.
-  for (const name of ['.env', '.env.local-auth']) {
-    const envPath = resolve(farmslotRoot, name);
-    try {
-      const content = readFileSync(envPath, 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIdx = trimmed.indexOf('=');
-        if (eqIdx < 0) continue;
-        process.env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
-      }
-      console.log(`[env] loaded ${envPath}`);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') {
-        console.warn(
-          `[env] ${envPath} not found — should be configured (see ${name}.sample if available)`,
-        );
-      } else {
-        console.warn(`[env] failed to load ${envPath}: ${(err as Error).message}`);
-      }
-    }
-  }
+  loadGatewayEnvFiles(farmslotRoot);
 
   const gatewayAuthRuntime = createGatewayAuthRuntime();
   const host =

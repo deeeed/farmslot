@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { expandTemplate, type SlotVars } from '@farmslot/slot-config';
+
 import { resolveNodeSupportPaths } from './paths.js';
+import { remapRemoteFarmRefs } from './remote-command.js';
 
 const root = '/repo/farmslot';
 
-test('farmslot farm declares remote prepare support and keeps sandbox lifecycle checkout-local', () => {
+test('farmslot farm declares current support for sandbox lifecycle and keeps the slot checkout target', () => {
   const configPath = new URL('../../../../projects/farmslot-farm/project.json', import.meta.url);
   const projectJson = JSON.parse(readFileSync(configPath, 'utf8')) as Parameters<
     typeof resolveNodeSupportPaths
@@ -26,13 +29,67 @@ test('farmslot farm declares remote prepare support and keeps sandbox lifecycle 
 
   const profiles = projectJson.prepare?.profiles;
   assert.match(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{repo\}\}/);
-  assert.doesNotMatch(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
+  assert.match(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{farmslot_dir\}\}/);
   assert.doesNotMatch(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{primary_repo\}\}/);
   assert.match(profiles?.['companion-warm']?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
 
   for (const hookName of ['health_check', 'dev_server_check', 'teardown'] as const) {
     assert.match(String(projectJson.hooks?.[hookName] ?? ''), /\{\{repo\}\}/);
     assert.doesNotMatch(String(projectJson.hooks?.[hookName] ?? ''), /\{\{primary_repo\}\}/);
+    assert.match(String(projectJson.hooks?.[hookName] ?? ''), /\{\{farmslot_dir\}\}/);
+  }
+});
+
+test('stock sandbox hooks expand through the shared local and remote caller path', () => {
+  const project = JSON.parse(
+    readFileSync(
+      new URL('../../../../projects/farmslot-farm/project.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  const hooks = [
+    project.hooks.health_check,
+    project.hooks.dev_server_check,
+    project.hooks.teardown,
+    project.prepare.profiles.sandbox.hooks.preflight,
+    ...Object.values(project.resources['dev-server'].hooks),
+  ] as string[];
+  const paths = resolveNodeSupportPaths('farmslot-farm', project, root).paths;
+  for (const host of ['localhost', 'remote.fixture.invalid']) {
+    const vars: SlotVars = {
+      slotId: 'fixture',
+      platform: 'cli',
+      sshUser: 'fixture',
+      osType: 'linux',
+      claudePath: '',
+      codexPath: '',
+      opencodePath: '',
+      cursorPath: '',
+      grokPath: '',
+      dispatchCmd: 'true',
+      recycleCmd: 'true',
+      repo: '/slot/checkout',
+      session: 'fixture',
+      slotMode: 'dispatch',
+      slotEnabled: true,
+      sshTarget: host,
+      projectName: 'farmslot-farm',
+      host,
+      machine: 'fixture',
+      remoteRepo: '/slot/checkout',
+      resourceVars: { port: '8808' },
+    };
+    for (const hook of hooks) {
+      const expanded = expandTemplate(hook, vars);
+      assert.doesNotMatch(expanded, /\{\{/);
+      assert.match(expanded, /FARMSLOT_SLOT_REPO=\/slot\/checkout/);
+      if (host !== 'localhost')
+        assert.match(
+          remapRemoteFarmRefs(expanded, '/node/support/current', paths),
+          /bash \/node\/support\/current\/projects\/farmslot-farm\/setup\/sandbox-dev.sh/,
+        );
+      else assert.match(expanded, /\/projects\/farmslot-farm\/setup\/sandbox-dev.sh/);
+    }
   }
 });
 

@@ -7,8 +7,20 @@ import {
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
   readDefaultBranchProbe,
+  remoteBranchRefspec,
   resolveSlotTrackingBranch,
 } from '../../src/slots/tracking-branch.js';
+
+test('remoteBranchRefspec targets origin by default and a configured remote explicitly', () => {
+  assert.equal(
+    remoteBranchRefspec('feat/work'),
+    '+refs/heads/feat/work:refs/remotes/origin/feat/work',
+  );
+  assert.equal(
+    remoteBranchRefspec('feat/work', 'fork'),
+    '+refs/heads/feat/work:refs/remotes/fork/feat/work',
+  );
+});
 
 test('resolveSlotTrackingBranch uses project template on linked worktrees', () => {
   const branch = resolveSlotTrackingBranch(
