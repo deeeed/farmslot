@@ -29,6 +29,30 @@ def review_state_path(config, repo, pr):
     return review_dir(config, repo, pr) / "state.json"
 
 
+def legacy_review_dir(config, repo, pr):
+    root = config.get("reviews", {}).get("legacy_root")
+    if not root:
+        return None
+    name = repo.split("/")[1]
+    prefixes = (name, name.removesuffix("_monorepo"), name.removeprefix("experimental-"),
+                name.removeprefix("experimental-metamask-"),
+                name.removeprefix("experimental-metamask-recipe-"))
+    for prefix in prefixes:
+        directory = resolve_path(config, root) / f"{prefix}-{pr}"
+        if directory.is_dir():
+            return directory
+    return None
+
+
+def verdict_dir(config, repo, pr):
+    directory = review_dir(config, repo, pr)
+    # New rounds own their verdicts exclusively. Never inherit legacy approval after a failed round.
+    if review_state_path(config, repo, pr).exists():
+        return directory, False
+    legacy = legacy_review_dir(config, repo, pr)
+    return (legacy, True) if legacy else (directory, False)
+
+
 def _verdict(text, sha):
     lines = text.splitlines()
     if len(lines) < 2 or lines[1] != f"COMMIT: {sha}":
@@ -40,13 +64,13 @@ def _verdict(text, sha):
     return None
 
 
-def parse_verdict(path, sha):
+def parse_verdict(path, sha, *, legacy=False):
     """Only exact, current, top-level reviewer approvals can open a merge gate."""
     path = Path(path)
     if (
         not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha)
         or path.name not in {f"{reviewer}.md" for reviewer in REVIEWERS}
-        or not re.fullmatch(r"[\w.-]+%2F[\w.-]+-[1-9]\d*", path.parent.name)
+        or not legacy and not re.fullmatch(r"[\w.-]+%2F[\w.-]+-[1-9]\d*", path.parent.name)
         or not path.is_file()
     ):
         return False
@@ -276,6 +300,8 @@ def _report_status(report, repo, pr, state, directory):
 
 def review(config, args):
     directory = review_dir(config, args.repo, args.pr)
+    if not review_state_path(config, args.repo, args.pr).exists() and legacy_review_dir(config, args.repo, args.pr):
+        raise RuntimeError("existing PR keeps its legacy verdict files; do not restart or migrate its review")
     directory.mkdir(parents=True, exist_ok=True)
     # A process crash releases this lock. Its reserved round remains consumed in state.json.
     with (directory / ".lock").open("a") as lock:

@@ -1,6 +1,8 @@
 """Configuration and process helpers shared by the orchestration commands."""
 
 import json
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -91,9 +93,22 @@ def append_report(path, line):
 
 def gh(argv, *, write=False, input=None):
     env = os.environ.copy()
-    if write:
-        env.pop("GH_TOKEN", None)
+    env.pop("GH_TOKEN", None)
     return run(["gh", *argv], env=env, input=input)
+
+
+@contextmanager
+def locked_state(config, name, default):
+    path = Path(config["state_dir"]) / f"{name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError(f"{name} is already running") from error
+        state = read_json(path, default)
+        yield state
+        write_json(path, state)
 
 
 def project_hook(config, repo, name):

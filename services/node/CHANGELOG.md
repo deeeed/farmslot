@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Track cancellable executions by their gateway connection and retain them through closeout.
+
 - fix(deploy): `deploy-node.sh` starts the node with `FARMSLOT_ROOT` unset (`/usr/bin/env -u FARMSLOT_ROOT` in the launchd and systemd invocation, after the login shell on native nodes), which the shadowed-token check shares. A `FARMSLOT_ROOT` from launchd, systemd or a login profile reached the service but not the check, so the two could pick different env files. Processes the node starts no longer inherit that `FARMSLOT_ROOT` either.
 
 - fix(deploy): `deploy-node.sh` fails, before the service is reloaded, when a `.env.local-auth` or `.env` on the target sets a `FARMSLOT_NODE_TOKEN` other than the deployed one. The node reads that file ahead of the token in its service definition, so a stale `~/farmslot-node/.env.local-auth` kept nodes failing auth with `credential_mismatch` after a deploy that reported success. The error names the file and the fix. The synced node runs the check (`src/check-node-token.ts`) with the env-file search from `gateway-credential.ts`, and the token is passed on stdin.

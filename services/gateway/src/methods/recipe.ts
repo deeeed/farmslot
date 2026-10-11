@@ -30,6 +30,7 @@ import {
   type RuntimeCapabilityStatusResult,
   type RuntimeCapabilityTarget,
   type ScriptActionResult,
+  validateProjectRecipeConfig,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
@@ -57,8 +58,16 @@ import {
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
 import { slotRealpath } from '../core/slot-io.js';
+import {
+  claimSlotStatusIf,
+  onSlotReset,
+  readSlotRow,
+  SLOT_PHASE_RELEASING,
+  updateSlotStatusIf,
+} from '../core/state.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { assertTargetInInventory } from '../fleet/device-inventory.js';
+import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
   attachLiveRecipeContext,
@@ -92,9 +101,60 @@ interface WarmthResult {
 interface ActiveRerun {
   requestId: string;
   abortController: AbortController;
+  unconfirmed?: boolean;
 }
 
 const activeReruns = new Map<string, ActiveRerun>();
+onSlotReset((slotId) => {
+  if (activeReruns.get(slotId)?.unconfirmed) activeReruns.delete(slotId);
+});
+
+// Recipe teardown may include app/provider cleanup. Other exec callers keep their 5s default.
+const RECIPE_CLOSEOUT_MS = 30_000;
+const UNCONFIRMED_RECIPE_CLOSEOUT = 'Recipe process closeout unconfirmed: ';
+
+type RecipeSlotOwner = Awaited<ReturnType<typeof readSlotRow>>;
+
+async function holdUnconfirmedRecipe(
+  slotId: string,
+  active: ActiveRerun,
+  before: RecipeSlotOwner,
+  error: NodeExecUnconfirmedError,
+): Promise<void> {
+  active.unconfirmed = true;
+  const reason = `${UNCONFIRMED_RECIPE_CLOSEOUT}${error.message}`;
+  const held = { lifecycle: 'held', phase: 'occupied', held_reason: reason };
+  if (before) {
+    await updateSlotStatusIf(
+      slotId,
+      (row) =>
+        row.current_run_id === before.current_run_id &&
+        row.slot_epoch === before.slot_epoch &&
+        row.handoff_run_id === before.handoff_run_id &&
+        row.phase !== SLOT_PHASE_RELEASING,
+      held,
+    );
+    if (typeof before.current_run_id === 'string' && getRun(before.current_run_id)) {
+      updateRun(before.current_run_id, { slotTeardownSkipped: reason });
+    }
+  } else {
+    // A newly configured slot may not have been written by the first fleet refresh yet.
+    // The atomic claim creates that row, but cannot replace a concurrent owner.
+    await claimSlotStatusIf(
+      slotId,
+      (row) =>
+        row.slot_epoch === 0 &&
+        !row.current_run_id &&
+        !row.handoff_run_id &&
+        row.phase !== SLOT_PHASE_RELEASING,
+      held,
+    );
+  }
+}
+
+function releaseRecipeTracking(slotId: string, active: ActiveRerun): void {
+  if (!active.unconfirmed && activeReruns.get(slotId) === active) activeReruns.delete(slotId);
+}
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const ARTIFACT_RUN_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -547,12 +607,77 @@ export function validateRecipeProjectHookOutput(
   };
 }
 
+/** A declared provider uses the same CLI and binding as a checkout invocation. */
+export function buildHostedRecipeCommand(
+  hook: RecipeProjectHookName,
+  projectVars: ProjectVars,
+  slotVars: SlotVars,
+  params: { recipePath?: string; artifactsDir?: string; target?: RuntimeCapabilityTarget } = {},
+): string | undefined {
+  // Readiness is not whole-library conformance; its lifecycle migration belongs to Phase 2.
+  if (hook === 'recipe_doctor') return undefined;
+  const declaration = getProjectFieldRaw(projectVars.projectJson, 'recipe');
+  if (declaration === undefined) return undefined;
+  validateProjectRecipeConfig(declaration);
+  assertSlotProjectMatchesRequestedProject(slotVars, projectVars.projectName);
+  const target = shellExpressionForRemotePath(slotVars.remoteRepo);
+  const args = ['recipe', hook === 'recipe_run' ? 'run' : 'actions', '--target', target];
+  if (hook === 'recipe_action_manifest') args.push('--raw');
+  if (hook === 'recipe_run') {
+    if (!params.recipePath) throw new Error('hooks.recipe_run execution requires recipePath.');
+    if (!params.artifactsDir) throw new Error('hooks.recipe_run execution requires artifactsDir.');
+    const relativeArtifacts = path.posix.relative(
+      normalizeRemotePath(slotVars.remoteRepo),
+      normalizeRemotePath(params.artifactsDir),
+    );
+    if (
+      !relativeArtifacts ||
+      !resolvePathWithinRemoteBase(slotVars.remoteRepo, relativeArtifacts)
+    ) {
+      throw new Error('Recipe artifacts must be inside the selected slot checkout.');
+    }
+    args.push(
+      shellExpressionForRemotePath(params.recipePath),
+      '--artifacts-dir',
+      shellQuote(relativeArtifacts),
+    );
+    if (params.target) {
+      const checked = deviceTargetExtraVars(params.target);
+      if (!checked.ok) throw new Error(checked.reason);
+      const selected = checked.value;
+      const iosDevice = selected?.udid ?? selected?.simulator;
+      const androidDevice = selected?.adb_serial ?? selected?.avd;
+      if (iosDevice && androidDevice) throw new Error('A recipe execution must select one device.');
+      const device = iosDevice ?? androidDevice;
+      if (device) args.push('--device', shellQuote(device));
+      if (selected?.platform) args.push('--platform', shellQuote(selected.platform));
+    }
+  }
+  args.push(
+    '--project',
+    shellQuote(projectVars.projectName),
+    '--slot',
+    shellQuote(slotVars.slotId),
+    '--json',
+  );
+  const farmRoot = expandTemplate('{{farmslot_dir}}', slotVars, projectVars);
+  // Keep the remote root visible to the content-addressed node-support remapper.
+  const rootArg = isShellHomePath(farmRoot) ? farmRoot : shellQuote(farmRoot);
+  const registry = isLocal(slotVars.host, slotVars.machine)
+    ? shellQuote(path.dirname(path.dirname(projectVars.projectConfig)))
+    : '"$farm/projects"';
+  const script = `farm="$1"; shift; source "$farm/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" "$@" --projects-dir ${registry}`;
+  return `bash -c ${shellQuote(script)} farmslot-recipe ${rootArg} ${args.join(' ')}`;
+}
+
 export function expandRecipeProjectHookTemplate(
   hook: RecipeProjectHookName,
   projectVars: ProjectVars,
   slotVars: SlotVars,
   params: { recipePath?: string; artifactsDir?: string } = {},
 ): RecipeProjectHookCommandResult {
+  const hosted = buildHostedRecipeCommand(hook, projectVars, slotVars, params);
+  if (hosted) return { hook, command: hosted };
   const template = projectVars.projectJson.hooks?.[hook];
   if (!template || typeof template !== 'string') {
     throw new Error(`No ${hook} hook configured in project.json for ${projectVars.projectName}.`);
@@ -624,10 +749,12 @@ export function canRecipeRerunOnSlot(
     phase?: string | null;
     lifecycle?: string | null;
     agent?: string | null;
+    heldReason?: string | null;
   },
   runId: string,
   runSlotId?: string | null,
 ): boolean {
+  if (slotStatus.heldReason?.startsWith(UNCONFIRMED_RECIPE_CLOSEOUT)) return false;
   if (slotStatus.currentRunId && slotStatus.currentRunId !== runId) return false;
   if (slotStatus.currentRunId === runId) {
     // Operator load-run / warm switch binds currentRunId without always resetting
@@ -1000,6 +1127,7 @@ async function buildRecipeExecutionCommand(
   artifactRunId: string,
   playbackSlowMs: number | undefined,
   recordVideo: boolean | undefined,
+  target?: RuntimeCapabilityTarget,
 ): Promise<{ recipePath: string; artifactRoot: string; command: string }> {
   assertValidArtifactRunId(artifactRunId);
   const workerTaskDir = resolveWorkerTaskDir(run, slotVars, projectVars.projectJson);
@@ -1026,19 +1154,26 @@ async function buildRecipeExecutionCommand(
   const slotArtifactsDir = path.join(workerTaskDir, 'artifacts');
   const slotRecipeRunArtifactsDir = path.join(slotArtifactsDir, 'recipe-runs', artifactRunId);
   const recipeHook = projectVars.projectJson.hooks?.recipe_run;
-  if (!recipeHook || typeof recipeHook !== 'string') {
-    throw new Error(
-      `No recipe_run hook configured in project.json for ${run.project}. Add hooks.recipe_run to enable recipe re-execution.`,
+  let recipeCmd = buildHostedRecipeCommand('recipe_run', projectVars, slotVars, {
+    recipePath: slotRecipePath,
+    artifactsDir: slotRecipeRunArtifactsDir,
+    target,
+  });
+  if (!recipeCmd) {
+    if (!recipeHook || typeof recipeHook !== 'string') {
+      throw new Error(
+        `No recipe_run hook configured in project.json for ${run.project}. Add hooks.recipe_run to enable recipe re-execution.`,
+      );
+    }
+    recipeCmd = expandRecipeRunHookTemplate(
+      recipeHook,
+      slotVars,
+      projectVars,
+      shellExpressionForRemotePath(slotRecipePath),
+      shellExpressionForRemotePath(slotRecipeRunArtifactsDir),
+      { runId: run.id, recipeRunId: artifactRunId },
     );
   }
-  let recipeCmd = expandRecipeRunHookTemplate(
-    recipeHook,
-    slotVars,
-    projectVars,
-    shellExpressionForRemotePath(slotRecipePath),
-    shellExpressionForRemotePath(slotRecipeRunArtifactsDir),
-    { runId: run.id, recipeRunId: artifactRunId },
-  );
   recipeCmd = appendRecipePlaybackOptions(
     recipeCmd,
     recipeRunOptionsForProject(projectVars.projectJson, { playbackSlowMs, recordVideo }),
@@ -1099,10 +1234,35 @@ export async function recipeProjectHookRun(
   params: RecipeProjectHookRunParams,
 ): Promise<RecipeProjectHookRunResult> {
   const { built, slotVars } = await buildRecipeProjectHookCommand(params);
-  const result = await execOnSlot(slotVars, withMachineEnv(built.command, slotVars), {
-    timeout: params.timeoutMs ?? 60_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+  const owner = await readSlotRow(params.slotId);
+  if (
+    typeof owner?.held_reason === 'string' &&
+    owner.held_reason.startsWith(UNCONFIRMED_RECIPE_CLOSEOUT)
+  ) {
+    throw new Error(owner.held_reason);
+  }
+  if (activeReruns.has(params.slotId))
+    throw new Error(`Recipe execution already active on ${params.slotId}.`);
+  const active: ActiveRerun = {
+    requestId: `hook-${randomUUID()}`,
+    abortController: new AbortController(),
+  };
+  activeReruns.set(params.slotId, active);
+  let result: Awaited<ReturnType<typeof execOnSlot>>;
+  try {
+    result = await execOnSlot(slotVars, withMachineEnv(built.command, slotVars), {
+      timeout: params.timeoutMs ?? 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+      signal: active.abortController.signal,
+      closeoutTimeoutMs: RECIPE_CLOSEOUT_MS,
+    });
+  } catch (error) {
+    if (error instanceof NodeExecUnconfirmedError)
+      await holdUnconfirmedRecipe(params.slotId, active, owner, error);
+    throw error;
+  } finally {
+    releaseRecipeTracking(params.slotId, active);
+  }
   if (result.exitCode !== 0) {
     throw new Error(
       `hooks.${params.hook} failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
@@ -1395,6 +1555,8 @@ async function executeRecipeRerunJob(args: {
   } = args;
   const startTime = Date.now();
   let slotRecipeRunArtifactsDir = '';
+  const active = activeReruns.get(slotId)!;
+  let owner: RecipeSlotOwner = null;
 
   const complete = (detail: { exitCode: number; error?: string; artifactRoot?: string }): void => {
     emit(Events.SCRIPT_COMPLETE, {
@@ -1407,6 +1569,7 @@ async function executeRecipeRerunJob(args: {
   };
 
   try {
+    owner = await readSlotRow(slotId);
     emitRecipeRerunStream(emit, requestId, 'Preflight: resolving recipe command...\n');
     const slotVars = await loadSlotVars(slotId);
     const projectVars = await loadProjectVars(run.project);
@@ -1421,6 +1584,7 @@ async function executeRecipeRerunJob(args: {
       requestId,
       playbackSlowMs,
       recordVideo,
+      target,
     );
     const slotRecipePath = built.recipePath;
     if (!slotRecipePath) {
@@ -1549,10 +1713,19 @@ async function executeRecipeRerunJob(args: {
     console.log(`[recipe] rerun ${requestId} on ${slotId}: ${recipeCmd.slice(0, 100)}`);
     emitRecipeRerunStream(emit, requestId, `Starting recipe runner...\n$ ${recipeCmd}\n`, 'stdout');
 
+    const currentOwner = await readSlotRow(slotId);
+    if (
+      currentOwner?.current_run_id !== owner?.current_run_id ||
+      currentOwner?.slot_epoch !== owner?.slot_epoch ||
+      currentOwner?.phase === SLOT_PHASE_RELEASING
+    ) {
+      throw new Error('Slot ownership changed during recipe preflight.');
+    }
     publishLiveRecipeContext();
     const result = await execOnSlot(slotVars, recipeCmd, {
       timeout: timeoutMs,
       signal: abortController.signal,
+      closeoutTimeoutMs: RECIPE_CLOSEOUT_MS,
       onOutput: (stream, data) => {
         publishLiveRecipeContext();
         emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
@@ -1604,12 +1777,20 @@ async function executeRecipeRerunJob(args: {
       `[recipe] rerun ${requestId} complete: exit=${result.exitCode} (${Date.now() - startTime}ms)`,
     );
   } catch (err) {
-    const message = (err as Error).message;
+    let message = (err as Error).message;
+    if (err instanceof NodeExecUnconfirmedError) {
+      try {
+        await holdUnconfirmedRecipe(slotId, active, owner, err);
+      } catch (holdError) {
+        // Tracking stays reserved in memory even if durable status storage failed.
+        message += ` Could not persist the slot hold: ${holdError instanceof Error ? holdError.message : String(holdError)}`;
+      }
+    }
     emitRecipeRerunStream(emit, requestId, `Recipe rerun failed: ${message}\n`);
     complete({ exitCode: 1, error: message, artifactRoot: slotRecipeRunArtifactsDir });
     console.warn(`[recipe] rerun ${requestId} failed: ${message}`);
   } finally {
-    activeReruns.delete(slotId);
+    releaseRecipeTracking(slotId, active);
   }
 }
 
@@ -1690,16 +1871,11 @@ export async function recipeCancel(params: RecipeCancelParams): Promise<RecipeCa
     return { cancelled: false };
   }
 
-  // Check if slot is local — remote slots don't support signal-based cancellation
-  const slotVars = await loadSlotVars(params.slotId);
-  const local = isLocal(slotVars.host, slotVars.machine);
-  if (!local) {
-    console.warn(
-      `[recipe] cancel not supported on remote slot ${params.slotId} — process will run until timeout`,
-    );
+  if (active.unconfirmed) {
     return {
       cancelled: false,
-      reason: 'Cancel not supported on remote slots — recipe will run until timeout',
+      reason:
+        'Process closeout is unconfirmed. Verify the original node before resetting the held slot.',
     };
   }
 
