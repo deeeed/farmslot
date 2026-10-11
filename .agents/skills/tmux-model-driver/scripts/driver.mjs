@@ -10,6 +10,7 @@ import { readPaneStateFromCapture } from '../../../../services/gateway/src/runne
 
 import {
   acceptedPrompt,
+  bufferedPrompt,
   hasSubmittedQueue,
   nativeState,
   paneIdentity,
@@ -62,11 +63,12 @@ function metadata(pane) {
     '-p',
     '-t',
     pane,
-    '#{pane_id}\t#{session_name}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_pid}',
+    '#{pane_id}\t#{session_name}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_pid}\t#{socket_path}',
   ])
     .trimEnd()
     .split('\t');
-  const [pane_id, session_name, current_command, current_path, pane_title, pane_pid] = values;
+  const [pane_id, session_name, current_command, current_path, pane_title, pane_pid, socket_path] =
+    values;
   const override = (name, value) => process.env[`TMUX_PANE_STATE_${name}`] ?? value;
   const pid = override('PANE_PID', pane_pid);
   let foreground = '';
@@ -99,6 +101,7 @@ function metadata(pane) {
   }
   return {
     pane_id,
+    socket_path,
     session_name: override('SESSION_NAME', session_name),
     current_command: override('CURRENT_COMMAND', current_command),
     current_path: override('CURRENT_PATH', current_path),
@@ -166,7 +169,7 @@ export function paneSafety(tail, runner) {
   };
 }
 
-function paths(meta) {
+function paths(meta, selection = {}) {
   const obs =
     process.env.TMUX_MODEL_DRIVER_OBSERVABILITY_DIR ||
     path.join(meta.current_path, '.agent', '.observability');
@@ -174,12 +177,39 @@ function paths(meta) {
     process.env.TMUX_MODEL_DRIVER_STATE_DIR ||
     path.join(os.tmpdir(), `tmux-model-driver-${process.getuid?.() ?? 'user'}`);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const key = hash(
-    `${process.env.TMUX_MODEL_DRIVER_SOCKET || process.env.TMUX || 'default'}:${meta.pane_id}:${meta.pane_pid}:${meta.process_started_at}`,
-  );
+  const socket =
+    meta.socket_path ||
+    process.env.TMUX_MODEL_DRIVER_SOCKET ||
+    process.env.TMUX?.split(',')[0] ||
+    'default';
+  const key = hash(`${socket}:${meta.pane_id}:${meta.pane_pid}:${meta.process_started_at}`);
+  // Keep old caller-specific receipts in place. All aliases now share one mutation lock.
+  const pending = fs
+    .readdirSync(root)
+    .filter((name) => /^[a-f0-9]{64}\.json$/.test(name))
+    .flatMap((name) => {
+      const file = path.join(root, name);
+      // Another owner can acknowledge between directory listing and this read.
+      const raw = readOptional(file);
+      return raw ? [{ file, receipt: JSON.parse(raw) }] : [];
+    })
+    .filter(
+      ({ receipt }) =>
+        receipt.pane_identity === paneIdentity(meta) &&
+        (!receipt.socket || receipt.socket === socket) &&
+        (!receipt.pane_id || receipt.pane_id === meta.pane_id),
+    )
+    .sort((a, b) => a.receipt.sent_at - b.receipt.sent_at);
+  const selected =
+    pending.find(({ receipt }) =>
+      selection.receiptId
+        ? receiptIdentity(receipt) === selection.receiptId
+        : selection.payloadHash && receipt.payload_hash === selection.payloadHash,
+    ) || pending[0];
   return {
     obs,
-    receipt: path.join(root, `${key}.json`),
+    socket,
+    receipt: selected?.file || path.join(root, `${key}.json`),
     lock: path.join(root, `${key}.lock`),
     acknowledged: path.join(root, `${key}.acknowledged.json`),
   };
@@ -217,7 +247,7 @@ function clearAcceptedReceipt(files, receipt) {
   fs.unlinkSync(files.receipt);
 }
 
-export function paneState(pane, expectedRunner) {
+export function paneState(pane, expectedRunner, selection) {
   const meta = metadata(pane);
   const state = processState(meta);
   const runner = expectedRunner || state;
@@ -225,7 +255,7 @@ export function paneState(pane, expectedRunner) {
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE ??
     tmux(['capture-pane', '-p', '-t', pane, '-S', '-40']);
   const safety = paneSafety(tail, runner);
-  const files = paths(meta);
+  const files = paths(meta, selection);
   const { obs } = files;
   const native = runners.has(state)
     ? nativeState(meta, state, obs)
@@ -237,7 +267,10 @@ export function paneState(pane, expectedRunner) {
     (accepted.receipt_id !== receiptIdentity(receipt) ||
       accepted.payload_hash !== receipt.payload_hash ||
       accepted.session_id !== receipt.session_id ||
-      accepted.session_id !== native.session_id)
+      (accepted.source === 'runner-queue'
+        ? receipt.pane_identity !== paneIdentity(meta) ||
+          (receipt.session_id && native.session_id && receipt.session_id !== native.session_id)
+        : accepted.session_id !== native.session_id))
   )
     accepted = null;
   if (receipt && runners.has(state)) {
@@ -273,7 +306,7 @@ export function paneState(pane, expectedRunner) {
   const questionFingerprint = question
     ? hash(
         JSON.stringify({
-          socket: process.env.TMUX_MODEL_DRIVER_SOCKET || process.env.TMUX || 'default',
+          socket: files.socket,
           pane_id: meta.pane_id,
           pane_pid: meta.pane_pid,
           process_started_at: meta.process_started_at,
@@ -324,9 +357,10 @@ export function paneState(pane, expectedRunner) {
 }
 
 export function acknowledgeAcceptance(pane, runner, receiptId) {
-  const before = paneState(pane, runner);
+  const selection = { receiptId };
+  const before = paneState(pane, runner, selection);
   let verification = before.state !== runner ? 'wrong_runner' : null;
-  const files = paths(before);
+  const files = paths(before, selection);
   let locked = false;
   try {
     if (!verification) {
@@ -335,7 +369,7 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
         verification = wasAcknowledged(files, receiptId) ? 'already_acknowledged' : 'driver_busy';
     }
     if (!verification) {
-      const current = paneState(pane, runner);
+      const current = paneState(pane, runner, selection);
       if (current.state !== runner) verification = 'wrong_runner';
       else if (wasAcknowledged(files, receiptId)) {
         const pending = readReceipt(files);
@@ -457,12 +491,27 @@ export function refusal(before, runner, flush = false) {
 }
 
 export async function send(pane, runner, payload, tracePath, flush = false) {
-  let before = paneState(pane, runner);
+  const selection = { payloadHash: hash(payload) };
+  let before = paneState(pane, runner, selection);
   let after = before;
   let verification = refusal(before, runner, flush);
   let evidence = null;
   let typed = false;
-  const files = paths(before);
+  const files = paths(before, selection);
+  const ownedRetry = (state) => {
+    const receipt = readReceipt(files);
+    return (
+      !flush &&
+      supportsMidTurnPrompt(runner) &&
+      receipt &&
+      receipt.payload_hash === selection.payloadHash &&
+      receipt.pane_identity === paneIdentity(state) &&
+      (state.accepted ||
+        (state.queue_kind === 'driver-buffer' && bufferedPrompt(state, runner, receipt)))
+    );
+  };
+  if (['queued_input', 'acceptance_unacknowledged'].includes(verification) && ownedRetry(before))
+    verification = null;
   const timeout = Number(process.env.TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS || 3000);
   let scratch = null;
   let locked = false;
@@ -472,18 +521,33 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       if (!locked) verification = 'driver_busy';
     }
     if (!verification) {
-      before = paneState(pane, runner);
+      before = paneState(pane, runner, selection);
       verification = refusal(before, runner, flush);
+      if (
+        ['queued_input', 'acceptance_unacknowledged'].includes(verification) &&
+        ownedRetry(before)
+      )
+        verification = null;
     }
     if (!verification) {
-      let receipt;
-      if (flush) {
+      let receipt = readReceipt(files);
+      const retry = ownedRetry(before);
+      if (retry && before.accepted) {
+        evidence = before.accepted;
+        verification = evidence.source === 'runner-queue' ? 'queued' : 'submitted';
+      } else if (flush || retry) {
         receipt = JSON.parse(fs.readFileSync(files.receipt, 'utf8'));
-        if (!receipt.typed || !before.tail.includes(receipt.payload))
+        if (
+          !receipt.typed ||
+          (retry
+            ? !bufferedPrompt(before, runner, receipt)
+            : !before.tail.includes(receipt.payload))
+        )
           verification = 'queue_buffer_unconfirmed';
         if (payload && hash(payload) !== receipt.payload_hash)
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
+        if (retry) receipt.queue_was_empty = true;
       } else {
         if (!payload.trim()) verification = 'empty_payload';
         if (!verification && runner !== 'shell') {
@@ -498,6 +562,9 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             before_turn_token: before.turn_token,
             steering: supportsMidTurnPrompt(runner) && before.delivery_phase !== 'idle',
             pane_identity: paneIdentity(before),
+            pane_id: before.pane_id,
+            socket: files.socket,
+            queue_was_empty: !before.queued,
             typed: false,
           };
           durableWrite(files.receipt, receipt);
@@ -509,7 +576,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-model-driver-shell-'));
           transportPayload = `printf started > ${quote(path.join(scratch, 'started'))}; ${payload}`;
         }
-        if (!flush) {
+        if (!flush && !retry) {
           const buffer = `tmux-model-driver-${randomUUID()}`;
           tmux(['load-buffer', '-b', buffer, '-'], transportPayload);
           try {
@@ -524,7 +591,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             durableWrite(files.receipt, receipt);
           }
         }
-        after = paneState(pane, runner);
+        after = paneState(pane, runner, selection);
         verification = after.pending_question
           ? 'pending_question'
           : after.state !== runner
@@ -543,7 +610,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         const deadline = Date.now() + timeout;
         if (verification === 'unverified') {
           do {
-            after = paneState(pane, runner);
+            after = paneState(pane, runner, selection);
             evidence =
               runner === 'shell'
                 ? fs.existsSync(path.join(scratch, 'started'))
@@ -570,9 +637,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   verification = 'receipt_mismatch';
                   break;
                 }
-                clearAcceptedReceipt(files, current);
+                if (evidence.source === 'runner-queue')
+                  durableWrite(files.receipt, { ...current, accepted: evidence });
+                else clearAcceptedReceipt(files, current);
               }
-              verification = 'submitted';
+              verification = evidence.source === 'runner-queue' ? 'queued' : 'submitted';
               break;
             }
             if (after.pending_question) {
@@ -607,7 +676,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     before_state: before.state,
     after_state: after.state,
     verification,
-    submitted: verification === 'submitted',
+    submitted:
+      verification === 'submitted' || (verification === 'queued' && !payload.startsWith('/goal ')),
     queued: verification === 'queued',
     typed,
     flush,
