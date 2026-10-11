@@ -577,7 +577,14 @@ function check(dir, ...args) {
     `complete must refuse registered criteria without a ledger: ${optedOut.output}`,
   );
   assert.match(optedOut.output, /acceptance-status\.json is missing/);
-
+  const legacy = makeTask();
+  writeFileSync(path.join(legacy, 'artifacts', 'report.md'), '# Report\n\nValidation completed.\n');
+  writeFileSync(path.join(legacy, 'CHECKLIST.md'), '- [x] **1. do the work**\n');
+  const legacyComplete = spawnSync(process.execPath, [engine, legacy, 'complete', '--mark-last'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(legacyComplete.status, 0);
+  assert.match(legacyComplete.stderr, /acceptance-status\.json is missing/);
   // With the opt-in the same task is refused until every criterion has a verdict.
   const optedIn = completeWith({ require: true });
   assert.notEqual(optedIn.result.status, 0, 'complete must fail with require: true and no ledger');
