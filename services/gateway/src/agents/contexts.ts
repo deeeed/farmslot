@@ -482,7 +482,7 @@ function statusFromRun(status: Run['status']): AgentContextStatus {
   if (status === 'failed') return 'failed';
   if (status === 'blocked') return 'blocked';
   if (status === 'cancelled') return 'failed';
-  if (status === 'paused') return 'waiting';
+  if (['paused', 'human-gating', 'review-failed', 'reconciling'].includes(status)) return 'waiting';
   return 'working';
 }
 

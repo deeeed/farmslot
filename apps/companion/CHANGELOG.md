@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.1 - 2026-10-11

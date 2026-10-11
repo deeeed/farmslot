@@ -43,7 +43,9 @@ import {
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
+import { assertRunGateReady } from './gate-prerequisites.js';
 import { requiresPublicationApproval } from './publication-policy.js';
+import { runSupersededSince } from './run-generation.js';
 import { createSubStepCollector } from './sub-step-collector.js';
 
 interface StepIO {
@@ -55,6 +57,7 @@ type BroadcastFn = (event: string, payload: unknown) => void;
 type LoadedProjectVars = { projectJson: Parameters<typeof getProjectField>[0] };
 
 export interface FinalizeStepContext {
+  assertGatePrerequisites?: typeof assertRunGateReady;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
   latestResolvedHumanGateDecision: (
@@ -119,10 +122,15 @@ export async function executeFinalizeStep(
     stepPartialIO,
   } = context;
   const current = getRun(runId)!;
+  const generation = current.engineState?.generation ?? 0;
   if (!current.slotId) throw new Error('No slot assigned');
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
+  if (!publicationApprovalGate)
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Finalization was superseded during gate validation');
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     flowType: current.flowType,
@@ -358,7 +366,14 @@ export async function executeFinalizeStep(
     );
     // The current title and body are published even when they differ from the
     // reviewed ones; only code and evidence changes refuse the approval.
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(
+      current,
+      preparedPackage,
+      resolvedAction,
+    );
     const currentPackage = await assertReadyGatePackageInputsCurrent(current, preparedPackage);
+    if (runSupersededSince(getRun(runId), generation))
+      throw new Error('Finalization was superseded during gate validation');
     const approvedPackage: ReadyGatePrPackage = {
       ...currentPackage,
       publicationTarget: selectedTarget,

@@ -20,6 +20,7 @@ import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js'
 import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
+import type { RunGateReadiness } from './run-gate-readiness.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
@@ -37,6 +38,9 @@ export type RunStatus =
   | 'dispatching'
   | 'monitoring'
   | 'reviewing'
+  | 'fixing'
+  | 'review-failed'
+  | 'reconciling'
   | 'completing'
   | 'human-gating'
   | 'ci-watching'
@@ -56,6 +60,8 @@ export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
   'dispatching',
   'monitoring',
   'reviewing',
+  'fixing',
+  'reconciling',
   'completing',
   'ci-watching',
 ];
@@ -227,6 +233,7 @@ export interface EvidenceManifestStandalone {
 
 export interface ReviewGatePayload {
   kind: 'review';
+  gateReadiness?: RunGateReadiness;
   session?: ReviewSessionTrace;
   prNumber: number | null;
   repo: string | null;
@@ -792,6 +799,7 @@ export interface ReadyGateInputSnapshot {
 
 export interface ReadyGatePayload {
   kind: 'ready';
+  gateReadiness?: RunGateReadiness;
   prNumber: number | null;
   repo: string | null;
   diffStat: DiffStat;
@@ -882,6 +890,7 @@ export interface EvidenceRefreshOverrideRecord {
 
 export interface NoChangeGatePayload {
   kind: 'no-change';
+  gateReadiness?: RunGateReadiness;
   disposition: WorkerTerminalDisposition;
   reason?: string;
   evidence?: WorkerTerminalEvidence;

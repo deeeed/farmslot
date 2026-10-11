@@ -8,6 +8,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
 - Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
+- Recheck current task, source, evidence and review prerequisites at gates and completion; preserve live workers and report correction, review failure and uncertain operations explicitly.
+
 - Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
 - Verify queued lane handoffs, use only live bottom-composer input, and retain uncertain receipts while fresh messages proceed without replaying old ones. Parent-session probes support subagents.
 

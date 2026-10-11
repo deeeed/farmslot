@@ -8,6 +8,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
 - Bind live recipe conformance to named runtime and teardown proof targets, retained artifact digests and typed capture metadata.
+- Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
+
 - Declare optional recording-target resource claim bindings for scoped recording admission.
 
 - Define automatic registered claim evidence and original recording segments, with checked timeline identities and one shared acceptance validator (ADR-062).

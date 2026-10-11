@@ -570,3 +570,30 @@ const ciArtifacts = extractRunArtifactManifest({
 assert.equal(ciArtifacts.find((artifact) => artifact.path === ciLog)?.type, 'log');
 assert.equal(classifyArtifact(ciLog), 'document');
 assert.equal(classifyArtifact(ciArtifacts[0]), 'document');
+
+const pendingReadiness = {
+  state: 'not-ready',
+  identity: { runId: 'gate-run', generation: 2 },
+  reasons: [
+    {
+      code: 'acceptance-incomplete',
+      prerequisite: 'acceptance',
+      message: '11 registered criteria need verdicts.',
+    },
+  ],
+};
+for (const status of ['fixing', 'review-failed', 'reconciling']) {
+  const decision = reviewDecision('APPROVE');
+  decision.context = { runStatus: status };
+  decision.payload = { ...(decision.payload as object), gateReadiness: pendingReadiness };
+  decision.actions = [{ id: 'hold', label: 'Hold', style: 'secondary' }];
+  const view = presentDecision(decision);
+  assert.deepEqual(view.textSections[0], {
+    title: 'Prerequisites incomplete',
+    body: '11 registered criteria need verdicts.',
+  });
+  assert.deepEqual(
+    view.actions.map((action) => action.id),
+    ['hold'],
+  );
+}

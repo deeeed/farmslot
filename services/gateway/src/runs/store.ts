@@ -16,6 +16,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentContextStatus,
   agentContextTaskFile,
@@ -135,17 +136,10 @@ export function runSessionArchiveDir(runId: string): string {
 }
 
 const ACTIVE_STATUSES: Set<RunStatus> = new Set([
+  ...ACTIVE_RUN_STATUSES,
   'created',
-  'grading',
-  'writing-task',
-  'slot-finding',
-  'preparing',
-  'dispatching',
-  'monitoring',
-  'reviewing',
+  'review-failed',
   'human-gating',
-  'completing',
-  'ci-watching',
   'paused',
   'blocked',
 ]);
@@ -235,6 +229,8 @@ function agentContextStatusFromRunStatus(status: Run['status']): AgentContextSta
   if (status === 'failed' || status === 'cancelled') return 'failed';
   if (status === 'blocked') return 'blocked';
   if (status === 'paused') return 'waiting';
+  if (status === 'human-gating' || status === 'review-failed' || status === 'reconciling')
+    return 'waiting';
   return 'working';
 }
 
