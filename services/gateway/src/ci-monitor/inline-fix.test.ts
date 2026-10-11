@@ -183,10 +183,10 @@ test('CI fix replacement readiness excludes the pending CI context', () => {
 test('CI fix replacement readiness fails closed for ambiguous follow-up ownership', () => {
   const run: Run = {
     ...makeRun({ flowType: 'dev' }),
-    agentContexts: ['review', 'self-review-fix'].map((role) => ({
+    agentContexts: ['review', 'review-fix'].map((role) => ({
       id: role,
       label: role,
-      role: role as 'review' | 'self-review-fix',
+      role: role as 'review' | 'review-fix',
       status: 'working' as const,
       slotId: 'macpro-mm-5',
       runId: 'run-1',

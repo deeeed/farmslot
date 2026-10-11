@@ -179,15 +179,15 @@ test('normalizeWorkerSignal preserves optional checklist timing metadata', () =>
   );
 });
 
-test('normalizeWorkerSignal preserves the self-review requirement', () => {
+test('normalizeWorkerSignal preserves the review requirement', () => {
   const result = normalizeWorkerSignal({
     status: 'complete',
-    needsSelfReview: false,
+    needsReview: false,
     timestamp: '2026-06-25T10:01:00Z',
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.ok && result.signal.needsSelfReview, false);
+  assert.equal(result.ok && result.signal.needsReview, false);
 });
 
 test('normalizeWorkerSignal converts missing no-change report path to blocked partial', () => {

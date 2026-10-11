@@ -1,31 +1,44 @@
-import { html, LitElement, nothing } from 'lit';
+import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import {
-  DEFAULT_CODEX_EFFORT,
-  DEFAULT_CODEX_MODEL,
   isPRWorkspaceExecutionProfile,
   type PoolConfig,
+  type PRExecutionModel,
   type PRExecutionProfile,
+  type PRReviewOptions,
   type PRSlotExecutionProfile,
   type PRWorkspaceExecutionProfile,
+  type ReviewContinuationContext,
+  type ReviewMode,
+  type ReviewRequestContext,
   type SlotStatus,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
+import {
+  defaultReviewDispatchExecutionModels,
+  ReviewDispatchViewModel,
+  reviewSequenceForExecution,
+} from '@farmslot/review-dispatch';
 
-import '../shared/runner-model-effort-picker.js';
+import '../shared/review-dispatch-picker.js';
 import '../shared/slot-selector-modal.js';
 
-import type { EffortLevel } from '../../utils/runner-options.js';
-import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import type { ReviewDispatchChangeDetail } from '../shared/review-dispatch-picker.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 
+export interface PRReviewExecutionChangeDetail {
+  execution: PRExecutionProfile;
+  review: Pick<PRReviewOptions, 'mode' | 'reviewContext'>;
+}
+
 export function newPRExecution(): PRSlotExecutionProfile {
   return {
     slotPolicy: { kind: 'pool', allowedSlots: [] },
-    models: [{ runner: 'codex', model: DEFAULT_CODEX_MODEL, effort: DEFAULT_CODEX_EFFORT }],
+    models: defaultReviewDispatchExecutionModels(rememberedReviewDispatchCatalog()),
   };
 }
 
@@ -46,6 +59,78 @@ export class PRExecutionPicker extends LitElement {
   @property() project = '';
   @property({ type: Boolean }) allProjects = false;
   @property({ type: Boolean }) disabled = false;
+  @property() reviewMode: ReviewMode = 'cold';
+  @property({ attribute: false }) reviewLineages: readonly ReviewContinuationContext[] = [];
+  @property({ attribute: false }) reviewContext?: ReviewRequestContext;
+  @property({ type: Boolean }) review = false;
+  private viewModel = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['configure'],
+      allowSequence: true,
+      sequenceRole: 'execution-alternatives',
+    },
+  });
+  private resources = new Map<number, Pick<PRExecutionModel, 'allowedSlots' | 'allowedMachines'>>();
+
+  protected override willUpdate(changed: PropertyValues<this>) {
+    if (
+      changed.has('value') ||
+      changed.has('reviewMode') ||
+      changed.has('reviewContext') ||
+      changed.has('reviewLineages')
+    ) {
+      this.viewModel.setContext({
+        ...this.viewModel.context,
+        reviewContext: this.reviewContext,
+        reviewLineages: this.reviewLineages,
+      });
+      this.viewModel.setSequence(reviewSequenceForExecution(this.value.models, this.reviewMode));
+      this.resources = new Map(
+        this.viewModel.rows.map((row, index) => [
+          row.id,
+          {
+            allowedSlots: this.value.models[index]?.allowedSlots,
+            allowedMachines: this.value.models[index]?.allowedMachines,
+          },
+        ]),
+      );
+    }
+  }
+
+  get validationErrors(): readonly string[] {
+    return this.viewModel.errors;
+  }
+
+  private renderModels(renderResources?: (index: number) => unknown) {
+    return html`<review-dispatch-picker
+      .viewModel=${this.viewModel}
+      .review=${this.review}
+      .disabled=${this.disabled}
+      .renderRowResources=${(_row: unknown, index: number) => renderResources?.(index) ?? nothing}
+      @review-dispatch-change=${(event: CustomEvent<ReviewDispatchChangeDetail>) => {
+        const execution = {
+          ...this.value,
+          models: this.viewModel.toExecutionModels(this.resources),
+        };
+        if (this.review)
+          this.dispatchEvent(
+            new CustomEvent<PRReviewExecutionChangeDetail>('review-execution-change', {
+              detail: {
+                execution,
+                review: {
+                  mode: event.detail.selection!.mode,
+                  reviewContext: this.viewModel.toReviewContext(),
+                },
+              },
+              bubbles: true,
+              composed: true,
+            }),
+          );
+        else this.change(execution);
+      }}
+      @review-dispatch-status-change=${() => this.requestUpdate()}
+    ></review-dispatch-picker>`;
+  }
   @state() private picker: 'allowed' | number | undefined;
   static styles = prAutomationStyles;
 
@@ -191,30 +276,7 @@ export class PRExecutionPicker extends LitElement {
         <p class="muted">
           Static review runs in an isolated workspace. Device slots remain available.
         </p>
-        ${this.value.models.map(
-          (model, index) =>
-            html`<runner-model-effort-picker
-              .personalPreferences=${false}
-              .runner=${model.runner}
-              .model=${model.model}
-              .effort=${(model.effort ?? '') as EffortLevel}
-              .disabled=${this.disabled}
-              @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) =>
-                this.change({
-                  ...this.value,
-                  models: this.value.models.map((entry, i) =>
-                    i === index
-                      ? {
-                          ...entry,
-                          runner: event.detail.runner,
-                          model: event.detail.model,
-                          effort: event.detail.effort || undefined,
-                        }
-                      : entry,
-                  ),
-                })}
-            ></runner-model-effort-picker>`,
-        )}
+        ${this.renderModels()}
       </fieldset>`;
     }
     const selected =
@@ -255,79 +317,29 @@ export class PRExecutionPicker extends LitElement {
             </p>`,
         )}
       <p class="muted">Each runtime run uses one configured slot.</p>
-      ${this.value.models.map(
-        (model, index) =>
-          html` <div class="card">
-            <p class="muted">${index === 0 ? 'Preferred model' : `Alternative ${index}`}</p>
-            <runner-model-effort-picker
-              .personalPreferences=${false}
-              .runner=${model.runner}
-              .model=${model.model}
-              .effort=${(model.effort ?? '') as EffortLevel}
-              .disabled=${this.disabled}
-              @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) =>
-                this.change({
-                  ...this.value,
-                  models: this.value.models.map((entry, i) =>
-                    i === index
-                      ? {
-                          ...entry,
-                          runner: event.detail.runner,
-                          model: event.detail.model,
-                          effort: event.detail.effort || undefined,
-                        }
-                      : entry,
-                  ),
-                })}
-            ></runner-model-effort-picker>
-            <details>
-              <summary data-testid=${`pr-model-restrictions-${index}`}>
-                Slot restrictions ·
-                ${model.allowedSlots?.length
-                  ? `${model.allowedSlots.length} slots`
-                  : 'all allowed slots'}
-              </summary>
-              <p class="muted">
-                ${model.allowedSlots?.length
-                  ? `${model.allowedSlots.length} restricted slots`
-                  : 'Uses the allowed slots selected above.'}
-              </p>
-              ${this.slotSummary(model.allowedSlots ?? [])}
-              <button
-                type="button"
-                data-testid=${`pr-execution-model-slots-${index}`}
-                ?disabled=${this.disabled || !selected.length}
-                @click=${() => {
-                  this.picker = index;
-                }}
-              >
-                Choose a subset
-              </button>
-            </details>
-            ${this.value.models.length > 1
-              ? html`<button
-                  type="button"
-                  @click=${() =>
-                    this.change({
-                      ...this.value,
-                      models: this.value.models.filter((_, i) => i !== index),
-                    })}
-                >
-                  Remove alternative
-                </button>`
-              : nothing}
-          </div>`,
-      )}
-      <button
-        type="button"
-        @click=${() =>
-          this.change({
-            ...this.value,
-            models: [...this.value.models, { ...newPRExecution().models[0] }],
-          })}
-      >
-        Add model alternative
-      </button>
+      ${this.renderModels((index) => {
+        const model = this.value.models[index];
+        if (!model) return nothing;
+        return html`<details>
+          <summary data-testid=${`pr-model-restrictions-${index}`}>
+            Slot restrictions ·
+            ${model.allowedSlots?.length
+              ? `${model.allowedSlots.length} slots`
+              : 'all allowed slots'}
+          </summary>
+          ${this.slotSummary(model.allowedSlots ?? [])}
+          <button
+            type="button"
+            data-testid=${`pr-execution-model-slots-${index}`}
+            ?disabled=${this.disabled || !selected.length}
+            @click=${() => {
+              this.picker = index;
+            }}
+          >
+            Choose a subset
+          </button>
+        </details>`;
+      })}
       ${this.picker !== undefined
         ? html`<slot-selector-modal
             .open=${true}

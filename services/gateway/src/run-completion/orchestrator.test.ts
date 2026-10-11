@@ -13,13 +13,11 @@ import {
   assertDedicatedPrDescription,
   assertReadyGatePackageInputsCurrent,
   assertSelectedEvidencePublished,
-  defaultReviewDepthPolicy,
   defaultSelectedEvidenceKeysForPublication,
   effectiveRequiredReviewCount,
   expandEvidenceSelectionForManifest,
   filterArtifactUrlsByEvidenceSelection,
   filterEvidenceManifestBySelection,
-  independentReviewPolicySatisfied,
   inferRetrospectiveOutcome,
   isArtifactOnlyRun,
   isPublishedStatus,
@@ -28,6 +26,7 @@ import {
   publicationStatusForRun,
   readCommentsTriageSummary,
   readEvidenceManifest,
+  reviewPolicySatisfied,
   sanitizePRBody,
   selectedEvidenceKeysForPublication,
   shouldMarkReadyAfterCompletion,
@@ -853,128 +852,66 @@ test('local-first publication statuses only treat draft/ready as published', () 
   );
 });
 
-test('independent review policy requires passing reviews and optional cross-runner depth', () => {
-  const base = defaultReviewDepthPolicy();
-  assert.deepEqual(base, {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
-    requestedBy: 'dispatch',
-  });
-  assert.equal(independentReviewPolicySatisfied(base, []), false);
-  assert.equal(
-    independentReviewPolicySatisfied(base, [
-      {
-        id: 'review-1',
-        crossRunner: false,
-        loopNumber: 1,
-        verdict: 'issues',
-        unresolvedCount: 1,
-      },
-    ]),
-    false,
-  );
-  assert.equal(
-    independentReviewPolicySatisfied(base, [
-      {
-        id: 'review-1',
-        crossRunner: false,
-        loopNumber: 1,
-        verdict: 'pass',
-        unresolvedCount: 0,
-        validationDepth: 'static-code',
-      },
-    ]),
-    true,
-  );
-  assert.equal(
-    independentReviewPolicySatisfied(base, [
-      {
-        id: 'review-1',
-        crossRunner: false,
-        loopNumber: 1,
-        verdict: 'pass',
-        unresolvedCount: 0,
-        validationDepth: 'full-live',
-      },
-    ]),
-    true,
-  );
-  assert.equal(
-    independentReviewPolicySatisfied(base, [
-      {
-        id: 'self-review-1',
-        source: 'self-review',
-        crossRunner: true,
-        loopNumber: 1,
-        verdict: 'pass',
-        unresolvedCount: 0,
-        validationDepth: 'full-live',
-      },
-    ]),
-    false,
-  );
-  assert.equal(
-    independentReviewPolicySatisfied(
-      {
-        ...base,
-        requireCrossRunner: true,
-        extraLoopsRequested: 1,
-        requestedBy: 'human-gate',
-      },
-      [
-        { id: 'review-1', crossRunner: false, loopNumber: 1, verdict: 'pass', unresolvedCount: 0 },
-        { id: 'review-2', crossRunner: true, loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
-      ],
-    ),
-    true,
-  );
+test('review policy counts pipeline and gate reviewer sessions equally', () => {
+  const policy = { minimumReviews: 1, requestedBy: 'dispatch' as const };
+  const review = {
+    id: 'pipeline-review-1',
+    source: 'pipeline' as const,
+    mode: 'cold' as const,
+    loopNumber: 1,
+    verdict: 'pass' as const,
+    unresolvedCount: 0,
+    reviewerSessionId: 'reviewer',
+    reviewedHeadSha: 'head',
+  };
+  assert.equal(reviewPolicySatisfied(policy, [review]), true);
+  assert.equal(reviewPolicySatisfied(policy, [{ ...review, source: 'human-gate' }]), true);
+  assert.equal(reviewPolicySatisfied(policy, [{ ...review, reviewerSessionId: null }]), false);
 });
 
 test('publication review policy defaults and config preserve local-first review depth', () => {
   const fixBugPolicy = publicationReviewPolicyForRun(makeRun({ flowType: 'fix-bug' }));
-  assert.equal(fixBugPolicy.minimumIndependentReviews, 1);
+  assert.equal(fixBugPolicy.minimumReviews, 1);
   assert.equal(effectiveRequiredReviewCount(fixBugPolicy), 1);
 
   const autonomousDevPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'autonomous' }),
   );
-  assert.equal(autonomousDevPolicy.minimumIndependentReviews, 0);
+  assert.equal(autonomousDevPolicy.minimumReviews, 0);
   assert.equal(effectiveRequiredReviewCount(autonomousDevPolicy), 0);
-  assert.equal(independentReviewPolicySatisfied(autonomousDevPolicy, []), true);
+  assert.equal(reviewPolicySatisfied(autonomousDevPolicy, []), true);
 
   const reviewedInteractiveDevPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'interactive', devInteractiveProfile: 'reviewed' }),
     {
-      publication_review: { dev: { minimum_independent_reviews: 1 } },
+      publication_review: { dev: { minimum_reviews: 1 } },
     } satisfies Partial<RawProjectJson>,
   );
-  assert.equal(reviewedInteractiveDevPolicy.minimumIndependentReviews, 1);
+  assert.equal(reviewedInteractiveDevPolicy.minimumReviews, 1);
   assert.equal(effectiveRequiredReviewCount(reviewedInteractiveDevPolicy), 1);
 
   const configuredDevPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'autonomous' }),
     {
-      publication_review: { dev: { minimum_independent_reviews: 1 } },
+      publication_review: { dev: { minimum_reviews: 1 } },
     } satisfies Partial<RawProjectJson>,
   );
-  assert.equal(configuredDevPolicy.minimumIndependentReviews, 1);
+  assert.equal(configuredDevPolicy.minimumReviews, 1);
 
-  const crossRunnerPolicy = publicationReviewPolicyForRun(
+  const zeroMinimumPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'autonomous' }),
     {
-      publication_review: { dev: { minimum_independent_reviews: 0, require_cross_runner: true } },
+      publication_review: { dev: { minimum_reviews: 0 } },
     } satisfies Partial<RawProjectJson>,
   );
-  assert.equal(crossRunnerPolicy.minimumIndependentReviews, 1);
-  assert.equal(crossRunnerPolicy.requireCrossRunner, true);
+  assert.equal(zeroMinimumPolicy.minimumReviews, 0);
 
-  const extraLoopPolicy = publicationReviewPolicyForRun(
+  const requestedPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'autonomous' }),
     undefined,
-    { ...autonomousDevPolicy, extraLoopsRequested: 2, requestedBy: 'human-gate' },
+    { ...autonomousDevPolicy, minimumReviews: 2, requestedBy: 'human-gate' },
   );
-  assert.equal(effectiveRequiredReviewCount(extraLoopPolicy), 2);
+  assert.equal(effectiveRequiredReviewCount(requestedPolicy), 2);
 });
 
 test('inferRetrospectiveOutcome prefers persisted metrics outcome when present', () => {

@@ -2,13 +2,13 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { IndependentReviewStatus, ReviewDiffSnapshot, Run } from '@farmslot/protocol';
+import type { ReviewDiffSnapshot, ReviewStatus, Run } from '@farmslot/protocol';
 
 import { loadSlotVars, SlotConfigError } from '../core/config.js';
 import { verifiedReviewDiffHash } from '../core/review-diff-identity.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
-import { reviewSnapshotIdentityText } from '../self-review/snapshots.js';
-import { resolveWorkerTaskDir } from '../self-review/templates.js';
+import { reviewSnapshotIdentityText } from '../review/snapshots.js';
+import { resolveWorkerTaskDir } from '../review/templates.js';
 
 async function readSnapshotDiff(
   run: Run,
@@ -47,8 +47,8 @@ async function readSnapshotDiff(
 /** Preserve the historical artifacts; reconcile only the gate's snapshot identity. */
 export async function refreshReviewDiffIdentities(
   run: Run,
-  reviews: IndependentReviewStatus[],
-): Promise<IndependentReviewStatus[]> {
+  reviews: ReviewStatus[],
+): Promise<ReviewStatus[]> {
   return Promise.all(
     reviews.map(async (review) => {
       const snapshot = review.reviewSnapshot;

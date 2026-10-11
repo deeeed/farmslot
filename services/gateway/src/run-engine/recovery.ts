@@ -23,7 +23,7 @@ import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
-import { pendingIndependentReviewContinuation } from './gate-policy.js';
+import { pendingReviewContinuation } from './gate-policy.js';
 import {
   type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,
@@ -181,7 +181,7 @@ const STEP_TO_STATUS: Record<string, Run['status']> = {
   [S.PREPARE]: 'preparing',
   [S.DISPATCH]: 'dispatching',
   [S.MONITOR]: 'monitoring',
-  [S.SELF_REVIEW]: 'self-reviewing',
+  [S.REVIEW]: 'reviewing',
   [S.HUMAN_GATE]: 'human-gating',
   [S.FINALIZE]: 'completing',
   [S.COMPLETE]: 'completing',
@@ -244,17 +244,14 @@ export function isPublicationReviewRecoveryHeld(run: Run): boolean {
 }
 
 export function hasRecoverablePublicationReviewer(run: Run): boolean {
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
   return (run.agentContexts ?? []).some((context) =>
     reviewerContextNeedsRecovery(context, reviews, { includeFailed: true, includeBlocked: true }),
   );
 }
 
 export function hasPendingPublicationReviewContinuation(run: Run): boolean {
-  return (
-    pendingIndependentReviewContinuation(run.engineState?.publishGate?.independentReviews ?? []) !==
-    undefined
-  );
+  return pendingReviewContinuation(run.engineState?.publishGate?.reviews ?? []) !== undefined;
 }
 
 /**
@@ -384,9 +381,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     // context and skips this branch.
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
     if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
-      const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
+      const reviewSequence = run.engineState?.publishGate?.reviewSequence ?? [];
       const recoveredRun =
-        pendingReviewPlan.length > 0
+        reviewSequence.length > 0
           ? run
           : {
               ...run,
@@ -394,12 +391,12 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 ...run.engineState,
                 publishGate: {
                   ...run.engineState?.publishGate,
-                  pendingReviewPlan: recoveredFixPlan,
-                  pendingReviewPlanRequestedAt: new Date().toISOString(),
+                  reviewSequence: recoveredFixPlan,
+                  reviewSequenceRequestedAt: new Date().toISOString(),
                 },
               },
             };
-      if (pendingReviewPlan.length === 0) {
+      if (reviewSequence.length === 0) {
         deps.updateRun(run.id, { engineState: recoveredRun.engineState });
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — restored publication review plan for active fix pass`,

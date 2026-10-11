@@ -29,11 +29,21 @@ test('codex, grok, and pi parse structured catalogs and keep reasoning modes', (
     parseCodexModelCatalog({
       models: [
         {
+          model: null,
+          effort: null,
+          mode: 'cold' as const,
           slug: 'gpt-6-astra',
           visibility: 'list',
           supported_reasoning_levels: [{ effort: 'high' }, { effort: 'ultra' }],
         },
-        { slug: 'hidden-old', visibility: 'hide', supported_reasoning_levels: [] },
+        {
+          model: null,
+          effort: null,
+          mode: 'cold' as const,
+          slug: 'hidden-old',
+          visibility: 'hide',
+          supported_reasoning_levels: [],
+        },
       ],
     }),
     [
@@ -58,7 +68,15 @@ test('codex, grok, and pi parse structured catalogs and keep reasoning modes', (
   assert.deepEqual(
     parsePiModelCatalog({
       anthropic: {
-        models: [{ id: 'claude-fable-5', thinkingLevelMap: { off: null, high: { id: 'high' } } }],
+        models: [
+          {
+            model: null,
+            effort: null,
+            mode: 'cold' as const,
+            id: 'claude-fable-5',
+            thinkingLevelMap: { off: null, high: { id: 'high' } },
+          },
+        ],
       },
     }),
     [{ id: 'anthropic/claude-fable-5', reasoningModes: ['off', 'high'], listed: true }],

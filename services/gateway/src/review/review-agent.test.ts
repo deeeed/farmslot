@@ -1,0 +1,581 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import type { AgentContext } from '@farmslot/protocol';
+
+import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
+import { targetForChecklistBasename } from '../tasks/checklist-target.js';
+
+import {
+  prependReviewerExecutionContract,
+  reReviewChecklistPrefix,
+  resumeReviewAgentPromptDelivery,
+  reviewChecklistMarkPrompt,
+  reviewerChecklistBasename,
+  reviewerFeedbackRelPath,
+  scopeReviewFeedbackPath,
+  selectRecoverableReviewContext,
+  waitForRecoveredReviewerOrCleanup,
+} from './review-agent.js';
+import { TerminalReviewArtifactError } from './terminal-result.js';
+
+test('review recovery rejects in-place handoff for argv-first runners', () => {
+  const source = fs.readFileSync(
+    fileURLToPath(new URL('./review-agent.ts', import.meta.url)),
+    'utf8',
+  );
+  assert.match(source, /runnerRetainedSessionHandoff\(runner\) === 'argv-relaunch'/);
+  assert.match(
+    source,
+    /if \(runnerNeedsPostLaunchPrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(runnerSupportsInteractivePrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
+  );
+  assert.match(source, /abandonRecoveredReviewer\(`\$\{delivery\} recovered reviewer cleanup`\)/);
+});
+
+test('COLD creates a new conversation and unsupported WARM refuses', () => {
+  for (const runner of ['claude', 'codex', 'cursor'])
+    assert.deepEqual(retainedReviewerDeliveryPlan(runner, 'cold', 1), {
+      kind: 'cold-relaunch',
+      resetContext: false,
+    });
+  assert.deepEqual(retainedReviewerDeliveryPlan('codex', 'warm', 1), {
+    kind: 'in-place',
+    resetContext: false,
+  });
+  assert.throws(() => retainedReviewerDeliveryPlan('cursor', 'warm', 1), /WARM/);
+});
+
+test('restart recovery reclaims only the newest matching in-flight reviewer', () => {
+  const context = (id: string, status: AgentContext['status'], scope: string | null) =>
+    ({
+      id,
+      role: 'review',
+      label: id,
+      status,
+      slotId: 'slot-1',
+      runId: 'run-1',
+      runner: 'claude',
+      taskFile: `tasks/run-1/REVIEW.${id}.md`,
+      signalFile: `tasks/run-1/REVIEW.${id}-SIGNAL.json`,
+      artifactScope: scope,
+      target: { session: 'ff-1', window: id, pane: null, target: `ff-1:${id}` },
+    }) satisfies AgentContext;
+  const contexts = [
+    context('rev-claude', 'working', 'review-2'),
+    context('rev1-claude', 'complete', 'review-2'),
+    { ...context('rev2-claude', 'working', 'review-2'), reviewLoopNumber: 4 },
+  ];
+
+  const recovered = selectRecoverableReviewContext(contexts, {
+    taskDir: 'tasks/run-1',
+    runner: 'claude',
+    artifactScope: 'review-2',
+  });
+  assert.equal(recovered?.id, 'rev2-claude');
+  assert.equal(recovered?.reviewLoopNumber, 4);
+  assert.equal(
+    selectRecoverableReviewContext(contexts, {
+      taskDir: 'tasks/run-1',
+      runner: 'claude',
+      artifactScope: null,
+    }),
+    null,
+  );
+});
+
+test('re-review prefix is cold on loop 1 and includes worker output from loop 2', () => {
+  assert.equal(
+    reReviewChecklistPrefix({
+      taskDir: 'temp/tasks/foo',
+      loopNumber: 1,
+      currentHeadSha: 'abc',
+    }),
+    null,
+  );
+  const prefix = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/foo',
+    loopNumber: 2,
+    artifactScope: 'review-3',
+    priorHeadSha: 'aaa111',
+    currentHeadSha: 'bbb222',
+  });
+  assert.match(prefix ?? '', /aaa111\.\.bbb222/);
+  assert.match(prefix ?? '', /artifacts\/report\.md/);
+  assert.match(prefix ?? '', /REVIEW-FIX\.md/);
+  assert.match(prefix ?? '', /Review Fixes/);
+  assert.match(prefix ?? '', /subset fixed \+ documented refusals/);
+  assert.match(prefix ?? '', /Repeating the same/);
+  assert.match(prefix ?? '', /review-3\/review-loop-1/);
+  const resumed = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/foo',
+    loopNumber: 1,
+    resume: true,
+    priorArtifactScope: 'review-4',
+    priorLoopNumber: 1,
+    priorHeadSha: 'oldhead',
+    currentHeadSha: 'newhead',
+  });
+  assert.match(resumed ?? '', /review-4\/review-loop-1/);
+  assert.match(resumed ?? '', /do not re-state it as a new finding/i);
+});
+
+test('review agent instructions use context-scoped checklist, signal, and feedback files', () => {
+  const checklist = reviewerChecklistBasename('rev-codex-2');
+  const feedback = reviewerFeedbackRelPath('rev-codex-2');
+  const target = targetForChecklistBasename(checklist);
+
+  assert.equal(checklist, 'REVIEW.rev-codex-2.md');
+  assert.equal(target.signal, 'REVIEW.rev-codex-2-SIGNAL.json');
+  assert.equal(feedback, 'artifacts/review-feedback.rev-codex-2.md');
+
+  const prompt = reviewChecklistMarkPrompt(
+    'tasks/run-1',
+    `tasks/run-1/${checklist}`,
+    target,
+    feedback,
+  );
+
+  assert.match(prompt, /--checklist REVIEW\.rev-codex-2\.md/);
+  assert.match(prompt, /--signal REVIEW\.rev-codex-2-SIGNAL\.json/);
+  assert.match(prompt, /tasks\/run-1\/artifacts\/review-feedback\.rev-codex-2\.md/);
+
+  const checklistWithContract = prependReviewerExecutionContract('Review the diff.', prompt);
+  assert.match(checklistWithContract, /^## Reviewer-specific execution contract/);
+  assert.match(checklistWithContract, /--signal REVIEW\.rev-codex-2-SIGNAL\.json/);
+  assert.match(checklistWithContract, /\n\nReview the diff\.$/);
+});
+
+test('review agent scopes legacy template feedback paths to the reviewer context', () => {
+  const scoped = scopeReviewFeedbackPath(
+    'Write tasks/run-1/artifacts/review-feedback.md, include review-feedback.md in evidence, but leave docs/review-feedback.md alone.',
+    reviewerFeedbackRelPath('rev-claude'),
+  );
+
+  assert.equal(
+    scoped,
+    'Write tasks/run-1/artifacts/review-feedback.rev-claude.md, include artifacts/review-feedback.rev-claude.md in evidence, but leave docs/review-feedback.md alone.',
+  );
+});
+
+test('review agent appends scoped feedback path when template omits legacy path', () => {
+  const scoped = scopeReviewFeedbackPath('Review the diff.', reviewerFeedbackRelPath('rev-codex'));
+
+  assert.equal(
+    scoped,
+    'Review the diff.\n\nWrite reviewer feedback to artifacts/review-feedback.rev-codex.md.',
+  );
+});
+
+test('review agent does not rewrite a similarly named artifact directory', () => {
+  const scoped = scopeReviewFeedbackPath(
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.md, now.',
+    reviewerFeedbackRelPath('rev-codex'),
+  );
+
+  assert.equal(
+    scoped,
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.rev-codex.md, now.',
+  );
+});
+
+test('review prompt recovery retires an argv-first reviewer without tmux input', async () => {
+  const vars = {
+    projectName: 'farmslot-farm',
+  } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
+  let retiredWindow = '';
+  const outcome = await resumeReviewAgentPromptDelivery(
+    vars,
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+      resolveWorkerDispatchPrompt: async () => {
+        throw new Error('unsupported retained handoff must not build an in-place prompt');
+      },
+      resolveProjectRuntimeDir: async () => {
+        throw new Error('unsupported retained handoff must not resolve runtime state');
+      },
+      sendRunnerPostLaunchPrompt: async () => {
+        throw new Error('unsupported retained handoff must not send tmux input');
+      },
+    },
+  );
+
+  assert.equal(outcome, 'retired');
+  assert.equal(retiredWindow, '@123');
+});
+
+test('review prompt recovery resolves and retires a pane-only reviewer window', async () => {
+  let retiredWindow = '';
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: '', window: null, pane: '%151', target: '%151' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@124',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'retired');
+  assert.equal(retiredWindow, '@124');
+});
+
+test('review prompt recovery retires only the exact probed legacy reviewer window', async () => {
+  let resolvedPane = '';
+  let retiredWindow = '';
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: {
+        session: 'mm-4',
+        window: null,
+        pane: null,
+        target: 'mm-4:rev-cursor',
+      },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async (_vars, paneId) => {
+        resolvedPane = paneId;
+        return { windowId: '@125', session: 'mm-4', window: 'rev-cursor' };
+      },
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'retired');
+  assert.equal(resolvedPane, '%151');
+  assert.equal(retiredWindow, '@125');
+});
+
+test('review prompt recovery preserves ambiguous named reviewer windows', async () => {
+  let inspectedPane = false;
+  const window = (windowId: string) => ({
+    windowId,
+    windowIndex: Number(windowId.slice(1)),
+    windowName: 'rev-cursor',
+    activityAt: 1,
+    paneId: `%${windowId.slice(1)}`,
+    panePid: '59361',
+  });
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: {
+        session: 'mm-4',
+        window: null,
+        pane: null,
+        target: 'mm-4:rev-cursor',
+      },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [window('@1'), window('@2')],
+      resolveExactTmuxWindowPane: async () => {
+        inspectedPane = true;
+        return { paneId: '%1', panePid: '59361' };
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(inspectedPane, false);
+});
+
+test('review prompt recovery preserves a split argv-first reviewer window', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 2,
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
+});
+
+test('review prompt recovery preserves a reused reviewer window id', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'other-session',
+        window: 'rev-cursor',
+      }),
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
+});
+
+test('review prompt recovery preserves an argv-first reviewer when liveness is unknown', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({
+        state: 'unknown',
+        code: 'probe-timeout',
+        reason: 'probe timed out',
+      }),
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
+});
+
+test('review prompt recovery stays unsupported for non-interactive runners', async () => {
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-scripted',
+      runner: 'scripted',
+      taskFile: 'tasks/run-1/REVIEW.rev-scripted.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-scripted-SIGNAL.json',
+      target: { session: 'ff-1', window: 'rev-scripted', pane: null, target: 'ff-1:rev-scripted' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => {
+        throw new Error('must not inspect tmux for unsupported runners');
+      },
+      probeRunnerDescendantPid: async () => {
+        throw new Error('must not inspect tmux for unsupported runners');
+      },
+      resolveWorkerDispatchPrompt: async () => {
+        throw new Error('must not build a prompt for unsupported runners');
+      },
+      resolveProjectRuntimeDir: async () => {
+        throw new Error('must not resolve runtime for unsupported runners');
+      },
+      sendRunnerPostLaunchPrompt: async () => {
+        throw new Error('must not send a prompt for unsupported runners');
+      },
+    },
+  );
+
+  assert.equal(outcome, 'unsupported');
+});
+
+test('review prompt recovery reuses the exact live reviewer pane', async () => {
+  const vars = {
+    projectName: 'farmslot-farm',
+  } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
+  let sentPane = '';
+  let sentPrompt = '';
+
+  const outcome = await resumeReviewAgentPromptDelivery(
+    vars,
+    'missing-run',
+    {
+      id: 'rev-claude',
+      runner: 'claude',
+      taskFile: 'tasks/run-1/REVIEW.rev-claude.md',
+      signalFile: 'tasks/run-1/REVIEW.rev-claude-SIGNAL.json',
+      target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
+      attemptStartedAt: '2026-08-03T16:00:00.000Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@22',
+          windowIndex: 1,
+          windowName: 'rev-claude',
+          activityAt: 1,
+          paneId: '%22',
+          panePid: '2002',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
+      resolveWorkerDispatchPrompt: async () =>
+        'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
+      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
+      sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
+        sentPane = paneId;
+        sentPrompt = prompt;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'delivered');
+  assert.equal(sentPane, '%22');
+  assert.match(sentPrompt, /REVIEW\.rev-claude\.md/);
+  assert.doesNotMatch(sentPrompt, /review-feedback\.rev-claude\.md/);
+  assert.doesNotMatch(sentPrompt, /SIGNAL\.json complete/);
+});
+
+test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {
+  const cleanupReasons: Array<{ reason: string; status?: 'failed' | 'blocked' }> = [];
+  const recordCleanup = async (reason: string, status?: 'failed' | 'blocked') => {
+    cleanupReasons.push(status ? { reason, status } : { reason });
+  };
+  const completed = await waitForRecoveredReviewerOrCleanup(async () => false, recordCleanup);
+
+  assert.equal(completed, false);
+  assert.deepEqual(cleanupReasons, [{ reason: 'recovered reviewer timeout' }]);
+
+  await assert.rejects(
+    waitForRecoveredReviewerOrCleanup(async () => {
+      throw new TerminalReviewArtifactError('invalid result');
+    }, recordCleanup),
+    TerminalReviewArtifactError,
+  );
+  assert.deepEqual(cleanupReasons.at(-1), {
+    reason: 'invalid recovered reviewer artifact cleanup',
+    status: 'blocked',
+  });
+});
+
+test('continuing base review uses its unscoped artifacts', () => {
+  const prefix = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/task',
+    loopNumber: 1,
+    artifactScope: 'review-2',
+    priorArtifactScope: null,
+    priorLoopNumber: 1,
+    priorHeadSha: 'prior',
+    currentHeadSha: 'current',
+    resume: true,
+  });
+  assert.ok(prefix);
+  assert.match(prefix, /temp\/tasks\/task\/artifacts\/pipeline-review-loop-1/);
+  assert.doesNotMatch(prefix, /artifacts\/review-2/);
+});

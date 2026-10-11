@@ -26,7 +26,7 @@ export interface FlowGraphNode {
   description?: string;
   skipped?: boolean;
   annotation?: string;
-  /** Override template file shown in detail panel (e.g., 'self-review.md') */
+  /** Override template file shown in detail panel (e.g., 'review.md') */
   templateFile?: string;
   /** Who executes this step */
   executor?: Executor;
@@ -89,9 +89,9 @@ interface StepMeta {
 
 const S = PipelineSteps;
 
-// ─── Self-review sub-graph ───
+// ─── Review sub-graph ───
 
-function renderSelfReview(
+function renderReview(
   mode: FlowMode,
   nextId: string,
 ): { nodes: FlowGraphNode[]; edges: FlowGraphEdge[] } {
@@ -105,7 +105,7 @@ function renderSelfReview(
       executor: 'reviewer',
       description:
         'Run the reviewer in its runner-owned tmux window on the same slot. Reviews the PR diff, reads code, runs checks, and can execute the recipe.',
-      templateFile: 'self-review.md',
+      templateFile: 'review.md',
     },
     {
       id: 'sr-verdict',
@@ -122,7 +122,7 @@ function renderSelfReview(
       lane: 'worker',
       executor: 'gateway',
       description: 'Gateway sends review-feedback.md to the worker via tmux send-keys.',
-      templateFile: 'self-review-fix.md',
+      templateFile: 'review-fix.md',
     },
     {
       id: 'sr-fix',
@@ -131,7 +131,7 @@ function renderSelfReview(
       lane: 'worker',
       executor: 'worker',
       description: 'Worker addresses review feedback. Gateway polls SIGNAL.json for completion.',
-      templateFile: 'self-review-fix.md',
+      templateFile: 'review-fix.md',
     },
     {
       id: 'sr-recheck',
@@ -274,12 +274,12 @@ const STEP_META: Record<string, StepMeta> = {
     executor: 'worker',
   },
 
-  [S.SELF_REVIEW]: {
+  [S.REVIEW]: {
     lane: 'worker',
-    label: 'Self Review',
+    label: 'Review',
     description: 'Automated review + feedback + fix cycle.',
     entryId: 'sr-review',
-    render: renderSelfReview,
+    render: renderReview,
   },
 
   [S.COMPLETE]: {
@@ -291,22 +291,22 @@ const STEP_META: Record<string, StepMeta> = {
     after: (_mode, stepId, nextId) => ({
       nodes: [
         {
-          id: 'independent-review',
+          id: 'publication-review',
           kind: 'decision',
           label: 'Review ready?',
           lane: 'post',
           executor: 'reviewer',
           description:
-            'Default one independent review must pass; gate can request more independent reviews (optionally with runner diversity) before publication.',
+            'One review must pass by default. The gate can request more separate-session reviews before publication.',
         },
       ],
       edges: [
-        { from: stepId, to: 'independent-review', style: 'normal' },
-        { from: 'independent-review', to: nextId, label: 'policy satisfied', style: 'normal' },
+        { from: stepId, to: 'publication-review', style: 'normal' },
+        { from: 'publication-review', to: nextId, label: 'policy satisfied', style: 'normal' },
         {
-          from: 'independent-review',
-          to: 'independent-review',
-          label: 'independent review requested',
+          from: 'publication-review',
+          to: 'publication-review',
+          label: 'review requested',
           style: 'loop',
         },
       ],
@@ -444,7 +444,7 @@ export function buildFlowGraph(flowType: FlowType, mode: FlowMode): FlowGraph {
 
     // --- Render step ---
     if (meta?.render) {
-      // Complex step: render provides all nodes/edges (e.g., self-review sub-graph)
+      // Complex step: render provides all nodes/edges (e.g., review sub-graph)
       const result = meta.render(mode, nextEntryId ?? 'done');
       nodes.push(...result.nodes);
       edges.push(...result.edges);

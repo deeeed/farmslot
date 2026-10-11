@@ -17,8 +17,8 @@ export const SUBTASK_INDEX_FILE = 'index.json';
 /** A child unit id: a slug, unique for the life of one task directory. */
 export const SUBTASK_ID_PATTERN = /^[a-z0-9-]+$/;
 
-export const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
-export const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
+export const REVIEW_CHECKLIST = 'REVIEW.md';
+export const REVIEW_FIX_CHECKLIST = 'REVIEW-FIX.md';
 export const CI_FIX_CHECKLIST = 'CI-FIX.md';
 
 /**
@@ -151,7 +151,7 @@ export interface ChecklistTarget {
   signal: string;
 }
 
-export type NestedLoopAgentRole = Extract<AgentRole, 'self-review' | 'self-review-fix' | 'ci-fix'>;
+export type NestedLoopAgentRole = Extract<AgentRole, 'review' | 'review-fix' | 'ci-fix'>;
 
 export interface ChecklistTargetRegistry {
   manifest: string;
@@ -242,14 +242,13 @@ export function terminalContractInputForChecklist(checklistBasename: string): st
   return `inputs/worker-terminal-contract.${base}.json`;
 }
 
-export const SELF_REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_CHECKLIST);
-export const SELF_REVIEW_FIX_CHECKLIST_TARGET =
-  targetForChecklistBasename(SELF_REVIEW_FIX_CHECKLIST);
+export const REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(REVIEW_CHECKLIST);
+export const REVIEW_FIX_CHECKLIST_TARGET = targetForChecklistBasename(REVIEW_FIX_CHECKLIST);
 export const CI_FIX_CHECKLIST_TARGET = targetForChecklistBasename(CI_FIX_CHECKLIST);
 
 export const CHECKLIST_TARGET_BY_AGENT_ROLE: Record<NestedLoopAgentRole, ChecklistTarget> = {
-  'self-review': SELF_REVIEW_CHECKLIST_TARGET,
-  'self-review-fix': SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  review: REVIEW_CHECKLIST_TARGET,
+  'review-fix': REVIEW_FIX_CHECKLIST_TARGET,
   'ci-fix': CI_FIX_CHECKLIST_TARGET,
 };
 
@@ -348,18 +347,18 @@ export function shouldAcceptTaskProgressUpdate(
   return contextId === expectedRole;
 }
 
-export type PipelineProgressStep = 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null;
+export type PipelineProgressStep = 'monitor' | 'review' | 'ci-watch' | 'human-gate' | null;
 
 export function nestedLoopProgressLabel(
   activeStep: PipelineProgressStep,
   activeTaskBasename: string | null | undefined,
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): string {
-  if (activeStep === 'self-review' || activeStep === 'human-gate') {
+  if (activeStep === 'review' || activeStep === 'human-gate') {
     const role = agentRoleForChecklistBasename(activeTaskBasename ?? '', registry);
-    if (role === 'self-review-fix') return 'Self-review Fix Progress';
-    if (activeStep === 'human-gate') return 'Independent Review Progress';
-    return 'Self-review Progress';
+    if (role === 'review-fix') return 'Review Fix Progress';
+    if (activeStep === 'human-gate') return 'Review Progress';
+    return 'Review Progress';
   }
   if (activeStep === 'ci-watch') return 'CI Fix Progress';
   return 'Worker Progress';

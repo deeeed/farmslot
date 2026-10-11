@@ -40,7 +40,7 @@ test('concurrent enrollment is idempotent and duplicate adds cannot upgrade poli
         mode: 'automatic-repair',
         execution: {
           slotPolicy: { kind: 'exact', slotId: 'slot-a' },
-          models: [{ runner: 'runner', model: 'model' }],
+          models: [{ effort: null, mode: 'cold' as const, runner: 'runner', model: 'model' }],
         },
       },
     },

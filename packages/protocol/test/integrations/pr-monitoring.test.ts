@@ -23,8 +23,14 @@ import { assertPRTriggerRuleConfig } from '../../src/integrations/pr-rule-config
 const profile: PRExecutionProfile = {
   slotPolicy: { kind: 'pool', allowedSlots: ['slot-a', 'slot-b'] },
   models: [
-    { runner: 'runner-a', model: 'model-a', effort: 'high', allowedSlots: ['slot-a'] },
-    { runner: 'runner-b', model: 'model-b', effort: 'medium' },
+    {
+      mode: 'cold',
+      runner: 'runner-a',
+      model: 'model-a',
+      effort: 'high',
+      allowedSlots: ['slot-a'],
+    },
+    { mode: 'cold', runner: 'runner-b', model: 'model-b', effort: 'medium' },
   ],
 };
 
@@ -44,16 +50,22 @@ test('PR identities distinguish hosts and repositories while normalizing case', 
 const workspaceProfile: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['node-a', 'node-b'] },
   models: [
-    { runner: 'runner-a', model: 'model-a', effort: 'high', allowedMachines: ['node-b'] },
-    { runner: 'runner-b', model: 'model-b' },
+    {
+      mode: 'cold',
+      runner: 'runner-a',
+      model: 'model-a',
+      effort: 'high',
+      allowedMachines: ['node-b'],
+    },
+    { effort: null, mode: 'cold', runner: 'runner-b', model: 'model-b' },
   ],
 };
 
 test('workspace choices preserve machine and model preferences without slot placeholders', () => {
   assert.deepEqual(prExecutionChoices(workspaceProfile), [
-    { machine: 'node-b', runner: 'runner-a', model: 'model-a', effort: 'high' },
-    { machine: 'node-a', runner: 'runner-b', model: 'model-b', effort: undefined },
-    { machine: 'node-b', runner: 'runner-b', model: 'model-b', effort: undefined },
+    { mode: 'cold', machine: 'node-b', runner: 'runner-a', model: 'model-a', effort: 'high' },
+    { mode: 'cold', machine: 'node-a', runner: 'runner-b', model: 'model-b', effort: null },
+    { mode: 'cold', machine: 'node-b', runner: 'runner-b', model: 'model-b', effort: null },
   ]);
   assert.ok(isPRWorkspaceExecutionProfile(workspaceProfile));
   assert.ok(!isPRWorkspaceExecutionProfile(profile));
@@ -70,10 +82,10 @@ test('workspace choices preserve machine and model preferences without slot plac
 test('workspace intersections constrain exact/pool machines, runner, model and effort', () => {
   const exact: PRWorkspaceExecutionProfile = {
     workspacePolicy: { kind: 'exact', machine: 'node-b' },
-    models: [{ runner: 'runner-a', model: 'model-a', effort: 'high' }],
+    models: [{ mode: 'cold', runner: 'runner-a', model: 'model-a', effort: 'high' }],
   };
   assert.deepEqual(intersectPRExecutionProfiles([workspaceProfile, exact]), [
-    { machine: 'node-b', runner: 'runner-a', model: 'model-a', effort: 'high' },
+    { mode: 'cold', machine: 'node-b', runner: 'runner-a', model: 'model-a', effort: 'high' },
   ]);
   assert.deepEqual(
     intersectPRExecutionProfiles([
@@ -82,7 +94,7 @@ test('workspace intersections constrain exact/pool machines, runner, model and e
     ]),
     [],
   );
-  for (const changed of [{ runner: 'other' }, { model: 'other' }, { effort: undefined }]) {
+  for (const changed of [{ runner: 'other' }, { model: 'other' }, { effort: null }]) {
     assert.deepEqual(
       intersectPRExecutionProfiles([
         workspaceProfile,
@@ -121,7 +133,9 @@ test('execution policies reject mixed target authority and invalid machine const
     assert.throws(() =>
       assertPRExecutionProfile({
         ...workspaceProfile,
-        models: [{ runner: 'runner-a', model: 'model-a', allowedMachines }],
+        models: [
+          { effort: null, mode: 'cold', runner: 'runner-a', model: 'model-a', allowedMachines },
+        ],
       }),
     );
   }
@@ -166,12 +180,13 @@ test('workspace transport and native profile remain explicit intersected authori
   };
   const native: PRWorkspaceExecutionProfile = {
     workspacePolicy: { kind: 'exact', machine: 'node-b' },
-    models: [{ runner: 'runner-a', model: 'model-a', effort: 'high' }],
+    models: [{ mode: 'cold', runner: 'runner-a', model: 'model-a', effort: 'high' }],
     transport: 'native',
     nativeProfile,
   };
   assert.deepEqual(prExecutionChoices(native), [
     {
+      mode: 'cold',
       machine: 'node-b',
       runner: 'runner-a',
       model: 'model-a',
@@ -213,10 +228,10 @@ test('workspace transport and native profile remain explicit intersected authori
 test('execution intersections preserve preference and cannot expand slot/model/effort authority', () => {
   const other: PRExecutionProfile = {
     slotPolicy: { kind: 'exact', slotId: 'slot-b' },
-    models: [{ runner: 'runner-b', model: 'model-b', effort: 'medium' }],
+    models: [{ mode: 'cold', runner: 'runner-b', model: 'model-b', effort: 'medium' }],
   };
   assert.deepEqual(intersectPRExecutionProfiles([profile, other]), [
-    { slotId: 'slot-b', runner: 'runner-b', model: 'model-b', effort: 'medium' },
+    { mode: 'cold', slotId: 'slot-b', runner: 'runner-b', model: 'model-b', effort: 'medium' },
   ]);
   assert.deepEqual(
     intersectPRExecutionProfiles([
@@ -233,7 +248,15 @@ test('execution intersections preserve preference and cannot expand slot/model/e
     () =>
       assertPRExecutionProfile({
         ...profile,
-        models: [{ runner: 'runner-a', model: 'model-a', allowedSlots: ['unlisted'] }],
+        models: [
+          {
+            effort: null,
+            mode: 'cold',
+            runner: 'runner-a',
+            model: 'model-a',
+            allowedSlots: ['unlisted'],
+          },
+        ],
       }),
     /within/,
   );
@@ -345,7 +368,7 @@ test('portable workspace pools bind only configured registry machines and retain
       {
         ...portable,
         workspacePolicy: { kind: 'exact', machine: 'unregistered' },
-        models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+        models: [{ effort: null, mode: 'cold', runner: 'codex', model: 'gpt-6-astra' }],
       },
     ]),
     [],

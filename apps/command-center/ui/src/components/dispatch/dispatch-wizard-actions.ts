@@ -5,8 +5,9 @@ import type {
   PressureAdmissionReference,
   PressureDispatchOverride,
   QaInput,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   RunCreateResult,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
@@ -49,8 +50,11 @@ export interface DispatchPayloadDraftInput {
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   reviewTier?: '' | 'light' | 'standard' | 'full';
-  reviewDepth?: ReviewDepthPolicy;
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewPolicy?: ReviewPolicy;
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
+  reviewMode?: import('@farmslot/protocol').ReviewMode;
   pressureAdmissionRef?: PressureAdmissionReference;
   pressureOverride?: PressureDispatchOverride;
   comparison: Partial<ComparisonRunParams>;
@@ -100,9 +104,11 @@ export function buildDispatchWizardPayloadDraft(
     reviewTier: input.reviewTier || undefined,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewScope: input.flowType === 'review-pr' ? 'full' : undefined,
-    reviewDepth: input.reviewDepth,
-    pendingReviewPlan: input.pendingReviewPlan,
+    reviewMode: input.reviewMode,
+    reviewPolicy: input.reviewPolicy,
+    reviewSequence: input.reviewSequence,
+    reviewContext: input.reviewContext,
+    reviewSequenceContext: input.reviewSequenceContext,
     pressureAdmissionRef: workspace ? undefined : input.pressureAdmissionRef,
     pressureOverride: workspace ? undefined : input.pressureOverride,
     comparison: input.comparison,

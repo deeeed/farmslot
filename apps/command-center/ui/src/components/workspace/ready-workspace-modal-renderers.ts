@@ -1,32 +1,16 @@
 import { html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import type {
-  ArtifactRef,
-  IndependentReviewStatus,
-  ReviewLoopRequest,
-  ReviewSessionIntent,
-} from '@farmslot/protocol';
+import type { ArtifactRef, ReviewStatus } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import '../shared/runner-model-effort-picker.js';
+import '../shared/review-dispatch-picker.js';
 
 import { reviewHasPendingContinuationPhases } from '../../utils/review-gate-display.js';
-import type { EffortLevel } from '../../utils/runner-options.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
-import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
-
-export type ReviewRunnerChoice = ReviewLoopRequest['runner'];
-
-export interface ReviewLoopDraft {
-  id: number;
-  runner: ReviewRunnerChoice | '';
-  model?: string;
-  effort?: EffortLevel;
-  sessionIntent: ReviewSessionIntent;
-}
 
 export interface ReadyInputArtifactViewerContext {
   open: boolean;
@@ -67,144 +51,57 @@ export function renderReadyInputArtifactViewer(ctx: ReadyInputArtifactViewerCont
 
 export interface ReadyReviewRequestModalContext {
   open: boolean;
-  loops: ReviewLoopDraft[];
-  currentRunner: ReviewRunnerChoice;
+  viewModel: ReviewDispatchViewModel;
   acting: boolean;
-  runnerLabel: (runner: string) => string;
   close: () => void;
-  addLoop: () => void;
-  removeLoop: (id: number) => void;
-  setRunner: (id: number, runner: ReviewRunnerChoice) => void;
-  setModelEffort: (id: number, model: string, effort: EffortLevel) => void;
-  setSessionIntent: (id: number, sessionIntent: ReviewSessionIntent) => void;
+  changed: () => void;
   submit: () => void | Promise<void>;
 }
 
 export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContext) {
   if (!ctx.open) return nothing;
-  return html`
-    <div
-      class="rdy-modal-backdrop"
-      @click=${(event: Event) => {
-        if (event.target === event.currentTarget) ctx.close();
-      }}
-    >
-      <div
-        class="rdy-review-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Request independent review"
-      >
-        <div class="rdy-review-modal-head">
-          <div>
-            <div class="rdy-review-modal-eyebrow">Independent review</div>
-            <h3>Build review sequence</h3>
-            <p>
-              Each row runs after the previous row passes. Choose runner, model, and effort, then
-              whether that runner continues its same-run context or starts clean.
-            </p>
-          </div>
-          <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
+  return html`<div
+    class="rdy-modal-backdrop"
+    @click=${(event: Event) => {
+      if (event.target === event.currentTarget) ctx.close();
+    }}
+  >
+    <div class="rdy-review-modal" role="dialog" aria-modal="true" aria-label="Request review">
+      <div class="rdy-review-modal-head">
+        <div>
+          <div class="rdy-review-modal-eyebrow">Review</div>
+          <h3>Build review sequence</h3>
+          <p>
+            Each review runs in a separate session. WARM reuses this PR's retained reviewer; COLD
+            starts a fresh whole-PR review.
+          </p>
         </div>
-        <div class="rdy-review-sequence">
-          ${ctx.loops.map((loop, index) => {
-            const selectedRunner = loop.runner || ctx.currentRunner;
-            return html`
-              <div class="rdy-review-loop">
-                <div class="rdy-review-loop-row">
-                  <span class="rdy-review-loop-index">${index + 1}</span>
-                  <div class="rdy-review-runner-picker" aria-label="Review runner">
-                    ${(
-                      [ctx.currentRunner, 'claude', 'codex', 'cursor', 'grok', 'pi'].filter(
-                        (runner, runnerIndex, runners) =>
-                          runner && runners.indexOf(runner) === runnerIndex,
-                      ) as ReviewRunnerChoice[]
-                    ).map(
-                      (runner) => html`
-                        <button
-                          class="rdy-runner-chip ${selectedRunner === runner ? 'active' : ''}"
-                          @click=${() => ctx.setRunner(loop.id, runner)}
-                          aria-pressed=${selectedRunner === runner ? 'true' : 'false'}
-                        >
-                          ${ctx.runnerLabel(runner)}
-                        </button>
-                      `,
-                    )}
-                  </div>
-                  <span
-                    class="rdy-review-loop-kind"
-                    data-testid="ready-review-static"
-                    title="Static source inspection: no build, no tests, no app runtime. Run QA separately for runtime validation."
-                    >Static</span
-                  >
-                  <div class="rdy-review-session-picker" aria-label="Reviewer session">
-                    ${(['resume', 'reset'] as ReviewSessionIntent[]).map(
-                      (candidate) => html`
-                        <button
-                          class="rdy-runner-chip ${loop.sessionIntent === candidate
-                            ? 'active'
-                            : ''}"
-                          title=${candidate === 'resume'
-                            ? "Continue this runner's same-run review context; start fresh if it cannot be resumed."
-                            : 'Reset reviewer reasoning and start clean in the same runner window.'}
-                          @click=${() => ctx.setSessionIntent(loop.id, candidate)}
-                          aria-pressed=${loop.sessionIntent === candidate ? 'true' : 'false'}
-                        >
-                          ${candidate === 'resume' ? 'Warm recheck' : 'Fresh review'}
-                        </button>
-                      `,
-                    )}
-                  </div>
-                  <span class="rdy-review-loop-kind"
-                    >${selectedRunner === ctx.currentRunner
-                      ? 'worker runner'
-                      : 'runner diversity'}</span
-                  >
-                  <button
-                    class="rdy-modal-close"
-                    ?disabled=${ctx.loops.length <= 1}
-                    @click=${() => ctx.removeLoop(loop.id)}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <div class="rdy-review-loop-runtime">
-                  <runner-model-effort-picker
-                    .runner=${selectedRunner}
-                    .model=${loop.model ?? ''}
-                    .effort=${loop.effort ?? ''}
-                    .showRunner=${false}
-                    .showDefaultEffort=${false}
-                    @runner-model-effort-change=${(
-                      event: CustomEvent<RunnerModelEffortChangeDetail>,
-                    ) => ctx.setModelEffort(loop.id, event.detail.model, event.detail.effort)}
-                  ></runner-model-effort-picker>
-                </div>
-              </div>
-            `;
-          })}
-          <button
-            class="rdy-add-review-loop"
-            ?disabled=${ctx.loops.length >= 5}
-            @click=${ctx.addLoop}
-          >
-            + Add next review loop
-          </button>
-        </div>
-        <div class="rdy-review-modal-actions">
-          <button class="rdy-btn rdy-btn-secondary" @click=${ctx.close}>Cancel</button>
-          <button class="rdy-btn rdy-btn-primary" ?disabled=${ctx.acting} @click=${ctx.submit}>
-            Request ${ctx.loops.length} Review${ctx.loops.length === 1 ? '' : 's'}
-          </button>
-        </div>
+        <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
+      </div>
+      <review-dispatch-picker
+        .viewModel=${ctx.viewModel}
+        .review=${true}
+        .disabled=${ctx.acting}
+        @review-dispatch-change=${ctx.changed}
+        @review-dispatch-status-change=${ctx.changed}
+      ></review-dispatch-picker>
+      <div class="rdy-review-modal-actions">
+        <button class="rdy-btn rdy-btn-secondary" @click=${ctx.close}>Cancel</button>
+        <button
+          class="rdy-btn rdy-btn-primary"
+          ?disabled=${ctx.acting || !ctx.viewModel.canInvoke('request-review')}
+          @click=${ctx.submit}
+        >
+          Request ${ctx.viewModel.rows.length} Review${ctx.viewModel.rows.length === 1 ? '' : 's'}
+        </button>
       </div>
     </div>
-  `;
+  </div>`;
 }
 
 export interface ReadyReviewFlowModalContext {
   open: boolean;
-  reviews: IndependentReviewStatus[];
+  reviews: ReviewStatus[];
   passingReviews: number;
   unresolvedFindings: number;
   staleIgnoredReviews: number;
@@ -213,7 +110,7 @@ export interface ReadyReviewFlowModalContext {
   activeReviewIds: ReadonlySet<string>;
   view: 'chronological' | 'reviewer';
   selected: 'overall' | string;
-  selfReviewSummary?: string;
+  reviewSummary?: string;
   artifactUrl: (artifact: ArtifactRef) => string;
   close: () => void;
   setView: (view: 'chronological' | 'reviewer') => void;
@@ -239,12 +136,12 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
           key,
           runner: review.runner ?? 'Unknown runner',
           model: review.model ?? 'default',
-          reviews: [] as IndependentReviewStatus[],
+          reviews: [] as ReviewStatus[],
         };
         group.reviews.push(review);
         groups.set(key, group);
         return groups;
-      }, new Map<string, { key: string; runner: string; model: string; reviews: IndependentReviewStatus[] }>())
+      }, new Map<string, { key: string; runner: string; model: string; reviews: ReviewStatus[] }>())
       .values(),
   );
   const selectedReviews =
@@ -358,10 +255,10 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
               @review-diff-open=${(event: CustomEvent<ReviewLoopArtifactOpenDetail>) =>
                 ctx.openReviewDiff(event.detail)}
             ></review-loop-timeline>
-            ${ctx.view === 'chronological' && ctx.selfReviewSummary
+            ${ctx.view === 'chronological' && ctx.reviewSummary
               ? html`<section class="rdy-review-flow-fix-summary">
                   <strong>Worker fix summary</strong>
-                  <p>${ctx.selfReviewSummary}</p>
+                  <p>${ctx.reviewSummary}</p>
                 </section>`
               : nothing}
           </main>

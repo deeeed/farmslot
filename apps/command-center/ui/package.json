@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",
     "@types/qrcode": "^1.5.6",
     "@xterm/addon-fit": "^0.11.0",

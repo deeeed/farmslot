@@ -5,7 +5,6 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  assertStaticReviewLoopRequests,
   type AssessmentRecord,
   captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
@@ -16,7 +15,6 @@ import {
   failedRunCancelEffects,
   failureTriageCause,
   FLOW_STEPS,
-  type IndependentReviewStatus,
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
   isAllowedRunDecisionAction,
@@ -38,6 +36,7 @@ import {
   resolvePRWorkflowDefaults,
   ReviewQaConfigurationError,
   type ReviewQaDispatchSelection,
+  type ReviewStatus,
   type Run,
   type RunCreateParams,
   type RunCreateResult,
@@ -51,6 +50,7 @@ import {
   type RunResolveDecisionResult,
   type SafetyTier,
 } from '@farmslot/protocol';
+import { assertReviewRequestPayload, assertReviewSequence } from '@farmslot/review-dispatch';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
@@ -71,7 +71,6 @@ import { readTriagePolicy } from '../intelligence/triage/policy.js';
 import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
-import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
 import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   assertReviewWorkspaceAdmitted,
@@ -120,7 +119,11 @@ import {
   normalizeExhaustedReviewContinuationsForRun,
   projectExhaustedReviewContinuationsForRun,
 } from '../run-engine/recover-inflight-reviews.js';
-import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
+import { assertReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
+import {
+  assertPrimaryReviewContext,
+  assertWarmReviewRequestAvailable,
+} from '../run-engine/review-plan.js';
 import {
   persistMonitorWindowStart,
   probeWorkerSignalForRun,
@@ -382,7 +385,8 @@ export async function runCreate(
     throw new Error('Publication authority cannot be supplied in run parameters');
   if ('qaAfterReview' in params)
     throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
-  assertStaticReviewLoopRequests(params.pendingReviewPlan);
+  if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  assertPrimaryReviewContext(params);
 
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
@@ -681,11 +685,6 @@ export async function runCreate(
     throw new Error('nudgeReuse and freshReuse are mutually exclusive — pick one mode');
   }
 
-  params.reviewDepth = normalizeReviewDepthForRunCreate(
-    params.reviewDepth,
-    params.pendingReviewPlan?.length ?? 0,
-  );
-
   const createParams = {
     ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
     ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
@@ -897,7 +896,7 @@ async function markInteractiveDevDoneWithoutPr(
   const reason = params.reason?.trim() || 'operator marked interactive dev done without PR';
   completeStepAsOperator(run.id, 'monitor', reason, { operatorAction: params.action, reason });
   if (handoff) {
-    for (const stepName of ['self-review', 'human-gate', 'finalize', 'ci-watch']) {
+    for (const stepName of ['review', 'human-gate', 'finalize', 'ci-watch']) {
       completeStepAsOperator(run.id, stepName, reason, {
         operatorAction: params.action,
         reason,
@@ -906,7 +905,7 @@ async function markInteractiveDevDoneWithoutPr(
       });
     }
   } else {
-    for (const stepName of ['self-review', 'human-gate', 'finalize', 'ci-watch']) {
+    for (const stepName of ['review', 'human-gate', 'finalize', 'ci-watch']) {
       skipStepAsOperator(run.id, stepName, 'operator-completed-without-pr');
     }
   }
@@ -993,7 +992,7 @@ async function linkInteractiveDevPrAndStartCiWatch(
   // Self-review is an explicit operator skip on this path — the operator chose
   // CI watch over another review pass. Recorded as a settled step so the
   // engine resumes at COMPLETE instead of re-running the review.
-  completeStepAsOperator(run.id, 'self-review', `Skipped: operator linked PR ${pr.ref}`, {
+  completeStepAsOperator(run.id, 'review', `Skipped: operator linked PR ${pr.ref}`, {
     skipped: true,
     reason: 'operator-linked-pr-resolution',
     source: 'operator',
@@ -1078,7 +1077,7 @@ export async function runInteractiveDevResolve(
     return { ok: true, run: updated, reason: slotDisposition };
   }
 
-  if (params.action === 'run-self-review') {
+  if (params.action === 'run-review') {
     const engineState = appendInteractiveDevAction(run.id, params, run);
     const updated = updateRun(run.id, {
       devInteractiveProfile: 'reviewed',
@@ -1090,7 +1089,7 @@ export async function runInteractiveDevResolve(
         },
       },
     });
-    await runReplayStep({ runId: run.id, stepName: 'self-review', triggeredBy: 'operator' }, emit);
+    await runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, emit);
     return { ok: true, run: getRun(run.id) ?? updated };
   }
 
@@ -1344,18 +1343,16 @@ async function assertReadyPublishResolveIsFresh(
     // The override restamps stale reviews later in executeReadyGate, so the
     // policy is not yet satisfied here. Gate the resolve on the override's
     // precondition instead: staleness must be evidence-only (HEAD unchanged).
-    const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
     assertEvidenceRefreshOverrideAvailable(
-      run.engineState?.publishGate?.independentReviews ?? [],
+      run.engineState?.publishGate?.reviews ?? [],
       currentPackage,
-      reviewDepth,
     );
   } else if (params.actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) {
-    const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
+    const reviewPolicy = currentPackage.reviewPolicy ?? publicationReviewPolicyForRun(run);
     assertUnavailableSnapshotOverrideAvailable(
-      run.engineState?.publishGate?.independentReviews ?? [],
+      run.engineState?.publishGate?.reviews ?? [],
       currentPackage,
-      reviewDepth,
+      reviewPolicy,
     );
   } else if (params.actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
     assertPublicationReviewPolicySatisfied(run, currentPackage);
@@ -1427,10 +1424,7 @@ export interface RunResolveDecisionDependencies {
     Pick<Awaited<ReturnType<typeof admittedFailureSnapshot>>, 'snapshotHash' | 'sources'>
   >;
   resumeRun?: (runId: string) => Promise<void>;
-  assertReviewLaunchAllowed?: (
-    reviews: readonly IndependentReviewStatus[],
-    slotId: string,
-  ) => Promise<void>;
+  assertReviewLaunchAllowed?: (reviews: readonly ReviewStatus[], slotId: string) => Promise<void>;
   /**
    * ADR-054 `free-slot`: brings a run whose park freed its slot back before its
    * gate is answered. Injectable so the resolve path's own ordering — restore,
@@ -1686,11 +1680,8 @@ export async function resolveRunDecision(
   }
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const reviewRequest = params.selectionData?.reviewRequest;
-    const loops =
-      reviewRequest && typeof reviewRequest === 'object'
-        ? (reviewRequest as { loops?: unknown }).loops
-        : undefined;
-    assertStaticReviewLoopRequests(Array.isArray(loops) ? loops : undefined, 'reviewRequest.loops');
+    assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
+    assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
   }
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before
@@ -1711,7 +1702,7 @@ export async function resolveRunDecision(
   }
   // Set when the review-request branch projected a normalization; committed
   // only after the consumption-point park fence below.
-  let normalizedReviews: IndependentReviewStatus[] | undefined;
+  let normalizedReviews: ReviewStatus[] | undefined;
   if (
     decision.type === 'engine_human_gate' &&
     isHumanGateReviewRequestAction(params.actionId) &&
@@ -1733,7 +1724,7 @@ export async function resolveRunDecision(
     // awaited assertion would leave this run mutated by a resolve that was then
     // refused.
     normalizedReviews = projectExhaustedReviewContinuationsForRun(existing.id);
-    await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
+    await (dependencies.assertReviewLaunchAllowed ?? assertReviewLaunchStateForSlot)(
       normalizedReviews,
       existing.slotId,
     );

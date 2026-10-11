@@ -37,6 +37,7 @@ jobs:
       agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
       capabilities: ${{ steps.filter.outputs.capabilities }}
       protocol: ${{ steps.filter.outputs.protocol }}
+      review_dispatch: ${{ steps.filter.outputs.review_dispatch }}
       recipe_runner: ${{ steps.filter.outputs.recipe_runner }}
       recipe_cli: ${{ steps.filter.outputs.recipe_cli }}
       adapter_sdk: ${{ steps.filter.outputs.adapter_sdk }}
@@ -76,6 +77,7 @@ jobs:
               - 'apps/command-center/**'
               - 'packages/cli/**'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'packages/recipe-runner/**'
               - 'packages/theme/**'
               - 'services/gateway/**'
@@ -88,6 +90,7 @@ jobs:
               - 'apps/command-center-desktop/**'
               - 'apps/command-center/ui/**'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'packages/theme/**'
             companion:
               - '.github/workflows/farmslot-quality.yml'
@@ -98,6 +101,7 @@ jobs:
               - 'apps/companion/**'
               - 'packages/adapter-rn/**'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'packages/recipe-runner/**'
               - 'packages/theme/**'
             docs:
@@ -111,6 +115,7 @@ jobs:
               - 'apps/docs/**'
               - 'packages/cli/**'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'scripts/build-hosted-command-center.mjs'
               - 'scripts/quality/check-gateway-api-docs.mjs'
               - 'services/gateway/**'
@@ -121,6 +126,7 @@ jobs:
               - '.yarnrc.yml'
               - 'packages/cli/**'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'packages/recipe-runner/**'
             adapter_rn:
               - '.github/workflows/farmslot-quality.yml'
@@ -150,6 +156,13 @@ jobs:
               - 'yarn.lock'
               - '.yarnrc.yml'
               - 'packages/protocol/**'
+            review_dispatch:
+              - '.github/workflows/farmslot-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - '.yarnrc.yml'
+              - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
             recipe_runner:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -209,6 +222,7 @@ jobs:
               - 'yarn.lock'
               - '.yarnrc.yml'
               - 'packages/protocol/**'
+              - 'packages/review-dispatch/**'
               - 'services/gateway/**'
             node:
               - '.github/workflows/farmslot-quality.yml'
@@ -523,6 +537,26 @@ jobs:
         run: yarn install --immutable
       - name: React Native adapter quality
         run: yarn workspace @farmslot/adapter-rn quality
+
+  review-dispatch:
+    name: Shared review and dispatch package quality
+    needs: changes
+    if: needs.changes.outputs.review_dispatch == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Shared picker quality
+        run: yarn workspace @farmslot/review-dispatch quality
 
   protocol:
     name: Protocol package quality

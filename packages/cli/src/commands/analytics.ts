@@ -34,7 +34,7 @@ function formatQuery(r: AnalyticsQueryResult): string {
   );
   lines.push(`failures by step: ${JSON.stringify(r.failureByStep)}`);
   lines.push(`failures by reason: ${JSON.stringify(r.failureByReason)}`);
-  lines.push(`self-review loops: ${JSON.stringify(r.selfReviewLoops.distribution)}`);
+  lines.push(`review loops: ${JSON.stringify(r.reviewLoops.distribution)}`);
   lines.push(`ci results: ${JSON.stringify(r.ci.resultBreakdown)}`);
   lines.push(`nudges: avg=${r.nudges.avg} zeroRate=${r.nudges.zeroRate}`);
   return lines.join('\n');

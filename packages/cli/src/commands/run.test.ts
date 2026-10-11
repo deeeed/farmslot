@@ -52,12 +52,10 @@ function repeatReviewRun(): Run {
       unresolvedFindings: [],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      contextMode: 'reuse',
-      reviewScope: 'incremental',
+      mode: 'warm',
       validationDepth: 'static-code',
-      sessionIntent: 'resume',
       session: {
-        intent: 'resume',
+        mode: 'warm',
         continuity: 'resumed',
         priorRunId: 'review-run-1',
         priorSessionId: 'session-1',
@@ -77,7 +75,7 @@ test('run review-chain exposes stable JSON and human output shapes', () => {
   assert.equal(result.chain[0]?.session?.continuity, 'resumed');
   assert.equal(
     formatReviewChainLine(result.chain[0]!),
-    'G2 review-r  1111111 -> 2222222  incremental/static-code  pending  unresolved pending  resumed',
+    'G2 review-r  1111111 -> 2222222  warm/static-code  pending  unresolved pending  resumed',
   );
 });
 
@@ -104,7 +102,7 @@ test('run gate rejects actions that the pending decision does not offer', () => 
 
   assert.doesNotThrow(() => assertRunGateActionAvailable(decision, 'approve-publish'));
   assert.throws(
-    () => assertRunGateActionAvailable(decision, 'request-extra-review'),
+    () => assertRunGateActionAvailable(decision, 'request-review'),
     /Available actions: hold, approve-publish/,
   );
 });
@@ -576,7 +574,7 @@ test('run get shows each step queue time, run time and last progress', () => {
 test('parseAgentRole accepts a known role and rejects the rest', () => {
   assert.equal(parseAgentRole(undefined), undefined);
   assert.equal(parseAgentRole(''), undefined);
-  assert.equal(parseAgentRole('self-review'), 'self-review');
+  assert.equal(parseAgentRole('review'), 'review');
   assert.throws(() => parseAgentRole('reviewer'), /Invalid --role 'reviewer'/);
   // A child checklist unit is observed, never spawned: it is not a session role.
   assert.throws(() => parseAgentRole('subtask'), /Invalid --role 'subtask'/);
@@ -623,7 +621,7 @@ test('run session --json forwards the exact context and returns the RPC result v
   const payload = {
     supported: true,
     runId: 'run-1',
-    role: 'self-review',
+    role: 'review',
     contextId: 'rev2-codex',
     runner: 'codex',
     model: 'gpt-5.6',
@@ -675,7 +673,7 @@ test('run session --json forwards the exact context and returns the RPC result v
         '--context',
         'rev2-codex',
         '--role',
-        'self-review',
+        'review',
       ],
       home,
     );
@@ -691,7 +689,7 @@ test('run session --json forwards the exact context and returns the RPC result v
     // The exact context must reach the gateway; role alone would resolve to
     // whichever reviewer is newest.
     assert.equal(calls[0]!.params.contextId, 'rev2-codex');
-    assert.equal(calls[0]!.params.role, 'self-review');
+    assert.equal(calls[0]!.params.role, 'review');
     assert.equal(calls[0]!.params.runId, 'run-1');
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -716,6 +714,51 @@ test('static review flags preserve machine, native runner and effort while refus
   assert.throws(
     () => buildRunCreateParams({ ...base, reviewMachine: 'node', slot: 'runtime' }),
     /--review-machine cannot be combined with --slot/,
+  );
+});
+
+test('review mode and sequence preserve every selection dimension through CLI dispatch', () => {
+  const selection = { runner: 'codex', model: 'gpt-6-astra', effort: 'xhigh', mode: 'warm' };
+  const context = {
+    reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-1' }],
+  };
+  const params = buildRunCreateParams({
+    project: 'review',
+    flowType: 'review-pr',
+    ticket: 'owner/repo#42',
+    reviewMode: 'warm',
+    reviewSequence: JSON.stringify([selection]),
+    reviewContext: JSON.stringify(context),
+    reviewSequenceContext: JSON.stringify(context),
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'xhigh',
+  });
+  assert.equal(params.reviewMode, 'warm');
+  assert.deepEqual(params.reviewSequence, [selection]);
+  assert.deepEqual(params.reviewContext, context);
+  assert.deepEqual(params.reviewSequenceContext, context);
+  for (const mode of ['incremental', 'full', 'resume', 'reset'])
+    assert.throws(
+      () => buildRunCreateParams({ project: 'review', ticket: 'owner/repo#42', reviewMode: mode }),
+      /warm or cold/,
+    );
+  assert.throws(
+    () => buildRunCreateParams({ project: 'review', ticket: 'owner/repo#42', reviewSequence: '{' }),
+    /valid JSON array/,
+  );
+  assert.throws(
+    () => buildRunCreateParams({ project: 'review', ticket: 'owner/repo#42', reviewContext: '{' }),
+    /valid JSON/,
+  );
+  assert.throws(
+    () =>
+      buildRunCreateParams({
+        project: 'review',
+        ticket: 'owner/repo#42',
+        reviewContext: JSON.stringify({ reviewLineages: [{ runner: 'codex' }] }),
+      }),
+    /unsupported property/,
   );
 });
 

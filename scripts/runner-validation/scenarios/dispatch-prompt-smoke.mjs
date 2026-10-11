@@ -94,7 +94,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       pane = capturePane(paneId, 80);
     } else if (runnerAdapter.OBSERVABILITY_SCOPE === 'pane-only') {
       // sendRunnerPostLaunchPrompt already verified delivery. Pane-only Cursor
-      // has no launch-ack signal, which is the production self-review miss.
+      // has no launch-ack signal, which is the production review miss.
       report.responseCompleted = report.promptDelivered;
       pane = capturePane(paneId, 80);
     } else {

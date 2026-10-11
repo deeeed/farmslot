@@ -67,8 +67,8 @@ test('run detail lists one session row per agent context with a short session id
     run([
       context(),
       context({
-        id: 'self-review',
-        role: 'self-review',
+        id: 'review',
+        role: 'review',
         label: 'Reviewer',
         runner: 'claude',
         model: 'sonnet',
@@ -85,7 +85,7 @@ test('run detail lists one session row per agent context with a short session id
   assert.equal(rows[0]?.sessionIdShort, 'codex-se');
   assert.equal(rows[0]?.slotId, 'macpro-mm-1');
   assert.equal(rows[0]?.target, 'mm-1:dev');
-  assert.equal(rows[1]?.role, 'self-review');
+  assert.equal(rows[1]?.role, 'review');
   assert.equal(rows[1]?.runner, 'claude');
   assert.equal(rows[1]?.sessionIdShort, null);
 });
@@ -242,13 +242,13 @@ test('two same-role reviewer rows stay distinct so each copies its own session',
     run([
       context({
         id: 'rev-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer 1',
         runnerSessionId: 'reviewer-session-1',
       }),
       context({
         id: 'rev2-codex',
-        role: 'self-review',
+        role: 'review',
         label: 'Reviewer 2',
         runnerSessionId: 'reviewer-session-2',
       }),

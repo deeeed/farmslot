@@ -9,7 +9,7 @@ import type { PlanningContextProjection } from '@farmslot/protocol';
 import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/planning-context.js';
 
 import {
-  buildIndependentReviewPlanningBrief,
+  buildReviewPlanningBrief,
   readFrozenPlanningContext,
   reviewCommitFromMarkdown,
   reviewRecommendationFromMarkdown,
@@ -63,15 +63,12 @@ async function taskDirWithSnapshot(snapshot?: unknown): Promise<{ dir: string; t
   return { dir, taskFile: path.join(dir, 'TASK.md') };
 }
 
-test('independent-review brief reuses the worker frozen planning-context snapshot', async (t) => {
+test('review brief reuses the worker frozen planning-context snapshot', async (t) => {
   const { dir, taskFile } = await taskDirWithSnapshot(WORKER_SNAPSHOT);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   const workerSection = buildPlanningContextSection('tasks/dev/manual-000072', WORKER_SNAPSHOT);
-  const reviewerSection = await buildIndependentReviewPlanningBrief(
-    taskFile,
-    'tasks/dev/manual-000072',
-  );
+  const reviewerSection = await buildReviewPlanningBrief(taskFile, 'tasks/dev/manual-000072');
 
   // Same snapshot, same hash, same rendered brief — a reviewer comparing the
   // hash against a re-derived one can tell that prerequisites changed.
@@ -84,7 +81,7 @@ test('independent-review brief reuses the worker frozen planning-context snapsho
   assert.equal(frozen?.snapshotHash, WORKER_SNAPSHOT.snapshotHash);
 });
 
-test('independent-review brief is not re-derived from a changed store', async (t) => {
+test('review brief is not re-derived from a changed store', async (t) => {
   const { dir, taskFile } = await taskDirWithSnapshot(WORKER_SNAPSHOT);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
@@ -95,7 +92,7 @@ test('independent-review brief is not re-derived from a changed store', async (t
     relations: [],
     snapshotHash: '0000000000000000',
   };
-  const reviewerSection = await buildIndependentReviewPlanningBrief(taskFile, 'tasks/dev/x');
+  const reviewerSection = await buildReviewPlanningBrief(taskFile, 'tasks/dev/x');
   assert.match(reviewerSection, /Snapshot hash: f00dcafef00dcafe/);
   assert.equal(reviewerSection.includes(drifted.snapshotHash), false);
 });
@@ -105,7 +102,7 @@ test('missing frozen snapshot yields an explicit empty state, not a silent omiss
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   assert.equal(await readFrozenPlanningContext(taskFile), null);
-  const section = await buildIndependentReviewPlanningBrief(taskFile, 'tasks/dev/x');
+  const section = await buildReviewPlanningBrief(taskFile, 'tasks/dev/x');
   assert.match(section, /^## Related planning context$/m);
   assert.match(section, /the worker task carried no frozen planning-context snapshot/);
 });

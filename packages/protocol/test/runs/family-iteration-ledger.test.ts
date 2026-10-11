@@ -43,7 +43,7 @@ function makeRun(overrides: Partial<FamilyObservabilityRunSummary>): FamilyObser
     steps: overrides.steps ?? [],
     acceptanceCriteria: overrides.acceptanceCriteria ?? [],
     ciChecks: overrides.ciChecks ?? [],
-    selfReview: overrides.selfReview ?? { verdict: null, summary: null, issues: [] },
+    review: overrides.review ?? { verdict: null, summary: null, issues: [] },
     familyScope: overrides.familyScope ?? null,
     humanGrade: overrides.humanGrade,
     proofTargets: overrides.proofTargets,

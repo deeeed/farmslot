@@ -7,9 +7,10 @@ import test from 'node:test';
 import type {
   CompleteStepOutput,
   PublicationReviewLaunchRejection,
-  ReviewLoopRequest,
+  ReviewSelection,
   Run,
 } from '@farmslot/protocol';
+import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
@@ -20,12 +21,12 @@ import {
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
-  baseSelfReviewDepth,
+  baseReviewPolicy,
   executeHumanGateStep,
-  executeSelfReviewStep,
+  executeReviewStep,
   holdInteractiveCompletionForOperator,
   isFlowTerminalStep,
-  persistedUpdateBranchNeedsSelfReview,
+  persistedUpdateBranchNeedsReview,
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
@@ -124,7 +125,7 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
   );
 });
 
-test('executeSelfReviewStep honors a persisted update-branch skip signal', async (t) => {
+test('executeReviewStep honors a persisted update-branch skip signal', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     mode: 'autonomous',
@@ -140,7 +141,7 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
             ...step,
             status: 'done',
             outputs: {
-              workerSignal: { status: 'complete', needsSelfReview: false },
+              workerSignal: { status: 'complete', needsReview: false },
             },
           }
         : step,
@@ -151,7 +152,7 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
   });
 
   let probeCalls = 0;
-  const io = await executeSelfReviewStep(run.id, {
+  const io = await executeReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
     broadcastFn: () => {},
@@ -184,7 +185,7 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
   assert.equal(probeCalls, 0);
 });
 
-test('persistedUpdateBranchNeedsSelfReview requires a terminal update-branch signal', () => {
+test('persistedUpdateBranchNeedsReview requires a terminal update-branch signal', () => {
   const run = makeRun({ flowType: 'update-branch' });
   const withMonitor = (
     status: 'running' | 'done',
@@ -195,44 +196,44 @@ test('persistedUpdateBranchNeedsSelfReview requires a terminal update-branch sig
   });
 
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview(
-      withMonitor('done', { status: 'complete', needsSelfReview: false }),
+    persistedUpdateBranchNeedsReview(
+      withMonitor('done', { status: 'complete', needsReview: false }),
     ),
     false,
   );
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview(
-      withMonitor('running', { status: 'complete', needsSelfReview: false }),
+    persistedUpdateBranchNeedsReview(
+      withMonitor('running', { status: 'complete', needsReview: false }),
     ),
     undefined,
   );
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview(
-      withMonitor('done', { status: 'complete', needsSelfReview: true }),
+    persistedUpdateBranchNeedsReview(
+      withMonitor('done', { status: 'complete', needsReview: true }),
     ),
     true,
   );
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview(withMonitor('done', { status: 'complete' })),
+    persistedUpdateBranchNeedsReview(withMonitor('done', { status: 'complete' })),
     undefined,
   );
-  assert.equal(persistedUpdateBranchNeedsSelfReview(withMonitor('done', null)), undefined);
+  assert.equal(persistedUpdateBranchNeedsReview(withMonitor('done', null)), undefined);
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview(
-      withMonitor('done', { status: 'running', needsSelfReview: false }),
+    persistedUpdateBranchNeedsReview(
+      withMonitor('done', { status: 'running', needsReview: false }),
     ),
     undefined,
   );
   assert.equal(
-    persistedUpdateBranchNeedsSelfReview({
-      ...withMonitor('done', { status: 'complete', needsSelfReview: false }),
+    persistedUpdateBranchNeedsReview({
+      ...withMonitor('done', { status: 'complete', needsReview: false }),
       flowType: 'dev',
     }),
     undefined,
   );
 });
 
-test('executeSelfReviewStep honors the slot signal probe fallback', async (t) => {
+test('executeReviewStep honors the slot signal probe fallback', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     mode: 'autonomous',
@@ -246,7 +247,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
   });
 
   let probeCalls = 0;
-  const io = await executeSelfReviewStep(run.id, {
+  const io = await executeReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
     broadcastFn: () => {},
@@ -268,7 +269,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
         status: 'complete',
         signal: {
           status: 'complete',
-          needsSelfReview: false,
+          needsReview: false,
           timestamp: new Date().toISOString(),
         },
       };
@@ -289,7 +290,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
   assert.equal(probeCalls, 1);
 });
 
-test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a skip', async (t) => {
+test('executeReviewStep proceeds when the slot signal probe cannot approve a skip', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     mode: 'autonomous',
@@ -302,8 +303,8 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
     await deleteTestRunIfPresent(run.id);
   });
 
-  let selfReviewCalls = 0;
-  const io = await executeSelfReviewStep(run.id, {
+  let reviewCalls = 0;
+  const io = await executeReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
     broadcastFn: () => {},
@@ -312,8 +313,8 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
     executePublishGateReviewPlan: async () => ({ reviewIds: [] }),
     executeReadyGate: async () => 'ready',
     executeReviewGate: async () => {},
-    executeSelfReviewForRun: async () => {
-      selfReviewCalls += 1;
+    executeReviewForRun: async () => {
+      reviewCalls += 1;
       return { verdict: 'pass', retryCount: 0 };
     },
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
@@ -330,42 +331,42 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
     deferTerminalSlotRelease: () => {},
   });
 
-  assert.equal(selfReviewCalls, 1);
+  assert.equal(reviewCalls, 1);
   assert.equal(io.inputs?.enabled, true);
   assert.equal(io.outputs?.verdict, 'pass');
 });
 
-test('baseSelfReviewDepth is static for new runs and keeps a recorded or pre-migration live review', () => {
-  assert.equal(baseSelfReviewDepth(makeRun({ steps: [] })), 'static-code');
+test('baseReviewPolicy is static for new runs and keeps a recorded or pre-migration live review', () => {
+  assert.equal(baseReviewPolicy(makeRun({ steps: [] })), 'static-code');
   const recorded = makeRun({
     steps: [
-      { name: 'self-review', status: 'running', inputs: { validationDepth: 'full-live' } },
+      { name: 'review', status: 'running', inputs: { validationDepth: 'full-live' } },
     ] as Run['steps'],
   });
-  assert.equal(baseSelfReviewDepth(recorded), 'full-live', 'recorded depth survives a restart');
+  assert.equal(baseReviewPolicy(recorded), 'full-live', 'recorded depth survives a restart');
   const preMigration: Run = {
     ...makeRun({ steps: [] }),
-    agentContexts: [{ id: 'reviewer-1', role: 'self-review' }] as Run['agentContexts'],
+    agentContexts: [{ id: 'reviewer-1', role: 'review' }] as Run['agentContexts'],
   };
   assert.equal(
-    baseSelfReviewDepth(preMigration),
+    baseReviewPolicy(preMigration),
     'full-live',
     'a base review launched before depth was recorded ran the live contract',
   );
   const publicationOnly: Run = {
     ...makeRun({ steps: [] }),
     agentContexts: [
-      { id: 'reviewer-2', role: 'self-review', artifactScope: 'independent-review-1' },
+      { id: 'reviewer-2', role: 'review', artifactScope: 'review-1' },
     ] as Run['agentContexts'],
   };
   assert.equal(
-    baseSelfReviewDepth(publicationOnly),
+    baseReviewPolicy(publicationOnly),
     'static-code',
     'a publication reviewer is not a started base review',
   );
 });
 
-test('executeSelfReviewStep records a static base review and replays the recorded depth', async (t) => {
+test('executeReviewStep records a static base review and replays the recorded depth', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -387,7 +388,7 @@ test('executeSelfReviewStep records a static base review and replays the recorde
     executePublishGateReviewPlan: async () => ({ reviewIds: [] }),
     executeReadyGate: async () => 'ready' as const,
     executeReviewGate: async () => {},
-    executeSelfReviewForRun: async (
+    executeReviewForRun: async (
       _runId: string,
       _slotId: string | null | undefined,
       options?: { validationDepth?: string },
@@ -407,16 +408,16 @@ test('executeSelfReviewStep records a static base review and replays the recorde
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
     deferTerminalSlotRelease: () => {},
-  } as unknown as Parameters<typeof executeSelfReviewStep>[1];
+  } as unknown as Parameters<typeof executeReviewStep>[1];
 
-  const io = await executeSelfReviewStep(run.id, context);
+  const io = await executeReviewStep(run.id, context);
   assert.equal(io.inputs?.validationDepth, 'static-code');
   assert.equal(
-    getRun(run.id)?.steps.find((step) => step.name === 'self-review')?.inputs?.validationDepth,
+    getRun(run.id)?.steps.find((step) => step.name === 'review')?.inputs?.validationDepth,
     'static-code',
   );
   // A restarted engine re-enters the step: the recorded depth wins over the new default.
-  const step = getRun(run.id)!.steps.find((candidate) => candidate.name === 'self-review')!;
+  const step = getRun(run.id)!.steps.find((candidate) => candidate.name === 'review')!;
   updateRun(run.id, {
     steps: getRun(run.id)!.steps.map((candidate) =>
       candidate === step
@@ -424,7 +425,7 @@ test('executeSelfReviewStep records a static base review and replays the recorde
         : candidate,
     ),
   });
-  await executeSelfReviewStep(run.id, context);
+  await executeReviewStep(run.id, context);
   assert.deepEqual(depths, ['static-code', 'full-live']);
 });
 
@@ -443,7 +444,7 @@ test('interactive send-feedback continues from existing findings without another
 
   const issue = { file: 'src/example.ts', line: 12, description: 'Fix the stale state' };
   const calls: unknown[][] = [];
-  const io = await executeSelfReviewStep(run.id, {
+  const io = await executeReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
     broadcastFn: () => {},
@@ -452,7 +453,7 @@ test('interactive send-feedback continues from existing findings without another
     executePublishGateReviewPlan: async () => ({ reviewIds: [] }),
     executeReadyGate: async () => 'ready',
     executeReviewGate: async () => {},
-    executeSelfReviewForRun: async (...args) => {
+    executeReviewForRun: async (...args) => {
       calls.push([...args]);
       return calls.length === 1
         ? { verdict: 'issues', issues: [issue], retryCount: 0 }
@@ -546,18 +547,18 @@ test('human-gate restart repairs legacy review counts before deriving an automat
       publishGate: {
         publicationTarget: 'ready',
         publicationStatus: 'not_published',
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 1,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
+            reviewerSessionId: 'fixture-session-' + 'legacy-dispatch-review',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
             id: 'legacy-dispatch-review',
             source: 'dispatch',
             runner: 'codex',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -581,11 +582,8 @@ test('human-gate restart repairs legacy review counts before deriving an automat
   });
 
   assert.equal(reviewPlanCalls, 0);
-  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
-    countingVersion: 2,
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewPolicy, {
+    minimumReviews: 1,
     requestedBy: 'dispatch',
   });
 });
@@ -601,10 +599,8 @@ test('human-gate restart replay restores the operator-requested review policy', 
   updateRun(run.id, {
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 2,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 2,
           requestedBy: 'dispatch',
         },
       },
@@ -618,12 +614,11 @@ test('human-gate restart replay restores the operator-requested review policy', 
         actions: [],
         createdAt: '2026-08-02T00:00:00.000Z',
         resolvedAt: '2026-08-02T00:01:00.000Z',
-        resolvedAction: 'request-cross-runner-review',
+        resolvedAction: 'request-review',
         selectionData: {
-          reviewRequest: {
-            requireCrossRunner: true,
-            loops: [{ runner: 'codex', validationDepth: 'static-code' }],
-          },
+          reviewRequest: reviewRequestFromSequence([
+            { runner: 'codex', model: null, effort: null, mode: 'cold' },
+          ]),
         },
       },
     ],
@@ -634,10 +629,8 @@ test('human-gate restart replay restores the operator-requested review policy', 
 
   await assert.rejects(executeHumanGateStep(run.id, restartReplayContext()), /No slot assigned/);
 
-  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
-    minimumIndependentReviews: 2,
-    requireCrossRunner: true,
-    extraLoopsRequested: 0,
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewPolicy, {
+    minimumReviews: 2,
     requestedBy: 'human-gate',
   });
 });
@@ -653,10 +646,8 @@ test('human-gate restart replay does not inherit a prior temporary review reques
   updateRun(run.id, {
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 2,
-          requireCrossRunner: true,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 2,
           requestedBy: 'human-gate',
         },
       },
@@ -670,11 +661,11 @@ test('human-gate restart replay does not inherit a prior temporary review reques
         actions: [],
         createdAt: '2026-08-02T00:00:00.000Z',
         resolvedAt: '2026-08-02T00:01:00.000Z',
-        resolvedAction: 'request-extra-review',
+        resolvedAction: 'request-review',
         selectionData: {
-          reviewRequest: {
-            loops: [{ runner: 'codex', validationDepth: 'static-code' }],
-          },
+          reviewRequest: reviewRequestFromSequence([
+            { runner: 'codex', model: null, effort: null, mode: 'cold' },
+          ]),
         },
       },
     ],
@@ -685,19 +676,17 @@ test('human-gate restart replay does not inherit a prior temporary review reques
 
   await assert.rejects(executeHumanGateStep(run.id, restartReplayContext()), /No slot assigned/);
 
-  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewPolicy, {
+    minimumReviews: 1,
     requestedBy: 'human-gate',
   });
 });
 
 test('human-gate partial review refusal retains only unconsumed work and rebuilds the package', async (t) => {
   const requestedAt = '2026-08-03T00:00:00.000Z';
-  const plan: ReviewLoopRequest[] = [
-    { order: 1, runner: 'codex', model: null, validationDepth: 'static-code' },
-    { order: 2, runner: 'claude', model: null, validationDepth: 'full-live' },
+  const plan: ReviewSelection[] = [
+    { runner: 'codex', model: null, effort: null, mode: 'cold' as const },
+    { runner: 'claude', model: null, effort: null, mode: 'cold' as const },
   ];
   const rejection: PublicationReviewLaunchRejection = {
     code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
@@ -705,10 +694,8 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
     userAction: 'Commit or discard the changes before requesting another review.',
     rejectedAt: '2026-08-03T00:02:00.000Z',
   };
-  const reviewDepth = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  const reviewPolicy = {
+    minimumReviews: 1,
     requestedBy: 'dispatch' as const,
   };
   const run = createRun({
@@ -722,14 +709,16 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
       publishGate: {
         publicationTarget: 'ready',
         publicationStatus: 'not_published',
-        reviewDepth,
-        pendingReviewPlanRequestedAt: requestedAt,
-        independentReviews: [
+        reviewPolicy,
+        reviewSequenceRequestedAt: requestedAt,
+        reviews: [
           {
+            reviewerSessionId: 'fixture-session-' + 'baseline-review',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
             id: 'baseline-review',
             source: 'dispatch',
             runner: 'codex',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -756,8 +745,8 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
       artifacts: [],
     },
     prPackage: makeReadyGatePackage(),
-    reviewDepth,
-    independentReviews: [],
+    reviewPolicy,
+    reviews: [],
   };
   await executeHumanGateStep(run.id, {
     activeMonitors: new Map(),
@@ -784,20 +773,20 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
             actions: [],
             createdAt: requestedAt,
             resolvedAt: '2026-08-03T00:00:01.000Z',
-            resolvedAction: 'request-extra-review',
-            selectionData: { reviewRequest: { loops: plan } },
+            resolvedAction: 'request-review',
+            selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
           },
         ],
         engineState: {
           ...latest.engineState,
           publishGate: {
             ...latest.engineState?.publishGate,
-            pendingReviewPlan: plan,
-            pendingReviewPlanRequestedAt: requestedAt,
+            reviewSequence: plan,
+            reviewSequenceRequestedAt: requestedAt,
           },
         },
       });
-      return 'request-extra-review';
+      return 'request-review';
     },
     executeReviewGate: async () => {},
     getDiffStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
@@ -816,8 +805,8 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
   });
 
   const persistedGate = getRun(run.id)?.engineState?.publishGate;
-  assert.deepEqual(persistedGate?.pendingReviewPlan, [plan[1]]);
-  assert.notEqual(persistedGate?.pendingReviewPlanRequestedAt, requestedAt);
+  assert.deepEqual(persistedGate?.reviewSequence, [plan[1]]);
+  assert.notEqual(persistedGate?.reviewSequenceRequestedAt, requestedAt);
   assert.equal(packageRebuilds, 1);
 
   const afterFirstPass = getRun(run.id)!;
@@ -826,13 +815,15 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
       ...afterFirstPass.engineState,
       publishGate: {
         ...afterFirstPass.engineState?.publishGate,
-        independentReviews: [
-          ...(afterFirstPass.engineState?.publishGate?.independentReviews ?? []),
+        reviews: [
+          ...(afterFirstPass.engineState?.publishGate?.reviews ?? []),
           {
+            reviewerSessionId: 'fixture-session-' + 'r1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
             id: 'r1',
             source: 'human-gate',
             runner: 'codex',
-            crossRunner: true,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -842,7 +833,7 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
       },
     },
   });
-  let replayedPlan: ReviewLoopRequest[] = [];
+  let replayedPlan: ReviewSelection[] = [];
   await executeHumanGateStep(run.id, {
     ...restartReplayContext(),
     executePublishGateReviewPlan: async (_runId, _slotId, actualPlan) => {
@@ -921,10 +912,8 @@ test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects sub
     packageInputHash: 'input-1',
     reviewSubjectHash: 'subject-1',
     reviewArtifactIds: ['review-before'],
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: true,
-      extraLoopsRequested: 1,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'dispatch',
     },
   });
@@ -936,10 +925,8 @@ test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects sub
         packageInputHash: 'input-2',
         reviewSubjectHash: 'subject-2',
         reviewArtifactIds: ['review-after'],
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 2,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'human-gate',
         },
       }),
@@ -1039,7 +1026,7 @@ test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects sub
     false,
   );
 });
-test('executeSelfReviewStep skips eval packages with review axis none', async (t) => {
+test('executeReviewStep skips eval packages with review axis none', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-review-axis-skip-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -1079,7 +1066,7 @@ test('executeSelfReviewStep skips eval packages with review axis none', async (t
     await deleteTestRunIfPresent(run.id);
   });
 
-  const io = await executeSelfReviewStep(run.id, {
+  const io = await executeReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
     broadcastFn: () => {},

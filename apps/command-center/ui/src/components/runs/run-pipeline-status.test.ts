@@ -104,10 +104,10 @@ test('finalize package-changed failure is recoverable orange', () => {
   );
 });
 
-test('self-review issues are orange until max retries exhausted (then red)', () => {
+test('review issues are orange until max retries exhausted (then red)', () => {
   assert.equal(
     pipelineStepTone({
-      name: 'self-review',
+      name: 'review',
       status: 'failed',
       outputs: { verdict: 'issues', maxRetriesExhausted: false },
     }),
@@ -115,7 +115,7 @@ test('self-review issues are orange until max retries exhausted (then red)', () 
   );
   assert.equal(
     pipelineStepTone({
-      name: 'self-review',
+      name: 'review',
       status: 'failed',
       outputs: { verdict: 'issues', maxRetriesExhausted: true },
     }),
@@ -137,7 +137,7 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
           detail: 'Worker fix complete; running claude re-review (2)...',
         },
       ],
-      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'complete' } as never],
+      agentContexts: [{ id: 'rev1-claude', role: 'review', status: 'complete' } as never],
       engineState: {},
     }),
     'failed',
@@ -161,7 +161,7 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
   assert.equal(
     computePackageRefreshStatus(failedStatuses, {
       steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
-      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'working' } as never],
+      agentContexts: [{ id: 'rev1-claude', role: 'review', status: 'working' } as never],
       engineState: {},
     }),
     'pending',
@@ -170,7 +170,7 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
   assert.equal(
     computePackageRefreshStatus(failedStatuses, {
       steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
-      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'launching' } as never],
+      agentContexts: [{ id: 'rev1-claude', role: 'review', status: 'launching' } as never],
       engineState: {},
     }),
     'pending',
@@ -182,7 +182,7 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
       agentContexts: [],
       engineState: {
         publishGate: {
-          pendingReviewPlan: [{ order: 1, runner: 'claude' }],
+          reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' }],
         },
       } as never,
     }),

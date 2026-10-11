@@ -29,7 +29,7 @@ test('applyRunningWorkerSignalToContext updates the matched reviewer context id'
         id: 'rev-codex',
         slotId: 'runner-browser-1',
         runId: run.id,
-        role: 'self-review',
+        role: 'review',
         label: 'rev-codex',
         status: 'working',
         target: { session: 'mme-1', window: 'rev-codex', target: 'mme-1:rev-codex' },
@@ -44,10 +44,10 @@ test('applyRunningWorkerSignalToContext updates the matched reviewer context id'
     {
       status: 'running',
       timestamp: '2026-07-10T08:10:00.000Z',
-      role: 'self-review',
+      role: 'review',
       contextId: 'rev-codex',
     },
-    'self-review',
+    'review',
     'rev-codex',
   );
 
@@ -57,7 +57,7 @@ test('applyRunningWorkerSignalToContext updates the matched reviewer context id'
   assert.equal(contexts[0]?.id, 'rev-codex');
   assert.equal(contexts[0]?.lastSignalAt, '2026-07-10T08:10:00.000Z');
   assert.equal(
-    contexts.some((ctx) => ctx.id === 'self-review'),
+    contexts.some((ctx) => ctx.id === 'review'),
     false,
   );
 });
@@ -77,7 +77,7 @@ test('applyRunningWorkerSignalToContext prefers signal context id before role fa
         id: 'rev-claude',
         slotId: 'runner-browser-1',
         runId: run.id,
-        role: 'self-review',
+        role: 'review',
         label: 'rev-claude',
         status: 'working',
         target: { session: 'mme-1', window: 'rev-claude', target: 'mme-1:rev-claude' },
@@ -87,7 +87,7 @@ test('applyRunningWorkerSignalToContext prefers signal context id before role fa
         id: 'rev-codex',
         slotId: 'runner-browser-1',
         runId: run.id,
-        role: 'self-review',
+        role: 'review',
         label: 'rev-codex',
         status: 'working',
         target: { session: 'mme-1', window: 'rev-codex', target: 'mme-1:rev-codex' },
@@ -104,7 +104,7 @@ test('applyRunningWorkerSignalToContext prefers signal context id before role fa
       timestamp: '2026-07-10T08:20:00.000Z',
       contextId: 'rev-codex',
     },
-    'self-review',
+    'review',
   );
 
   const contexts = getRun(run.id)?.agentContexts ?? [];
@@ -129,7 +129,7 @@ test('first opaque attempt identity adopts the worker timestamp', async (t) => {
         id: 'rev-codex',
         slotId: 'runner-browser-1',
         runId: run.id,
-        role: 'self-review',
+        role: 'review',
         label: 'rev-codex',
         status: 'working',
         attemptStartedAt: '2026-07-10T09:00:00.000Z',
@@ -164,7 +164,7 @@ test('attempt-scoped context rejects an ID-less running signal', async (t) => {
         id: 'rev-codex',
         slotId: 'runner-browser-1',
         runId: run.id,
-        role: 'self-review',
+        role: 'review',
         label: 'rev-codex',
         status: 'complete',
         signalAttemptId: 'attempt-2',

@@ -25,6 +25,11 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import {
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+  reviewRequestContextForRun,
+} from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
@@ -91,6 +96,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
 
@@ -142,6 +148,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     artifact?: string | string[];
   }>();
   const resolvedDecisionId = routeParamString(decisionId) || routeParamString(id);
+  const reviewPicker = useMemo(
+    () =>
+      new ReviewDispatchViewModel({
+        context: { allowedActions: ['request-review'], allowSequence: true },
+      }),
+    [resolvedDecisionId],
+  );
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
@@ -159,6 +172,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     null,
   );
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
+  useEffect(() => {
+    reviewPicker.setContext({
+      ...reviewPicker.context,
+      reviewLineages: reviewLineagesForRun(sourceRun),
+      reviewContext: reviewRequestContextForRun(sourceRun),
+    });
+  }, [reviewPicker, sourceRun]);
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
   const [recipeArtifactCount, setRecipeArtifactCount] = useState<number | null>(null);
   const [recipeAvailabilityError, setRecipeAvailabilityError] = useState<string | null>(null);
@@ -514,7 +534,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     return () => clearInterval(timer);
   }, [fetchTaskProgress, sourceRun]);
   const resolveAction = useCallback(
-    (actionId: string) => {
+    (actionId: string, selectionData?: Record<string, unknown>) => {
       if (!client || !decision) return;
       // A choice the Gateway already refused, or one whose effect is still
       // unproven, must not be sent: the decision would be consumed and the
@@ -535,9 +555,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             runId: decision.runMeta.runId,
             decision,
             actionId,
+            selectionData,
             ...(resourcePosture ? { resourcePosture } : {}),
           })
-        : { decisionId: decision.id, actionId };
+        : { decisionId: decision.id, actionId, ...(selectionData ? { selectionData } : {}) };
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -1516,22 +1537,36 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               </Text>
             </View>
           ) : (
-            presentation.actions.map((action) => (
-              <Pressable
-                key={action.id}
-                style={[
-                  styles.actionButton,
-                  action.style === 'primary' && { backgroundColor: colors.accent },
-                  action.style === 'danger' && { backgroundColor: colors.statusFail },
-                ]}
-                onPress={() => resolveAction(action.id)}
-              >
-                <Text style={styles.actionText}>{action.label}</Text>
-                {action.description && (
-                  <Text style={styles.actionDescription}>{action.description}</Text>
-                )}
-              </Pressable>
-            ))
+            presentation.actions.map((action) =>
+              action.id === 'request-review' ? (
+                <ReviewDispatchPicker
+                  key={action.id}
+                  model={reviewPicker}
+                  testID="companion-gate-review"
+                  disabled={!client}
+                  action="request-review"
+                  actionLabel={action.label}
+                  onInvoke={(actionId, payload) =>
+                    resolveAction(actionId, { reviewRequest: payload })
+                  }
+                />
+              ) : (
+                <Pressable
+                  key={action.id}
+                  style={[
+                    styles.actionButton,
+                    action.style === 'primary' && { backgroundColor: colors.accent },
+                    action.style === 'danger' && { backgroundColor: colors.statusFail },
+                  ]}
+                  onPress={() => resolveAction(action.id)}
+                >
+                  <Text style={styles.actionText}>{action.label}</Text>
+                  {action.description && (
+                    <Text style={styles.actionDescription}>{action.description}</Text>
+                  )}
+                </Pressable>
+              ),
+            )
           )}
           <View
             testID="companion-screen-decision-workspace-end"

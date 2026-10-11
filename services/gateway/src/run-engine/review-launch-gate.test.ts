@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ExecResult, IndependentReviewStatus } from '@farmslot/protocol';
+import type { ExecResult, ReviewStatus } from '@farmslot/protocol';
 
 import {
-  assertIndependentReviewLaunchState,
+  assertReviewLaunchState,
   publicationReviewLaunchRejectionFromError,
 } from './review-launch-gate.js';
 
@@ -20,25 +20,23 @@ function gitExecutor(status: string, headSha: string): (command: string) => Prom
   };
 }
 
-function issuesReview(reviewedHeadSha: string): IndependentReviewStatus {
+function issuesReview(reviewedHeadSha: string): ReviewStatus {
   return {
-    id: 'extra-review-1',
+    reviewerSessionId: 'fixture-session-' + 'review-1',
+    mode: 'cold' as const,
+    id: 'review-1',
     source: 'human-gate',
-    crossRunner: true,
     loopNumber: 1,
     verdict: 'issues',
     unresolvedCount: 1,
     reviewedHeadSha,
-    artifactPaths: [
-      'artifacts/extra-review-loop-1/review.diff',
-      'artifacts/extra-review-loop-1/self-review.md',
-    ],
+    artifactPaths: ['artifacts/review-loop-1/review.diff', 'artifacts/review-loop-1/review.md'],
   };
 }
 
 test('independent publication review refuses a dirty slot with a commit action', async () => {
   await assert.rejects(
-    assertIndependentReviewLaunchState(
+    assertReviewLaunchState(
       [],
       gitExecutor(' M services/gateway/src/run-engine/ready-gate.ts\n?? scratch.txt\n', 'abc123'),
     ),
@@ -64,7 +62,7 @@ test('independent publication review refuses a dirty slot with a commit action',
 
 test('independent publication re-review refuses the same HEAD after issues', async () => {
   await assert.rejects(
-    assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'abc123')),
+    assertReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'abc123')),
     (error: unknown) => {
       const envelope = error as {
         code?: string;
@@ -74,7 +72,7 @@ test('independent publication re-review refuses the same HEAD after issues', asy
       };
       assert.equal(envelope.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
       assert.match(envelope.message ?? '', /prior issues review.*abc123/iu);
-      assert.match(envelope.message ?? '', /extra-review-loop-1\/self-review\.md/u);
+      assert.match(envelope.message ?? '', /review-loop-1\/review\.md/u);
       assert.match(envelope.userAction ?? '', /fix.*git commit.*new HEAD/iu);
       assert.equal(envelope.details?.priorReviewCommit, 'abc123');
       assert.ok(envelope.details?.priorFeedbackPath);
@@ -85,7 +83,7 @@ test('independent publication re-review refuses the same HEAD after issues', asy
 
 test('independent publication re-review allows a clean advanced HEAD', async () => {
   await assert.doesNotReject(
-    assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
+    assertReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
   );
 });
 
@@ -97,9 +95,7 @@ test('independent publication re-review allows the same HEAD after fix retries a
   review.feedbackSent = false;
   review.recoveryContinuationPending = true;
   review.issues = [{ file: 'src/example.ts', description: 'still broken' }];
-  await assert.doesNotReject(
-    assertIndependentReviewLaunchState([review], gitExecutor('', 'abc123')),
-  );
+  await assert.doesNotReject(assertReviewLaunchState([review], gitExecutor('', 'abc123')));
 });
 
 test('independent publication continuation can deliver pending findings at the same HEAD', async () => {
@@ -107,9 +103,7 @@ test('independent publication continuation can deliver pending findings at the s
   review.feedbackSent = false;
   review.recoveryContinuationPending = true;
   review.issues = [{ file: 'src/example.ts', description: 'Fix the pending finding' }];
-  await assert.doesNotReject(
-    assertIndependentReviewLaunchState([review], gitExecutor('', 'abc123')),
-  );
+  await assert.doesNotReject(assertReviewLaunchState([review], gitExecutor('', 'abc123')));
 });
 
 test('independent publication re-review trusts the immutable snapshot over a restamped compatibility HEAD', async () => {
@@ -119,14 +113,12 @@ test('independent publication re-review trusts the immutable snapshot over a res
     headSha: 'abc123',
     capturedAt: '2026-08-03T00:00:00.000Z',
   };
-  await assert.doesNotReject(
-    assertIndependentReviewLaunchState([review], gitExecutor('', 'def456')),
-  );
+  await assert.doesNotReject(assertReviewLaunchState([review], gitExecutor('', 'def456')));
 });
 
 test('independent publication review surfaces a recoverable non-zero git probe failure', async () => {
   await assert.rejects(
-    assertIndependentReviewLaunchState([], async (command) => ({
+    assertReviewLaunchState([], async (command) => ({
       stdout: command.includes('rev-parse HEAD') ? 'abc123\n' : '',
       stderr: command.includes('status --porcelain') ? 'not a git worktree' : '',
       exitCode: command.includes('status --porcelain') ? 128 : 0,
@@ -147,7 +139,7 @@ test('independent publication review surfaces a recoverable non-zero git probe f
 
 test('independent publication review surfaces a recoverable thrown git transport failure', async () => {
   await assert.rejects(
-    assertIndependentReviewLaunchState([], async () => {
+    assertReviewLaunchState([], async () => {
       throw new Error(`node disconnected ${'x'.repeat(2_000)}`);
     }),
     (error: unknown) => {
@@ -162,14 +154,11 @@ test('independent publication review surfaces a recoverable thrown git transport
 });
 
 test('independent publication review surfaces a recoverable empty HEAD probe failure', async () => {
-  await assert.rejects(
-    assertIndependentReviewLaunchState([], gitExecutor('', '')),
-    (error: unknown) => {
-      const rejection = publicationReviewLaunchRejectionFromError(error);
-      assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
-      assert.match(rejection?.message ?? '', /returned no commit/u);
-      assert.match(rejection?.userAction ?? '', /valid commit.*git rev-parse HEAD/iu);
-      return true;
-    },
-  );
+  await assert.rejects(assertReviewLaunchState([], gitExecutor('', '')), (error: unknown) => {
+    const rejection = publicationReviewLaunchRejectionFromError(error);
+    assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
+    assert.match(rejection?.message ?? '', /returned no commit/u);
+    assert.match(rejection?.userAction ?? '', /valid commit.*git rev-parse HEAD/iu);
+    return true;
+  });
 });

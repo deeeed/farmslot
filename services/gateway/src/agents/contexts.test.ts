@@ -88,7 +88,7 @@ test('primaryRoleForFlow maps review and bugfix worker flows to role labels', ()
 
 test('non-primary roles with dedicated windows have a tmux window mapping', () => {
   const ROLES_WITHOUT_OWN_WINDOW: Set<string> = new Set([
-    'self-review-fix',
+    'review-fix',
     // A child checklist unit is observed, never spawned; it owns no window
     // (mirrors AGENT_ROLE_WINDOWS in @farmslot/protocol agents/roles.ts).
     'subtask',
@@ -97,11 +97,7 @@ test('non-primary roles with dedicated windows have a tmux window mapping', () =
     if (role === 'primary' || ROLES_WITHOUT_OWN_WINDOW.has(role)) continue;
     assert.equal(typeof agentRoleWindow(role), 'string', `${role} must define a window`);
   }
-  assert.equal(
-    agentRoleWindow('self-review-fix'),
-    null,
-    'self-review-fix runs in the primary worker window',
-  );
+  assert.equal(agentRoleWindow('review-fix'), null, 'review-fix runs in the primary worker window');
   assert.equal(agentRoleWindow('primary'), null, 'primary is not a disposable role window');
   assert.equal(
     agentRoleWindow('subtask'),
@@ -153,15 +149,15 @@ test('agentContextTaskFile keeps only worker-relative scoped task files', () => 
   assert.equal(agentContextTaskFile('TASK.md'), null);
   assert.equal(agentContextTaskFile('.task/review/TASK.md'), '.task/review/TASK.md');
   assert.equal(
-    agentContextTaskFile('/orchestrator/TASK.md', '.task/fix/SELF-REVIEW.md'),
-    '.task/fix/SELF-REVIEW.md',
+    agentContextTaskFile('/orchestrator/TASK.md', '.task/fix/REVIEW.md'),
+    '.task/fix/REVIEW.md',
   );
   assert.equal(
-    agentContextTaskFile('.task/fix/TASK.md', '/orchestrator/SELF-REVIEW.md'),
+    agentContextTaskFile('.task/fix/TASK.md', '/orchestrator/REVIEW.md'),
     '.task/fix/TASK.md',
   );
   assert.equal(
-    agentContextTaskFile('.task/fix/TASK.md', '.task/fix/SELF-REVIEW.md'),
+    agentContextTaskFile('.task/fix/TASK.md', '.task/fix/REVIEW.md'),
     '.task/fix/TASK.md',
   );
 });
@@ -228,8 +224,8 @@ test('selectAgentContext does not promote arbitrary secondary context to primary
   const updated = updateRun(run.id, {
     agentContexts: [
       {
-        id: 'self-review',
-        role: 'self-review',
+        id: 'review',
+        role: 'review',
         label: 'Self-review',
         status: 'working',
         slotId: 'runner-browser-1',
@@ -457,17 +453,17 @@ test('resolveAgentTarget prefers explicit and persisted role targets', async (t)
 
 test('resolveAgentTarget rejects mismatched explicit target and role selectors', async () => {
   await assert.rejects(
-    () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:review', role: 'self-review' }),
-    /target mme-1:review belongs to role review, not self-review/,
+    () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:review', role: 'review' }),
+    /target mme-1:review belongs to role review, not review/,
   );
   await assert.rejects(
     () =>
       resolveAgentTarget('runner-browser-1', {
-        target: 'mme-1:self-review',
+        target: 'mme-1:review',
         role: 'review',
-        contextId: 'self-review',
+        contextId: 'review',
       }),
-    /context self-review does not match role review/,
+    /context review does not match role review/,
   );
   await assert.rejects(
     () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:ci-fix', contextId: 'review' }),
@@ -486,7 +482,7 @@ test('resolveAgentTarget rejects mismatched explicit target and role selectors',
       resolveAgentTarget('runner-browser-1', {
         target: 'mme-1:rev-claude',
         contextId: 'rev-codex',
-        role: 'self-review',
+        role: 'review',
       }),
     /target mme-1:rev-claude belongs to context rev-claude, not rev-codex/,
   );
@@ -699,7 +695,7 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
   });
   t.after(() => cleanupRun(run.id));
 
-  await upsertAgentContext(run.id, 'self-review', {
+  await upsertAgentContext(run.id, 'review', {
     id: 'rev-codex',
     label: 'rev-codex (gpt-5)',
     status: 'working',
@@ -707,7 +703,7 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
     model: 'gpt-5',
     target: { session: 'mme-1', window: 'rev-codex', target: 'mme-1:rev-codex' },
   });
-  await upsertAgentContext(run.id, 'self-review', {
+  await upsertAgentContext(run.id, 'review', {
     id: 'rev-claude',
     label: 'rev-claude (opus)',
     status: 'working',
@@ -718,13 +714,13 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
 
   const updated = updateRun(run.id, {});
   const reviewerIds = updated.agentContexts
-    ?.filter((ctx) => ctx.role === 'self-review')
+    ?.filter((ctx) => ctx.role === 'review')
     .map((ctx) => ctx.id)
     .sort();
   assert.deepEqual(reviewerIds, ['rev-claude', 'rev-codex']);
   assert.equal(selectAgentContext(updated, { contextId: 'rev-codex' })?.runner, 'codex');
   assert.equal(selectAgentContext(updated, { contextId: 'rev-claude' })?.runner, 'claude');
-  assert.equal(selectAgentContext(updated, { role: 'self-review' })?.id, 'rev-claude');
+  assert.equal(selectAgentContext(updated, { role: 'review' })?.id, 'rev-claude');
 
   // The resolved target carries the context's own runner: callers that act on the runner (e.g.
   // terminal image-attachment delivery) must not fall back to the slot-level field, which would
@@ -733,12 +729,12 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
     await resolveAgentTarget('runner-browser-1', {
       runId: run.id,
       contextId: 'rev-codex',
-      role: 'self-review',
+      role: 'review',
     }),
     {
       target: 'mme-1:rev-codex',
       session: 'mme-1',
-      role: 'self-review',
+      role: 'review',
       contextId: 'rev-codex',
       runner: 'codex',
     },
@@ -747,12 +743,12 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
     await resolveAgentTarget('runner-browser-1', {
       runId: run.id,
       contextId: 'rev-claude',
-      role: 'self-review',
+      role: 'review',
     }),
     {
       target: 'mme-1:rev-claude',
       session: 'mme-1',
-      role: 'self-review',
+      role: 'review',
       contextId: 'rev-claude',
       runner: 'claude',
     },

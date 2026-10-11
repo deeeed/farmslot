@@ -42,6 +42,7 @@ import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { buildTmuxWorkerUpdateFromNodeSnapshot } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
+import { handleReviewFsChanged } from './review/orchestrator.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
   cleanupAgentScreenSessions,
@@ -67,7 +68,6 @@ import {
 } from './security/authorization.js';
 import { nativeOwnerCanUseWorkers } from './security/native-owner.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
-import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
@@ -250,7 +250,7 @@ export function createWebSocketServer(
           if (handleBranchFsChanged(peek.payload)) {
             return;
           }
-          if (!handleSelfReviewFsChanged(peek.payload)) {
+          if (!handleReviewFsChanged(peek.payload)) {
             handleAgentFsChanged(peek.payload);
           }
           return;

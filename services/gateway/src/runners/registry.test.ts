@@ -748,7 +748,7 @@ describe('cursor runner', () => {
   });
 
   it('detects Codex instructions buffered at the live composer without progress', async () => {
-    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
+    const message = await dispatchPrompt('temp/tasks/fix/demo/REVIEW-FIX.md');
     const pane = `
 • Current TASK.md status is already done.
 
@@ -761,7 +761,7 @@ describe('cursor runner', () => {
   });
 
   it('does not treat a submitted Codex instruction with progress as pending', async () => {
-    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
+    const message = await dispatchPrompt('temp/tasks/fix/demo/REVIEW-FIX.md');
     const pane = `
 › ${message}
 
@@ -775,7 +775,7 @@ describe('cursor runner', () => {
   });
 
   it('accepts prompt delivery when Codex immediately starts working and no marker remains visible', async () => {
-    const message = await dispatchPrompt('temp/tasks/feat/proj-1043/SELF-REVIEW.md');
+    const message = await dispatchPrompt('temp/tasks/feat/proj-1043/REVIEW.md');
     const before = `
 ╭────────────────────────────╮
 │ >_ OpenAI Codex            │
@@ -792,20 +792,17 @@ describe('cursor runner', () => {
 
 • SessionStart hook (completed)
 • Explored
-  └ Read SELF-REVIEW.md
+  └ Read REVIEW.md
 • Working (3s • esc to interrupt)
 
   gpt-5.5 medium fast · branch · Context 89% left
 `;
 
-    assert.equal(
-      runnerPaneShowsPromptAccepted(after, before, message, 'SELF-REVIEW.md', 'codex'),
-      true,
-    );
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'REVIEW.md', 'codex'), true);
   });
 
   it('does not mistake stale busy text before a buffered Codex instruction for progress', async () => {
-    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
+    const message = await dispatchPrompt('temp/tasks/fix/demo/REVIEW-FIX.md');
     const pane = `
 • Working (12s • esc to interrupt)
 
@@ -818,7 +815,7 @@ describe('cursor runner', () => {
   });
 
   it('does not accept Codex post-launch prompt delivery when Enter was dropped', async () => {
-    const message = await dispatchPrompt('.task/fix/30728-0529-130215/SELF-REVIEW.md');
+    const message = await dispatchPrompt('.task/fix/30728-0529-130215/REVIEW.md');
     const before = `
 ╭─────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                     │
@@ -839,13 +836,13 @@ describe('cursor runner', () => {
 
     assert.equal(runnerPaneHasBufferedInstruction(after, message, 'codex'), true);
     assert.equal(
-      runnerPaneShowsPromptAccepted(after, before, message, 'SELF-REVIEW.md', 'codex'),
+      runnerPaneShowsPromptAccepted(after, before, message, 'REVIEW.md', 'codex'),
       false,
     );
   });
 
   it('accepts Claude post-launch prompt delivery once the prompt is in transcript history', async () => {
-    const message = await dispatchPrompt('temp/tasks/feat/tat-1043-0608-144339/SELF-REVIEW.md');
+    const message = await dispatchPrompt('temp/tasks/feat/tat-1043-0608-144339/REVIEW.md');
     const before = `
  ▐▛███▜▌   Claude Code v2.1.162
 
@@ -866,15 +863,15 @@ describe('cursor runner', () => {
 
     assert.equal(runnerPaneHasBufferedInstruction(after, message, 'claude'), false);
     assert.equal(
-      runnerPaneShowsPromptAccepted(after, before, message, 'SELF-REVIEW.md', 'claude'),
+      runnerPaneShowsPromptAccepted(after, before, message, 'REVIEW.md', 'claude'),
       true,
     );
   });
 
-  it('recognizes a Claude self-review task that is already executing during readiness wait', async () => {
-    const message = await dispatchPrompt('.task/feat/tat-3215-0622-110508/SELF-REVIEW.md');
+  it('recognizes a Claude review task that is already executing during readiness wait', async () => {
+    const message = await dispatchPrompt('.task/feat/tat-3215-0622-110508/REVIEW.md');
     const pane = `
-⏺ Update(.task/feat/tat-3215-0622-110508/SELF-REVIEW.md)
+⏺ Update(.task/feat/tat-3215-0622-110508/REVIEW.md)
   ⎿  Added 1 line, removed 1 line
 
 ⏺ Bash(git diff main...HEAD --stat)
@@ -889,16 +886,13 @@ describe('cursor runner', () => {
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 `;
 
-    assert.equal(
-      runnerPaneShowsTaskAlreadyRunning(pane, message, 'SELF-REVIEW.md', 'claude'),
-      true,
-    );
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(pane, message, 'REVIEW.md', 'claude'), true);
   });
 
   it('recognizes Claude Effecting progress labels during readiness wait', async () => {
-    const message = await dispatchPrompt('temp/tasks/feat/tat-3463-0630-074758/SELF-REVIEW.md');
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3463-0630-074758/REVIEW.md');
     const pane = `
-❯ Follow the checklist in temp/tasks/feat/tat-3463-0630-074758/SELF-REVIEW.md. After each step, run
+❯ Follow the checklist in temp/tasks/feat/tat-3463-0630-074758/REVIEW.md. After each step, run
   temp/tasks/feat/tat-3463-0630-074758/mark N before continuing.
 
 ✻ Effecting… (1m 24s · thought for 2s)
@@ -907,10 +901,7 @@ describe('cursor runner', () => {
   fs · Opus 4.8 · ctx:5%
 `;
 
-    assert.equal(
-      runnerPaneShowsTaskAlreadyRunning(pane, message, 'SELF-REVIEW.md', 'claude'),
-      true,
-    );
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(pane, message, 'REVIEW.md', 'claude'), true);
   });
 
   it('recognizes Claude Churning progress labels during readiness wait', async () => {
@@ -1144,7 +1135,7 @@ describe('cursor runner', () => {
 
   it('detects Codex instructions buffered after tmux wraps long task paths', async () => {
     const message = await dispatchPrompt(
-      'temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/SELF-REVIEW-FIX.md',
+      'temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/REVIEW-FIX.md',
     );
     const pane = `
 • Waiting for background terminal (2m 08s • esc to interrupt)

@@ -126,7 +126,6 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
     version: 1,
     chainId: 'chain-1',
     generation: 2,
-    contextMode: 'reuse',
     priorRunId: 'prior-run',
     priorFamilyId: 'family-1',
     repository: 'owner/repo',
@@ -137,9 +136,9 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
     unresolvedFindings: [{ file: 'src/a.ts', line: 7, description: 'Fix this.' }],
     artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
     farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
-    reviewScope: 'incremental',
+    mode: 'warm',
     validationDepth: 'static-code',
-    sessionIntent: 'resume',
+
     priorGenerations: [],
   });
 

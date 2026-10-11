@@ -61,15 +61,12 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   await mkdir(path.join(taskDir, 'artifacts/review-loop-1'), { recursive: true });
   await writeFile(path.join(taskDir, 'artifacts/review-loop-1/review.diff'), 'self diff\n');
   await writeFile(path.join(taskDir, 'artifacts/pr-package.json'), '{"gateway":true}\n');
-  await mkdir(path.join(taskDir, 'artifacts/independent-review-2/review-loop-1'), {
+  await mkdir(path.join(taskDir, 'artifacts/review-2/review-loop-1'), {
     recursive: true,
   });
-  await writeFile(path.join(taskDir, 'artifacts/independent-review-2.json'), '{}\n');
-  await writeFile(path.join(taskDir, 'artifacts/independent-review-2.md'), '# Review\n');
-  await writeFile(
-    path.join(taskDir, 'artifacts/independent-review-2/review-loop-1/review.diff'),
-    'diff\n',
-  );
+  await writeFile(path.join(taskDir, 'artifacts/review-2.json'), '{}\n');
+  await writeFile(path.join(taskDir, 'artifacts/review-2.md'), '# Review\n');
+  await writeFile(path.join(taskDir, 'artifacts/review-2/review-loop-1/review.diff'), 'diff\n');
   await writeFile(path.join(taskDir, 'artifacts/publication-gate-hold-abc.md'), '# Hold\n');
   await writeFile(path.join(taskDir, 'artifacts/stale-worker-owned.png'), 'stale\n');
   await writeFile(
@@ -95,8 +92,8 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
 
   assert.equal(copied >= 2, true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/after.png')), true);
-  assert.equal(existsSync(path.join(taskDir, 'artifacts/independent-review-2.json')), true);
-  assert.equal(existsSync(path.join(taskDir, 'artifacts/independent-review-2.md')), true);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.json')), true);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.md')), true);
   assert.equal(
     existsSync(path.join(taskDir, 'artifacts/recipe-runs/cached-run/summary.json')),
     true,
@@ -110,7 +107,7 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     '{"gateway":true}\n',
   );
   assert.equal(
-    existsSync(path.join(taskDir, 'artifacts/independent-review-2/review-loop-1/review.diff')),
+    existsSync(path.join(taskDir, 'artifacts/review-2/review-loop-1/review.diff')),
     true,
   );
   assert.equal(existsSync(path.join(taskDir, 'artifacts/publication-gate-hold-abc.md')), true);
@@ -538,7 +535,7 @@ test('refreshArtifactMirror keeps recipe packages whole by marker, within the de
 
 test('refreshArtifactMirror keeps a worker package under a review-like name and any manifest-named file', async (t) => {
   const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-worker-review');
-  const pkg = 'self-review-fix-20261009/after-flag-off';
+  const pkg = 'review-fix-20261009/after-flag-off';
   await put(
     'evidence-manifest.json',
     JSON.stringify({
@@ -555,7 +552,7 @@ test('refreshArtifactMirror keeps a worker package under a review-like name and 
   await put(`${pkg}/summary.json`, '{}\n');
   await put(`${pkg}/trace.json`, '[]\n');
   await put('repro/before-broken-timeline.json', '{}\n');
-  await put('self-review-1/review.md', 'gateway review\n');
+  await put('review-1/review.md', 'gateway review\n');
 
   await refreshArtifactMirror(run);
 
@@ -569,7 +566,7 @@ test('refreshArtifactMirror keeps a worker package under a review-like name and 
     assert.equal(has(`${pkg}/${file}`), true, file);
   }
   assert.equal(has('repro/before-broken-timeline.json'), true);
-  assert.equal(has('self-review-1'), false, "a numbered review directory is the gateway's");
+  assert.equal(has('review-1'), false, "a numbered review directory is the gateway's");
 });
 
 test('refreshArtifactMirror fails when a snapshot link cannot be resolved for a reason other than dangling', async (t) => {

@@ -406,7 +406,7 @@ export function renderReviewChain(run: Run): unknown {
             <a class="review-chain-row" href=${`#run/${entry.runId}`}>
               <span class="review-chain-generation">G${entry.generation}</span>
               <span title=${`${entry.repository}#${entry.prNumber}`}>${range}</span>
-              <span>${entry.reviewScope} · ${entry.validationDepth}</span>
+              <span>${entry.mode.toUpperCase()} · ${entry.validationDepth}</span>
               <span
                 >${entry.verdict} ·
                 ${entry.unresolvedCount == null

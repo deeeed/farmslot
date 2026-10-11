@@ -10,6 +10,7 @@ import {
   type QueueItem,
   type Run,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -265,8 +266,8 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
             project: repair.project,
             ticketOrPr: `${monitor.config.pr.repo}#${monitor.config.pr.number}`,
             runner: choice.runner,
-            model: choice.model,
-            effort: choice.effort,
+            model: executionModelFromSelection(choice).model,
+            effort: executionModelFromSelection(choice).effort ?? undefined,
             allowedSlots: [...new Set(execution.choices.map((entry) => entry.slotId))],
             autoDispatch: false,
             initialContext: `Handle these observed PR incidents without changing monitoring policy:\n${monitor.incidents

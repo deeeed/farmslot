@@ -4825,6 +4825,7 @@ __metadata:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-cli": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
+    "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@farmslot/slot-config": "workspace:*"
     "@types/node": "npm:^22.0.0"
@@ -4861,6 +4862,7 @@ __metadata:
   resolution: "@farmslot/command-center-ui@workspace:apps/command-center/ui"
   dependencies:
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/theme": "workspace:*"
     "@types/qrcode": "npm:^1.5.6"
     "@xterm/addon-fit": "npm:^0.11.0"
@@ -4937,6 +4939,7 @@ __metadata:
     "@farmslot/capabilities": "workspace:*"
     "@farmslot/credential-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@farmslot/slot-config": "workspace:*"
     "@sinclair/typebox": "npm:^0.34.49"
@@ -4980,6 +4983,7 @@ __metadata:
     "@farmslot/adapter-rn": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
+    "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/theme": "workspace:*"
     "@gorhom/bottom-sheet": "npm:^5.2.14"
     "@react-native-async-storage/async-storage": "npm:2.2.0"
@@ -5096,6 +5100,19 @@ __metadata:
     ws: "npm:^8.18.0"
   bin:
     farmslot-visual-review: ./bin/farmslot-visual-review.mjs
+  languageName: unknown
+  linkType: soft
+
+"@farmslot/review-dispatch@workspace:*, @farmslot/review-dispatch@workspace:packages/review-dispatch":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/review-dispatch@workspace:packages/review-dispatch"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    eslint: "npm:^10.3.0"
+    prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
+    typescript: "npm:^5.6.0"
   languageName: unknown
   linkType: soft
 

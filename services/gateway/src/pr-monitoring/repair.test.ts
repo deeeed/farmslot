@@ -15,7 +15,7 @@ import { PRMonitorStore } from './store.js';
 
 const execution = {
   slotPolicy: { kind: 'exact' as const, slotId: 'repair-slot' },
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 const config: PRMonitorConfig = {
   pr: { host: 'github.com', repo: 'owner/repo', number: 501 },
@@ -76,7 +76,15 @@ async function fixture(t: test.TestContext) {
       () => true,
       () => {},
       async () => ({
-        choices: [{ slotId: 'repair-slot', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+        choices: [
+          {
+            slotId: 'repair-slot',
+            runner: 'codex',
+            model: 'gpt-6-astra',
+            effort: 'high',
+            mode: 'cold' as const,
+          },
+        ],
         errors: [],
       }),
     );
@@ -631,7 +639,15 @@ test('transient post-persistence refusal clears queue linkage without recording 
         updateRun(run.id, { status: 'done' });
       }
       return {
-        choices: [{ slotId: 'repair-slot', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+        choices: [
+          {
+            slotId: 'repair-slot',
+            runner: 'codex',
+            model: 'gpt-6-astra',
+            effort: 'high',
+            mode: 'cold' as const,
+          },
+        ],
         errors: [],
       };
     },

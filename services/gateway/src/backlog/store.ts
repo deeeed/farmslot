@@ -1,5 +1,4 @@
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
-
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import path from 'node:path';
 import {
   ARCHIVABLE_BACKLOG_STATUSES,
   assertBacklogLaunchPlan,
-  assertStaticReviewLoopRequests,
   type BacklogAutoDispatchTickParams,
   type BacklogAutoDispatchTickResult,
   type BacklogBlockedItem,
@@ -36,7 +34,7 @@ import {
   EDITABLE_BACKLOG_STATUSES,
   Events,
   isResourcePostureWaitPolicy,
-  isReviewValidationDepth,
+  isReviewMode,
   isSuccessfulRun,
   isTerminalRunStatus,
   normalizeRunTags,
@@ -46,13 +44,18 @@ import {
   type QueueItem,
   RESOURCE_POSTURE_WAIT_POLICIES,
   type ResourcePostureWaitPolicy,
-  type ReviewDepthPolicy,
-  type ReviewLoopRequest,
-  type ReviewRunnerId,
+  type ReviewMode,
+  type ReviewPolicy,
+  type ReviewSelection,
   type Run,
   type RunStatus,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
+import {
+  assertReviewSequence,
+  parseReviewPolicy,
+  parseReviewRequestContext,
+} from '@farmslot/review-dispatch';
 
 import { loadProjectVars } from '../core/config.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -70,6 +73,7 @@ import {
   normalizeTicketRef,
   validateTicketRef,
 } from '../methods/dispatch/ticket-ref.js';
+import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
@@ -150,23 +154,17 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'prepareProfile',
   'mode',
   'devInteractiveProfile',
-  'reviewDepth',
+  'reviewMode',
+  'reviewContext',
+  'reviewPolicy',
   'waitPolicy',
-  'pendingReviewPlan',
+  'reviewSequence',
+  'reviewSequenceContext',
   'launchPlan',
 ]);
 
 const DISPATCH_MODES = new Set(['interactive', 'autonomous']);
 const DEV_INTERACTIVE_PROFILES = new Set(['lightweight', 'reviewed']);
-const REVIEW_RUNNERS = new Set<ReviewRunnerId>([
-  'claude',
-  'codex',
-  'cursor',
-  'grok',
-  'opencode',
-  'pi',
-]);
-
 let _broadcast: BroadcastFn | null = null;
 const items: BacklogRecord[] = [];
 let backlogPersistChain: Promise<void> = Promise.resolve();
@@ -360,83 +358,24 @@ function normalizeBacklogTaskTemplate(
   });
 }
 
-function normalizeReviewDepth(value: unknown): ReviewDepthPolicy | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (!isRecord(value)) throw new Error('reviewDepth must be an object');
-  const minimumIndependentReviews = Number(value.minimumIndependentReviews);
-  const extraLoopsRequested = Number(value.extraLoopsRequested);
-  if (!Number.isInteger(minimumIndependentReviews) || minimumIndependentReviews < 0) {
-    throw new Error('reviewDepth.minimumIndependentReviews must be a non-negative integer');
-  }
-  if (!Number.isInteger(extraLoopsRequested) || extraLoopsRequested < 0) {
-    throw new Error('reviewDepth.extraLoopsRequested must be a non-negative integer');
-  }
-  if (typeof value.requireCrossRunner !== 'boolean') {
-    throw new Error('reviewDepth.requireCrossRunner must be a boolean');
-  }
-  if (
-    value.requestedBy !== 'dispatch' &&
-    value.requestedBy !== 'human-gate' &&
-    value.requestedBy !== 'agent-gate'
-  ) {
-    throw new Error('reviewDepth.requestedBy is invalid');
-  }
-  if (value.countingVersion !== undefined && value.countingVersion !== 2) {
-    throw new Error('reviewDepth.countingVersion is invalid');
-  }
-  return {
-    minimumIndependentReviews,
-    requireCrossRunner: value.requireCrossRunner,
-    extraLoopsRequested,
-    ...(value.countingVersion === 2 ? { countingVersion: 2 } : {}),
-    requestedBy: value.requestedBy,
-  };
+function normalizePrimaryReviewMode(value: unknown): ReviewMode | undefined {
+  if (value == null) return undefined;
+  if (!isReviewMode(value)) throw new Error('reviewMode must be warm or cold');
+  return value;
 }
 
-/** New or edited plans are static; stored legacy plans stay readable for operator repair. */
-function normalizeRequestedReviewPlan(value: unknown): ReviewLoopRequest[] | undefined {
-  if (Array.isArray(value)) assertStaticReviewLoopRequests(value);
+function normalizeReviewPolicy(value: unknown): ReviewPolicy | undefined {
+  return value == null ? undefined : parseReviewPolicy(value);
+}
+
+function normalizeRequestedReviewPlan(value: unknown): ReviewSelection[] | undefined {
   return normalizePendingReviewPlan(value);
 }
 
-function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undefined {
+function normalizePendingReviewPlan(value: unknown): ReviewSelection[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value)) throw new Error('pendingReviewPlan must be an array');
-  const plan = value.slice(0, 5).map((entry, index): ReviewLoopRequest => {
-    if (!isRecord(entry)) throw new Error(`pendingReviewPlan[${index}] must be an object`);
-    const runner = normalizeExecutionHint(entry.runner, `pendingReviewPlan[${index}].runner`);
-    if (runner !== 'same' && !REVIEW_RUNNERS.has(runner as ReviewRunnerId)) {
-      throw new Error(`pendingReviewPlan[${index}].runner is invalid`);
-    }
-    const order = Number(entry.order ?? index + 1);
-    if (!Number.isInteger(order) || order < 1) {
-      throw new Error(`pendingReviewPlan[${index}].order must be a positive integer`);
-    }
-    const validationDepth =
-      entry.validationDepth === undefined || entry.validationDepth === null
-        ? undefined
-        : entry.validationDepth;
-    if (validationDepth !== undefined && !isReviewValidationDepth(validationDepth)) {
-      throw new Error(`pendingReviewPlan[${index}].validationDepth is invalid`);
-    }
-    const sessionIntent =
-      entry.sessionIntent === 'resume' || entry.sessionIntent === 'reset'
-        ? entry.sessionIntent
-        : undefined;
-    return {
-      order,
-      runner: runner as ReviewLoopRequest['runner'],
-      ...(typeof entry.model === 'string' && entry.model.trim()
-        ? { model: entry.model.trim() }
-        : {}),
-      ...(typeof entry.effort === 'string' && entry.effort.trim()
-        ? { effort: entry.effort.trim() }
-        : {}),
-      ...(validationDepth ? { validationDepth } : {}),
-      ...(sessionIntent ? { sessionIntent } : {}),
-    };
-  });
-  return plan.length > 0 ? plan : undefined;
+  assertReviewSequence(value, { maxRows: 5 });
+  return value.length ? structuredClone(value) : undefined;
 }
 
 function assertExecutionHintsCompatible(item: BacklogItem): void {
@@ -504,6 +443,7 @@ async function assertBacklogSpecReady(item: BacklogItem): Promise<void> {
 }
 
 function normalizeStoredItem(raw: unknown): BacklogRecord | null {
+  assertCurrentReviewConfiguration(raw, 'backlog');
   if (!isRecord(raw)) return null;
   const id = typeof raw.id === 'string' && raw.id ? raw.id : null;
   const project = typeof raw.project === 'string' && raw.project ? raw.project : null;
@@ -546,9 +486,16 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
   const prepareProfile = normalizeOptionalString(raw.prepareProfile);
   const mode = normalizeDispatchMode(raw.mode);
   const devInteractiveProfile = normalizeDevInteractiveProfile(raw.devInteractiveProfile);
-  const reviewDepth = normalizeReviewDepth(raw.reviewDepth);
+  const reviewPolicy = normalizeReviewPolicy(raw.reviewPolicy);
+  const reviewMode = normalizePrimaryReviewMode(raw.reviewMode);
+  const reviewContext =
+    raw.reviewContext == null ? undefined : parseReviewRequestContext(raw.reviewContext, 1);
   const waitPolicy = normalizeWaitPolicy(raw.waitPolicy);
-  const pendingReviewPlan = normalizePendingReviewPlan(raw.pendingReviewPlan);
+  const reviewSequence = normalizePendingReviewPlan(raw.reviewSequence);
+  const reviewSequenceContext =
+    raw.reviewSequenceContext == null
+      ? undefined
+      : parseReviewRequestContext(raw.reviewSequenceContext, reviewSequence?.length ?? 0);
   const launchPlan = normalizeLaunchPlan(raw.launchPlan);
   const launchPlanState = isRecord(raw.launchPlanState)
     ? {
@@ -625,9 +572,12 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
     ...(prepareProfile ? { prepareProfile } : {}),
     ...(mode ? { mode } : {}),
     ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
-    ...(reviewDepth ? { reviewDepth } : {}),
+    ...(reviewPolicy ? { reviewPolicy } : {}),
+    ...(reviewMode ? { reviewMode } : {}),
+    ...(reviewContext ? { reviewContext } : {}),
     ...(waitPolicy ? { waitPolicy } : {}),
-    ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
+    ...(reviewSequence ? { reviewSequence } : {}),
+    ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
     ...(launchPlan ? { launchPlan } : {}),
     ...(launchPlanState?.launchGroupId ? { launchPlanState } : {}),
     createdAt,
@@ -1325,9 +1275,16 @@ export async function createBacklogItem(
     const prepareProfile = normalizeOptionalString(params.prepareProfile);
     const mode = normalizeDispatchMode(params.mode);
     const devInteractiveProfile = normalizeDevInteractiveProfile(params.devInteractiveProfile);
-    const reviewDepth = normalizeReviewDepth(params.reviewDepth);
+    const reviewPolicy = normalizeReviewPolicy(params.reviewPolicy);
+    const reviewMode = normalizePrimaryReviewMode(params.reviewMode);
+    const reviewContext =
+      params.reviewContext == null ? undefined : parseReviewRequestContext(params.reviewContext, 1);
     const waitPolicy = normalizeWaitPolicy(params.waitPolicy);
-    const pendingReviewPlan = normalizeRequestedReviewPlan(params.pendingReviewPlan);
+    const reviewSequence = normalizeRequestedReviewPlan(params.reviewSequence);
+    const reviewSequenceContext =
+      params.reviewSequenceContext == null
+        ? undefined
+        : parseReviewRequestContext(params.reviewSequenceContext, reviewSequence?.length ?? 0);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
     const item: BacklogRecord = {
@@ -1356,9 +1313,12 @@ export async function createBacklogItem(
       ...(prepareProfile ? { prepareProfile } : {}),
       ...(mode ? { mode } : {}),
       ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
-      ...(reviewDepth ? { reviewDepth } : {}),
+      ...(reviewPolicy ? { reviewPolicy } : {}),
+      ...(reviewMode ? { reviewMode } : {}),
+      ...(reviewContext ? { reviewContext } : {}),
       ...(waitPolicy ? { waitPolicy } : {}),
-      ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
+      ...(reviewSequence ? { reviewSequence } : {}),
+      ...(reviewSequenceContext ? { reviewSequenceContext } : {}),
       ...(launchPlan ? { launchPlan } : {}),
       createdAt: now,
       updatedAt: now,
@@ -1648,19 +1608,36 @@ export async function updateBacklogItem(
         if (waitPolicy) item.waitPolicy = waitPolicy;
         else delete item.waitPolicy;
       }
-      if (params.reviewDepth !== undefined) {
-        const reviewDepth =
-          params.reviewDepth === null ? undefined : normalizeReviewDepth(params.reviewDepth);
-        if (reviewDepth) item.reviewDepth = reviewDepth;
-        else delete item.reviewDepth;
+      if (params.reviewMode !== undefined) {
+        const mode = normalizePrimaryReviewMode(params.reviewMode);
+        if (mode) item.reviewMode = mode;
+        else delete item.reviewMode;
       }
-      if (params.pendingReviewPlan !== undefined) {
-        const pendingReviewPlan =
-          params.pendingReviewPlan === null
+      if (params.reviewContext !== undefined) {
+        if (params.reviewContext === null) delete item.reviewContext;
+        else item.reviewContext = parseReviewRequestContext(params.reviewContext, 1);
+      }
+      if (params.reviewPolicy !== undefined) {
+        const reviewPolicy =
+          params.reviewPolicy === null ? undefined : normalizeReviewPolicy(params.reviewPolicy);
+        if (reviewPolicy) item.reviewPolicy = reviewPolicy;
+        else delete item.reviewPolicy;
+      }
+      if (params.reviewSequence !== undefined) {
+        const reviewSequence =
+          params.reviewSequence === null
             ? undefined
-            : normalizeRequestedReviewPlan(params.pendingReviewPlan);
-        if (pendingReviewPlan) item.pendingReviewPlan = pendingReviewPlan;
-        else delete item.pendingReviewPlan;
+            : normalizeRequestedReviewPlan(params.reviewSequence);
+        if (reviewSequence) item.reviewSequence = reviewSequence;
+        else delete item.reviewSequence;
+      }
+      if (params.reviewSequenceContext !== undefined) {
+        if (params.reviewSequenceContext === null) delete item.reviewSequenceContext;
+        else
+          item.reviewSequenceContext = parseReviewRequestContext(
+            params.reviewSequenceContext,
+            item.reviewSequence?.length ?? 0,
+          );
       }
       if (params.launchPlan !== undefined) {
         if (params.launchPlan === null) {
@@ -2022,9 +1999,12 @@ async function buildBacklogQueueParams(
     prepareProfile: item.prepareProfile,
     mode: item.mode,
     devInteractiveProfile: item.devInteractiveProfile,
-    reviewDepth: item.reviewDepth,
+    reviewPolicy: item.reviewPolicy,
+    reviewMode: item.reviewMode,
+    reviewContext: item.reviewContext,
     waitPolicy: item.waitPolicy,
-    pendingReviewPlan: item.pendingReviewPlan,
+    reviewSequence: item.reviewSequence,
+    reviewSequenceContext: item.reviewSequenceContext,
     // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
     autoDispatch: false,
   };
@@ -2076,7 +2056,7 @@ export async function enqueueBacklogItem(
       options.dispatchOriginator ?? originator ?? requireBacklogOriginator(item);
     try {
       // Stored legacy live loops stay readable; queueing them needs an operator repair first.
-      assertStaticReviewLoopRequests(item.pendingReviewPlan);
+      if (item.reviewSequence) assertReviewSequence(item.reviewSequence, { maxRows: 5 });
       await assertAllowedSlotsBelongToProject(item);
       if (params.auto) await assertAutoDispatchEligible(item);
       item.sourceRef = await normalizeSourceFields(

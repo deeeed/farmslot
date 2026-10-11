@@ -66,12 +66,12 @@ try {
         ? {
             execution: {
               slotPolicy: { kind: 'exact', slotId },
-              models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+              models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
             },
           }
         : {}),
       githubTeams: [],
-      review: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' },
+      review: { mode: 'warm' },
       notificationPrincipalIds: [],
     },
   });
@@ -150,11 +150,8 @@ try {
     assert.deepEqual(queued.allowedSlots, [slotId]);
     assert.equal(queued.model, 'gpt-6-astra');
     assert.equal(queued.effort, 'high');
-    assert.equal(queued.reviewValidationDepth, 'full-live');
     assert.deepEqual(queued.prWork?.review?.options, {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      validationDepth: 'full-live',
+      mode: 'warm',
     });
     assert.equal(queued.runId, undefined);
     await connection.call('prRules.defer', { id: active[0].id });

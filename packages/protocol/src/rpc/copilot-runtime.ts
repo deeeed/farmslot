@@ -45,7 +45,7 @@ export interface CopilotCheckoutIdentity {
 
 export interface CopilotWorkloadTotals {
   implementation: number;
-  independentReview: number;
+  review: number;
   reviewRework: number;
   ciFix: number;
   fullQa: number;

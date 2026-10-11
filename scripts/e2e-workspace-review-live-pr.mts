@@ -68,7 +68,7 @@ for (const entry of await readdir(pack, { withFileTypes: true }))
 const execution = {
   workspacePolicy: { kind: 'exact', machine: 'review-live' },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'medium' }],
+  models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'medium' }],
 };
 await json(path.join(projectRoot, 'project.json'), {
   ...config,
@@ -77,7 +77,7 @@ await json(path.join(projectRoot, 'project.json'), {
     ...config.workflow_defaults,
     'review-pr': {
       execution,
-      review: { validationDepth: 'static-code', scope: 'full', sessionIntent: 'reset' },
+      review: { mode: 'cold' },
     },
   },
 });

@@ -17,15 +17,22 @@ import {
   type SlotStatus,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
+import { reviewLineagesForPR } from '@farmslot/review-dispatch';
 
 import '../shared/choice-picker.js';
 import './pr-execution-picker.js';
 import './pr-review-options-picker.js';
 
+import { getState } from '../../state.js';
 import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
-import { newPRExecution, newPRWorkspaceExecution } from './pr-execution-picker.js';
+import {
+  newPRExecution,
+  newPRWorkspaceExecution,
+  type PRExecutionPicker,
+  type PRReviewExecutionChangeDetail,
+} from './pr-execution-picker.js';
 
 @customElement('pr-review-request-form')
 export class PRReviewRequestForm extends LitElement {
@@ -51,7 +58,7 @@ export class PRReviewRequestForm extends LitElement {
   protected willUpdate(changed: Map<string, unknown>) {
     if (changed.has('prUrl')) this.url = this.prUrl;
     if (changed.has('initialWorkflow') && this.initialWorkflow === 'qa') {
-      this.review = { sessionIntent: 'reset', scope: 'full', workflow: 'qa' };
+      this.review = { mode: 'cold', workflow: 'qa' };
       this.overrideReview = true;
     }
   }
@@ -70,6 +77,10 @@ export class PRReviewRequestForm extends LitElement {
     event.preventDefault();
     this.error = '';
     try {
+      const validationErrors =
+        this.renderRoot.querySelector<PRExecutionPicker>('pr-execution-picker')?.validationErrors ??
+        [];
+      if (validationErrors.length) throw new Error(validationErrors.join(' '));
       const pr = parseGitHubPullUrl(this.url);
       if (!pr) throw new Error('Enter a GitHub pull request URL');
       let requestedReview = this.overrideReview ? this.review : undefined;
@@ -120,6 +131,14 @@ export class PRReviewRequestForm extends LitElement {
     const { teamId, team, policy, farm, resolved } = this.selection();
     const { review } = resolved;
     const execution = this.overrideExecution ? this.execution : resolved.execution;
+    const pr = parseGitHubPullUrl(this.url);
+    const reviewLineages = pr
+      ? reviewLineagesForPR(getState().runs, {
+          host: 'github.com',
+          repo: pr.repo,
+          number: pr.number,
+        })
+      : [];
     const target = execution
       ? isPRWorkspaceExecutionProfile(execution)
         ? workspacePolicyTargetLabel(execution.workspacePolicy)
@@ -173,7 +192,6 @@ export class PRReviewRequestForm extends LitElement {
             </p>`
           : nothing}
         <pr-review-options-picker
-          .presentation=${'workflow'}
           .qa=${farm?.qa}
           .value=${{
             ...review,
@@ -257,19 +275,6 @@ export class PRReviewRequestForm extends LitElement {
               }}
             />Override inherited review options</label
           >
-          <pr-review-options-picker
-            .presentation=${'reviewer'}
-            .qa=${farm?.qa}
-            .value=${{
-              ...review,
-              publishReview: this.overrideReview ? this.review.publishReview : undefined,
-            }}
-            .disabled=${this.disabled || !this.overrideReview}
-            @review-options-change=${(event: CustomEvent<PRReviewOptions>) => {
-              this.review = event.detail;
-              this.edited();
-            }}
-          ></pr-review-options-picker>
           <label class="check"
             ><input
               type="checkbox"
@@ -286,6 +291,16 @@ export class PRReviewRequestForm extends LitElement {
           >
           ${execution
             ? html`<pr-execution-picker
+                .review=${prReviewWorkflow(review) === 'review'}
+                .reviewMode=${review.mode}
+                .reviewContext=${review.reviewContext}
+                .reviewLineages=${reviewLineages}
+                @review-execution-change=${(event: CustomEvent<PRReviewExecutionChangeDetail>) => {
+                  this.overrideReview = true;
+                  this.execution = event.detail.execution;
+                  this.review = { ...review, ...event.detail.review };
+                  this.edited();
+                }}
                 .pools=${this.pools}
                 .resource=${prReviewWorkflow(review) === 'qa' ? 'slot' : 'workspace'}
                 .value=${execution}

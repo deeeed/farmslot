@@ -192,7 +192,7 @@ test('task.progress keeps blocked and complete statuses from the child signal', 
 });
 
 test('task.progress ignores a child parented on a different checklist', async () => {
-  const fixture = writeFixture({ parentChecklist: 'SELF-REVIEW.md' });
+  const fixture = writeFixture({ parentChecklist: 'REVIEW.md' });
   try {
     const steps = stepsOf(await progressFor(fixture));
     assert.deepEqual(

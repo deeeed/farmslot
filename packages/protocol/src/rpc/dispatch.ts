@@ -199,17 +199,19 @@ export interface DispatchQueueAddParams {
   /** Same semantics as RunCreateParams.startRef — queued replay/compare base ref. */
   startRef?: string;
   startRefSource?: import('../contracts/index.js').RunStartRefSource;
-  /** Same semantics as RunCreateParams.reviewDepth — persisted onto the created run. */
-  reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
+  /** Same semantics as RunCreateParams.reviewPolicy — persisted onto the created run. */
+  reviewPolicy?: import('../contracts/index.js').ReviewPolicy;
   /** Explicitly finish static review without waiting for operator questions/publication. */
   reviewAutoFinish?: boolean;
   publishReview?: boolean;
-  reviewScope?: import('../contracts/index.js').ReviewScope;
+  reviewMode?: import('../contracts/index.js').ReviewMode;
   reviewTier?: string;
   recipeStrategy?: string;
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
-  /** Same semantics as RunCreateParams.pendingReviewPlan — additional independent reviews for auto-dispatch. */
-  pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
+  /** Same semantics as RunCreateParams.reviewSequence — additional independent reviews for auto-dispatch. */
+  reviewSequence?: import('../contracts/index.js').ReviewSequence;
+  reviewContext?: import('../contracts/index.js').ReviewRequestContext;
+  reviewSequenceContext?: import('../contracts/index.js').ReviewRequestContext;
   /** Internal ADR-044 launch-plan linkage. Public dispatch.queue.add rejects these fields. */
   launchPlanId?: string;
   launchCandidateId?: string;
@@ -252,7 +254,9 @@ export interface DispatchQueueUpdateParams {
    * Replace the queued publication-review plan in place, keeping the row's receipt identity.
    * Loops must be static; `null` or `[]` drops the plan. Repairs a queued legacy full-live plan.
    */
-  pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[] | null;
+  reviewSequence?: import('../contracts/index.js').ReviewSequence | null;
+  reviewContext?: import('../contracts/index.js').ReviewRequestContext | null;
+  reviewSequenceContext?: import('../contracts/index.js').ReviewRequestContext | null;
 }
 
 export interface DispatchQueueUpdateResult {

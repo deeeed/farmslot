@@ -1,27 +1,7 @@
-/**
- * Publish-gate review source abstraction. Two streams write into
- * `engineState.publishGate.independentReviews`:
- *
- *   1. Self-review (worker's own attempt loops).
- *   2. Extra-review (operator-requested cross-runner or repeat reviews
- *      emitted from the human gate or chained dispatch).
- *
- * Each stream owns a distinct id namespace + artifact-path scheme so the Map
- * merge in `prepareCompletionPackage` cannot silently overwrite one with the
- * other — a regression that previously erased operator-requested reviews when
- * a self-review attempt happened to land on the same loop number.
- *
- * Callers MUST route through a `ReviewSource` instance to produce ids and
- * artifact paths. Never construct these strings inline; the format lives here.
- *
- * Adding a third source (e.g. cross-runner-audit) = new class + frozen export
- * + entry in `REVIEW_SOURCES`. No call site needs to know the literal naming.
- */
-
-export type ReviewSourceKind = 'self-review' | 'extra-review';
+export type ReviewSourceKind = 'pipeline' | 'requested';
 
 export interface ReviewArtifactRefs {
-  /** Globally-unique id for the IndependentReviewStatus entry. */
+  /** Globally-unique id for the ReviewStatus entry. */
   readonly id: string;
   /** Workspace-relative path to the JSON artifact (`artifacts/...`). */
   readonly jsonRel: string;
@@ -33,39 +13,39 @@ export interface ReviewSource {
   readonly kind: ReviewSourceKind;
   /** Canonical prefix used by both id and artifact filenames (no trailing dash). */
   readonly idPrefix: string;
-  artifactRefs(loopNumber: number): ReviewArtifactRefs;
+  artifactRefs(loopNumber: number, lineage?: string): ReviewArtifactRefs;
 }
 
-class SelfReviewSourceImpl implements ReviewSource {
-  readonly kind = 'self-review' as const;
-  readonly idPrefix = 'self-review';
-  artifactRefs(loopNumber: number): ReviewArtifactRefs {
+class ReviewSourceImpl implements ReviewSource {
+  readonly kind = 'pipeline' as const;
+  readonly idPrefix = 'pipeline-review';
+  artifactRefs(loopNumber: number, lineage?: string): ReviewArtifactRefs {
     return {
-      id: `${this.idPrefix}-${loopNumber}`,
-      jsonRel: `artifacts/${this.idPrefix}-${loopNumber}.json`,
-      mdRel: `artifacts/${this.idPrefix}-${loopNumber}.md`,
+      id: `${this.idPrefix}-${lineage ?? loopNumber}`,
+      jsonRel: `artifacts/${this.idPrefix}-${lineage ?? loopNumber}.json`,
+      mdRel: `artifacts/${this.idPrefix}-${lineage ?? loopNumber}.md`,
     };
   }
 }
 
-class ExtraReviewSourceImpl implements ReviewSource {
-  readonly kind = 'extra-review' as const;
-  readonly idPrefix = 'independent-review';
-  artifactRefs(loopNumber: number): ReviewArtifactRefs {
+class RequestedReviewSourceImpl implements ReviewSource {
+  readonly kind = 'requested' as const;
+  readonly idPrefix = 'review';
+  artifactRefs(loopNumber: number, lineage?: string): ReviewArtifactRefs {
     return {
-      id: `${this.idPrefix}-${loopNumber}`,
-      jsonRel: `artifacts/${this.idPrefix}-${loopNumber}.json`,
-      mdRel: `artifacts/${this.idPrefix}-${loopNumber}.md`,
+      id: `${this.idPrefix}-${lineage ?? loopNumber}`,
+      jsonRel: `artifacts/${this.idPrefix}-${lineage ?? loopNumber}.json`,
+      mdRel: `artifacts/${this.idPrefix}-${lineage ?? loopNumber}.md`,
     };
   }
 }
 
-export const SELF_REVIEW_SOURCE: ReviewSource = Object.freeze(new SelfReviewSourceImpl());
-export const EXTRA_REVIEW_SOURCE: ReviewSource = Object.freeze(new ExtraReviewSourceImpl());
+export const PIPELINE_REVIEW_SOURCE: ReviewSource = Object.freeze(new ReviewSourceImpl());
+export const REQUESTED_REVIEW_SOURCE: ReviewSource = Object.freeze(new RequestedReviewSourceImpl());
 
 export const REVIEW_SOURCES: Readonly<Record<ReviewSourceKind, ReviewSource>> = Object.freeze({
-  'self-review': SELF_REVIEW_SOURCE,
-  'extra-review': EXTRA_REVIEW_SOURCE,
+  pipeline: PIPELINE_REVIEW_SOURCE,
+  requested: REQUESTED_REVIEW_SOURCE,
 });
 
 export function reviewLoopNumberFromId(source: ReviewSource, id: string): number | null {

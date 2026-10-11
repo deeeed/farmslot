@@ -61,9 +61,9 @@ test('inferFlowFromBasename uses longest Farmslot flow prefix', () => {
   assert.equal(inferFlowFromBasename('notes.md'), null);
 });
 
-test('self-review-fix resolves as its own prefix, not self-review', () => {
-  assert.equal(inferFlowFromBasename('self-review-fix.md'), 'self-review-fix');
-  assert.equal(inferFlowFromBasename('self-review.md'), 'self-review');
+test('review-fix resolves as its own prefix, not review', () => {
+  assert.equal(inferFlowFromBasename('review-fix.md'), 'review-fix');
+  assert.equal(inferFlowFromBasename('review.md'), 'review');
 });
 
 test('catalog ids collide across worker-flat and flow-tree layouts', () => {

@@ -77,7 +77,7 @@ Adopt the rest only when the workflow needs it:
 
 - multiple isolated slots;
 - live watch-and-steer runs;
-- cross-runner review;
+- PR review;
 - mobile supervision;
 - retrospectives that improve prompts, recipes, docs, and adapters.
 

@@ -10,12 +10,12 @@ import {
   DEFAULT_BRANCH,
   type DiffStat,
   type GatePolicy,
-  type IndependentReviewStatus,
   modelsMatch,
   type PublicationStatus,
   type PublicationTarget,
   type ReadyGatePrPackage,
-  type ReviewDepthPolicy,
+  type ReviewPolicy,
+  type ReviewStatus,
   type Run,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
@@ -32,6 +32,7 @@ import {
 } from '../integrations/pr-linkage.js';
 import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
+import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -40,10 +41,6 @@ import {
   extractRunnerSessionUsage,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
-import {
-  captureCurrentReviewSnapshot,
-  unavailableReviewSnapshot,
-} from '../self-review/snapshots.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -60,10 +57,6 @@ import {
 } from './draft-pr.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
-import {
-  augmentIndependentReviewAttemptsFromArtifacts,
-  materializeIndependentReviewArtifacts,
-} from './independent-reviews.js';
 import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
@@ -100,11 +93,12 @@ import {
   sortArtifactRefsForComparison,
   stableJson,
 } from './ready-gate-package.js';
+import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
-  defaultReviewDepthPolicy,
+  defaultReviewPolicy,
   effectiveRequiredReviewCount,
-  independentReviewPolicySatisfied,
+  reviewPolicySatisfied,
 } from '../quality/review-policy.js';
 export {
   ciRequiresPublishedPr,
@@ -193,8 +187,8 @@ export interface CompletionResult {
 export interface PrepareCompletionPackageResult {
   completion: CompletionResult;
   prPackage: ReadyGatePrPackage;
-  reviewDepth: ReviewDepthPolicy;
-  independentReviews: IndependentReviewStatus[];
+  reviewPolicy: ReviewPolicy;
+  reviews: ReviewStatus[];
 }
 
 export interface PublishCompletionPackageResult extends CompletionResult {
@@ -621,7 +615,7 @@ export async function prepareCompletionPackage(
   options?: {
     diffStat?: DiffStat;
     publicationTarget?: PublicationTarget;
-    reviewDepth?: ReviewDepthPolicy;
+    reviewPolicy?: ReviewPolicy;
     selectedEvidenceKeys?: string[];
     priorEvidenceManifest?: ArtifactRef[];
     stampReviews?: boolean;
@@ -652,43 +646,43 @@ export async function prepareCompletionPackage(
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);
   const baseBranch = getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
-  const reviewDepth = publicationReviewPolicyForRun(
+  const reviewPolicy = publicationReviewPolicyForRun(
     run,
     projectVars.projectJson,
-    options?.reviewDepth ?? run.engineState?.publishGate?.reviewDepth,
+    options?.reviewPolicy ?? run.engineState?.publishGate?.reviewPolicy,
   );
-  const materializedReviews = await materializeIndependentReviewArtifacts(run);
-  const selfReviewStep = run.steps.find((step) => step.name === 'self-review');
-  const priorReviews = (run.engineState?.publishGate?.independentReviews ?? []).filter(
+  const materializedReviews = await materializeReviewArtifacts(run);
+  const reviewStep = run.steps.find((step) => step.name === 'review');
+  const priorReviews = (run.engineState?.publishGate?.reviews ?? []).filter(
     (review) =>
       !(
-        inferReviewSourceKind(review) === 'self-review' &&
+        inferReviewSourceKind(review) === 'pipeline' &&
         review.verdict === 'pending' &&
-        selfReviewStep?.status !== 'running'
+        reviewStep?.status !== 'running'
       ),
   );
   // Composite (sourceKind, loopNumber) key — defense in depth so two streams
   // can't collide even if a future caller bypasses the source helpers. The id
   // alone was the prior key and silently dropped entries on collision.
-  const priorReviewsByCompositeKey = new Map<string, IndependentReviewStatus>();
-  const reviewsByCompositeKey = new Map<string, IndependentReviewStatus>();
+  const priorReviewsByCompositeKey = new Map<string, ReviewStatus>();
+  const reviewsByCompositeKey = new Map<string, ReviewStatus>();
   for (const review of priorReviews) {
     const key = reviewCompositeKey(inferReviewSourceKind(review), review.loopNumber);
     priorReviewsByCompositeKey.set(key, review);
     reviewsByCompositeKey.set(key, review);
   }
-  const priorSelfReview =
-    priorReviews.filter((review) => inferReviewSourceKind(review) === 'self-review').at(-1) ?? null;
-  if (materializedReviews.some((review) => inferReviewSourceKind(review) === 'self-review')) {
+  const priorReview =
+    priorReviews.filter((review) => inferReviewSourceKind(review) === 'pipeline').at(-1) ?? null;
+  if (materializedReviews.some((review) => inferReviewSourceKind(review) === 'pipeline')) {
     for (const [key, review] of reviewsByCompositeKey) {
-      if (inferReviewSourceKind(review) === 'self-review') reviewsByCompositeKey.delete(key);
+      if (inferReviewSourceKind(review) === 'pipeline') reviewsByCompositeKey.delete(key);
     }
   }
   for (const review of materializedReviews) {
     const key = reviewCompositeKey(inferReviewSourceKind(review), review.loopNumber);
     const prior =
       priorReviewsByCompositeKey.get(key) ??
-      (inferReviewSourceKind(review) === 'self-review' ? priorSelfReview : null);
+      (inferReviewSourceKind(review) === 'pipeline' ? priorReview : null);
     reviewsByCompositeKey.set(
       key,
       options?.stampReviews === false && prior
@@ -701,10 +695,8 @@ export async function prepareCompletionPackage(
         : review,
     );
   }
-  let independentReviews = [...reviewsByCompositeKey.values()].sort(
-    (a, b) => a.loopNumber - b.loopNumber,
-  );
-  independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
+  let reviews = [...reviewsByCompositeKey.values()].sort((a, b) => a.loopNumber - b.loopNumber);
+  reviews = await augmentReviewAttemptsFromArtifacts(run, reviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
   // A live slot always wins. A persisted package HEAD is accepted only as the
   // inspection identity fallback after that slot has been removed.
@@ -758,10 +750,10 @@ export async function prepareCompletionPackage(
       }),
     validationSummaryPath: validation.path,
     validationSummaryHash: validation.hash,
-    reviewArtifactIds: independentReviews.flatMap((review) => review.artifactPaths ?? [review.id]),
+    reviewArtifactIds: reviews.flatMap((review) => review.artifactPaths ?? [review.id]),
     dispatchMode: run.mode,
     gatePolicy: gatePolicyForRun(run),
-    reviewDepth,
+    reviewPolicy,
     publicationTarget: target,
     publicationStatus: 'not_published',
     createdAt: new Date().toISOString(),
@@ -776,15 +768,13 @@ export async function prepareCompletionPackage(
   const packageHash = computeReadyGatePackageHash(packageWithoutHash);
   const prPackage: ReadyGatePrPackage = { ...packageWithoutHash, packageHash };
   if (options?.stampReviews !== false) {
-    independentReviews = independentReviews.map((review) => ({
+    reviews = reviews.map((review) => ({
       ...review,
       reviewedHeadSha: prPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
       reviewedPackageInputHash: prPackage.packageInputHash ?? null,
       reviewedReviewSubjectHash: prPackage.reviewSubjectHash ?? null,
     }));
-    prPackage.reviewArtifactIds = independentReviews.flatMap(
-      (review) => review.artifactPaths ?? [review.id],
-    );
+    prPackage.reviewArtifactIds = reviews.flatMap((review) => review.artifactPaths ?? [review.id]);
   }
 
   if (taskDir) {
@@ -802,7 +792,7 @@ export async function prepareCompletionPackage(
         `- Head: ${prPackage.headSha ?? 'unknown'}`,
         `- Target: ${prPackage.publicationTarget}`,
         `- Status: ${prPackage.publicationStatus}`,
-        `- Reviews: ${independentReviews.length}/${effectiveRequiredReviewCount(reviewDepth)}`,
+        `- Reviews: ${reviews.length}/${effectiveRequiredReviewCount(reviewPolicy)}`,
         '',
         '## Draft title',
         prPackage.draftTitle,
@@ -826,13 +816,13 @@ export async function prepareCompletionPackage(
         packageArtifactPath: artifactPath,
         publicationTarget: target,
         publicationStatus: 'not_published',
-        reviewDepth,
-        independentReviews,
+        reviewPolicy,
+        reviews,
       },
     },
   });
 
-  return { completion, prPackage, reviewDepth, independentReviews };
+  return { completion, prPackage, reviewPolicy, reviews };
 }
 
 /**

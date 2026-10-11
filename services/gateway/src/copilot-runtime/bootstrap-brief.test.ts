@@ -39,7 +39,7 @@ test('bootstrap brief includes every required projection and excludes secrets', 
     ],
     agentContexts: [
       { role: 'review', status: 'working', slotId: 'slot-1', target: { target: 'pane' } },
-      { role: 'self-review-fix', status: 'working', slotId: 'slot-1' },
+      { role: 'review-fix', status: 'working', slotId: 'slot-1' },
       { role: 'ci-fix', status: 'waiting', slotId: 'slot-1' },
     ],
   } as unknown as Run;
@@ -70,7 +70,7 @@ test('bootstrap brief includes every required projection and excludes secrets', 
     'Pending decisions',
     'Backlog and dispatch queue',
     'Roadmap',
-    'PR and independent-review state',
+    'PR and review state',
     'Recipe executions',
     'Prepare and dev-server activity',
     'Fleet and host workload pressure',
@@ -81,7 +81,7 @@ test('bootstrap brief includes every required projection and excludes secrets', 
     assert.match(brief, new RegExp(`## ${heading}`));
   }
   assert.match(brief, /review-pr/);
-  assert.match(brief, /self-review-fix/);
+  assert.match(brief, /review-fix/);
   assert.match(brief, /ci-fix/);
   assert.match(brief, /full-live/);
   assert.doesNotMatch(brief, /ghp_/);

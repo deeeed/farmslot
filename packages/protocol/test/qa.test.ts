@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { prReviewPurpose, samePRReviewOptions } from '../src/contracts/pr-rules.js';
 import {
-  assertStaticReviewLoopRequests,
+  assertStaticReviewSelections,
   type ProjectQaConfig,
   qaInputFieldValue,
   resolveReviewQaDispatch,
@@ -189,8 +189,7 @@ test('modern static Review has no implicit QA and unrelated flows cannot smuggle
 
 test('review intake accepts modern workflows and distinguishes QA profile/input purposes', () => {
   const review = {
-    sessionIntent: 'resume' as const,
-    scope: 'incremental' as const,
+    mode: 'warm' as const,
     workflow: 'review' as const,
   };
   const qa = {
@@ -206,9 +205,7 @@ test('review intake accepts modern workflows and distinguishes QA profile/input 
   assert.equal(prReviewPurpose(qa), prReviewPurpose({ ...qa, qaInputs: { b: { c: true }, a: 1 } }));
   assert.equal(
     samePRReviewOptions(review, {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      validationDepth: 'static-code',
+      mode: 'warm' as const,
     }),
     true,
   );
@@ -218,18 +215,18 @@ test('review intake accepts modern workflows and distinguishes QA profile/input 
   );
   assert.throws(
     () => assertPRReviewOptions({ ...qa, validationDepth: 'static-code' }),
-    /conflicts/,
+    /Unsupported property/,
   );
 });
 
-test('new independent review loops must be static and name the QA flow for runtime validation', () => {
-  assert.doesNotThrow(() => assertStaticReviewLoopRequests(undefined));
+test('new review selections must be static and name the QA flow for runtime validation', () => {
+  assert.doesNotThrow(() => assertStaticReviewSelections(undefined));
   assert.doesNotThrow(() =>
-    assertStaticReviewLoopRequests([{ runner: 'codex', validationDepth: 'static-code' }, {}]),
+    assertStaticReviewSelections([{ runner: 'codex', validationDepth: 'static-code' }, {}]),
   );
   assert.throws(
     () =>
-      assertStaticReviewLoopRequests(
+      assertStaticReviewSelections(
         [{ validationDepth: 'static-code' }, { validationDepth: 'full-live' }],
         'reviewRequest.loops',
       ),

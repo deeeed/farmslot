@@ -86,7 +86,7 @@ test('monitor replay requires a fresh timestamped non-blocked worker signal', ()
       attemptId: 'new',
       timestamp,
       status: 'running',
-      role: 'self-review',
+      role: 'review',
     }),
     false,
   );

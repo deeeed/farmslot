@@ -61,7 +61,7 @@ export function buildCopilotBootstrapBrief(input: CopilotBootstrapInput): string
       flowType: run.flowType,
       prNumber: run.prNumber,
       prState: run.prState,
-      reviewScope: run.reviewScope,
+      reviewMode: run.reviewMode,
       reviewValidationDepth: run.reviewValidationDepth,
       publishGate: run.engineState?.publishGate,
     }));
@@ -82,7 +82,8 @@ export function buildCopilotBootstrapBrief(input: CopilotBootstrapInput): string
     section('Runtime identity', input.runtime),
     section('Authority rules', {
       defaultTier: 'sandboxed',
-      dangerousContainment: 'same-user dangerous access is audited governance, not hard containment',
+      dangerousContainment:
+        'same-user dangerous access is audited governance, not hard containment',
       forbiddenImplicitActions: [
         'gate approval',
         'publication',
@@ -94,11 +95,15 @@ export function buildCopilotBootstrapBrief(input: CopilotBootstrapInput): string
         'dispatch expansion',
         'subagent fan-out',
       ],
-      structuredProductActions: 'Use explicit existing Gateway methods and confirmation flows only.',
+      structuredProductActions:
+        'Use explicit existing Gateway methods and confirmation flows only.',
       authorityDependency: 'ADR-051 and its containment follow-up.',
     }),
     section('Checkout state', input.checkout),
-    section('Current Command Center screen evidence', input.screenEvidence ?? 'No screen evidence.'),
+    section(
+      'Current Command Center screen evidence',
+      input.screenEvidence ?? 'No screen evidence.',
+    ),
     section('Observer evidence', input.observerEvidence),
     section('Saved Co-Pilot memory', input.savedMemory || 'No saved memory.'),
     section('Operator snapshot', input.operator),
@@ -107,7 +112,7 @@ export function buildCopilotBootstrapBrief(input: CopilotBootstrapInput): string
     section('Pending decisions', input.operator.pendingDecisions),
     section('Backlog and dispatch queue', input.backlog),
     section('Roadmap', input.roadmap),
-    section('PR and independent-review state', prReviewState),
+    section('PR and review state', prReviewState),
     section('Recipe executions', recipeActivity),
     section('Prepare and dev-server activity', {
       prepare: prepareActivity,

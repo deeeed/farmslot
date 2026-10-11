@@ -27,12 +27,19 @@ export async function runScenario({ explicit, outDir }) {
         { cwd: ROOT, env: process.env, encoding: 'utf8', timeout: 30000 },
       ),
     );
-  const desktopRunner = (runner) =>
+  const desktopRunner = (runner) => {
     cdp(
+      'select',
+      'native',
+      'native-session-view >>> review-dispatch-picker >>> [data-testid=review-dispatch-runner]',
+      runner,
+    );
+    return cdp(
       'eval',
       'native',
-      `const v=document.querySelector('native-session-view');const p=v.shadowRoot.querySelector('runner-model-effort-picker');const b=[...p.shadowRoot.querySelectorAll('button')].find(item=>item.textContent.trim()===${JSON.stringify(runner)});if(!b||b.disabled)throw Error('Runner control is unavailable');b.click();await v.updateComplete;return {runner:v.runner,mode:v.mode,modes:[...v.shadowRoot.querySelectorAll('select option')].filter(o=>['default','plan'].includes(o.value)).map(o=>({value:o.value,disabled:o.disabled})),models:[...p.shadowRoot.querySelectorAll('.config-group')][1]?.textContent.trim()};`,
+      `const v=document.querySelector('native-session-view');await v.updateComplete;const p=v.shadowRoot.querySelector('review-dispatch-picker');return {runner:v.runner,mode:v.mode,modes:[...v.shadowRoot.querySelectorAll('select option')].filter(o=>['default','plan'].includes(o.value)).map(o=>({value:o.value,disabled:o.disabled})),models:p.shadowRoot.querySelector('[data-testid=review-dispatch-model]').textContent};`,
     );
+  };
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');

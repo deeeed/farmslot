@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = process.env.FARMSLOT_PI_REVIEW_PROOF_RUN_ID;
 assert.ok(runId, 'Set FARMSLOT_PI_REVIEW_PROOF_RUN_ID to the recovered run');
-const role = process.argv[2] ?? 'self-review';
-assert.ok(['self-review', 'self-review-fix'].includes(role));
+const role = process.argv[2] ?? 'review';
+assert.ok(['review', 'review-fix'].includes(role));
 function rpc(method, params) {
   return JSON.parse(
     execFileSync(

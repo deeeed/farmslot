@@ -548,19 +548,19 @@ export class DecisionInbox extends LitElement {
               </div>
             `
           : nothing}
-        ${payload.selfReviewVerdict
+        ${payload.reviewVerdict
           ? html`
               <div class="retro-row">
-                <span class="retro-label">Self Review</span
-                ><span class="retro-value">${payload.selfReviewVerdict}</span>
+                <span class="retro-label">Review</span
+                ><span class="retro-value">${payload.reviewVerdict}</span>
               </div>
             `
           : nothing}
-        ${payload.selfReviewSummary
+        ${payload.reviewSummary
           ? html`
               <div class="retro-row">
-                <span class="retro-label">Self Review Summary</span>
-                <div class="retro-text">${payload.selfReviewSummary}</div>
+                <span class="retro-label">Review Summary</span>
+                <div class="retro-text">${payload.reviewSummary}</div>
               </div>
             `
           : nothing}

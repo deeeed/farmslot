@@ -564,7 +564,7 @@ export class AnalyticsPanel extends LitElement {
                     ${this.renderCounts('Failures by step', r.failureByStep, true)}
                     ${this.renderCounts('Failures by reason', r.failureByReason, true)}
                     ${this.renderCounts('CI results', r.ci.resultBreakdown)}
-                    ${this.renderCounts('Self-review loops', r.selfReviewLoops.distribution)}
+                    ${this.renderCounts('Review loops', r.reviewLoops.distribution)}
                     ${this.renderCounts('Runs by model', r.byModel)} ${this.renderTokens(r)}
                     ${this.renderCounts('Runs by runner', r.byRunner)}
                     ${this.renderCounts('Runs by template', r.byTemplate)}

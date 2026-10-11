@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Replace runner-diversity review contracts with WARM/COLD selections, ordered review sequences and separate-session review provenance.
+
 ## 0.38.0 - 2026-10-11
 
 - Declare connection-scoped node execution and cancellation support.

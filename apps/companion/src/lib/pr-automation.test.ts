@@ -8,6 +8,7 @@ import type {
   PRTeamProfile,
   Run,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
 import {
   buildPRMonitorConfig,
@@ -17,6 +18,7 @@ import {
   newPRMonitorDraft,
   newPRRequestDraft,
   prExecutionText,
+  prReviewText,
   qaRequestFromReview,
   togglePRSlot,
   updatePRReviewOptions,
@@ -35,14 +37,14 @@ const team: PRTeamProfile = {
     sources: [{ kind: 'repository', repo: 'owner/repo' }],
     predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
     execution,
-    review: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' },
+    review: { mode: 'warm' },
     repositories: [
       {
         repo: 'owner/repo',
         project: 'project',
         reviewProfile: 'security',
         excludedLabels: [],
-        review: { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' },
+        review: { mode: 'cold' },
       },
     ],
     githubTeams: [],
@@ -58,8 +60,8 @@ test('requests inherit repository review options and team execution without seri
   };
   const effective = effectivePRRequest(draft, [team]);
   assert.equal(effective.project, 'project');
-  assert.equal(effective.review.sessionIntent, 'reset');
-  assert.equal(effective.review.validationDepth, 'full-live');
+  assert.equal(effective.review.mode, 'cold');
+  assert.equal(effective.review.workflow, 'review');
   assert.deepEqual(effective.execution, execution);
   const request = buildPRRequest(draft, 'stable-request');
   assert.equal(request.review, undefined);
@@ -78,16 +80,14 @@ test('explicit review/QA overrides preserve the selected policy and idempotency 
     overrideExecution: true,
     execution,
     review: {
-      sessionIntent: 'resume' as const,
-      scope: 'incremental' as const,
-      validationDepth: 'full-live' as const,
+      mode: 'warm' as const,
     },
   };
   assert.deepEqual(
     buildPRRequest(draft, 'stable-request'),
     buildPRRequest(draft, 'stable-request'),
   );
-  assert.equal(buildPRRequest(draft, 'stable-request').review?.validationDepth, 'full-live');
+  assert.equal(buildPRRequest(draft, 'stable-request').review?.mode, 'warm');
   assert.throws(
     () => buildPRRequest({ ...draft, url: 'https://github.com/owner/repo/issues/42' }, 'key'),
     /pull request URL/,
@@ -166,20 +166,20 @@ test('publication policy edits preserve enterprise hosts and check names contain
   assert.equal(result.pollIntervalMs, 600_000);
 });
 
-test('QA transition removes static publication and retained-session options', () => {
+test('QA transition removes static publication and uses its separate cold workflow', () => {
   const qa = updatePRReviewOptions(
     {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      validationDepth: 'static-code',
+      mode: 'warm',
+      reviewContext: {
+        reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-42' }],
+      },
       publishReview: true,
     },
     { workflow: 'qa', qaProfileId: 'daily', qaInputs: { hours: 24 } },
   );
   assert.equal(qa.publishReview, undefined);
-  assert.equal(qa.validationDepth, undefined);
-  assert.equal(qa.sessionIntent, 'reset');
-  assert.equal(qa.scope, 'full');
+  assert.equal(qa.mode, 'cold');
+  assert.equal(qa.reviewContext, undefined);
   const review = updatePRReviewOptions(qa, { workflow: 'review' });
   assert.equal(review.qaProfileId, undefined);
   assert.equal(review.qaInputs, undefined);
@@ -189,14 +189,12 @@ test('static publication inherits independently and explicit opt-out wins', () =
   const selectedTeam = structuredClone(team);
   selectedTeam.config.review = {
     workflow: 'review',
-    sessionIntent: 'reset',
-    scope: 'full',
+    mode: 'cold',
     publishReview: true,
   };
   selectedTeam.config.repositories[0].review = {
     workflow: 'review',
-    sessionIntent: 'reset',
-    scope: 'full',
+    mode: 'cold',
   };
   const draft = {
     ...newPRRequestDraft(),
@@ -338,4 +336,150 @@ test('portable pool execution remains readable before registry binding', () => {
   assert.match(prExecutionText(profile), /Review machines: Configured pool/);
   assert.deepEqual(profile.models, execution.models);
   assert.equal(profile.workspacePolicy.kind, 'pool');
+});
+
+test('request serialization preserves each review selection and its slot restrictions', () => {
+  const models = [
+    {
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      mode: 'cold' as const,
+      allowedSlots: ['slot-a'],
+    },
+    {
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      mode: 'warm' as const,
+      allowedSlots: ['slot-b'],
+    },
+  ];
+  const draft = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideReview: true,
+    overrideExecution: true,
+    execution: {
+      slotPolicy: { kind: 'pool' as const, allowedSlots: ['slot-a', 'slot-b'] },
+      models,
+    },
+    review: { workflow: 'review' as const, mode: 'cold' as const },
+  };
+  const request = buildPRRequest(draft, 'selected-rows');
+  assert.deepEqual(request.execution?.models, models);
+  assert.equal(request.review?.mode, 'cold');
+  assert.match(prExecutionText(request.execution), /gpt-6.1-sol\/high/);
+  assert.match(prReviewText({ mode: 'warm' }), /WARM review/);
+});
+
+test('request validation refuses unsupported effort through the shared picker validator', () => {
+  const draft = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideExecution: true,
+    execution: {
+      ...execution,
+      models: [{ runner: 'claude', model: 'opus', effort: 'high', mode: 'cold' as const }],
+    },
+  };
+  assert.throws(() => buildPRRequest(draft, 'unsupported-effort'), /Unsupported review effort/);
+});
+
+test('PR requests preserve shared WARM lineage context independently of runner choice', () => {
+  const retained = {
+    mode: 'cold' as const,
+    continuity: 'fresh' as const,
+    reviewId: 'review-42',
+    repository: 'owner/repo',
+    prNumber: 42,
+    sessionId: 'retained-review-session',
+    lastReviewedHeadSha: 'a'.repeat(40),
+    runner: 'claude',
+  };
+  const run = { decisions: [], reviewResult: { session: retained } } as unknown as Run;
+  const lineages = reviewLineagesForPR([run], {
+    host: 'github.com',
+    repo: 'owner/repo',
+    number: 42,
+  });
+  const picker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['configure'],
+      sequenceRole: 'execution-alternatives',
+      reviewLineages: lineages,
+    },
+  });
+  picker.setRunner(picker.rows[0].id, 'codex');
+  picker.setMode(picker.rows[0].id, 'warm');
+  const reviewContext = picker.toReviewContext();
+  const request = buildPRRequest(
+    {
+      ...newPRRequestDraft(),
+      url: 'https://github.com/owner/repo/pull/42',
+      teamId: team.id,
+      overrideReview: true,
+      overrideExecution: true,
+      review: { mode: 'warm', reviewContext },
+      execution: { ...execution, models: picker.toExecutionModels() },
+    },
+    'warm-lineage',
+  );
+  assert.equal(request.execution?.models[0].runner, 'codex');
+  assert.deepEqual(request.review?.reviewContext, {
+    reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-42' }],
+  });
+});
+
+test('missing or ambiguous WARM provenance blocks the shared picker without changing mode', () => {
+  const retained = {
+    mode: 'cold' as const,
+    continuity: 'fresh' as const,
+    repository: 'owner/repo',
+    prNumber: 42,
+    sessionId: 'retained-review-session',
+    lastReviewedHeadSha: 'a'.repeat(40),
+  };
+  const runs = ['review-a', 'review-b'].map(
+    (reviewId) =>
+      ({
+        decisions: [],
+        reviewResult: { session: { ...retained, reviewId } },
+      }) as unknown as Run,
+  );
+  for (const candidates of [[], runs]) {
+    const picker = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['configure'],
+        sequenceRole: 'execution-alternatives',
+        reviewLineages: reviewLineagesForPR(candidates, {
+          host: 'github.com',
+          repo: 'owner/repo',
+          number: 42,
+        }),
+      },
+    });
+    picker.setMode(picker.rows[0].id, 'warm');
+    assert.equal(picker.canInvoke('configure'), false);
+    assert.equal(picker.rows[0].selection.mode, 'warm');
+    assert.throws(() => picker.toExecutionModels(), /unambiguous.*reviewId lineage/);
+  }
+});
+
+test('the QA picker keeps its work separate from unavailable static WARM provenance', () => {
+  const picker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['configure'],
+      sequenceRole: 'execution-alternatives',
+      workflow: 'qa',
+    },
+    sequence: [{ runner: 'codex', model: null, effort: null, mode: 'warm' }],
+  });
+  assert.equal(picker.canInvoke('configure'), true);
+  assert.equal(picker.toReviewContext(), undefined);
+  const qa = updatePRReviewOptions({ mode: 'warm' }, { workflow: 'qa' });
+  assert.equal(qa.mode, 'cold');
+  assert.equal(qa.reviewContext, undefined);
 });

@@ -154,6 +154,6 @@ if FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
 fi
 
 # Metro protocol .js→.ts rewrite path detection (cwd / worktree safe)
-node "${APP_DIR}/metro-protocol-source.test.cjs"
+node "${APP_DIR}/metro-workspace-source.test.cjs"
 
 printf 'ok - Companion launch ports are required from slot/worktree configuration\n'

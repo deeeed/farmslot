@@ -83,12 +83,14 @@ const controls = [
     expected: 'Allocation cancellation must not wait for the Git deadline',
   },
   {
-    id: 'repeat-fallback',
+    id: 'warm-unavailable',
     scenario: 'repeat-review',
-    file: 'services/gateway/src/review-workspaces/pipeline.ts',
-    before: "continuity: run.reviewScope === 'incremental' ? 'fallback-fresh' : 'fresh',",
-    after: "continuity: run.reviewScope === 'incremental' ? 'fresh' : 'fresh',",
-    expected: 'Repeat review must disclose a fresh-session fallback',
+    file: 'services/gateway/src/review-workspaces/continuity.ts',
+    before:
+      "if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId) throw new Error('WARM review unavailable: missing or foreign reviewId lineage');",
+    after:
+      "if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId) { context.mode = 'cold'; return; }",
+    expected: 'Unavailable WARM must be refused',
   },
   {
     id: 'slot-isolation',
@@ -128,7 +130,16 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const)
     restore();
     process.exit(1);
   });
-const results = [];
+interface NegativeControlResult {
+  id: string;
+  detected: boolean;
+  expectedAssertion: string;
+  source: string;
+  originalSha256: string;
+  mutationSha256: string;
+  restoredSha256: string;
+}
+const results: NegativeControlResult[] = [];
 const selected = process.argv[3]
   ? controls.filter((control) => control.id === process.argv[3])
   : controls;

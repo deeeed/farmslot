@@ -6,7 +6,7 @@ title: What is Farmslot?
 
 Farmslot is a local framework for supervised agentic engineering: a way to scale one engineer's judgment across many agent workers, projects, machines, and review loops.
 
-It is the control plane around coding agents, combining current and emerging capabilities for roadmap memory, backlog refinement, dispatch, isolated slots, runner orchestration, live observability, recipe evidence, cross-runner review, and human approval.
+It is the control plane around coding agents, combining current and emerging capabilities for roadmap memory, backlog refinement, dispatch, isolated slots, runner orchestration, live observability, recipe evidence, PR review, and human approval.
 
 > Why the name? I know. It stuck: agentic dev farming across many isolated slots. Naming is harder than scheduling the agents.
 

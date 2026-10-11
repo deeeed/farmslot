@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { GateSummary, IndependentReviewStatus, ReadyGatePayload } from '@farmslot/protocol';
+import type { GateSummary, ReadyGatePayload, ReviewStatus } from '@farmslot/protocol';
 
 import {
   activePublicationReviewLabel,
@@ -15,12 +15,11 @@ import {
   readyReviewBlockingDisplayReason,
   reviewAttemptLabel,
   reviewHasPendingContinuationPhases,
-  reviewPolicyLabel,
   reviewSegmentLabel,
   summarizeReviewCounts,
 } from './review-gate-display.js';
 
-function payload(review: Partial<IndependentReviewStatus>): ReadyGatePayload {
+function payload(review: Partial<ReviewStatus>): ReadyGatePayload {
   return {
     kind: 'ready',
     prNumber: null,
@@ -45,21 +44,22 @@ function payload(review: Partial<IndependentReviewStatus>): ReadyGatePayload {
       selectedEvidenceKeys: ['artifacts/before.png'],
       reviewArtifactIds: [],
       gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'demo' },
-      reviewDepth: {
-        minimumIndependentReviews: 1,
-        requireCrossRunner: false,
-        extraLoopsRequested: 0,
+      reviewPolicy: {
+        minimumReviews: 1,
+
         requestedBy: 'dispatch',
       },
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
       createdAt: '2026-05-18T00:00:00.000Z',
     },
-    independentReviews: [
+    reviews: [
       {
         id: 'review-1',
-        crossRunner: false,
+        reviewerSessionId: 'review-session-1',
+
         loopNumber: 1,
+        mode: 'cold',
         verdict: 'pass',
         unresolvedCount: 0,
         reviewedHeadSha: 'head-new-1234567890',
@@ -78,7 +78,7 @@ function payload(review: Partial<IndependentReviewStatus>): ReadyGatePayload {
 test('classifyReviewFreshness explains stale head, stale subject, and unavailable snapshot separately', () => {
   assert.equal(
     classifyReviewFreshness(
-      payload({ reviewedHeadSha: 'head-old' }).independentReviews![0],
+      payload({ reviewedHeadSha: 'head-old' }).reviews![0],
       payload({ reviewedHeadSha: 'head-old' }),
     ).reason,
     'reviewed-old-head',
@@ -90,7 +90,7 @@ test('classifyReviewFreshness explains stale head, stale subject, and unavailabl
 
   const staleSubject = payload({ reviewedReviewSubjectHash: 'subject-old' });
   assert.equal(
-    classifyReviewFreshness(staleSubject.independentReviews![0], staleSubject).reason,
+    classifyReviewFreshness(staleSubject.reviews![0], staleSubject).reason,
     'review-subject-changed',
   );
   assert.match(readyReviewBlockingDisplayReason(staleSubject), /Reviewed subject subject-old/);
@@ -104,31 +104,30 @@ test('classifyReviewFreshness explains stale head, stale subject, and unavailabl
     },
   });
   assert.equal(
-    classifyReviewFreshness(unavailable.independentReviews![0], unavailable).reason,
+    classifyReviewFreshness(unavailable.reviews![0], unavailable).reason,
     'review-snapshot-unavailable',
   );
   assert.match(readyReviewBlockingDisplayReason(unavailable), /snapshot unavailable/);
 });
 
-test('summarizeReviewCounts separates required, fresh, stale, attempts, external and unresolved counts', () => {
+test('summarizeReviewCounts separates required, fresh, stale, attempts and unresolved counts', () => {
   const fixture = payload({
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
-      { loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
+      { loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 1 },
+      { loopNumber: 2, mode: 'cold', verdict: 'pass', unresolvedCount: 0 },
     ],
   });
-  fixture.prPackage!.reviewDepth = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: true,
-    extraLoopsRequested: 1,
+  fixture.prPackage!.reviewPolicy = {
+    minimumReviews: 1,
+
     requestedBy: 'human-gate',
   };
-  fixture.independentReviews = [
-    fixture.independentReviews![0],
+  fixture.reviews = [
+    fixture.reviews![0],
     {
-      ...fixture.independentReviews![0],
+      ...fixture.reviews![0],
       id: 'review-stale',
-      crossRunner: true,
+
       reviewedHeadSha: 'old-head',
       reviewSnapshot: {
         source: 'local-git',
@@ -140,12 +139,10 @@ test('summarizeReviewCounts separates required, fresh, stale, attempts, external
   ];
 
   const summary = summarizeReviewCounts(fixture);
-  assert.equal(summary.requiredReviews, 2);
+  assert.equal(summary.requiredReviews, 1);
   assert.equal(summary.freshPassingReviews, 1);
   assert.equal(summary.staleIgnoredReviews, 1);
   assert.equal(summary.totalAttempts, 3);
-  assert.equal(summary.externalRequired, true);
-  assert.equal(summary.externalFreshPassingReviews, 0);
 });
 
 test('publishEvidenceDisplayRows exposes included, excluded and dropped-after-refresh evidence', () => {
@@ -168,14 +165,10 @@ test('publishEvidenceDisplayRows exposes included, excluded and dropped-after-re
   );
 });
 
-test('review labels use Independent review with runner diversity as policy metadata', () => {
-  const requested = payload({ source: 'human-gate', crossRunner: true }).independentReviews![0];
+test('review labels use source without runner classification', () => {
+  const requested = payload({ source: 'human-gate' }).reviews![0];
   assert.equal(reviewAttemptLabel(requested, 1, 2), 'Review round 2');
-  assert.equal(reviewSegmentLabel(requested, 1), 'Independent review (requested) 1');
-  // Runner diversity is not a review kind — it renders as a policy label.
-  assert.equal(reviewPolicyLabel({ crossRunner: true, runner: 'codex' }), 'runner: codex');
-  assert.equal(reviewPolicyLabel({ crossRunner: true }), 'runner diversity');
-  assert.equal(reviewPolicyLabel({ crossRunner: false, runner: 'codex' }), null);
+  assert.equal(reviewSegmentLabel(requested, 1), 'Review (requested) 1');
 });
 
 test('pending continuation phases cover undelivered exhausted findings', () => {
@@ -207,7 +200,7 @@ test('pending continuation phases cover undelivered exhausted findings', () => {
 
 test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () => {
   const auditOnly = payload({ verdict: 'issues', unresolvedCount: 1, feedbackSent: false })
-    .independentReviews![0];
+    .reviews![0];
   assert.match(fixDeltaAbsenceReason(auditOnly, undefined), /audit-only review/);
 
   const unavailable = payload({
@@ -216,7 +209,7 @@ test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () 
       capturedAt: '2026-05-18T00:00:00.000Z',
       missingReason: 'fix-base-unavailable',
     },
-  }).independentReviews![0];
+  }).reviews![0];
   assert.match(fixDeltaAbsenceReason(unavailable, undefined), /fix-base-unavailable/);
 
   const unchanged = payload({
@@ -226,61 +219,58 @@ test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () 
       baseSha: 'same-sha',
       headSha: 'same-sha',
     },
-  }).independentReviews![0];
+  }).reviews![0];
   assert.equal(hasMeaningfulReviewFixDelta(unchanged.fixDelta), false);
   assert.match(fixDeltaAbsenceReason(unchanged, undefined), /No tracked worker change/);
 });
 
-test('summarizeReviewCounts mirrors gateway fix-loop certification by trusting passing reviews', () => {
+test('fix retries preserve one session count and cannot certify old heads', () => {
   const fixture = payload({
-    reviewedHeadSha: 'old-head',
-    reviewedReviewSubjectHash: 'subject-new-1234567890',
-    reviewSnapshot: {
-      source: 'local-git',
-      headSha: 'head-new-1234567890',
-      capturedAt: '2026-05-18T00:00:00.000Z',
-    },
-    validationDepth: 'full-live',
-    feedbackSent: false,
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
-      { loopNumber: 2, verdict: 'pass', unresolvedCount: 0 },
+      { loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 1 },
+      { loopNumber: 2, mode: 'warm', verdict: 'pass', unresolvedCount: 0 },
     ],
   });
-
+  fixture.reviews!.push({ ...fixture.reviews![0], id: 'same-session-recheck' });
+  assert.equal(summarizeReviewCounts(fixture).trustedPassingReviews, 1);
+  fixture.reviews!.forEach((review) => {
+    review.reviewedHeadSha = 'old-head';
+  });
   const summary = summarizeReviewCounts(fixture);
-  assert.equal(summary.freshPassingReviews, 0);
-  assert.equal(summary.fixLoopCertified, true);
-  assert.equal(summary.trustedPassingReviews, 1);
-  assert.equal(summary.staleIgnoredReviews, 0);
+  assert.equal(summary.trustedPassingReviews, 0);
+  assert.equal(summary.staleIgnoredReviews, 2);
+});
 
-  // The gateway certifies fix loops regardless of depth; static rounds must certify too.
-  const staticFixture = structuredClone(fixture);
-  staticFixture.independentReviews![0]!.validationDepth = 'static-code';
-  assert.equal(summarizeReviewCounts(staticFixture).fixLoopCertified, true);
+test('missing session provenance cannot count a passing result', () => {
+  const fixture = payload({ reviewerSessionId: undefined });
+  assert.equal(summarizeReviewCounts(fixture).trustedPassingReviews, 0);
+  assert.equal(
+    classifyReviewFreshness(fixture.reviews![0], fixture).reason,
+    'review-session-missing',
+  );
 });
 
 test('classifyReviewFreshness treats missing package review subject as stale', () => {
   const fixture = payload({});
   delete fixture.prPackage!.reviewSubjectHash;
 
-  const freshness = classifyReviewFreshness(fixture.independentReviews![0], fixture);
+  const freshness = classifyReviewFreshness(fixture.reviews![0], fixture);
   assert.equal(freshness.reason, 'package-review-subject-missing');
   assert.match(readyReviewBlockingDisplayReason(fixture), /review-subject hash/);
 });
 
-test('review labels preserve self-review source', () => {
-  const review = payload({ source: 'self-review', crossRunner: false }).independentReviews![0];
+test('review labels preserve review source', () => {
+  const review = payload({ source: 'pipeline' }).reviews![0];
   assert.equal(reviewAttemptLabel(review, 0, 1), 'Review round 1');
-  assert.equal(reviewSegmentLabel(review, 2), 'Self-review 2');
+  assert.equal(reviewSegmentLabel(review, 2), 'Review 2');
 });
 
-test('compact human-gate labels prioritize the active independent review loop', () => {
+test('compact human-gate labels prioritize the active review loop', () => {
   const activeFix = {
     agentContexts: [
       {
-        id: 'self-review-fix',
-        role: 'self-review-fix' as const,
+        id: 'review-fix',
+        role: 'review-fix' as const,
         label: 'Review fix',
         status: 'working' as const,
         slotId: 'slot-1',
@@ -289,8 +279,8 @@ test('compact human-gate labels prioritize the active independent review loop', 
     ],
     decisions: [],
   };
-  assert.equal(activePublicationReviewLabel(activeFix), 'Independent review fix');
-  assert.equal(compactHumanGateLabel(activeFix), 'independent review fix');
+  assert.equal(activePublicationReviewLabel(activeFix), 'Review fix');
+  assert.equal(compactHumanGateLabel(activeFix), 'review fix');
 
   assert.equal(
     compactHumanGateLabel({
@@ -298,11 +288,11 @@ test('compact human-gate labels prioritize the active independent review loop', 
       decisions: [],
       engineState: {
         publishGate: {
-          pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+          reviewSequence: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }],
         },
       },
     }),
-    'independent review',
+    'review',
   );
 
   assert.equal(
@@ -311,7 +301,7 @@ test('compact human-gate labels prioritize the active independent review loop', 
       decisions: [],
       engineState: {
         publishGate: {
-          pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+          reviewSequence: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }],
           reviewLaunchRejection: {
             code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
             message: 'The slot worktree is dirty.',
@@ -347,12 +337,13 @@ test('compact human-gate labels distinguish publish-ready from review-blocked', 
       decisions: [],
       engineState: {
         publishGate: {
-          independentReviews: [
+          reviews: [
             {
               id: 'independent-review-1',
               source: 'human-gate',
-              crossRunner: true,
+
               loopNumber: 1,
+              mode: 'cold',
               verdict: 'issues',
               unresolvedCount: 2,
             },
@@ -368,12 +359,13 @@ test('compact human-gate labels distinguish publish-ready from review-blocked', 
       decisions: [],
       engineState: {
         publishGate: {
-          independentReviews: [
+          reviews: [
             {
               id: 'independent-review-3',
               source: 'human-gate',
-              crossRunner: true,
+
               loopNumber: 3,
+              mode: 'cold',
               verdict: 'issues',
               unresolvedCount: 6,
               feedbackSent: false,
@@ -406,16 +398,15 @@ test('readyReviewBlockingDisplayReason names the retry cap instead of the first 
 
 test('readyReviewBlockingDisplayReason cites stale reviews even when fresh quorum is satisfied', () => {
   const fixture = payload({});
-  fixture.prPackage!.reviewDepth = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  fixture.prPackage!.reviewPolicy = {
+    minimumReviews: 1,
+
     requestedBy: 'dispatch',
   };
-  fixture.independentReviews = [
-    fixture.independentReviews![0],
+  fixture.reviews = [
+    fixture.reviews![0],
     {
-      ...fixture.independentReviews![0],
+      ...fixture.reviews![0],
       id: 'stale-extra-review',
       reviewedHeadSha: 'old-head',
       reviewSnapshot: {
@@ -453,7 +444,7 @@ function gateSummaryWithChecklist(checklist: GateSummary['checklist']): GateSumm
     flowType: 'dev',
     worker: { model: 'claude-opus-5', turns: 12 },
     review: {
-      independentReviews: [],
+      reviews: [],
       requiredReviews: 0,
       passingReviews: 0,
       totalUnresolved: 0,

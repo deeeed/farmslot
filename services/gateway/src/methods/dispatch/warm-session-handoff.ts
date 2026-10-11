@@ -29,6 +29,7 @@ import {
 } from '../../core/index.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { isWorkerAlive } from '../../review/worker-lifecycle.js';
 import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
@@ -42,7 +43,6 @@ import {
   runnerSessionContextPatch,
 } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
-import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 

@@ -26,8 +26,10 @@ import type {
   FlowType,
   ProjectConfig,
   ResourcePostureWaitPolicy,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   Run,
   SafetyTier,
   SlotStatus,
@@ -44,9 +46,19 @@ import {
   DEFAULT_BACKLOG_REFINEMENT_RUNNER,
   isTerminalRunStatus,
   Methods,
+  parseGitHubPullUrl,
+  parseGitHubRef,
 } from '@farmslot/protocol';
+import {
+  defaultModelForRunner,
+  modelsForRunner,
+  resolveReviewDispatchDefaults,
+  ReviewDispatchViewModel,
+  reviewLineagesForPR,
+} from '@farmslot/review-dispatch';
 
 import '../shared/dispatch-config-editor.js';
+import '../shared/review-dispatch-picker.js';
 import '../shared/linked-run-summary.js';
 import '../shared/slot-choice-list.js';
 import '../shared/slot-selector-modal.js';
@@ -55,12 +67,8 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import {
-  defaultModelForRunner,
-  modelForRunnerChange,
-  modelsForRunner,
-  RUNNER_OPTIONS,
-} from '../../utils/runner-options.js';
+import { RUNNER_OPTIONS } from '../../utils/runner-options.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
@@ -233,8 +241,11 @@ interface BacklogDispatchDraft {
   prepareProfile: string;
   mode: 'interactive' | 'autonomous' | '';
   devInteractiveProfile: 'lightweight' | 'reviewed' | '';
-  reviewDepth?: ReviewDepthPolicy;
-  pendingReviewPlan: ReviewLoopRequest[];
+  reviewPolicy?: ReviewPolicy;
+  reviewSequence: ReviewSequence;
+  reviewMode?: ReviewMode;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
   waitPolicy: ResourcePostureWaitPolicy | '';
 }
 
@@ -266,7 +277,7 @@ function defaultDispatchDraft(): BacklogDispatchDraft {
     prepareProfile: '',
     mode: '',
     devInteractiveProfile: '',
-    pendingReviewPlan: [],
+    reviewSequence: [],
     waitPolicy: '',
   };
 }
@@ -285,7 +296,10 @@ function slotsText(item: BacklogItem): string {
 
 function defaultCandidate(role: DraftLaunchCandidate['role'], index: number): DraftLaunchCandidate {
   const runner = role === 'baseline' ? 'claude' : index % 2 === 0 ? 'claude' : 'codex';
-  const model = role === 'baseline' ? 'opus' : defaultModelForRunner(runner);
+  const model =
+    role === 'baseline'
+      ? 'opus'
+      : (defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '');
   return {
     id: role === 'baseline' ? 'baseline' : `comparison-${index}`,
     role,
@@ -370,12 +384,17 @@ export class BacklogPanel extends LitElement {
     [NEW_PLAN_KEY]: defaultLaunchPlanDraft(),
   };
   @state() private _pendingConfirm: string | null = null;
-  @state() private _refineRunner = '';
-  @state() private _refineModel = '';
+  private _refinementPicker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['dispatch'],
+      defaults: {
+        runner: DEFAULT_BACKLOG_REFINEMENT_RUNNER,
+        model: DEFAULT_BACKLOG_REFINEMENT_MODEL,
+      },
+    },
+  });
   @state() private _refineCommand = '';
   @state() private _refineSafetyTier = '';
-  @state() private _refineRunnerCustom = false;
-  @state() private _refineModelCustom = false;
   @state() private _refineSafetyCustom = false;
   @state() private _runnerPickerOpen = false;
   @state() private _refinementSessionLoading = '';
@@ -1447,8 +1466,8 @@ export class BacklogPanel extends LitElement {
         taskTemplate: null,
         mode: '',
         devInteractiveProfile: '',
-        reviewDepth: undefined,
-        pendingReviewPlan: [],
+        reviewPolicy: undefined,
+        reviewSequence: [],
       };
       if (this._draftProject) {
         void this._ensureDispatchConfigDataFor(this._draftProject, this._draftFlow);
@@ -1922,10 +1941,14 @@ export class BacklogPanel extends LitElement {
     if (detail.devInteractiveProfile !== undefined) {
       next.devInteractiveProfile = detail.devInteractiveProfile ?? '';
     }
-    if (detail.reviewDepth !== undefined) next.reviewDepth = detail.reviewDepth ?? undefined;
+    if (detail.reviewPolicy !== undefined) next.reviewPolicy = detail.reviewPolicy ?? undefined;
     if (detail.waitPolicy !== undefined) next.waitPolicy = detail.waitPolicy ?? '';
-    if (detail.pendingReviewPlan !== undefined) {
-      next.pendingReviewPlan = detail.pendingReviewPlan ?? [];
+    if (detail.reviewMode !== undefined) next.reviewMode = detail.reviewMode ?? undefined;
+    if (detail.reviewContext !== undefined) next.reviewContext = detail.reviewContext ?? undefined;
+    if (detail.reviewSequenceContext !== undefined)
+      next.reviewSequenceContext = detail.reviewSequenceContext ?? undefined;
+    if (detail.reviewSequence !== undefined) {
+      next.reviewSequence = detail.reviewSequence ?? [];
     }
     this._draftDispatch = next;
   }
@@ -1955,7 +1978,13 @@ export class BacklogPanel extends LitElement {
           id: candidate.id,
           role: candidate.role,
           runner: candidate.runner ?? 'claude',
-          model: candidate.model ?? defaultModelForRunner(candidate.runner ?? 'claude'),
+          model:
+            candidate.model ??
+            defaultModelForRunner(
+              candidate.runner ?? 'claude',
+              rememberedReviewDispatchCatalog(),
+            ) ??
+            '',
           effort: candidate.effort ?? '',
           variant: candidate.variant ?? '',
           slotPolicyKind: slotPolicy.kind,
@@ -2119,7 +2148,11 @@ export class BacklogPanel extends LitElement {
     index: number,
     item?: BacklogItem,
   ) {
-    const models = modelsForRunner(candidate.runner, candidate.model);
+    const models = modelsForRunner(
+      candidate.runner,
+      candidate.model,
+      rememberedReviewDispatchCatalog(),
+    );
     return html`<div class="launch-row" data-testid="backlog-launch-candidate">
       <div>
         <div class="field-label">${candidate.role}</div>
@@ -2136,10 +2169,10 @@ export class BacklogPanel extends LitElement {
               index,
               {
                 runner,
-                model: defaultModelForRunner(runner),
+                model: defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '',
                 variant:
                   candidate.role === 'comparison'
-                    ? `${runner}-${defaultModelForRunner(runner).replace(/[^a-z0-9]+/gi, '-')}`
+                    ? `${runner}-${(defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '').replace(/[^a-z0-9]+/gi, '-')}`
                     : '',
               },
               item,
@@ -2429,6 +2462,17 @@ export class BacklogPanel extends LitElement {
     `;
   }
 
+  private _reviewLineages(sourceRef: string) {
+    const pr = parseGitHubRef(sourceRef) ?? parseGitHubPullUrl(sourceRef);
+    return pr
+      ? reviewLineagesForPR(getState().runs, {
+          host: 'github.com',
+          repo: pr.repo,
+          number: pr.number,
+        })
+      : [];
+  }
+
   private _renderDispatchConfigEditor(
     item: BacklogItem,
     disabled: boolean,
@@ -2448,7 +2492,15 @@ export class BacklogPanel extends LitElement {
         .templateOptions=${this._templateOptionsForItem(item)}
         .prepareProfile=${item.prepareProfile ?? ''}
         .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, item.project)}
-        .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+        .reviewLineages=${this._reviewLineages(item.sourceRef)}
+        .reviewDefaults=${resolveReviewDispatchDefaults(
+          this._configProjectConfigs.find((project) => project.name === item.project),
+          'review-pr',
+        )}
+        .reviewSequence=${item.reviewSequence ?? []}
+        .reviewSequenceContext=${item.reviewSequenceContext}
+        .reviewMode=${item.reviewMode ?? 'cold'}
+        .reviewContext=${item.reviewContext}
         .waitPolicy=${item.waitPolicy ?? ''}
         .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
         .disabled=${disabled}
@@ -2587,6 +2639,12 @@ export class BacklogPanel extends LitElement {
     event.preventDefault();
     this._error = '';
     this._message = '';
+    const form = event.currentTarget as HTMLFormElement;
+    const validationErrors = form.querySelector('dispatch-config-editor')?.validationErrors ?? [];
+    if (validationErrors.length) {
+      this._error = validationErrors.join(' ');
+      return;
+    }
     if (!this._draftProject) {
       this._error = 'Select a project before creating a backlog item.';
       return;
@@ -2616,11 +2674,14 @@ export class BacklogPanel extends LitElement {
         prepareProfile: this._draftDispatch.prepareProfile || undefined,
         mode: this._draftDispatch.mode || undefined,
         devInteractiveProfile: this._draftDispatch.devInteractiveProfile || undefined,
-        reviewDepth: this._draftDispatch.reviewDepth,
+        reviewPolicy: this._draftDispatch.reviewPolicy,
+        reviewSequenceContext: this._draftDispatch.reviewSequenceContext,
+        reviewMode: this._draftDispatch.reviewMode,
+        reviewContext: this._draftDispatch.reviewContext,
         waitPolicy: this._draftDispatch.waitPolicy || undefined,
-        pendingReviewPlan:
-          this._draftDispatch.pendingReviewPlan.length > 0
-            ? this._draftDispatch.pendingReviewPlan
+        reviewSequence:
+          this._draftDispatch.reviewSequence.length > 0
+            ? this._draftDispatch.reviewSequence
             : undefined,
         launchPlan: this._launchPlanFromDraft(NEW_PLAN_KEY),
       });
@@ -2955,7 +3016,15 @@ export class BacklogPanel extends LitElement {
           .templateOptions=${templateOptions}
           .prepareProfile=${this._draftDispatch.prepareProfile}
           .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, this._draftProject)}
-          .pendingReviewPlan=${this._draftDispatch.pendingReviewPlan}
+          .reviewLineages=${this._reviewLineages(this._draftSourceRef)}
+          .reviewDefaults=${resolveReviewDispatchDefaults(
+            this._configProjectConfigs.find((project) => project.name === this._draftProject),
+            'review-pr',
+          )}
+          .reviewSequence=${this._draftDispatch.reviewSequence}
+          .reviewSequenceContext=${this._draftDispatch.reviewSequenceContext}
+          .reviewMode=${this._draftDispatch.reviewMode ?? 'cold'}
+          .reviewContext=${this._draftDispatch.reviewContext}
           .waitPolicy=${this._draftDispatch.waitPolicy}
           .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
           .disabled=${!this._draftProject}
@@ -3097,17 +3166,6 @@ export class BacklogPanel extends LitElement {
     </div>`;
   }
 
-  private get _refinementRunnerOptions(): string[] {
-    const slotRunners = [
-      ...new Set(
-        this._slots
-          .map((slot) => slot.runner)
-          .filter((runner): runner is string => Boolean(runner)),
-      ),
-    ];
-    return [...new Set([...RUNNER_OPTIONS, ...slotRunners])].sort();
-  }
-
   private _renderVisibleModelsError() {
     return this._visibleModelsError
       ? html`<div class="muted" role="status" data-testid="backlog-visible-models-error">
@@ -3116,24 +3174,12 @@ export class BacklogPanel extends LitElement {
       : nothing;
   }
 
-  private get _refinementModelOptions(): string[] {
-    const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-    return modelsForRunner(runner, this._refineModel);
-  }
-
-  private get _refinementDefaultModelLabel(): string {
-    const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-    return defaultModelForRunner(runner) || DEFAULT_BACKLOG_REFINEMENT_MODEL;
-  }
-
   private _setRunnerPickerOpen(open: boolean) {
     this._runnerPickerOpen = open;
     if (open && this._selectedItem) void this._loadRefinementSessionStatus(this._selectedItem);
     if (!open) {
       this._refinementSessionLoading = '';
       this._existingRefinementSession = null;
-      this._refineRunnerCustom = false;
-      this._refineModelCustom = false;
       this._refineSafetyCustom = false;
     }
     this._writeUrlState();
@@ -3165,8 +3211,9 @@ export class BacklogPanel extends LitElement {
       const result = await gateway.request<BacklogRefineResult>(Methods.BACKLOG_REFINE, {
         itemId: this._selectedItem.id,
         launch,
-        ...(this._refineRunner.trim() ? { runner: this._refineRunner.trim() } : {}),
-        ...(this._refineModel.trim() ? { model: this._refineModel.trim() } : {}),
+        runner: this._refinementPicker.toSelection().runner,
+        model: this._refinementPicker.toSelection().model ?? undefined,
+        effort: this._refinementPicker.toSelection().effort ?? undefined,
         ...(this._refineCommand.trim() ? { runnerCommand: this._refineCommand.trim() } : {}),
         ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
       });
@@ -3300,39 +3347,10 @@ export class BacklogPanel extends LitElement {
             : nothing}
         <div class="grid">
           <div class="full">
-            ${this._renderRefinementChoice({
-              label: 'Runner',
-              defaultLabel: `Default (${DEFAULT_BACKLOG_REFINEMENT_RUNNER})`,
-              testId: 'backlog-refine-runner',
-              value: this._refineRunner,
-              options: this._refinementRunnerOptions,
-              customMode: this._refineRunnerCustom,
-              onChange: (runner, customMode) => {
-                this._refineRunnerCustom = customMode;
-                this._refineRunner = runner;
-                if (!customMode) {
-                  this._refineModelCustom = false;
-                  this._refineModel = modelForRunnerChange(runner, this._refineModel, {
-                    defaultRunner: DEFAULT_BACKLOG_REFINEMENT_RUNNER,
-                  });
-                }
-              },
-            })}
-          </div>
-          <div class="full">
-            ${this._renderRefinementChoice({
-              label: 'Model',
-              defaultLabel: `Default (${this._refinementDefaultModelLabel})`,
-              testId: 'backlog-refine-model',
-              value: this._refineModel,
-              options: this._refinementModelOptions,
-              customMode: this._refineModelCustom,
-              onChange: (model, customMode) => {
-                this._refineModelCustom = customMode;
-                this._refineModel = model;
-              },
-            })}
-            ${this._renderVisibleModelsError()}
+            <review-dispatch-picker
+              .viewModel=${this._refinementPicker}
+              @review-dispatch-change=${() => this.requestUpdate()}
+            ></review-dispatch-picker>
           </div>
           <div class="full">
             ${this._renderRefinementChoice({

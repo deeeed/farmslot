@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import type { DispatchQueueAddParams, RunCreateParams } from '@farmslot/protocol';
+import { ReviewDispatchViewModel, reviewSequenceFromRequest } from '@farmslot/review-dispatch';
 
 import {
   buildDispatchCandidatesParams,
@@ -31,8 +32,8 @@ const baseDraft = {
   nudgeReuse: undefined,
   freshReuse: undefined,
   reviewTier: undefined,
-  reviewDepth: undefined,
-  pendingReviewPlan: undefined,
+  reviewPolicy: undefined,
+  reviewSequence: undefined,
   comparison: {},
 } satisfies Partial<DispatchPayloadDraft>;
 
@@ -73,14 +74,12 @@ test('buildRunCreateParams matches golden fix-bug payload', () => {
     runner: 'claude',
     mode: 'autonomous',
     devInteractiveProfile: 'lightweight',
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      extraLoopsRequested: 0,
-      countingVersion: 2,
-      requireCrossRunner: true,
+    reviewPolicy: {
+      minimumReviews: 1,
+
       requestedBy: 'dispatch',
     },
-    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+    reviewSequence: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }],
     comparison: {},
   });
   assert.deepEqual(stablePayload<RunCreateParams>(payload), fixture('fix-bug-run'));
@@ -354,4 +353,39 @@ test('candidates, run.create and queue agree on the prepare profile under Skip P
     assert.equal(buildRunCreateParams(draft).prepareProfile, expected);
     assert.equal(buildDispatchQueueAddParams(draft).prepareProfile, expected);
   }
+});
+
+test('one picker preserves review choices through direct dispatch, queue and gate receipts', () => {
+  const picker = new ReviewDispatchViewModel({
+    context: {
+      allowedActions: ['dispatch', 'request-review'],
+      allowSequence: true,
+      reviewLineages: [{ repository: 'fixture/repo', prNumber: 1, reviewId: 'review-1' }],
+    },
+  });
+  const row = picker.rows[0];
+  picker.setRunner(row.id, 'codex');
+  picker.setModel(row.id, 'gpt-6-astra');
+  picker.setEffort(row.id, 'ultra');
+  picker.setMode(row.id, 'warm');
+  picker.addRow({ runner: 'claude', mode: 'cold' });
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    flowType: 'fix-bug',
+    project: 'fixture',
+    ticketOrPr: 'FIX-1',
+    mode: 'autonomous',
+    devInteractiveProfile: 'lightweight',
+    ...picker.toDispatchOptions(),
+  };
+  const expected = picker.toSequence();
+  assert.deepEqual(buildRunCreateParams(draft).reviewSequence, expected);
+  assert.deepEqual(buildDispatchQueueAddParams(draft).reviewSequence, expected);
+  assert.deepEqual(reviewSequenceFromRequest(picker.toRequestPayload()), expected);
+  assert.equal(buildDispatchQueueAddParams(draft).reviewPolicy?.minimumReviews, 2);
+  assert.deepEqual(
+    buildDispatchQueueAddParams(draft).reviewSequenceContext,
+    picker.toReviewContext(),
+  );
+  assert.deepEqual(buildRunCreateParams(draft).reviewSequenceContext, picker.toReviewContext());
 });

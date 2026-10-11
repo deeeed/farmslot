@@ -23,6 +23,7 @@
     "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-cli": "workspace:*",
     "@farmslot/recipe-runner": "workspace:*",
+    "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",
     "commander": "^12.0.0",

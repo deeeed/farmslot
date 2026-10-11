@@ -633,7 +633,7 @@ export function wrapWorkerShellCommand(
 /**
  * Argv-prompt runners (Cursor) put the task on the launch line via `{task_prompt}`.
  * Pool templates that only expand `{runner_path} {safety_flags}` drop it, so
- * self-review respawns an idle TUI. Insert the placeholder next to the runner
+ * review respawns an idle TUI. Insert the placeholder next to the runner
  * invocation — not after a trailing `printf` / `;` command.
  */
 export function withArgvTaskPromptPlaceholder(dispatchCmd: string): string {
@@ -728,7 +728,7 @@ export interface BuildLaunchOptions {
    * requires a pool `dispatch_cmd` (production dispatch flow).
    * When false (default), the Claude runner is launched inline via its
    * configured binary + tier-driven flags — used by relaunch paths
-   * (self-review, CI follow-up) that always bypass the dispatch template.
+   * (review, CI follow-up) that always bypass the dispatch template.
    */
   claudeUsesDispatchCmd?: boolean;
   /**
@@ -753,7 +753,7 @@ export interface BuildLaunchOptions {
 /**
  * Construct the shell command used to launch a runner inside a tmux pane.
  *
- * Single source of truth across dispatch, self-review, and CI-watch relaunch
+ * Single source of truth across dispatch, review, and CI-watch relaunch
  * sites. Callers pass the runner id + prompt; the function absorbs
  * `expandDispatchCmd` routing, runner-aware-dispatch detection, and
  * per-runner inline flag selection via the capability registry.
@@ -956,7 +956,7 @@ export function buildLaunchCommand(
 
   // Cursor Agent: argv carries the task (`needsPostLaunchPrompt: false`). A
   // runner-aware dispatch_cmd that omits `{task_prompt}` still has to receive
-  // the prompt or self-review respawns an idle composer.
+  // the prompt or review respawns an idle composer.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
       return withRecipeTrust(expanded);

@@ -117,7 +117,7 @@ test('a retried click during the ancestry lookup reuses the first rebased re-rev
   assert.equal(children.length, 1, 'one warm re-review per head');
   assert.equal(a.runId, children[0]!.id);
   assert.equal(b.runId, children[0]!.id);
-  assert.equal(children[0]!.reviewScope, 'full', 'a rebased head gets a full review');
+  assert.equal(children[0]!.reviewMode, 'full', 'a rebased head gets a full review');
   assert.deepEqual(children[0]!.repeatReviewContext?.unresolvedFindings, [
     { file: 'src/a.ts', line: 7, description: 'Fix this.' },
   ]);

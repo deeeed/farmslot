@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use neutral review/review-fix task and terminal contracts across execution templates and checklist helpers.
+
 ## 0.17.5 - 2026-10-11
 
 - Align the protocol dependency with 0.37.0 so consumers resolve one copy.

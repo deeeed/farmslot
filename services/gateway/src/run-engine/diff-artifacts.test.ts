@@ -178,12 +178,11 @@ test('incremental review input captures the exact prior-head to current-head ran
     ticketOrPr: 'owner/repo#123',
     prNumber: 123,
     taskFile: path.join(dir, 'TASK.md'),
-    reviewScope: 'incremental',
+    reviewMode: 'warm',
     repeatReviewContext: {
       version: 1,
       chainId: 'prior-run',
       generation: 2,
-      contextMode: 'reuse',
       priorRunId: 'prior-run',
       priorFamilyId: 'family-1',
       repository: 'owner/repo',
@@ -194,9 +193,9 @@ test('incremental review input captures the exact prior-head to current-head ran
       unresolvedFindings: [],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      reviewScope: 'incremental',
+      mode: 'warm' as const,
       validationDepth: 'static-code',
-      sessionIntent: 'resume',
+
       priorGenerations: [],
     },
   });
@@ -212,7 +211,7 @@ test('incremental review input captures the exact prior-head to current-head ran
       number: 123,
     }),
     fetchPRDiffFiles: async () => {
-      calls.push('full');
+      calls.push('cold');
       return [];
     },
     fetchGitHubCompareFiles: async (repo, baseSha, headSha) => {
@@ -225,11 +224,11 @@ test('incremental review input captures the exact prior-head to current-head ran
 
   assert.deepEqual(calls, ['owner/repo:prior-head..current-head']);
   const commit = JSON.parse(await readFile(path.join(dir, 'inputs/commit.json'), 'utf-8'));
-  assert.equal(commit.reviewScope, 'incremental');
+  assert.equal(commit.reviewMode, 'warm');
   assert.equal(commit.baseSha, 'prior-head');
   assert.equal(commit.headSha, 'current-head');
   const stat = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf-8'));
-  assert.equal(stat.reviewScope, 'incremental');
+  assert.equal(stat.reviewMode, 'warm');
   assert.equal(stat.baseSha, 'prior-head');
   assert.equal(stat.headSha, 'current-head');
 });
@@ -241,12 +240,11 @@ test('incremental review input refuses to review a head that advanced after the 
     ticketOrPr: 'owner/repo#123',
     prNumber: 123,
     taskFile: path.join(dir, 'TASK.md'),
-    reviewScope: 'incremental',
+    reviewMode: 'warm',
     repeatReviewContext: {
       version: 1,
       chainId: 'prior-run',
       generation: 2,
-      contextMode: 'reuse',
       priorRunId: 'prior-run',
       priorFamilyId: 'family-1',
       repository: 'owner/repo',
@@ -257,9 +255,9 @@ test('incremental review input refuses to review a head that advanced after the 
       unresolvedFindings: [],
       artifactRefs: [],
       farmslotEvidenceRefs: [],
-      reviewScope: 'incremental',
+      mode: 'warm' as const,
       validationDepth: 'static-code',
-      sessionIntent: 'resume',
+
       priorGenerations: [],
     },
   });

@@ -11,6 +11,7 @@ import {
   type ReadyGatePrPackage,
   type RunDecision,
 } from '@farmslot/protocol';
+import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
@@ -71,7 +72,7 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
     description: 'Request another independent review',
     actions: [
       {
-        id: 'request-extra-review',
+        id: 'request-review',
         label: 'Request Independent Review',
         style: 'secondary',
       },
@@ -89,7 +90,7 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
       {
         runId: run.id,
         decisionId: decision.id,
-        actionId: 'request-extra-review',
+        actionId: 'request-review',
       },
       () => {},
       {
@@ -131,9 +132,7 @@ test('runResolveDecision refuses a full-live review loop before any restore or l
     type: 'engine_human_gate',
     title: 'Publication gate',
     description: 'Request another independent review',
-    actions: [
-      { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
-    ],
+    actions: [{ id: 'request-review', label: 'Request Independent Review', style: 'secondary' }],
     createdAt: '2026-09-23T00:00:00.000Z',
   };
   updateRun(run.id, { status: 'blocked', decisions: [decision] });
@@ -148,9 +147,11 @@ test('runResolveDecision refuses a full-live review loop before any restore or l
       {
         runId: run.id,
         decisionId: decision.id,
-        actionId: 'request-extra-review',
+        actionId: 'request-review',
         selectionData: {
-          reviewRequest: { loops: [{ runner: 'codex', validationDepth: 'full-live' }] },
+          reviewRequest: reviewRequestFromSequence([
+            { runner: 'codex', validationDepth: 'full-live' },
+          ]),
         },
       },
       () => {},
@@ -189,7 +190,7 @@ test('runResolveDecision reports a recoverable action when a review run has no a
     description: 'Request another independent review',
     actions: [
       {
-        id: 'request-extra-review',
+        id: 'request-review',
         label: 'Request Independent Review',
         style: 'secondary',
       },
@@ -207,7 +208,7 @@ test('runResolveDecision reports a recoverable action when a review run has no a
       {
         runId: run.id,
         decisionId: decision.id,
-        actionId: 'request-extra-review',
+        actionId: 'request-review',
       },
       () => {},
     ),
@@ -248,7 +249,7 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
     description: 'Request another independent review',
     actions: [
       {
-        id: 'request-extra-review',
+        id: 'request-review',
         label: 'Request Independent Review',
         style: 'secondary',
       },
@@ -264,7 +265,7 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
     {
       runId: run.id,
       decisionId: decision.id,
-      actionId: 'request-extra-review',
+      actionId: 'request-review',
     },
     () => {},
     { assertReviewLaunchAllowed: async () => {} },
@@ -272,7 +273,7 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
 
   const persisted = getRun(run.id)!;
   assert.equal(persisted.engineState?.publishGate?.reviewLaunchRejection, undefined);
-  assert.equal(persisted.decisions[0]?.resolvedAction, 'request-extra-review');
+  assert.equal(persisted.decisions[0]?.resolvedAction, 'request-review');
   assert.ok(persisted.decisions[0]?.resolvedAt);
 });
 
@@ -330,10 +331,8 @@ function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): Read
       publishAuthority: 'human',
       reason: 'local-first publication requires human approval',
     },
-    reviewDepth: overrides.reviewDepth ?? {
-      minimumIndependentReviews: 0,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: overrides.reviewPolicy ?? {
+      minimumReviews: 0,
       requestedBy: 'dispatch',
     },
     publicationTarget: overrides.publicationTarget ?? 'ready',
@@ -425,8 +424,8 @@ test('runResolveDecision keeps publish gate pending when approved package select
       prPackage,
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
-      reviewDepth: prPackage.reviewDepth,
-      independentReviews: [],
+      reviewPolicy: prPackage.reviewPolicy,
+      reviews: [],
     },
   };
   updateRun(run.id, {
@@ -434,8 +433,8 @@ test('runResolveDecision keeps publish gate pending when approved package select
     engineState: {
       publishGate: {
         publicationStatus: 'not_published',
-        reviewDepth: prPackage.reviewDepth,
-        independentReviews: [],
+        reviewPolicy: prPackage.reviewPolicy,
+        reviews: [],
       },
     },
   });
@@ -509,8 +508,8 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
         prPackage: visiblePackage,
         publicationTarget: 'ready',
         publicationStatus: 'not_published',
-        reviewDepth: visiblePackage.reviewDepth,
-        independentReviews: [],
+        reviewPolicy: visiblePackage.reviewPolicy,
+        reviews: [],
       },
     };
     updateRun(run.id, {
@@ -520,8 +519,8 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
         publishGate: {
           packageArtifactPath: currentPackage.artifactPath,
           publicationStatus: 'not_published',
-          reviewDepth: visiblePackage.reviewDepth,
-          independentReviews: [],
+          reviewPolicy: visiblePackage.reviewPolicy,
+          reviews: [],
         },
       },
     });
@@ -609,8 +608,8 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
         prPackage,
         publicationTarget: 'ready',
         publicationStatus: 'not_published',
-        reviewDepth: prPackage.reviewDepth,
-        independentReviews: [],
+        reviewPolicy: prPackage.reviewPolicy,
+        reviews: [],
       },
     };
     updateRun(run.id, {
@@ -620,8 +619,8 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
         publishGate: {
           packageArtifactPath: prPackage.artifactPath,
           publicationStatus: 'not_published',
-          reviewDepth: prPackage.reviewDepth,
-          independentReviews: [],
+          reviewPolicy: prPackage.reviewPolicy,
+          reviews: [],
         },
       },
     });
@@ -706,8 +705,8 @@ test('runResolveDecision rejects approval when selected evidence differs from re
       prPackage,
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
-      reviewDepth: prPackage.reviewDepth,
-      independentReviews: [],
+      reviewPolicy: prPackage.reviewPolicy,
+      reviews: [],
     },
   };
   updateRun(run.id, {
@@ -717,8 +716,8 @@ test('runResolveDecision rejects approval when selected evidence differs from re
       publishGate: {
         packageArtifactPath: prPackage.artifactPath,
         publicationStatus: 'not_published',
-        reviewDepth: prPackage.reviewDepth,
-        independentReviews: [],
+        reviewPolicy: prPackage.reviewPolicy,
+        reviews: [],
       },
     },
   });
@@ -846,7 +845,7 @@ test('createRun preserves reviewed interactive dev profile on dev lane', async (
     ticketOrPr: `DEV-REVIEWED-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     devInteractiveProfile: 'reviewed',
-    initialContext: 'Prototype with self-review enabled',
+    initialContext: 'Prototype with review enabled',
   });
   t.after(async () => {
     if (getRun(run.id)) {
@@ -858,10 +857,7 @@ test('createRun preserves reviewed interactive dev profile on dev lane', async (
   assert.equal(run.flowType, 'dev');
   assert.equal(run.devInteractiveProfile, 'reviewed');
   assert.equal(run.engineState?.interactiveDev?.profile, 'reviewed');
-  assert.equal(
-    run.engineState?.interactiveDev?.initialContext,
-    'Prototype with self-review enabled',
-  );
+  assert.equal(run.engineState?.interactiveDev?.initialContext, 'Prototype with review enabled');
 });
 
 test('runInteractiveDevResolve rejects terminal interactive dev runs without slot mutation', async (t) => {
@@ -1118,10 +1114,10 @@ test('runInteractiveDevResolve CI-watch actions resume the pipeline through the 
   assert.equal(resumed.steps.find((step) => step.name === 'finalize')?.status, 'pending');
   assert.equal(resumed.steps.find((step) => step.name === 'ci-watch')?.status, 'pending');
   assert.equal(resumed.steps.find((step) => step.name === 'monitor')?.status, 'done');
-  const selfReview = resumed.steps.find((step) => step.name === 'self-review')!;
-  assert.equal(selfReview.status, 'done');
-  assert.equal(selfReview.outputs?.skipped, true);
-  assert.equal(selfReview.outputs?.source, 'operator');
+  const review = resumed.steps.find((step) => step.name === 'review')!;
+  assert.equal(review.status, 'done');
+  assert.equal(review.outputs?.skipped, true);
+  assert.equal(review.outputs?.source, 'operator');
   assert.equal(resumed.devInteractiveProfile, 'reviewed');
   assert.equal(resumed.engineState?.interactiveDev?.profile, 'reviewed');
   assert.equal(
@@ -2323,28 +2319,32 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
     type: 'engine_human_gate',
     title: 'Publication gate',
     description: 'Approve package',
-    actions: [{ id: 'request-extra-review', label: 'Request review', style: 'secondary' }],
+    actions: [{ id: 'request-review', label: 'Request review', style: 'secondary' }],
     createdAt: '2026-09-05T00:00:00.000Z',
   };
   // A review whose normalization WOULD rewrite it. If the normalize write runs
   // before the consumption-point fence, this run is mutated by a resolve that
   // was then refused.
   const exhaustedReview = {
-    id: 'independent-review-1',
+    reviewerSessionId: 'fixture-session-' + 'review-1',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-1',
     source: 'human-gate' as const,
-    crossRunner: true,
     loopNumber: 1,
     verdict: 'issues' as const,
     unresolvedCount: 1,
     issues: [{ file: 'src/example.ts', description: 'Fix this' }],
     feedbackSent: true,
-    attempts: [{ loopNumber: 1, verdict: 'issues' as const, unresolvedCount: 1 }],
+    attempts: [
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'issues' as const, unresolvedCount: 1 },
+    ],
   };
   // Starts UNPARKED, so the entry check passes and only the re-check can catch it.
   updateRun(run.id, {
     status: 'blocked',
     decisions: [decision],
-    engineState: { publishGate: { independentReviews: [exhaustedReview] } },
+    engineState: { publishGate: { reviews: [exhaustedReview] } },
   });
   t.after(async () => {
     updateRun(run.id, { status: 'failed', park: null });
@@ -2353,7 +2353,7 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
 
   await assert.rejects(
     runResolveDecision(
-      { runId: run.id, decisionId: decision.id, actionId: 'request-extra-review' },
+      { runId: run.id, decisionId: decision.id, actionId: 'request-review' },
       () => {},
       {
         // The park lands inside an awaited probe — the window the entry check
@@ -2380,7 +2380,7 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
   assert.equal(persisted.status, 'blocked');
   // Nothing this refused resolve touched may have persisted, including the
   // review normalization that runs alongside the launch assertion.
-  const stored = persisted.engineState?.publishGate?.independentReviews?.[0];
+  const stored = persisted.engineState?.publishGate?.reviews?.[0];
   assert.equal(stored?.feedbackSent, true, 'a refused resolve must not normalize reviews');
   assert.equal(stored?.recoveryContinuationPending, undefined);
 });

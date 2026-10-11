@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the shared review picker and COLD/WARM session rules.
+
 - Explain hosted recipe binding, remote cancellation and recovery from unconfirmed process closeout.
 
 - Gateway API reference includes the supported finished-run evidence refresh operation.

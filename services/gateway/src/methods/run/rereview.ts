@@ -88,8 +88,7 @@ export async function runRereviewLatestHead(
           ),
           {
             ...DEFAULT_PR_REVIEW_OPTIONS,
-            validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
-            busySession: 'wait',
+            mode: 'warm',
           },
         )
       : undefined;
@@ -134,14 +133,14 @@ export async function runRereviewLatestHead(
     // Keep the parent's completion policy: the operator was trying to post
     // this review, so the child must offer the same posting gate.
     completionPolicy: run.completionPolicy,
-    reviewScope: context.reviewScope,
+    reviewMode: context.mode,
     prNumber: target.number,
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
   });
   updateRun(child.id, {
     repeatReviewContext: context,
-    reviewScope: context.reviewScope,
+    reviewMode: context.mode,
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });

@@ -175,7 +175,7 @@ function toneForPayload(
   }
   if (kind === 'ready') {
     if (stringField(payload, 'publicationStatus') === 'publish_failed') return 'fail';
-    if (isFailingVerdict(stringField(payload, 'selfReviewVerdict'))) return 'fail';
+    if (isFailingVerdict(stringField(payload, 'reviewVerdict'))) return 'fail';
     return 'ok';
   }
   if (kind === 'no-change')
@@ -191,7 +191,7 @@ function summaryForPayload(payload: PayloadRecord | undefined, fallback: string)
     return compact(firstString(payload, ['evidenceMarkdown', 'reviewMd']) || fallback);
   if (kind === 'ready') {
     return compact(
-      firstString(payload, ['validationSummary', 'selfReviewSummary', 'workerReport']) || fallback,
+      firstString(payload, ['validationSummary', 'reviewSummary', 'workerReport']) || fallback,
     );
   }
   if (kind === 'no-change')
@@ -275,7 +275,7 @@ function textSectionsForPayload(
   if (kind === 'ready') {
     sections.push(
       { title: 'Worker report', body: stringOrUndefined(payload, 'workerReport') },
-      { title: 'Self review', body: stringOrUndefined(payload, 'selfReviewSummary') },
+      { title: 'Review', body: stringOrUndefined(payload, 'reviewSummary') },
       { title: 'Validation summary', body: stringOrUndefined(payload, 'validationSummary') },
       { title: 'Worker learnings', body: stringOrUndefined(payload, 'workerLearnings') },
     );
@@ -293,7 +293,7 @@ function textSectionsForPayload(
   } else if (kind === 'retrospective') {
     sections.push(
       { title: 'What this is', body: stringOrUndefined(payload, 'whatThisIs') },
-      { title: 'Self review', body: stringOrUndefined(payload, 'selfReviewSummary') },
+      { title: 'Review', body: stringOrUndefined(payload, 'reviewSummary') },
       { title: 'Report excerpt', body: stringOrUndefined(payload, 'reportExcerpt') },
       { title: 'Worker learnings', body: stringOrUndefined(payload, 'workerLearnings') },
       { title: 'Root learnings', body: stringOrUndefined(payload, 'rootLearnings') },
@@ -353,11 +353,11 @@ function highlightsForPayload(
     if (payload.stale === true)
       highlights.push({ label: 'Snapshot', value: 'Stale', tone: 'warn' });
   } else if (kind === 'ready') {
-    const selfReview = stringOrUndefined(payload, 'selfReviewVerdict');
-    if (selfReview)
+    const reviewVerdict = stringOrUndefined(payload, 'reviewVerdict');
+    if (reviewVerdict)
       highlights.unshift({
-        label: 'Self review',
-        value: selfReview,
+        label: 'Review',
+        value: reviewVerdict,
         tone: toneForPayload(payload, 'ready'),
       });
     const publicationStatus = stringOrUndefined(payload, 'publicationStatus');

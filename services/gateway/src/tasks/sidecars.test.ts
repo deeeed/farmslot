@@ -87,11 +87,11 @@ test('copyPreparedTaskRootSidecars removes a stale role manifest when the fresh 
   await mkdir(taskDir, { recursive: true });
   await mkdir(workerTaskAbs, { recursive: true });
   await writeFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), '#!/bin/sh\n', 'utf-8');
-  // Left behind by an interrupted self-review on the slot: points the mark at
+  // Left behind by an interrupted review on the slot: points the mark at
   // the nested checklist. A fresh worker dispatch must not inherit it.
   await writeFile(
     path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST),
-    JSON.stringify({ checklist: 'SELF-REVIEW.md', signal: 'SELF-REVIEW-SIGNAL.json' }),
+    JSON.stringify({ checklist: 'REVIEW.md', signal: 'REVIEW-SIGNAL.json' }),
     'utf-8',
   );
 

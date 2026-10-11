@@ -251,9 +251,9 @@ export function renderReviewContinuation(decision: RunDecision) {
       ${reviewContinuationSummary(payload).map(
         (line) => html`<div class="cdesc-line">${line}</div>`,
       )}
-      ${payload.prior.incrementalUnavailableReason
+      ${payload.prior.warmUnavailableReason
         ? html`<div class="cdesc-line" style="color:${colors.statusWarn}">
-            ${payload.prior.incrementalUnavailableReason}
+            ${payload.prior.warmUnavailableReason}
           </div>`
         : nothing}
       ${payload.prior.artifactRefs.length > 0

@@ -18,7 +18,7 @@ import { PRRuleStore } from './store.js';
 
 const execution: PRExecutionProfile = {
   slotPolicy: { kind: 'exact', slotId: 'slot-a' },
-  models: [{ runner: 'runner', model: 'model', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'runner', model: 'model', effort: 'high' }],
 };
 const teamConfig: PRTeamConfig = {
   name: 'Team',
@@ -39,11 +39,7 @@ test('overlapping static review policies with different continuity hold one shar
   const second = await ruleFor(store, 'owner', true);
   await store.applyPreview('owner', preview(first.team, first.rule));
   const changed = preview(second.team, second.rule);
-  changed.items[0].review = {
-    sessionIntent: 'reset',
-    scope: 'full',
-    validationDepth: 'static-code',
-  };
+  changed.items[0].review = { mode: 'warm' as const };
   await store.applyPreview('owner', changed);
   assert.equal(store.snapshot().intents.length, 1);
   assert.equal(store.snapshot().intents[0].status, 'needs-configuration');
@@ -53,40 +49,29 @@ test('overlapping static review policies with different continuity hold one shar
   );
 });
 
-test('a legacy full-live id cannot capture a new static review after restart', async (t) => {
+test('a QA intent cannot capture a new static review after restart', async (t) => {
   const { store, file } = await fixture(t);
   const first = await ruleFor(store, 'owner', true);
   const live = preview(first.team, first.rule);
-  live.items[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'full-live',
-  };
+  live.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
   await store.applyPreview('owner', live);
   const legacy = store.snapshot();
-  legacy.intents[0].id = reviewIntentId({ ...live.items[0], review: undefined });
-  const legacyId = legacy.intents[0].id;
   await writeFile(file, JSON.stringify(legacy));
   const restarted = await PRRuleStore.load(file);
   const second = await ruleFor(restarted, 'owner', true);
   await restarted.applyPreview('owner', preview(second.team, second.rule));
   assert.equal(restarted.snapshot().intents.length, 2);
   assert.equal(new Set(restarted.snapshot().intents.map((entry) => entry.id)).size, 2);
-  assert.equal(restarted.intent(legacyId)?.contributions[0].review?.validationDepth, 'full-live');
 });
 
-test('rescanning legacy full-live retains its durable id and eligible contribution', async (t) => {
+test('rescanning QA retains its durable id and eligible contribution', async (t) => {
   const { store, file } = await fixture(t);
   const { team, rule } = await ruleFor(store, 'owner', true);
   const live = preview(team, rule);
-  live.items[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'full-live',
-  };
+  live.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
   await store.applyPreview('owner', live);
   const legacy = store.snapshot();
-  const legacyId = reviewIntentId({ ...live.items[0], review: undefined });
+  const legacyId = reviewIntentId(live.items[0]);
   legacy.intents[0].id = legacyId;
   await writeFile(file, JSON.stringify(legacy));
   const restarted = await PRRuleStore.load(file);
@@ -363,11 +348,7 @@ test('resolving farm defaults preserves completed legacy QA without equating a d
   const { store, file } = await fixture(t);
   const { team, rule } = await ruleFor(store, 'owner', true);
   const live = preview(team, rule);
-  live.items[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'full-live',
-  };
+  live.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
   await store.applyPreview('owner', live);
   const legacy = store.snapshot();
   const historical = legacy.intents[0];
@@ -383,12 +364,7 @@ test('resolving farm defaults preserves completed legacy QA without equating a d
 
   const additional = await ruleFor(restarted, 'owner', true);
   const explicit = preview(additional.team, additional.rule);
-  explicit.items[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    workflow: 'qa',
-    qaProfileId: 'release',
-  };
+  explicit.items[0].review = { mode: 'warm' as const, workflow: 'qa', qaProfileId: 'release' };
   resolvePreviewQaPreset(explicit.items[0], qaPresets);
   await restarted.applyPreview('owner', explicit);
   assert.equal(restarted.snapshot().intents.length, 2);
@@ -400,13 +376,13 @@ test('pending QA refreshes changed defaults in place and persists purpose corres
   const { store, file } = await fixture(t);
   const { team, rule } = await ruleFor(store, 'owner', true);
   const initial = preview(team, rule);
-  initial.items[0].review = { sessionIntent: 'resume', scope: 'incremental', workflow: 'qa' };
+  initial.items[0].review = { mode: 'warm' as const, workflow: 'qa' };
   resolvePreviewQaPreset(initial.items[0], qaPresets);
   await store.applyPreview('owner', initial);
   const id = store.snapshot().intents[0].id;
   const restarted = await PRRuleStore.load(file);
   const changed = preview(team, rule);
-  changed.items[0].review = { sessionIntent: 'resume', scope: 'incremental', workflow: 'qa' };
+  changed.items[0].review = { mode: 'warm' as const, workflow: 'qa' };
   resolvePreviewQaPreset(changed.items[0], { ...qaPresets, default_profile: 'release' });
   await restarted.applyPreview('owner', changed);
   assert.equal(restarted.snapshot().intents.length, 1);
@@ -424,12 +400,7 @@ test('approved and previously reviewed PRs still allow explicit QA acceptance', 
   const { team, rule } = await ruleFor(store, 'owner', true);
   for (const [index, decision] of ['APPROVED', null].entries()) {
     const live = preview(team, rule, `head-${index}`);
-    live.items[0].review = {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      workflow: 'qa',
-      qaProfileId: 'pr',
-    };
+    live.items[0].review = { mode: 'warm' as const, workflow: 'qa', qaProfileId: 'pr' };
     live.items[0].subject.reviewObservation = {
       observedAt: live.checkedAt,
       headSha: `head-${index}`,
@@ -458,11 +429,7 @@ test('QA admission retains closed and draft restrictions while static review ret
     const { store } = await fixture(t);
     const { team, rule } = await ruleFor(store, 'owner', true);
     const live = preview(team, rule, `blocked-${index}`);
-    live.items[0].review = {
-      sessionIntent: 'resume',
-      scope: 'incremental',
-      workflow: options.workflow,
-    };
+    live.items[0].review = { mode: 'warm' as const, workflow: options.workflow };
     live.items[0].subject.reviewObservation = {
       observedAt: live.checkedAt,
       headSha: `blocked-${index}`,
