@@ -24,7 +24,11 @@ existing review result; retry attempts do not increase the review count.
   captured base/head SHAs. A reset of an existing session is insufficient.
 - WARM MUST reuse that PR's verified previous review session and review only
   `lastReviewedHead..currentHead`. The binding is to repository/PR and review
-  provenance, not the worker's runner or a run ID alone.
+  provenance, not the worker's runner or a run ID alone. The exact binding key
+  is repository/PR plus durable `reviewId` lineage. Request/sequence context
+  identifies the lineage being continued; a recheck updates that same result.
+  Missing or ambiguous lineage MUST be refused. Lineage is provenance, not a
+  fifth selection dimension or a runner-relative default.
 - Missing, foreign, busy or incompatible WARM bindings MUST produce a visible
   refusal or wait state. They MUST NOT silently launch COLD. A model/effort
   change is allowed only when the session adapter supports it.
@@ -60,6 +64,10 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
 - This is a coordinated breaking contract update. Persisted configuration and
   queued requests MUST be converted before deployment; old records lacking
   proof remain historical provenance, not current passing reviews.
+- Project `review.mode` supplies a configured mode default. Removed keys such
+  as `minimum_independent_reviews`, `require_cross_runner` and
+  `self_review.session_policy` MUST be rejected with a conversion hint, not
+  ignored into a less restrictive default.
 - Harnesses, including `mm-harness`, consume the typed gateway contract. They
   inherit session/mode validation; farm-owned QA remains separate under
   ADR-058. This adds no harness-specific review policy or extension flag.

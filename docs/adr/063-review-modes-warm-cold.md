@@ -5,7 +5,7 @@
 **Owner:** Farmslot maintainers
 **Scope:** Review sessions, publication gates, dispatch configuration, and shared web/mobile pickers
 **Related:** [ADR-038](038-gate-held-worker-session.md), [ADR-057](057-structured-runner-transports.md), [ADR-058](058-static-review-and-farm-owned-qa.md), [ADR-061](061-structured-assessment-providers.md)
-**Supersedes:** ADR-038's publication-review classification and runner-diversity requirement in lifecycle contract item 2. Its gate-held worker lifecycle remains in effect.
+**Supersedes:** ADR-038's publication-review classification and runner-diversity requirement in lifecycle contract item 2, and ADR-058's implicit fresh-session fallback for review continuation. Worker lifecycle and farm-owned QA remain in effect.
 
 ## Context
 
@@ -32,13 +32,21 @@ them with the worker's choices never changes review eligibility.
 | WARM | Reuse the previous review session of the same repository/PR | Last reviewed head to the current head                    |
 | COLD | Create a fresh review session                               | The whole PR diff, using a captured base and current head |
 
-A first review is COLD. WARM requires a verified retained reviewer session and
+The picker defaults to COLD without a retained review; an explicit WARM request
+without one is refused. WARM requires a verified retained reviewer session and
 its last reviewed head, scoped to that PR rather than the current run ID or
 worker runner. A missing, foreign, busy or incompatible session never silently
 turns WARM into COLD. Show the reason and let the operator wait or choose COLD.
 Model/effort changes follow the runner's session capabilities. Those are
 transport constraints, not diversity policy. COLD creates a new session;
 clearing a retained session is not COLD.
+
+Each review has a durable `reviewId` lineage, bound to repository/PR, its native
+reviewer session and last reviewed head. The WARM key is repository/PR plus
+`reviewId`. A sequence row's request context identifies which lineage it
+continues; the selected runner does not choose it. Missing or ambiguous lineage
+is refused. A recheck updates that lineage's result. Lineage and session IDs are
+provenance, not a fifth picker dimension.
 
 Publication may require passing reviews, but counts depend on valid separate
 review sessions and exact-head results, never distinct runners. A pipeline
@@ -48,7 +56,9 @@ it does not manufacture another required reviewer.
 
 Use one review-and-dispatch picker with one `ReviewDispatchViewModel` in the
 shared package `@farmslot/review-dispatch`. It owns selection, defaults, catalog
-choices, validation, sequence-row changes and payload construction. Command
+choices, validation, sequence-row changes and payload construction. Preserve
+custom model IDs and saved model preferences rather than narrowing them to a
+static model list. Command
 Center and Companion each provide one thin platform renderer. Call context
 supplies allowed actions, defaults and whether a sequence is allowed. Callers
 must not copy picker state, validation or normalization.
@@ -59,6 +69,8 @@ always visible next to model; a capability that cannot vary effort shows its
 supported default explicitly. All review rows also expose WARM/COLD. Resource,
 publication and QA controls remain host concerns; QA remains separate from
 static review under ADR-058.
+
+The [normative contract](../reference/review-modes-warm-cold.md) defines request validation and wire consumers.
 
 ## Public surface
 
@@ -78,6 +90,8 @@ static review under ADR-058.
   `same` runner sentinel and runner-relative defaults. Rename review-count and
   sequence fields to `minimumReviews` and `reviewSequence`, including project
   configuration's `minimum_reviews`; rename `independentReviews` to `reviews`.
+  Project `review.mode` replaces `self_review.session_policy` as the configured
+  default; removed configuration keys must be rejected with a conversion hint.
   Keep head/session/receipt provenance distinct from choices. Server and SDK
   request validation use the shared package's validators too.
 - **Gate actions:** replace `request-cross-runner-review` and
