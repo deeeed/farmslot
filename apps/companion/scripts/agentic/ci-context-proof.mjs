@@ -77,7 +77,7 @@ function open(legacy = false) {
     'simctl',
     'openurl',
     simulator,
-    `farmslot-development://workspace/decision/${legacy ? s.legacyId : s.decisionId}?runId=${legacy ? s.legacyRunId : s.runId}`,
+    `farmslot-development://decision/${legacy ? s.legacyId : s.decisionId}?runId=${legacy ? s.legacyRunId : s.runId}`,
   ]);
 }
 
