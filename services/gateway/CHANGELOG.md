@@ -8,6 +8,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
 - Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
+- Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
+- Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
+
+- Retain CI check metadata at decisions and return current details through pr.status.
+- Validate deterministic local CI receipts before package preparation and publication, including current source inputs and runtime support.
 - Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch, including runner defaults and retained rechecks. Publication counts current-package reviewer approvals, including pipeline reviews; refresh preserves the latest result, WARM refuses unavailable continuity and COLD creates a fresh full-diff review.
 - Keep runtime cleanup failed when a shutdown hook loses its pidfile but leaves the owned process running; cover six recovery scenarios with isolated gateway, Git and process fixtures in CI.
 

@@ -5,7 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
+const {
+  expandedArtifactsForCommand,
+  deterministicChecks,
+} = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
 const { acceptanceContractIssues } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -729,9 +732,29 @@ if (contractPath && terminalCommand && !existsSync(contractPath)) {
   }
 }
 
+const deterministicResults = [];
+if (terminalCommand !== 'blocked') {
+  const checklists = new Set(
+    (terminalContract?.deterministicChecks ?? []).map((step) => step.checklist),
+  );
+  if (checklists.size === 0) checklists.add(undefined);
+  for (const checklist of checklists) {
+    try {
+      const result = deterministicChecks.evaluate(taskDir, checklist);
+      issues.push(...result.issues);
+      deterministicResults.push(...result.checks);
+    } catch (error) {
+      issues.push(`Deterministic checks cannot be validated: ${error.message}`);
+    }
+  }
+}
+
 if (issues.length > 0) {
   console.error('TASK_ARTIFACT_CONTRACT_FAIL');
   for (const issue of issues) console.error(`- ${issue}`);
   process.exit(1);
 }
 console.log('TASK_ARTIFACT_CONTRACT_PASS');
+if (deterministicResults.length > 0) {
+  console.log(`${deterministicChecks.outputPrefix}${JSON.stringify(deterministicResults)}`);
+}

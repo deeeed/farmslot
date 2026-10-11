@@ -1,17 +1,28 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import {
+  DEFAULT_RECORDED_EVIDENCE_POLICY,
   digestRecipeDocument,
   getRecipeActionManifestActionNames,
+  hasUnresolvedRecipeFailure,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
+  type RecipeClaimLedger,
   type RecipeExecutionPlan,
+  type RecipeRecordingTimelineDocument,
   type RecipeVideoTiming,
-  validateRecipeArtifactPackage,
+  type RecordingSegmentRef,
+  validateRecipeRecordingTarget,
 } from '@farmslot/protocol';
 
+import { proofDocument } from '../evidence/assertions.js';
+import { deriveRecipeClaims } from '../evidence/claims.js';
+import { validateRecordedEvidencePackage } from '../evidence/package.js';
+import { planRecipeEvidence, type RecipeEvidencePlan } from '../evidence/plan.js';
+import { materializeEvidenceStill } from '../evidence/stills.js';
 import {
   JsonArtifactWriter,
   JsonSummaryWriter,
@@ -57,11 +68,18 @@ import {
 } from './library.js';
 import { resolveRecipeParams } from './parameters.js';
 import { defaultObserverRefsFromManifest } from './passive-observations.js';
-import { copyFileWithinRoots, statFileWithinRoot } from './path.js';
+import {
+  copyFileWithinRoots,
+  digestFileWithinRoot,
+  statFileWithinRoot,
+  writeFileWithinRoot,
+} from './path.js';
 import {
   cleanupAbortedRunVideoRecording,
   removePartialRunVideoOutput,
 } from './recording-cleanup.js';
+import { boundRecording } from './recording-limits.js';
+import { startSegmentedRecording } from './recording-segments.js';
 import { RecipeResolutionError } from './resolution-error.js';
 import {
   buildRecipeExecutionPlan,
@@ -84,7 +102,9 @@ import type {
   RecipeRunResult,
   RecipeRunStatus,
   RecipeVideoRecordingOptions,
+  RecordingAdmissionLease,
   SummaryDocument,
+  TraceEntry,
   VideoRecorder,
 } from './types.js';
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
@@ -110,6 +130,9 @@ interface ResolvedRecipeRun {
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   dependencyResolution: ResolvedRecipeDependencies;
   executionPlan: RecipeExecutionPlan;
+  evidencePlan: RecipeEvidencePlan;
+  recordingRequired: boolean;
+  videoOptions: RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' };
 }
 
 export function defineActionAdapter(adapter: ActionAdapter): ActionAdapter {
@@ -310,6 +333,22 @@ class DefaultRecipeRunner implements RecipeRunner {
       params,
       recipes: dependencyResolution.recipes,
     });
+    const evidencePlan = planRecipeEvidence(
+      proofDocument(recipe),
+      new Map(
+        [...dependencyResolution.recipes].map(([ref, entry]) => [
+          ref,
+          proofDocument(entry.document),
+        ]),
+      ),
+      request.claims,
+    );
+    const needsUi = [...evidencePlan.nodes.values()].some((node) => node.action.startsWith('ui.'));
+    const videoOptions = normalizeVideoRecordingOptions(
+      request.recordVideo,
+      needsUi,
+      request.recordingReason,
+    );
     const executionPlan = buildRecipeExecutionPlan({
       recipe,
       params,
@@ -322,7 +361,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       artifactsDir,
       env,
       hud: this.#hud,
-      recordVideo: request.recordVideo,
+      recordVideo: videoOptions.mode === 'off' ? false : videoOptions,
     });
     return {
       projectRoot,
@@ -338,6 +377,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipes: dependencyResolution.recipes,
       dependencyResolution,
       executionPlan,
+      evidencePlan,
+      recordingRequired: needsUi,
+      videoOptions,
     };
   }
 
@@ -354,9 +396,13 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipes,
       dependencyResolution,
       executionPlan,
+      evidencePlan,
+      recordingRequired,
+      videoOptions,
     } = await this.#resolveRequest(request);
     enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
     const startedAt = new Date();
+    const recipeRunId = randomUUID();
     await mkdir(artifactsDir, { recursive: true });
     const runFileOffsets = await collectRunFileOffsets({
       graph,
@@ -369,20 +415,26 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     let outputs: ReadonlyMap<string, unknown> = new Map();
     const recipePath = await artifactWriter.copyRecipe(recipe);
-    const invocation = createRecipeInvocation(recipe, params, startedAt.toISOString());
+    const invocation = createRecipeInvocation(
+      recipe,
+      params,
+      startedAt.toISOString(),
+      request.claims,
+      recipeRunId,
+    );
     await artifactWriter.writeInvocation(invocation);
     for (const dependency of dependencyResolution.recipes.values()) {
       await artifactWriter.copyResolvedRecipe(dependency.provenance.digest!, dependency.document);
     }
     await artifactWriter.writeRecipeResolution(dependencyResolution.document);
     let status: RecipeRunStatus = 'unknown';
-    const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
+    const segments: RecordingSegmentRef[] = [];
+    const timelines = new Map<string, RecipeRecordingTimelineDocument>();
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
     let runRecording: RunVideoRecording | undefined;
     let captureInterruption: RecipeRunCaptureInterruption | undefined;
-    let videoTimeline:
-      | { entry: RecipeArtifactManifestEntry; timing: RecipeVideoTiming }
-      | undefined;
+    let completionHudFailure: TraceEntry | undefined;
+    const videoTimelines: { entry: RecipeArtifactManifestEntry; timing: RecipeVideoTiming }[] = [];
     let canExecute = true;
     if (videoRecorder) {
       try {
@@ -425,6 +477,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           actionManifest: this.#actionManifest,
           adapters: this.#adapters,
           traceWriter,
+          claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
@@ -447,7 +500,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             this.#publishHudProgressOrRecord(traceWriter, hudStatus, event),
           ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
         });
-        status = execution.status;
+        status = hasUnresolvedRecipeFailure(traceWriter.list()) ? 'fail' : execution.status;
         outputs = execution.outputs;
       }
 
@@ -463,25 +516,69 @@ class DefaultRecipeRunner implements RecipeRunner {
         label: 'Execution trace',
         category: 'system',
       });
+      if (status === 'pass' || status === 'fail') {
+        const runHudStartedAt = new Date();
+        try {
+          await this.#publishRunHud(status, {
+            recipe,
+            projectRoot,
+            artifactsDir,
+            env,
+            outputs,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const fields = recipeFailureTraceFields(error);
+          const captureEndpointLost =
+            captureInterruption && fields.error_code === RUNTIME_CONNECTION_CLOSED;
+          completionHudFailure = {
+            nodeId: 'recipe-complete:hud',
+            action: 'app.hud',
+            startedAt: runHudStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - runHudStartedAt.getTime(),
+            ok: false,
+            cause_class: captureEndpointLost ? 'environment' : recipeFailureCause(error, 'harness'),
+            error: message,
+            ...fields,
+            ...(captureEndpointLost
+              ? {
+                  error_code: CAPTURE_INTERRUPTED,
+                  error_details: { runtime_error_code: fields.error_code },
+                }
+              : {}),
+          };
+          traceWriter.record(completionHudFailure);
+          this.#logger.error(`app.hud complete update failed: ${message}`);
+          status = 'fail';
+        }
+      }
       if (runRecording) {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const {
-            entry: videoArtifact,
-            interruption,
-            timing,
-          } = await this.#stopRunVideoRecording(
+          const { videos, interruption, releaseFailure } = await this.#stopRunVideoRecording(
             recordingToStop,
             traceWriter,
             artifactWriter,
             startedAt,
           );
-          artifactWriter.register(videoArtifact);
-          if (timing) videoTimeline = { entry: videoArtifact, timing };
+          for (const video of videos)
+            if (video.timing) videoTimelines.push({ entry: video.entry, timing: video.timing });
+          if (releaseFailure) {
+            this.#logger.error(`Recording lease cleanup failed: ${releaseFailure}`);
+            status = 'fail';
+          }
           if (interruption) {
             // The partial video stays registered as evidence; the run still fails, typed.
             captureInterruption = interruption;
+            if (completionHudFailure?.error_code === RUNTIME_CONNECTION_CLOSED) {
+              completionHudFailure.error_code = CAPTURE_INTERRUPTED;
+              completionHudFailure.cause_class = 'environment';
+              completionHudFailure.error_details = {
+                runtime_error_code: RUNTIME_CONNECTION_CLOSED,
+              };
+            }
             this.#logger.error(`record.video interrupted: ${interruption.message}`);
             status = 'fail';
           }
@@ -503,67 +600,16 @@ class DefaultRecipeRunner implements RecipeRunner {
           status = 'fail';
         }
       }
-      if (request.finalizeRecording) {
-        const recordingStartedAt = new Date();
-        try {
-          const interruption = await request.finalizeRecording();
-          if (interruption) {
-            captureInterruption = interruption;
-            traceWriter.record(captureInterruptedTraceEntry(interruption, startedAt));
-            status = 'fail';
-          }
-        } catch (error) {
-          traceWriter.record({
-            nodeId: 'recipe-run:video',
-            action: 'record.video',
-            startedAt: recordingStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - recordingStartedAt.getTime(),
-            ok: false,
-            cause_class: recipeFailureCause(error, 'harness'),
-            error: errorMessage(error),
-          });
-          status = 'fail';
+      for (const entry of artifactWriter
+        .list()
+        .filter((artifact) => artifact.type === 'video' && artifact.sha256)) {
+        for (const still of artifactWriter.list()) {
+          const source = still.metadata?.recordedEvidence;
+          if (isRecord(source) && source.videoPath === entry.path)
+            source.videoDigest = `sha256:${entry.sha256}`;
         }
       }
-      if (status === 'pass' || status === 'fail') {
-        const runHudStartedAt = new Date();
-        try {
-          await this.#publishRunHud(status, {
-            recipe,
-            projectRoot,
-            artifactsDir,
-            env,
-            outputs,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const fields = recipeFailureTraceFields(error);
-          const captureEndpointLost =
-            captureInterruption && fields.error_code === RUNTIME_CONNECTION_CLOSED;
-          traceWriter.record({
-            nodeId: 'recipe-complete:hud',
-            action: 'app.hud',
-            startedAt: runHudStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - runHudStartedAt.getTime(),
-            ok: false,
-            cause_class: captureEndpointLost ? 'environment' : recipeFailureCause(error, 'harness'),
-            error: message,
-            ...fields,
-            ...(captureEndpointLost
-              ? {
-                  error_code: CAPTURE_INTERRUPTED,
-                  error_details: { runtime_error_code: fields.error_code },
-                }
-              : {}),
-          });
-          this.#logger.error(`app.hud complete update failed: ${message}`);
-          status = 'fail';
-        }
-      }
-      if (videoTimeline) {
-        const { entry, timing } = videoTimeline;
+      for (const { entry, timing } of videoTimelines) {
         try {
           entry.timelinePath = await writeRecordingTimeline(
             artifactsDir,
@@ -594,7 +640,122 @@ class DefaultRecipeRunner implements RecipeRunner {
     const endedAt = new Date();
     const tracePath = await traceWriter.write();
     const trace = traceWriter.list();
+    for (const artifact of artifactWriter.list()) {
+      if (artifact.type !== 'video') continue;
+      const videoDigest = artifact.sha256
+        ? `sha256:${artifact.sha256}`
+        : await digestFileWithinRoot(artifactsDir, artifact.path);
+      segments.push({
+        videoPath: artifact.path,
+        videoDigest,
+        ...(artifact.timelinePath ? { timelinePath: artifact.timelinePath } : {}),
+        ...(artifact.metadata?.gapBefore === true ? { gapBefore: true } : {}),
+      });
+      if (artifact.timelinePath)
+        timelines.set(
+          videoDigest,
+          (await readJsonFile(
+            path.join(artifactsDir, artifact.timelinePath),
+          )) as RecipeRecordingTimelineDocument,
+        );
+    }
+    const pendingClaims = deriveRecipeClaims({
+      recipeRunId,
+      ...evidencePlan,
+      trace,
+      artifacts: artifactWriter.list(),
+      segments,
+      timelines,
+    });
+    const derivativeIssues: { nodeId?: string; error: string }[] = [];
+    const requiredStills = [...new Set(pendingClaims.flatMap((claim) => claim.assertionIndices))];
+    await mkdir(path.join(artifactsDir, 'stills'), { recursive: true });
+    for (const traceIndex of requiredStills) {
+      const nodeId = trace[traceIndex]?.nodeId;
+      if (
+        !trace[traceIndex]?.action.startsWith('ui.') ||
+        artifactWriter
+          .list()
+          .some(
+            (artifact) =>
+              artifact.type === 'screenshot' &&
+              artifact.nodeId === nodeId &&
+              isRecord(artifact.metadata?.recordedEvidence),
+          )
+      )
+        continue;
+      const claim = pendingClaims.find((entry) => entry.assertionIndices.includes(traceIndex));
+      const moment = claim?.moments.find((entry) => entry.traceIndex === traceIndex);
+      const segment = moment
+        ? segments.find((entry) => entry.videoDigest === moment.videoDigest)
+        : undefined;
+      const timeline = segment ? timelines.get(segment.videoDigest) : undefined;
+      if (!segment || !timeline) continue;
+      try {
+        const still = await materializeEvidenceStill(
+          artifactsDir,
+          segment,
+          timeline,
+          traceIndex,
+          trace,
+        );
+        if (still) artifactWriter.register(still);
+      } catch (error) {
+        // The source clip remains usable; retain the failed derivative as package diagnostics.
+        artifactWriter.register({
+          path: 'recording-derivatives.json',
+          type: 'json',
+          category: 'diagnostic',
+          label: 'Evidence derivative limitations',
+        });
+        derivativeIssues.push({ nodeId, error: errorMessage(error) });
+      }
+    }
+    if (derivativeIssues.length)
+      await writeFileWithinRoot(
+        artifactsDir,
+        'recording-derivatives.json',
+        JSON.stringify(derivativeIssues),
+      );
+    const claims: RecipeClaimLedger = {
+      schemaVersion: 2,
+      recipeRunId,
+      criteria: deriveRecipeClaims({
+        recipeRunId,
+        ...evidencePlan,
+        trace,
+        artifacts: artifactWriter.list(),
+        segments,
+        timelines,
+      }),
+      recording: {
+        status:
+          videoOptions.mode === 'off'
+            ? recordingRequired
+              ? 'explicit-off'
+              : 'not-required'
+            : captureInterruption
+              ? 'incomplete'
+              : segments.length
+                ? 'complete'
+                : 'failed',
+        ...(videoOptions.reason ? { reason: videoOptions.reason } : {}),
+        segments,
+      },
+    };
+    const claimsPath = await writeFileWithinRoot(
+      artifactsDir,
+      'acceptance-status.json',
+      `${JSON.stringify(claims, null, 2)}\n`,
+    );
+    artifactWriter.register({
+      path: 'acceptance-status.json',
+      type: 'json',
+      category: 'system',
+      label: 'Derived claim evidence',
+    });
     const summary: SummaryDocument = {
+      recipeRunId,
       invocationDigest: digestRecipeDocument(invocation),
       status,
       ...summarizeTraceCounts(trace),
@@ -616,7 +777,18 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryPath = await summaryWriter.write(summary);
     const artifactManifestPath = await artifactWriter.write(status, this.#runnerProvenance);
 
-    const packageValidation = validateRecipeArtifactPackage({
+    const packageValidation = validateRecordedEvidencePackage({
+      invocation,
+      recipeRunId,
+      claims,
+      artifactDigests: Object.fromEntries(
+        segments.map((segment) => [segment.videoPath, segment.videoDigest]),
+      ),
+      timelines: Object.fromEntries(
+        segments
+          .filter((segment) => segment.timelinePath)
+          .map((segment) => [segment.timelinePath!, timelines.get(segment.videoDigest)!]),
+      ),
       recipe,
       resolvedRecipes: Object.fromEntries(
         [...dependencyResolution.recipes.values()].map((entry) => [
@@ -656,6 +828,8 @@ class DefaultRecipeRunner implements RecipeRunner {
       tracePath,
       artifactManifestPath,
       recipePath,
+      claimsPath,
+      claims,
       ...(captureInterruption ? { captureInterruption } : {}),
     };
   }
@@ -703,7 +877,14 @@ class DefaultRecipeRunner implements RecipeRunner {
               await copyFileWithinRoots(dir, 'frame.png', artifactsDir, relative);
               // Keep the provider's source path in its raw sidecar; the action output
               // maps it to the published artifact path without rewriting capture facts.
-              return { ...evidence, sourceOutput: evidence.output, output: relative };
+              return {
+                ...evidence,
+                sourceOutput: evidence.output,
+                output: relative,
+                ...(evidence.fallbackFrom
+                  ? {}
+                  : { videoPath: recordedVideoPath(Number(evidence.segmentIndex ?? 0)) }),
+              };
             },
           }
         : {}),
@@ -755,7 +936,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       action: 'record.video',
       intent: 'Record the recipe run when motion proof is useful',
     };
-    const target =
+    const resolvedTarget =
       videoOptions.target ??
       (await this.#recording?.targetProvider?.resolveRecordingTarget({
         nodeId: 'recipe-run',
@@ -766,18 +947,34 @@ class DefaultRecipeRunner implements RecipeRunner {
         env,
         scope: 'run',
       }));
-    if (!target) {
+    if (!resolvedTarget) {
       throw new Error(
-        '--record-video requires a recording target. Provide a project RecordingTargetProvider or CLI target flags.',
+        'UI recording requires a target. Provide a project RecordingTargetProvider or disable recording with a reason.',
       );
     }
-    const relativePath = 'videos/recipe-run.mp4';
+    const validation = validateRecipeRecordingTarget(resolvedTarget);
+    if (validation.status !== 'valid')
+      throw new RecipeExecutionError(
+        'environment',
+        validation.findings.map((finding) => finding.message).join('; '),
+      );
+    // Admission and backend start use the same immutable provider-resolved identity.
+    const target = Object.freeze({ ...resolvedTarget });
+    const relativePath = recordedVideoPath(0);
     const stagingRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-video-'));
     const stagingRelativePath = 'recipe-run.mp4';
     const outputPath = path.join(stagingRoot, stagingRelativePath);
+    let admission: RecordingAdmissionLease | undefined;
+    let releaseFailure: string | undefined;
     let recording: ActiveVideoRecording;
     try {
-      recording = await recorder.start({
+      admission = await this.#recording?.admission?.acquire({
+        backend: recorder.name,
+        target,
+        projectRoot,
+        artifactsDir,
+      });
+      const backend = await startSegmentedRecording(recorder, {
         outputPath,
         target,
         maxFps: videoOptions.maxFps,
@@ -785,9 +982,43 @@ class DefaultRecipeRunner implements RecipeRunner {
         nodeId: 'recipe-run',
         record: 'full_run',
       });
+      recording = {
+        ...backend,
+        async stop() {
+          let result: Awaited<ReturnType<ActiveVideoRecording['stop']>>;
+          try {
+            result = await backend.stop();
+          } catch (error) {
+            try {
+              await admission?.release();
+            } catch (releaseError) {
+              throw new AggregateError(
+                [error, releaseError],
+                'Recording stop and admission release failed.',
+              );
+            }
+            throw error;
+          }
+          try {
+            await admission?.release();
+          } catch (error) {
+            // Completed originals remain usable; the caller records failed lease cleanup separately.
+            releaseFailure = errorMessage(error);
+          }
+          return result;
+        },
+      };
     } catch (error) {
       await removePartialRunVideoOutput(outputPath, this.#logger);
       await rm(stagingRoot, { recursive: true, force: true });
+      try {
+        await admission?.release();
+      } catch (releaseError) {
+        throw new AggregateError(
+          [error, releaseError],
+          'Recording start and admission release failed.',
+        );
+      }
       throw error;
     }
     const entry: RecipeArtifactManifestEntry = {
@@ -806,7 +1037,10 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(videoOptions.maxFps != null ? { maxFps: videoOptions.maxFps } : {}),
     };
     return {
-      recording,
+      get releaseFailure() {
+        return releaseFailure;
+      },
+      recording: boundRecording(recording, outputPath, videoOptions),
       entry,
       outputPath,
       stagingRoot,
@@ -821,51 +1055,79 @@ class DefaultRecipeRunner implements RecipeRunner {
     artifactWriter: JsonArtifactWriter,
     runStartedAt: Date,
   ): Promise<{
-    entry: RecipeArtifactManifestEntry;
+    videos: { entry: RecipeArtifactManifestEntry; timing?: RecipeVideoTiming }[];
     interruption?: RecipeRunCaptureInterruption;
-    timing?: RecipeVideoTiming;
+    releaseFailure?: string;
   }> {
     const result = await runRecording.recording.stop();
+    const releaseFailure = runRecording.releaseFailure;
+    if (releaseFailure)
+      traceWriter.record({
+        nodeId: 'recipe-run:video',
+        action: 'record.video',
+        startedAt: runStartedAt.toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: Date.now() - runStartedAt.getTime(),
+        ok: false,
+        cause_class: 'environment',
+        error_code: 'RECORDING_ADMISSION_RELEASE_FAILED',
+        error: releaseFailure,
+      });
+    if (!result.segments.length) throw new Error('Recorder returned no original media segments.');
     const interruption = result.interruption
-      ? runCaptureInterruption(result.interruption, runRecording.entry.path)
+      ? runCaptureInterruption(result.interruption, recordedVideoPath(result.segments.length - 1))
       : undefined;
-    // Record the failure before the timeline, which is bound to the final trace.
     if (interruption) traceWriter.record(captureInterruptedTraceEntry(interruption, runStartedAt));
-    await assertVideoOutputReady(runRecording.outputPath);
-    await copyFileWithinRoots(
-      runRecording.stagingRoot,
-      runRecording.stagingRelativePath,
-      runRecording.artifactsDir,
-      runRecording.entry.path,
-    );
-    if (result.timingEvidencePath && result.timing) {
-      const evidencePath = `${runRecording.entry.path}.capture.json`;
+    const videos: { entry: RecipeArtifactManifestEntry; timing?: RecipeVideoTiming }[] = [];
+    for (const [index, segment] of result.segments.entries()) {
+      const source = normalizeRelativePath(segment.path);
+      await assertVideoOutputReady(path.join(runRecording.stagingRoot, source));
+      const relativePath = recordedVideoPath(index);
       await copyFileWithinRoots(
         runRecording.stagingRoot,
-        result.timingEvidencePath,
+        source,
         runRecording.artifactsDir,
-        evidencePath,
+        relativePath,
       );
-      artifactWriter.register({
-        path: evidencePath,
-        type: 'json',
-        category: 'system',
-        label: 'Native recording and snapshot timing',
-      });
+      if (segment.timingEvidencePath && segment.timing) {
+        const evidencePath = `${relativePath}.capture.json`;
+        await copyFileWithinRoots(
+          runRecording.stagingRoot,
+          segment.timingEvidencePath,
+          runRecording.artifactsDir,
+          evidencePath,
+        );
+        artifactWriter.register({
+          path: evidencePath,
+          type: 'json',
+          category: 'system',
+          label: 'Native recording and snapshot timing',
+        });
+      }
+      const entry: RecipeArtifactManifestEntry = {
+        ...runRecording.entry,
+        path: relativePath,
+        sha256: (await digestFileWithinRoot(runRecording.artifactsDir, relativePath)).slice(7),
+        ...(segment.recorder ? { recorder: segment.recorder } : {}),
+        ...(segment.gapBefore ? { metadata: { gapBefore: true } } : {}),
+        ...(result.interruption && index === result.segments.length - 1
+          ? { interruption: result.interruption }
+          : {}),
+        ...(!segment.timing
+          ? {
+              timelineUnavailableReason:
+                segment.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.',
+            }
+          : {}),
+      };
+      artifactWriter.register(entry);
+      videos.push({ entry, ...(segment.timing ? { timing: segment.timing } : {}) });
     }
     await rm(runRecording.stagingRoot, { recursive: true, force: true });
-    const entry = {
-      ...runRecording.entry,
-      ...(result.recorder ? { recorder: result.recorder } : {}),
-      ...(result.interruption ? { interruption: result.interruption } : {}),
-    };
-    if (!result.timing)
-      entry.timelineUnavailableReason =
-        result.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.';
     return {
-      entry,
+      videos,
       ...(interruption ? { interruption } : {}),
-      ...(result.timing ? { timing: result.timing } : {}),
+      ...(releaseFailure ? { releaseFailure } : {}),
     };
   }
 
@@ -993,7 +1255,12 @@ class DefaultRecipeRunner implements RecipeRunner {
   }
 }
 
+function recordedVideoPath(index: number): string {
+  return index === 0 ? 'videos/recipe-run.mp4' : `videos/recipe-run-${index}.mp4`;
+}
+
 interface RunVideoRecording {
+  readonly releaseFailure?: string;
   recording: ActiveVideoRecording;
   entry: RecipeArtifactManifestEntry;
   outputPath: string;
@@ -1041,12 +1308,40 @@ function rootRecipeRef(
 
 function normalizeVideoRecordingOptions(
   input: RecipeRunRequest['recordVideo'],
+  needsUi: boolean,
+  reason?: string,
 ): RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' } {
-  if (!input) return { mode: 'off' };
-  if (input === true) return { mode: 'full-run' };
-  if (typeof input === 'string') return normalizeVideoRecordingMode(input);
-  const mode = input.mode ?? 'full-run';
-  return { ...input, mode: normalizeVideoRecordingMode(mode).mode };
+  if (input === undefined && !needsUi) return { mode: 'off' };
+  if (input === false || input === 'off' || (typeof input === 'object' && input.mode === 'off')) {
+    const offReason = (typeof input === 'object' ? input.reason : undefined) ?? reason;
+    if (needsUi && !offReason?.trim())
+      throw new Error('Disabling UI recording requires recordingReason.');
+    return { mode: 'off', ...(offReason ? { reason: offReason } : {}) };
+  }
+  const mode =
+    typeof input === 'string'
+      ? input
+      : typeof input === 'object'
+        ? (input.mode ?? 'full-run')
+        : 'full-run';
+  const options = {
+    maxFps: DEFAULT_RECORDED_EVIDENCE_POLICY.maxFps,
+    maxSize: DEFAULT_RECORDED_EVIDENCE_POLICY.maxSize,
+    maxDurationMs: DEFAULT_RECORDED_EVIDENCE_POLICY.maxDurationMs,
+    maxBytes: DEFAULT_RECORDED_EVIDENCE_POLICY.maxBytes,
+    ...(typeof input === 'object' ? input : {}),
+    mode: normalizeVideoRecordingMode(mode).mode,
+  };
+  for (const key of ['maxFps', 'maxSize', 'maxDurationMs', 'maxBytes'] as const) {
+    if (!Number.isFinite(options[key]) || options[key] <= 0)
+      throw new Error(`Recording ${key} must be finite and positive.`);
+  }
+  if (
+    options.maxDurationMs > DEFAULT_RECORDED_EVIDENCE_POLICY.maxDurationMs ||
+    options.maxBytes > DEFAULT_RECORDED_EVIDENCE_POLICY.maxBytes
+  )
+    throw new Error('Recording policy exceeds the execution duration/byte limits.');
+  return options;
 }
 
 function normalizeVideoRecordingMode(mode: unknown): { mode: 'off' | 'full-run' } {

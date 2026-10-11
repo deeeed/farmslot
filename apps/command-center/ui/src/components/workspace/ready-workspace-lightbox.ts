@@ -1,6 +1,7 @@
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { artifactLightboxItems, artifactLightboxPairs } from '../shared/artifact-lightbox-model.js';
+import { mediaLightboxFileType } from '../shared/media-lightbox-model.js';
 import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
 
 import { JSON_EXTS, MARKDOWN_EXTS, MEDIA_EXTS, VIDEO_EXTS } from './workspace-artifacts.js';
@@ -33,7 +34,8 @@ export function readyWorkspaceOpensInLightbox(artifact: Pick<ArtifactRef, 'path'
   return (
     MEDIA_EXTS.test(artifact.path) ||
     MARKDOWN_EXTS.test(artifact.path) ||
-    JSON_EXTS.test(artifact.path)
+    JSON_EXTS.test(artifact.path) ||
+    mediaLightboxFileType({ path: artifact.path, purpose: '' }) === 'log'
   );
 }
 

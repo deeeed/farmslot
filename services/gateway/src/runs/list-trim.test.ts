@@ -7,6 +7,28 @@ import { RUN_LIST_PAYLOAD_VALUE_LIMIT, trimDecisionForList, trimRunForList } fro
 
 const big = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT);
 
+test('run.list trims CI snapshot context without a payload and retains other context', () => {
+  const stored: RunDecision = {
+    id: 'ci',
+    type: 'ci_ci_timeout',
+    title: 'CI',
+    description: '',
+    actions: [],
+    createdAt: 'now',
+    context: {
+      checkSnapshot: { checks: [] },
+      checks: [{ name: 'lint', status: 'pending' }],
+      repo: 'owner/repo',
+    },
+  };
+  const listed = trimDecisionForList(stored);
+  assert.deepEqual(listed.payloadTrimmed, ['context.checkSnapshot']);
+  assert.equal(listed.context?.checkSnapshot, undefined);
+  assert.deepEqual(listed.context?.checks, stored.context?.checks);
+  assert.equal(listed.context?.repo, 'owner/repo');
+  assert.deepEqual(stored.context?.checkSnapshot, { checks: [] });
+});
+
 function decision(payload: Record<string, unknown>): RunDecision {
   return {
     id: 'd1',

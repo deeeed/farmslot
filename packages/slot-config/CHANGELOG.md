@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Validate exclusive recording-target claim declarations and preserve their binding and provider parameter schemas in the capability catalog.
+
 - Use WARM/COLD review defaults and minimum review counts without runner-diversity configuration.
 
 - Slot resolution and pack admission share configured pool-file reading, so a malformed file is skipped consistently without exposing its parser input.

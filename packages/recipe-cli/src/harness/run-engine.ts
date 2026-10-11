@@ -3,31 +3,20 @@
 // rules as a `RecipeEngine`; the registered adapters supply platform behavior.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import type {
   CommandOptions,
   HealBoundViolation,
   HealPolicy,
   HealState,
-  PlatformAdapter,
-  RecipeNodeEvent,
+  RecipeEngine,
   RecipeRunOptions,
+  TrustedMutationLoadInput,
 } from '@farmslot/adapter-sdk';
-import type {
-  RecipeActionManifestDocument,
-  RecipeExecutionPlan,
-  RecipeSourceProvenance,
-} from '@farmslot/protocol';
+import type { RecipeExecutionPlan } from '@farmslot/protocol';
 import {
-  type ActionAdapter,
-  type ActionResult,
-  createRecipeRunner,
-  createStandardCoreAdapters,
-  createStandardUiAdapters,
   isCaptureInterruptedEntry,
   loneCaptureInterruption,
-  normalizeUiTransportResult,
   readRunTraceEntries,
   type RecipeLibrarySource,
   type RecipeRunner,
@@ -35,10 +24,6 @@ import {
   type RecipeRunResult,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-runner';
-import { createCdpWebUiTransport } from '@farmslot/recipe-runner/runtime/cdp';
-import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runtime/react-native-bridge';
-
-import { RECIPE_CLI_VERSION } from '../version.js';
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
@@ -51,8 +36,6 @@ import {
   type ExecutionProvenanceInput,
   type ExecutionProvenanceSnapshot,
   ProvenanceDriftError,
-  sourceIsDirty,
-  sourceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
 import {
@@ -72,312 +55,28 @@ import {
   recipeEnvName,
   withRecipeCleanup,
 } from './host.js';
-import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
-import { runNetworkCaptureAction } from './network-observation.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
 import { recipeRuntimePath } from './paths.js';
 import {
-  captureHelperSupportsRecordSessionSnapshots,
-  createRecordingTargetProvider,
-} from './recording-target.js';
-import {
   beginRunDiagnostics,
   type ConsoleAllowlist,
-  type ConsoleClassifier,
-  createDefaultConsoleClassifier,
   finishRunDiagnostics,
   type RecipeRunEvidence,
 } from './run-diagnostics.js';
-import { startRecipeRecording, stopRecipeRecording } from './run-recording.js';
 import { executedBrowser, recipeCdpPorts } from './run-report.js';
 import { EXIT } from './shared.js';
 
-export interface RecipeRunnerOptions<TMutation> {
-  captureHudEvidence?: boolean;
-  quietStdout?: boolean;
-  suppressLibraryResolutionLogs?: boolean;
-  autoHud?: boolean;
-  actionSources: ReadonlyMap<string, ActionCapabilitySource>;
-  // A direct operator invocation may trust task-local actions.
-  trustTaskActions: boolean;
-  trustedMutation?: TMutation;
-  onActionEvent?(event: RecipeNodeEvent): void;
-}
-
-/** What `trustedMutation.load` receives: the run's command line and what the command resolved. */
-export interface TrustedMutationLoadInput {
-  /** The adapter the command resolved: `--adapter`, a `--platform` target, or the detected one. */
-  adapter: string;
-  cli: CommandOptions;
-  artifactsDir: string;
-  projectRoot: string;
-  rootRecipe: unknown;
-}
-
-/** What `trustedMutation.authorize` receives besides the loaded mutation and the plan. */
-export interface TrustedMutationAuthorizeContext {
-  /** The adapter the command resolved, the same one `load` received. */
-  adapter: string;
-}
-
-/** What a host executes recipes with, on top of its catalog. */
-export interface RecipeEngine<
-  TMutation = unknown,
-  TAllowlist extends ConsoleAllowlist = ConsoleAllowlist,
-> extends RecipeCatalog {
-  createRunner(
-    adapter: string,
-    manifest: RecipeActionManifestDocument,
-    options: RecipeRunnerOptions<TMutation>,
-  ): Promise<RecipeRunner>;
-  /**
-   * Funded external mutations: the context loaded from the run's command line,
-   * then bound to the run's execution plan. Absent: no run binds one. The plan is
-   * computed without the mutation; `authorize` returning undefined means there is
-   * nothing to bind for this plan, and the run executes with no trusted mutation.
-   */
-  trustedMutation?: {
-    /** Validate provider authorization without claims, ledgers or other writes. */
-    preflight?(input: TrustedMutationLoadInput, plan: RecipeExecutionPlan): Promise<void>;
-    load(input: TrustedMutationLoadInput): Promise<TMutation | undefined>;
-    authorize(
-      base: TMutation,
-      plan: RecipeExecutionPlan,
-      context: TrustedMutationAuthorizeContext,
-    ): Promise<TMutation | undefined>;
-  };
-  /** The console rules run diagnostics classify with. */
-  console: ConsoleClassifier<TAllowlist>;
-  /** The host package paths a run's provenance binds. */
-  runnerIncludes: readonly string[];
-}
-
-export interface DefaultRecipeEngineOptions {
-  runtime: PlatformAdapter;
-  catalog: RecipeCatalog;
-  runnerIncludes?: readonly string[];
-  console?: ConsoleClassifier<ConsoleAllowlist>;
-  /** Actual provider/plugin code provenance, independent of declaration precedence. */
-  runtimeSource?: RecipeSourceProvenance;
-  resolveRuntimeDigest?: () => Promise<string>;
-}
-
-/** Compose the existing SDK and runner contracts without a project engine. */
-export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine {
-  const { runtime, catalog } = options;
-  const runnerRoot = fileURLToPath(new URL('../..', import.meta.url));
-  const runnerSource = sourceSnapshot(runnerRoot);
-  return {
-    ...catalog,
-    console: options.console ?? createDefaultConsoleClassifier([catalog.bundledLibrary.root]),
-    runnerIncludes: options.runnerIncludes ?? ['src', 'dist', 'package.json'],
-    async createRunner(adapter, manifest, runnerOptions) {
-      if (adapter !== runtime.id)
-        throw new Error(`Runtime ${runtime.id} cannot execute ${adapter}.`);
-      await catalog.validateManifest(manifest);
-      const declared = new Set(Object.keys(manifest.actions));
-      const core = createStandardCoreAdapters({ actions: declared });
-      const coded = ((await runtime.actions.adapters?.()) ?? []).filter((entry) =>
-        declared.has(entry.action),
-      );
-      const codedNames = new Set(coded.map((entry) => entry.action));
-      const runtimeSource = options.runtimeSource ?? {
-        kind: 'custom-adapter' as const,
-        trust: 'unknown' as const,
-        name: runtime.id,
-      };
-      const bindRuntime = (entries: ActionAdapter[]) =>
-        entries.map((entry) => ({
-          ...entry,
-          source: entry.source ?? runtimeSource,
-          ...(!entry.source && !entry.resolveSourceDigest && options.resolveRuntimeDigest
-            ? { resolveSourceDigest: options.resolveRuntimeDigest }
-            : {}),
-        }));
-      const transport = runtime.actions.ui?.(
-        { createCdpWebUiTransport, createReactNativeBridgeUiTransport },
-        {
-          hudPolicy: runnerOptions.autoHud === true ? 'show' : 'auto',
-        },
-      );
-      const ui = transport
-        ? createStandardUiAdapters({
-            actions: [...declared].filter((action) => !codedNames.has(action)),
-            transport: transport.base,
-            captureHudEvidence: runnerOptions.captureHudEvidence,
-          }).map(
-            (entry) =>
-              ({
-                ...entry,
-                ...(transport.execute
-                  ? {
-                      execute: async (node, context) => {
-                        let standardResult: ActionResult | undefined;
-                        const output = await transport.execute!(
-                          entry.action as Parameters<NonNullable<typeof transport.execute>>[0],
-                          node,
-                          context,
-                          async () => {
-                            standardResult = await entry.execute(node, context);
-                            return standardResult.output;
-                          },
-                        );
-                        const result = normalizeUiTransportResult(output);
-                        return {
-                          ...standardResult,
-                          ...result,
-                          artifacts: result.artifacts ?? standardResult?.artifacts,
-                          case: result.case ?? standardResult?.case,
-                          phases: result.phases ?? standardResult?.phases,
-                        };
-                      },
-                    }
-                  : {}),
-              }) satisfies ActionAdapter,
-          )
-        : [];
-      const lifecycle = runtime.actions.lifecycle ? await runtime.actions.lifecycle([]) : [];
-      const network: ActionAdapter[] =
-        runtime.observation?.network?.actions &&
-        declared.has('app.network_capture') &&
-        !codedNames.has('app.network_capture')
-          ? [
-              {
-                action: 'app.network_capture',
-                execute: (node, context) => runNetworkCaptureAction(adapter, node, context),
-              },
-            ]
-          : [];
-      const adapters = [
-        ...core.filter((entry) => !codedNames.has(entry.action)),
-        ...bindRuntime([...coded, ...ui, ...lifecycle, ...network]),
-      ];
-      const registered = new Set(adapters.map((entry) => entry.action));
-      for (const action of declared) {
-        if (registered.has(action) || action === 'call' || action === 'end') continue;
-        const source = runnerOptions.actionSources.get(action);
-        if (!source?.implementationRoot) continue;
-        const prepared = await prepareLiveAdapterScript({
-          platform: adapter,
-          action,
-          namespace: catalog.bundledLibrary.actionNamespace,
-          implementationRoot: source.implementationRoot,
-          allowRuntimeImports:
-            source.trust === 'trusted' ||
-            (source.tier === 'task' && runnerOptions.trustTaskActions),
-        });
-        if (!prepared) continue;
-        adapters.push({
-          action,
-          capabilities: [...catalog.actionCapabilities(action)],
-          source: {
-            kind: source.tier === 'canonical' ? 'bundled' : 'custom-adapter',
-            trust:
-              source.tier === 'task' && runnerOptions.trustTaskActions
-                ? 'trusted'
-                : (source.trust ?? 'unknown'),
-            name: source.name,
-            path: prepared.entryPath,
-            digest: prepared.sourceDigest,
-          },
-          async execute(node, context) {
-            const live = await runLiveAdapterScript({
-              platform: adapter,
-              action,
-              namespace: catalog.bundledLibrary.actionNamespace,
-              node,
-              context,
-              prepared,
-            });
-            if (!live) throw new Error(`Prepared live adapter for ${action} is unavailable.`);
-            const output = live.result;
-            return {
-              output,
-              ...(isRecord(output) && typeof output.case === 'string' ? { case: output.case } : {}),
-              ...(isRecord(output) && Array.isArray(output.artifacts)
-                ? { artifacts: output.artifacts }
-                : {}),
-            };
-          },
-        });
-      }
-      const wrapped = runtime.actions.wrap ? await runtime.actions.wrap(adapters) : adapters;
-      const finalAdapters = wrapped.map(
-        (entry) =>
-          ({
-            ...entry,
-            capabilities: [
-              ...new Set([
-                ...(entry.capabilities ?? []),
-                ...catalog.actionCapabilities(entry.action),
-              ]),
-            ],
-            ...(runnerOptions.onActionEvent
-              ? {
-                  async execute(node, context) {
-                    const event = { nodeId: context.nodeId, action: entry.action };
-                    runnerOptions.onActionEvent!({ ...event, status: 'running' });
-                    try {
-                      const result = await entry.execute(node, context);
-                      runnerOptions.onActionEvent!({ ...event, status: 'passed' });
-                      return result;
-                    } catch (error) {
-                      runnerOptions.onActionEvent!({ ...event, status: 'failed' });
-                      throw error;
-                    }
-                  },
-                }
-              : {}),
-          }) satisfies ActionAdapter,
-      );
-      const logger = runnerOptions.quietStdout ? new console.Console(process.stderr) : console;
-      const videoRecorder = await runtime.recording?.videoRecorder?.();
-      return createRecipeRunner({
-        actionManifest: manifest,
-        runner: {
-          name: '@farmslot/recipe-cli',
-          version: RECIPE_CLI_VERSION,
-          source: runnerRoot,
-          git_ref:
-            runnerSource.head && !sourceIsDirty(runnerSource)
-              ? runnerSource.head
-              : `sha256:${runnerSource.sourceFingerprint}`,
-        },
-        adapters: finalAdapters,
-        defaultSource: { kind: 'operator', trust: 'trusted', name: harnessHost().packageName },
-        logger: {
-          info(message) {
-            if (
-              !runnerOptions.suppressLibraryResolutionLogs ||
-              !message.startsWith('Recipe libraries:')
-            )
-              logger.info(message);
-          },
-          warn: (message) => logger.warn(message),
-          error: (message) => logger.error(message),
-        },
-        // The runner's HUD needs real app.hud/app.status implementations.
-        hud:
-          runnerOptions.autoHud === false ||
-          runtime.headless ||
-          !finalAdapters.some((entry) => entry.action === 'app.hud')
-            ? false
-            : { enabled: true },
-        ...(runtime.recording
-          ? {
-              recording: {
-                targetProvider: createRecordingTargetProvider(adapter),
-                ...(videoRecorder ? { videoRecorder } : {}),
-              },
-            }
-          : {}),
-      });
-    },
-  };
-}
+export type {
+  RecipeEngine,
+  RecipeRunnerOptions,
+  TrustedMutationAuthorizeContext,
+  TrustedMutationLoadInput,
+} from '@farmslot/adapter-sdk';
 
 /** A run's options: the generic ones (with the platform's own) and the command line it came from. */
 export type RecipeEngineRunOptions = RecipeRunOptions & {
+  /** Command-resolved task registration; the engine never reads ambient task paths. */
+  claims?: RecipeRunRequest['claims'];
   signal?: AbortSignal;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
@@ -392,7 +91,6 @@ export interface PreparedRecipeExecution {
   runner: RecipeRunner;
   runRequest: RecipeRunRequest;
   absoluteArtifactsDir: string;
-  useFramedRecording: boolean;
   provenanceInput: ExecutionProvenanceInput;
   provenanceSnapshots: ExecutionProvenanceSnapshot[];
 }
@@ -423,14 +121,8 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     ));
   if (execution.readOnly)
     throw new Error('Read-only preflight cannot execute; resolve an executing plan first.');
-  const {
-    runner,
-    runRequest,
-    absoluteArtifactsDir,
-    useFramedRecording,
-    provenanceInput,
-    provenanceSnapshots,
-  } = execution;
+  const { runner, runRequest, absoluteArtifactsDir, provenanceInput, provenanceSnapshots } =
+    execution;
   if (!wasPreflighted) await runner.preflight(runRequest);
   await prepareRuntimeIfNeeded(adapter, projectRoot, runtimeOptions);
   // The prepared runner owns frozen action bundles. Rechecking its plan here
@@ -448,28 +140,12 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
   }
   const diagnosticBaseline = await beginRunDiagnostics(adapter, projectRoot);
-  const recording = useFramedRecording
-    ? await startRecipeRecording(adapter, projectRoot, absoluteArtifactsDir, {
-        record: true,
-        cdpPort: runtimeOptions.cdpPort,
-      })
-    : undefined;
   let result: RecipeRunResult | undefined;
   let executionError: unknown;
   try {
-    result = await runner.run({
-      ...runRequest,
-      ...(recording ? { finalizeRecording: () => stopRecipeRecording(recording) } : {}),
-    });
+    result = await runner.run(runRequest);
   } catch (error) {
     executionError = error;
-    try {
-      await stopRecipeRecording(recording);
-    } catch (recordingError) {
-      console.error(
-        `WARN: recipe and video recording both failed; preserving recipe failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`,
-      );
-    }
   } finally {
     // Always clear a HUD step the engine left on-device (a failed run strands
     // the FAIL banner). Best-effort — never masks the run's real outcome.
@@ -477,16 +153,6 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     if (run?.teardown) {
       const teardown = () => run.teardown!(projectRoot, recipeRunEnv(adapter, runtimeOptions));
       await (runtimeOptions.signal ? withRecipeCleanup(teardown) : teardown());
-    }
-  }
-  let recordingError: unknown;
-  if (executionError === undefined && result) {
-    try {
-      const captureInterruption = await stopRecipeRecording(recording, result);
-      // The partial video is published; the run fails with a typed capture failure.
-      if (captureInterruption) result = { ...result, status: 'fail', captureInterruption };
-    } catch (error) {
-      recordingError = error;
     }
   }
   const end = await captureExecutionProvenance(provenanceInput, 'end');
@@ -502,7 +168,6 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     throw new ProvenanceDriftError(provenancePath, endDrift, executionError);
   }
   if (executionError !== undefined) throw executionError;
-  if (recordingError !== undefined) throw recordingError;
   if (!result) throw new Error('Recipe execution returned no result.');
   const finalized = await finishRunDiagnostics(diagnosticBaseline, result, engine.console);
   persistRunEffects(finalized.summaryPath, finalized.artifactManifestPath, effectsState);
@@ -571,7 +236,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
 ): Promise<PreparedRecipeExecution> {
   const absoluteArtifactsDir = path.resolve(artifactsDir);
   const absoluteRecipePath = typeof recipe === 'string' ? path.resolve(recipe) : undefined;
-  const recordVideo = runtimeOptions.recordVideo ?? false;
+  const recordVideo = runtimeOptions.recordVideo;
   const trust = resolveRecipeTrustInput({
     sourceTrust: runtimeOptions.source?.trust,
     sourceKind: runtimeOptions.source?.kind,
@@ -604,8 +269,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const surface = harnessAdapter(adapter);
   const suppressAutoHud = surface.run?.autoHud?.() === false;
   const runnerOptions = {
-    captureHudEvidence:
-      runtimeOptions.cli?.captureHudEvidence === true && !suppressAutoHud && !surface.headless,
+    captureHudEvidence: !suppressAutoHud && !surface.headless,
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
     suppressLibraryResolutionLogs: runtimeOptions.suppressLibraryResolutionLogs,
     // Every source follows the run's HUD policy: the runner owns the HUD node
@@ -621,15 +285,6 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   // The loaded mutation is not bound to a plan yet, so the runner that computes
   // the plan gets none; only an authorized mutation reaches execution.
   let runner = await engine.createRunner(adapter, manifest, runnerOptions);
-  // The wrapper-owned framed recorder is outside the generic execution plan.
-  // Keep it for trusted operator runs only; restricted sources use the generic
-  // recorder so capture remains plan-bound and approval-gated.
-  const useFramedRecording =
-    surface.recording?.framed !== undefined &&
-    recordVideo === 'full-run' &&
-    trust.source?.trust !== 'untrusted' &&
-    trust.source?.trust !== 'unknown' &&
-    captureHelperSupportsRecordSessionSnapshots(projectRoot);
   const runRequest: RecipeRunRequest = {
     signal: runtimeOptions.signal,
     ...(recipeDocument !== undefined
@@ -645,7 +300,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
       ...recipeRunEnv(adapter, runtimeOptions),
       [recipeEnvName('ACTION_SOURCE_MAP')]: actionSourceMap(actionSources),
     },
-    recordVideo: useFramedRecording ? false : recordVideo,
+    recordVideo,
+    recordingReason: runtimeOptions.recordingReason,
+    claims: runtimeOptions.claims,
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,
@@ -698,7 +355,6 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     ...(plan ? { plan } : {}),
     runner,
     absoluteArtifactsDir,
-    useFramedRecording,
     runRequest,
     provenanceInput,
     provenanceSnapshots,

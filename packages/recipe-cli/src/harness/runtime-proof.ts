@@ -6,18 +6,24 @@ import {
   isRecord,
   normalizeRecipeRef,
   type RecipeArtifactManifestEntry,
-  type RecipeConformanceLiveEvidence,
   type RecipeValidationFinding,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
-import { extractWorkflowGraph } from '@farmslot/recipe-runner';
+import {
+  collectProofNodes,
+  executedProofIndex,
+  extractWorkflowGraph,
+  potentiallyEligibleProof,
+  type ProofDocument,
+  type ProofNode,
+} from '@farmslot/recipe-runner';
 
 /** Validate executed behavioral proof, independently of any task host or control plane. */
 export function validateRuntimeProof(
   bundle: Parameters<typeof validateRecipeArtifactPackage>[0],
   smokeTarget?: string,
   teardownTarget?: string,
-  visualProof: Pick<RecipeConformanceLiveEvidence, 'captureRequired' | 'hudRequired'> = {},
+  visualProof: { captureRequired?: boolean; hudRequired?: boolean } = {},
 ): string[] {
   const checked = validateRecipeArtifactPackage(bundle);
   assert.equal(checked.status, 'valid', JSON.stringify(checked.findings));
@@ -56,37 +62,8 @@ export function validateRuntimeProof(
     entries.map((entry, index) => [entry.nodeId ?? entry.id, { entry, index }]),
   );
   function proves(id: string): boolean {
-    const node = nodes.get(id)!;
-    const current = executed.get(id);
-    if (!current || current.entry.action !== node.action) return false;
-    if (node.action === 'call')
-      return [...nodes.keys()].some((child) => child.startsWith(`${id}/`) && proves(child));
-    if (
-      !assertions.has(node.action) ||
-      !current.entry.output ||
-      typeof current.entry.output !== 'object'
-    )
-      return false;
-    if (node.action === 'assert_output') {
-      const source = assertionSource(id, node);
-      const prior = executed.get(source);
-      const action = nodes.get(source)?.action;
-      return Boolean(
-        prior &&
-        prior.index < current.index &&
-        action &&
-        action === prior.entry.action &&
-        isObservation(action),
-      );
-    }
-    if (node.action === 'ui.wait_for')
-      return entries.slice(0, current.index).some((entry) => inputs.has(entry.action));
-    return (
-      typeof node.path === 'string' &&
-      manifest.artifacts.some(
-        (artifact) => artifact.path === node.path && artifact.category === 'proof',
-      )
-    );
+    const index = executedProofIndex(id, nodes, entries, manifest.artifacts);
+    return index !== null && entries[index]?.ok === true;
   }
   assert(recipe.proofTargets?.length, 'Runtime recipe has no behavioral proof targets');
   for (const target of recipe.proofTargets) {
@@ -150,60 +127,6 @@ function teardownProofNodes(
   );
 }
 
-const assertions = new Set(['assert_output', 'assert_json', 'ui.wait_for']);
-const controls = new Set([
-  'end',
-  'wait',
-  'manual',
-  'switch',
-  'call',
-  'index_artifacts',
-  'assert_exit_code',
-  'assert_file',
-  'branch',
-  'repeat',
-  'set',
-  'log',
-]);
-const inputs = new Set([
-  'ui.press',
-  'ui.key_press',
-  'ui.set_input',
-  'ui.swipe',
-  'ui.drag',
-  'ui.long_press',
-]);
-
-function isObservation(action: string): boolean {
-  return !controls.has(action) && !assertions.has(action);
-}
-
-function assertionSource(id: string, node: ProofNode): string {
-  const prefix = id.includes('/') ? id.slice(0, id.lastIndexOf('/') + 1) : '';
-  return prefix + String(node.source ?? node.node ?? '');
-}
-
-function collectProofNodes(
-  recipe: ProofDocument,
-  documents: ReadonlyMap<string, ProofDocument>,
-): Map<string, ProofNode> {
-  const nodes = new Map<string, ProofNode>();
-  function collect(document: ProofDocument, prefix = '', stack = new Set<string>()) {
-    for (const [id, node] of Object.entries(document.workflow.nodes)) {
-      nodes.set(prefix + id, node);
-      if (node.action === 'call' && typeof node.ref === 'string') {
-        const ref = normalizeRecipeRef(node.ref);
-        assert(!stack.has(ref), 'Recursive recipe proof');
-        const nested = documents.get(ref);
-        assert(nested, `Missing resolved recipe ${ref}`);
-        collect(nested, `${prefix}${id}/`, new Set(stack).add(ref));
-      }
-    }
-  }
-  collect(recipe);
-  return nodes;
-}
-
 /**
  * Check possible proof bindings after protocol/dependency validation, without executing a graph.
  * A clean result is conditional: order, branches, successful observations and indexed artifacts
@@ -230,20 +153,7 @@ export function validateRuntimeProofPlan(
       ),
     ];
   const nodes = collectProofNodes(recipe, documents);
-  const hasInput = [...nodes.values()].some((node) => inputs.has(node.action));
-  function eligible(id: string): boolean {
-    const node = nodes.get(id)!;
-    if (node.action === 'call')
-      return [...nodes.keys()].some((child) => child.startsWith(`${id}/`) && eligible(child));
-    if (node.action === 'assert_output') {
-      const source = nodes.get(assertionSource(id, node));
-      return Boolean(source && isObservation(source.action));
-    }
-    // Inputs may live in a caller or a sibling call. Do not infer execution order here.
-    if (node.action === 'ui.wait_for') return hasInput;
-    // The manifest is created at execution; a path alone cannot prove it will be indexed.
-    return node.action === 'assert_json' && typeof node.path === 'string';
-  }
+  const eligible = (id: string) => potentiallyEligibleProof(id, nodes);
   const findings = recipe.proofTargets.flatMap((target, index) => {
     const linked = [...nodes].filter(([, node]) => node.proves?.includes(target.id));
     return linked.some(([id]) => eligible(id))
@@ -277,19 +187,7 @@ export function validateRuntimeProofPlan(
   return findings;
 }
 
-/** The recipe shape proof checks read: its proof targets and workflow nodes. */
-export interface ProofDocument {
-  proofTargets?: { id: string }[];
-  workflow: { nodes: Record<string, ProofNode> };
-}
-export interface ProofNode {
-  action: string;
-  ref?: string;
-  proves?: string[];
-  source?: string;
-  node?: string;
-  path?: string;
-}
+export type { ProofDocument, ProofNode } from '@farmslot/recipe-runner';
 interface Entry {
   nodeId?: string;
   id?: string;

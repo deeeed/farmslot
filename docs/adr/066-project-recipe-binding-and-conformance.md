@@ -1,6 +1,6 @@
-# ADR-063: Project recipe binding and conformance
+# ADR-066: Project recipe binding and conformance
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-11
 **Owner:** Farmslot maintainers
 **Scope:** One recipe CLI, project providers, composed libraries, lifecycle, conformance and selected-flow admission

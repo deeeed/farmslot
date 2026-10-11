@@ -438,3 +438,37 @@ test('live artifact evidence refuses a passing package without runtime and clean
   assert.equal(result.liveEvidence, undefined);
   assert.equal(result.checks.find((check) => check.id === 'runtime.proof')?.status, 'fail');
 });
+
+test('legacy artifact packages retain an explicit untimed warning', async (t) => {
+  const root = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const result = await validateRecipeArtifactDirectory(root, {});
+  assert.equal(result.status, 'pass');
+  assert.ok(
+    result.recipe.findings.some(
+      (f) => f.severity === 'warning' && /Legacy.*untimed/.test(f.message),
+    ),
+  );
+});
+
+test('recorded identity requires the retained claim package', async (t) => {
+  const root = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'summary.json');
+  const summary = JSON.parse(await readFile(file, 'utf8'));
+  await writeJson(file, { ...summary, recipeRunId: 'retained-execution' });
+  const result = await validateRecipeArtifactDirectory(root, {});
+  assert.equal(result.status, 'fail');
+  assert.ok(result.recipe.findings.some((f) => /retained claim package/.test(f.message)));
+});
+
+test('malformed present claims cannot disappear into legacy validation', async (t) => {
+  const root = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'acceptance-status.json'), '{');
+  const result = await validateRecipeArtifactDirectory(root, {});
+  assert.equal(result.status, 'fail');
+  assert.ok(
+    result.checks.some((c) => c.id === 'file.acceptance-status.json' && c.status === 'fail'),
+  );
+});

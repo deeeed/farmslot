@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Consume the shared acceptance contract and engine-derived claims; automatic ledgers permit only audited untestable overrides (ADR-062).
+- Execute declared deterministic checklist commands through mark and refuse completion without current passing receipts and logs. Track submodule revisions too; require submodule changes to be committed before checking the parent repository.
 - Use neutral review/review-fix task and terminal contracts across execution templates and checklist helpers.
 
 - Successful task completion requires verdicts for every registered acceptance criterion, including older contracts without an acceptance opt-in. Missing or unreadable ledgers fail closed; no-change and review outcomes retain their existing contracts.

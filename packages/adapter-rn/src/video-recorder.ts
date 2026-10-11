@@ -10,10 +10,6 @@ import {
   type VideoRecorderStartRequest,
 } from '@farmslot/recipe-runner';
 
-// Recording target ids: `android-device:<serial>` and `ios-simulator:<udid>`.
-export const ANDROID_RECORDING_TARGET_PREFIX = 'android-device:';
-export const IOS_SIMULATOR_RECORDING_TARGET_PREFIX = 'ios-simulator:';
-
 const RECORDING_START_TIMEOUT_MS = 5_000;
 const RECORDING_STOP_TIMEOUT_MS = 10_000;
 const RECORDING_TIME_LIMIT_SECONDS = 0;
@@ -34,80 +30,6 @@ export function createAndroidVideoRecorder(serial: string): VideoRecorder {
     platform: 'android',
     doctor: async () => doctorAndroidRecorder(serial),
     start: (request) => startAndroidRecording(serial, request),
-  };
-}
-
-export function createIosSimulatorVideoRecorder(simulator: string): VideoRecorder {
-  return {
-    name: 'simctl-recordVideo',
-    platform: 'ios',
-    doctor: async () => doctorIosSimulatorRecorder(simulator),
-    start: (request) => startIosSimulatorRecording(simulator, request),
-  };
-}
-
-function doctorIosSimulatorRecorder(simulator: string): VideoRecorderDoctorResult {
-  const state = runSimctl(['getenv', simulator, 'SIMULATOR_UDID']);
-  if (state.status !== 0 || !state.stdout.trim()) {
-    return {
-      ok: false,
-      code: 'ios_simulator_unavailable',
-      message: `iOS simulator ${simulator} is not booted: ${commandFailure(state)}`,
-      suggestedFix: `Boot ${simulator} and run xcrun simctl getenv ${simulator} SIMULATOR_UDID.`,
-    };
-  }
-  return {
-    ok: true,
-    code: 'ok',
-    message: `iOS simulator recording is ready on ${simulator}.`,
-  };
-}
-
-async function startIosSimulatorRecording(
-  simulator: string,
-  request: VideoRecorderStartRequest,
-): Promise<ActiveVideoRecording> {
-  const targetSimulator = iosTargetSimulator(request);
-  if (targetSimulator !== simulator) {
-    throw new Error(
-      `iOS recording target ${targetSimulator ?? '<missing>'} does not match selected simulator ${simulator}.`,
-    );
-  }
-
-  fs.mkdirSync(path.dirname(request.outputPath), { recursive: true });
-  const child = spawn(
-    'xcrun',
-    ['simctl', 'io', simulator, 'recordVideo', '--codec=h264', '--force', request.outputPath],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  const output: string[] = [];
-  child.stdout?.setEncoding('utf8');
-  child.stderr?.setEncoding('utf8');
-  child.stdout?.on('data', (chunk) => output.push(String(chunk)));
-  child.stderr?.on('data', (chunk) => output.push(String(chunk)));
-
-  await waitForIosRecordingStart(child, output);
-  let stopped = false;
-  return {
-    async stop() {
-      if (stopped) {
-        throw new Error(`iOS simulator recording on ${simulator} was already stopped.`);
-      }
-      stopped = true;
-      child.kill('SIGINT');
-      await waitForChildExit(child, RECORDING_STOP_TIMEOUT_MS, 'iOS simulator recordVideo');
-      const recorded = fs.statSync(request.outputPath);
-      if (!recorded.isFile() || recorded.size <= 0) {
-        throw new Error(`iOS simulator recording output is empty: ${request.outputPath}`);
-      }
-      return {
-        recorder: {
-          name: 'simctl-recordVideo',
-          platform: 'ios',
-          target: { selector: 'simulator', value: simulator },
-        },
-      };
-    },
   };
 }
 
@@ -188,12 +110,20 @@ async function startAndroidRecording(
           throw new Error(`Android recording output is empty: ${request.outputPath}`);
         }
         return {
-          ...(await optionalVideoTiming(request.outputPath, { startedAtUnixMs, stoppedAtUnixMs })),
-          recorder: {
-            name: 'adb-screenrecord',
-            platform: 'android',
-            target: { selector: 'adb-serial', value: serial },
-          },
+          segments: [
+            {
+              path: path.basename(request.outputPath),
+              ...(await optionalVideoTiming(request.outputPath, {
+                startedAtUnixMs,
+                stoppedAtUnixMs,
+              })),
+              recorder: {
+                name: 'adb-screenrecord',
+                platform: 'android',
+                target: { selector: 'adb-serial', value: serial },
+              },
+            },
+          ],
         };
       } finally {
         runAdb(serial, ['shell', 'rm', '-f', remotePath]);
@@ -203,10 +133,7 @@ async function startAndroidRecording(
 }
 
 function androidTargetSerial(request: VideoRecorderStartRequest): string | undefined {
-  if (request.target.kind === 'android-device') return request.target.serial;
-  if (request.target.kind !== 'window-id') return undefined;
-  if (!request.target.windowId.startsWith(ANDROID_RECORDING_TARGET_PREFIX)) return undefined;
-  return request.target.windowId.slice(ANDROID_RECORDING_TARGET_PREFIX.length) || undefined;
+  return request.target.kind === 'android-device' ? request.target.serial : undefined;
 }
 
 async function waitForScreenrecordStart(
@@ -256,31 +183,6 @@ async function waitForChildExit(
   });
 }
 
-async function waitForIosRecordingStart(child: ChildProcess, output: string[]): Promise<void> {
-  const deadline = Date.now() + RECORDING_START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(
-        `iOS simulator recordVideo exited before capture started (exit ${child.exitCode}): ${output.join('').trim() || 'no recorder output'}`,
-      );
-    }
-    if (output.join('').includes('Recording started')) return;
-    await sleep(100);
-  }
-  if (child.exitCode === null) return;
-  throw new Error(
-    `iOS simulator recordVideo did not start within ${RECORDING_START_TIMEOUT_MS}ms.`,
-  );
-}
-
-function iosTargetSimulator(request: VideoRecorderStartRequest): string | undefined {
-  if (request.target.kind !== 'window-id') return undefined;
-  if (!request.target.windowId.startsWith(IOS_SIMULATOR_RECORDING_TARGET_PREFIX)) {
-    return undefined;
-  }
-  return request.target.windowId.slice(IOS_SIMULATOR_RECORDING_TARGET_PREFIX.length) || undefined;
-}
-
 function screenrecordPid(serial: string): string | undefined {
   const result = runAdb(serial, ['shell', 'pidof', 'screenrecord']);
   if (result.status !== 0) return undefined;
@@ -289,10 +191,6 @@ function screenrecordPid(serial: string): string | undefined {
 
 function runAdb(serial: string, args: string[]) {
   return spawnSync('adb', ['-s', serial, ...args], { encoding: 'utf8' });
-}
-
-function runSimctl(args: string[]) {
-  return spawnSync('xcrun', ['simctl', ...args], { encoding: 'utf8' });
 }
 
 function commandFailure(result: ReturnType<typeof runAdb>): string {

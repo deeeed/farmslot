@@ -66,6 +66,8 @@ STATUS: pending
 
 ### Commit & Reply (steps 7-8)
 
+{{CI_PARITY_STEP}}
+
 - [ ] **7. Commit and push:**
   ```bash
   cd {{REPO}}
@@ -82,6 +84,7 @@ STATUS: pending
 ### Package & Signal (steps 9-10)
 
 - [ ] **9. Write packaged evidence:**
+
   ```bash
   mkdir -p {{TASK_DIR}}/artifacts
   # Write exactly one outcome report with real, reviewable content:
@@ -89,14 +92,17 @@ STATUS: pending
   # - no-change-report.md when no code change was needed
   # Include the issue, what changed or why no change was needed, validation commands + results, and commit SHA if any.
   # Also write learnings.md with any reusable lesson, or a one-line "No reusable lesson" note.
-  {{TASK_DIR}}/mark --checklist CI-FIX.md 9
+  # Mark this item using its visible step number.
   ```
-- [ ] **10. Write CI-FIX-SIGNAL.json:**
+
+  - [ ] **10. Write CI-FIX-SIGNAL.json:**
+
   ```bash
   {{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last
   # If no code change was needed:
   {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "already fixed or not reproducible" --mark-last
   ```
+
   **Do NOT `/exit`. Stay alive — CI-watch may nudge you again if new issues appear.**
 
 ## Acceptance verdicts + recipe coverage

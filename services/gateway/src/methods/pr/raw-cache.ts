@@ -21,6 +21,8 @@ import {
 export interface PRRawSnapshot {
   author?: string;
   checksStdout: string;
+  /** Successful complete check query, even when it returned zero rows. */
+  checksAvailable?: boolean;
   prStateStdout: string;
   /** Why the PR state read returned nothing (gh's message); absent when it succeeded. */
   prStateError?: string;
@@ -77,9 +79,9 @@ export function buildPRChecksArgs(prNum: number, ghRepo: string): string[] {
     '--repo',
     ghRepo,
     '--json',
-    'name,bucket,startedAt,completedAt',
+    'name,bucket,startedAt,completedAt,state,link',
     '--jq',
-    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // "")] | @tsv',
+    '.[] | [.name, .bucket, (.startedAt // ""), (.completedAt // ""), (.state // ""), (.link // "")] | @tsv',
   ];
 }
 
@@ -202,6 +204,7 @@ export async function getPRRawData(
     const snap: PRRawSnapshot = {
       author: author || undefined,
       checksStdout: checks.stdout,
+      checksAvailable: !checks.stderr,
       prStateStdout: stateLine ?? '',
       prStateError: stateLine ? undefined : prState.stderr || 'empty response',
       commentsStdout: comments.stdout,
@@ -276,6 +279,7 @@ interface GqlCheckRun {
   status?: string;
   startedAt?: string;
   completedAt?: string;
+  detailsUrl?: string;
 }
 
 interface GqlStatusContext {
@@ -283,6 +287,7 @@ interface GqlStatusContext {
   context?: string;
   state?: string;
   createdAt?: string;
+  targetUrl?: string;
 }
 
 type GqlCheckNode = GqlCheckRun | GqlStatusContext;
@@ -406,8 +411,8 @@ export function buildBatchQuery(prCount: number): string {
         `        pageInfo { hasNextPage }\n` +
         `        nodes {\n` +
         `          __typename\n` +
-        `          ... on CheckRun { name conclusion status startedAt completedAt }\n` +
-        `          ... on StatusContext { context state createdAt }\n` +
+        `          ... on CheckRun { name conclusion status startedAt completedAt detailsUrl }\n` +
+        `          ... on StatusContext { context state createdAt targetUrl }\n` +
         `      } } }\n` +
         `      comments(last: 50) { nodes {\n` +
         `        databaseId author { login __typename } body createdAt url\n` +
@@ -491,10 +496,26 @@ export function synthesizeRawSnapshotFromGraphQL(
   for (const c of checkNodes) {
     if (c?.__typename === 'CheckRun') {
       checksLines.push(
-        [c.name ?? '', checkRunBucket(c), c.startedAt ?? '', c.completedAt ?? ''].join('\t'),
+        [
+          c.name ?? '',
+          checkRunBucket(c),
+          c.startedAt ?? '',
+          c.completedAt ?? '',
+          c.conclusion ?? c.status ?? '',
+          c.detailsUrl ?? '',
+        ].join('\t'),
       );
     } else if (c?.__typename === 'StatusContext') {
-      checksLines.push([c.context ?? '', statusContextBucket(c), c.createdAt ?? '', ''].join('\t'));
+      checksLines.push(
+        [
+          c.context ?? '',
+          statusContextBucket(c),
+          c.createdAt ?? '',
+          '',
+          c.state ?? '',
+          c.targetUrl ?? '',
+        ].join('\t'),
+      );
     }
   }
   const checksStdout = joinLinesOrEmpty(checksLines);
@@ -598,6 +619,9 @@ export function synthesizeRawSnapshotFromGraphQL(
   return {
     author: node.author?.login || undefined,
     checksStdout,
+    checksAvailable:
+      (node.statusCheckRollup === null || Boolean(node.statusCheckRollup?.contexts?.nodes)) &&
+      !isPRBatchTruncated(node),
     prStateStdout,
     commentsStdout,
     reviewCommentsStdout,

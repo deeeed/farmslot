@@ -35,17 +35,50 @@ credentials, artifacts, session archives or orchestrator verdict/review state.
    requires a separate QA configuration. Existing WARM rows require their
    already recorded lineage context; the converter never creates one.
 
+   Completed terminal runs whose review configuration cannot be mapped become
+   read-only legacy envelopes, per [ADR-065](../adr/065-fail-closed-run-lifecycle.md).
+   The envelope retains the complete original under `legacy`, records the
+   unmappable paths in `legacyUnresolvedFields`, and marks
+   `conversionStatus: "unconvertible-historical"`. Its outer object has no
+   runtime run shape, so the shared run loader excludes it from execution,
+   recovery and replay. Inspect the original JSON directly for historical
+   provenance. Active runs, terminal runs without a recorded completion time,
+   and project/backlog/queue configuration still refuse unmappable fields.
+   Pending output cleanup, backlog reconciliation, review-workspace/native
+   worker ownership and dispatching queue references also prevent an envelope;
+   finish those obligations through normal runtime recovery before conversion.
+   Dry-run reports the proposed envelope without writing it. Apply retains a
+   byte-exact backup; subsequent conversions leave the envelope unchanged.
+
 3. Stop gateway processes that write these stores through the project's normal
    deployment procedure. Re-run the same dry-run against the stopped stores.
    Continue only when `unresolved` is zero, then apply explicitly:
 
    ```bash
    node scripts/migrate-review-configuration.mjs --root "$FARMSLOT_ROOT" --apply
-   node scripts/migrate-review-configuration.mjs --root "$FARMSLOT_ROOT"
    ```
 
-   The final dry-run must report zero changed files and zero unresolved paths.
-   Start the upgraded gateway only after that check passes. This procedure does
+4. The converter also rewrites tracked `project.json` files in the runtime
+   checkout. Once that checkout is on upgraded main, inspect the project diff
+   and preserve any operator edits separately. Restore conversion-generated
+   changes to tracked project files from that main before restarting. For the
+   bundled framework project:
+
+   ```bash
+   git -C "$FARMSLOT_ROOT" diff -- projects
+   git -C "$FARMSLOT_ROOT" restore --source=HEAD -- projects/farmslot-farm/project.json
+   ```
+
+   Restore only inspected tracked files. Nested project repositories and
+   untracked runtime stores retain their converted configuration.
+
+5. Repeat the dry run after the upgrade and tracked-file restoration:
+
+   ```bash
+   node scripts/migrate-review-configuration.mjs --root "$FARMSLOT_ROOT" --dry-run
+   ```
+
+   Require zero changed files and zero unresolved paths, then restart. This procedure does
    not start, stop or restart reviewer sessions or live lanes.
 
 The report contains counts, item IDs, file paths and field paths. It never prints

@@ -39,6 +39,9 @@ export function readyWorkspaceAllArtifacts(payload: ReadyGatePayload): ArtifactR
     });
   }
   return dedupeReadyWorkspaceArtifacts([
+    ...(payload.prPackage?.deterministicChecks ?? []).flatMap((check) =>
+      check.logPath ? [{ path: check.logPath, purpose: 'ci-parity-log' }] : [],
+    ),
     ...(payload.artifactManifest ?? []),
     ...(payload.prPackage?.evidenceManifest ?? []),
     ...readyWorkspaceReviewArtifacts(payload),

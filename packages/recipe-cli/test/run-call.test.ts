@@ -2384,6 +2384,13 @@ describe('run', () => {
               action: 'shop.ping',
               mode: 'fast',
               intent: 'Ping the shop.',
+              next: 'check',
+            },
+            check: {
+              action: 'assert_output',
+              source: 'ping',
+              assert: { path: '$.pong', operator: 'eq', value: 1 },
+              intent: 'The shop answered the ping.',
               proves: ['AC1'],
               next: 'done',
             },
@@ -2422,7 +2429,10 @@ describe('run', () => {
         entry.recipeNodes,
         entry.evidence,
       ]),
-      [['AC-1', 'proven', ['ping'], ['artifacts/trace.json']]],
+      [
+        ['AC-1', 'proven', ['check'], ['artifacts/trace.json']],
+        ['AC-2', 'missing', [], ['artifacts/trace.json']],
+      ],
     );
   });
 
@@ -2850,7 +2860,7 @@ describe('--record-video', () => {
         async start({ outputPath }) {
           recorded.push(adapter);
           fs.writeFileSync(outputPath, 'video');
-          return { stop: async () => ({}) };
+          return { stop: async () => ({ segments: [{ path: path.basename(outputPath) }] }) };
         },
       },
     }));

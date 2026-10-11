@@ -22,10 +22,13 @@ All lane input goes through [tmux-model-driver](../tmux-model-driver/SKILL.md).
 Use `launch <lane>`, `lanes-status`, `send <lane> --file <message>`, and `restore`.
 Launch syntax, resume, hooks, and acceptance evidence come from the shared runner adapter.
 Submit with named Enter. Never queue with Tab, resend buffered text, or send a model prompt to
-a shell. A send succeeds only with structured exact-prompt acceptance evidence.
+a shell. A send reports exact native acceptance or explicit pending queued input with a retained
+receipt. Queued input does not claim delivery or a new turn.
 
-Read and surface pending questions before answering. A blocked question, busy turn, unknown
-state, shell, or foreign queue stops a send. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
+Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
+phases accept steering with exact native proof, or report queued input with its
+receipt retained until native acceptance; other runners
+still require idle readiness. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
 with an explicit JSON key list on stdin. It refuses if the pane, session, or question changed.
 A response acknowledgement does not itself prove a new turn. Interactive attachment is also available. Flush only driver-owned buffered input with `flush <lane>`.
 It sends Enter without adding text and verifies acceptance again.
@@ -42,7 +45,8 @@ resume. Omit them to use the runner's defaults. The shared runner adapter receiv
 
 `lanes-status` observes without persisting bindings or acknowledging receipts. Existing lanes
 may configure `pane_id` and `observability_dir`. Unhooked native sessions held open by a foreground
-process can supply observational state; that state does not authorize transport or recovery.
+process can supply observational state; status observation does not authorize recovery. Codex transport rechecks process-owned
+native session identity and proves exact prompt acceptance without installing hooks.
 Unknown state is reported explicitly. Keep paused and farm-managed sessions outside recovery.
 
 ## Review

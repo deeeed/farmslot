@@ -4,6 +4,22 @@ export interface CICheck {
   watchName: string;
 }
 
+/** Read-only provider metadata; timestamps describe activity, not duration. */
+export interface PRCheckDetail {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  timestamp: string | null;
+  detailsUrl: string | null;
+}
+
+export interface PRCheckSnapshot {
+  pr: number;
+  repo: string;
+  fetchedAt: string;
+  checks: PRCheckDetail[];
+}
+
 export interface BotComment {
   author: string;
   label: string;
@@ -52,6 +68,8 @@ export interface PRStatus {
   slot: string | null;
   session: string | null;
   checks: CICheck[];
+  /** Complete successful check read. pr.status only; omitted from list projections. */
+  checkSnapshot?: PRCheckSnapshot;
   checkSummary: {
     passed: number;
     failed: number;

@@ -52,7 +52,7 @@ export function GateReviewScreen({
       ]}
     >
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
-      <GateSummaryCard summary={viewModel.summary} />
+      <GateSummaryCard summary={viewModel.summary} onOpenLog={actions.openLog} />
       <GateReviewVerdicts reviews={viewModel.reviews} />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Acceptance criteria</Text>

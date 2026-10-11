@@ -24,6 +24,7 @@ import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.j
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
 import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
+import type { DeterministicChecklistCheck } from './worker-terminal.js';
 
 // ─── Runs ───
 
@@ -766,6 +767,8 @@ export interface ReadyGatePrPackage {
   selectedEvidenceKeys?: string[];
   validationSummaryPath?: string | null;
   validationSummaryHash?: string | null;
+  /** Verified local command receipts for this package's source inputs, ADR-064. */
+  deterministicChecks?: DeterministicChecklistCheck[];
   reviewArtifactIds: string[];
   dispatchMode?: 'interactive' | 'autonomous' | 'validation';
   gatePolicy: GatePolicy;
@@ -1258,10 +1261,11 @@ export interface RunDecision {
   triageAssessmentId?: string;
   payload?: RunDecisionPayload;
   /**
-   * Payload keys `run.list` left out because their values are large (review
+   * Detail keys `run.list` left out because their values are large (review
    * markdown, input snapshots, PR packages, artifact manifests). Absent on
    * `run.get`, `run.forSlot` and every run event, which carry the full
-   * payload; a reader that needs one of these keys fetches the run directly.
+   * payload/context; `context.checkSnapshot` also names omitted CI context.
+   * A reader that needs one of these keys fetches the run directly.
    */
   payloadTrimmed?: string[];
   selectionData?: Record<string, unknown>;

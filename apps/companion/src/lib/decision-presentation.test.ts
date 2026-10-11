@@ -552,3 +552,21 @@ assert.deepEqual(
   ],
   'run artifact extraction should include step output artifacts for retrospective evidence fallback',
 );
+
+const ciLog = 'artifacts/deterministic-checks/CHECKLIST.md/1-proof.log';
+const ciArtifacts = extractRunArtifactManifest({
+  decisions: [
+    {
+      payload: {
+        kind: 'ready',
+        prPackage: {
+          deterministicChecks: [{ reference: 'ci.local_check', status: 'passed', logPath: ciLog }],
+        },
+      },
+    },
+  ],
+  steps: [],
+} as unknown as Parameters<typeof extractRunArtifactManifest>[0]);
+assert.equal(ciArtifacts.find((artifact) => artifact.path === ciLog)?.type, 'log');
+assert.equal(classifyArtifact(ciLog), 'document');
+assert.equal(classifyArtifact(ciArtifacts[0]), 'document');

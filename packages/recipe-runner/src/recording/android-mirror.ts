@@ -76,7 +76,13 @@ export function createAndroidMirrorVideoRecorder(options: {
           ...active,
           async stop() {
             const result = await active.stop();
-            return { ...result, recorder: { ...result.recorder, fallbackReason } };
+            return {
+              ...result,
+              segments: result.segments.map((segment) => ({
+                ...segment,
+                recorder: { ...segment.recorder, fallbackReason },
+              })),
+            };
           },
         };
       }
@@ -184,7 +190,7 @@ export function createAndroidMirrorVideoRecorder(options: {
               if (mirrorFailure && !interruption) {
                 // A normal helper stop can race the mirror's exit. Measured, finalized
                 // frames still make this usable partial footage rather than a failed file.
-                const frames = result.timing?.framesMs;
+                const frames = result.segments.at(-1)?.timing?.framesMs;
                 if (!frames?.length) throw mirrorFailure;
                 interruption = {
                   frames: frames.length,
@@ -195,12 +201,15 @@ export function createAndroidMirrorVideoRecorder(options: {
               return {
                 ...result,
                 ...(interruption ? { interruption } : {}),
-                recorder: {
-                  ...result.recorder,
-                  platform: 'android',
-                  target: { selector: 'adb-serial', value: options.serial },
-                  mirrorWindowId: String(windowId),
-                },
+                segments: result.segments.map((segment) => ({
+                  ...segment,
+                  recorder: {
+                    ...segment.recorder,
+                    platform: 'android',
+                    target: { selector: 'adb-serial', value: options.serial },
+                    mirrorWindowId: String(windowId),
+                  },
+                })),
               };
             } finally {
               await cleanup();

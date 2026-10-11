@@ -379,8 +379,6 @@ export {
 export {
   activateRecipeRuntimeEnvironment,
   countRecipeNodes,
-  createDefaultRecipeEngine,
-  type DefaultRecipeEngineOptions,
   preflightRecipe,
   type PreparedRecipeExecution,
   type RecipeEngine,
@@ -391,13 +389,6 @@ export {
   type TrustedMutationLoadInput,
 } from './run-engine.js';
 export { recipeRunOptionsFromCli } from './run-options.js';
-export {
-  type ActiveRecipeRecording,
-  captureActiveRecipeRecordingSnapshot,
-  type RecipeRecordingOptions,
-  startRecipeRecording,
-  stopRecipeRecording,
-} from './run-recording.js';
 export {
   executedBrowser,
   indexProductProvenanceArtifact,

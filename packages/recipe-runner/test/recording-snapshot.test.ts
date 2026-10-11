@@ -207,7 +207,7 @@ process.on('SIGINT',()=>{
         ? /Native stream lost its mirror/u
         : /mirror exited during recording/u,
     );
-    assert.equal(result.recorder?.mirrorWindowId, '1');
+    assert.equal(result.segments[0]?.recorder?.mirrorWindowId, '1');
     assert.equal(await readFile(path.join(dir, 'out.mp4'), 'utf8'), 'video fixture');
     assert.throws(() => process.kill(processIdentity.pid, 0), /ESRCH/);
   });
@@ -259,7 +259,7 @@ test('Android mirror fallback records the readiness reason and refuses wrong dev
       starts++;
       return {
         async stop() {
-          return { recorder: { name: 'fallback' } };
+          return { segments: [{ path: 'fallback.mp4', recorder: { name: 'fallback' } }] };
         },
       };
     },
@@ -289,8 +289,8 @@ test('Android mirror fallback records the readiness reason and refuses wrong dev
     record: 'full_run',
   });
   const stopped = await active.stop();
-  assert.ok(stopped.recorder!.fallbackReason);
-  assert.ok(result.message.includes(stopped.recorder!.fallbackReason!));
+  assert.ok(stopped.segments[0]!.recorder!.fallbackReason);
+  assert.ok(result.message.includes(stopped.segments[0]!.recorder!.fallbackReason!));
 });
 
 test('failed fallback readiness cannot be bypassed by retrying the recorder', async () => {

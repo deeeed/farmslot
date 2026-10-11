@@ -1,9 +1,8 @@
 // Run evidence on a fake host and fake adapters: run options, trust input,
 // suggestions, behavioral proof, execution provenance, run diagnostics, the
-// framed recorder, the run report and live adapter scripts.
+// recording target, the run report and live adapter scripts.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,17 +16,13 @@ import {
   type PlatformAdapter,
 } from '@farmslot/adapter-sdk';
 import {
-  digestRecipeDocument,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestDocument,
-  validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
 
 import {
-  type ActiveRecipeRecording,
   beginRunDiagnostics,
-  captureActiveRecipeRecordingSnapshot,
   captureExecutionProvenance,
   closest,
   collectRunDiagnostics,
@@ -49,8 +44,6 @@ import {
   recipeRunOptionsFromCli,
   recipeTrustFailure,
   runLiveAdapterScript,
-  startRecipeRecording,
-  stopRecipeRecording,
   validateRuntimeProof,
   validateRuntimeProofPlan,
   verifyConsoleCapture,
@@ -177,13 +170,14 @@ describe('run options', () => {
         slot: 'mini-2',
         validationRuntimeDir: undefined,
         recordVideo: 'full-run',
+        recordingReason: undefined,
         autoHud: false,
         source: { trust: 'untrusted', kind: 'recipe-file' },
         approval: { planDigest: 'sha256:plan' },
       },
     );
     const defaults = recipeRunOptionsFromCli('web', { recordVideo: 'step' });
-    assert.equal(defaults.recordVideo, false);
+    assert.equal(defaults.recordVideo, undefined);
     assert.equal(defaults.autoHud, undefined);
     assert.equal(recipeRunOptionsFromCli('web', { hud: 'show' }).autoHud, true);
   });
@@ -585,13 +579,11 @@ describe('behavioral proof', () => {
     );
   });
 
-  test('rejects a passing package that only labels a command as proof', async () => {
-    const bundle = await execute({
-      run: { ...command, proves: ['behavior'], next: 'done' },
-      done,
-    });
-    assert.equal(validateRecipeArtifactPackage(bundle).status, 'valid');
-    assert.throws(() => validateRuntimeProof(bundle, 'behavior'), /no executed runtime assertion/u);
+  test('rejects an action-only proof before execution', async () => {
+    await assert.rejects(
+      execute({ run: { ...command, proves: ['behavior'], next: 'done' }, done }),
+      /observation-bound expectation/,
+    );
   });
 
   test('rejects failed runtime assertions', async () => {
@@ -711,7 +703,15 @@ describe('behavioral proof', () => {
     );
     assert.deepEqual(
       validateRuntimeProofPlan(
-        plan({ check: { action: 'assert_json', path: 'proof.json', proves: ['market'] }, done }),
+        plan({
+          check: {
+            action: 'assert_json',
+            path: 'proof.json',
+            assert: { operator: 'exists' },
+            proves: ['market'],
+          },
+          done,
+        }),
       ),
       [],
     );
@@ -1154,271 +1154,6 @@ describe('run diagnostics', () => {
 });
 
 describe('run recording', () => {
-  const ACTIVE_PID_ENV = 'SHOP_RECIPE_ACTIVE_RECORDING_PID';
-
-  function fixture() {
-    const root = tempRoot('recording-timing-');
-    const videos = path.join(root, 'videos');
-    fs.mkdirSync(videos);
-    const stagingDir = fs.mkdtempSync(path.join(videos, '.private-'));
-    const stagedPath = path.join(stagingDir, 'full-run.mp4');
-    const bytes = Buffer.from('finalized recorder fixture');
-    fs.writeFileSync(stagedPath, bytes);
-    const artifactManifestPath = path.join(root, 'artifact-manifest.json');
-    const tracePath = path.join(root, 'trace.json');
-    const summaryPath = path.join(root, 'summary.json');
-    fs.writeFileSync(artifactManifestPath, JSON.stringify({ runStatus: 'pass', artifacts: [] }));
-    fs.writeFileSync(
-      tracePath,
-      JSON.stringify({
-        entries: [
-          {
-            nodeId: 'n1',
-            action: 'ui.press',
-            startedAt: new Date(Date.now() - 4000).toISOString(),
-            endedAt: new Date(Date.now() - 3000).toISOString(),
-            durationMs: 1000,
-            ok: true,
-          },
-        ],
-      }),
-    );
-    fs.writeFileSync(
-      summaryPath,
-      JSON.stringify({
-        status: 'pass',
-        total: 1,
-        passed: 1,
-        failed: 0,
-        cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
-      }),
-    );
-    const sidecar = {
-      version: 1,
-      recording_id: 'test-recording',
-      video_file: 'full-run.mp4',
-      video_digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
-      frames_ms: [0, 40, 80],
-      duration_ms: 100,
-      clock: {
-        source: 'coremedia-host-clock',
-        earliest_zero_unix_ms: 1000,
-        latest_zero_unix_ms: 1001,
-      },
-    };
-    fs.writeFileSync(`${stagedPath}.timing.json`, JSON.stringify(sidecar));
-    process.env[ACTIVE_PID_ENV] = '123456';
-    const recording = {
-      pid: 123456,
-      startedAtUnixMs: Date.now() - 5000,
-      exited: true,
-      finalized: false,
-      nativeTiming: true,
-      completedVideo: true,
-      completedRecordingId: 'test-recording',
-      stagingDir,
-      stagedPath,
-      outputPath: path.join(videos, 'full-run.mp4'),
-      relativePath: 'videos/full-run.mp4',
-      stdout: '',
-      stderr: '',
-      activePidEnv: ACTIVE_PID_ENV,
-      previousActiveRecordingPid: '42',
-    } as unknown as ActiveRecipeRecording;
-    const artifacts = () =>
-      JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8')).artifacts as Array<
-        Record<string, unknown>
-      >;
-    const result = { artifactManifestPath, tracePath, summaryPath } as Parameters<
-      typeof stopRecipeRecording
-    >[1];
-    return { recording, sidecar, result, artifacts, bytes };
-  }
-
-  test('publishes native timing and its timeline beside the footage, and restores the pid env', async () => {
-    const f = fixture();
-    await stopRecipeRecording(f.recording, f.result);
-    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
-    assert.ok(fs.lstatSync(`${f.recording.outputPath}.timing.json`).isFile());
-    const video = f.artifacts().find((artifact) => artifact.type === 'video');
-    assert.equal(video?.timelinePath, 'videos/full-run.mp4.timeline.json');
-    assert.equal(fs.existsSync(f.recording.stagingDir), false);
-    assert.equal(process.env[ACTIVE_PID_ENV], '42');
-  });
-
-  test('a recording stopped before the completion HUD publishes once against the final trace', async () => {
-    const f = fixture();
-    await stopRecipeRecording(f.recording);
-    assert.equal(f.artifacts().length, 0);
-    const entry = {
-      nodeId: 'recipe-complete:hud',
-      action: 'app.hud',
-      startedAt: new Date().toISOString(),
-      endedAt: new Date().toISOString(),
-      durationMs: 0,
-      ok: false,
-    };
-    const trace = JSON.parse(fs.readFileSync(f.result!.tracePath, 'utf8'));
-    trace.entries.push(entry);
-    fs.writeFileSync(f.result!.tracePath, JSON.stringify(trace));
-    await stopRecipeRecording(f.recording, f.result);
-    const timeline = JSON.parse(fs.readFileSync(`${f.recording.outputPath}.timeline.json`, 'utf8'));
-    assert.equal(timeline.markers.at(-1).nodeId, 'recipe-complete:hud');
-    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
-    assert.equal(f.artifacts().filter((artifact) => artifact.type === 'video').length, 1);
-  });
-
-  for (const mode of ['missing', 'wrong-id', 'wrong-digest'] as const) {
-    test(`keeps the video with an explicit gap for ${mode} timing`, async () => {
-      const f = fixture();
-      const file = `${f.recording.stagedPath}.timing.json`;
-      if (mode === 'missing') fs.unlinkSync(file);
-      if (mode === 'wrong-id')
-        fs.writeFileSync(file, JSON.stringify({ ...f.sidecar, recording_id: 'another' }));
-      if (mode === 'wrong-digest')
-        fs.writeFileSync(file, JSON.stringify({ ...f.sidecar, video_digest: 'sha256:0' }));
-      await stopRecipeRecording(f.recording, f.result);
-      assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
-      assert.equal(f.artifacts().length, 1);
-      assert.ok(f.artifacts()[0]?.timelineUnavailableReason);
-    });
-  }
-
-  test('does not turn an unfinished recording into footage', async () => {
-    const f = fixture();
-    f.recording.completedVideo = false;
-    await assert.rejects(
-      stopRecipeRecording(f.recording, f.result),
-      /Missing finalized video completion/u,
-    );
-    assert.equal(fs.existsSync(f.recording.outputPath), false);
-    assert.equal(f.artifacts().length, 0);
-  });
-
-  const interruption = {
-    frames: 2400,
-    mediaTimeMs: 79966.7,
-    cause:
-      'com.apple.ScreenCaptureKit.SCStreamErrorDomain -3805: Failed during stream due to application connection being interrupted',
-  };
-
-  test('keeps a stream-interrupted recording as partial footage and returns the interruption', async () => {
-    const f = fixture();
-    Object.assign(f.recording, {
-      completedVideo: false,
-      completedRecordingId: undefined,
-      exitCode: 3,
-      interruption: { ...interruption, recordingId: 'test-recording' },
-    });
-    const kept = await stopRecipeRecording(f.recording, f.result);
-    assert.equal(kept?.videoPath, 'videos/full-run.mp4');
-    assert.match(kept?.message ?? '', /^CAPTURE_INTERRUPTED: .*2400 frames .*-3805/u);
-    assert.deepEqual(fs.readFileSync(f.recording.outputPath), f.bytes);
-    const video = f.artifacts().find((artifact) => artifact.type === 'video');
-    assert.deepEqual(video?.interruption, interruption);
-    // The package fails the way a runner-owned recording does: trace, summary and manifest agree.
-    const read = (file: string) => JSON.parse(fs.readFileSync(file, 'utf8'));
-    const entries = read(f.result!.tracePath).entries as Array<Record<string, unknown>>;
-    assert.equal(entries.at(-1)?.error_code, 'CAPTURE_INTERRUPTED');
-    assert.equal(entries.at(-1)?.cause_class, 'environment');
-    assert.deepEqual(
-      (({ status, total, passed, failed, cause_counts }) => ({
-        status,
-        total,
-        passed,
-        failed,
-        cause_counts,
-      }))(read(f.result!.summaryPath)),
-      {
-        status: 'fail',
-        total: 2,
-        passed: 1,
-        failed: 1,
-        cause_counts: { subject: 0, harness: 0, environment: 1, unknown: 0 },
-      },
-    );
-    assert.equal(read(f.result!.artifactManifestPath).runStatus, 'fail');
-    // The interruption event carries the recording identity, so native timing still verifies,
-    // and the timeline is bound to the final trace, the interruption included.
-    assert.equal(video?.timelinePath, 'videos/full-run.mp4.timeline.json');
-    const timeline = read(
-      path.join(path.dirname(f.result!.artifactManifestPath), video!.timelinePath as string),
-    );
-    assert.equal(timeline.traceDigest, digestRecipeDocument(entries));
-  });
-
-  for (const [label, exitCode, event] of [
-    ['an exit 3 without the interruption event', 3, undefined],
-    ['an interruption event without exit 3', 1, { ...interruption, recordingId: 'test-recording' }],
-  ] as const) {
-    test(`does not keep footage for ${label}`, async () => {
-      const f = fixture();
-      Object.assign(f.recording, { completedVideo: false, exitCode, interruption: event });
-      await assert.rejects(
-        stopRecipeRecording(f.recording, f.result),
-        /Missing finalized video completion/u,
-      );
-      assert.equal(f.artifacts().length, 0);
-    });
-  }
-
-  test('records nothing unless asked, or for a platform without a framed recorder', async () => {
-    const root = tempRoot();
-    assert.equal(await startRecipeRecording('web', root, root, {}), undefined);
-    if (process.platform === 'darwin')
-      assert.equal(await startRecipeRecording('web', root, root, { record: true }), undefined);
-  });
-
-  test('stream_stopped ignores stale replies and sends no more session snapshot commands', async (t) => {
-    if (process.platform !== 'darwin') return t.skip('Framed recorder is macOS-only');
-    const root = tempRoot('framed-stopped-');
-    const helper = path.join(root, 'helper.cjs');
-    const commands = path.join(root, 'commands');
-    fs.writeFileSync(
-      helper,
-      `#!/usr/bin/env node
-const fs=require('node:fs');
-if(process.argv[2]==='version'){console.log(JSON.stringify({capabilities:['record_session_snapshot','record_session_timing_v1']}));process.exit(0)}
-const out=process.argv[process.argv.indexOf('--output')+1];
-process.stderr.write(JSON.stringify({type:'info',msg:'record frames=1'})+'\\n');
-require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
- fs.appendFileSync(${JSON.stringify(commands)},line+'\\n');
- const output=line.slice(9);
- process.stderr.write(JSON.stringify({type:'error',code:'stream_stopped',message:'Window stopped'})+'\\n');
- setTimeout(()=>{fs.writeFileSync(output,'stale session');process.stderr.write(JSON.stringify({type:'snapshot',output,media_time_ms:5})+'\\n')},20);
- setTimeout(()=>{fs.writeFileSync(out,'partial video');process.stderr.write(JSON.stringify({type:'error',code:'stream_interrupted',output:out,frames:2,media_time_ms:33,cause:'Window stopped'})+'\\n',()=>process.exit(3))},40);
-});
-`,
-      { mode: 0o755 },
-    );
-    process.env.CAPTURE_HELPER_PATH = helper;
-    useAdapters(
-      fakeAdapter('web', {
-        recording: {
-          target: async () => ({ kind: 'pid', pid: 4242 }),
-          framed: { browserPid: () => 4242, activePidEnv: ACTIVE_PID_ENV },
-        },
-      }),
-    );
-    const recording = await startRecipeRecording('web', root, root, { record: true });
-    assert.ok(recording);
-    try {
-      const stopped = new Promise<void>((resolve) =>
-        recording.child.stderr.once('data', () => resolve()),
-      );
-      const first = captureActiveRecipeRecordingSnapshot(4242, path.join(root, 'first.png'));
-      await stopped;
-      assert.equal(recording.streamStopped, true);
-      const second = captureActiveRecipeRecordingSnapshot(4242, path.join(root, 'second.png'));
-      assert.equal(await first, undefined);
-      assert.equal(await second, undefined);
-      assert.equal(recording.exited, true);
-      assert.equal(fs.readFileSync(commands, 'utf8').trim().split('\n').length, 1);
-    } finally {
-      await stopRecipeRecording(recording);
-    }
-  });
-
   test('the recording target comes from the platform; a platform without one refuses', async () => {
     useAdapters(
       fakeAdapter('web', { recording: { target: async () => ({ kind: 'pid', pid: 4242 }) } }),

@@ -60,6 +60,8 @@ export interface RecipeArtifactManifestEntry {
   metadata?: Record<string, unknown>;
   path: string;
   type: RecipeArtifactTypeName;
+  /** Checked immutable file identity, using the same representation as ArtifactRef. */
+  sha256?: string;
   label?: string;
   nodeId?: string;
   mimeType?: string;

@@ -108,8 +108,8 @@ test('a ledger that breaks the contract throws, naming the field', () => {
     /criteria\[0\]\.verdict/,
   );
   assert.throws(
-    () => parseAcceptanceStatusLedger(JSON.stringify({ schemaVersion: 2, criteria: [] })),
-    /schemaVersion: expected 1/,
+    () => parseAcceptanceStatusLedger(JSON.stringify({ schemaVersion: 3, criteria: [] })),
+    /schemaVersion: expected 1 or 2/,
   );
 });
 

@@ -12,16 +12,20 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 // (@farmslot/recipe-cli). The ids come from task init, which records the criteria in
 // inputs/handoff.json; this module never invents one.
 //
-// The constants and the validate/summarize/render helpers are a behavioral mirror
-// of @farmslot/protocol/contracts/acceptance (see test/acceptance-ledger-sync.test.mjs).
-// The mirror exists because the mark engine and this CLI are CJS and must run on a
-// slot without a built protocol package.
+// Portable contract helpers are shared with protocol clients, including unbuilt slot scripts.
 
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
-const ACCEPTANCE_STATUS_ARTIFACT = 'artifacts/acceptance-status.json';
-const ACCEPTANCE_VERDICTS = ['proven', 'weak', 'missing', 'untestable'];
-const ACCEPTANCE_PROOF_MODES = ['state', 'visual', 'mixed'];
-const ACCEPTANCE_CRITERION_ID_PATTERN = /^AC-[1-9][0-9]*$/;
+const {
+  ACCEPTANCE_STATUS_ARTIFACT,
+  ACCEPTANCE_VERDICTS,
+  ACCEPTANCE_PROOF_MODES,
+  ACCEPTANCE_CRITERION_ID_PATTERN,
+  acceptanceCriterionId,
+  validateAcceptanceStatusLedger,
+  acceptanceCriteriaView,
+  summarizeAcceptanceStatus,
+  renderAcceptanceCoverage,
+} = require('@farmslot/protocol/scripts/acceptance.mjs');
 
 /** A refused command: the message is worker-facing, the code is the exit code. */
 class AcceptanceRefusal extends Error {
@@ -36,141 +40,9 @@ class AcceptanceRefusal extends Error {
  * `AC-<N>` for a criterion's position in the handoff array.
  * @param {number} index 0-based position in inputs/handoff.json task.acceptanceCriteria.
  */
-function acceptanceCriterionId(index) {
-  return `AC-${index + 1}`;
-}
-
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
-
-function isNonEmptyString(value) {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function validateAcceptanceStatusLedger(value) {
-  const issues = [];
-  if (!isRecord(value)) return ['acceptance ledger: expected object'];
-  if (value.schemaVersion !== 1) issues.push('acceptance ledger schemaVersion: expected 1');
-  if (!Array.isArray(value.criteria)) {
-    issues.push('acceptance ledger criteria: expected array');
-    return issues;
-  }
-  const seen = new Set();
-  value.criteria.forEach((entry, index) => {
-    const prefix = `acceptance ledger criteria[${index}]`;
-    if (!isRecord(entry)) {
-      issues.push(`${prefix}: expected object`);
-      return;
-    }
-    if (!isNonEmptyString(entry.id) || !ACCEPTANCE_CRITERION_ID_PATTERN.test(entry.id)) {
-      issues.push(`${prefix}.id: expected AC-<N>`);
-    } else if (seen.has(entry.id)) {
-      issues.push(`${prefix}.id: duplicate ${entry.id}`);
-    } else {
-      seen.add(entry.id);
-    }
-    if (typeof entry.text !== 'string') issues.push(`${prefix}.text: expected string`);
-    if (!ACCEPTANCE_VERDICTS.includes(entry.verdict)) {
-      issues.push(`${prefix}.verdict: expected one of ${ACCEPTANCE_VERDICTS.join(', ')}`);
-    }
-    if (entry.proofMode !== undefined && !ACCEPTANCE_PROOF_MODES.includes(entry.proofMode)) {
-      issues.push(`${prefix}.proofMode: expected one of ${ACCEPTANCE_PROOF_MODES.join(', ')}`);
-    }
-    for (const key of ['evidence', 'recipeNodes']) {
-      const list = entry[key];
-      if (!Array.isArray(list) || list.some((item) => !isNonEmptyString(item))) {
-        issues.push(`${prefix}.${key}: expected an array of non-empty strings`);
-      }
-    }
-    if (entry.note !== undefined && typeof entry.note !== 'string') {
-      issues.push(`${prefix}.note: expected string`);
-    }
-    if (!isNonEmptyString(entry.updatedAt)) {
-      issues.push(`${prefix}.updatedAt: expected non-empty string`);
-    }
-  });
-  return issues;
-}
-
-function acceptanceCriteriaView(criteria, ledger) {
-  const byId = new Map((ledger?.criteria ?? []).map((entry) => [entry.id, entry]));
-  const rows = criteria.map((criterion) => ({
-    ...criterion,
-    status: byId.get(criterion.id) ?? null,
-  }));
-  for (const entry of ledger?.criteria ?? []) {
-    if (!criteria.some((criterion) => criterion.id === entry.id)) {
-      rows.push({ id: entry.id, text: entry.text, status: entry });
-    }
-  }
-  return rows;
-}
-
-function summarizeAcceptanceStatus(ledger, criteria) {
-  const total = criteria
-    ? Math.max(criteria.length, ledger.criteria.length)
-    : ledger.criteria.length;
-  const summary = {
-    proven: 0,
-    weak: 0,
-    missing: 0,
-    untestable: 0,
-    unrecorded: 0,
-    total,
-  };
-  for (const criterion of ledger.criteria) summary[criterion.verdict] += 1;
-  summary.unrecorded =
-    total - (summary.proven + summary.weak + summary.missing + summary.untestable);
-  return summary;
-}
-
-function cell(value) {
-  return (
-    value
-      .replace(/\|/g, '\\|')
-      .replace(/\s*\n\s*/g, ' ')
-      .trim() || '-'
-  );
-}
-
-function list(values) {
-  return values.length > 0 ? cell(values.join(', ')) : '-';
-}
-
-function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
-  const summary = summarizeAcceptanceStatus(ledger, criteria);
-  const rows = acceptanceCriteriaView(criteria, ledger);
-  const untestable = ledger.criteria
-    .filter((criterion) => criterion.verdict === 'untestable')
-    .map((criterion) => criterion.id);
-  const lines = [
-    '## Recipe coverage',
-    '',
-    '| AC | Criterion | Verdict | Proof mode | Recipe nodes | Evidence | Note |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
-  ];
-  for (const row of rows) {
-    const status = row.status;
-    lines.push(
-      `| ${row.id} | ${cell(row.text)} | ${status ? status.verdict.toUpperCase() : 'NO VERDICT'} | ` +
-        `${status?.proofMode ?? '-'} | ${list(status?.recipeNodes ?? [])} | ` +
-        `${list(status?.evidence ?? [])} | ${cell(status?.note ?? '')} |`,
-    );
-  }
-  lines.push(
-    '',
-    `Overall recipe coverage: ${summary.proven}/${summary.total} ACs PROVEN ` +
-      `(untestable: ${untestable.length > 0 ? untestable.join(', ') : 'none'}, ` +
-      `weak: ${summary.weak}, missing: ${summary.missing}` +
-      `${summary.unrecorded > 0 ? `, no verdict: ${summary.unrecorded}` : ''})`,
-    '',
-  );
-  return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// task-dir IO
 
 function ledgerPath(taskDir) {
   return path.join(taskDir, ACCEPTANCE_STATUS_ARTIFACT);
@@ -305,6 +177,35 @@ function setAcceptanceVerdict(taskDir, input) {
       );
     }
   }
+  if (stored?.schemaVersion === 2) {
+    if (input.verdict !== 'untestable' || !input.note?.trim() || !input.actor?.trim())
+      throw new AcceptanceRefusal(
+        'Automatic claim verdicts are engine-owned; an untestable override requires actor and reason.',
+      );
+    const prior = stored.criteria.find((entry) => entry.id === input.id);
+    if (!prior) throw new AcceptanceRefusal(`No automatic claim ${input.id} to override.`);
+    const override = {
+      actor: input.actor,
+      reason: input.note,
+      priorVerdict: prior.verdict,
+      at: input.now ?? new Date().toISOString(),
+    };
+    const updated = {
+      ...stored,
+      criteria: stored.criteria.map((entry) =>
+        entry.id === input.id
+          ? {
+              ...entry,
+              verdict: 'untestable',
+              note: input.note,
+              overrides: [...(entry.overrides ?? []), override],
+            }
+          : entry,
+      ),
+    };
+    writeAcceptanceLedger(taskDir, updated);
+    return updated;
+  }
   const byId = new Map((stored?.criteria ?? []).map((entry) => [entry.id, entry]));
   byId.set(criterion.id, {
     id: criterion.id,
@@ -323,6 +224,29 @@ function setAcceptanceVerdict(taskDir, input) {
   };
   writeAcceptanceLedger(taskDir, ledger);
   return ledger;
+}
+
+/** Transfer one engine-owned execution. Never aggregate sibling attempts. */
+function setDerivedClaims(taskDir, claims) {
+  if (claims.schemaVersion !== 2) throw new AcceptanceRefusal('Derived claims require schema 2.');
+  const registered = handoffAcceptanceCriteria(taskDir);
+  for (const criterion of registered) {
+    const claim = claims.criteria.find((entry) => entry.id === criterion.id);
+    if (!claim || claim.text !== criterion.text)
+      throw new AcceptanceRefusal(
+        `Engine claim ${criterion.id} does not match the registered task.`,
+      );
+  }
+  for (const claim of claims.criteria) {
+    if (
+      ACCEPTANCE_CRITERION_ID_PATTERN.test(claim.id) &&
+      !registered.some((entry) => entry.id === claim.id)
+    )
+      throw new AcceptanceRefusal(`Unknown task claim ${claim.id}.`);
+    for (const file of claim.evidence) assertEvidencePath(taskDir, file);
+  }
+  writeAcceptanceLedger(taskDir, claims);
+  return claims;
 }
 
 /** Every handoff criterion with its current verdict, or null when unrecorded. */
@@ -375,7 +299,10 @@ function acceptanceContractIssues(taskDir, options = {}) {
   if (issues.length > 0) return issues;
   const known = new Set(criteria.map((criterion) => criterion.id));
   for (const entry of stored.criteria) {
-    if (!known.has(entry.id)) {
+    if (
+      !known.has(entry.id) &&
+      (stored.schemaVersion === 1 || ACCEPTANCE_CRITERION_ID_PATTERN.test(entry.id))
+    ) {
       issues.push(
         `${ACCEPTANCE_STATUS_ARTIFACT}: ${entry.id} is not an acceptance criterion of this task`,
       );
@@ -390,7 +317,11 @@ function acceptanceContractIssues(taskDir, options = {}) {
       );
       continue;
     }
-    if (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak')) {
+    if (
+      entry.verdict === 'failed' ||
+      entry.verdict === 'awaiting-review' ||
+      (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak'))
+    ) {
       issues.push(
         `${criterion.id} is ${entry.verdict}: prove it, or record \`untestable\` with a note ` +
           '(a flow may waive this with worker_terminal.acceptance.allowWeak)',
@@ -415,6 +346,7 @@ module.exports = {
   readAcceptanceLedger,
   renderAcceptanceCoverage,
   setAcceptanceVerdict,
+  setDerivedClaims,
   summarizeAcceptanceStatus,
   validateAcceptanceStatusLedger,
   writeAcceptanceLedger,
