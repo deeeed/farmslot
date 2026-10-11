@@ -1,13 +1,15 @@
+import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 
 import {
   getRecipeActionManifestActionNames,
   isRecord,
   Methods,
   type RecipeActionManifestDocument,
+  type RecipeConformanceLiveEvidence,
   type RecipeProjectHookCommandResult,
   type RecipeProjectHookName,
   type RecipeProjectHookRunResult,
@@ -20,6 +22,7 @@ import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
+  digestFileWithinRoot,
   type RecipeRunRequest,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
@@ -40,8 +43,11 @@ import { withProgress } from '../progress.js';
 
 import {
   collectRecipeOption,
+  projectRecipeHostOptions,
+  recipeProjectOptions,
   registerProjectActionsCommand,
   registerProjectExecutionCommand,
+  registerProjectLifecycleCommands,
 } from './recipe-project.js';
 import { resolveRecipeProjectHookGatewayTimeoutMs } from './recipe-project-hook-timeout.js';
 
@@ -55,6 +61,10 @@ interface RecipeValidateOptions {
 interface RecipeArtifactsValidateOptions {
   recipe?: string;
   requireRunnerProvenance?: boolean;
+  liveProof?: Pick<
+    RecipeConformanceLiveEvidence,
+    'smokeTarget' | 'teardownTarget' | 'captureRequired' | 'hudRequired'
+  >;
 }
 
 interface RecipeRunOptions {
@@ -104,6 +114,7 @@ interface ArtifactValidationResult {
   artifactDir: string;
   checks: ArtifactValidationCheck[];
   recipe: RecipeValidationResult;
+  liveEvidence?: RecipeConformanceLiveEvidence;
 }
 
 const TERMINAL_RECIPE_STATUSES = new Set(['pass', 'fail', 'unknown']);
@@ -197,58 +208,6 @@ function runnerProvenanceMatches(summary: unknown, trace: unknown, manifest: unk
   );
 }
 
-function readTraceEntries(trace: unknown): Record<string, unknown>[] | null {
-  const entries = Array.isArray(trace) ? trace : isRecord(trace) ? trace.entries : null;
-  if (!Array.isArray(entries)) return null;
-  return entries.filter(isRecord);
-}
-
-function traceCounts(trace: unknown): { passed: number; failed: number; unknown: number } | null {
-  const entries = readTraceEntries(trace);
-  if (!entries) return null;
-  let passed = 0;
-  let failed = 0;
-  let unknown = 0;
-  for (const entry of entries) {
-    if (entry.status === 'fail' || entry.ok === false) {
-      failed += 1;
-    } else if (entry.status === 'pass' || entry.ok === true) {
-      passed += 1;
-    } else {
-      unknown += 1;
-    }
-  }
-  return { passed, failed, unknown };
-}
-
-function traceStatus(trace: unknown): 'pass' | 'fail' | 'unknown' | null {
-  const counts = traceCounts(trace);
-  if (!counts) return null;
-  if (counts.failed > 0) return 'fail';
-  if (counts.unknown > 0 || counts.passed === 0) return 'unknown';
-  return 'pass';
-}
-
-function traceStatusMatchesSummary(summaryStatus: unknown, trace: unknown): boolean {
-  const status = traceStatus(trace);
-  return typeof summaryStatus === 'string' && status === summaryStatus;
-}
-
-function traceCountsMatchSummary(summary: unknown, trace: unknown): boolean {
-  if (!isRecord(summary)) return false;
-  const counts = traceCounts(trace);
-  if (!counts) return false;
-  if (typeof summary.passed === 'number' && summary.passed !== counts.passed) return false;
-  if (typeof summary.failed === 'number' && summary.failed !== counts.failed) return false;
-  if (
-    typeof summary.total === 'number' &&
-    summary.total !== counts.passed + counts.failed + counts.unknown
-  ) {
-    return false;
-  }
-  return true;
-}
-
 export async function validateRecipeArtifactDirectory(
   artifactDirInput: string,
   opts: RecipeArtifactsValidateOptions,
@@ -318,7 +277,7 @@ export async function validateRecipeArtifactDirectory(
       }
     }
   }
-  const recipeValidation = validateRecipeArtifactPackage({
+  const bundle = {
     recipe,
     trace,
     summary,
@@ -326,7 +285,33 @@ export async function validateRecipeArtifactDirectory(
     artifactPaths,
     recipeResolution,
     resolvedRecipes,
-  });
+  };
+  const recipeValidation = validateRecipeArtifactPackage(bundle);
+  let captures: string[] = [];
+  if (opts.liveProof) {
+    const { validateRuntimeProof } = await import('@farmslot/recipe-cli/harness');
+    try {
+      captures = validateRuntimeProof(
+        bundle,
+        opts.liveProof.smokeTarget,
+        opts.liveProof.teardownTarget,
+        opts.liveProof,
+      );
+      addArtifactCheck(
+        checks,
+        'runtime.proof',
+        'pass',
+        'Runtime effect and authored teardown assertions passed.',
+      );
+    } catch (error) {
+      addArtifactCheck(
+        checks,
+        'runtime.proof',
+        'fail',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;
   addArtifactCheck(
@@ -344,19 +329,6 @@ export async function validateRecipeArtifactDirectory(
     Array.isArray(trace) || (isRecord(trace) && Array.isArray(trace.entries)) ? 'pass' : 'fail',
     'trace.json must be an array or an object with entries[].',
   );
-  addArtifactCheck(
-    checks,
-    'trace.status_matches_summary',
-    traceStatusMatchesSummary(summaryStatus, trace) ? 'pass' : 'fail',
-    'trace.json terminal status must agree with summary.json status.',
-  );
-  addArtifactCheck(
-    checks,
-    'trace.counts_match_summary',
-    traceCountsMatchSummary(summary, trace) ? 'pass' : 'fail',
-    'trace.json pass/fail counts must agree with summary.json counts when summary counts are present.',
-  );
-
   const manifestStatus = isRecord(manifest) ? manifest.runStatus : undefined;
   addArtifactCheck(
     checks,
@@ -396,7 +368,27 @@ export async function validateRecipeArtifactDirectory(
     checks.some((check) => check.status === 'fail') || recipeValidation.status === 'invalid'
       ? 'fail'
       : 'pass';
-  return { status, artifactDir, checks, recipe: recipeValidation };
+  const liveEvidence =
+    status === 'pass' && opts.liveProof
+      ? {
+          ...opts.liveProof,
+          ...(opts.liveProof.captureRequired || opts.liveProof.hudRequired ? { captures } : {}),
+          artifactDir,
+          artifacts: await Promise.all(
+            artifactPaths.sort().map(async (file) => ({
+              path: file,
+              digest: await digestFileWithinRoot(artifactDir, file),
+            })),
+          ),
+        }
+      : undefined;
+  return {
+    status,
+    artifactDir,
+    checks,
+    recipe: recipeValidation,
+    ...(liveEvidence ? { liveEvidence } : {}),
+  };
 }
 
 function formatArtifactValidationResult(result: ArtifactValidationResult): string {
@@ -442,6 +434,7 @@ function formatValidationResult(result: RecipeValidationResult): string {
 export function registerRecipeCommand(program: Command): void {
   const recipe = program.command('recipe').description('Checkout recipes and artifact helpers');
   registerProjectActionsCommand(recipe);
+  registerProjectLifecycleCommands(recipe);
   registerProjectExecutionCommand(recipe, 'call');
 
   recipe
@@ -506,7 +499,72 @@ export function registerRecipeCommand(program: Command): void {
       }
     });
 
-  const artifacts = recipe.command('artifacts').description('Recipe artifact package helpers');
+  const artifacts = recipeProjectOptions(
+    recipe.command('artifacts').description('Inspect, validate or render retained recipe evidence'),
+  )
+    .argument('[directory]', 'Artifact package or task directory; defaults to the latest proof')
+    .option('--target <path>', 'Checkout whose latest proof to inspect')
+    .option('--validate', 'Validate the artifact package and runner provenance')
+    .addOption(new Option('--format <format>', 'Output format').choices(['text', 'markdown']))
+    .action(async (directory: string | undefined, _options: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        const shared = await import('@farmslot/recipe-cli/harness');
+        const options = cmd.opts();
+        const context = directory
+          ? undefined
+          : await shared.resolveProjectContext(
+              await projectRecipeHostOptions('artifacts', undefined, options),
+            );
+        const candidates = directory
+          ? [path.resolve(directory)]
+          : (shared.readLatestProofJournal(context!.target.value, context!.project!.runtimeDir)
+              .record?.evidencePaths ?? []);
+        const packages = candidates
+          .flatMap((candidate) => [
+            candidate,
+            path.join(candidate, 'artifacts'),
+            path.join(candidate, 'artifacts/recipe'),
+          ])
+          .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
+        const distinct = [...new Set(packages)];
+        if (distinct.length !== 1)
+          throw new Error(
+            distinct.length
+              ? `More than one artifact package matches; select a directory: ${distinct.join(', ')}`
+              : 'No retained artifact package found; pass its directory explicitly.',
+          );
+        const artifactDir = distinct[0]!;
+        const summary = await readArtifactJson(artifactDir, 'summary.json');
+        const manifest = await readArtifactJson(artifactDir, 'artifact-manifest.json');
+        const validation = options.validate
+          ? await validateRecipeArtifactDirectory(artifactDir, { requireRunnerProvenance: true })
+          : undefined;
+        const result = { artifactDir, summary, manifest, ...(validation ? { validation } : {}) };
+        if (output.json) output.writeJson(result);
+        else if (options.format === 'markdown') {
+          const literal = (value: string) =>
+            `<code>${value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</code>`;
+          const entries =
+            isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+          output.write(`Recipe evidence: ${literal(artifactDir)}\n\n`);
+          output.write(
+            `Result: ${literal(isRecord(summary) ? String(summary.status) : 'unknown')}\n\n`,
+          );
+          for (const entry of entries)
+            if (isRecord(entry) && typeof entry.path === 'string')
+              output.write(`- ${literal(entry.path)}\n`);
+          if (validation) output.write(`\nValidation: ${validation.status}\n`);
+        } else {
+          output.write(`Artifacts: ${artifactDir}\n${JSON.stringify(summary, null, 2)}\n`);
+          if (validation) output.write(formatArtifactValidationResult(validation));
+        }
+        if (validation?.status === 'fail') process.exitCode = 1;
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
 
   artifacts
     .command('validate')

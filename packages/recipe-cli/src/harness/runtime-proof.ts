@@ -3,16 +3,22 @@
 import assert from 'node:assert/strict';
 
 import {
+  isRecord,
   normalizeRecipeRef,
+  type RecipeArtifactManifestEntry,
+  type RecipeConformanceLiveEvidence,
   type RecipeValidationFinding,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
+import { extractWorkflowGraph } from '@farmslot/recipe-runner';
 
 /** Validate executed behavioral proof, independently of any task host or control plane. */
 export function validateRuntimeProof(
   bundle: Parameters<typeof validateRecipeArtifactPackage>[0],
   smokeTarget?: string,
-): void {
+  teardownTarget?: string,
+  visualProof: Pick<RecipeConformanceLiveEvidence, 'captureRequired' | 'hudRequired'> = {},
+): string[] {
   const checked = validateRecipeArtifactPackage(bundle);
   assert.equal(checked.status, 'valid', JSON.stringify(checked.findings));
   const { recipe, summary, trace, manifest, recipeResolution, resolvedRecipes } =
@@ -20,7 +26,7 @@ export function validateRuntimeProof(
       recipe: { proofTargets?: { id: string }[]; workflow: { nodes: Record<string, ProofNode> } };
       summary: { status: string };
       trace: Entry[] | { entries: Entry[] };
-      manifest: { artifacts: { path: string; category?: string }[] };
+      manifest: { artifacts: RecipeArtifactManifestEntry[] };
       recipeResolution: { dependencies: { ref: string; digest: string }[] };
       resolvedRecipes: Record<string, { workflow: { nodes: Record<string, ProofNode> } }>;
     };
@@ -95,6 +101,53 @@ export function validateRuntimeProof(
       recipe.proofTargets.some((target) => target.id === smokeTarget),
       'Smoke target is absent from recipe',
     );
+  if (teardownTarget) {
+    assert(
+      recipe.proofTargets.some((target) => target.id === teardownTarget) &&
+        teardownProofNodes(recipe, nodes, teardownTarget).some(proves),
+      `Teardown target ${teardownTarget} has no executed cleanup assertion`,
+    );
+  }
+  if (!visualProof.captureRequired && !visualProof.hudRequired) return [];
+  const proofNodes = [...nodes].filter(([, node]) => node.proves?.includes(smokeTarget ?? ''));
+  const captures = manifest.artifacts.filter((artifact) => {
+    if (artifact.type !== 'screenshot' && artifact.type !== 'video') return false;
+    const nodeId = artifact.nodeId;
+    if (!nodeId || !proofNodes.some(([id]) => nodeId === id || nodeId.startsWith(`${id}/`)))
+      return false;
+    const entry = executed.get(nodeId)?.entry;
+    if (!entry || entry.action !== nodes.get(nodeId)?.action) return false;
+    if (!visualProof.hudRequired) return true;
+    const hud = artifact.metadata?.hud;
+    if (!isRecord(hud) || typeof entry.intent !== 'string') return false;
+    const expected = entry.intent.replace(/\s+/gu, ' ').trim();
+    const matches = (value: unknown): boolean => {
+      if (!isRecord(value) || value.visible !== true || typeof value.intent !== 'string')
+        return false;
+      const observed = value.intent.replace(/\s+/gu, ' ').trim();
+      return Boolean(expected && observed === expected);
+    };
+    return matches(hud.before) && matches(hud.after);
+  });
+  assert(
+    captures.length,
+    visualProof.hudRequired
+      ? 'Live smoke has no capture tied to its proof with the rendered intent HUD observed before and after capture.'
+      : 'Live smoke has no capture tied to its named proof.',
+  );
+  return captures.map((artifact) => artifact.path);
+}
+
+function teardownProofNodes(
+  recipe: ProofDocument,
+  nodes: ReadonlyMap<string, ProofNode>,
+  target: string,
+): string[] {
+  const graph = extractWorkflowGraph(recipe);
+  if (!graph.teardownEntry) return [];
+  return [...nodes].flatMap(([id, node]) =>
+    node.proves?.includes(target) && !graph.mainNodeIds.has(id.split('/')[0]!) ? [id] : [],
+  );
 }
 
 const assertions = new Set(['assert_output', 'assert_json', 'ui.wait_for']);
@@ -159,6 +212,8 @@ function collectProofNodes(
 export function validateRuntimeProofPlan(
   recipe: ProofDocument,
   documents: ReadonlyMap<string, ProofDocument> = new Map(),
+  teardownTarget?: string,
+  smokeTarget?: string,
 ): RecipeValidationFinding[] {
   const finding = (code: string, path: string, message: string): RecipeValidationFinding => ({
     severity: 'error',
@@ -189,7 +244,7 @@ export function validateRuntimeProofPlan(
     // The manifest is created at execution; a path alone cannot prove it will be indexed.
     return node.action === 'assert_json' && typeof node.path === 'string';
   }
-  return recipe.proofTargets.flatMap((target, index) => {
+  const findings = recipe.proofTargets.flatMap((target, index) => {
     const linked = [...nodes].filter(([, node]) => node.proves?.includes(target.id));
     return linked.some(([id]) => eligible(id))
       ? []
@@ -201,6 +256,25 @@ export function validateRuntimeProofPlan(
           ),
         ];
   });
+  if (smokeTarget && !recipe.proofTargets.some((target) => target.id === smokeTarget)) {
+    findings.push(
+      finding(
+        'proof.smoke_target_missing',
+        'proofTargets',
+        `Smoke target ${smokeTarget} is absent from the recipe.`,
+      ),
+    );
+  }
+  if (teardownTarget && !teardownProofNodes(recipe, nodes, teardownTarget).some(eligible)) {
+    findings.push(
+      finding(
+        'proof.teardown_assertion_missing',
+        'workflow.teardown',
+        `Teardown target ${teardownTarget} needs a runtime assertion in the authored teardown.`,
+      ),
+    );
+  }
+  return findings;
 }
 
 /** The recipe shape proof checks read: its proof targets and workflow nodes. */
@@ -223,4 +297,5 @@ interface Entry {
   ok: boolean;
   status?: string;
   output?: unknown;
+  intent?: string;
 }

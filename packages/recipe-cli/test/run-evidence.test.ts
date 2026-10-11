@@ -19,6 +19,7 @@ import {
 import {
   digestRecipeDocument,
   type RecipeActionManifestDocument,
+  type RecipeArtifactManifestDocument,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
@@ -378,7 +379,7 @@ describe('behavioral proof', () => {
   };
   const done = { action: 'end', status: 'pass' };
 
-  async function execute(nodes: Record<string, Record<string, unknown>>) {
+  async function execute(nodes: Record<string, Record<string, unknown>>, teardown?: string) {
     const dir = tempRoot('runtime-proof-');
     const manifest = JSON.parse(
       fs.readFileSync(PROOF_MANIFEST, 'utf8'),
@@ -391,8 +392,11 @@ describe('behavioral proof', () => {
     const recipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       title: 'Runtime proof test',
-      proofTargets: [{ id: 'behavior', claim: 'Command produces expected runtime output' }],
-      workflow: { entry: 'run', nodes },
+      proofTargets: [
+        { id: 'behavior', claim: 'Command produces expected runtime output' },
+        ...(teardown ? [{ id: 'cleanup', claim: 'Owned file is removed during teardown' }] : []),
+      ],
+      workflow: { entry: 'run', nodes, ...(teardown ? { teardown } : {}) },
     };
     await runner.run({
       recipeDocument: recipe,
@@ -424,6 +428,161 @@ describe('behavioral proof', () => {
     const bundle = await execute({ run: command, assert: assertion, done });
     validateRuntimeProof(bundle, 'behavior');
     assert.throws(() => validateRuntimeProof(bundle, 'missing'), /Smoke target/u);
+  });
+
+  test('visual live proof requires a capture of its own proof step and observed intent HUD', async () => {
+    const bundle = await execute({ run: command, assert: assertion, done });
+    const manifest = bundle.manifest as RecipeArtifactManifestDocument;
+    const observation = { visible: true, intent: assertion.intent };
+    const capture = (
+      before: unknown = observation,
+      after: unknown = observation,
+      nodeId = 'assert',
+    ) => ({
+      ...bundle,
+      manifest: {
+        ...manifest,
+        artifacts: [
+          ...manifest.artifacts,
+          {
+            path: 'proof.png',
+            type: 'screenshot',
+            nodeId,
+            metadata: { hud: { before, after } },
+          },
+        ],
+      },
+      artifactPaths: [...(bundle.artifactPaths ?? []), 'proof.png'],
+    });
+    const required = { captureRequired: true, hudRequired: true };
+    assert.throws(
+      () => validateRuntimeProof(bundle, 'behavior', undefined, required),
+      /no capture/,
+    );
+    assert.deepEqual(validateRuntimeProof(capture(), 'behavior', undefined, required), [
+      'proof.png',
+    ]);
+    assert.throws(
+      () => validateRuntimeProof(capture(null), 'behavior', undefined, required),
+      /rendered intent HUD/,
+    );
+    assert.throws(
+      () =>
+        validateRuntimeProof(
+          capture(observation, { ...observation, visible: false }),
+          'behavior',
+          undefined,
+          required,
+        ),
+      /rendered intent HUD/,
+    );
+    assert.throws(
+      () =>
+        validateRuntimeProof(
+          capture({ ...observation, intent: 'Another step' }),
+          'behavior',
+          undefined,
+          required,
+        ),
+      /rendered intent HUD/,
+    );
+    assert.throws(
+      () =>
+        validateRuntimeProof(
+          capture(observation, observation, 'run'),
+          'behavior',
+          undefined,
+          required,
+        ),
+      /no capture/,
+    );
+    assert.deepEqual(
+      validateRuntimeProof(capture(null, null), 'behavior', undefined, { captureRequired: true }),
+      ['proof.png'],
+    );
+  });
+
+  test('live HUD proof rejects a truncated intent in a retained package', async () => {
+    // Retained packages can predate authoring limits; the complete traced intent must be visible.
+    const intent =
+      'Verify the selected controller reports the expected state after the requested operation and retain the complete observed result so the reviewer can check the same account, network and selected target against the assertion.';
+    const bundle = await execute({ run: command, assert: { ...assertion, intent }, done });
+    const manifest = bundle.manifest as RecipeArtifactManifestDocument;
+    const hud = {
+      before: { visible: true, intent },
+      after: { visible: true, intent },
+    };
+    manifest.artifacts.push({
+      path: 'proof.png',
+      type: 'screenshot',
+      nodeId: 'assert',
+      metadata: { hud },
+    });
+    const captured = { ...bundle, artifactPaths: [...(bundle.artifactPaths ?? []), 'proof.png'] };
+    const required = { captureRequired: true, hudRequired: true };
+    assert.deepEqual(validateRuntimeProof(captured, 'behavior', undefined, required), [
+      'proof.png',
+    ]);
+    hud.after.intent = `${intent.slice(0, 179)}…`;
+    assert.throws(
+      () => validateRuntimeProof(captured, 'behavior', undefined, required),
+      /rendered intent HUD/,
+    );
+  });
+
+  test('live conformance requires an executed cleanup assertion in authored teardown', async () => {
+    const bundle = await execute(
+      {
+        run: {
+          ...command,
+          cmd: `node -e 'require("node:fs").writeFileSync("owned.txt", "owned"); console.log("expected")'`,
+        },
+        assert: assertion,
+        done,
+        cleanup: {
+          action: 'command',
+          cmd: `node -e 'const fs=require("node:fs");fs.unlinkSync("owned.txt");console.log(fs.existsSync("owned.txt") ? "still owned" : "cleaned")'`,
+          intent: 'Remove the owned file and observe its absence',
+          next: 'cleanup-check',
+        },
+        'cleanup-check': {
+          action: 'assert_output',
+          source: 'cleanup',
+          contains: 'cleaned',
+          proves: ['cleanup'],
+          intent: 'Verify the owned file was removed',
+          next: 'closed',
+        },
+        closed: done,
+      },
+      'cleanup',
+    );
+    validateRuntimeProof(bundle, 'behavior', 'cleanup');
+    assert.deepEqual(
+      validateRuntimeProofPlan(
+        bundle.recipe as Parameters<typeof validateRuntimeProofPlan>[0],
+        new Map(),
+        'cleanup',
+      ),
+      [],
+    );
+    assert.throws(
+      () => validateRuntimeProof(bundle, 'behavior', 'behavior'),
+      /no executed cleanup assertion/u,
+    );
+    const missing = await execute({ run: command, assert: assertion, done });
+    assert.throws(
+      () => validateRuntimeProof(missing, 'behavior', 'behavior'),
+      /no executed cleanup assertion/u,
+    );
+    assert.equal(
+      validateRuntimeProofPlan(
+        missing.recipe as Parameters<typeof validateRuntimeProofPlan>[0],
+        new Map(),
+        'behavior',
+      )[0]?.code,
+      'proof.teardown_assertion_missing',
+    );
   });
 
   test('rejects a passing package that only labels a command as proof', async () => {
@@ -581,6 +740,33 @@ describe('execution provenance', () => {
       writeExecutionProvenance(artifactsDir, [], [], path.join(artifactsDir, 'missing.json')),
       /missing\.json/u,
     );
+  });
+
+  test('a colocated library ignores generated output but still binds its recipe source', async () => {
+    const product = tempRoot('colocated-library-');
+    const recipePath = path.join(product, 'smoke.recipe.json');
+    fs.writeFileSync(recipePath, JSON.stringify(recipeDocument));
+    const artifacts = path.join(product, 'artifacts');
+    const input = {
+      adapter: 'web',
+      projectRoot: product,
+      recipeDocument,
+      recipePath,
+      librarySources: [{ name: 'local', root: product }],
+      runnerRoot: product,
+      runnerIncludes: ['smoke.recipe.json'],
+      excludedProductRoots: [artifacts],
+    };
+    const start = await captureExecutionProvenance(input, 'start');
+    fs.mkdirSync(artifacts);
+    fs.writeFileSync(path.join(artifacts, 'trace.json'), '{}');
+    assert.deepEqual(
+      executionProvenanceDrift(start, await captureExecutionProvenance(input, 'end')),
+      [],
+    );
+    fs.writeFileSync(recipePath, JSON.stringify({ ...recipeDocument, title: 'Changed source' }));
+    const drift = executionProvenanceDrift(start, await captureExecutionProvenance(input, 'end'));
+    assert.ok(drift.some((entry) => entry.field === 'libraries[0].sourceFingerprint'));
   });
 
   test('records stable snapshots, then recipe, library and product drift', async () => {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  conformanceChecksPass,
   digestRecipeDocument,
   type RecipeConformanceCheck,
   type RecipeConformanceIdentity,
@@ -46,13 +47,7 @@ export interface RecipeConformanceOptions {
   recipes: Array<{ recipe: string; params?: Record<string, unknown> }>;
 }
 
-export function conformanceChecksPass(checks: readonly RecipeConformanceCheck[]): boolean {
-  const required = checks.filter((check) => check.required);
-  return (
-    required.length > 0 &&
-    required.every((check) => check.status === 'pass' && check.evidence?.plan !== undefined)
-  );
-}
+export { conformanceChecksPass } from '@farmslot/protocol';
 
 /** Bind static and live claims to the same code, configuration and target identities. */
 export async function recipeConformanceIdentity(
@@ -194,10 +189,14 @@ export function assertConformanceReportCurrent(
   report: RecipeConformanceReport,
   identity: RecipeConformanceIdentity,
 ): void {
-  if (report.schemaVersion !== 1 || !sameConformanceIdentity(report.identity, identity)) {
+  if (
+    report.schemaVersion !== 1 ||
+    !['static', 'live'].includes(report.mode) ||
+    !sameConformanceIdentity(report.identity, identity)
+  ) {
     throw new Error('Conformance report is stale; rerun farmslot doctor --conformance.');
   }
-  if (report.status !== 'pass' || !conformanceChecksPass(report.checks)) {
+  if (report.status !== 'pass' || !conformanceChecksPass(report.checks, report.mode)) {
     throw new Error('Conformance report has no passing evidence for every required check.');
   }
 }
@@ -364,8 +363,8 @@ function withDirtyDigest(source: RecipeConformanceSource): RecipeConformanceSour
 export async function writeRecipeConformanceReport(
   artifactsDir: string,
   report: RecipeConformanceReport,
+  relative = 'conformance-report.json',
 ): Promise<string> {
-  const relative = 'conformance-report.json';
   await writeContainedArtifact(
     artifactsDir,
     relative,

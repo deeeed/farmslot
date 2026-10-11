@@ -3,6 +3,7 @@
 // rules as a `RecipeEngine`; the registered adapters supply platform behavior.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type {
   CommandOptions,
@@ -37,6 +38,8 @@ import {
 import { createCdpWebUiTransport } from '@farmslot/recipe-runner/runtime/cdp';
 import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runtime/react-native-bridge';
 
+import { RECIPE_CLI_VERSION } from '../version.js';
+
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
@@ -48,6 +51,8 @@ import {
   type ExecutionProvenanceInput,
   type ExecutionProvenanceSnapshot,
   ProvenanceDriftError,
+  sourceIsDirty,
+  sourceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
 import {
@@ -88,6 +93,7 @@ import { executedBrowser, recipeCdpPorts } from './run-report.js';
 import { EXIT } from './shared.js';
 
 export interface RecipeRunnerOptions<TMutation> {
+  captureHudEvidence?: boolean;
   quietStdout?: boolean;
   suppressLibraryResolutionLogs?: boolean;
   autoHud?: boolean;
@@ -159,6 +165,8 @@ export interface DefaultRecipeEngineOptions {
 /** Compose the existing SDK and runner contracts without a project engine. */
 export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine {
   const { runtime, catalog } = options;
+  const runnerRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const runnerSource = sourceSnapshot(runnerRoot);
   return {
     ...catalog,
     console: options.console ?? createDefaultConsoleClassifier([catalog.bundledLibrary.root]),
@@ -196,6 +204,7 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
         ? createStandardUiAdapters({
             actions: [...declared].filter((action) => !codedNames.has(action)),
             transport: transport.base,
+            captureHudEvidence: runnerOptions.captureHudEvidence,
           }).map(
             (entry) =>
               ({
@@ -325,6 +334,15 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
       const videoRecorder = await runtime.recording?.videoRecorder?.();
       return createRecipeRunner({
         actionManifest: manifest,
+        runner: {
+          name: '@farmslot/recipe-cli',
+          version: RECIPE_CLI_VERSION,
+          source: runnerRoot,
+          git_ref:
+            runnerSource.head && !sourceIsDirty(runnerSource)
+              ? runnerSource.head
+              : `sha256:${runnerSource.sourceFingerprint}`,
+        },
         adapters: finalAdapters,
         defaultSource: { kind: 'operator', trust: 'trusted', name: harnessHost().packageName },
         logger: {
@@ -586,6 +604,8 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
   const surface = harnessAdapter(adapter);
   const suppressAutoHud = surface.run?.autoHud?.() === false;
   const runnerOptions = {
+    captureHudEvidence:
+      runtimeOptions.cli?.captureHudEvidence === true && !suppressAutoHud && !surface.headless,
     quietStdout: runtimeOptions.stdoutIsMachineContract === true,
     suppressLibraryResolutionLogs: runtimeOptions.suppressLibraryResolutionLogs,
     // Every source follows the run's HUD policy: the runner owns the HUD node

@@ -19,6 +19,7 @@ import {
   type DoctorCommandOptions,
   handleChecklist,
   handleDoctor,
+  handleLogs,
   handlePrepare,
   handleRecipeQuality,
   handleStatus,
@@ -229,6 +230,82 @@ async function withResolvedContext<T>(
     setHarnessContext(undefined);
   }
 }
+
+describe('runtime log selection', () => {
+  function logAdapter(appLabel = 'client', appExists = true): string {
+    const target = tempRoot();
+    const buildLog = path.join(target, 'build.log');
+    const appLog = path.join(target, 'console.log');
+    fs.writeFileSync(buildLog, 'build ready\n');
+    if (appExists) fs.writeFileSync(appLog, 'client ready\n');
+    useAdapters(
+      fakeAdapter('shop', {
+        logSources: () => [{ label: 'build', path: buildLog }],
+        appLogSource: () => ({ label: appLabel, path: appLog }),
+      }),
+    );
+    return target;
+  }
+
+  for (const source of [undefined, 'client', 'app', 'build']) {
+    test(`selects ${source ?? 'the named application log by default'} without reading log contents`, async () => {
+      const target = logAdapter();
+      const result = await capture(() =>
+        handleLogs(
+          parseArgs([
+            '--adapter',
+            'shop',
+            '--target',
+            target,
+            '--json',
+            ...(source ? ['--source', source] : []),
+          ]),
+        ),
+      );
+      assert.equal(result.result, 0);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.source, source ?? 'client');
+      assert.equal(
+        output.logFile,
+        path.join(target, source === 'build' ? 'build.log' : 'console.log'),
+      );
+      assert.doesNotMatch(result.stdout, /client ready|build ready/u);
+    });
+  }
+
+  test('a generic app log keeps the declared build source as default', async () => {
+    const target = logAdapter('app');
+    const result = await capture(() =>
+      handleLogs(parseArgs(['--adapter', 'shop', '--target', target, '--json'])),
+    );
+    assert.equal(result.result, 0);
+    assert.equal(JSON.parse(result.stdout).source, 'build');
+  });
+
+  test('a missing selected app log fails without falling back to available build output', async () => {
+    const target = logAdapter('client', false);
+    const result = await capture(() =>
+      handleLogs(parseArgs(['--adapter', 'shop', '--target', target, '--json'])),
+    );
+    assert.equal(result.result, 1);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.status, 'fail');
+    assert.equal(output.source, 'client');
+    assert.equal(output.error.code, 'APP_LOG_UNAVAILABLE');
+    assert.equal(output.error.userAction, 'launch shop');
+  });
+
+  test('an unknown source fails without selecting any available output', async () => {
+    const target = logAdapter();
+    const result = await capture(() =>
+      handleLogs(
+        parseArgs(['--adapter', 'shop', '--target', target, '--json', '--source', 'typo']),
+      ),
+    );
+    assert.equal(result.result, 2);
+    assert.match(result.stdout, /Available: build, client, app/u);
+  });
+});
 
 describe('the doctor report', () => {
   test('lists the manifest check, then the host checks, then the platform checks, and tallies the required ones', () => {
@@ -545,6 +622,50 @@ describe('doctor', () => {
     assert.equal(envelope.next, envelope.error.userAction);
   });
 
+  test('an optional recorder failure refuses live readiness and the ready indicator', async () => {
+    shopHost();
+    let recording = false;
+    useAdapters(
+      fakeAdapter('shop', {
+        readiness: {
+          readyIndicator: () => 'READY',
+          recorder: async () => ({
+            id: 'recorder',
+            required: true,
+            status: recording ? 'pass' : 'fail',
+            message: 'Device recorder',
+            userAction: 'repair recorder',
+          }),
+        },
+      }),
+    );
+    const target = doctorTarget();
+    const check = await capture(() =>
+      handleDoctor(
+        parseArgs(['--adapter', 'shop', '--target', target, '--expect-live', '--json']),
+        { manifest: manifestOk },
+      ),
+    );
+    assert.equal(check.result, 1);
+    assert.equal(JSON.parse(check.stdout).ready, false);
+    assert.equal(JSON.parse(check.stdout).error.code, 'RECORDER_UNAVAILABLE');
+    const blocked = await capture(() =>
+      handleDoctor(parseArgs(['--adapter', 'shop', '--target', target, '--print-ready']), {
+        manifest: manifestOk,
+      }),
+    );
+    assert.equal(blocked.result, 1);
+    assert.equal(blocked.stdout, '');
+    recording = true;
+    const ready = await capture(() =>
+      handleDoctor(parseArgs(['--adapter', 'shop', '--target', target, '--print-ready']), {
+        manifest: manifestOk,
+      }),
+    );
+    assert.equal(ready.result, 0);
+    assert.equal(ready.stdout, 'READY');
+  });
+
   test('--fix lists the host next steps first, then the shared ones, and lets the host word the error', async () => {
     shopHost();
     process.env.SHOP_HARNESS_EXECUTABLE = '/opt/bin/shop-harness';
@@ -561,7 +682,10 @@ describe('doctor', () => {
           ensureRuntimeContext: () => {
             throw new Error('unwritable');
           },
-          repair: () => ({ fixed: [], failed: ['wallet'] }),
+          repair: async () => {
+            await Promise.resolve();
+            return { fixed: [], failed: ['wallet'] };
+          },
           nextActions: (failed, { executable, scope }) =>
             failed.includes('wallet') ? [`${executable} wallet init ${scope}`] : [],
           userAction: (failed, retry) =>

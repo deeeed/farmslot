@@ -78,6 +78,7 @@ interface DispatchWizardViewContext {
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
   profileFitSuggestion: ProfileFitSuggestion | null;
+  recipeCompatibilityControl?: unknown;
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   comparisonLane: boolean;
@@ -261,6 +262,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               variantInput: ctx.variantInput,
               setVariantInput: ctx.setVariantInput,
             })}
+            ${ctx.recipeCompatibilityControl ?? nothing}
             ${renderPublicationReviewConfig({
               enabled: ctx.publicationReviewsEnabled,
               flowType: ctx.flowType,

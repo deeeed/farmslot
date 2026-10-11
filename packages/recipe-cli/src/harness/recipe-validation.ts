@@ -118,11 +118,13 @@ export async function validateRecipeAdapterAware(
   rootRef?: string,
   params?: Record<string, unknown>,
   proof = false,
+  teardownProofTarget?: string,
+  smokeTarget?: string,
 ): Promise<RecipeValidationResult> {
   let externalRecipeIds: ReadonlySet<string> | undefined;
   let libraryResolution: Awaited<ReturnType<typeof loadRecipeLibraries>> | undefined;
-  if (librarySources && librarySources.length > 0) {
-    libraryResolution = await loadRecipeLibraries(librarySources, {
+  if ((librarySources && librarySources.length > 0) || proof) {
+    libraryResolution = await loadRecipeLibraries(librarySources ?? [], {
       adapter,
     });
     externalRecipeIds = new Set(libraryResolution.recipes.keys());
@@ -206,6 +208,8 @@ export async function validateRecipeAdapterAware(
                 dependency.document as unknown as ProofDocument,
               ]),
             ),
+            teardownProofTarget,
+            smokeTarget,
           ),
         );
       }
@@ -329,6 +333,8 @@ export async function validateRunRecipeStatic(
         resolved.ref,
         effectiveParams,
         optionFlag(options, 'proof'),
+        optionString(options, 'teardownProofTarget'),
+        optionString(options, 'smokeTarget'),
       )
     : {
         status: 'invalid' as const,

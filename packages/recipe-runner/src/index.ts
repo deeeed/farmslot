@@ -77,6 +77,7 @@ export {
   SHARED_RECIPE_SCOPE,
 } from './core/library-manifest.js';
 export { resolveRecipeParams, resolveRecipeValue } from './core/parameters.js';
+export { digestFileWithinRoot } from './core/path.js';
 export { RecipeResolutionError } from './core/resolution-error.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export {

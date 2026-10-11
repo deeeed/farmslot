@@ -4,6 +4,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
+- Bind live recipe conformance to named runtime and teardown proof targets, retained artifact digests and typed capture metadata.
+
 ## 0.38.0 - 2026-10-11
 
 - Declare connection-scoped node execution and cancellation support.

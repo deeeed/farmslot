@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Expose optional device-recorder readiness to shared project doctor commands.
+
 ## 0.8.6 - 2026-10-11
 
 - Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.

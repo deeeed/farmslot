@@ -625,3 +625,21 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     },
   );
 }
+
+for (const command of ['launch', 'reload', 'stop', 'logs']) {
+  test(`${command} receives owned-child cancellation without recipe authority`, async (t) => {
+    const options = fixture(t);
+    const control = new AbortController();
+    const hookLog = path.join(options.cwd, 'hooks.log');
+    await withProjectRecipeHost(
+      { ...options, command, signal: control.signal, options: { hookLog } },
+      async (host) => {
+        assert.ok(host.signal);
+        assert.equal(recipeExecutionSignal(), host.signal);
+        control.abort(new Error('operator cancelled'));
+        assert.equal(host.signal.aborted, true);
+      },
+    );
+    assert.equal(fs.readFileSync(hookLog, 'utf8'), 'cancel\nfinalize\n');
+  });
+}

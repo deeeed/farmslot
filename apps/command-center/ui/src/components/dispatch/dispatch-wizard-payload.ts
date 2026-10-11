@@ -1,6 +1,7 @@
 import type {
   DevInteractiveProfile,
   DispatchCandidatesParams,
+  DispatchPreviewParams,
   DispatchQueueAddParams,
   FlowType,
   NativeProfileReference,
@@ -120,6 +121,36 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     pressureAdmissionRef: input.pressureAdmissionRef,
     pressureOverride: input.pressureOverride,
     ...input.comparison,
+  };
+}
+
+export function buildDispatchPreviewParams(input: DispatchPayloadDraft): DispatchPreviewParams {
+  return {
+    project: input.project,
+    flowType: input.flowType,
+    ticketOrPr: input.ticketOrPr,
+    slotId: input.slotId,
+    allowedSlots: input.allowedSlots,
+    targetBranch: input.branch,
+    app: input.app,
+    domain: input.domain,
+    executionTemplateId: input.executionTemplateId,
+    qaProfileId: input.qaProfileId,
+    qaInputs: input.qaInputs,
+    runner: input.runner,
+    model: input.model,
+    effort: input.effort,
+    transport: input.transport,
+    nativeProfile: input.nativeProfile,
+    reviewWorkspaceTarget: input.reviewWorkspaceTarget,
+    mode: input.mode,
+    skipPrepare: input.skipPrepare,
+    prepareProfile: effectivePrepareProfile(input),
+    freshReuse: input.freshReuse,
+    pressureOverride: input.pressureOverride,
+    familyId: input.comparison.familyId,
+    lane: input.comparison.lane,
+    variant: input.comparison.variant,
   };
 }
 

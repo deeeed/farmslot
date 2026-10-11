@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Command } from 'commander';
+
 import { digestRecipeDocument } from '@farmslot/protocol';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
-import { validateRecipeArtifactDirectory } from './recipe.js';
+import { registerRecipeCommand, validateRecipeArtifactDirectory } from './recipe.js';
 
 const runner = {
   name: 'test-runner',
@@ -160,9 +162,82 @@ test('validateRecipeArtifactDirectory rejects trace status that contradicts summ
   });
   assert.equal(result.status, 'fail');
   assert.ok(
-    result.checks.some(
-      (check) => check.id === 'trace.status_matches_summary' && check.status === 'fail',
+    result.recipe.findings.some(
+      (finding) =>
+        finding.code === 'artifact_package.summary_status_mismatch' && finding.severity === 'error',
     ),
+  );
+});
+
+test('artifact inspection uses the protocol outcome for an explicitly partial run', async (t) => {
+  const partialRecipe = {
+    ...recipe,
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: {
+          action: 'command',
+          cmd: 'printf observed',
+          intent: 'Read the local value',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+  const artifactDir = await createArtifactPackage({
+    metadata: { runner },
+    entries: [
+      {
+        ...traceEntry,
+        nodeId: 'read',
+        action: 'command',
+        intent: 'Read the local value',
+        status: undefined,
+        next: 'done',
+        output: { stdout: 'observed', exitCode: 0 },
+      },
+    ],
+  });
+  t.after(() => rm(artifactDir, { recursive: true, force: true }));
+  await writeJson(path.join(artifactDir, 'recipe.json'), partialRecipe);
+  await writeJson(path.join(artifactDir, 'recipe-resolution.json'), {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(partialRecipe) },
+    dependencies: [],
+    edges: [],
+  });
+  const summary = JSON.parse(await readFile(path.join(artifactDir, 'summary.json'), 'utf8'));
+  await writeJson(path.join(artifactDir, 'summary.json'), {
+    ...summary,
+    status: 'unknown',
+    stopAfterNode: 'read',
+  });
+  const manifest = JSON.parse(
+    await readFile(path.join(artifactDir, 'artifact-manifest.json'), 'utf8'),
+  );
+  await writeJson(path.join(artifactDir, 'artifact-manifest.json'), {
+    ...manifest,
+    runStatus: 'unknown',
+  });
+  const result = await validateRecipeArtifactDirectory(artifactDir, {
+    requireRunnerProvenance: true,
+  });
+  assert.equal(result.recipe.status, 'valid', JSON.stringify(result.recipe.findings));
+  assert.ok(
+    result.recipe.findings.some((finding) => finding.code === 'artifact_package.partial_run'),
+  );
+  assert.equal(result.status, 'pass', JSON.stringify(result.checks));
+  assert.equal(result.liveEvidence, undefined);
+  const live = await validateRecipeArtifactDirectory(artifactDir, {
+    requireRunnerProvenance: true,
+    liveProof: { smokeTarget: 'read', teardownTarget: 'cleanup' },
+  });
+  assert.equal(live.status, 'fail');
+  assert.equal(live.liveEvidence, undefined);
+  assert.match(
+    live.checks.find((check) => check.id === 'runtime.proof')!.message,
+    /Runtime recipe did not pass/u,
   );
 });
 
@@ -177,8 +252,9 @@ test('validateRecipeArtifactDirectory rejects trace counts that contradict summa
   });
   assert.equal(result.status, 'fail');
   assert.ok(
-    result.checks.some(
-      (check) => check.id === 'trace.counts_match_summary' && check.status === 'fail',
+    result.recipe.findings.some(
+      (finding) =>
+        finding.code === 'artifact_package.summary_count_mismatch' && finding.severity === 'error',
     ),
   );
 });
@@ -313,4 +389,52 @@ test('validateRecipeArtifactDirectory rejects array traces when runner provenanc
     result.checks.filter((check) => check.status === 'fail').map((check) => check.id),
     ['runner.provenance.trace', 'runner.provenance.matches'],
   );
+});
+
+test('public artifacts inspects, renders Markdown and refuses invalid provenance', async (t) => {
+  const artifactDir = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  const write = process.stdout.write;
+  const previousExit = process.exitCode;
+  let captured = '';
+  t.after(async () => {
+    process.stdout.write = write;
+    process.exitCode = previousExit;
+    await rm(artifactDir, { recursive: true, force: true });
+  });
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  const invoke = async (flags: string[]) => {
+    captured = '';
+    process.exitCode = 0;
+    const program = new Command().name('farmslot').option('--json').exitOverride();
+    registerRecipeCommand(program);
+    await program.parseAsync(['recipe', 'artifacts', artifactDir, ...flags], { from: 'user' });
+    return captured;
+  };
+  const inspected = JSON.parse(await invoke(['--json', '--validate']));
+  assert.equal(inspected.validation.status, 'pass');
+  assert.equal(inspected.summary.status, 'pass');
+  const markdown = await invoke(['--format', 'markdown']);
+  assert.match(markdown, /- <code>trace.json<\/code>/u);
+  await writeJson(path.join(artifactDir, 'trace.json'), {
+    metadata: { runner: { ...runner, git_ref: 'other' } },
+    entries: [traceEntry],
+  });
+  const invalid = JSON.parse(await invoke(['--json', '--validate']));
+  assert.equal(invalid.validation.status, 'fail');
+  assert.equal(process.exitCode, 1);
+});
+
+test('live artifact evidence refuses a passing package without runtime and cleanup assertions', async (t) => {
+  const artifactDir = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(artifactDir, { recursive: true, force: true }));
+  const result = await validateRecipeArtifactDirectory(artifactDir, {
+    requireRunnerProvenance: true,
+    liveProof: { smokeTarget: 'behavior', teardownTarget: 'cleanup' },
+  });
+  assert.equal(result.status, 'fail');
+  assert.equal(result.liveEvidence, undefined);
+  assert.equal(result.checks.find((check) => check.id === 'runtime.proof')?.status, 'fail');
 });

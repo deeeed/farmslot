@@ -104,6 +104,8 @@ export interface AdapterReadiness {
   checks?(target: string, platform?: string): AdapterDoctorCheck[];
   // Checks that need the live runtime, appended after the runtime check.
   liveChecks?(target: string): Promise<AdapterDoctorCheck[]>;
+  // Optional device recorder readiness, checked only after the runtime is ready.
+  recorder?(): Promise<AdapterDoctorCheck | undefined>;
   // Reported as the doctor report's `environment`.
   environment?(target: string): Record<string, unknown>;
   // Extra human doctor lines.

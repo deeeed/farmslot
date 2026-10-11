@@ -4,6 +4,10 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use shared protocol outcomes for artifact validation; retain partial-run warnings without certifying partial results as live proof.
+
+- Run project lifecycle commands through the declared provider and inspect retained recipe evidence with journal-backed status. Logs preserve application-source selection and `--full` raw follow. Recipe commands and conformance use the explicitly selected Farmslot root's registry before an inherited workspace, keeping project and pool resolution together.
+
 - Run the public CLI in its invoking process so signals sent to its PID reach recipe cancellation and teardown. Preserve checkout TypeScript mappings and the scripted-runner entry.
 
 - Reject project packs with private home paths or fixed machine references before project add or update. Validation, registration and update migrations use the same configured pool file. Project copies preserve relative links, and unchanged add/update repairs only recognized links converted by older copies.

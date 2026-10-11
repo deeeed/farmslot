@@ -210,6 +210,13 @@ test('headless SDK runtime executes a real command and retains the artifact pack
   );
   for (const file of [result.summaryPath, result.artifactManifestPath, result.tracePath])
     assert.ok(fs.statSync(file).size > 0);
+  const summary = JSON.parse(fs.readFileSync(result.summaryPath, 'utf8'));
+  const trace = JSON.parse(fs.readFileSync(result.tracePath, 'utf8'));
+  const artifacts = JSON.parse(fs.readFileSync(result.artifactManifestPath, 'utf8'));
+  assert.equal(summary.runner.name, '@farmslot/recipe-cli');
+  assert.match(summary.runner.git_ref, /^(?:[a-f0-9]{40}|sha256:[a-f0-9]{64})$/u);
+  assert.deepEqual(trace.metadata.runner, summary.runner);
+  assert.deepEqual(artifacts.provenance.runner, summary.runner);
   assert.equal('diagnosticsPath' in result, false);
 });
 

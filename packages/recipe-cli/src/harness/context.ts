@@ -586,6 +586,12 @@ export interface ResolveProjectContextOptions extends ResolveHarnessContextOptio
 export interface ProjectProvider {
   runtime: PlatformAdapter;
   engine?: RecipeEngine;
+  /** Project presentation and owned companions consumed by the shared lifecycle handlers. */
+  commandOptions?: {
+    doctor?: Partial<import('./commands/doctor.js').DoctorCommandOptions>;
+    status?: import('./commands/status.js').StatusCommandOptions;
+    stop?: import('./commands/stop.js').StopCommandOptions;
+  };
   cancel?(): void | Promise<void>;
   finalize?(): void | Promise<void>;
 }
@@ -594,7 +600,10 @@ export interface LoadProjectProviderOptions {
   /** Exact module paths or declared refs authorized by this invocation's operator. */
   authorizedProviders?: readonly string[];
   host?: HarnessHostConfig;
-  hostHints?: Pick<HarnessHostConfig, 'doctorHint' | 'supportsLast'>;
+  hostHints?: Pick<
+    HarnessHostConfig,
+    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands'
+  >;
   command?: string;
   options?: CliOptions;
   /** Target and paths already resolved by the shared host, authoritative over raw input. */

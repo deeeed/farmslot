@@ -146,6 +146,7 @@ export interface DispatchRequest {
 }
 
 export interface DispatchPreview {
+  recipeCompatibility?: import('./recipe-conformance.js').RecipeProjectCompatibility;
   slotId: string | null;
   reviewWorkspace?: {
     machine: string;

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Collect opt-in rendered HUD observations around screenshot capture for live conformance.
+
 ## 0.6.10 - 2026-10-11
 
 - Align published runtime dependencies with recipe-runner 0.29.0 for shared cancellation and execution.

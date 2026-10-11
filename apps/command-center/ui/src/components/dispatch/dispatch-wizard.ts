@@ -20,6 +20,7 @@ import { failedRunCancelEffects, Methods, workspacePolicyMachines } from '@farms
 import './execution-template-preview-modal.js';
 import '../shared/choice-picker.js';
 import './dispatch-native-profiles.js';
+import './recipe-compatibility-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -86,6 +87,7 @@ import {
   requestProjectConfigs,
   requestUnfilteredTemplateOptions,
 } from './dispatch-wizard-loaders.js';
+import { buildDispatchPreviewParams } from './dispatch-wizard-payload.js';
 import { parseDispatchWizardHash, syncPublicationReviewsHash } from './dispatch-wizard-prefill.js';
 import {
   candidateDispatchable,
@@ -1482,6 +1484,24 @@ export class DispatchWizard extends DispatchWizardState {
     );
   }
 
+  private _recipeCompatibilityControl() {
+    if (!this._flowType || this._flowType === 'review-pr' || !this._project) return nothing;
+    try {
+      const draft = this._dispatchPayloadDraft();
+      return html`<recipe-compatibility-panel
+        .request=${draft ? buildDispatchPreviewParams(draft) : null}
+        .disabled=${this.mockMode ||
+        this._dispatching ||
+        this._connectionStale ||
+        !this._ticketId.trim()}
+      ></recipe-compatibility-panel>`;
+    } catch (error) {
+      return html`<recipe-compatibility-panel
+        .unavailable=${error instanceof Error ? error.message : String(error)}
+      ></recipe-compatibility-panel>`;
+    }
+  }
+
   private _workspaceMachine(): string {
     const filters = getState().globalFilters.machines;
     if (this._reviewMachine.trim()) return this._reviewMachine.trim();
@@ -1851,6 +1871,7 @@ export class DispatchWizard extends DispatchWizardState {
       prepareProfiles: projectPrepareProfiles(this._projectConfigs, this._project),
       prepareProfile: this._prepareProfile,
       profileFitSuggestion: this._profileFitSuggestion,
+      recipeCompatibilityControl: this._recipeCompatibilityControl(),
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
       comparisonLane: this._comparisonLane,

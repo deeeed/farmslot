@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "description": "Create and read one owned note, then prove teardown removed it.",
+  "proofTargets": [
+    {
+      "id": "note",
+      "claim": "The owned note contains hello recipe."
+    },
+    {
+      "id": "cleanup",
+      "claim": "The owned note no longer exists."
+    }
+  ],
+  "workflow": {
+    "entry": "create",
+    "teardown": "cleanup",
+    "nodes": {
+      "create": {
+        "action": "example.note",
+        "operation": "create",
+        "intent": "Create one owned note.",
+        "next": "observe"
+      },
+      "observe": {
+        "action": "example.note",
+        "operation": "observe",
+        "intent": "Read the note from disk.",
+        "next": "check"
+      },
+      "check": {
+        "action": "assert_output",
+        "source": "observe",
+        "contains": "hello recipe",
+        "proves": ["note"],
+        "intent": "Verify the observed note value.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cleanup": {
+        "action": "example.note",
+        "operation": "cleanup",
+        "intent": "Remove the note this provider owns.",
+        "next": "cleanup-check"
+      },
+      "cleanup-check": {
+        "action": "assert_output",
+        "source": "cleanup",
+        "contains": "removed",
+        "proves": ["cleanup"],
+        "intent": "Verify the note is absent.",
+        "next": "closed"
+      },
+      "closed": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

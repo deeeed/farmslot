@@ -1014,6 +1014,65 @@ export class CdpWebPage {
     };
   }
 
+  async #observeHud(): Promise<unknown> {
+    interface HudNode {
+      backendNodeId: number;
+      attributes?: string[];
+      children?: HudNode[];
+      shadowRoots?: HudNode[];
+    }
+    const { root } = await this.session.call<{ root: { nodeId: number } }>('DOM.getDocument', {
+      depth: 0,
+    });
+    const { nodeId } = await this.session.call<{ nodeId: number }>('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: '[data-farmslot-hud-node]',
+    });
+    if (!nodeId) return { visible: false };
+    const { node } = await this.session.call<{ node: HudNode }>('DOM.describeNode', {
+      nodeId,
+      depth: -1,
+      pierce: true,
+    });
+    const findIntent = (entry: HudNode): HudNode | undefined => {
+      const attributes = entry.attributes ?? [];
+      for (let i = 0; i < attributes.length; i += 2)
+        if (attributes[i] === 'data-farmslot-hud-intent') return entry;
+      for (const child of [...(entry.children ?? []), ...(entry.shadowRoots ?? [])]) {
+        const found = findIntent(child);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const intent = findIntent(node);
+    if (!intent) return { visible: false };
+    const { object } = await this.session.call<{ object: { objectId?: string } }>(
+      'DOM.resolveNode',
+      { backendNodeId: intent.backendNodeId },
+    );
+    if (!object.objectId) throw new Error('CDP could not resolve the rendered HUD intent.');
+    try {
+      const observed = await this.session.call<{
+        result: { value?: unknown };
+        exceptionDetails?: unknown;
+      }>('Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        returnByValue: true,
+        functionDeclaration: `function() {
+          ${deepQueryHelpersExpression()}
+          const bounds = this.getBoundingClientRect();
+          const visible = isRenderedDeep(this) && bounds.width > 0 && bounds.height > 0 &&
+            bounds.top >= 0 && bounds.left >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight;
+          return { visible, intent: this.textContent || '', provider: 'cdp-rendered-hud' };
+        }`,
+      });
+      if (observed.exceptionDetails) throw new Error('CDP rendered HUD observation failed.');
+      return observed.result.value;
+    } finally {
+      await this.session.call('Runtime.releaseObject', { objectId: object.objectId });
+    }
+  }
+
   async observe(refs: readonly UiObserverRef[]): Promise<RecipeObservationResult> {
     const observations: Record<string, unknown> = {};
     const warnings: RecipeObservationResult['warnings'] = [];
@@ -1023,6 +1082,8 @@ export class CdpWebPage {
           observations[ref] = await this.evaluate(
             `(() => { const hashPath = location.hash.split('?')[0]; const hashRoute = hashPath && !hashPath.includes('=') ? hashPath : undefined; return { provider: 'cdp-web', name: document.title || location.pathname || hashRoute || 'Browser', title: document.title || undefined, route: hashRoute || location.pathname || undefined, url: location.origin + location.pathname }; })()`,
           );
+        } else if (ref === 'ui.hud') {
+          observations[ref] = await this.#observeHud();
         } else if (ref === 'ui.visible') {
           observations[ref] = await this.evaluate(visibleTargetsExpression());
         } else {
@@ -1589,6 +1650,7 @@ async function renderCdpHud(
       document.getElementById(id)?.remove();
       const el = document.createElement('div');
       el.id = id;
+      el.setAttribute('data-farmslot-hud-node', payload.nodeId);
       el.setAttribute('aria-hidden', 'true');
       Object.assign(el.style, {
         position: 'fixed',
@@ -1656,6 +1718,7 @@ async function renderCdpHud(
       Object.assign(body.style, { minWidth: '0', flex: '1' });
       const line1 = document.createElement('div');
       Object.assign(line1.style, { color: '#fff', fontWeight: '750', lineHeight: '1.25', whiteSpace: 'normal' });
+      line1.setAttribute('data-farmslot-hud-intent', '');
       line1.textContent = payload.text || payload.nodeId;
       const line2 = document.createElement('div');
       Object.assign(line2.style, {

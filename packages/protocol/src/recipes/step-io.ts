@@ -56,6 +56,8 @@ export interface RecipeRecordingInterruption {
 }
 
 export interface RecipeArtifactManifestEntry {
+  /** Provider capture facts retained with this artifact, including live HUD observations. */
+  metadata?: Record<string, unknown>;
   path: string;
   type: RecipeArtifactTypeName;
   label?: string;

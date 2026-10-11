@@ -354,9 +354,11 @@ describe('web-dapp HUD drawing', () => {
     assert.equal(host.shadowMode, 'closed');
     const [head, line] = host.shadow.children.find((child) => child.className === 'hud').children;
     assert.equal(head.children.find((child) => child.className === 'step').textContent, 'step 2/5');
-    const [badge] = line.children;
+    const [badge, renderedIntent] = line.children;
     assert.deepEqual([badge.className, badge.textContent], ['badge running', 'RUN']);
-    assert.equal(line.textContent, ` ${capped.current.intent}`);
+    assert.equal(line.textContent, ' ');
+    assert.equal(renderedIntent.attributes['data-farmslot-hud-intent'], '');
+    assert.equal(renderedIntent.textContent, capped.current.intent);
   });
 
   it('is a no-op for the same state, replaces a newer one and clears on null', () => {

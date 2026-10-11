@@ -6,6 +6,7 @@ import type { DispatchQueueAddParams, RunCreateParams } from '@farmslot/protocol
 
 import {
   buildDispatchCandidatesParams,
+  buildDispatchPreviewParams,
   buildDispatchQueueAddParams,
   buildRunCreateParams,
   type DispatchPayloadDraft,
@@ -35,6 +36,47 @@ const baseDraft = {
   pendingReviewPlan: undefined,
   comparison: {},
 } satisfies Partial<DispatchPayloadDraft>;
+
+test('compatibility preview preserves the dispatch target, QA preset and template selection', () => {
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    project: 'example',
+    flowType: 'qa',
+    ticketOrPr: 'Validate checkout',
+    slotId: 'selected-slot',
+    app: 'apps/mobile',
+    domain: 'payments',
+    executionTemplateId: 'validation/shared',
+    qaProfileId: 'pr',
+    qaInputs: { smoke: 'payments/smoke' },
+    mode: 'autonomous',
+    devInteractiveProfile: 'reviewed',
+    branch: 'selected-branch',
+    prepareProfile: 'configured',
+    skipPrepare: true,
+    comparison: { familyId: 'family', variant: 'candidate' },
+  };
+  const preview = buildDispatchPreviewParams(draft);
+  const run = buildRunCreateParams(draft);
+  for (const key of [
+    'project',
+    'flowType',
+    'slotId',
+    'app',
+    'domain',
+    'executionTemplateId',
+    'qaProfileId',
+    'qaInputs',
+    'mode',
+    'skipPrepare',
+    'prepareProfile',
+    'familyId',
+    'variant',
+  ] as const)
+    assert.deepEqual(preview[key], run[key], key);
+  assert.equal(preview.targetBranch, run.branch);
+  assert.equal(preview.prepareProfile, undefined);
+});
 
 test('native queue and direct dispatch preserve transport and preparation intent', () => {
   const draft: DispatchPayloadDraft = {

@@ -125,6 +125,7 @@ export function hudRenderExpression(state, appOrigin) {
     existing?.remove();
     const host = document.createElement('${HUD_ELEMENT}');
     host.dataset.seq = String(state.seq);
+    host.setAttribute('data-farmslot-hud-node', state.current?.nodeId || '');
     host.setAttribute('aria-hidden', 'true');
     host.inert = true;
     host.style.cssText = 'all: initial; position: fixed; inset: 0 auto auto 0; width: 0; height: 0; pointer-events: none; z-index: 2147483647;';
@@ -140,7 +141,9 @@ export function hudRenderExpression(state, appOrigin) {
     if (state.current) {
       const line = el('div', 'intent');
       const status = state.finished || 'running';
-      line.append(el('span', 'badge ' + status, status === 'running' ? 'RUN' : status.toUpperCase()), ' ', state.current.intent);
+      const intent = el('span', null, state.current.intent);
+      intent.setAttribute('data-farmslot-hud-intent', '');
+      line.append(el('span', 'badge ' + status, status === 'running' ? 'RUN' : status.toUpperCase()), ' ', intent);
       box.append(line);
     }
     if (state.last && !state.finished) {

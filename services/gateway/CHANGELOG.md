@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
+- Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
 - Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
 - Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
 - Run replay and startup recovery reuse the run branch. New-work prepare refuses to replace a published branch with commits outside the default branch or recorded start ref, and reports those commits before resetting or deleting any branch.

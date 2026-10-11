@@ -106,6 +106,15 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  readConfiguredExecutionTemplateSnapshot,
+  resolveConfiguredExecutionTemplateForSlot,
+} from '../../tasks/execution-template-catalog.js';
+import {
+  assertRecipeDispatchRequirements,
+  checkRecipeDispatchRequirements,
+} from '../../tasks/recipe-dispatch-check.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
@@ -1137,6 +1146,33 @@ export async function dispatchExecute(
       ?.toLowerCase()
       .replace(/\s+/g, '-') || '';
   const flowType = currentRun?.flowType || taskProfileFlowType || workerHeadingFlowType;
+  const runRecipeGate = async (): Promise<void> => {
+    if (
+      !projectVars ||
+      !projectUsesExecutionTemplateCatalog(projectVars) ||
+      flowType === 'review-pr'
+    )
+      return;
+    const selected = currentRun?.executionTemplate
+      ? readConfiguredExecutionTemplateSnapshot(projectVars, {
+          ...currentRun.executionTemplate,
+          flow: flowType,
+        })
+      : resolveConfiguredExecutionTemplateForSlot(projectVars, {
+          flow: flowType,
+          platform: vars.platform,
+          runMode: params.mode ?? 'autonomous',
+          explicitDomain: currentRun?.domain,
+          slotDomain: vars.domain,
+        });
+    assertRecipeDispatchRequirements(
+      await checkRecipeDispatchRequirements(projectVars, vars, selected.entry, {
+        app: selectedApp || undefined,
+        domain: currentRun?.domain ?? vars.domain,
+      }),
+    );
+    options.assertCurrent?.();
+  };
   const defaultFlowKey =
     flowTypeToKey(taskProfileFlowType) ||
     flowTypeToKey(flowType) ||
@@ -1501,6 +1537,8 @@ export async function dispatchExecute(
   if (selectedApp) {
     await updateSlotStatus(params.slotId, { app: selectedApp });
   }
+
+  await runRecipeGate();
 
   // 3. Copy task to worker
   step('copy', 'Copying task files...');

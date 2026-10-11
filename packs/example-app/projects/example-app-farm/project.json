@@ -4,7 +4,8 @@
   "type": "standalone",
   "default_branch": "main",
   "paths": {
-    "runtime_dir": ".agent"
+    "runtime_dir": ".agent",
+    "artifact_dir": ".agent/artifacts"
   },
   "defaults": {
     "dev": {
@@ -34,6 +35,51 @@
   "platforms": {
     "cli": {
       "device_check": "true"
+    }
+  },
+  "recipe": {
+    "adapter": "headless",
+    "domain": "example",
+    "provider": {
+      "module": "./provider.mjs"
+    }
+  },
+  "node_support": {
+    "paths": ["projects/example-app-farm"]
+  },
+  "execution_templates": {
+    "sources": [],
+    "defaults": [
+      {
+        "when": {
+          "flow": "qa"
+        },
+        "templateId": "qa/recipe-smoke"
+      },
+      {
+        "when": {
+          "flow": "dev"
+        },
+        "templateId": "dev/default"
+      }
+    ]
+  },
+  "qa": {
+    "default_profile": "smoke",
+    "profiles": [
+      {
+        "id": "smoke",
+        "title": "Example recipe smoke",
+        "template_id": "qa/recipe-smoke"
+      }
+    ]
+  },
+  "scripted": {
+    "commands": {
+      "recipe-smoke": {
+        "command": "bash \"{{farmslot_dir}}/projects/example-app-farm/scripts/recipe-smoke.sh\" \"{{farmslot_dir}}\" \"{{repo}}\" \"{{slot_id}}\"",
+        "timeout_ms": 60000
+      }
     }
   }
 }
