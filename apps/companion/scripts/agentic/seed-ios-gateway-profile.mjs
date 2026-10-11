@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function seedIOSGatewayProfile({ simulator, bundleId, profile }) {
+export function seedIOSGatewayProfile({ simulator, bundleId, profile, seenVersion }) {
   const terminated = spawnSync('xcrun', ['simctl', 'terminate', simulator, bundleId], {
     encoding: 'utf8',
   });
@@ -30,6 +30,7 @@ export function seedIOSGatewayProfile({ simulator, bundleId, profile }) {
     '@farmslot:activeGatewayProfileId': profile.id,
     '@farmslot:gatewayUrl': profile.url,
   };
+  if (seenVersion) values['@farmslot:whats-new-seen-version'] = seenVersion;
   for (const [key, value] of Object.entries(values)) {
     // A value an earlier run stored out of line would shadow nothing once the
     // manifest holds it inline, but it would be left behind; remove it.

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
+import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const phase = process.argv[2];
@@ -220,6 +221,9 @@ if (phase === 'serve') {
     seedIOSGatewayProfile({
       simulator,
       bundleId: bundle,
+      seenVersion: JSON.parse(
+        fs.readFileSync(path.join(root, 'apps/companion/package.json'), 'utf8'),
+      ).version,
       profile: {
         id: project,
         name: 'CI context proof',
@@ -234,12 +238,7 @@ if (phase === 'serve') {
   }
   evidence('live-gate', gate());
 } else if (phase === 'relaunch') {
-  execFileSync('xcrun', [
-    'simctl',
-    'openurl',
-    simulator,
-    `farmslot-development://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${process.env.METRO_PORT}`)}`,
-  ]);
+  await openSimulatorDevClient(simulator);
 } else if (phase === 'open') open();
 else if (phase === 'open-legacy') open(true);
 else if (phase === 'before') {
