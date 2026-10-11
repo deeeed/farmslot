@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -105,4 +105,34 @@ test('expandPackVars substitutes {{workspace}}', () => {
     expandPackVars('{{workspace}}/repos/src and {{workspace}}/runs', { workspace: '/w' }),
     '/w/repos/src and /w/runs',
   );
+});
+
+test('pack validation refuses malformed recipe sources before any provider import', (t) => {
+  const dir = writePackDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'projects', 'example-app-farm', 'project.json');
+  for (const recipe of [
+    { provider: { module: 1 } },
+    {
+      provider: { module: 'provider.mjs' },
+      libraries: [{ name: 'team', source: 'library', owner: '' }],
+    },
+    {
+      provider: { module: 'provider.mjs' },
+      libraries: [
+        { name: 'team', source: 'a', owner: 'x' },
+        { name: 'team', source: 'b', owner: 'y' },
+      ],
+    },
+  ]) {
+    writeFileSync(file, JSON.stringify({ name: 'example-app-farm', recipe }));
+    const result = validatePackDir(dir);
+    assert.equal(result.pack, null);
+    assert.ok(result.errors.some((error) => error.includes('recipe.')));
+  }
+  writeFileSync(
+    file,
+    JSON.stringify({ name: 'example-app-farm', recipe: { provider: { module: 'provider.mjs' } } }),
+  );
+  assert.deepEqual(validatePackDir(dir).errors, []);
 });

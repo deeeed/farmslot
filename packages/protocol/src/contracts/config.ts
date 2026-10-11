@@ -1,7 +1,12 @@
+import { isRecord } from '../recipe/common.js';
+
 import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
 import type { FailureCategory } from './chat.js';
-import type { ProjectExecutionTemplatesConfig } from './execution-templates.js';
+import type {
+  ExecutionTemplateSourceRoot,
+  ProjectExecutionTemplatesConfig,
+} from './execution-templates.js';
 import type {
   PRExecutionProfile,
   PRSlotExecutionProfile,
@@ -165,6 +170,78 @@ export interface ProjectPrepareConfig {
   profiles?: Record<string, PrepareProfileConfig>;
 }
 
+/** Executable source is trusted by operator configuration, never by discovery. */
+export interface ProjectRecipeProvider {
+  module: string;
+  root?: ExecutionTemplateSourceRoot;
+  export?: string;
+  package?: string;
+  revision?: string;
+}
+
+export interface ProjectRecipeLibrary {
+  name: string;
+  source: string | ExecutionTemplateSourceRoot;
+  owner: string;
+  revision?: string;
+}
+
+export interface ProjectRecipeConfig {
+  provider: ProjectRecipeProvider;
+  libraries?: ProjectRecipeLibrary[];
+  adapter?: string;
+  app?: string;
+  domain?: string;
+  template?: string;
+  manifest?: string;
+}
+
+/** Validate recipe metadata before resolving or importing any executable source. */
+export function validateProjectRecipeConfig(value: unknown): asserts value is ProjectRecipeConfig {
+  const record = isRecord;
+  const string = (entry: unknown): entry is string =>
+    typeof entry === 'string' && entry.trim().length > 0;
+  const fail = (field: string, code = 'PROJECT_RECIPE_INVALID'): never => {
+    throw Object.assign(new Error(`recipe.${field} is invalid`), { code });
+  };
+  const root = (entry: unknown): boolean =>
+    record(entry) &&
+    ((typeof entry.env === 'string' &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/u.test(entry.env) &&
+      entry.projectPath === undefined) ||
+      (string(entry.projectPath) && entry.env === undefined));
+  if (!record(value)) return fail('declaration');
+  if (!record(value.provider) || !string(value.provider.module)) return fail('provider.module');
+  if (value.provider.root !== undefined && !root(value.provider.root)) fail('provider.root');
+  for (const field of ['export', 'package', 'revision']) {
+    if (value.provider[field] !== undefined && !string(value.provider[field]))
+      fail(`provider.${field}`);
+  }
+  for (const field of ['adapter', 'app', 'domain', 'template', 'manifest']) {
+    if (value[field] !== undefined && !string(value[field])) fail(field);
+  }
+  if (value.libraries !== undefined) {
+    if (!Array.isArray(value.libraries)) return fail('libraries');
+    const names = new Set<string>();
+    value.libraries.forEach((library: unknown, index: number) => {
+      if (!record(library)) return fail(`libraries[${index}]`);
+      for (const field of ['name', 'owner']) {
+        if (!string(library[field]))
+          fail(
+            `libraries[${index}].${field}`,
+            field === 'owner' ? 'LIBRARY_OWNER_MISSING' : undefined,
+          );
+      }
+      if (!string(library.source) && !root(library.source)) fail(`libraries[${index}].source`);
+      if (library.revision !== undefined && !string(library.revision))
+        fail(`libraries[${index}].revision`);
+      const name = library.name as string;
+      if (names.has(name)) fail(`libraries[${index}].name, duplicate ${name}`);
+      names.add(name);
+    });
+  }
+}
+
 export interface ProjectConfig {
   name: string;
   repoUrl: string;
@@ -174,6 +251,7 @@ export interface ProjectConfig {
   /** Operator/docs hint for worktree sandboxes. Stale/idle inference uses fleet-probed linkedWorktree on SlotStatus, not this path. */
   worktreeBase?: string;
   apps?: string[];
+  recipe?: ProjectRecipeConfig;
   paths: { runtimeDir: string; artifactDir: string };
   defaults: Record<string, { runner: string; model: string }>;
   workflowDefaults?: ProjectWorkflowDefaults;

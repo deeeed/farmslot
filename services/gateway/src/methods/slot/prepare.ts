@@ -35,6 +35,7 @@ import {
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
@@ -546,6 +547,8 @@ async function slotPrepareInner(
     step('fixtures', `Fixtures synced (log: ${syncLogPath})`);
     fixturesSynced = true;
   };
+
+  await excludeSlotScaffolding(vars, projectJson);
 
   // 2. Verify clean state / checkout branch
   const current = (
@@ -1211,6 +1214,8 @@ async function slotPrepareInner(
   // project setup files such as .tool-versions are in place. Profile-gated
   // inside syncFixtures.
   await syncFixtures();
+  // Fixture packs can replace info/exclude; keep generated namespaces excluded.
+  await excludeSlotScaffolding(vars, projectJson);
 
   // 3b. Install deps. Always install after a checkout when the phase is
   // enabled: skip-heuristics (lockHash before/after, .yarn-state.yml present)

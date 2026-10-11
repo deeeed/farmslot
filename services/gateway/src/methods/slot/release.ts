@@ -49,6 +49,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -71,7 +72,13 @@ import {
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
 } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
-import { getRun, getRunWithArchived } from '../../runs/store.js';
+import {
+  getRun,
+  getRunWithArchived,
+  listRunsForSlotHistory,
+  runsDirectory,
+  runSessionArchiveDir,
+} from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
@@ -324,7 +331,7 @@ async function findReleaseUnmergedWork(
     isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
   )
     return null;
-  const details = await findUnmergedSlotWork(vars, currentBranch);
+  const details = await findUnmergedSlotWork(vars, currentBranch, execOnSlot, projectJson);
   return details ? { branch: currentBranch, details } : null;
 }
 
@@ -684,6 +691,9 @@ async function slotReleaseImpl(
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
   if (!keepWork) {
+    // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
+    await assertReleaseClaim();
+    await excludeSlotScaffolding(vars, projectJson);
     // Read task_file from status
     const taskRel = normalizeTaskRelativeDir(
       (await readSlotField(params.slotId, 'task_file')) as string | null,
@@ -736,6 +746,44 @@ async function slotReleaseImpl(
         }
       } else {
         step('artifacts', 'No artifacts directory');
+      }
+    }
+
+    if (!preserveAgents) {
+      await assertReleaseClaim();
+      const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
+      const runId =
+        params.expectedRunId ??
+        boundOwner ??
+        (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
+      const destination = runId
+        ? path.join(runSessionArchiveDir(runId), 'slot-scaffolding')
+        : path.join(runsDirectory(), 'slot-scaffolding', vars.slotId);
+      try {
+        const collected = await archiveSlotScaffolding(vars, projectJson, {
+          destination,
+          taskRelativeDir: taskRel,
+          beforeRemove: assertReleaseClaim,
+        });
+        step(
+          'scaffolding',
+          `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
+        );
+      } catch (error) {
+        await assertReleaseClaim();
+        const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
+        const held = await guardedTeardownWrite({
+          lifecycle: 'held',
+          phase: 'occupied',
+          held_reason: reason,
+          [SLOT_RELEASING_SINCE]: null,
+        });
+        if (!held) {
+          complete(0);
+          return { released: false };
+        }
+        complete(1);
+        throw new Error(reason);
       }
     }
 
