@@ -85,6 +85,24 @@ const execForTest = async (_vars: unknown, cmd: string) => {
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: execForTest } });
 
+// Main added scaffolding collection after r6. Keep this runner-free release
+// fixture at its existing mocked I/O boundary while retaining the claim callback.
+const realScaffolding = await import('../../fleet/slot-scaffolding.js');
+mock.module('../../fleet/slot-scaffolding.js', {
+  namedExports: {
+    ...realScaffolding,
+    excludeSlotScaffolding: async () => undefined,
+    archiveSlotScaffolding: async (
+      _vars: unknown,
+      _project: unknown,
+      options: { destination: string; beforeRemove?: () => Promise<void> },
+    ) => {
+      await options.beforeRemove?.();
+      return { roots: 0, directory: options.destination };
+    },
+  },
+});
+
 const realCore = await import('../../core/index.js');
 mock.module('../../core/index.js', {
   namedExports: {
