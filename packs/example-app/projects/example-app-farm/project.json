@@ -37,6 +37,21 @@
       "device_check": "true"
     }
   },
+  "worker_terminal": {
+    "flows": {
+      "qa": {
+        "complete": {
+          "report": "artifacts/report.md",
+          "artifacts": [
+            "artifacts/report.md",
+            "artifacts/scripted-command-result.json",
+            "artifacts/scripted-command.stdout.txt",
+            "artifacts/scripted-runner-provenance.json"
+          ]
+        }
+      }
+    }
+  },
   "recipe": {
     "checks": [{ "recipe": "smoke" }],
     "adapter": "headless",
