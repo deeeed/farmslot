@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
+  deriveRunLifecycleView,
   Events,
   isSlotFreedByPark,
   isTerminalRunStatus,
@@ -461,7 +462,16 @@ export default function RunDetailScreen() {
     );
   }
 
-  const statusColor = STATUS_COLORS[run.status] ?? colors.textMuted;
+  const lifecycle = deriveRunLifecycleView({ status: run.status });
+  const statusColor =
+    STATUS_COLORS[run.status] ??
+    {
+      ok: colors.statusOk,
+      fail: colors.statusFail,
+      warn: colors.statusWarn,
+      running: colors.lifecycleWorking,
+      muted: colors.textMuted,
+    }[lifecycle.tone];
   const replayAllowed =
     ['failed', 'done', 'cancelled'].includes(run.status) &&
     !run.engineState?.operatorForceCompleted &&
@@ -557,7 +567,7 @@ export default function RunDetailScreen() {
               <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]}>{run.status}</Text>
+              <Text style={[styles.statusText, { color: statusColor }]}>{lifecycle.label}</Text>
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>

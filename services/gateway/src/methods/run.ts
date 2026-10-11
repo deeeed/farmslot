@@ -114,6 +114,12 @@ import {
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import {
+  advancingGateAction,
+  assertRunGateReady,
+  isPrerequisiteGatePayload,
+  runGateDefinitionActions,
+} from '../run-engine/gate-prerequisites.js';
+import {
   applyChainedRunEngineFlags,
   bumpRunGeneration,
   cancelRunEngine,
@@ -130,6 +136,7 @@ import {
   assertPrimaryReviewContext,
   assertWarmReviewRequestAvailable,
 } from '../run-engine/review-plan.js';
+import { runSupersededSince } from '../run-engine/run-generation.js';
 import {
   persistMonitorWindowStart,
   probeWorkerSignalForRun,
@@ -1427,6 +1434,7 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
 type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
 
 export interface RunResolveDecisionDependencies {
+  assertGatePrerequisites?: typeof assertRunGateReady;
   triageSnapshot?: (
     runId: string,
     step: string,
@@ -1663,7 +1671,12 @@ export async function resolveRunDecision(
     throw new Error(
       'This review action was removed. Convert the pending decision and use request-review with runner, model, effort and mode.',
     );
-  if (!isAllowedRunDecisionAction(decision, params.actionId)) {
+  if (
+    !isAllowedRunDecisionAction(
+      { ...decision, actions: runGateDefinitionActions(decision) },
+      params.actionId,
+    )
+  ) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
   const resumeNative = params.actionId === NATIVE_WORKER_RESUME_ACTION;
@@ -1702,6 +1715,10 @@ export async function resolveRunDecision(
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
   const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
+  const gateGeneration = getRun(existing.id)?.engineState?.generation ?? 0;
+  const gatePayload = decision.payload;
+  const guardedAdvance =
+    advancingGateAction(params.actionId) && isPrerequisiteGatePayload(gatePayload);
   const skipHandoffSignal =
     params.actionId === 'abort' ||
     resumeNative ||
@@ -1745,246 +1762,275 @@ export async function resolveRunDecision(
     );
   }
   const currentDescription = await assertReadyPublishResolveIsFresh(existing, decision, params);
-  // The probes above await; a concurrent resolver (operator abort vs re-armed
-  // auto-recovery) may have resolved this decision during that window. Re-read
-  // from the store so the first resolution wins instead of being overwritten.
-  assertDecisionStillUnresolved(params.runId, params.decisionId);
-  // Re-read and re-check at the CONSUMPTION point. The probes above await, and
-  // a park can land during any of them — the early check only proves the run
-  // was not parked when the request arrived. Consuming the decision after that
-  // would drive the engine against a worker the park stopped.
-  assertNotGateParked(params.runId, getRun(params.runId)!);
-  if (resumeNative) {
-    const { resumeNativeWorkerDecision } = await import('./run/native-worker-decision.js');
-    await resumeNativeWorkerDecision(existing.id, decision.id);
+  const consume = async (): Promise<RunResolveDecisionResult> => {
+    // The probes above await; a concurrent resolver (operator abort vs re-armed
+    // auto-recovery) may have resolved this decision during that window. Re-read
+    // from the store so the first resolution wins instead of being overwritten.
     assertDecisionStillUnresolved(params.runId, params.decisionId);
-  }
-  if (params.triageAssessmentId !== undefined) {
-    await assertTriageDecisionReference(
-      getRun(params.runId)!,
-      params.triageAssessmentId,
-      dependencies.triageSnapshot ?? currentTriageSnapshot,
-    );
+    // Re-read and re-check at the CONSUMPTION point. The probes above await, and
+    // a park can land during any of them — the early check only proves the run
+    // was not parked when the request arrived. Consuming the decision after that
+    // would drive the engine against a worker the park stopped.
+    assertNotGateParked(params.runId, getRun(params.runId)!);
+    if (resumeNative) {
+      const { resumeNativeWorkerDecision } = await import('./run/native-worker-decision.js');
+      await resumeNativeWorkerDecision(existing.id, params.decisionId);
+      assertDecisionStillUnresolved(params.runId, params.decisionId);
+    }
+    if (params.triageAssessmentId !== undefined) {
+      await assertTriageDecisionReference(
+        getRun(params.runId)!,
+        params.triageAssessmentId,
+        dependencies.triageSnapshot ?? currentTriageSnapshot,
+      );
+      assertDecisionStillUnresolved(params.runId, params.decisionId);
+      assertNotGateParked(params.runId, getRun(params.runId)!);
+    }
+    if (guardedAdvance) {
+      await (dependencies.assertGatePrerequisites ?? assertRunGateReady)(
+        getRun(existing.id)!,
+        gatePayload.kind === 'ready' ? (gatePayload.prPackage ?? null) : null,
+        params.actionId,
+      );
+      const current = getRun(params.runId);
+      const currentDecision = current?.decisions.find((entry) => entry.id === params.decisionId);
+      if (
+        runSupersededSince(current, gateGeneration) ||
+        isTerminalRunStatus(current!.status) ||
+        currentDecision?.payload !== gatePayload
+      )
+        throw new GatewayMethodError(
+          'RUN_GATE_NOT_READY',
+          'The run or gate package changed during validation. Refresh the gate.',
+        );
+    }
     assertDecisionStillUnresolved(params.runId, params.decisionId);
     assertNotGateParked(params.runId, getRun(params.runId)!);
-  }
-  decision = getRun(params.runId)!.decisions.find(
-    (candidate) => candidate.id === params.decisionId,
-  )!;
-  // Past every refusal now, so the normalization may persist.
-  if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
-  if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
-    const fresh = getRun(params.runId)!;
-    if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
-      updateRun(params.runId, {
-        engineState: {
-          ...fresh.engineState,
-          publishGate: {
-            ...fresh.engineState.publishGate,
-            reviewLaunchRejection: undefined,
+    decision = getRun(params.runId)!.decisions.find(
+      (candidate) => candidate.id === params.decisionId,
+    )!;
+    // Past every refusal now, so the normalization may persist.
+    if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
+    if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
+      const fresh = getRun(params.runId)!;
+      if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
+        updateRun(params.runId, {
+          engineState: {
+            ...fresh.engineState,
+            publishGate: {
+              ...fresh.engineState.publishGate,
+              reviewLaunchRejection: undefined,
+            },
           },
-        },
-      });
-    }
-  }
-
-  // The gate shows the description approval publishes, not the reviewed one.
-  const readyPayload = decision.payload as ReadyGatePayload | undefined;
-  if (isPublishApprovalAction(params.actionId) && readyPayload?.kind === 'ready') {
-    decision.payload = { ...readyPayload, currentDescription };
-  }
-
-  // Store selectionData on decision so engine steps can use it. The ADR-054
-  // resource posture choice arrives as a typed param so a client cannot invent a
-  // policy; it is copied here into the same channel the engine already reads.
-  if (params.selectionData || params.resourcePosture) {
-    decision.selectionData = {
-      ...(params.selectionData ?? {}),
-      ...(params.resourcePosture ? { resourcePosture: params.resourcePosture } : {}),
-    };
-  }
-
-  // Human gate for routed domain drafts: bind the consumed feedback to the
-  // rule BEFORE resolving, so a ledger failure leaves the card pending instead
-  // of recording an approval with no trace. Idempotent by (candidate, rule).
-  let releaseLearningsDraft: (() => void) | null = null;
-  if (decision.type === 'engine_learnings_draft') {
-    const { beginLearningsDraftResolution, recordLearningsDraftLanded } =
-      await import('../intelligence/learnings-router.js');
-    // Serializes landed/dismiss on one card; released once the resolution is persisted.
-    releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
-    if (params.actionId === 'landed') {
-      try {
-        // A dismiss that won the lock during the import above already resolved
-        // the card; recheck before anything reaches the ledger.
-        assertDecisionStillUnresolved(params.runId, params.decisionId);
-        await recordLearningsDraftLanded(existing, decision);
-        assertDecisionStillUnresolved(params.runId, params.decisionId);
-      } catch (err) {
-        releaseLearningsDraft();
-        throw err;
-      }
-    }
-  }
-
-  // Mark decision as resolved
-  decision.resolvedAt = new Date().toISOString();
-  decision.resolvedAction = params.actionId;
-  if (params.triageAssessmentId) decision.triageAssessmentId = params.triageAssessmentId;
-  const extendMonitorWindow =
-    params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
-    (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
-  if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
-  updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
-  releaseLearningsDraft?.();
-
-  // Unblock whichever resolver owns this decision
-  resolveMonitorDecision(params.decisionId, params.actionId);
-  resolveEngineDecision(params.decisionId, params.actionId);
-  resolveCIDecision(params.decisionId, params.actionId);
-
-  // If run is still blocked after all resolvers fired (engine loop was lost on gateway restart),
-  // clean up stale running steps and kick startRun to resume the pipeline.
-  // Delay check to let the engine's promise resolver update status first (microtask ordering).
-  setTimeout(() => {
-    void (async () => {
-      const afterResolve = getRun(params.runId);
-      if (!afterResolve || afterResolve.status !== 'blocked') return;
-      // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
-      // was lost. A gate-parked run is not that — a park can land while the
-      // engine holds the resolved decision, and the gate blocker then leaves the
-      // run `blocked` with HUMAN_GATE marked done and every decision resolved,
-      // which is exactly the shape below resumes. Resuming would enter FINALIZE
-      // against a slot a successor may already own. The park's own restore or
-      // cancel is the way out, not an automatic restart.
-      if (isGateParkInFlightOrFreed(afterResolve)) {
-        console.log(
-          `[run] run ${params.runId.slice(0, 8)} — gate-parked, not auto-resuming after decision resolve`,
-        );
-        return;
-      }
-      const stillUnresolved = afterResolve.decisions.filter((d) => !d.resolvedAt);
-      if (stillUnresolved.length === 0) {
-        console.log(
-          `[run] run ${params.runId.slice(0, 8)} — all decisions resolved but still blocked, resuming engine`,
-        );
-        const runningStep = afterResolve.steps.find((s) => s.status === 'running');
-        if (
-          runningStep?.name === 'ci-watch' &&
-          (params.actionId === 'dispatch-update-branch' ||
-            params.actionId === 'dispatch-pr-complete') &&
-          afterResolve.slotId
-        ) {
-          // Resolve ci.repo for the chained PR-bound flow. Do NOT swallow a
-          // project-config failure: if ciRepo is missing, buildCIWatchChainedRunParams
-          // falls back to the parent's MANUAL-*/PROJ-* ref, and createRun below skips
-          // runCreate's validateTicketRef — the follow-up would then wedge downstream.
-          // Let the load error surface via the outer .catch so the run stays blocked.
-          const ciRepo = (await loadProjectVars(afterResolve.project))?.projectJson?.ci?.repo as
-            | string
-            | undefined;
-          const chainSpec = buildCIWatchChainedRunParams(afterResolve, params.actionId, ciRepo);
-          if (chainSpec) {
-            // createRun bypasses runCreate's entry validation, so guard the chained
-            // ref here: a PR-bound flow still carrying an inherited MANUAL-*/PROJ-*
-            // ref (unresolved ciRepo) fails hard now instead of at write-task.
-            validateTicketRef(chainSpec.createParams.ticketOrPr, chainSpec.flowType);
-            console.log(
-              `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
-            );
-            const chainRun = createRun(chainSpec.createParams);
-            applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
-            if (Object.keys(chainSpec.updateFields).length)
-              updateRun(chainRun.id, chainSpec.updateFields);
-            updateRunStep(params.runId, runningStep.name, {
-              status: 'done',
-              completedAt: new Date().toISOString(),
-              outputs: {
-                ...((runningStep.outputs ?? {}) as Record<string, unknown>),
-                result: 'failed',
-                dispatchAction: params.actionId,
-                chainedRunId: chainRun.id,
-              },
-            });
-            const done = updateRun(params.runId, {
-              status: 'done',
-              completedAt: new Date().toISOString(),
-            });
-            emit(Events.RUN_UPDATED, { run: done });
-            emit(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });
-            startRun(chainRun.id).catch((err) => {
-              console.error(
-                `[run] chained ${chainSpec.flowType} run failed after decision resolve: ${(err as Error).message}`,
-              );
-            });
-            return;
-          }
-        }
-        // Stale 'running' steps must be re-executed. Substep telemetry (e.g. WRITE_TASK
-        // emits fetch-pr-data/recipe-strategy progress) lives in step.outputs but does NOT
-        // prove the step persisted its side-effects (e.g. run.taskFile). The previous
-        // "outputs present = done" heuristic skipped re-execution and left the run with
-        // taskFile=null, then DISPATCH failed with "No task file specified". Always reset
-        // to pending; startRun clears partial outputs and reruns the case body.
-        for (const step of afterResolve.steps.filter((s) => s.status === 'running')) {
-          updateRunStep(params.runId, step.name, {
-            status: 'pending',
-            startedAt: undefined,
-            completedAt: undefined,
-            durationMs: undefined,
-            inputs: undefined,
-            outputs: undefined,
-            detail: undefined,
-          });
-        }
-        const hasRunningStep = afterResolve.steps.some((s) => s.status === 'running');
-        if (!hasRunningStep) {
-          const nextStep = FLOW_STEPS[afterResolve.flowType]?.find((stepName) => {
-            const step = afterResolve.steps.find((candidate) => candidate.name === stepName);
-            return !step || step.status !== 'done';
-          });
-          if (nextStep) {
-            updateRun(params.runId, { status: 'created' });
-          } else {
-            const done = updateRun(params.runId, { status: 'done' });
-            emit(Events.RUN_UPDATED, { run: done });
-            return;
-          }
-        }
-        (dependencies.resumeRun ?? startRun)(params.runId).catch((err) => {
-          console.error(
-            `[run] resume after decision resolve failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-          );
         });
       }
-    })().catch((err) => {
-      console.error(
-        `[run] resume after decision resolve failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-    });
-  }, 0);
+    }
 
-  // Broadcast update so UI reflects resolved state
-  const updated = getRun(params.runId) ?? existing;
-  emit(Events.RUN_UPDATED, { run: updated });
-  // Match the typed RunDecisionResolvedPayload contract (runId + decisionId +
-  // actionId). The legacy `{id}` shape is still tolerated by the UI handler
-  // via `p.id ?? p.decisionId`, but emitting the canonical shape here lets
-  // run-scoped subscribers consume runId without falling back to context.
-  emit(Events.RUN_DECISION_RESOLVED, {
-    runId: params.runId,
-    decisionId: params.decisionId,
-    actionId: params.actionId,
-  });
+    // The gate shows the description approval publishes, not the reviewed one.
+    const readyPayload = decision.payload as ReadyGatePayload | undefined;
+    if (isPublishApprovalAction(params.actionId) && readyPayload?.kind === 'ready') {
+      decision.payload = { ...readyPayload, currentDescription };
+    }
 
-  // Trigger improvement analysis on retrospective accept (fire-and-forget)
-  if (decision.type === 'retrospective' && params.actionId === 'accept') {
-    void triggerImprovementAnalysis(params.runId, existing).catch((err) => {
-      console.warn(
-        `[run] improvement analysis kickoff failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
+    // Store selectionData on decision so engine steps can use it. The ADR-054
+    // resource posture choice arrives as a typed param so a client cannot invent a
+    // policy; it is copied here into the same channel the engine already reads.
+    if (params.selectionData || params.resourcePosture) {
+      decision.selectionData = {
+        ...(params.selectionData ?? {}),
+        ...(params.resourcePosture ? { resourcePosture: params.resourcePosture } : {}),
+      };
+    }
+
+    // Human gate for routed domain drafts: bind the consumed feedback to the
+    // rule BEFORE resolving, so a ledger failure leaves the card pending instead
+    // of recording an approval with no trace. Idempotent by (candidate, rule).
+    let releaseLearningsDraft: (() => void) | null = null;
+    if (decision.type === 'engine_learnings_draft') {
+      const { beginLearningsDraftResolution, recordLearningsDraftLanded } =
+        await import('../intelligence/learnings-router.js');
+      // Serializes landed/dismiss on one card; released once the resolution is persisted.
+      releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
+      if (params.actionId === 'landed') {
+        try {
+          // A dismiss that won the lock during the import above already resolved
+          // the card; recheck before anything reaches the ledger.
+          assertDecisionStillUnresolved(params.runId, params.decisionId);
+          await recordLearningsDraftLanded(existing, decision);
+          assertDecisionStillUnresolved(params.runId, params.decisionId);
+        } catch (err) {
+          releaseLearningsDraft();
+          throw err;
+        }
+      }
+    }
+
+    // Mark decision as resolved
+    decision.resolvedAt = new Date().toISOString();
+    decision.resolvedAction = params.actionId;
+    if (params.triageAssessmentId) decision.triageAssessmentId = params.triageAssessmentId;
+    const extendMonitorWindow =
+      params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
+      (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
+    if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
+    updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
+    releaseLearningsDraft?.();
+
+    // Unblock whichever resolver owns this decision
+    resolveMonitorDecision(params.decisionId, params.actionId);
+    resolveEngineDecision(params.decisionId, params.actionId);
+    resolveCIDecision(params.decisionId, params.actionId);
+
+    // If run is still blocked after all resolvers fired (engine loop was lost on gateway restart),
+    // clean up stale running steps and kick startRun to resume the pipeline.
+    // Delay check to let the engine's promise resolver update status first (microtask ordering).
+    setTimeout(() => {
+      void (async () => {
+        const afterResolve = getRun(params.runId);
+        if (!afterResolve || afterResolve.status !== 'blocked') return;
+        // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
+        // was lost. A gate-parked run is not that — a park can land while the
+        // engine holds the resolved decision, and the gate blocker then leaves the
+        // run `blocked` with HUMAN_GATE marked done and every decision resolved,
+        // which is exactly the shape below resumes. Resuming would enter FINALIZE
+        // against a slot a successor may already own. The park's own restore or
+        // cancel is the way out, not an automatic restart.
+        if (isGateParkInFlightOrFreed(afterResolve)) {
+          console.log(
+            `[run] run ${params.runId.slice(0, 8)} — gate-parked, not auto-resuming after decision resolve`,
+          );
+          return;
+        }
+        const stillUnresolved = afterResolve.decisions.filter((d) => !d.resolvedAt);
+        if (stillUnresolved.length === 0) {
+          console.log(
+            `[run] run ${params.runId.slice(0, 8)} — all decisions resolved but still blocked, resuming engine`,
+          );
+          const runningStep = afterResolve.steps.find((s) => s.status === 'running');
+          if (
+            runningStep?.name === 'ci-watch' &&
+            (params.actionId === 'dispatch-update-branch' ||
+              params.actionId === 'dispatch-pr-complete') &&
+            afterResolve.slotId
+          ) {
+            // Resolve ci.repo for the chained PR-bound flow. Do NOT swallow a
+            // project-config failure: if ciRepo is missing, buildCIWatchChainedRunParams
+            // falls back to the parent's MANUAL-*/PROJ-* ref, and createRun below skips
+            // runCreate's validateTicketRef — the follow-up would then wedge downstream.
+            // Let the load error surface via the outer .catch so the run stays blocked.
+            const ciRepo = (await loadProjectVars(afterResolve.project))?.projectJson?.ci?.repo as
+              | string
+              | undefined;
+            const chainSpec = buildCIWatchChainedRunParams(afterResolve, params.actionId, ciRepo);
+            if (chainSpec) {
+              // createRun bypasses runCreate's entry validation, so guard the chained
+              // ref here: a PR-bound flow still carrying an inherited MANUAL-*/PROJ-*
+              // ref (unresolved ciRepo) fails hard now instead of at write-task.
+              validateTicketRef(chainSpec.createParams.ticketOrPr, chainSpec.flowType);
+              console.log(
+                `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
+              );
+              const chainRun = createRun(chainSpec.createParams);
+              applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
+              if (Object.keys(chainSpec.updateFields).length)
+                updateRun(chainRun.id, chainSpec.updateFields);
+              updateRunStep(params.runId, runningStep.name, {
+                status: 'done',
+                completedAt: new Date().toISOString(),
+                outputs: {
+                  ...((runningStep.outputs ?? {}) as Record<string, unknown>),
+                  result: 'failed',
+                  dispatchAction: params.actionId,
+                  chainedRunId: chainRun.id,
+                },
+              });
+              const done = updateRun(params.runId, {
+                status: 'done',
+                completedAt: new Date().toISOString(),
+              });
+              emit(Events.RUN_UPDATED, { run: done });
+              emit(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });
+              startRun(chainRun.id).catch((err) => {
+                console.error(
+                  `[run] chained ${chainSpec.flowType} run failed after decision resolve: ${(err as Error).message}`,
+                );
+              });
+              return;
+            }
+          }
+          // Stale 'running' steps must be re-executed. Substep telemetry (e.g. WRITE_TASK
+          // emits fetch-pr-data/recipe-strategy progress) lives in step.outputs but does NOT
+          // prove the step persisted its side-effects (e.g. run.taskFile). The previous
+          // "outputs present = done" heuristic skipped re-execution and left the run with
+          // taskFile=null, then DISPATCH failed with "No task file specified". Always reset
+          // to pending; startRun clears partial outputs and reruns the case body.
+          for (const step of afterResolve.steps.filter((s) => s.status === 'running')) {
+            updateRunStep(params.runId, step.name, {
+              status: 'pending',
+              startedAt: undefined,
+              completedAt: undefined,
+              durationMs: undefined,
+              inputs: undefined,
+              outputs: undefined,
+              detail: undefined,
+            });
+          }
+          const hasRunningStep = afterResolve.steps.some((s) => s.status === 'running');
+          if (!hasRunningStep) {
+            const nextStep = FLOW_STEPS[afterResolve.flowType]?.find((stepName) => {
+              const step = afterResolve.steps.find((candidate) => candidate.name === stepName);
+              return !step || step.status !== 'done';
+            });
+            if (nextStep) {
+              updateRun(params.runId, { status: 'created' });
+            } else {
+              const done = updateRun(params.runId, { status: 'done' });
+              emit(Events.RUN_UPDATED, { run: done });
+              return;
+            }
+          }
+          (dependencies.resumeRun ?? startRun)(params.runId).catch((err) => {
+            console.error(
+              `[run] resume after decision resolve failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+            );
+          });
+        }
+      })().catch((err) => {
+        console.error(
+          `[run] resume after decision resolve failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
+      });
+    }, 0);
+
+    // Broadcast update so UI reflects resolved state
+    const updated = getRun(params.runId) ?? existing;
+    emit(Events.RUN_UPDATED, { run: updated });
+    // Match the typed RunDecisionResolvedPayload contract (runId + decisionId +
+    // actionId). The legacy `{id}` shape is still tolerated by the UI handler
+    // via `p.id ?? p.decisionId`, but emitting the canonical shape here lets
+    // run-scoped subscribers consume runId without falling back to context.
+    emit(Events.RUN_DECISION_RESOLVED, {
+      runId: params.runId,
+      decisionId: params.decisionId,
+      actionId: params.actionId,
     });
+
+    // Trigger improvement analysis on retrospective accept (fire-and-forget)
+    if (decision.type === 'retrospective' && params.actionId === 'accept') {
+      void triggerImprovementAnalysis(params.runId, existing).catch((err) => {
+        console.warn(
+          `[run] improvement analysis kickoff failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
+      });
+    }
+
+    return { run: updated, ...(gateParkRestore ? { gateParkRestore } : {}) };
+  };
+  if (guardedAdvance) {
+    // Restore above owns its own machine transition. Only consumption enters
+    // this coordinator, so a parked gate cannot deadlock through nested restore.
+    const { withRunTransition } = await import('../run-lifecycle/transition-coordinator.js');
+    return withRunTransition(params.runId, consume);
   }
-
-  return { run: updated, ...(gateParkRestore ? { gateParkRestore } : {}) };
+  return consume();
 }

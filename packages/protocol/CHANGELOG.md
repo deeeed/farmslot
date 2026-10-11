@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
+
 - Declare optional recording-target resource claim bindings for scoped recording admission.
 
 - Define automatic registered claim evidence and original recording segments, with checked timeline identities and one shared acceptance validator (ADR-062).

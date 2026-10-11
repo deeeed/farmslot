@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show gateway prerequisite reasons and distinguish fixing, reviewer failure and reconciliation in run views.
+
 - Use the protocol timeline-binding validator when opening recipe video evidence (ADR-062).
 
 - Show retained check metadata in CI decisions without changing timeout auto-resume.

@@ -2638,3 +2638,51 @@ test('runResolveDecision binds only an owned completed triage of the current fai
     { runId: run.id, decisionId: decision.id, actionId: 'continue', triageAssessmentId: own },
   );
 });
+
+for (const interruption of ['cancelled', 'paused', 'replay', 'package-refresh'] as const) {
+  test(`gate advancement preserves its pending decision after ${interruption} during validation`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      mode: 'interactive',
+      project: 'gate-fence',
+      ticketOrPr: 'GATE-CONSUMPTION-FENCE',
+      runner: 'scripted',
+    });
+    const decision: RunDecision = {
+      id: 'no-change-fence',
+      type: 'engine_no_change',
+      title: 'No change',
+      description: '',
+      actions: [{ id: 'accept-no-change', label: 'Accept', style: 'primary' }],
+      createdAt: new Date().toISOString(),
+      payload: { kind: 'no-change', disposition: 'already_fixed' },
+    };
+    updateRun(run.id, {
+      status: 'human-gating',
+      decisions: [decision],
+      engineState: { generation: 2 },
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    });
+    await assert.rejects(
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'accept-no-change' },
+        () => {},
+        {
+          assertGatePrerequisites: async () => {
+            if (interruption === 'replay') updateRun(run.id, { engineState: { generation: 3 } });
+            else if (interruption === 'package-refresh')
+              updateRun(run.id, {
+                decisions: [{ ...decision, payload: { ...decision.payload! } }],
+              });
+            else updateRun(run.id, { status: interruption });
+          },
+        },
+      ),
+      /changed during validation/,
+    );
+    assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  });
+}

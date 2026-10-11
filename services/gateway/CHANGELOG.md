@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recheck current task, source, evidence and review prerequisites at gates and completion; preserve live workers and report correction, review failure and uncertain operations explicitly.
+
 - Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
 

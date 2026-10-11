@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Show gateway prerequisite reasons when listing run gates.
+
 - Expose WARM/COLD review mode and ordered review selections through the shared request contract; preserve model, effort and retained lineage across run, dispatch and gate review requests.
 
 - Run the public CLI in its invoking process so signals sent to its PID reach recipe cancellation and teardown. Preserve checkout TypeScript mappings and the scripted-runner entry.

@@ -26,6 +26,7 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   readSlotField,
   resetSlot,
@@ -55,6 +56,7 @@ import {
 import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
+import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
 import {
   createRun,
   getRun,
@@ -864,14 +866,28 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         console.warn(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
         );
-        markTerminalReviewArtifactOperatorRequired({ updateRun }, interruptedRun, msg);
+        const progress = await readRunProgress(interruptedRun);
+        const current = getRun(runId);
+        if (runSupersededSince(current, myGen)) return;
+        await markTerminalReviewArtifactOperatorRequired(
+          { updateRun, getRun, observeRunProgress: async () => progress },
+          current!,
+          msg,
+        );
+        if (runSupersededSince(getRun(runId), myGen)) return;
         updateRunStep(runId, stepName, {
           status: 'done',
           detail: msg,
           completedAt: new Date().toISOString(),
         });
-        updateRun(runId, { status: 'blocked', error: msg });
-        await finalizeNonThrownTerminalRun(runId, i + 1, steps, myGen);
+        for (let j = i + 1; j < steps.length; j++) {
+          updateRunStep(runId, steps[j], { status: 'skipped' });
+        }
+        updateRun(runId, {
+          status: runDecisionWaitingStatus(getRun(runId)!, progress, 'review_artifact'),
+          error: msg,
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
       }
 
@@ -905,7 +921,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         }
         const blockedRun = getRun(runId)!;
         updateRun(runId, {
-          status: 'blocked',
+          status: 'reconciling',
           error: nativeOperation
             ? `${msg}\n\nThe native session reservation and slot claim remain owned until this operation is reconciled.`
             : `${msg}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
@@ -914,6 +930,26 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             outcome: 'partial',
             durationMs: Date.now() - new Date(blockedRun.createdAt).getTime(),
           },
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        return;
+      }
+
+      if (err instanceof GatewayMethodError && err.code === 'RUN_GATE_NOT_READY') {
+        const progress = await readRunProgress(interruptedRun);
+        if (runSupersededSince(getRun(runId), myGen)) return;
+        updateRunStep(runId, stepName, {
+          status: 'failed',
+          detail: err.message,
+          outputs: { gatePrerequisiteRefusal: err.details },
+        });
+        for (let j = i + 1; j < steps.length; j++) {
+          updateRunStep(runId, steps[j], { status: 'skipped' });
+        }
+        updateRun(runId, {
+          status: runDecisionWaitingStatus(getRun(runId)!, progress, 'blocked'),
+          error: err.message,
+          metrics: { ...getRun(runId)!.metrics, outcome: 'partial' },
         });
         broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
@@ -932,6 +968,18 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         const blockedRun = getRun(runId)!;
+        const progress = await readRunProgress(blockedRun);
+        if (runSupersededSince(getRun(runId), myGen)) return;
+        const observedStatus = runDecisionWaitingStatus(getRun(runId)!, progress, 'blocked');
+        if (observedStatus !== 'blocked') {
+          updateRun(runId, {
+            status: observedStatus,
+            error: err.message,
+            metrics: { ...getRun(runId)!.metrics, outcome: 'partial' },
+          });
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+          return;
+        }
         await routeAndRecordTerminalTransition({
           runId,
           kind: 'block',
@@ -1418,6 +1466,7 @@ export function suspendPublicationReviewRecoveryForRun(runId: string): boolean {
 
 function buildRecoveryDeps(): RunRecoveryCollaborators {
   return {
+    observeRunProgress: readRunProgress,
     listRuns,
     loadFleetStatus,
     getRun,
@@ -1786,7 +1835,6 @@ async function executeNoChangeGate(runId: string): Promise<void> {
     current.ticketOrPr,
   );
   updateRun(runId, {
-    status: 'blocked',
     error: message,
     metrics: { ...latest.metrics, outcome: 'partial' },
   });

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run gate refuses incomplete prerequisites",
+  "description": "A disposable production gateway reads a current incomplete task despite a complete retained display copy. Direct RPC approval remains pending and the browser renders gateway reasons. Worker-turn and recorded-evidence positive controls remain separate acceptance requirements.",
+  "workflow": {
+    "entry": "gateway",
+    "nodes": {
+      "gateway": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/run-gate-prerequisites.mts --ui",
+        "timeout_ms": 120000,
+        "intent": "Gateway refuses incomplete task prerequisites and clients show the reasons.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
