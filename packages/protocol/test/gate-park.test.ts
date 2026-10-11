@@ -14,6 +14,7 @@ import {
   MachineParkEligibilityCodes,
   type MachineParkRecord,
   needsGateParkRestore,
+  parkOriginalSlotId,
   type Run,
 } from '../src/index.js';
 
@@ -617,4 +618,11 @@ test('a refused re-home still points the operator at the original slot', () => {
   assert.equal(notice?.kind, 'restore-blocked');
   assert.equal(notice?.blocking, true);
   assert.match(notice!.message, /macwork-ff-1/);
+});
+
+test('original-slot lookup retains rehome provenance and legacy binding fallback', () => {
+  assert.equal(parkOriginalSlotId(rehomedRecord()), rehomedRecord().rehome?.fromSlotId);
+  assert.equal(parkOriginalSlotId(parkRecord()), 'macwork-ff-1');
+  assert.equal(parkOriginalSlotId({}, 'legacy-slot'), 'legacy-slot');
+  assert.equal(parkOriginalSlotId({}, null), null);
 });
