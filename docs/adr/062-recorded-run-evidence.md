@@ -3,155 +3,132 @@
 **Status:** Proposed
 **Date:** 2026-10-11
 **Owner:** Farmslot maintainers
-**Scope:** Recipe execution, recorded evidence, acceptance criteria, publish gates, and public SDK/CLI
+**Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
 **Related:** [ADR-012](012-device-screen-streaming.md), [ADR-034](034-recipe-protocol-v1.md), [ADR-060](060-sub-task-observability.md), [Recorded run evidence specification](../reference/recorded-run-evidence.md)
 
 ## Context
 
-A recipe should leave an engineer with verifiable evidence for each acceptance
-criterion, without asking its author to manage recorders, timestamps, clips or
-publication links. The same feature must work through the recipe CLI, custom
-harnesses, Command Center and Companion.
+Recipe authors should describe actions and verifiable expectations. Farmslot
+should retain the evidence and let an engineer review each acceptance criterion
+or QA check without managing recording or searching a long video.
 
-Capture, measured timelines, resource leases, AC ledgers and viewers exist, but
-their ownership is fragmented. An MP4 can survive without its timeline; a valid
-timeline can fail when an index supplies another video's digest. Farm templates
-duplicate lifecycle mechanics, and native viewers do not receive marker identity.
-
-This ADR defines the architecture. The linked normative spec defines contracts
-and conformance. Both are proposals, not claims that the complete feature ships.
-Private run inventories belong outside these public documents.
+The existing capture, timeline, ledger, lease and viewer pieces do not yet form
+one feature. Parallel lifecycles, successful actions mistaken for proof, lost
+artifact identity and separate client mappings prevent dependable review. This
+ADR sets the architecture; its reference spec defines the proposed requirements.
+Neither document claims the complete feature is shipped.
 
 ## Decision
 
 ### Hard design principles
 
-- **P1 Transparent to the agent.** Recipe execution automatically produces capture, clip boundaries, timeline markers, HUD captions and evidence links. Authors write no recording, timestamp or linking code.
-- **P2 Automatic AC evidence.** Nodes declare the AC IDs they prove. The runner derives verdicts, ranges, clips and stills from results. Manual `ac set` is an explicit untestable-case override, not the normal path.
-- **P3 Cheap by default.** UI recipes always record within the specification's CPU, disk and time budgets. Encoded per-AC clips are materialized on demand, not during every run.
-- **P4 Harness-level integration.** One Farmslot RecipeEngine owns this behavior through ProjectRuntime. Custom harnesses provide targets/actions and inherit evidence generation, with no recording implementation of their own.
-- **P5 Weak-model proof.** A basic recipe-writing worker gets a complete gate package from a plain recipe without extra evidence instructions. Recording and verdict checklist steps disappear.
-- **P6 Gate-first review.** Each publish gate presents ACs with verdicts, stills and immediate bounded-clip playback in Command Center and Companion.
-- **P7 Public surface.** Every capability has a supported Farmslot CLI and SDK entry point. Consumers never import implementation files or create a parallel recipe command family.
+- **P1 Transparent to the agent.** Execution automatically produces recording, markers, padded clips, stills, HUD captions and evidence links. Authors write no recording, timestamp or linking code.
+- **P2 Automatic claim evidence.** Nodes declare which claims they prove through eligible expectations. The engine derives verdicts and moments; manual `ac set` is only an audited untestable override after cutover.
+- **P3 Cheap by default.** UI recording is on with bounded CPU, disk, time and transfer cost. Virtual clips are immediate; separate encoded clips are produced only on demand.
+- **P4 Harness-level integration.** One RecipeEngine and provider contract own lifecycle and evidence. Custom harnesses inherit this behavior without recording implementations.
+- **P5 Weak-model proof.** A basic recipe author gets a complete review package from ordinary assertions without extra evidence instructions. Action-only false claims fail closed.
+- **P6 Gate-first review.** Engineers review claim by claim through stills and one-action bounded playback, with checked expectations visible beside each claim.
+- **P7 Public surface.** Every capability has a supported entry through the single recipe CLI and public SDK, with a named consumer and versioned contract.
+- **P8 QA flows.** ACs, QA cases and QA checks use one claim model, one verdict reducer and one player model, including long composed and segmented recordings.
 
-### Concepts, ownership and invariants
+### Concepts and one owner per fact
 
-A **recipe execution** is one immutable attempt. A **claim** is an AC, QA case or
-QA check declared by the recipe. A **recording** is captured media; long executions
-may have bounded segments. A **marker** ties one trace occurrence to measured
-media-clock bounds. An **evidence moment** links a claim to that marker. A **clip**
-is a bounded view, optionally materialized as a file. A **gate package** freezes
-the selected evidence for review and authorized publication.
+An execution is one attempt. A claim is an AC, QA case or QA check. A marker
+identifies one qualified node occurrence; a moment links a claim to that marker.
+A clip is a view of the measured range, optionally encoded. A gate package is
+the immutable selected evidence for review and authorized publication.
 
-The RecipeEngine owns execution and capture lifecycle; its trace owns node
-outcomes and intent. The recorder backend owns captured bytes and source-clock
-measurements. The timeline owns their validated mapping. The acceptance writer
-owns derived AC verdicts and moment references. Artifact storage owns immutable
-bytes, availability and retention. The gateway owns resource leases and gate
-selection, not another recording implementation. Clients own presentation.
+The trace owns intent, `proves` and assertion results. The recorder owns source
+bytes and capture lifecycle facts. The timeline owns clock mapping and ranges;
+marker labels are checked projections of the trace. The artifact manifest owns
+file identity. One ledger writer owns claim verdicts and moment references. The
+evidence manifest owns publication selection only. Storage owns retention; the
+gateway owns resource admission. Digests used as references are checked, not
+independent copies of facts. Neither a successful screenshot nor a HUD caption
+is an executed expectation or a human visual judgment.
 
-References are scoped to an execution and trace occurrence. Cached labels and
-ranges are projections, never independent authority. No consumer may seek with
-a mismatched video/trace digest, infer media time from nominal FPS, turn missing
-footage into proof, or alter reviewed bytes during refresh. The HUD and captions
-use the same traced recipe intent. Capture failure is an evidence/environment
-failure, not evidence of a product regression.
+### Lifecycle and evidence
 
-### Lifecycle and extension points
+One engine plans the target, obtains backend-specific claims, starts capture,
+executes actions/assertions, renders the final HUD, finalizes media, derives
+claims/stills and freezes the package. Abort releases only owned resources and
+retains usable partial evidence with its limitation. The specification's single
+measured-range/padding rule governs seeking; it adds no precision contract or
+clock-qualification system.
 
-Resolve the target and recording policy during planning. Execution acquires its
-claims and starts one recorder before the first UI proof node. Record node/HUD
-events automatically. Paint the terminal HUD while capture is active, finalize
-media, validate the timeline, derive AC moments/stills, then freeze the package.
-Interruption preserves valid partial footage with incomplete evidence status;
-abort always cleans up owned processes and leases.
-
-ProjectRuntime declares target resolution, capabilities and resource claims.
-Platform backends implement the shared recorder contract once. Harnesses compose
-runtime, actions and domain libraries through the public engine. A new project
-does not add recorder subprocesses, timestamp math or an evidence writer.
-
-### Existing pieces assessed
-
-| Piece                                 | Decision | Reason                                                                                                                                            |
-| ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Timeline document and markers         | KEEP     | Measured clock ranges, digests and trace indices provide portable identity and honest uncertainty; scalar duplicated offsets would weaken them.   |
-| Recording lease                       | CHANGE   | Retain scoped ownership, but derive claims from the selected backend/target instead of reserving a fleet-wide helper for every kind of capture.   |
-| capture-helper and platform recorders | KEEP     | Native capture and source-clock measurement are platform concerns; fill timing gaps through the same backend contract.                            |
-| Split runner/CLI framed lifecycle     | REPLACE  | One engine must own capture, snapshots, cancellation and finalization; parallel orchestration creates gaps and conflicting ownership.             |
-| Evidence manifest                     | CHANGE   | Keep publication selection, but reference a complete immutable recording package instead of an unrelated copied MP4.                              |
-| AC ledger                             | CHANGE   | Preserve one writer and verdict semantics; add typed moment references, derive normal verdicts, and restrict manual override to untestable cases. |
-| HUD                                   | CHANGE   | Keep the intent/progress renderer; acknowledge capture boundaries and show terminal outcome before stopping the recorder.                         |
-| Command Center lightbox               | CHANGE   | Its verified seeking is sound; supply automatic AC selection, bounded clips and complete package identity.                                        |
-| Companion viewer                      | CHANGE   | Keep native rendering; use the same public validation/seek model and AC moments as Command Center.                                                |
-| PR publication and evidence refresh   | CHANGE   | Preserve approval and race checks; generate moment links/clips from the frozen package and maintain dependency identity.                          |
+Claim registration extends recipe `proofTargets`. Qualified composition paths,
+iteration identity and the last result of a declared retry determine occurrences;
+required skipped checks remain missing. Visual claims wait for visual review,
+while state assertions can establish state proof. QA parent cases aggregate the
+same child verdicts, not a second QA evidence pipeline.
 
 ### One shared evidence review model
 
-`createEvidenceReviewModel` in `@farmslot/adapter-sdk/evidence` owns claim-to-clip,
-still and marker traversal, identity checks, HUD captions, seek ranges and selected
-moment state. Command Center PR preview, Run Detail and lightbox, and Companion
-gate review and ArtifactViewer all consume it. Context selects presentation needs,
-not another derivation. Only Lit/React Native rendering and media controls differ.
-No duplicated selector, mapper, player view-model or evidence component remains.
+`createEvidenceReviewModel` in `@farmslot/adapter-sdk/evidence` owns claim-to-moment,
+clip/still/marker traversal, caption, selection and seek state. Command Center PR
+preview, Run Detail and lightbox, and Companion gate review and ArtifactViewer
+consume it. Context changes presentation only. Each platform reuses its renderer;
+no copied selectors, mappings or player view-models remain.
 
-### QA output review
+Both output-review gates show the retained report identity and QA case/check
+results. Reviewing a report snapshot does not itself authorize publication or
+release. Inactive clips load no media; selected clips use authenticated seeking.
 
-Long composed QA uses the same claim, verdict and moment model. Nodes declare QA
-case/check IDs in `proves`, with check-to-case parent relationships; no parallel
-QA evidence pipeline is introduced. Both output-review gates show the retained
-report snapshot and cases with pass/fail, stills and one-action clip playback.
-Acknowledging `engine_output_review` means reviewing that snapshot, not release
-or publication approval. Size-bounded recording segments and indexed markers
-keep seek cost independent of total suite length; cross-segment moments retain
-explicit continuity/gap information. Conformance includes 10+ cases and a check
-spanning a segment boundary.
+### Existing pieces assessed
+
+| Piece                                | Decision | Reason                                                                                                                         |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Timeline and markers                 | CHANGE   | Keep measured ranges/digests; validate labels as projections and connect ordered recording segments without invented coverage. |
+| Recording lease registry             | KEEP     | Scoped ownership is sound; use backend/target conflict keys and identical SDK/hosted admission.                                |
+| Native capture and timing backends   | CHANGE   | Preserve measured capture, sampling and interruption behavior; complete missing timing and segment results.                    |
+| CDP recorder                         | CHANGE   | Bound encoding/spooling instead of retaining every PNG until stop.                                                             |
+| Parallel runner/CLI framed lifecycle | REPLACE  | One engine must own start, snapshots, final HUD, cancellation and stop.                                                        |
+| Artifact and evidence manifests      | CHANGE   | Immutable files/dependencies and publication selection need separate authority; remove duplicate claim `covers`.               |
+| AC ledger/reducer                    | REPLACE  | One claim writer must use executed assertions, explicit aggregation and visual-review state, not action success.               |
+| HUD                                  | CHANGE   | Keep the renderer and trace intent; order final outcome before capture stop.                                                   |
+| Command Center lightbox              | CHANGE   | Keep validated seeking and controls; use the shared claim model and padded bounded playback.                                   |
+| Companion viewer                     | CHANGE   | Keep native rendering; initialize only selected media and adopt the same model.                                                |
+| Publication/refresh                  | CHANGE   | Select approved immutable bytes/dependencies and refuse substitution or unapproved selection.                                  |
 
 ### Public surface
 
-The spec lists the complete proposed surface, named consumers and stability.
-Commands stay under `farmslot recipe run`, `artifacts`, and `status`, with
-`farmslot doctor --conformance --live` for verification. There is no recording or
-evidence command family beside the single recipe CLI.
+The spec defines signatures, packages, consumers and release status. Commands
+stay under `farmslot recipe run`, `artifacts`, `status`, and existing conformance
+commands; there is no parallel command family. Serialized evidence belongs in
+`@farmslot/protocol`; executable provider/engine contracts belong in the SDK.
 
-`@farmslot/protocol` owns serialized contracts. `@farmslot/recipe-runner` owns
-execution and built-in platform capture. `@farmslot/adapter-sdk` exposes engine
-composition, one shared evidence review model and bounded-log capture. A harness
-implements ProjectRuntime and domain actions; capture, clips, AC derivation and
-package validation are inherited.
+Evolve `AdapterRecording` and the published `createDefaultRecipeEngine` factory,
+not a second engine. Its current `@farmslot/recipe-cli/harness` export is public.
+Move only the replaced engine exports in a coordinated breaking release; do not
+ban that entire published subpath. A harness supplies target/action bindings and
+inherits capture, derivation, cleanup and review data. Delete external recorder
+wrappers, private timestamp math, manual normal verdicts and duplicate mappings.
+Unrelated domain log/performance assertions remain outside this feature.
 
-Move generic Android segment/cleanup mechanics and bounded-log capture onto
-these public surfaces. Move Perps-specific performance assertions into their
-domain library. Delete the corresponding harness implementations and old import
-paths, without re-export shims. Generate CLI reference entries from the command
-definitions; maintain concepts, SDK contracts and project-adoption guidance with
-the implementation.
+Generate CLI reference entries from the single definitions and ship the SDK
+contracts, concepts and declarative-adoption guidance with implementation.
 
 ## Alternatives considered
 
-### Why this architecture
-
-1. **One recording plus derived moments.** Reject pre-encoding a separate clip per AC: it multiplies storage and encoding cost. Virtual clips are immediate; export encodes only requested moments.
-2. **Measured ranges and immutable identity.** Reject process-start offsets, FPS arithmetic and independently stored AC timestamps: drift or retries can point reviewers at another event.
-3. **Engine-owned automation.** Reject template wrappers and per-harness evidence writers: even a correct copy requires special instructions and can bypass cleanup or admission.
-4. **Shared model, native presentation.** Reject a new cross-platform player framework. Reuse the web/native renderers with one validation, selection and seek implementation.
-5. **Explicit incompleteness.** Reject silent screenshot-only success when required video fails. Reviewers need the failure and retained partial evidence, not an invented complete package.
+1. **One source recording and virtual clips.** Reject ahead-of-time encoding per claim because it multiplies work and bytes.
+2. **Measured ranges with fixed padding.** Reject guessed offsets and new precision machinery; unmeasured moments remain untimed.
+3. **Executed assertions and explicit review.** Reject action/screenshot success as semantic proof, including when a weak author tags it with `proves`.
+4. **One engine and portable review model.** Reject lifecycle/template copies and a new cross-platform player framework; only platform rendering differs.
+5. **Frozen publication identity.** Reject rescanning mutable files as authority for approved refresh; reviewed bytes must remain reviewed bytes.
 
 ## Consequences
 
-- Recipe authors describe actions and AC proof intent, not evidence plumbing.
-- Engineers review the same moment and identity in every client and publish gate.
-- Always-on UI capture adds bounded cost and requires qualified platform backends.
-- Typed AC moments and public engine composition require a versioned migration.
-- Clip export and retention need explicit resource accounting; public media selection still requires normal authorization.
+- Authors describe expectations; reviewers see what was actually checked.
+- Every client navigates the same claim and recording identity.
+- Bounded capture/encoding and lazy transfer require implementation changes and performance qualification; budgets are targets, not current measurements.
+- Versioned claim/segment contracts require a clean migration.
+- Untimed/outside/partial evidence stays visible without becoming false seekable proof.
 
 ## Migration
 
-1. Establish public contracts, one engine lifecycle, timing-capable backends and automatic AC derivation. Qualify the performance budgets through conformance.
-2. Adopt immutable packages and AC moments in Command Center, Companion and publication/refresh. Preserve completed-run evidence and approval history.
-3. Cut farms and custom harnesses over to declarative ProjectRuntime. Remove external recorders, PID/kill/trap/moov instructions, video-only copying, normal manual verdict steps and private imports. Delete the old implementations, not merely their callers.
+1. Complete shared engine derivation, assertion/segment contracts and public APIs through the existing canonical work. Pass conformance before changing normal verdict ownership.
+2. Adopt the shared model and immutable package selection in clients/publication. Migrate verified legacy relationships once; retain other historical media as explicitly untimed.
+3. Cut over each adopter with its own coordinated change linking this ADR. Until engine derivation passes, existing manual verdict steps remain the sole normal path. Then remove those steps in one cutover: never run two normal paths or writers. Delete replaced recorders, orchestration, link plumbing and imports; no shims.
 
-Use a one-time data migration for existing ledger relationships that can be
-verified. Keep legacy media available as historical untimed artifacts when its
-clock or identity cannot be recovered; never manufacture ranges. No runtime
-compatibility shim or duplicate format/writer remains after cutover.
+Specific repositories, files and rollout coordination belong in separate adoption
+records, not these public framework documents.
