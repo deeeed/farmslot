@@ -1,5 +1,4 @@
 import {
-  type Run,
   type RunnerMobileKeyProfile,
   runnerMobileKeyProfile,
   type SlotStatus,
@@ -30,11 +29,14 @@ export const TERMINAL_CONTROL_KEYS: readonly TerminalControlKey[] = [
   { label: '^L', data: '\x0c', danger: false },
 ] as const;
 
-/** What a terminal screen knows about the runner in the pane it drives. */
+/** The tmux pane a terminal key bar drives. */
+export type TerminalRunnerPane = Pick<TmuxWorkerRef, 'nodeId' | 'target'>;
+
+/** What the Gateway reports about the runner in the pane a terminal drives. */
 export interface TerminalRunnerContext {
   /** `tmuxWorkerWatchId` of the pane; keys the saved override. Null until the pane is known. */
   paneKey: string | null;
-  /** `metrics.runner` of the run linked to the pane. */
+  /** Gateway `linkedRunner`: the linked run's runner, set only on that worker's own pane. */
   linkedRunner?: string | null;
   /** Gateway-derived `processRunnerIds` of the pane. */
   processRunnerIds?: readonly string[];
@@ -83,32 +85,39 @@ export function runnerKeyProfileSummary(resolved: ResolvedRunnerKeyProfile): str
   return `Runner: ${name} · ${PROFILE_SOURCE_LABELS[resolved.source]}`;
 }
 
-export function workerTerminalRunnerContext(
-  worker: TmuxWorkerRef | null,
-  pane: Pick<TmuxWorkerSummary, 'processRunnerIds'> | null,
-  linkedRun: Pick<Run, 'metrics'> | null,
+export function paneRunnerContext(
+  pane: TerminalRunnerPane | null,
+  summary: Pick<TmuxWorkerSummary, 'linkedRunner' | 'processRunnerIds'> | null,
 ): TerminalRunnerContext {
   return {
-    paneKey: worker ? tmuxWorkerWatchId(worker) : null,
-    linkedRunner: linkedRun?.metrics?.runner ?? null,
-    processRunnerIds: pane?.processRunnerIds,
+    paneKey: pane ? tmuxWorkerWatchId(pane) : null,
+    linkedRunner: summary?.linkedRunner ?? null,
+    processRunnerIds: summary?.processRunnerIds,
   };
 }
 
 /** Slot terminals type into the active pane of the slot's tmux session. */
-export function slotTerminalRunnerContext(
-  slot: Pick<SlotStatus, 'machine' | 'session' | 'slot'> | undefined,
-  run: Pick<Run, 'metrics'> | null,
+export function slotTerminalRunnerPane(
+  slot: Pick<SlotStatus, 'machine'> | undefined,
   windows: readonly TmuxWindow[],
-): TerminalRunnerContext {
-  const pane = windows.find((window) => window.active)?.panes.find((entry) => entry.active);
-  return {
-    paneKey: slot
-      ? tmuxWorkerWatchId({ nodeId: slot.machine, target: slot.session ?? slot.slot })
-      : null,
-    linkedRunner: run?.metrics?.runner ?? null,
-    processRunnerIds: pane?.processRunnerIds,
-  };
+): TerminalRunnerPane | null {
+  const paneId = windows
+    .find((window) => window.active)
+    ?.panes.find((entry) => entry.active)?.paneId;
+  return slot && paneId ? { nodeId: slot.machine, target: paneId } : null;
+}
+
+/** Drops saved choices for this node's panes that its current pane list no longer has. */
+export function pruneRunnerKeyOverrides(
+  overrides: RunnerKeyOverrides,
+  nodeId: string,
+  liveTargets: readonly string[],
+): RunnerKeyOverrides {
+  const prefix = `${nodeId}:`;
+  const live = new Set(liveTargets.map((target) => `${prefix}${target}`));
+  const entries = Object.entries(overrides);
+  const kept = entries.filter(([paneKey]) => !paneKey.startsWith(prefix) || live.has(paneKey));
+  return kept.length === entries.length ? overrides : Object.fromEntries(kept);
 }
 
 export interface TerminalPaletteEntry {

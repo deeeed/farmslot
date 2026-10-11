@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Pressable, type StyleProp, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
+import { usePaneRunnerContext } from '../hooks/usePaneRunnerContext';
 import {
   resolveRunnerKeyProfile,
   runnerKeyProfileSummary,
   TERMINAL_CONTROL_KEYS,
   type TerminalControlKey,
   terminalExtraKeyRows,
-  type TerminalRunnerContext,
+  type TerminalRunnerPane,
 } from '../lib/terminal-controls';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useTerminalPrefsStore } from '../store/terminal-prefs';
@@ -19,7 +20,7 @@ export type TerminalControlKeyBarProps = {
   disabled?: boolean;
   label?: string | null;
   /** Adds the runner row, the Yours row and their pickers for the pane this bar drives. */
-  runnerContext?: TerminalRunnerContext;
+  runnerPane?: TerminalRunnerPane | null;
   touchKeyboardEnabled?: boolean;
   onPress: (control: TerminalControlKey) => void;
   onToggleTouchKeyboard?: () => void;
@@ -32,7 +33,7 @@ export function TerminalControlKeyBar({
   activeLabel = null,
   disabled = false,
   label = 'Terminal keys · arrows / Tab / Esc / ^C / ^D',
-  runnerContext,
+  runnerPane,
   touchKeyboardEnabled,
   onPress,
   onToggleTouchKeyboard,
@@ -42,6 +43,7 @@ export function TerminalControlKeyBar({
     <Pressable
       key={control.label}
       testID={testID}
+      accessibilityRole="button"
       style={[
         styles.button,
         control.danger && styles.dangerButton,
@@ -76,18 +78,19 @@ export function TerminalControlKeyBar({
         ) : null}
         {TERMINAL_CONTROL_KEYS.map((control) => renderKey(control))}
       </View>
-      {runnerContext ? <RunnerKeyRows context={runnerContext} renderKey={renderKey} /> : null}
+      {runnerPane !== undefined ? <RunnerKeyRows pane={runnerPane} renderKey={renderKey} /> : null}
     </View>
   );
 }
 
 function RunnerKeyRows({
-  context,
+  pane,
   renderKey,
 }: {
-  context: TerminalRunnerContext;
+  pane: TerminalRunnerPane | null;
   renderKey: RenderKey;
 }) {
+  const { context, error } = usePaneRunnerContext(pane);
   const overrides = useTerminalPrefsStore((s) => s.runnerKeyOverrides);
   const customKeys = useTerminalPrefsStore((s) => s.customKeys);
   const setRunnerKeyOverride = useTerminalPrefsStore((s) => s.setRunnerKeyOverride);
@@ -99,6 +102,7 @@ function RunnerKeyRows({
       <View style={styles.extraRow}>
         <Pressable
           testID="terminal-runner-profile"
+          accessibilityRole="button"
           style={[styles.chip, !paneKey && styles.disabledButton]}
           disabled={!paneKey}
           onPress={() => setOpenModal('profile')}
@@ -107,11 +111,13 @@ function RunnerKeyRows({
         </Pressable>
         <Pressable
           testID="terminal-custom-keys-manage"
+          accessibilityRole="button"
           style={styles.chip}
           onPress={() => setOpenModal('custom')}
         >
           <Text style={styles.chipText}>＋ Your keys</Text>
         </Pressable>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </View>
       {terminalExtraKeyRows(resolved.profile, customKeys).map((row) => (
         <View key={row.id} testID={`terminal-${row.id}-keys-row`} style={styles.extraRow}>
@@ -130,10 +136,10 @@ function RunnerKeyRows({
           }}
         />
       ) : null}
-      <CustomTerminalKeysModal
-        visible={openModal === 'custom'}
-        onClose={() => setOpenModal(null)}
-      />
+      {/* Mounted only while open, so a closed editor keeps no draft. */}
+      {openModal === 'custom' ? (
+        <CustomTerminalKeysModal visible onClose={() => setOpenModal(null)} />
+      ) : null}
     </>
   );
 }
@@ -210,4 +216,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   dangerText: { color: colors.statusFail },
+  errorText: { color: colors.statusFail, fontSize: fonts.sizeXs },
 });

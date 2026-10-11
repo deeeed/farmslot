@@ -39,12 +39,18 @@ function ModalCard({
   closeTestID: string;
   children: React.ReactNode;
 }) {
+  // Neither wrapper is an accessibility element; otherwise iOS merges the whole card into one
+  // element and the options and fields inside cannot be reached.
   return (
-    <Pressable style={styles.backdrop} onPress={onClose}>
-      <Pressable style={styles.card} onPress={(event) => event.stopPropagation()}>
+    <Pressable accessible={false} style={styles.backdrop} onPress={onClose}>
+      <Pressable
+        accessible={false}
+        style={styles.card}
+        onPress={(event) => event.stopPropagation()}
+      >
         <View style={styles.header}>
           <Text style={styles.title}>{title}</Text>
-          <Pressable testID={closeTestID} onPress={onClose} hitSlop={8}>
+          <Pressable testID={closeTestID} accessibilityRole="button" onPress={onClose} hitSlop={8}>
             <Text style={styles.close}>Close</Text>
           </Pressable>
         </View>
@@ -83,6 +89,8 @@ export function RunnerKeyProfilePicker({
             <Pressable
               key={option.id ?? 'auto'}
               testID={`terminal-runner-profile-option-${option.id ?? 'auto'}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: option.id === saved }}
               style={[styles.item, option.id === saved && styles.itemActive]}
               onPress={() => onSelect(option.id)}
             >
@@ -132,6 +140,7 @@ export function CustomTerminalKeysModal({
               </Text>
               <Pressable
                 testID={`terminal-custom-key-delete-${index}`}
+                accessibilityRole="button"
                 onPress={() => deleteCustomKey(key.label)}
                 hitSlop={8}
               >
@@ -157,6 +166,8 @@ export function CustomTerminalKeysModal({
                   <Pressable
                     key={entry.id}
                     testID={paletteTestId(entry.id)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: sequence === entry.id }}
                     style={[styles.paletteKey, sequence === entry.id && styles.paletteKeyActive]}
                     onPress={() => {
                       Keyboard.dismiss();
@@ -179,7 +190,12 @@ export function CustomTerminalKeysModal({
                     {danger ? 'Danger on' : 'Danger off'}
                   </Text>
                 </Pressable>
-                <Pressable testID="terminal-custom-key-add" style={styles.addButton} onPress={add}>
+                <Pressable
+                  testID="terminal-custom-key-add"
+                  accessibilityRole="button"
+                  style={styles.addButton}
+                  onPress={add}
+                >
                   <Text style={styles.addText}>Add key</Text>
                 </Pressable>
               </View>

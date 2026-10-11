@@ -10,19 +10,20 @@ import {
   addTerminalCustomKey,
   MAX_TERMINAL_CUSTOM_KEYS,
   normalizeTerminalCustomKeys,
+  paneRunnerContext,
+  pruneRunnerKeyOverrides,
   removeTerminalCustomKey,
   resolveRunnerKeyProfile,
   runnerKeyProfileSummary,
-  slotTerminalRunnerContext,
+  slotTerminalRunnerPane,
   TERMINAL_CONTROL_KEYS,
   TERMINAL_KEY_PALETTE,
   type TerminalCustomKey,
   terminalExtraKeyRows,
   type TerminalRunnerContext,
-  workerTerminalRunnerContext,
 } from './terminal-controls';
 
-const PANE = 'macpro::%7';
+const PANE = 'macpro:%7';
 
 test('terminal control keys include mobile TUI navigation sequences', () => {
   const dataByLabel = new Map(TERMINAL_CONTROL_KEYS.map((key) => [key.label, key.data]));
@@ -53,7 +54,7 @@ test('runner profile resolves saved override, then linked run, then one process 
   assert.deepEqual([saved.runnerId, saved.source], ['pi', 'saved']);
   assert.equal(saved.profile, RUNNER_MOBILE_KEY_PROFILES.pi);
 
-  const fromRun = resolveRunnerKeyProfile(context, { 'other::%1': 'pi' });
+  const fromRun = resolveRunnerKeyProfile(context, { 'other:%1': 'pi' });
   assert.deepEqual([fromRun.runnerId, fromRun.source], ['codex', 'run']);
 
   const fromProcess = resolveRunnerKeyProfile({ ...context, linkedRunner: null }, {});
@@ -67,10 +68,9 @@ test('runner profile resolves saved override, then linked run, then one process 
 
 test('runner profile stays generic for an ambiguous or generic agent command', () => {
   // The gateway never lists cursor for `agent`; the client must not infer it from the command.
-  const agentPane = workerTerminalRunnerContext(
-    { nodeId: 'macpro', session: 'adhoc', target: '%7' },
+  const agentPane = paneRunnerContext(
+    { nodeId: 'macpro', target: '%7' },
     { processRunnerIds: undefined },
-    null,
   );
   assert.equal(resolveRunnerKeyProfile(agentPane, {}).source, 'generic');
 
@@ -91,7 +91,7 @@ test('saved runner choice survives a prefs reload until it is cleared', () => {
   const context: TerminalRunnerContext = { paneKey: PANE, linkedRunner: 'codex' };
   const stored = serializeTerminalPrefs({
     ...parseTerminalPrefs(null),
-    runnerKeyOverrides: { [PANE]: 'grok', 'macpro::%9': 'not-a-runner' },
+    runnerKeyOverrides: { [PANE]: 'grok', 'macpro:%9': 'not-a-runner' },
   });
 
   const reloaded = parseTerminalPrefs(stored);
@@ -105,30 +105,51 @@ test('saved runner choice survives a prefs reload until it is cleared', () => {
   assert.deepEqual([auto.runnerId, auto.source], ['codex', 'run']);
 });
 
-test('slot terminal context keys the slot session and reads the active pane', () => {
-  const context = slotTerminalRunnerContext(
-    { slot: 'macpro-ff-1', machine: 'macpro', session: 'ff-1' },
-    { metrics: { runner: 'claude' } as never },
-    [
-      { index: 0, name: 'shell', active: false, synchronizePanes: false, panes: [] },
-      {
-        index: 1,
-        name: 'worker',
-        active: true,
-        synchronizePanes: false,
-        panes: [
-          { index: 0, active: false, width: 80, height: 24, title: '', processRunnerIds: ['pi'] },
-          { index: 1, active: true, width: 80, height: 24, title: '', processRunnerIds: ['codex'] },
-        ],
-      },
-    ],
+test('pane context reads the gateway pane summary and keys the pane by node and target', () => {
+  assert.deepEqual(
+    paneRunnerContext(
+      { nodeId: 'macpro', target: '%7' },
+      { linkedRunner: 'claude', processRunnerIds: ['codex'] },
+    ),
+    { paneKey: PANE, linkedRunner: 'claude', processRunnerIds: ['codex'] },
   );
-  assert.deepEqual(context, {
-    paneKey: 'macpro:ff-1',
-    linkedRunner: 'claude',
-    processRunnerIds: ['codex'],
+  assert.deepEqual(paneRunnerContext(null, null), {
+    paneKey: null,
+    linkedRunner: null,
+    processRunnerIds: undefined,
   });
-  assert.equal(slotTerminalRunnerContext(undefined, null, []).paneKey, null);
+});
+
+test('slot terminal drives the active pane of the active window', () => {
+  const windows = [
+    { index: 0, name: 'shell', active: false, synchronizePanes: false, panes: [] },
+    {
+      index: 1,
+      name: 'worker',
+      active: true,
+      synchronizePanes: false,
+      panes: [
+        { index: 0, active: false, width: 80, height: 24, title: '', paneId: '%3' },
+        { index: 1, active: true, width: 80, height: 24, title: '', paneId: '%7' },
+      ],
+    },
+  ];
+  assert.deepEqual(slotTerminalRunnerPane({ machine: 'macpro' }, windows), {
+    nodeId: 'macpro',
+    target: '%7',
+  });
+  assert.equal(slotTerminalRunnerPane(undefined, windows), null);
+  assert.equal(slotTerminalRunnerPane({ machine: 'macpro' }, []), null);
+});
+
+test('saved choices for panes a node no longer lists are forgotten', () => {
+  const overrides = { [PANE]: 'pi', 'macpro:%9': 'grok', 'mini:%9': 'codex' };
+  assert.deepEqual(pruneRunnerKeyOverrides(overrides, 'macpro', ['%7']), {
+    [PANE]: 'pi',
+    'mini:%9': 'codex',
+  });
+  // Nothing to drop keeps the same object, so the store skips a write.
+  assert.equal(pruneRunnerKeyOverrides(overrides, 'mini', ['%9']), overrides);
 });
 
 test('palette encodes xterm modified arrows and Ctrl+A through Ctrl+Z only', () => {

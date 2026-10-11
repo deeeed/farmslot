@@ -5,6 +5,7 @@ import {
   addTerminalCustomKey,
   normalizeRunnerKeyOverrides,
   normalizeTerminalCustomKeys,
+  pruneRunnerKeyOverrides,
   removeTerminalCustomKey,
   type RunnerKeyOverrides,
   type TerminalCustomKey,
@@ -42,6 +43,8 @@ interface TerminalPrefsStore extends TerminalPrefs {
   deleteCustomKey: (label: string) => void;
   /** `null` clears the override so the pane returns to auto detection. */
   setRunnerKeyOverride: (paneKey: string, runnerId: string | null) => void;
+  /** Forgets saved choices for `nodeId` panes missing from its current pane list. */
+  forgetClosedPanes: (nodeId: string, liveTargets: readonly string[]) => void;
 }
 
 function isTmuxPrefixOption(value: unknown): value is TmuxPrefixOption {
@@ -101,6 +104,11 @@ export const useTerminalPrefsStore = create<TerminalPrefsStore>((set, get) => {
       delete runnerKeyOverrides[paneKey];
       if (runnerId) runnerKeyOverrides[paneKey] = runnerId;
       update({ runnerKeyOverrides });
+    },
+    forgetClosedPanes: (nodeId, liveTargets) => {
+      const current = get().runnerKeyOverrides;
+      const runnerKeyOverrides = pruneRunnerKeyOverrides(current, nodeId, liveTargets);
+      if (runnerKeyOverrides !== current) update({ runnerKeyOverrides });
     },
   };
 });
