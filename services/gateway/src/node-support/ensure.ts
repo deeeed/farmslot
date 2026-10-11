@@ -13,11 +13,19 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  packMachineNames,
+  validatePackBytesPortability,
+  validatePackPortability,
+} from '@farmslot/protocol/node/pack-portability';
+
 import { execOnSlot } from '../core/exec.js';
 import {
   farmslotRoot,
   isLocal,
   loadProjectVars,
+  poolDir,
+  projectsDir,
   type ProjectVars,
   type RawProjectJson,
   slotFileExists,
@@ -110,6 +118,16 @@ export function nodeSupportBundlePaths(projectName: string, projectJson: RawProj
 
 /** Read and hash the bundle's files from this gateway's tree. */
 export async function collectNodeSupportBundle(projectName: string, supportPaths: string[]) {
+  const projects = new Set([
+    projectName,
+    ...supportPaths.filter((p) => p.startsWith('projects/')).map((p) => p.split('/')[1]),
+  ]);
+  const machines = packMachineNames(poolDir);
+  const portabilityErrors = [...projects].flatMap((name) =>
+    validatePackPortability(path.join(projectsDir, name), `projects/${name}`, machines),
+  );
+  if (portabilityErrors.length)
+    throw new Error(`Project pack is not portable:\n${portabilityErrors.join('\n')}`);
   const farmslotRootRealPath = await realpath(farmslotRoot);
   const files: NodeSupportFile[] = (
     await Promise.all(
@@ -123,6 +141,16 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
       }),
     )
   ).flat();
+  const shippedErrors = files.flatMap((file) => {
+    if (!file.relativePath.startsWith('projects/')) return [];
+    return validatePackBytesPortability(
+      file.relativePath,
+      Buffer.from(file.contentBase64, 'base64'),
+      machines,
+    );
+  });
+  if (shippedErrors.length)
+    throw new Error(`Project support is not portable:\n${shippedErrors.join('\n')}`);
   const manifest = {
     version: 1,
     project: projectName,

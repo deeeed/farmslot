@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
+
+- Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.
+
 ## 0.37.0 - 2026-10-11
 
 - Declare portable project providers and ordered libraries, and record recipe conformance evidence bound to source, target selection, trust, invocation parameters and effective library paths. Slot reverse lookup refuses ambiguity and supports explicit selection while preserving local-host preference.

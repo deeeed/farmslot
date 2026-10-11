@@ -2401,7 +2401,7 @@
             },
             {
               "type": "object",
-              "required": ["kind", "allowedMachines"],
+              "required": ["kind"],
               "properties": {
                 "kind": {
                   "const": "pool"
