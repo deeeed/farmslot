@@ -233,3 +233,31 @@ test('prepare refuses an unreadable commit graph rather than assuming no work', 
     /Cannot verify commits.*unreadable commit graph/,
   );
 });
+
+test('prepare can reuse detached parked work while protecting its saved branch', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  const saved = git(repo, 'rev-parse', BRANCH);
+  git(repo, 'checkout', '--detach', '-q', 'HEAD');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+  await assert.rejects(assertPrepareCommitsPublished(vars, BRANCH, bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', BRANCH), saved);
+  git(repo, 'branch', '-D', BRANCH);
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), saved);
+});
+
+test('prepare retains published tips after remote deletion and still refuses later unpublished work', async (t) => {
+  const { repo, vars } = slotRepo(t, ['origin']);
+  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
+  const published = git(repo, 'rev-parse', BRANCH);
+  const origin = git(repo, 'remote', 'get-url', 'origin');
+  // GitHub deletes the merged branch independently of this slot's refs.
+  git(origin, 'update-ref', '-d', `refs/heads/${BRANCH}`);
+  git(repo, 'config', 'fetch.prune', 'true');
+  await assertPrepareCommitsPublished(vars, 'next-run', bash);
+  assert.equal(git(repo, 'rev-parse', `origin/${BRANCH}`), published);
+  commit(repo, 'unpublished-after-merge.txt');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  await assert.rejects(assertPrepareCommitsPublished(vars, 'next-run', bash), /unpushed commits/);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
