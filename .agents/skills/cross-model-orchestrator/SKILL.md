@@ -43,7 +43,8 @@ resume. Omit them to use the runner's defaults. The shared runner adapter receiv
 
 `lanes-status` observes without persisting bindings or acknowledging receipts. Existing lanes
 may configure `pane_id` and `observability_dir`. Unhooked native sessions held open by a foreground
-process can supply observational state; that state does not authorize transport or recovery.
+process can supply observational state; status observation does not authorize recovery. Codex transport rechecks process-owned
+native session identity and proves exact prompt acceptance without installing hooks.
 Unknown state is reported explicitly. Keep paused and farm-managed sessions outside recovery.
 
 ## Review

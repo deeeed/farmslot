@@ -22,7 +22,8 @@ cat prompt.txt | scripts/send-and-verify.sh <pane> <runner> [trace.jsonl]
 
 The process tree and argv identify Codex, Claude, Cursor, Gemini, Grok or a
 shell. A rendered prompt cannot establish runner identity. Native session
-records and pane-bound hooks establish idle or active turns. Missing or stale
+records and pane-bound hooks establish idle or active turns. An unhooked Codex
+process can bind its sole kernel-owned rollout file for exact native acceptance. Missing or stale
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
