@@ -1,6 +1,6 @@
 # Project recipe contract
 
-**Status:** Accepted normative specification, approved with [ADR-066](../adr/066-project-recipe-binding-and-conformance.md).
+**Status:** Accepted normative specification, approved with [ADR-068](../adr/068-project-recipe-binding-and-conformance.md).
 **Owner:** Farmslot maintainers
 
 MUST, MUST NOT and SHOULD describe the intended contract. This specification extends [Recipe Protocol v1](recipe-protocol-v1.md), the [runtime capability contract](recipe-runtime-capability-contract.md) and the existing project/template/resource contracts. It does not claim that all migration gates are already implemented or validated.

@@ -1,4 +1,4 @@
-# ADR-066: Project recipe binding and conformance
+# ADR-068: Project recipe binding and conformance
 
 **Status:** Accepted
 **Date:** 2026-10-11
