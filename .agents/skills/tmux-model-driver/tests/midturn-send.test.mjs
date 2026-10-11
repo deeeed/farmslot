@@ -184,6 +184,7 @@ test('legacy caller receipts share a socket lock and survive read-only observati
   const original = JSON.parse(fs.readFileSync(legacyFile, 'utf8'));
   delete original.socket;
   delete original.pane_id;
+  delete original.queue_was_empty;
   fs.writeFileSync(legacyFile, JSON.stringify(original));
   process.env.TMUX = '/tmp/fixture-socket,10,2';
   assert.equal(paneState('%1', 'codex').queue_kind, 'driver-buffer');
@@ -197,6 +198,7 @@ test('legacy caller receipts share a socket lock and survive read-only observati
   assert.equal(result.typed, false);
   assert.equal(result.evidence.receipt_id, original.receipt_id);
   assert.equal(fs.existsSync(legacyFile), true);
+  assert.equal(JSON.parse(fs.readFileSync(legacyFile, 'utf8')).queue_was_empty, true);
   const bytes = fs.readFileSync(legacyFile);
   process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
   assert.equal(paneState('%1', 'codex').accepted.receipt_id, original.receipt_id);
@@ -233,4 +235,35 @@ test('a queued /goal still requires native objective and new-turn evidence', asy
   assert.equal(delivered.queued, true);
   assert.equal(delivered.submitted, false);
   assert.equal(paneState('%1', 'codex').accepted, null);
+});
+
+test('a fresh owned submission accepts the native truncated queue preview', async (t) => {
+  const f = fixture(t);
+  const lines = Array.from({ length: 20 }, (_, index) => `Admission handoff line ${index}`);
+  const payload = lines.join('\n');
+  f.setQueuedPayload(lines.slice(0, 3).join('\n') + '\n    …');
+  const delivered = await send('%1', 'codex', payload);
+  assert.equal(delivered.submitted, true);
+  assert.equal(delivered.evidence.source, 'runner-queue');
+  const file = path.join(
+    f.dir,
+    fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
+  );
+  const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete receipt.queue_was_empty;
+  delete receipt.accepted;
+  fs.writeFileSync(file, JSON.stringify(receipt));
+  assert.equal(
+    paneState('%1', 'codex').accepted,
+    null,
+    'old uncertain receipts need complete queue or native proof',
+  );
+  receipt.queue_was_empty = true;
+  fs.writeFileSync(file, JSON.stringify(receipt));
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Messages to be submitted after next tool call\n↳ ${lines[0]}\n    …\n↳ foreign queue\n›`;
+  assert.equal(
+    paneState('%1', 'codex').accepted,
+    null,
+    'multiple queued messages cannot use preview ownership',
+  );
 });

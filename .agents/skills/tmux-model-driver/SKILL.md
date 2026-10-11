@@ -38,7 +38,9 @@ A complete driver-owned "Messages to be submitted after next tool call" block re
 `queued`, with `submitted: true`, for the same pane process. This proves queue delivery,
 with no new-turn claim. Its receipt stays until the owner acknowledges delivery.
 Cancellation or a disappearing banner never clears that evidence.
-A marker or shared prefix alone is insufficient.
+A marker or shared prefix alone is insufficient for an older uncertain receipt.
+For this driver's fresh submit into an empty queue, a single native truncated preview
+with its matching visible text and overflow line also proves queue delivery.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.

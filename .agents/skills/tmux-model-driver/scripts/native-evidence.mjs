@@ -231,7 +231,12 @@ export function queuedPrompt(meta, runner, receipt) {
   if (
     receipt.submitted_at &&
     receipt.pane_identity === paneIdentity(meta) &&
-    runnerPaneHasQueuedInstruction(meta.tail || '', receipt.payload, true)
+    runnerPaneHasQueuedInstruction(
+      meta.tail || '',
+      receipt.payload,
+      true,
+      receipt.queue_was_empty === true,
+    )
   )
     return {
       source: 'runner-queue',

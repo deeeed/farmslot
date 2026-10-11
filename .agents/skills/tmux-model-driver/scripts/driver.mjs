@@ -547,6 +547,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         if (payload && hash(payload) !== receipt.payload_hash)
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
+        if (retry) receipt.queue_was_empty = true;
       } else {
         if (!payload.trim()) verification = 'empty_payload';
         if (!verification && runner !== 'shell') {
@@ -563,6 +564,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             pane_identity: paneIdentity(before),
             pane_id: before.pane_id,
             socket: files.socket,
+            queue_was_empty: !before.queued,
             typed: false,
           };
           durableWrite(files.receipt, receipt);

@@ -26,6 +26,7 @@ export function runnerPaneHasQueuedInstruction(
   pane: string,
   message?: string,
   submittedExact = false,
+  allowTruncatedPreview = false,
 ): boolean {
   const lines = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
   const marker = lines
@@ -48,11 +49,22 @@ export function runnerPaneHasQueuedInstruction(
     const composer = body.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
     const firstMessage = body.findIndex((line) => /^\s*[↳›❯](?:\s|$)/.test(line));
     if (composer === -1 || firstMessage === -1 || firstMessage >= composer) return false;
-    const queued = body
+    const queuedLines = body
       .slice(firstMessage, composer)
       .map((line) => line.replace(/^\s*[↳›❯]\s?/, ''))
-      .join('\n');
-    return normalizeInstructionText(queued) === normalizeInstructionText(message);
+      .filter((line) => line.trim());
+    const expected = normalizeInstructionText(message);
+    if (normalizeInstructionText(queuedLines.join('\n')) === expected) return true;
+    const preview = normalizeInstructionText(queuedLines.slice(0, -1).join('\n'));
+    // The native preview caps long messages and renders a separate overflow line.
+    // Only a fresh owned submit from an empty queue may use that preview as delivery proof.
+    return (
+      allowTruncatedPreview &&
+      queuedLines.at(-1)?.trim() === '…' &&
+      body.slice(firstMessage, composer).filter((line) => /^\s*↳\s/.test(line)).length === 1 &&
+      Boolean(preview) &&
+      expected.startsWith(preview)
+    );
   }
   if (!runnerPaneContainsInstruction(pane, message)) return false;
   const compactPane = normalizeInstructionText(pane).toLowerCase();
