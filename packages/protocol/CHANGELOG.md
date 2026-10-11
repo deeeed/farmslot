@@ -8,7 +8,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Provide shared file:line portability validation for project packs.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+## 0.37.0 - 2026-10-11
+
+- Declare portable project providers and ordered libraries, and record recipe conformance evidence bound to source, target selection, trust, invocation parameters and effective library paths. Slot reverse lookup refuses ambiguity and supports explicit selection while preserving local-host preference.
 
 ## 0.36.0 - 2026-10-10
 

@@ -4823,6 +4823,7 @@ __metadata:
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/credential-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/recipe-cli": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@farmslot/slot-config": "workspace:*"
@@ -5057,7 +5058,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/recipe-cli@workspace:packages/recipe-cli":
+"@farmslot/recipe-cli@workspace:*, @farmslot/recipe-cli@workspace:packages/recipe-cli":
   version: 0.0.0-use.local
   resolution: "@farmslot/recipe-cli@workspace:packages/recipe-cli"
   dependencies:

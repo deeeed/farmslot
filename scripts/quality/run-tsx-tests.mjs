@@ -132,7 +132,8 @@ export function discoverTests(roots, cwd) {
 }
 
 export function classifyTest(source) {
-  if (source.includes('mock.module(')) return 'module-mock';
+  if (source.includes('mock.module(') || source.includes('mock-pty.test-support'))
+    return 'module-mock';
   if (source.includes(SERIAL_PRAGMA)) return 'serial';
   return 'parallel';
 }

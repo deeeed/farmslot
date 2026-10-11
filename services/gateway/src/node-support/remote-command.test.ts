@@ -54,8 +54,9 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
       calls.push('write');
       if (filePath.endsWith('manifest.json')) manifest = data;
     },
-    writeFiles: async () => {
+    writeFiles: async (_vars, _base, files) => {
       calls.push('writeFiles');
+      if (files.some((file) => file.path === 'node-support-hash')) calls.push('select');
       if (opts.failUpload) throw new Error('node went away mid-upload');
     },
   };
@@ -377,4 +378,17 @@ test('every direct node exec sender is reviewed for farm script references', asy
       [];
     assert.equal(calls.length, expected, `${file} resolves farm refs on each exec path`);
   }
+});
+
+test('read-only prerequisite cache cannot suppress later slot bundle selection', async () => {
+  resetRemoteFarmCommandCache();
+  const node = fakeNode();
+  const command = await resolveRemoteFarmCommand(remoteVars(), HOOK, {
+    io: node.io,
+    selectSlot: false,
+  });
+  assert.equal(node.calls.includes('select'), false);
+  const selected = await resolveRemoteFarmCommand(remoteVars(), HOOK, { io: node.io });
+  assert.equal(selected, command);
+  assert.equal(node.calls.filter((call) => call === 'select').length, 1);
 });

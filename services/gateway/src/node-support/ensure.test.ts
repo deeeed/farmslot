@@ -204,6 +204,31 @@ test('a failed upload discards the incoming dir and aborts the launch', async ()
   assert.equal(rec.written.length, 0, 'no pointer is written for an unpublished bundle');
 });
 
+test('read-only prerequisite delivery and reuse preserve the slot support pointer', async () => {
+  const { io, rec } = fakeIo({ remoteManifestHash: null });
+  const state = await ensureNodeSupportBundle(remoteVars(), '.agent', {
+    projectVars,
+    io,
+    selectSlot: false,
+  });
+  assert.ok(state?.hash);
+  assert.equal(state.published, true);
+  assert.equal(
+    rec.written.some((write) => write.paths.includes('node-support-hash')),
+    false,
+  );
+  rec.written.length = 0;
+  const reused = await ensureNodeSupportBundle(remoteVars(), '.agent', {
+    projectVars,
+    io,
+    selectSlot: false,
+  });
+  assert.equal(reused?.published, false);
+  assert.equal(rec.written.length, 0);
+  await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
+  assert.deepEqual(rec.written.at(-1)?.paths, ['node-support-hash']);
+});
+
 test('a quoted project Node hook resolves from the remote home instead of the slot cwd', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-hook-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -131,3 +131,33 @@ test('pack admission uses the target workspace pool for literal node references'
   writeFileSync(template, 'ssh worker-z true');
   assert.match(validatePackDir(root, pool).errors[0], /setup\/cli.sh:1:.*pool\/slot/);
 });
+
+test('pack validation refuses malformed recipe sources before any provider import', (t) => {
+  const dir = writePackDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'projects', 'example-app-farm', 'project.json');
+  for (const recipe of [
+    { provider: { module: 1 } },
+    {
+      provider: { module: 'provider.mjs' },
+      libraries: [{ name: 'team', source: 'library', owner: '' }],
+    },
+    {
+      provider: { module: 'provider.mjs' },
+      libraries: [
+        { name: 'team', source: 'a', owner: 'x' },
+        { name: 'team', source: 'b', owner: 'y' },
+      ],
+    },
+  ]) {
+    writeFileSync(file, JSON.stringify({ name: 'example-app-farm', recipe }));
+    const result = validatePackDir(dir);
+    assert.equal(result.pack, null);
+    assert.ok(result.errors.some((error) => error.includes('recipe.')));
+  }
+  writeFileSync(
+    file,
+    JSON.stringify({ name: 'example-app-farm', recipe: { provider: { module: 'provider.mjs' } } }),
+  );
+  assert.deepEqual(validatePackDir(dir).errors, []);
+});

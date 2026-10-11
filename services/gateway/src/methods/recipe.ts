@@ -1099,7 +1099,7 @@ export async function recipeProjectHookRun(
   params: RecipeProjectHookRunParams,
 ): Promise<RecipeProjectHookRunResult> {
   const { built, slotVars } = await buildRecipeProjectHookCommand(params);
-  const result = await execOnSlot(slotVars, built.command, {
+  const result = await execOnSlot(slotVars, withMachineEnv(built.command, slotVars), {
     timeout: params.timeoutMs ?? 60_000,
     maxBuffer: 2 * 1024 * 1024,
   });

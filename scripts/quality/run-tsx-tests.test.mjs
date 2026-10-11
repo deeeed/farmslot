@@ -140,6 +140,19 @@ test('worker count defaults to serial and rejects invalid values', () => {
 test('classification keys off module mocks and the serial pragma', () => {
   assert.equal(classifyTest('const x = 1;'), 'parallel');
   assert.equal(
+    classifyTest("await import('../../runtime/mock-pty.test-support.js');"),
+    'module-mock',
+  );
+  const checkSource = readFileSync(
+    path.join(REPO_ROOT, 'services/gateway/src/methods/slot/check.test.ts'),
+    'utf8',
+  );
+  assert.equal(
+    classifyTest(checkSource),
+    'module-mock',
+    'the real PTY-isolated check suite needs module mocking',
+  );
+  assert.equal(
     classifyTest("import { mock } from 'node:test';\nmock.module('./a.js', {});"),
     'module-mock',
   );

@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { validateProjectRecipeConfig } from '@farmslot/protocol';
 import {
   listPackOwnedEntries,
   packMachineNames,
@@ -145,10 +146,11 @@ export function validatePackDir(
       continue;
     }
     const name = projectName(proj);
-    let declared: { name?: string };
+    let declared: { name?: string; recipe?: unknown };
     try {
       declared = JSON.parse(readFileSync(join(projDir, 'project.json'), 'utf-8')) as {
         name?: string;
+        recipe?: unknown;
       };
     } catch (err) {
       errors.push(
@@ -160,6 +162,15 @@ export function validatePackDir(
       errors.push(
         `${proj.dir}/project.json: 'name' is ${JSON.stringify(declared.name)} but must match the dir name '${name}'`,
       );
+    }
+    if (declared.recipe !== undefined) {
+      try {
+        validateProjectRecipeConfig(declared.recipe);
+      } catch (err) {
+        errors.push(
+          `${proj.dir}/project.json: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     const setupScript = join(projDir, 'setup', `${proj.platform}.sh`);
     if (!existsSync(setupScript)) {

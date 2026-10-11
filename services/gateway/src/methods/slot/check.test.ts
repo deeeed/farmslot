@@ -7,18 +7,20 @@ import path from 'node:path';
 import test, { describe } from 'node:test';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../../core/config.js';
-import { assertSlotHealthForRecipeRerun } from '../recipe.js';
+await import('../../runtime/mock-pty.test-support.js');
+const { assertSlotHealthForRecipeRerun } = await import('../recipe.js');
 
-import {
+const {
   checkDefaultBranch,
   checkHealth,
   checkRunnerLaunch,
   isOptionalFixtureAbsence,
   runHealthCheck,
   runUnlockHook,
-} from './check.js';
-import { verifyPrepareHealth } from './prepare.js';
-import { probeDefaultBranch } from './slot-tracking.js';
+} = await import('./check.js');
+const { verifyPrepareHealth } = await import('./prepare.js');
+const { probeDefaultBranch } = await import('./slot-tracking.js');
+const { checkPrepareRequirement } = await import('./prepare-profile.js');
 
 function makeSlotVars(remoteRepo: string): SlotVars {
   return {
@@ -485,4 +487,34 @@ test('checkRunnerLaunch reports an unbuildable worker env once', async (t) => {
   assert.equal(steps[0]!.name, 'runner');
   assert.equal(steps[0]!.status, 'fail');
   assert.match(steps[0]!.detail, /^Worker env cannot be built: .*BAD-NAME/);
+});
+
+test('health and unlock hooks receive configured pool tools in real child shells', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'pool-health '));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const vars = { ...makeSlotVars(repo), machineEnv: { AUDIOLAB_NODE_BIN: repo } };
+  const condition = 'test "$AUDIOLAB_NODE_BIN" = "$PWD"';
+  assert.equal(await runHealthCheck(vars, `${condition} && printf OK`, ''), 'OK');
+  assert.equal(await runUnlockHook(vars, condition), null);
+});
+
+test('prepare profile artifact and dev-server probes receive pool paths', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'profile pool env '));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const vars = { ...makeSlotVars(repo), machineEnv: { FARMSLOT_WORKSPACE: repo } };
+  const context = {
+    vars,
+    runtimeDir: '.agent',
+    projectJson: {
+      command_env: { set: { FARMSLOT_WORKSPACE: '/wrong' } },
+      hooks: {
+        artifact_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD"',
+        dev_server_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD"',
+        health_check: 'test "$FARMSLOT_WORKSPACE" = "$PWD" && printf OK',
+      },
+    },
+  };
+  assert.equal((await checkPrepareRequirement('artifact_available', context)).ok, true);
+  assert.equal((await checkPrepareRequirement('dev_server_up', context)).ok, true);
+  assert.equal((await checkPrepareRequirement('health_ok', context)).ok, true);
 });
