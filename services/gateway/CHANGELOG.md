@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery.
+- Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
 
 - Retain CI check metadata at decisions and return current details through pr.status.
