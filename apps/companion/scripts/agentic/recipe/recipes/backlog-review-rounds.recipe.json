@@ -56,7 +56,7 @@
         "text_contains": ["COLD"],
         "timeout_ms": 15000,
         "intent": "The shared picker exposes COLD next to the review choices.",
-        "next": "capture-create"
+        "next": "capture-create-hud"
       },
       "capture-create": {
         "action": "ui.screenshot",
@@ -202,7 +202,7 @@
         "text_contains": ["WARM"],
         "timeout_ms": 15000,
         "intent": "The reopened sequence exposes WARM and its persisted choices.",
-        "next": "capture-saved"
+        "next": "capture-saved-hud"
       },
       "capture-saved": {
         "action": "ui.screenshot",
@@ -344,7 +344,7 @@
         ],
         "timeout_ms": 15000,
         "intent": "Missing WARM provenance refuses the request and keeps the chosen mode visible.",
-        "next": "capture-warm-refusal"
+        "next": "capture-warm-refusal-hud"
       },
       "capture-warm-refusal": {
         "action": "ui.screenshot",
@@ -365,7 +365,7 @@
         "text_contains": ["validation/companion-proof#901 / proof-review-901"],
         "timeout_ms": 15000,
         "intent": "The shared picker exposes its configured lineage as read-only provenance.",
-        "next": "capture-warm-mode"
+        "next": "capture-warm-mode-hud"
       },
       "reveal-warm-submit": {
         "action": "ui.scroll",
@@ -406,6 +406,30 @@
         "pixels": 250,
         "intent": "The next review model choices fit above the bottom bar so their labels can be read.",
         "next": "create-second-model"
+      },
+      "capture-create-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the static round before saving.",
+        "next": "capture-create"
+      },
+      "capture-warm-mode-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the selected WARM review before saving.",
+        "next": "capture-warm-mode"
+      },
+      "capture-saved-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the saved review reopened in Companion.",
+        "next": "capture-saved"
+      },
+      "capture-warm-refusal-hud": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the refusal before the operator changes mode.",
+        "next": "capture-warm-refusal"
       }
     }
   }

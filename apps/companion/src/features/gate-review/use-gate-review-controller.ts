@@ -229,6 +229,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
             const now = decisionResolveRequest(
               decisionDetailFromRun(latest.run, latest.decision),
               action.id,
+              null,
+              selectionData,
             );
             if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
               Alert.alert(action.label, 'The publish package changed; review it again.');

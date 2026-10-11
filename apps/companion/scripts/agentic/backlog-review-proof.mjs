@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { openSimulatorDevClient } from './simulator-dev-client.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-backlog-review-proof');
 const statePath = path.join(proofDir, 'state.json');
@@ -140,7 +142,7 @@ if (phase === 'setup') {
   assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
   const bundleId = process.env.BUNDLE_ID ?? 'net.siteed.farmslot.development';
   execFileSync('xcrun', ['simctl', 'terminate', process.env.IOS_SIMULATOR, bundleId]);
-  execFileSync('xcrun', ['simctl', 'launch', process.env.IOS_SIMULATOR, bundleId]);
+  await openSimulatorDevClient(process.env.IOS_SIMULATOR);
 } else if (phase === 'open-connection') {
   openUrl('/connection');
 } else if (phase === 'open-create') {

@@ -112,7 +112,7 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
   fs.chmodSync(path.join(repo, 'tasks/review/mark'), 0o700);
   write(
     path.join(repo, 'tasks/review/artifacts/pr-description.md'),
-    '# Verify message\n\nThe fixture changes message.txt to hello.\n',
+    '# Verify message\n\nThe fixture updates message.txt to a greeting containing hello and makes greeting() in greeting.js return hello.\n',
   );
   write(
     path.join(fixture, 'pool/local.json'),

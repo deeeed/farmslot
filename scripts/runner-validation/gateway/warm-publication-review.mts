@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { reviewPolicySatisfied } from '../../../services/gateway/src/quality/review-policy.js';
+import { reviewPolicySatisfied } from '../../../packages/protocol/src/runs/review-policy.js';
 import { REQUESTED_REVIEW_SOURCE } from '../../../services/gateway/src/quality/review-sources.js';
 import { loadSlotVars } from '../../../services/gateway/src/core/config.js';
 import {
