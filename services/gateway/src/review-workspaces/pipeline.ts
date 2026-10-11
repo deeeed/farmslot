@@ -229,10 +229,10 @@ async function freezeSubject(
       )
     : undefined;
   currentWorkspaceRun(runId, generation);
+  if (!prior && run.reviewMode === 'warm')
+    throw new Error('WARM review unavailable: no previous review for this repository/PR');
   if (context && prior) {
-    const resumeRequested =
-      (run.prWork?.review?.options.sessionIntent ??
-        (run.reviewScope === 'incremental' ? 'resume' : 'reset')) === 'resume';
+    const resumeRequested = (run.prWork?.review?.options.mode ?? run.reviewMode) === 'warm';
     if (resumeRequested && compatibleWorkspaceReviewer(run, prior)) {
       // Fill only the missing session identity on the saved prior run; its result stays immutable.
       await recoverReviewTmuxSession(prior, () => {
@@ -248,7 +248,7 @@ async function freezeSubject(
       reviewWorkspaceSubject: subject,
       branch: pr.branch,
       summary: pr.title,
-      ...(context ? { repeatReviewContext: context, reviewScope: context.reviewScope } : {}),
+      ...(context ? { repeatReviewContext: context, reviewMode: context.mode } : {}),
     }),
     'freeze workspace review subject',
   );

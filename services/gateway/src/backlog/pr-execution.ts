@@ -7,6 +7,7 @@ import {
   type PRSlotExecutionProfile,
   type PRSourceAccount,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -64,7 +65,15 @@ export async function resolvePRExecution(
     for (const choice of choices) {
       if (!isPRWorkspaceExecutionChoice(choice)) continue;
       try {
-        await inspectReviewWorkspaceTarget({ project, ...choice }, context.ownerId);
+        await inspectReviewWorkspaceTarget(
+          {
+            project,
+            ...choice,
+            effort: executionModelFromSelection(choice).effort ?? undefined,
+            model: executionModelFromSelection(choice).model,
+          },
+          context.ownerId,
+        );
         supported.push(choice);
       } catch (error) {
         // Rejected alternatives become operator-visible configuration failures; unexpected failures propagate.
@@ -91,7 +100,13 @@ export async function resolvePRExecution(
       errors.push(`${choice.runner}/${choice.model}: unsupported runner or model`);
       return false;
     }
-    if (!runnerSupportsEffort(choice.runner, choice.model, choice.effort)) {
+    if (
+      !runnerSupportsEffort(
+        choice.runner,
+        executionModelFromSelection(choice).model,
+        executionModelFromSelection(choice).effort ?? undefined,
+      )
+    ) {
       errors.push(`${choice.runner}/${choice.model}: unsupported effort ${choice.effort}`);
       return false;
     }

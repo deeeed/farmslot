@@ -35,7 +35,7 @@ test('ready workspace artifact model merges package, evidence, and review artifa
         { path: 'artifacts/diff.txt', purpose: 'diff' },
         { path: 'artifacts/after.png', purpose: 'screenshot' },
       ],
-      independentReviews: [{ loopNumber: 2, artifactPaths: ['reviews/review.md'] }],
+      reviews: [{ loopNumber: 2, mode: 'cold', artifactPaths: ['reviews/review.md'] }],
       prPackage: {
         artifactPath: 'artifacts/pr-package.json',
         validationSummaryPath: 'artifacts/validation.md',
@@ -107,8 +107,8 @@ test('ready workspace evidence model preserves selected package media under scre
 test('ready workspace artifact model exposes review, package preview, and diff helpers', () => {
   const input = payload({
     artifactManifest: [{ path: 'reports/changes.diff', purpose: 'review patch' }],
-    independentReviews: [
-      { loopNumber: 1, artifactPaths: ['reviews/notes.md', 'reviews/diff.txt'] },
+    reviews: [
+      { loopNumber: 1, mode: 'cold', artifactPaths: ['reviews/notes.md', 'reviews/diff.txt'] },
     ],
     prPackage: { artifactPath: 'artifacts/pr-package.json' },
   });

@@ -15,17 +15,25 @@ import {
 const reviewExecution: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['one', 'two'] },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high', allowedMachines: ['two'] }],
+  models: [
+    {
+      mode: 'cold',
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      allowedMachines: ['two'],
+    },
+  ],
 };
 const qaExecution: PRSlotExecutionProfile = {
   slotPolicy: { kind: 'exact', slotId: 'runtime' },
-  models: [{ runner: 'runner', model: 'model' }],
+  models: [{ effort: null, mode: 'cold', runner: 'runner', model: 'model' }],
 };
 const farm: ProjectWorkflowDefaults = {
-  'review-pr': { execution: reviewExecution, review: { sessionIntent: 'reset', scope: 'full' } },
+  'review-pr': { execution: reviewExecution, review: { mode: 'cold' as const } },
   qa: {
     execution: qaExecution,
-    review: { sessionIntent: 'resume', scope: 'full', workflow: 'qa', qaProfileId: 'daily' },
+    review: { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'daily' },
   },
 };
 
@@ -33,7 +41,7 @@ test('farm defaults resolve independently for Review and QA and retain source in
   const review = resolvePRWorkflowDefaults({ farm });
   assert.equal(review.workflow, 'review-pr');
   assert.deepEqual(review.execution, reviewExecution);
-  assert.deepEqual(review.review, { sessionIntent: 'reset', scope: 'full', workflow: 'review' });
+  assert.deepEqual(review.review, { mode: 'cold' as const, workflow: 'review' });
   assert.deepEqual(review.sources, { execution: 'farm', review: 'farm', publication: 'built-in' });
   const qa = resolvePRWorkflowDefaults({ workflow: 'qa', farm });
   assert.deepEqual(qa.execution, qaExecution);
@@ -55,12 +63,12 @@ test('request, rule, repository and team precedence selects complete policies wi
   for (const layer of [...layers].reverse()) {
     const execution: PRWorkspaceExecutionProfile = {
       workspacePolicy: { kind: 'exact', machine: layer },
-      models: [{ runner: layer, model: `${layer}-model` }],
+      models: [{ effort: null, mode: 'cold', runner: layer, model: `${layer}-model` }],
       transport: 'native',
     };
     configured[layer] = {
       execution,
-      review: { sessionIntent: 'resume', scope: 'incremental', busySession: 'fresh' },
+      review: { mode: 'warm' as const },
     };
     const result = resolvePRWorkflowDefaults({ ...configured, farm });
     assert.deepEqual(result.execution, execution);
@@ -81,22 +89,26 @@ test('request, rule, repository and team precedence selects complete policies wi
 
 test('explicit workflow chooses the farm map before execution selection and rejects contradictory options', () => {
   const qa = resolvePRWorkflowDefaults({
-    request: { review: { sessionIntent: 'reset', scope: 'full', workflow: 'qa' } },
+    request: { review: { mode: 'cold' as const, workflow: 'qa' } },
     farm,
   });
   assert.equal(qa.workflow, 'qa');
   assert.deepEqual(qa.execution, qaExecution);
-  const legacyQa = resolvePRWorkflowDefaults({
-    rule: { review: { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' } },
-    farm,
-  });
-  assert.equal(legacyQa.workflow, 'qa');
-  assert.equal(legacyQa.review.validationDepth, 'full-live');
+  assert.throws(
+    () =>
+      resolvePRWorkflowDefaults({
+        rule: {
+          review: { mode: 'cold', validationDepth: 'full-live' },
+        } as unknown as PRWorkflowPolicy,
+        farm,
+      }),
+    /Unsupported property/,
+  );
   assert.throws(
     () =>
       resolvePRWorkflowDefaults({
         workflow: 'review-pr',
-        request: { review: { sessionIntent: 'resume', scope: 'full', workflow: 'qa' } },
+        request: { review: { mode: 'cold' as const, workflow: 'qa' } },
         farm,
       }),
     /conflicts/,
@@ -113,41 +125,45 @@ test('normalization rejects invalid authority and prevents mutation of the confi
     { qa: { script: 'run' } },
     { 'review-pr': { execution: qaExecution } },
     { qa: { execution: reviewExecution } },
-    { 'review-pr': { review: { sessionIntent: 'resume', scope: 'full', workflow: 'qa' } } },
-    { qa: { review: { sessionIntent: 'resume', scope: 'full', validationDepth: 'static-code' } } },
+    { 'review-pr': { review: { mode: 'cold' as const, workflow: 'qa' } } },
+    { qa: { review: { mode: 'cold' as const, validationDepth: 'static-code' } } },
     {
       'review-pr': {
         execution: {
           ...reviewExecution,
-          models: [{ runner: 'codex', model: 'gpt-6-astra', allowedMachines: ['unlisted'] }],
+          models: [
+            {
+              effort: null,
+              mode: 'cold',
+              runner: 'codex',
+              model: 'gpt-6-astra',
+              allowedMachines: ['unlisted'],
+            },
+          ],
         },
       },
     },
   ])
     assert.throws(() => normalizeProjectWorkflowDefaults(invalid));
   const normalized = normalizeProjectWorkflowDefaults(farm)!;
-  normalized['review-pr']!.review!.scope = 'incremental';
-  assert.equal(farm['review-pr']!.review!.scope, 'full');
+  normalized['review-pr']!.review!.mode = 'warm';
+  assert.equal(farm['review-pr']!.review!.mode, 'cold');
   const selected = resolvePRWorkflowDefaults({ farm });
   selected.execution!.models[0].runner = 'changed';
   assert.equal(farm['review-pr']!.execution!.models[0].runner, 'codex');
 });
 
-test('static farm review options from the first delivery remain valid after QA migration', () => {
-  const legacy = {
-    'review-pr': {
-      execution: reviewExecution,
-      review: {
-        sessionIntent: 'resume' as const,
-        scope: 'incremental' as const,
-        validationDepth: 'static-code' as const,
-      },
-    },
-  };
-  const resolved = resolvePRWorkflowDefaults({ farm: legacy });
-  assert.equal(resolved.workflow, 'review-pr');
-  assert.deepEqual(resolved.execution, reviewExecution);
-  assert.equal(resolved.review.validationDepth, 'static-code');
+test('removed session/scope settings are rejected rather than converted at runtime', () => {
+  assert.throws(
+    () =>
+      normalizeProjectWorkflowDefaults({
+        'review-pr': {
+          execution: reviewExecution,
+          review: { sessionIntent: 'resume', scope: 'incremental' },
+        },
+      }),
+    /Unsupported property/,
+  );
 });
 
 test('publication inherits project opt-in independently from ordinary review options', () => {
@@ -155,10 +171,10 @@ test('publication inherits project opt-in independently from ordinary review opt
     ...farm,
     'review-pr': {
       ...farm['review-pr'],
-      review: { sessionIntent: 'reset' as const, scope: 'full' as const, publishReview: true },
+      review: { mode: 'cold' as const, publishReview: true },
     },
   };
-  const request = { review: { sessionIntent: 'resume' as const, scope: 'incremental' as const } };
+  const request = { review: { mode: 'warm' as const } };
   const inherited = resolvePRWorkflowDefaults({ farm: optedIn, request });
   assert.equal(inherited.review.publishReview, true);
   assert.equal(inherited.sources.publication, 'farm');
@@ -175,7 +191,7 @@ test('publication inherits project opt-in independently from ordinary review opt
 });
 
 test('publication follows request, rule, repository, team and farm precedence', () => {
-  const review = { sessionIntent: 'reset' as const, scope: 'full' as const };
+  const review = { mode: 'cold' as const };
   const layers = ['team', 'repository', 'rule', 'request'] as const;
   const configured: Partial<Record<(typeof layers)[number], PRWorkflowPolicy>> = {};
   for (const [index, layer] of layers.entries()) {
@@ -204,7 +220,7 @@ test('publication follows request, rule, repository, team and farm precedence', 
 });
 
 test('sharing a running review requires the same effective publication choice', () => {
-  const review = { sessionIntent: 'reset' as const, scope: 'full' as const };
+  const review = { mode: 'cold' as const };
   assert.equal(samePRReviewOptions(review, { ...review, publishReview: false }), true);
   assert.equal(
     samePRReviewOptions({ ...review, publishReview: true }, { ...review, publishReview: false }),
@@ -214,8 +230,8 @@ test('sharing a running review requires the same effective publication choice', 
 
 test('QA requests do not inherit static publication from lower-priority team policy', () => {
   const resolved = resolvePRWorkflowDefaults({
-    request: { review: { sessionIntent: 'reset', scope: 'full', workflow: 'qa' } },
-    team: { review: { sessionIntent: 'reset', scope: 'full', publishReview: true } },
+    request: { review: { mode: 'cold' as const, workflow: 'qa' } },
+    team: { review: { mode: 'cold' as const, publishReview: true } },
   });
   assert.equal(resolved.workflow, 'qa');
   assert.equal(resolved.review.publishReview, undefined);
@@ -225,10 +241,10 @@ test('QA requests do not inherit static publication from lower-priority team pol
 test('publication gate defaults inherit independently and explicit hold wins', () => {
   const configured = {
     'review-pr': {
-      review: { sessionIntent: 'reset' as const, scope: 'full' as const, autoFinish: true },
+      review: { mode: 'cold' as const, autoFinish: true },
     },
   };
-  const request = { review: { sessionIntent: 'reset' as const, scope: 'incremental' as const } };
+  const request = { review: { mode: 'warm' as const } };
   assert.equal(resolvePRWorkflowDefaults({ farm: configured, request }).review.autoFinish, true);
   assert.equal(
     resolvePRWorkflowDefaults({
@@ -244,4 +260,16 @@ test('portable farm pool defaults preserve runner model and effort without machi
   const portable = { ...reviewExecution, workspacePolicy: { kind: 'pool' as const } };
   const resolved = resolvePRWorkflowDefaults({ farm: { 'review-pr': { execution: portable } } });
   assert.deepEqual(resolved.execution, portable);
+});
+
+test('review lineage context survives inherited PR option resolution without mutating provenance', () => {
+  const reviewContext = {
+    reviewLineages: [{ repository: 'owner/repo', prNumber: 1, reviewId: 'review-a' }],
+  };
+  const result = resolvePRWorkflowDefaults({
+    request: { review: { mode: 'warm', reviewContext } },
+  });
+  assert.deepEqual(result.review.reviewContext, reviewContext);
+  result.review.reviewContext!.reviewLineages[0]!.reviewId = 'changed';
+  assert.equal(reviewContext.reviewLineages[0].reviewId, 'review-a');
 });

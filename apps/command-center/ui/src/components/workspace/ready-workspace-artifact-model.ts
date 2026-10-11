@@ -3,7 +3,7 @@ import type { ArtifactRef, ReadyGatePayload } from '@farmslot/protocol';
 import { DIFF_EXTS, isWorkspaceEvidenceArtifact, MEDIA_EXTS } from './workspace-artifacts.js';
 
 export function readyWorkspaceReviewArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
-  return (payload.independentReviews ?? []).flatMap((review) =>
+  return (payload.reviews ?? []).flatMap((review) =>
     (review.artifactPaths ?? []).map((path) => ({
       path,
       purpose: `review-loop-${review.loopNumber}`,

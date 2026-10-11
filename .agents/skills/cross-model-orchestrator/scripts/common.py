@@ -31,6 +31,9 @@ def load_config(path):
         if session in sessions or not re.fullmatch(r"[A-Za-z0-9_-]+", session):
             raise ValueError("lane session names must be unique safe names")
         sessions.add(session)
+        for field in ("model", "effort"):
+            if field in lane and (not isinstance(lane[field], str) or not lane[field].strip()):
+                raise ValueError(f"lane {lane['id']} {field} must be a non-empty string")
         for field in ("cwd", "goal", "report"):
             lane[field] = str(resolve_path(config, lane[field]))
     return config

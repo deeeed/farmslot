@@ -2,7 +2,7 @@ import type {
   RepeatReviewContext,
   ReviewChainEntry,
   ReviewGatePayload,
-  ReviewSessionIntent,
+  ReviewMode,
   Run,
   RunReviewResult,
 } from '../contracts/index.js';
@@ -43,11 +43,11 @@ export function currentReviewChainEntry(
     prNumber: context.prNumber,
     ...(payload?.reviewSnapshot?.baseSha
       ? { baseSha: payload.reviewSnapshot.baseSha }
-      : context.reviewScope === 'incremental' && context.priorReviewedHeadSha
+      : context.mode === 'warm' && context.priorReviewedHeadSha
         ? { baseSha: context.priorReviewedHeadSha }
         : {}),
     headSha: payload?.reviewSnapshot?.headSha ?? context.currentHeadSha,
-    reviewScope: context.reviewScope,
+    mode: context.mode,
     validationDepth: context.validationDepth,
     verdict: payload?.recommendation?.trim() || 'pending',
     unresolvedCount: payload ? payload.lineComments.length : null,
@@ -71,10 +71,10 @@ export function reviewChainForRun(
   );
 }
 
-export function reviewSessionIntentForContext(
-  context: Pick<RepeatReviewContext, 'sessionIntent'> | null | undefined,
-): ReviewSessionIntent {
-  return context?.sessionIntent ?? 'reset';
+export function reviewModeForContext(
+  context: Pick<RepeatReviewContext, 'mode'> | null | undefined,
+): ReviewMode {
+  return context?.mode ?? 'cold';
 }
 
 /** Never turn missing launch evidence into an affirmative continuity claim. */

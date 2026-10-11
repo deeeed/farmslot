@@ -23,8 +23,8 @@ function fixture() {
     },
   };
   const fix: AgentContext = {
-    id: 'self-review-fix',
-    role: 'self-review-fix',
+    id: 'review-fix',
+    role: 'review-fix',
     runId: 'run',
     slotId: 'slot',
     label: 'Fix',

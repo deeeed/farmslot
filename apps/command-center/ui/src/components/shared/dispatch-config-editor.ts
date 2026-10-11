@@ -1,27 +1,29 @@
-import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type {
   DevInteractiveProfile,
   FlowType,
   ResourcePostureWaitPolicy,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
-  ReviewRunnerId,
+  ReviewContinuationContext,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSelection,
+  ReviewSequence,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { RESOURCE_POSTURE_WAIT_POLICIES, selectedTemplateMode } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import './runner-model-effort-picker.js';
+import './review-dispatch-picker.js';
 import './slot-prepare-options.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
-import { RUNNER_OPTIONS } from '../../utils/runner-options.js';
-import { reviewDepthForConfiguredPlan } from '../dispatch/dispatch-wizard-draft.js';
 
-import type { RunnerModelEffortChangeDetail } from './runner-model-effort-picker.js';
+import type { ReviewDispatchChangeDetail } from './review-dispatch-picker.js';
 import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 
 export interface DispatchPrepareProfileOption {
@@ -41,8 +43,11 @@ export interface DispatchConfigChangeDetail {
   skipPrepare?: boolean;
   mode?: 'interactive' | 'autonomous' | null;
   devInteractiveProfile?: DevInteractiveProfile | null;
-  reviewDepth?: ReviewDepthPolicy | null;
-  pendingReviewPlan?: ReviewLoopRequest[] | null;
+  reviewPolicy?: ReviewPolicy | null;
+  reviewSequence?: ReviewSequence | null;
+  reviewMode?: ReviewMode | null;
+  reviewContext?: ReviewRequestContext | null;
+  reviewSequenceContext?: ReviewRequestContext | null;
   /** ADR-054 dispatch preset for every durable wait of the created run. */
   waitPolicy?: ResourcePostureWaitPolicy | null;
 }
@@ -88,7 +93,12 @@ export class DispatchConfigEditor extends LitElement {
   @property({ type: Boolean }) skipPrepare = false;
   @property({ type: String }) prepareVariant: 'profile' | 'dispatch' = 'profile';
   @property({ attribute: false }) prepareProfiles: readonly DispatchPrepareProfileOption[] = [];
-  @property({ attribute: false }) pendingReviewPlan: readonly ReviewLoopRequest[] = [];
+  @property() reviewMode: ReviewMode = 'cold';
+  @property({ attribute: false }) reviewContext?: ReviewRequestContext;
+  @property({ attribute: false }) reviewLineages: readonly ReviewContinuationContext[] = [];
+  @property({ attribute: false }) reviewDefaults?: Partial<ReviewSelection>;
+  @property({ attribute: false }) reviewSequenceContext?: ReviewRequestContext;
+  @property({ attribute: false }) reviewSequence: ReviewSequence = [];
   @property({ type: String }) waitPolicy: ResourcePostureWaitPolicy | '' = '';
   @property({ attribute: false }) controls: DispatchConfigEditorControls = {};
   @property({ type: Boolean }) disabled = false;
@@ -165,16 +175,6 @@ export class DispatchConfigEditor extends LitElement {
       cursor: not-allowed;
       opacity: 0.45;
     }
-
-    .review-row {
-      align-items: center;
-      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
-      border-radius: ${unsafeCSS(radii.sm)};
-      display: grid;
-      gap: 8px;
-      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
-      padding: 8px;
-    }
   `;
 
   private resolvedControls(): Required<DispatchConfigEditorControls> {
@@ -234,51 +234,60 @@ export class DispatchConfigEditor extends LitElement {
     this.emitChange({ mode });
   }
 
-  private reviewPlanWith(next: readonly ReviewLoopRequest[]): {
-    reviewDepth: ReviewDepthPolicy | null;
-    pendingReviewPlan: ReviewLoopRequest[] | null;
-  } {
-    if (next.length === 0) return { reviewDepth: null, pendingReviewPlan: null };
-    return {
-      reviewDepth: reviewDepthForConfiguredPlan(this.runner, next),
-      pendingReviewPlan: [...next],
-    };
+  private executionPicker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'] },
+  });
+  private reviewPicker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'], allowSequence: true, allowEmpty: true },
+    sequence: [],
+  });
+
+  protected override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has('reviewLineages')) {
+      this.executionPicker.setContext({
+        ...this.executionPicker.context,
+        reviewContext: this.reviewContext,
+        reviewLineages: this.reviewLineages,
+      });
+      this.reviewPicker.setContext({
+        ...this.reviewPicker.context,
+        reviewContext: this.reviewSequenceContext,
+        reviewLineages: this.reviewLineages,
+      });
+    }
+    if (changed.has('reviewDefaults'))
+      this.reviewPicker.setContext({ ...this.reviewPicker.context, defaults: this.reviewDefaults });
+    if (
+      changed.has('runner') ||
+      changed.has('model') ||
+      changed.has('effort') ||
+      changed.has('reviewMode') ||
+      changed.has('reviewContext')
+    ) {
+      this.executionPicker.setContext({
+        ...this.executionPicker.context,
+        reviewContext: this.reviewContext,
+      });
+      this.executionPicker.setSequence([
+        {
+          runner: this.runner || this.executionPicker.selection!.runner,
+          model: this.model || null,
+          effort: this.effort || null,
+          mode: this.reviewMode,
+        },
+      ]);
+    }
+    if (changed.has('reviewSequence') || changed.has('reviewSequenceContext')) {
+      this.reviewPicker.setContext({
+        ...this.reviewPicker.context,
+        reviewContext: this.reviewSequenceContext,
+      });
+      this.reviewPicker.setSequence(this.reviewSequence);
+    }
   }
 
-  private addReviewLoop(runner: ReviewLoopRequest['runner']) {
-    const next = [...this.pendingReviewPlan, { order: this.pendingReviewPlan.length + 1, runner }];
-    this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
-  }
-
-  private updateReviewLoop(index: number, patch: Partial<Pick<ReviewLoopRequest, 'runner'>>) {
-    const next = this.pendingReviewPlan.map((loop, currentIndex) => {
-      if (currentIndex !== index) return loop;
-      if (patch.runner && patch.runner !== loop.runner) {
-        const rest = { ...loop };
-        delete rest.model;
-        delete rest.effort;
-        return { ...rest, ...patch };
-      }
-      return { ...loop, ...patch };
-    });
-    this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
-  }
-
-  private removeReviewLoop(index: number) {
-    const next = this.pendingReviewPlan.filter((_, currentIndex) => currentIndex !== index);
-    this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
-  }
-
-  /** Edits emit static rounds; runtime validation is a separate QA run (ADR-058). */
-  private normalizeReviewPlan(plan: readonly ReviewLoopRequest[]): ReviewLoopRequest[] {
-    return plan.slice(0, 5).map((loop, index) => ({
-      order: index + 1,
-      runner: loop.runner || 'same',
-      ...(loop.model?.trim() ? { model: loop.model.trim() } : {}),
-      ...(loop.effort?.trim() ? { effort: loop.effort.trim() } : {}),
-      validationDepth: 'static-code',
-      ...(loop.sessionIntent ? { sessionIntent: loop.sessionIntent } : {}),
-    }));
+  get validationErrors(): readonly string[] {
+    return [...this.executionPicker.errors, ...this.reviewPicker.errors];
   }
 
   private renderMode() {
@@ -415,84 +424,21 @@ export class DispatchConfigEditor extends LitElement {
       !this.resolvedControls().publicationReviews ||
       (this.flowType !== 'fix-bug' &&
         !(this.flowType === 'dev' && this.modeValue() === 'autonomous'))
-    ) {
+    )
       return nothing;
-    }
-    // Render the stored depth so a legacy full-live round stays visible until the operator
-    // repairs it; edits normalize to static.
-    const loops = this.pendingReviewPlan.slice(0, 5);
-    const runnerOptions: Array<ReviewLoopRequest['runner']> = [
-      'same',
-      ...(RUNNER_OPTIONS as ReviewRunnerId[]),
-    ];
     return html`<div class="group wide">
       <div class="section-label">Publication reviews</div>
-      ${loops.length
-        ? html`<div class="group">
-            ${loops.map(
-              (loop, index) =>
-                html`<div class="review-row">
-                  <span>${index + 1}</span>
-                  <div class="pill-row">
-                    ${runnerOptions.map(
-                      (runner) =>
-                        html`<button
-                          class="pill ${(loop.runner || 'same') === runner ? 'selected' : ''}"
-                          type="button"
-                          ?disabled=${this.disabled}
-                          @click=${() => this.updateReviewLoop(index, { runner })}
-                        >
-                          ${runner}
-                        </button>`,
-                    )}
-                  </div>
-                  ${loop.validationDepth === 'full-live'
-                    ? html`<button
-                        class="pill"
-                        type="button"
-                        data-testid="dispatch-config-review-make-static"
-                        title="Legacy full-live round. Review rounds are static; run QA separately for runtime validation."
-                        ?disabled=${this.disabled}
-                        @click=${() =>
-                          this.emitChange(
-                            this.reviewPlanWith(this.normalizeReviewPlan(this.pendingReviewPlan)),
-                          )}
-                      >
-                        Legacy full live · make static
-                      </button>`
-                    : html`<span class="section-help" data-testid="dispatch-config-review-depth"
-                        >Static</span
-                      >`}
-                  <button
-                    class="pill"
-                    type="button"
-                    ?disabled=${this.disabled}
-                    @click=${() => this.removeReviewLoop(index)}
-                  >
-                    Remove
-                  </button>
-                </div>`,
-            )}
-          </div>`
-        : html`<div class="section-help">No additional publication review loops configured.</div>`}
-      <div class="pill-row">
-        <button
-          class="pill"
-          type="button"
-          ?disabled=${this.disabled || loops.length >= 5}
-          @click=${() => this.addReviewLoop('same')}
-        >
-          Add independent review
-        </button>
-        <button
-          class="pill"
-          type="button"
-          ?disabled=${this.disabled || loops.length >= 5}
-          @click=${() => this.addReviewLoop('codex')}
-        >
-          Add independent review (runner diversity)
-        </button>
-      </div>
+      <review-dispatch-picker
+        .viewModel=${this.reviewPicker}
+        .review=${true}
+        .disabled=${this.disabled}
+        @review-dispatch-change=${() =>
+          this.emitChange({
+            ...this.reviewPicker.toDispatchOptions(),
+            reviewPolicy: this.reviewPicker.toDispatchOptions().reviewPolicy ?? null,
+            reviewSequenceContext: this.reviewPicker.toReviewContext() ?? null,
+          })}
+      ></review-dispatch-picker>
     </div>`;
   }
 
@@ -535,27 +481,28 @@ export class DispatchConfigEditor extends LitElement {
     </div>`;
   }
 
-  private renderRunnerModelEffort() {
+  private renderExecution() {
     if (!this.resolvedControls().runnerModelEffort) return nothing;
-    return html`<runner-model-effort-picker
-      .personalPreferences=${false}
-      .runner=${this.runner}
-      .model=${this.model}
-      .effort=${this.effort}
-      .allowDefault=${true}
+    return html`<review-dispatch-picker
+      .viewModel=${this.executionPicker}
+      .review=${this.flowType === 'review-pr'}
       .disabled=${this.disabled}
-      @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) =>
+      @review-dispatch-change=${(event: CustomEvent<ReviewDispatchChangeDetail>) => {
+        const selection = event.detail.selection!;
         this.emitChange({
-          runner: event.detail.runner || null,
-          model: event.detail.model || null,
-          effort: event.detail.effort || null,
-        })}
-    ></runner-model-effort-picker>`;
+          runner: selection.runner,
+          model: selection.model,
+          effort: selection.effort,
+          reviewMode: selection.mode,
+          reviewContext: this.executionPicker.toReviewContext() ?? null,
+        });
+      }}
+    ></review-dispatch-picker>`;
   }
 
   render() {
     return html`<div class="surface">
-      ${this.renderTaskTemplate()} ${this.renderMode()} ${this.renderRunnerModelEffort()}
+      ${this.renderTaskTemplate()} ${this.renderMode()} ${this.renderExecution()}
       ${this.renderPrepareProfile()} ${this.renderInteractiveProfile()} ${this.renderWaitPolicy()}
       ${this.renderPublicationReviews()}
     </div>`;

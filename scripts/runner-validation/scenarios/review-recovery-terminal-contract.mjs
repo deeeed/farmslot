@@ -9,10 +9,7 @@ export const RUNNER_AGNOSTIC = true;
 const BASELINE_SHA = '53ca603b7f4605defd44440edfef4599f370c6b5';
 
 function exposeBaselineWaitContract(baselineRoot) {
-  const reviewAgentPath = path.join(
-    baselineRoot,
-    'services/gateway/src/self-review/review-agent.ts',
-  );
+  const reviewAgentPath = path.join(baselineRoot, 'services/gateway/src/review/review-agent.ts');
   const original = fs.readFileSync(reviewAgentPath, 'utf-8');
   const exposed = original
     .replace(

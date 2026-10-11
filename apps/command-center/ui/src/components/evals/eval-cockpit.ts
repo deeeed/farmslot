@@ -11,12 +11,13 @@ import type {
   Run,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { defaultModelForRunner } from '@farmslot/review-dispatch';
 
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
-import { defaultModelForRunner } from '../../utils/runner-options.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
 import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 
@@ -98,7 +99,7 @@ export class EvalCockpit extends EvalCockpitState {
       return;
     this._candidateRows = this._candidateRows.map((row) => ({
       ...row,
-      model: defaultModelForRunner(row.runner),
+      model: defaultModelForRunner(row.runner, rememberedReviewDispatchCatalog()) ?? '',
     }));
     this._initialModelsPending = false;
   }

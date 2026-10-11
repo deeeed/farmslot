@@ -9,8 +9,8 @@ import {
 } from './progress-path.js';
 
 test('resolveTaskProgressMarkdownPath keeps non-TASK files unchanged', () => {
-  const selfReview = '/repo/tasks/feat/foo/SELF-REVIEW.md';
-  assert.equal(resolveTaskProgressMarkdownPath(selfReview), selfReview);
+  const review = '/repo/tasks/feat/foo/REVIEW.md';
+  assert.equal(resolveTaskProgressMarkdownPath(review), review);
 });
 
 test('resolveTaskProgressMarkdownPath maps TASK.md to sibling CHECKLIST.md', () => {

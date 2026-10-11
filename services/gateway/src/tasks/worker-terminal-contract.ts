@@ -365,7 +365,7 @@ export function deterministicChecklistTaskFileForPublication(run: Run): string |
   const fixes = (run.agentContexts ?? [])
     .filter(
       (context) =>
-        (context.role === 'self-review-fix' || context.role === 'ci-fix') &&
+        (context.role === 'review-fix' || context.role === 'ci-fix') &&
         context.status === 'complete' &&
         context.taskFile,
     )
@@ -375,7 +375,7 @@ export function deterministicChecklistTaskFileForPublication(run: Run): string |
       ),
     );
   const active = checklistBasenameFromTaskPath(run.activeTaskFile);
-  if (active === 'SELF-REVIEW-FIX.md' || active === 'CI-FIX.md') return run.activeTaskFile!;
+  if (active === 'REVIEW-FIX.md' || active === 'CI-FIX.md') return run.activeTaskFile!;
   return fixes[0]?.taskFile ?? run.taskFile;
 }
 

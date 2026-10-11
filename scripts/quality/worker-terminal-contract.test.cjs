@@ -100,7 +100,7 @@ assert.match(
 assert.match(lintWorkerTemplateStructure(structureBad).join(' '), /double braces/);
 // The task writer generates the ticket block into TASK.md; a flow template that
 // still carries it would duplicate the header inside CHECKLIST.md. Role
-// checklists (self-review, ci-fix) render beside an existing task dir and may
+// checklists (review, ci-fix) render beside an existing task dir and may
 // keep theirs.
 assert.match(lintWorkerTemplateStructure(structureBad).join(' '), /carries a `## Task` block/);
 assert.doesNotMatch(
@@ -116,11 +116,11 @@ const structureGood = [
 assert.deepEqual(lintWorkerTemplateStructure(structureGood), []);
 
 // Reviewer flows require the artifacts their templates actually produce, not learnings.
-const selfReviewContract = resolveWorkerTerminalContract(null, 'self-review');
-assert.deepEqual(selfReviewContract.commands.complete.artifacts, ['artifacts/review-feedback.md']);
-const selfReviewFixContract = resolveWorkerTerminalContract(null, 'self-review-fix');
-assert.deepEqual(selfReviewFixContract.commands.complete.artifacts, ['artifacts/report.md']);
-assert.deepEqual(selfReviewFixContract.commands['no-change'].artifacts, [
+const reviewContract = resolveWorkerTerminalContract(null, 'review');
+assert.deepEqual(reviewContract.commands.complete.artifacts, ['artifacts/review-feedback.md']);
+const reviewFixContract = resolveWorkerTerminalContract(null, 'review-fix');
+assert.deepEqual(reviewFixContract.commands.complete.artifacts, ['artifacts/report.md']);
+assert.deepEqual(reviewFixContract.commands['no-change'].artifacts, [
   'artifacts/no-change-report.md',
 ]);
 

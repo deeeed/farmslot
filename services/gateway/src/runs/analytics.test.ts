@@ -55,7 +55,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     steps: [
       step('prepare', 'done', base, base + 60_000),
       step('monitor', 'done', base + 60_000, base + 660_000),
-      step('self-review', 'done', base + 660_000, base + 960_000, { attempts: [{}, {}] }),
+      step('review', 'done', base + 660_000, base + 960_000, { attempts: [{}, {}] }),
       step('ci-watch', 'done', base + 960_000, base + 1_560_000, {
         result: 'passed',
         pollCount: 3,
@@ -103,7 +103,7 @@ test('buildAnalyticsRecord flattens a clean done run', () => {
   // wall 1.8M − Σ steps (60k+600k+300k+600k = 1.56M) = 240k idle
   assert.equal(rec.idleMs, 240_000);
   assert.equal(rec.nudgeCount, 2);
-  assert.equal(rec.selfReviewLoops, 2);
+  assert.equal(rec.reviewLoops, 2);
   assert.equal(rec.ciResult, 'passed');
   assert.equal(rec.ciPollCount, 3);
   assert.equal(rec.ciInlineFixAttempts, 1);
@@ -242,7 +242,7 @@ test('stale failure append does not stamp after completedAt moves', async () => 
   const run = makeRun({
     id: 'stale-stamp-1',
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     completedAt: failedAt,
     metrics: { nudgeCount: 0, model: 'opus', runner: 'claude', outcome: 'failure' },
   });
@@ -260,7 +260,7 @@ test('queued override appends after the in-flight failure row', async () => {
   const run = makeRun({
     id: 'override-1',
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     completedAt: failedAt,
     metrics: { nudgeCount: 0, model: 'opus', runner: 'claude', outcome: 'failure' },
   });

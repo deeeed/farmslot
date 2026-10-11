@@ -39,6 +39,11 @@ import {
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { retryDeferredFixDelivery } from '../review/orchestrator.js';
+import {
+  ensureTmuxTargetReadyForRelaunch,
+  rediscoverAcceptingWorkerPane,
+} from '../review/worker-lifecycle.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
@@ -70,11 +75,6 @@ import {
 } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
-import {
-  ensureTmuxTargetReadyForRelaunch,
-  rediscoverAcceptingWorkerPane,
-} from '../self-review/worker-lifecycle.js';
 import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -829,7 +829,7 @@ async function attemptInlineCIFix(
           // A deferred send never retries on its own, and two immediate probes
           // lose the race against a warm worker that is still booting — the
           // exact failure that dropped run 62004dac's lint-fix nudge right
-          // after ci-watch relaunched its worker. Reuse the self-review retry
+          // after ci-watch relaunched its worker. Reuse the review retry
           // loop: interval retries over a window, re-resolving the worker pane
           // before each attempt and bailing if the run goes terminal.
           console.warn(

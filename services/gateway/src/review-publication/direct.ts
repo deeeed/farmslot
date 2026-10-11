@@ -92,8 +92,7 @@ export function selectDirectReviewPublication(
     workflow: 'review-pr',
     request: {
       review: {
-        sessionIntent: 'reset',
-        scope: 'full',
+        mode: 'cold',
         workflow: 'review',
         ...(request.publishReview === undefined ? {} : { publishReview: request.publishReview }),
       },

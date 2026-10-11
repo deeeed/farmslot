@@ -20,7 +20,7 @@
     "nodes": {
       "connect-relaunch": {
         "action": "command",
-        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch-connect",
         "intent": "Restart the Companion so no earlier screen can take this step's input.",
         "next": "connect-app-ready"
       },

@@ -42,6 +42,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
+import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
@@ -52,7 +53,6 @@ import { requestNativeNode } from '../runners/native/node.js';
 import { assertReviewWorkspaceRun } from '../runners/native/review-workspace.js';
 import { getRun, runsDirectory } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
-import { parseStructuredReviewFeedback } from '../self-review/feedback.js';
 import { readConfiguredExecutionTemplateSnapshot } from '../tasks/execution-template-catalog.js';
 import { collectSubtaskMetricsFromTaskDir } from '../tasks/subtask-metrics.js';
 import { subtaskTerminalRefusal } from '../tasks/subtasks.js';
@@ -313,7 +313,7 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
-            ...(run.repeatReviewContext.reviewScope === 'incremental' &&
+            ...(run.repeatReviewContext.mode === 'warm' &&
             run.repeatReviewContext.priorReviewedHeadSha
               ? [
                   `This is an incremental review. Inspect git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff ${shellQuote(`${run.repeatReviewContext.priorReviewedHeadSha}..${subject.headSha}`)}, plus code needed to reassess prior findings. Avoid repeating the unchanged full review.`,

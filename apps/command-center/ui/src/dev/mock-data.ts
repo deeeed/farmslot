@@ -93,12 +93,12 @@ export function mockFleetSlots(): SlotStatus[] {
         },
         {
           id: 'rev-codex',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           status: 'working',
           runId: 'pipe-mid-monitor',
-          taskFile: '.task/fix/PROJ-2501/SELF-REVIEW.md',
-          signalFile: '.task/fix/PROJ-2501/SELF-REVIEW-SIGNAL.json',
+          taskFile: '.task/fix/PROJ-2501/REVIEW.md',
+          signalFile: '.task/fix/PROJ-2501/REVIEW-SIGNAL.json',
           runner: 'codex',
           model: 'gpt-5',
           updatedAt: '2026-07-09T12:01:00Z',
@@ -110,12 +110,12 @@ export function mockFleetSlots(): SlotStatus[] {
         },
         {
           id: 'rev-claude',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           status: 'complete',
           runId: 'pipe-mid-monitor',
-          taskFile: '.task/fix/PROJ-2501/SELF-REVIEW.md',
-          signalFile: '.task/fix/PROJ-2501/SELF-REVIEW-SIGNAL.json',
+          taskFile: '.task/fix/PROJ-2501/REVIEW.md',
+          signalFile: '.task/fix/PROJ-2501/REVIEW-SIGNAL.json',
           runner: 'claude',
           model: 'opus',
           updatedAt: '2026-07-09T12:02:00Z',
@@ -802,7 +802,7 @@ export function mockGateSummaryWithSubtasks(): GateSummary {
     headline: 'Worker finished, two reviews passed, one child unit still open.',
     worker: { model: 'claude-opus-5', turns: 34, outcome: 'success' },
     review: {
-      independentReviews: [],
+      reviews: [],
       requiredReviews: 1,
       passingReviews: 1,
       totalUnresolved: 0,
@@ -1241,20 +1241,20 @@ export function mockRuns(): Run[] {
           target: { session: 'example-1', window: 'bugfix', target: 'example-1:bugfix' },
         },
         {
-          id: 'self-review',
-          role: 'self-review',
-          label: 'Self-review',
+          id: 'review',
+          role: 'review',
+          label: 'Review',
           status: 'working',
           slotId: 'runner-local-mobile-1',
           runId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-          taskFile: '.task/fix/PROJ-2501/SELF-REVIEW.md',
-          signalFile: '.task/fix/PROJ-2501/SELF-REVIEW-SIGNAL.json',
+          taskFile: '.task/fix/PROJ-2501/REVIEW.md',
+          signalFile: '.task/fix/PROJ-2501/REVIEW-SIGNAL.json',
           runner: 'claude',
           model: 'sonnet',
           target: {
             session: 'example-1',
-            window: 'self-review',
-            target: 'example-1:self-review',
+            window: 'review',
+            target: 'example-1:review',
           },
         },
         {
@@ -1484,7 +1484,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'dispatch', status: 'done', durationMs: 12000 },
         { name: 'monitor', status: 'done', durationMs: 2400000 },
         {
-          name: 'self-review',
+          name: 'review',
           status: 'done',
           durationMs: 180000,
           outputs: { verdict: 'pass', issues: [] },
@@ -1520,15 +1520,14 @@ export function mockPipelineRuns(): Run[] {
       ],
       engineState: {
         publishGate: {
-          reviewDepth: {
-            minimumIndependentReviews: 1,
-            extraLoopsRequested: 2,
-            requireCrossRunner: true,
+          reviewPolicy: {
+            minimumReviews: 1,
+
             requestedBy: 'dispatch',
           },
-          pendingReviewPlan: [
-            { order: 1, runner: 'cursor' },
-            { order: 2, runner: 'codex' },
+          reviewSequence: [
+            { runner: 'cursor', model: null, effort: null, mode: 'cold' },
+            { runner: 'codex', model: null, effort: null, mode: 'cold' },
           ],
         },
       },
@@ -1548,10 +1547,10 @@ export function mockPipelineRuns(): Run[] {
             { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
             { id: 'hold', label: 'Hold', style: 'secondary' },
             { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
-            { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+            { id: 'request-review', label: 'Request Review', style: 'secondary' },
             {
               id: 'request-external-review',
-              label: 'Request Independent Review (runner diversity)',
+              label: 'Request Review',
               style: 'secondary',
             },
           ],
@@ -1572,12 +1571,12 @@ export function mockPipelineRuns(): Run[] {
               { path: 'before-keychain-race.png', purpose: 'screenshot-before', sizeBytes: 76000 },
               { path: 'after-keychain-race.png', purpose: 'screenshot-after', sizeBytes: 82000 },
               { path: 'after-keychain-race.mp4', purpose: 'video-after', sizeBytes: 2500000 },
-              { path: 'artifacts/self-review-1.md', purpose: 'review', sizeBytes: 1380 },
+              { path: 'artifacts/review-1.md', purpose: 'review', sizeBytes: 1380 },
               { path: 'artifacts/independent-review-2.md', purpose: 'review', sizeBytes: 920 },
             ],
-            selfReviewVerdict: 'pass',
-            selfReviewSummary:
-              'Loop 1 requested missing lock cleanup coverage and a clearer failure-path assertion. The worker fixed both, then loop 2 passed the independent review with zero unresolved findings.',
+            reviewVerdict: 'pass',
+            reviewSummary:
+              'Loop 1 requested missing lock cleanup coverage and a clearer failure-path assertion. The worker fixed both, then loop 2 passed the review with zero unresolved findings.',
             recipeJson: JSON.stringify({
               entry: 'unlock',
               nodes: {
@@ -1636,7 +1635,7 @@ export function mockPipelineRuns(): Run[] {
               overrides: [],
             },
             workerLearnings:
-              'Self-review found that keychain race tests need explicit timing assertions. Future recipes should include a delayed biometric callback node.',
+              'Review found that keychain race tests need explicit timing assertions. Future recipes should include a delayed biometric callback node.',
             acceptanceCriteria: [
               'Unlock succeeds after biometric prompt',
               'No keychain race regression',
@@ -1658,7 +1657,7 @@ export function mockPipelineRuns(): Run[] {
                 '## Validation',
                 '- Typecheck passed',
                 '- Recipe passed',
-                '- Independent self-review loops: 2',
+                '- Review rounds: 2',
                 '',
                 '## Visuals',
                 '- Before/after captures are attached below.',
@@ -1679,10 +1678,7 @@ export function mockPipelineRuns(): Run[] {
               ],
               validationSummaryPath: 'artifacts/report.md',
               validationSummaryHash: 'valhash',
-              reviewArtifactIds: [
-                'artifacts/self-review-1.json',
-                'artifacts/independent-review-2.json',
-              ],
+              reviewArtifactIds: ['artifacts/review-1.json', 'artifacts/independent-review-2.json'],
               dispatchMode: 'autonomous',
               gatePolicy: {
                 owner: 'human',
@@ -1694,20 +1690,21 @@ export function mockPipelineRuns(): Run[] {
               publicationStatus: 'not_published',
               createdAt: new Date(now - 3 * 60000).toISOString(),
             },
-            reviewDepth: {
-              minimumIndependentReviews: 1,
-              requireCrossRunner: true,
-              extraLoopsRequested: 1,
+            reviewPolicy: {
+              minimumReviews: 1,
+
               requestedBy: 'human-gate',
             },
-            independentReviews: [
+            reviews: [
               {
-                id: 'self-review-1',
-                source: 'self-review',
+                id: 'review-1',
+                source: 'pipeline',
                 runner: 'claude',
                 model: 'sonnet',
-                crossRunner: false,
+
                 loopNumber: 1,
+                mode: 'cold',
+                reviewerSessionId: 'fixture-review-session',
                 verdict: 'issues',
                 unresolvedCount: 2,
                 reviewSnapshot: {
@@ -1722,14 +1719,14 @@ export function mockPipelineRuns(): Run[] {
                   capturedAt: new Date(now - 8 * 60000).toISOString(),
                 },
                 taskProgressArtifactPath:
-                  'tasks/fix-bug/proj-2501/artifacts/review-loop-1/self-review.md',
+                  'tasks/fix-bug/proj-2501/artifacts/review-loop-1/review.md',
                 startedAt: new Date(now - 12 * 60000).toISOString(),
                 completedAt: new Date(now - 9 * 60000).toISOString(),
                 artifactPaths: [
-                  'artifacts/self-review-1.json',
-                  'artifacts/self-review-1.md',
+                  'artifacts/review-1.json',
+                  'artifacts/review-1.md',
                   'artifacts/review-loop-1/review.diff',
-                  'artifacts/review-loop-1/self-review.md',
+                  'artifacts/review-loop-1/review.md',
                 ],
               },
               {
@@ -1737,8 +1734,10 @@ export function mockPipelineRuns(): Run[] {
                 source: 'human-gate',
                 runner: 'codex',
                 model: 'gpt-5.5',
-                crossRunner: true,
+
                 loopNumber: 2,
+                mode: 'cold',
+                reviewerSessionId: 'fixture-review-session',
                 verdict: 'pass',
                 unresolvedCount: 0,
                 reviewSnapshot: {
@@ -1764,7 +1763,7 @@ export function mockPipelineRuns(): Run[] {
                   capturedAt: new Date(now - 5 * 60000).toISOString(),
                 },
                 taskProgressArtifactPath:
-                  'tasks/fix-bug/proj-2501/artifacts/independent-review-2/review-loop-2/self-review.md',
+                  'tasks/fix-bug/proj-2501/artifacts/independent-review-2/review-loop-2/review.md',
                 startedAt: new Date(now - 8 * 60000).toISOString(),
                 completedAt: new Date(now - 3 * 60000).toISOString(),
                 artifactPaths: [
@@ -1772,7 +1771,7 @@ export function mockPipelineRuns(): Run[] {
                   'artifacts/independent-review-2.md',
                   'artifacts/independent-review-2/review-loop-1/review.diff',
                   'artifacts/independent-review-2/review-loop-2/fix-delta.diff',
-                  'artifacts/independent-review-2/review-loop-2/self-review.md',
+                  'artifacts/independent-review-2/review-loop-2/review.md',
                 ],
               },
             ],
@@ -1805,13 +1804,13 @@ export function mockPipelineRuns(): Run[] {
         },
         {
           id: 'rev-codex',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           status: 'working',
           slotId: 'runner-local-mobile-1',
           runId: 'pipe-mid-monitor',
-          taskFile: '.task/fix/PROJ-2501/SELF-REVIEW.md',
-          signalFile: '.task/fix/PROJ-2501/SELF-REVIEW-SIGNAL.json',
+          taskFile: '.task/fix/PROJ-2501/REVIEW.md',
+          signalFile: '.task/fix/PROJ-2501/REVIEW-SIGNAL.json',
           runner: 'codex',
           model: 'gpt-5',
           updatedAt: '2026-07-09T12:01:00Z',
@@ -1823,13 +1822,13 @@ export function mockPipelineRuns(): Run[] {
         },
         {
           id: 'rev-claude',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           status: 'complete',
           slotId: 'runner-local-mobile-1',
           runId: 'pipe-mid-monitor',
-          taskFile: '.task/fix/PROJ-2501/SELF-REVIEW.md',
-          signalFile: '.task/fix/PROJ-2501/SELF-REVIEW-SIGNAL.json',
+          taskFile: '.task/fix/PROJ-2501/REVIEW.md',
+          signalFile: '.task/fix/PROJ-2501/REVIEW-SIGNAL.json',
           runner: 'claude',
           model: 'opus',
           updatedAt: '2026-07-09T12:02:00Z',
@@ -1874,7 +1873,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'prepare', status: 'pending' },
         { name: 'dispatch', status: 'pending' },
         { name: 'monitor', status: 'pending' },
-        { name: 'self-review', status: 'pending' },
+        { name: 'review', status: 'pending' },
         { name: 'complete', status: 'pending' },
         { name: 'human-gate', status: 'pending' },
         { name: 'finalize', status: 'pending' },
@@ -1939,7 +1938,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'dispatch', status: 'done', durationMs: 10000 },
         { name: 'monitor', status: 'done', durationMs: 2400000 },
         {
-          name: 'self-review',
+          name: 'review',
           status: 'done',
           durationMs: 185000,
           outputs: { verdict: 'pass', issues: [], retryCount: 0 },
@@ -2094,12 +2093,12 @@ export function mockPipelineRuns(): Run[] {
       completedAt: new Date(now - 177 * 60000).toISOString(),
       error: 'yarn install failed: lockfile conflict',
     },
-    // 6. Self-review running: fix-bug, mid-review with progress
+    // 6. Review running: fix-bug, mid-review with progress
     {
-      id: 'pipe-self-review-running',
-      familyId: 'pipe-self-review-running',
+      id: 'pipe-review-running',
+      familyId: 'pipe-review-running',
       flowType: 'fix-bug',
-      status: 'self-reviewing',
+      status: 'reviewing',
       project: 'example-mobile',
       ticketOrPr: 'PROJ-2520',
       slotId: 'runner-local-mobile-3',
@@ -2113,7 +2112,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'dispatch', status: 'done', durationMs: 11000 },
         { name: 'monitor', status: 'done', durationMs: 1800000 },
         {
-          name: 'self-review',
+          name: 'review',
           status: 'running',
           startedAt: new Date(now - 3 * 60000).toISOString(),
           detail: 'Review: 7/11 steps',
@@ -2134,10 +2133,10 @@ export function mockPipelineRuns(): Run[] {
       createdAt: new Date(now - 40 * 60000).toISOString(),
       updatedAt: new Date(now - 1 * 60000).toISOString(),
     },
-    // 7. Self-review done with issues + retry: fix-bug, now in complete step
+    // 7. Review done with issues + retry: fix-bug, now in complete step
     {
-      id: 'pipe-self-review-issues',
-      familyId: 'pipe-self-review-issues',
+      id: 'pipe-review-issues',
+      familyId: 'pipe-review-issues',
       flowType: 'fix-bug',
       status: 'completing',
       project: 'example-mobile',
@@ -2153,7 +2152,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'dispatch', status: 'done', durationMs: 9000 },
         { name: 'monitor', status: 'done', durationMs: 2500000 },
         {
-          name: 'self-review',
+          name: 'review',
           status: 'done',
           durationMs: 620000,
           detail: 'Fix: 11/11 steps',
@@ -2196,7 +2195,7 @@ export function mockPipelineRuns(): Run[] {
       createdAt: new Date(now - 55 * 60000).toISOString(),
       updatedAt: new Date(now - 1 * 60000).toISOString(),
     },
-    // 8. Publish gate requested an optional independent review after initial package
+    // 8. Publish gate requested an optional review after initial package
     {
       id: 'pipe-gate-extra-review',
       familyId: 'pipe-gate-extra-review',
@@ -2215,7 +2214,7 @@ export function mockPipelineRuns(): Run[] {
         { name: 'dispatch', status: 'done', durationMs: 9000 },
         { name: 'monitor', status: 'done', durationMs: 1800000 },
         {
-          name: 'self-review',
+          name: 'review',
           status: 'done',
           durationMs: 260000,
           outputs: { verdict: 'pass', issues: [] },
@@ -2241,32 +2240,35 @@ export function mockPipelineRuns(): Run[] {
       ],
       engineState: {
         publishGate: {
-          reviewDepth: {
-            minimumIndependentReviews: 1,
-            extraLoopsRequested: 1,
-            requireCrossRunner: true,
+          reviewPolicy: {
+            minimumReviews: 1,
+
             requestedBy: 'human-gate',
           },
-          pendingReviewPlan: [{ order: 1, runner: 'cursor' }],
-          independentReviews: [
+          reviewSequence: [{ runner: 'cursor', model: null, effort: null, mode: 'cold' }],
+          reviews: [
             {
               id: 'independent-review-1',
               source: 'dispatch',
               runner: 'codex',
               model: 'gpt-5.5',
-              crossRunner: true,
+
               loopNumber: 2,
+              mode: 'cold',
+              reviewerSessionId: 'fixture-review-session',
               verdict: 'pass',
               unresolvedCount: 0,
               feedbackSent: true,
               taskProgressArtifactPath:
-                'tasks/fix-bug/proj-2601/artifacts/independent-review-1/review-loop-1/self-review.md',
+                'tasks/fix-bug/proj-2601/artifacts/independent-review-1/review-loop-1/review.md',
               startedAt: new Date(now - 9 * 60000).toISOString(),
               completedAt: new Date(now - 5 * 60000).toISOString(),
               timeline: [
                 {
                   kind: 'review',
                   loopNumber: 1,
+                  mode: 'cold',
+                  reviewerSessionId: 'fixture-review-session',
                   runner: 'codex',
                   model: 'gpt-5.5',
                   startedAt: new Date(now - 9 * 60000).toISOString(),
@@ -2276,6 +2278,8 @@ export function mockPipelineRuns(): Run[] {
                 {
                   kind: 'worker-fix',
                   loopNumber: 2,
+                  mode: 'cold',
+                  reviewerSessionId: 'fixture-review-session',
                   runner: 'claude',
                   model: 'sonnet',
                   startedAt: new Date(now - 8 * 60000).toISOString(),
@@ -2285,6 +2289,8 @@ export function mockPipelineRuns(): Run[] {
                 {
                   kind: 're-review',
                   loopNumber: 2,
+                  mode: 'cold',
+                  reviewerSessionId: 'fixture-review-session',
                   runner: 'codex',
                   model: 'gpt-5.5',
                   startedAt: new Date(now - 6 * 60000).toISOString(),
@@ -2292,7 +2298,7 @@ export function mockPipelineRuns(): Run[] {
                   durationMs: 60_000,
                 },
               ],
-              artifactPaths: ['artifacts/independent-review-1/review-loop-1/self-review.md'],
+              artifactPaths: ['artifacts/independent-review-1/review-loop-1/review.md'],
             },
           ],
         },
@@ -2302,14 +2308,14 @@ export function mockPipelineRuns(): Run[] {
           id: 'dec-extra-review',
           type: 'engine_human_gate',
           title: 'Run pipe-gate-extra-review — publish gate',
-          description: 'Operator requested one more independent review before publication.',
+          description: 'Operator requested one more review before publication.',
           actions: [
             { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
-            { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+            { id: 'request-review', label: 'Request Review', style: 'secondary' },
           ],
           createdAt: new Date(now - 4 * 60000).toISOString(),
           resolvedAt: new Date(now - 3 * 60000).toISOString(),
-          resolvedAction: 'request-extra-review',
+          resolvedAction: 'request-review',
         },
       ],
       metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
@@ -3018,9 +3024,9 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
       {
         id: 'learn-2',
         runId: 'run-pr-complete',
-        source: 'self-review',
-        stepName: 'self-review',
-        title: 'Self-review issue',
+        source: 'review',
+        stepName: 'review',
+        title: 'Review issue',
         summary: 'Missing zero-balance edge case test was added in follow-up.',
         createdAt: generatedAt,
         severity: 'warn',
@@ -3166,7 +3172,7 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
           'Recipe passes key happy path',
         ],
         ciChecks: [{ name: 'lint', status: 'completed', conclusion: 'success' }],
-        selfReview: { verdict: 'pass', summary: null, issues: [] },
+        review: { verdict: 'pass', summary: null, issues: [] },
         familyScope: null,
         metrics: {
           nudgeCount: 1,
@@ -3207,7 +3213,7 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
                 { path: 'artifacts/before.png', purpose: 'screenshot' },
                 { path: 'artifacts/after.png', purpose: 'screenshot' },
               ],
-              selfReviewVerdict: 'pass',
+              reviewVerdict: 'pass',
               prPackage: {
                 id: 'pkg-root-publish',
                 packageHash: 'abc123def4567890abc123def4567890abc123def4567890abc123def4567890',
@@ -3281,7 +3287,7 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
         ],
         acceptanceCriteria: [],
         ciChecks: [],
-        selfReview: { verdict: null, summary: null, issues: [] },
+        review: { verdict: null, summary: null, issues: [] },
         familyScope: null,
         missingData: ['worker-report', 'worker-learnings', 'recipe-json', 'diff-stat', 'artifacts'],
       },
@@ -3362,8 +3368,8 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
           {
             id: 'learn-prc',
             runId: 'run-pr-complete',
-            source: 'self-review',
-            title: 'Self-review issue',
+            source: 'review',
+            title: 'Review issue',
             summary: 'Missing zero-balance edge case test was added in follow-up.',
             createdAt: generatedAt,
             severity: 'warn',
@@ -3372,7 +3378,7 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
         steps: [
           {
             runId: 'run-pr-complete',
-            stepName: 'self-review',
+            stepName: 'review',
             status: 'done',
             durationMs: 120000,
             artifacts: [],
@@ -3380,9 +3386,9 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
               {
                 id: 'learn-prc-step',
                 runId: 'run-pr-complete',
-                stepName: 'self-review',
-                source: 'self-review',
-                title: 'Self-review issue',
+                stepName: 'review',
+                source: 'review',
+                title: 'Review issue',
                 summary: 'Missing zero-balance edge case test was added in follow-up.',
                 createdAt: generatedAt,
                 severity: 'warn',
@@ -3393,7 +3399,7 @@ export function mockFamilyObservabilitySnapshot(): FamilyObservabilitySnapshot {
         ],
         acceptanceCriteria: ['Edge-case tests added'],
         ciChecks: [{ name: 'CI', status: 'completed', conclusion: 'success' }],
-        selfReview: {
+        review: {
           verdict: 'issues',
           summary: 'formatBalance.test.ts: Missing edge case for zero balance',
           issues: [
@@ -3608,7 +3614,7 @@ export function mockFamilyReport(): FamilyReport {
       recipeAssessment: 'Recipe quality remained strong across the root fix and follow-up runs.',
       learnings: [
         'Biometric completion races should be retried before surfacing failure states.',
-        'Self-review caught a missing edge-case test that the worker missed initially.',
+        'Review caught a missing edge-case test that the worker missed initially.',
       ],
       unresolvedGaps: ['Review flow did not emit a richer observability artifact set in v1.'],
     },

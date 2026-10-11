@@ -43,7 +43,7 @@ export const readyGateDecisionFixture: PendingDecisionLike = {
       { path: 'artifacts/pr-after.png', purpose: 'screenshot', sizeBytes: 1534 },
       { path: 'report.md', purpose: 'report', sizeBytes: 4567 },
     ],
-    selfReviewVerdict: 'pass',
+    reviewVerdict: 'pass',
     acceptanceCriteria: ['Inbox shows gate evidence', 'Terminal nudge is confirmed'],
   },
 };
@@ -53,7 +53,7 @@ export const reviewGateDecisionFixture: PendingDecisionLike = {
   type: 'review_comments',
   slotId: 'runner-browser-2',
   title: 'Review found issues',
-  description: 'Independent review requires operator decision.',
+  description: 'Review requires operator decision.',
   context: { runId: 'run-review-1', ticketOrPr: 'PR #123' },
   createdAt: '2026-05-16T03:05:00.000Z',
   runMeta: {
@@ -99,7 +99,7 @@ export const retrospectiveDecisionFixture: PendingDecisionLike = {
     kind: 'retrospective',
     outcome: 'success',
     whatThisIs: 'Worker finished and produced one reusable learning.',
-    selfReviewSummary: 'The worker validated the target flow and captured the reusable command.',
+    reviewSummary: 'The worker validated the target flow and captured the reusable command.',
     actionEffects: [
       { actionId: 'save', summary: 'Persist learning to the family retro.' },
       { actionId: 'rerun', summary: 'No rerun needed because CI passed.' },

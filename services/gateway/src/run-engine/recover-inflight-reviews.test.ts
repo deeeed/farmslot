@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, IndependentReviewStatus, WorkerSignal } from '@farmslot/protocol';
+import type { AgentContext, ReviewStatus, WorkerSignal } from '@farmslot/protocol';
 
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
@@ -22,14 +22,14 @@ test('retired reviewer recovery requests a fresh launch for the same artifact sc
   assert.deepEqual(
     recoveredReviewerActionForPromptRecovery('retired', {
       id: 'rev-cursor',
-      artifactScope: 'independent-review-2',
+      artifactScope: 'review-2',
     }),
-    { kind: 'relaunch', id: 'independent-review-2' },
+    { kind: 'relaunch', id: 'review-2' },
   );
   assert.equal(
     recoveredReviewerActionForPromptRecovery('indeterminate', {
       id: 'rev-cursor',
-      artifactScope: 'independent-review-2',
+      artifactScope: 'review-2',
     }),
     null,
   );
@@ -46,28 +46,30 @@ test('exhausted review continuations are normalized and persisted once per recov
   });
   t.after(() => deleteTestRunIfPresent(run.id));
 
-  const exhausted: IndependentReviewStatus = {
+  const exhausted: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'extra-review-1',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
     id: 'extra-review-1',
     source: 'human-gate',
-    crossRunner: false,
     loopNumber: 1,
     verdict: 'issues',
     unresolvedCount: 1,
     issues: [{ file: 'a.ts', description: 'unresolved' }],
     feedbackSent: true,
-    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
+    attempts: [{ mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
   };
-  updateRun(run.id, { engineState: { publishGate: { independentReviews: [exhausted] } } });
+  updateRun(run.id, { engineState: { publishGate: { reviews: [exhausted] } } });
 
   const normalized = normalizeExhaustedReviewContinuationsForRun(run.id);
   assert.equal(normalized[0].feedbackSent, false);
   assert.equal(normalized[0].recoveryContinuationPending, true);
-  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.independentReviews, normalized);
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviews, normalized);
 
   // Idempotent: the second entry point over already-normalized reviews returns
   // the stored array untouched rather than rewriting it.
   const second = normalizeExhaustedReviewContinuationsForRun(run.id);
-  assert.equal(second, getRun(run.id)?.engineState?.publishGate?.independentReviews);
+  assert.equal(second, getRun(run.id)?.engineState?.publishGate?.reviews);
 });
 
 test('recovery ignores the same terminal reviewer signal but accepts a later continuation', () => {
@@ -148,6 +150,7 @@ test('attempt identity wins over inverted completion clocks', () => {
         unresolvedCount: 1,
         attempts: [
           {
+            mode: 'cold' as const,
             loopNumber: 1,
             startedAt: '2026-08-03T16:00:00.000Z',
             verdict: 'issues',
@@ -161,6 +164,7 @@ test('attempt identity wins over inverted completion clocks', () => {
         unresolvedCount: 0,
         attempts: [
           {
+            mode: 'cold' as const,
             loopNumber: 1,
             startedAt: '2026-08-03T16:03:00.000Z',
             verdict: 'pass',
@@ -175,6 +179,7 @@ test('attempt identity wins over inverted completion clocks', () => {
 
 test('recovery deduplicates one review generation even when its terminal signal is later', () => {
   const attempt = {
+    mode: 'cold' as const,
     loopNumber: 4,
     verdict: 'issues' as const,
     unresolvedCount: 2,
@@ -235,16 +240,14 @@ test('recovery replaces a later failed delivery placeholder with the reviewer ve
 function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
   return {
     id: overrides.id ?? 'rev-abc',
-    role: overrides.role ?? 'self-review',
+    role: overrides.role ?? 'review',
     label: overrides.label ?? 'Reviewer',
     status: overrides.status ?? 'working',
     slotId: overrides.slotId ?? 'slot-1',
     runId: overrides.runId ?? 'run-1',
-    taskFile: 'taskFile' in overrides ? overrides.taskFile : 'tasks/PROJ-1/SELF-REVIEW.rev-abc.md',
+    taskFile: 'taskFile' in overrides ? overrides.taskFile : 'tasks/PROJ-1/REVIEW.rev-abc.md',
     signalFile:
-      'signalFile' in overrides
-        ? overrides.signalFile
-        : 'tasks/PROJ-1/SELF-REVIEW.rev-abc-SIGNAL.json',
+      'signalFile' in overrides ? overrides.signalFile : 'tasks/PROJ-1/REVIEW.rev-abc-SIGNAL.json',
     runner: overrides.runner ?? 'codex',
     model: overrides.model ?? 'gpt-5.5',
     startedAt: overrides.startedAt ?? '2026-07-16T10:00:00.000Z',
@@ -254,7 +257,7 @@ function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
 
 function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
   return {
-    role: 'self-review',
+    role: 'review',
     status: overrides.status ?? 'complete',
     outcome: overrides.outcome,
     timestamp: overrides.timestamp ?? '2026-07-16T10:40:00.000Z',
@@ -263,33 +266,30 @@ function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
 }
 
 test('isRecoverableReviewerContext keeps failed reviewers out of the long-lived watcher', () => {
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'working' }), true);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'launching' }), true);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), true);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), false);
+  assert.equal(isRecoverableReviewerContext({ role: 'review', status: 'working' }), true);
+  assert.equal(isRecoverableReviewerContext({ role: 'review', status: 'launching' }), true);
+  assert.equal(isRecoverableReviewerContext({ role: 'review', status: 'complete' }), true);
+  assert.equal(isRecoverableReviewerContext({ role: 'review', status: 'failed' }), false);
   assert.equal(
-    isRecoverableReviewerContext(
-      { role: 'self-review', status: 'failed' },
-      { includeFailed: true },
-    ),
+    isRecoverableReviewerContext({ role: 'review', status: 'failed' }, { includeFailed: true }),
     true,
   );
-  // Other roles never produce a publish-gate independent review.
+  // Other roles never produce a publish-gate review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
+  assert.equal(isRecoverableReviewerContext({ role: 'review-fix', status: 'working' }), false);
 });
 
 test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact scope', () => {
   const complete = reviewerContext({
     status: 'complete',
-    artifactScope: 'independent-review-7',
+    artifactScope: 'review-7',
   });
   assert.equal(reviewerContextNeedsRecovery(complete, []), true);
-  assert.equal(reviewerContextNeedsRecovery(complete, [{ id: 'independent-review-7' }]), false);
+  assert.equal(reviewerContextNeedsRecovery(complete, [{ id: 'review-7' }]), false);
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'issues',
         unresolvedCount: 1,
@@ -304,7 +304,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'issues',
         unresolvedCount: 1,
@@ -318,7 +318,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'human-gate',
         verdict: 'issues',
         unresolvedCount: 6,
@@ -343,7 +343,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'issues',
         unresolvedCount: 1,
@@ -352,7 +352,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
         issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
       },
       {
-        id: 'independent-review-8',
+        id: 'review-8',
         source: 'dispatch',
         verdict: 'pass',
         unresolvedCount: 0,
@@ -364,13 +364,13 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'human-gate',
         verdict: 'skipped',
         unresolvedCount: 0,
       },
       {
-        id: 'independent-review-8',
+        id: 'review-8',
         source: 'human-gate',
         verdict: 'skipped',
         unresolvedCount: 0,
@@ -383,13 +383,13 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     assert.equal(
       reviewerContextNeedsRecovery(complete, [
         {
-          id: 'independent-review-7',
+          id: 'review-7',
           source: 'human-gate',
           verdict: 'skipped',
           unresolvedCount: 0,
         },
         {
-          id: 'independent-review-8',
+          id: 'review-8',
           source: 'human-gate',
           verdict,
           unresolvedCount: 0,
@@ -402,7 +402,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(complete, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'human-gate',
         verdict: 'issues',
         unresolvedCount: 2,
@@ -417,12 +417,12 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
 test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
   const working = reviewerContext({
     status: 'working',
-    artifactScope: 'independent-review-7',
+    artifactScope: 'review-7',
   });
   assert.equal(
     reviewerContextIsSettled(working, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'pass',
         unresolvedCount: 0,
@@ -434,7 +434,7 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
   assert.equal(
     reviewerContextIsSettled(working, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'issues',
         unresolvedCount: 1,
@@ -449,7 +449,7 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
   assert.equal(
     reviewerContextIsSettled(working, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         source: 'dispatch',
         verdict: 'issues',
         unresolvedCount: 1,
@@ -458,7 +458,7 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
         issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
       },
       {
-        id: 'independent-review-8',
+        id: 'review-8',
         source: 'dispatch',
         verdict: 'pass',
         unresolvedCount: 0,
@@ -468,10 +468,9 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
     'a later persisted review supersedes an older pending continuation',
   );
   assert.equal(
-    reviewerContextIsSettled(
-      reviewerContext({ status: 'complete', artifactScope: 'independent-review-7' }),
-      [{ id: 'independent-review-7', verdict: 'pass', unresolvedCount: 0 }],
-    ),
+    reviewerContextIsSettled(reviewerContext({ status: 'complete', artifactScope: 'review-7' }), [
+      { id: 'review-7', verdict: 'pass', unresolvedCount: 0 },
+    ]),
     false,
   );
 });
@@ -479,7 +478,7 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
 test('a one-shot scan only replaces an explicitly recoverable failed placeholder', () => {
   const failed = reviewerContext({
     status: 'failed',
-    artifactScope: 'independent-review-7',
+    artifactScope: 'review-7',
   });
   assert.equal(
     reviewerContextNeedsRecovery(failed, [], { includeFailed: true }),
@@ -489,7 +488,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
   assert.equal(
     reviewerContextNeedsRecovery(failed, [
       {
-        id: 'independent-review-7',
+        id: 'review-7',
         verdict: 'failed',
         unresolvedCount: 0,
         feedbackSent: false,
@@ -502,7 +501,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
       failed,
       [
         {
-          id: 'independent-review-7',
+          id: 'review-7',
           verdict: 'failed',
           unresolvedCount: 0,
           feedbackSent: false,
@@ -518,7 +517,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
       failed,
       [
         {
-          id: 'independent-review-7',
+          id: 'review-7',
           source: 'dispatch',
           verdict: 'failed',
           unresolvedCount: 0,
@@ -526,7 +525,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
           recoveryContinuationPending: true,
         },
         {
-          id: 'independent-review-8',
+          id: 'review-8',
           source: 'dispatch',
           verdict: 'issues',
           unresolvedCount: 1,
@@ -543,7 +542,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
       failed,
       [
         {
-          id: 'independent-review-7',
+          id: 'review-7',
           verdict: 'failed',
           unresolvedCount: 0,
           feedbackSent: false,
@@ -559,7 +558,7 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
       failed,
       [
         {
-          id: 'independent-review-7',
+          id: 'review-7',
           verdict: 'issues',
           unresolvedCount: 1,
           feedbackSent: false,
@@ -573,10 +572,10 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
 
 test('delivery-failed reviewer can recover from a later fresh complete signal', () => {
   const review = buildRecoveredReview({
-    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
     ctx: reviewerContext({
       status: 'failed',
-      artifactScope: 'independent-review-7',
+      artifactScope: 'review-7',
       attemptStartedAt: '2026-07-16T10:00:00.000Z',
     }),
     signal: terminalSignal({
@@ -591,30 +590,27 @@ test('delivery-failed reviewer can recover from a later fresh complete signal', 
   });
 
   assert.ok(review);
-  assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.id, 'review-7');
   assert.equal(review.verdict, 'issues');
   assert.equal(review.unresolvedCount, 1);
 });
 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {
-  assert.equal(
-    recoveredReviewArtifactScope({ artifactScope: 'independent-review-7' }, 'independent-review-2'),
-    'independent-review-7',
-  );
-  assert.equal(recoveredReviewArtifactScope({}, 'independent-review-2'), 'independent-review-2');
+  assert.equal(recoveredReviewArtifactScope({ artifactScope: 'review-7' }, 'review-2'), 'review-7');
+  assert.equal(recoveredReviewArtifactScope({}, 'review-2'), 'review-2');
 });
 
 test('buildRecoveredReview preserves the reviewer-owned artifact scope as the review id', () => {
   const review = buildRecoveredReview({
-    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
-    ctx: reviewerContext({ artifactScope: 'independent-review-7' }),
+    run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
+    ctx: reviewerContext({ artifactScope: 'review-7' }),
     signal: terminalSignal(),
     feedback: { verdict: 'pass', issues: [] },
     reviewedPackage: undefined,
   });
 
   assert.ok(review);
-  assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.id, 'review-7');
   assert.equal(review.loopNumber, 7);
 });
 
@@ -653,7 +649,7 @@ test('buildRecoveredReview returns null when the reviewer has not finished', () 
 });
 
 test('buildRecoveredReview accepts fresh completed runtime context when terminal signal was lost', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   const ctx = reviewerContext({
     status: 'complete',
     attemptStartedAt: '2026-07-16T10:00:00.000Z',
@@ -673,7 +669,7 @@ test('buildRecoveredReview accepts fresh completed runtime context when terminal
 
 test('buildRecoveredReview accepts signal-less completion for an attempt-scoped context', () => {
   const review = buildRecoveredReview({
-    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
     ctx: reviewerContext({
       status: 'complete',
       signalAttemptId: 'attempt-2',
@@ -690,7 +686,7 @@ test('buildRecoveredReview accepts signal-less completion for an attempt-scoped 
 
 test('buildRecoveredReview rejects a terminal signal from another attempt', () => {
   const review = buildRecoveredReview({
-    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
     ctx: reviewerContext({
       status: 'complete',
       signalAttemptId: 'attempt-2',
@@ -706,7 +702,7 @@ test('buildRecoveredReview rejects a terminal signal from another attempt', () =
 });
 
 test('buildRecoveredReview rejects stale completed runtime context without a terminal signal', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   const review = buildRecoveredReview({
     run,
     ctx: reviewerContext({
@@ -724,7 +720,7 @@ test('buildRecoveredReview rejects stale completed runtime context without a ter
 
 test('buildRecoveredReview ingests a completed ISSUES review as an extra review', () => {
   const run = makeRun({
-    engineState: { publishGate: { independentReviews: [] } },
+    engineState: { publishGate: { reviews: [] } },
     metrics: {
       nudgeCount: 0,
       model: 'opus',
@@ -743,14 +739,13 @@ test('buildRecoveredReview ingests a completed ISSUES review as an extra review'
   });
 
   assert.ok(review);
-  assert.equal(review.id, 'independent-review-1');
+  assert.equal(review.id, 'review-1');
   assert.equal(review.source, 'human-gate');
   assert.equal(review.verdict, 'issues');
   assert.equal(review.unresolvedCount, 1);
   assert.equal(review.loopNumber, 1);
   assert.equal(review.effort, 'low');
   // Reviewer runner differs from the worker runner → cross-runner review.
-  assert.equal(review.crossRunner, true);
   // Unstamped: no package supplied, so it certifies nothing.
   assert.equal(review.reviewedHeadSha ?? null, null);
 });
@@ -759,11 +754,9 @@ test('buildRecoveredReview preserves the dispatch source for automatic review pl
   const run = makeRun({
     engineState: {
       publishGate: {
-        independentReviews: [],
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 0,
+        reviews: [],
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
       },
@@ -786,11 +779,13 @@ test('buildRecoveredReview stamps a PASS review against the matching package and
   const run = makeRun({
     engineState: {
       publishGate: {
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            reviewedHeadSha: 'fixture-head',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'human-gate',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
             unresolvedCount: 1,
@@ -810,7 +805,7 @@ test('buildRecoveredReview stamps a PASS review against the matching package and
 
   assert.ok(review);
   // Numbered after the existing review.
-  assert.equal(review.id, 'independent-review-2');
+  assert.equal(review.id, 'review-2');
   assert.equal(review.loopNumber, 2);
   assert.equal(review.verdict, 'pass');
   assert.equal(review.unresolvedCount, 0);
@@ -820,7 +815,7 @@ test('buildRecoveredReview stamps a PASS review against the matching package and
 });
 
 test('buildRecoveredReview preserves a captured snapshot when the prepared package drifted', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   const review = buildRecoveredReview({
     run,
     ctx: reviewerContext(),
@@ -832,7 +827,7 @@ test('buildRecoveredReview preserves a captured snapshot when the prepared packa
       baseSha: '1111111',
       headRef: 'fix/recovered-review',
       headSha: 'deadbeef',
-      diffPath: 'artifacts/independent-review-1/review-loop-1/review.diff',
+      diffPath: 'artifacts/review-1/review-loop-1/review.diff',
       diffHash: 'a'.repeat(64),
       diffStat: { files: 1, additions: 2, deletions: 0 },
       capturedAt: '2026-07-16T10:01:00.000Z',
@@ -847,7 +842,7 @@ test('buildRecoveredReview preserves a captured snapshot when the prepared packa
 });
 
 test('a failed or blocked reviewer never stamps a verdict, even with parseable PASS feedback', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   const ctx = reviewerContext();
   const feedback = { verdict: 'pass' as const, issues: [] };
   for (const status of ['failed', 'blocked'] as const) {
@@ -863,7 +858,7 @@ test('a failed or blocked reviewer never stamps a verdict, even with parseable P
 });
 
 test('freshness anchors on the current attempt launch, defeating warm-context reuse', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   // Warm-reused context: startedAt is loop 1's launch, attemptStartedAt is
   // loop 2's. A loop-1 signal written between them must be rejected.
   const ctx = reviewerContext({
@@ -896,7 +891,7 @@ test('freshness anchors on the current attempt launch, defeating warm-context re
 });
 
 test('startup reconciliation rewriting updatedAt does not reject the genuine pre-restart signal', () => {
-  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const run = makeRun({ engineState: { publishGate: { reviews: [] } } });
   // Restart ordering: the reviewer signaled complete BEFORE the crash; startup
   // reconciliation then rewrote updatedAt to the restart time BEFORE recovery
   // ran. The signal predates updatedAt but postdates the attempt launch — it
@@ -920,10 +915,12 @@ test('startup reconciliation rewriting updatedAt does not reject the genuine pre
 });
 
 test('appendRecoveredContinuationAttempt keeps an exhausted review instead of wiping the cap', () => {
-  const existing: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const existing: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
-    crossRunner: true,
     loopNumber: 3,
     verdict: 'issues',
     unresolvedCount: 6,
@@ -934,22 +931,24 @@ test('appendRecoveredContinuationAttempt keeps an exhausted review instead of wi
     maxRetriesExhausted: true,
     issues: [{ file: 'a.ts', description: 'still broken' }],
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
-      { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
-      { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
-      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { mode: 'cold' as const, loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+      { mode: 'cold' as const, loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+      { mode: 'cold' as const, loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
     ],
   };
-  const recovered: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const recovered: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
-    crossRunner: true,
     loopNumber: 1,
     verdict: 'issues',
     unresolvedCount: 6,
     retryCount: 0,
     issues: [{ file: 'a.ts', description: 'still broken' }],
-    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 6 }],
+    attempts: [{ mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 6 }],
   };
   const merged = appendRecoveredContinuationAttempt(existing, recovered);
   assert.equal(merged.retryCount, 3);

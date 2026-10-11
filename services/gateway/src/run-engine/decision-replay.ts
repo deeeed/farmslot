@@ -9,10 +9,7 @@ const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
   // must see it via latestResolvedHumanGateDecision(_, true) to take its bypass.
   CLOSE_AS_SHIPPED_ACTION,
 ]);
-export const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
-  'request-extra-review',
-  'request-cross-runner-review',
-]);
+export const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set(['request-review']);
 const HUMAN_GATE_REVIEW_REQUEST_CONSUMED_CONTEXT_KEY = 'reviewRequestConsumedAt';
 // An approval the gate held because the reviewed inputs changed (F42).
 const HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY = 'approvalHeldAt';

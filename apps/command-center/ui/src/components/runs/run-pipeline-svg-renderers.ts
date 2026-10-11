@@ -221,11 +221,11 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
   `;
 }
 
-export function renderSelfReviewLoop(
+export function renderReviewLoop(
   nodeMap: Map<string, NodePos>,
   visibleStatus: (step: RunStep) => RunStepStatus,
 ) {
-  const srNode = nodeMap.get('self-review');
+  const srNode = nodeMap.get('review');
   const monNode = nodeMap.get('monitor');
   if (!srNode || !monNode) return nothing;
 
@@ -240,7 +240,7 @@ export function renderSelfReviewLoop(
   // Show loop when: retry happened, or currently in fix phase, or step is running (loop is possible)
   if (isPending) return nothing;
 
-  // Arc from self-review right side, curves up and back to monitor right side
+  // Arc from review right side, curves up and back to monitor right side
   const srRight = srNode.x + srNode.w - 10;
   const monRight = monNode.x + monNode.w;
   const arcTop = srNode.y - 24;

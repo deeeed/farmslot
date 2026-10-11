@@ -46,7 +46,7 @@ export async function proveWarmReview(input: {
       execution: {
         workspacePolicy: { kind: 'exact', machine: 'review-node' },
         transport: 'tmux',
-        models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+        models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh', effort: null, mode: 'warm' }],
       },
       githubTeams: [],
       notificationPrincipalIds: [],
@@ -105,7 +105,13 @@ export async function proveWarmReview(input: {
       run.agentContexts?.find((c) => c.id === 'review')?.runnerSessionId,
       prior.agentContexts?.find((c) => c.id === 'review')?.runnerSessionId,
     );
-    assert.equal(run.reviewScope, 'incremental');
+    assert.equal(run.reviewMode, 'warm');
+    assert.equal(run.repeatReviewContext?.mode, 'warm');
+    assert.equal(
+      run.repeatReviewContext?.session?.reviewId,
+      prior.agentContexts?.find((c) => c.id === 'review')?.reviewId,
+    );
+    assert.equal(run.reviewResult?.mode, 'warm');
     assert.notEqual(run.reviewWorkspace?.checkoutPath, prior.reviewWorkspace?.checkoutPath);
     const task = path.dirname(run.taskFile!);
     const proof = JSON.parse(

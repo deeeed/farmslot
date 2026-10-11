@@ -47,8 +47,7 @@ try {
       'Direct review failure validation',
     );
     assert.equal(request.request.autoStart, false);
-    assert.equal(request.request.review?.validationDepth, 'full-live');
-    assert.equal(request.request.review?.sessionIntent, 'resume');
+    assert.equal(request.request.review?.mode, 'warm');
     if (phase === 'submitted') {
       assert(!request.cancelledAt);
       assert.match(request.error ?? '', /unavailable/);

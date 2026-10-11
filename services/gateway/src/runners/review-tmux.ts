@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
   isTerminalRunStatus,
+  parseGitHubRef,
   type Run,
   type RunnerPromptAcceptance,
   type WorkerSignal,
@@ -14,6 +16,7 @@ import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
 import { shellQuote } from '../core/tmux.js';
+import { WarmReviewRefusal } from '../review/session-mode.js';
 import { bindReviewWorkspaceSupportValue } from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
@@ -118,14 +121,40 @@ async function reviewEnvironment(run: Run) {
   });
 }
 
+export function verifiedWarmReviewSessionId(run: Run): string | undefined {
+  if (run.reviewMode !== 'warm' && run.repeatReviewContext?.mode !== 'warm') return undefined;
+  const trace = run.repeatReviewContext?.session;
+  const pr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
+  if (
+    !trace ||
+    trace.mode !== 'warm' ||
+    trace.continuity !== 'resumed' ||
+    !trace.reviewId ||
+    !trace.priorRunId ||
+    !trace.priorSessionId ||
+    !trace.lastReviewedHeadSha
+  )
+    throw new WarmReviewRefusal(
+      'missing-session',
+      'no verified retained reviewer session and last reviewed head are available',
+    );
+  if (
+    !pr ||
+    trace.repository?.toLowerCase() !== pr.repo.toLowerCase() ||
+    trace.prNumber !== pr.number
+  )
+    throw new WarmReviewRefusal(
+      'pr-mismatch',
+      'the retained reviewer belongs to a different repository/PR',
+    );
+  return trace.priorSessionId;
+}
+
 async function reserveReviewSession(run: Run): Promise<string | undefined> {
   const w = run.reviewWorkspace!;
   const argv = workspaceTerminalSessionCreateArgv(run.metrics.runner!, w.checkoutPath);
   if (!argv) return undefined;
-  const resumeSessionId =
-    run.repeatReviewContext?.session?.continuity === 'resumed'
-      ? run.repeatReviewContext.session.priorSessionId
-      : undefined;
+  const resumeSessionId = verifiedWarmReviewSessionId(run);
   if (
     resumeSessionId &&
     getAllRuns().some(
@@ -258,12 +287,17 @@ export async function launchReviewTmux(
   const w = run.reviewWorkspace!;
   const session = reviewTmuxSession(run);
   const previous = run.agentContexts?.find((c) => c.id === 'review');
+  verifiedWarmReviewSessionId(run);
   if (previous?.nativeSession)
     throw new Error('Stop the native reviewer before changing execution transport');
   const runnerSessionId = previous?.runnerSessionId ?? (await reserveReviewSession(run));
   await assertCurrent();
   const patch = {
     id: 'review',
+    reviewId:
+      run.reviewMode === 'warm'
+        ? run.repeatReviewContext?.session?.reviewId
+        : (previous?.reviewId ?? randomUUID()),
     label: 'Review',
     runner: run.metrics.runner,
     model: run.metrics.model,

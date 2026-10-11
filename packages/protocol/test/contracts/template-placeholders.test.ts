@@ -71,7 +71,7 @@ test('unconfigured projects retain their checklist and interactive CI uses its t
 
 test('every bundled PR checklist materializes one executable parity row before its preflight', () => {
   const templates = [
-    ...['dev', 'dev-interactive', 'fix-bug', 'pr-complete', 'self-review-fix', 'update-branch'].map(
+    ...['dev', 'dev-interactive', 'fix-bug', 'pr-complete', 'review-fix', 'update-branch'].map(
       (name) => `projects/farmslot-farm/templates/worker/${name}.md`,
     ),
     'templates/worker/ci-fix.md',

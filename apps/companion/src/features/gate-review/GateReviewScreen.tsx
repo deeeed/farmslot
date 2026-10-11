@@ -79,6 +79,7 @@ export function GateReviewScreen({
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Actions</Text>
         <GateActions
+          reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
           sendingActionId={viewModel.sendingActionId}

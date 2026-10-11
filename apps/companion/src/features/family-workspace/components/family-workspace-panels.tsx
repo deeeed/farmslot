@@ -1648,7 +1648,7 @@ export function FamilyRunWorkspaceCard({
           <Text style={styles.focusRetroText} numberOfLines={3}>
             {retrospectivePayload?.deltaLearnings ??
               retrospectivePayload?.workerLearnings ??
-              retrospectivePayload?.selfReviewSummary ??
+              retrospectivePayload?.reviewSummary ??
               retrospective.description}
           </Text>
           {retrospectivePayload?.commentsTriageSummary ? (

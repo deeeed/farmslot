@@ -206,7 +206,7 @@ const RUN_STATUSES = new Set([
   'preparing',
   'dispatching',
   'monitoring',
-  'self-reviewing',
+  'reviewing',
   'completing',
   'human-gating',
   'ci-watching',

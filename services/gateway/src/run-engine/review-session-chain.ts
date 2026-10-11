@@ -1,11 +1,12 @@
 import {
   isTerminalRunStatus,
   parseGitHubRef,
-  type ReviewSessionFallbackReason,
+  type ReviewSessionRefusalReason,
   type ReviewSessionTrace,
   type Run,
 } from '@farmslot/protocol';
 
+import { primaryReviewedHeadForSession } from '../review/session-mode.js';
 import {
   runnerRetainedSessionHandoff,
   runnerSupportsNativeTaskReuse,
@@ -16,17 +17,21 @@ import {
 } from '../runners/session-reactivation.js';
 
 export interface RepeatReviewResumeBinding {
+  reviewId: string;
   priorRunId: string;
   contextId: string;
   runnerSessionId: string;
   runnerSessionPath: string;
+  repository: string;
+  prNumber: number;
+  lastReviewedHeadSha: string;
 }
 
 export type RepeatReviewResumePlan =
-  | { kind: 'reset' }
+  | { kind: 'fresh' }
   | { kind: 'resume'; binding: RepeatReviewResumeBinding }
   | { kind: 'native-resume'; binding: Omit<RepeatReviewResumeBinding, 'runnerSessionPath'> }
-  | { kind: 'fallback'; reason: ReviewSessionFallbackReason };
+  | { kind: 'refused'; reason: ReviewSessionRefusalReason };
 
 export type RepeatReviewResumeAttempt =
   | {
@@ -35,8 +40,8 @@ export type RepeatReviewResumeAttempt =
       trace: ReviewSessionTrace;
     }
   | {
-      kind: 'fallback';
-      plan: { kind: 'fallback'; reason: 'session-unavailable' };
+      kind: 'refused';
+      plan: { kind: 'refused'; reason: 'session-unavailable' };
       reason: string;
     }
   | { kind: 'hold'; plan: Extract<RepeatReviewResumePlan, { kind: 'resume' }>; reason: string };
@@ -60,16 +65,19 @@ export function resolveRepeatReviewResumePlan(
   prior: Run | null,
   runner: string,
   model?: string | null,
+  effort?: string | null,
 ): RepeatReviewResumePlan {
   const context = current.repeatReviewContext;
-  if (!context || context.sessionIntent !== 'resume') return { kind: 'reset' };
+  if (context?.mode !== 'warm') return { kind: 'fresh' };
+  const reviewId = context.session?.reviewId;
+  if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';
   if (
     native
       ? !runnerSupportsNativeTaskReuse(runner)
       : runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt'
   ) {
-    return { kind: 'fallback', reason: 'unsupported-runner' };
+    return { kind: 'refused', reason: 'unsupported-runner' };
   }
   if (
     !prior ||
@@ -79,7 +87,7 @@ export function resolveRepeatReviewResumePlan(
     !isTerminalRunStatus(prior.status) ||
     prior.project !== current.project
   ) {
-    return { kind: 'fallback', reason: 'missing-session' };
+    return { kind: 'refused', reason: 'missing-session' };
   }
   const requested = current.prWork?.review;
   if (
@@ -88,18 +96,25 @@ export function resolveRepeatReviewResumePlan(
       prior.prWork.review?.ownerId !== requested.ownerId ||
       prior.prWork.review.profile !== requested.profile)
   )
-    return { kind: 'fallback', reason: 'missing-session' };
-  const priorRef = parseGitHubRef(prior.ticketOrPr);
+    return { kind: 'refused', reason: 'missing-session' };
+  const currentRef = current.prWork?.pr ?? parseGitHubRef(current.ticketOrPr);
+  const priorRef = prior.prWork?.pr ?? parseGitHubRef(prior.ticketOrPr);
+  if (
+    !currentRef ||
+    currentRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
+    currentRef.number !== context.prNumber
+  )
+    return { kind: 'refused', reason: 'pr-mismatch' };
   if (
     !priorRef ||
     priorRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
     priorRef.number !== context.prNumber ||
     context.chainId !== (prior.repeatReviewContext?.chainId ?? prior.id)
   ) {
-    return { kind: 'fallback', reason: 'missing-session' };
+    return { kind: 'refused', reason: 'pr-mismatch' };
   }
   if (!current.slotId || prior.slotId !== current.slotId) {
-    return { kind: 'fallback', reason: 'slot-mismatch' };
+    return { kind: 'refused', reason: 'slot-mismatch' };
   }
   if (
     native &&
@@ -107,9 +122,9 @@ export function resolveRepeatReviewResumePlan(
       !current.nativeOwnerPrincipalId ||
       prior.nativeOwnerPrincipalId !== current.nativeOwnerPrincipalId)
   )
-    return { kind: 'fallback', reason: 'missing-session' };
+    return { kind: 'refused', reason: 'missing-session' };
   if (!native && prior.transport === 'native')
-    return { kind: 'fallback', reason: 'missing-session' };
+    return { kind: 'refused', reason: 'missing-session' };
   if (native) {
     const requestedRef = parseGitHubRef(current.ticketOrPr);
     if (
@@ -118,12 +133,15 @@ export function resolveRepeatReviewResumePlan(
       requestedRef.number !== context.prNumber ||
       context.priorFamilyId !== prior.familyId
     )
-      return { kind: 'fallback', reason: 'missing-session' };
+      return { kind: 'refused', reason: 'missing-session' };
   }
   const reviewer = [...(prior.agentContexts ?? [])]
     .filter(
       (candidate) =>
+        candidate.runId === prior.id &&
+        candidate.status === 'complete' &&
         candidate.role === 'review' &&
+        candidate.reviewId === reviewId &&
         candidate.runner === runner &&
         candidate.slotId === current.slotId &&
         candidate.runnerSessionId?.trim() &&
@@ -144,15 +162,53 @@ export function resolveRepeatReviewResumePlan(
       (candidate) => candidate.role === 'review' && candidate.runner !== runner,
     );
     return {
-      kind: 'fallback',
+      kind: 'refused',
       reason: anotherRunner ? 'runner-mismatch' : 'missing-session',
     };
   }
-  if (model && reviewer.model !== model) return { kind: 'fallback', reason: 'model-mismatch' };
+  if (model && reviewer.model !== model) return { kind: 'refused', reason: 'model-mismatch' };
+  if ((effort ?? null) !== (reviewer.effort ?? null))
+    return { kind: 'refused', reason: 'effort-mismatch' };
+  const reviewedHead = context.priorReviewedHeadSha;
+  const headProvenance =
+    primaryReviewedHeadForSession(prior, {
+      reviewId,
+      runnerSessionId: reviewer.runnerSessionId,
+      repository: context.repository,
+      prNumber: context.prNumber,
+    }) === reviewedHead ||
+    prior.decisions?.some((decision) => {
+      const payload = decision.payload as
+        | {
+            kind?: string;
+            repo?: string;
+            prNumber?: number;
+            reviewSnapshot?: { headSha?: string | null };
+          }
+        | undefined;
+      return (
+        payload?.kind === 'review' &&
+        payload.repo?.toLowerCase() === context.repository.toLowerCase() &&
+        payload.prNumber === context.prNumber &&
+        payload.reviewSnapshot?.headSha === reviewedHead
+      );
+    }) ||
+    prior.engineState?.publishGate?.reviews?.some(
+      (review) =>
+        review.reviewerSessionId === reviewer.runnerSessionId &&
+        review.reviewedHeadSha === reviewedHead &&
+        ['pass', 'issues'].includes(review.verdict),
+    );
+  if (!reviewedHead || !context.currentHeadSha || !headProvenance)
+    return { kind: 'refused', reason: 'missing-session' };
   if (native)
     return {
       kind: 'native-resume',
       binding: {
+        reviewId,
+        repository: context.repository,
+        prNumber: context.prNumber,
+        lastReviewedHeadSha: reviewedHead,
         priorRunId: prior.id,
         contextId: reviewer.id,
         runnerSessionId: reviewer.runnerSessionId,
@@ -161,6 +217,10 @@ export function resolveRepeatReviewResumePlan(
   return {
     kind: 'resume',
     binding: {
+      reviewId,
+      repository: context.repository,
+      prNumber: context.prNumber,
+      lastReviewedHeadSha: reviewedHead,
       priorRunId: prior.id,
       contextId: reviewer.id,
       runnerSessionId: reviewer.runnerSessionId,
@@ -189,7 +249,11 @@ export async function attemptRepeatReviewResume(
       kind: 'resumed',
       plan,
       trace: {
-        intent: 'resume',
+        mode: 'warm',
+        reviewId: plan.binding.reviewId,
+        repository: plan.binding.repository,
+        prNumber: plan.binding.prNumber,
+        lastReviewedHeadSha: plan.binding.lastReviewedHeadSha,
         continuity: 'resumed',
         priorRunId: plan.binding.priorRunId,
         priorSessionId: plan.binding.runnerSessionId,
@@ -199,8 +263,8 @@ export async function attemptRepeatReviewResume(
   }
   if (result.disposition === 'safe-send') {
     return {
-      kind: 'fallback',
-      plan: { kind: 'fallback', reason: 'session-unavailable' },
+      kind: 'refused',
+      plan: { kind: 'refused', reason: 'session-unavailable' },
       reason: result.reason,
     };
   }

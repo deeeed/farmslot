@@ -1,130 +1,36 @@
 import { html, nothing } from 'lit';
 
-import type { FlowType, ReviewRunnerId } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
-
-export interface PublicationReviewPlanItem {
-  runner: ReviewRunnerId | 'same';
-}
+import '../shared/review-dispatch-picker.js';
 
 export interface PublicationReviewConfigRenderContext {
   enabled: boolean;
-  flowType: FlowType | null;
-  runner: string;
-  mode: 'interactive' | 'autonomous';
-  loops: readonly PublicationReviewLoopDraft[];
-  plan: readonly PublicationReviewPlanItem[];
-  runnerOptions: readonly string[];
-  /** Effective farm QA preset title; null when the project has none, undefined until its config loads. */
+  viewModel: ReviewDispatchViewModel;
   qaPreset: string | null | undefined;
-  setRunner: (id: number, runner: ReviewRunnerId) => void;
-  removeLoop: (id: number) => void;
-  addWorkerReviewLoop: () => void;
-  addExternalReviewLoop: () => void;
+  changed: () => void;
 }
 
 export function renderPublicationReviewConfig(ctx: PublicationReviewConfigRenderContext) {
   if (!ctx.enabled) return nothing;
-  const hasExternalReview = ctx.plan.some((loop) => loop.runner !== ctx.runner);
-  const baseLabel = ctx.flowType === 'dev' ? 'autonomous dev review' : 'self-review';
-  return html`
-    <div class="publication-review-panel">
-      <div class="publication-review-head">
-        <div>
-          <div class="section-label">Publication reviews</div>
-          <div class="section-help">
-            Base ${runnerLabel(ctx.runner)} ${baseLabel} always runs before the ready gate. Add
-            ordered independent review loops now; you can still add more from the ready gate.
-          </div>
-        </div>
-        <span class="publication-review-summary">
-          ${1 + ctx.plan.length} total${hasExternalReview ? ' · runner diversity' : ''}
-        </span>
-      </div>
-      <div class="publication-review-sequence">
-        <div class="publication-review-row base">
-          <span class="publication-review-index">base</span>
-          <span class="publication-review-base">${runnerLabel(ctx.runner)} ${baseLabel}</span>
-          <span class="publication-review-kind">worker runner</span>
-        </div>
-        ${ctx.loops.map((loop, index) => renderReviewLoopRow(ctx, loop, index))}
-      </div>
-      ${renderRuntimeValidationNote(ctx.qaPreset)}
-      <div class="publication-review-actions">
-        <button
-          class="pill"
-          ?disabled=${ctx.loops.length >= 5}
-          @click=${() => ctx.addWorkerReviewLoop()}
-        >
-          + Independent review
-        </button>
-        <button
-          class="pill"
-          ?disabled=${ctx.loops.length >= 5}
-          @click=${() => ctx.addExternalReviewLoop()}
-        >
-          + Independent review (runner diversity)
-        </button>
-      </div>
-    </div>
-  `;
-}
-
-function renderReviewLoopRow(
-  ctx: PublicationReviewConfigRenderContext,
-  loop: PublicationReviewLoopDraft,
-  index: number,
-) {
-  return html`
-    <div class="publication-review-row">
-      <span class="publication-review-index">${index + 1}</span>
-      <div class="publication-review-runners">
-        ${ctx.runnerOptions.map((runner) => renderRunnerChoice(ctx, loop, runner))}
-      </div>
-      <span
-        class="publication-review-kind"
-        data-testid="publication-review-static"
-        title="Static source inspection: no build, no tests, no app runtime."
-        >Static</span
-      >
-      <span class="publication-review-kind"
-        >${loop.runner === ctx.runner ? 'worker runner' : 'runner diversity'}</span
-      >
-      <button class="review-remove" @click=${() => ctx.removeLoop(loop.id)}>Remove</button>
-    </div>
-  `;
-}
-
-function renderRunnerChoice(
-  ctx: PublicationReviewConfigRenderContext,
-  loop: PublicationReviewLoopDraft,
-  runner: string,
-) {
-  return html`
-    <button
-      class="review-runner-chip ${loop.runner === runner ? 'selected' : ''}"
-      aria-pressed=${loop.runner === runner ? 'true' : 'false'}
-      @click=${() => ctx.setRunner(loop.id, runner as ReviewRunnerId)}
-    >
-      ${runnerLabel(runner)}
-    </button>
-  `;
-}
-
-function renderRuntimeValidationNote(qaPreset: string | null | undefined) {
-  const preset =
-    qaPreset === undefined
-      ? 'Select a project to see its QA preset.'
-      : qaPreset === null
-        ? 'This project has no QA preset configured.'
-        : html`Farm QA preset: <strong>${qaPreset}</strong>.`;
-  return html`<p class="section-help" data-testid="publication-review-qa-note">
-    Independent reviews inspect source only. Runtime validation runs separately with the QA flow.
-    ${preset}
-  </p>`;
-}
-
-function runnerLabel(runner: string): string {
-  return runner.charAt(0).toUpperCase() + runner.slice(1);
+  return html`<div class="publication-review-panel">
+    <div class="section-label">Publication reviews</div>
+    <p class="section-help">
+      Reviews run in separate sessions. Configure the ordered reviews required before publication.
+    </p>
+    <review-dispatch-picker
+      .viewModel=${ctx.viewModel}
+      .review=${true}
+      @review-dispatch-change=${ctx.changed}
+      @review-dispatch-status-change=${ctx.changed}
+    ></review-dispatch-picker>
+    <p class="section-help" data-testid="publication-review-qa-note">
+      Reviews inspect source only. Runtime validation runs separately with QA.
+      ${ctx.qaPreset === undefined
+        ? 'Select a project to see its QA preset.'
+        : ctx.qaPreset === null
+          ? 'This project has no QA preset configured.'
+          : `Farm QA preset: ${ctx.qaPreset}.`}
+    </p>
+  </div>`;
 }

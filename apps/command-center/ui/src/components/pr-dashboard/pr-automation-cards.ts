@@ -366,16 +366,8 @@ export function reviewCard(
           </p>
           <p class="muted">
             ${prReviewWorkflow(review) === 'qa'
-              ? review.workflow === undefined && review.validationDepth === 'full-live'
-                ? 'On-device review · legacy contract'
-                : `QA · ${review.qaProfileId ?? 'farm default'}`
-              : html`${review.sessionIntent === 'resume'
-                  ? 'Continue saved reviewer'
-                  : 'Fresh reviewer'}
-                · ${review.scope} · Review ·
-                ${review.busySession === 'fresh'
-                  ? 'Fresh reviewer fallback allowed'
-                  : 'Wait for saved reviewer'}`}
+              ? `QA · ${review.qaProfileId ?? 'farm default'}`
+              : `${review.mode.toUpperCase()} · Review`}
           </p>
           ${execution
             ? html`<p class="muted">
@@ -411,8 +403,8 @@ export function reviewCard(
     ${trace
       ? html`<p>
           Session
-          ${trace.continuity}${trace.fallbackReason
-            ? ` · ${trace.fallbackReason}`
+          ${trace.continuity}${trace.refusalReason
+            ? ` · ${trace.refusalReason}`
             : ''}${trace.sessionId ? ` · ${trace.sessionId}` : ''}
         </p>`
       : nothing}

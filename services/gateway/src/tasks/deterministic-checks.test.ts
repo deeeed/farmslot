@@ -51,15 +51,15 @@ test('publication uses the last completed source-fix checklist after role cleanu
     activeTaskFile: null,
     agentContexts: [
       {
-        role: 'self-review-fix',
+        role: 'review-fix',
         status: 'complete',
-        taskFile: '.task/proof/SELF-REVIEW-FIX.md',
+        taskFile: '.task/proof/REVIEW-FIX.md',
         completedAt: '2026-01-01T10:00:00Z',
       },
       {
-        role: 'self-review',
+        role: 'review',
         status: 'complete',
-        taskFile: '.task/proof/SELF-REVIEW.md',
+        taskFile: '.task/proof/REVIEW.md',
         completedAt: '2026-01-01T11:00:00Z',
       },
       {
@@ -70,7 +70,7 @@ test('publication uses the last completed source-fix checklist after role cleanu
       },
     ],
   } as unknown as Run;
-  assert.equal(deterministicChecklistTaskFileForPublication(run), '.task/proof/SELF-REVIEW-FIX.md');
+  assert.equal(deterministicChecklistTaskFileForPublication(run), '.task/proof/REVIEW-FIX.md');
   run.activeTaskFile = '.task/proof/CI-FIX.md';
   assert.equal(deterministicChecklistTaskFileForPublication(run), run.activeTaskFile);
 });
@@ -92,22 +92,19 @@ test('restoring an interactive parent preserves its initialized TASK.md command'
   await syncTerminalContractForFlowOnSlot(vars, path.basename(root), 'dev', 'interactive');
   const { readFile } = await import('node:fs/promises');
   assert.deepEqual(JSON.parse(await readFile(contractFile, 'utf8')).deterministicChecks, checks);
-  await writeFile(
-    path.join(root, 'SELF-REVIEW-FIX.md'),
-    '- [ ] CI [DETERMINISTIC: ci.local_check]\n',
-  );
+  await writeFile(path.join(root, 'REVIEW-FIX.md'), '- [ ] CI [DETERMINISTIC: ci.local_check]\n');
   await syncTerminalContractForFlowOnSlot(
     vars,
     path.basename(root),
     'dev',
     null,
     undefined,
-    'SELF-REVIEW-FIX.md',
+    'REVIEW-FIX.md',
   );
   const role = JSON.parse(
-    await readFile(path.join(root, 'inputs/worker-terminal-contract.SELF-REVIEW-FIX.json'), 'utf8'),
+    await readFile(path.join(root, 'inputs/worker-terminal-contract.REVIEW-FIX.json'), 'utf8'),
   );
-  assert.equal(role.deterministicChecks[0].checklist, 'SELF-REVIEW-FIX.md');
+  assert.equal(role.deterministicChecks[0].checklist, 'REVIEW-FIX.md');
   assert.equal(role.deterministicChecks[0].command, 'yarn ci:local');
 });
 

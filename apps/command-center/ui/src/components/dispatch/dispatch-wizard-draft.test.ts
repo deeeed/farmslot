@@ -5,10 +5,6 @@ import type { PreparePhase, ProjectQaConfig } from '@farmslot/protocol';
 
 import {
   appLabel,
-  buildPublicationReviewDepth,
-  buildPublicationReviewGateParams,
-  buildPublicationReviewPlan,
-  defaultExtraReviewRunner,
   modeForFlow,
   projectApps,
   projectPrepareProfiles,
@@ -19,8 +15,6 @@ import {
   selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
-
-const runners = ['claude', 'codex'] as const;
 
 test('selectedTaskTemplate omits default template and returns explicit variants', () => {
   const options = [
@@ -53,72 +47,18 @@ test('project app helpers select only for multi-app projects', () => {
   assert.equal(appLabel('apps/mobile'), 'mobile');
 });
 
-test('publication review draft builds gate params for fix-bug and autonomous dev only', () => {
-  const loops = [{ id: 1, runner: 'codex' as const }];
-  assert.deepEqual(buildPublicationReviewPlan('review-pr', 'claude', loops, runners), []);
-  assert.deepEqual(buildPublicationReviewPlan('dev', 'claude', loops, runners, 'interactive'), []);
+test('publication reviews belong to fix-bug and autonomous dev', () => {
+  assert.equal(publicationReviewsEnabled('fix-bug'), true);
   assert.equal(publicationReviewsEnabled('dev', 'autonomous'), true);
-  assert.deepEqual(buildPublicationReviewGateParams('fix-bug', 'claude', loops, runners), {
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      extraLoopsRequested: 0,
-      countingVersion: 2,
-      requireCrossRunner: true,
-      requestedBy: 'dispatch',
-    },
-    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
-  });
-  assert.deepEqual(
-    buildPublicationReviewGateParams('dev', 'claude', loops, runners, 'autonomous'),
-    {
-      reviewDepth: {
-        minimumIndependentReviews: 1,
-        extraLoopsRequested: 0,
-        countingVersion: 2,
-        requireCrossRunner: true,
-        requestedBy: 'dispatch',
-      },
-      pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
-    },
-  );
+  assert.equal(publicationReviewsEnabled('dev', 'interactive'), false);
+  assert.equal(publicationReviewsEnabled('qa'), false);
 });
 
-test('publication review plans submit only static rounds', () => {
-  const loops = [
-    { id: 1, runner: 'codex' as const },
-    { id: 2, runner: 'claude' as const },
-    { id: 3, runner: 'cursor' as const },
-  ];
-  const plan = buildPublicationReviewPlan('fix-bug', 'claude', loops, runners);
-  assert.deepEqual(
-    plan.map((loop) => loop.validationDepth),
-    ['static-code', 'static-code', 'static-code'],
-  );
-});
-
-test('publication review depth counts configured loops once', () => {
-  assert.deepEqual(
-    buildPublicationReviewDepth('fix-bug', 'claude', [
-      { order: 1, runner: 'codex' },
-      { order: 2, runner: 'cursor' },
-    ]),
-    {
-      minimumIndependentReviews: 1,
-      extraLoopsRequested: 1,
-      countingVersion: 2,
-      requireCrossRunner: true,
-      requestedBy: 'dispatch',
-    },
-  );
-});
-
-test('default draft choices derive from flow and current runner', () => {
+test('default workflow derives from flow', () => {
   assert.equal(modeForFlow('fix-bug'), 'autonomous');
   assert.equal(modeForFlow('review-pr'), 'autonomous');
   assert.equal(modeForFlow('qa'), 'autonomous');
   assert.equal(modeForFlow('pr-complete'), 'autonomous');
-  assert.equal(defaultExtraReviewRunner('claude', runners), 'codex');
-  assert.equal(defaultExtraReviewRunner('missing', runners), 'codex');
 });
 
 test('selectedTemplateMode derives mode from task template selection', () => {

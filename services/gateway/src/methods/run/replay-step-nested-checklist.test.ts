@@ -83,7 +83,7 @@ const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/sto
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
   await import('../../tasks/checklist-target.js');
 
-test('runReplayStep restores worker checklist-target when replaying from self-review', async (t) => {
+test('runReplayStep restores worker checklist-target when replaying from review', async (t) => {
   workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
   orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
   const taskRel = 'fix/replay-reset';
@@ -95,11 +95,11 @@ test('runReplayStep restores worker checklist-target when replaying from self-re
   await writeFile(taskFile, '# worker\n');
   await writeFile(path.join(taskDirOnSlot, 'CHECKLIST.md'), '# checklist\n');
 
-  const selfReview = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
-  await writeFile(path.join(taskDirOnSlot, selfReview.checklist), '# review\n');
+  const review = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
+  await writeFile(path.join(taskDirOnSlot, review.checklist), '# review\n');
   await writeFile(
     path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST),
-    `${JSON.stringify({ checklist: selfReview.checklist }, null, 2)}\n`,
+    `${JSON.stringify({ checklist: review.checklist }, null, 2)}\n`,
   );
 
   const run = createRun({
@@ -115,7 +115,7 @@ test('runReplayStep restores worker checklist-target when replaying from self-re
       if (['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)) {
         return { ...step, status: 'done' };
       }
-      if (step.name === 'self-review') {
+      if (step.name === 'review') {
         return { ...step, status: 'failed' };
       }
       return step;
@@ -130,10 +130,7 @@ test('runReplayStep restores worker checklist-target when replaying from self-re
     }
   });
 
-  await runReplayStep(
-    { runId: run.id, stepName: PS.SELF_REVIEW, triggeredBy: 'operator' },
-    () => {},
-  );
+  await runReplayStep({ runId: run.id, stepName: PS.REVIEW, triggeredBy: 'operator' }, () => {});
 
   // Restoring the worker target removes the role switch's manifest: absent
   // means CHECKLIST.md + SIGNAL.json to the mark engine.

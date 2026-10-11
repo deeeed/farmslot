@@ -53,7 +53,7 @@ import {
   renderMonitorPipelineNode,
   renderPackageRefreshPipelineNode,
   renderPublicationReviewPipelineNode,
-  renderSelfReviewPipelineNode,
+  renderReviewPipelineNode,
   type RunPipelineSpecialNodeRenderContext,
 } from './run-pipeline-special-node-renderers.js';
 import { runPipelineStyles } from './run-pipeline-styles.js';
@@ -65,7 +65,7 @@ import {
   renderPipelineFocus,
   renderPipelineLanes,
   renderPublicationReviewLoops,
-  renderSelfReviewLoop,
+  renderReviewLoop,
 } from './run-pipeline-svg-renderers.js';
 import { effectiveStepStatus } from './run-utils.js';
 
@@ -240,8 +240,8 @@ export class RunPipeline extends LitElement {
       ${layout.nodes.map((n) =>
         n.id === 'monitor'
           ? renderMonitorPipelineNode(n, specialNodeContext)
-          : n.id === 'self-review'
-            ? renderSelfReviewPipelineNode(n, specialNodeContext)
+          : n.id === 'review'
+            ? renderReviewPipelineNode(n, specialNodeContext)
             : n.id === 'complete'
               ? renderCompletePipelineNode(n, specialNodeContext)
               : n.id === 'package-refresh'
@@ -258,7 +258,7 @@ export class RunPipeline extends LitElement {
                           onStepSelect: (step) => this._selectStep(step),
                         }),
       )}
-      ${renderSelfReviewLoop(nodeMap, (step) => this._vis(step.status))}
+      ${renderReviewLoop(nodeMap, (step) => this._vis(step.status))}
       ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step.status))}
       ${renderPipelineDecisions(this.run, nodeMap)}
       ${renderPipelineFocus({
@@ -275,7 +275,7 @@ export class RunPipeline extends LitElement {
       visibleStatus: (step) => this._vis(step.status),
       inlineCiFixActive: this._isInlineCIFixActive(),
       monitorTaskProgress: this._monitorTaskProgress(),
-      selfReviewTaskProgress: this._selfReviewTaskProgress(),
+      reviewTaskProgress: this._reviewTaskProgress(),
       transferProgress: this.transferProgress,
       toggleProgressPanel: () => {
         this.monitorExpanded = !this.monitorExpanded;
@@ -347,8 +347,8 @@ export class RunPipeline extends LitElement {
       : undefined;
   }
 
-  private _selfReviewTaskProgress(): TaskProgressStructured | undefined {
-    return this._activeTaskProgressStepId() === 'self-review'
+  private _reviewTaskProgress(): TaskProgressStructured | undefined {
+    return this._activeTaskProgressStepId() === 'review'
       ? this._effectiveTaskProgress()
       : undefined;
   }
@@ -358,12 +358,7 @@ export class RunPipeline extends LitElement {
     return activeStep ? this._effectiveTaskProgress() : undefined;
   }
 
-  private _activeTaskProgressStepId():
-    | 'monitor'
-    | 'self-review'
-    | 'ci-watch'
-    | 'human-gate'
-    | null {
+  private _activeTaskProgressStepId(): 'monitor' | 'review' | 'ci-watch' | 'human-gate' | null {
     return activeTaskProgressStepId(this.run, this.taskProgress);
   }
 

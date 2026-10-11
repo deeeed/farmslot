@@ -217,7 +217,7 @@ mkdirSync(path.dirname(reviewerContractPath), { recursive: true });
 writeFileSync(path.join(taskDir, 'artifacts', 'review-feedback.rev-claude.md'), '# ISSUES\n');
 const reviewerContract = {
   schemaVersion: 1,
-  flowType: 'self-review',
+  flowType: 'review',
   requireSignal: true,
   commands: {
     complete: {
@@ -251,7 +251,7 @@ assert.equal(result.status, 0, result.stderr);
 
 writeFileSync(
   reviewerContractPath,
-  `${JSON.stringify({ ...reviewerContract, flowType: 'self-review-fix' })}\n`,
+  `${JSON.stringify({ ...reviewerContract, flowType: 'review-fix' })}\n`,
 );
 result = spawnSync(
   process.execPath,

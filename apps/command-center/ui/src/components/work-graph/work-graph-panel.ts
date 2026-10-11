@@ -972,7 +972,7 @@ export class WorkGraphPanel extends LitElement {
             .templateOptions=${this.templateOptionsForItem(item)}
             .prepareProfile=${item.prepareProfile ?? ''}
             .prepareProfiles=${projectPrepareProfiles(this.configProjectConfigs, item.project)}
-            .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+            .reviewSequence=${item.reviewSequence ?? []}
             .controls=${WORK_GRAPH_DISPATCH_CONFIG_CONTROLS}
             .disabled=${disabled}
             @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>

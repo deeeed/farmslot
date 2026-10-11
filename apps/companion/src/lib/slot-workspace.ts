@@ -201,7 +201,7 @@ export function summarizeSlotWorkspaceRetro(run: Run): SlotWorkspaceRetroSummary
     summary:
       payload?.deltaLearnings ??
       payload?.workerLearnings ??
-      payload?.selfReviewSummary ??
+      payload?.reviewSummary ??
       payload?.reportExcerpt ??
       decision.description,
     pending: !decision.resolvedAt,
@@ -316,7 +316,7 @@ function summarizeSlotWorkspaceDecision(
       title: decision.title,
       summary:
         payload.validationSummary ??
-        payload.selfReviewSummary ??
+        payload.reviewSummary ??
         payload.workerReport ??
         decision.description,
       tone: 'ready',

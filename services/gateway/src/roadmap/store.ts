@@ -1175,6 +1175,7 @@ function buildRefinementShellCommand(
   runner?: string,
   model?: string,
   safetyTier?: SafetyTier,
+  effort?: string,
 ): string {
   const commandTemplate =
     runnerCommand?.trim() || process.env.FARMSLOT_ROADMAP_REFINER_COMMAND?.trim();
@@ -1185,6 +1186,7 @@ function buildRefinementShellCommand(
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(safetyTier ? { safetyTier } : {}),
+    ...(effort ? { effort } : {}),
     prelude: roadmapRefinementRunnerPrelude(),
     commandLabel: 'Roadmap refinement command',
     fallbackMessages: [
@@ -1201,6 +1203,7 @@ async function launchRefinementTmux(
   runner?: string,
   model?: string,
   safetyTier?: SafetyTier,
+  effort?: string,
 ): Promise<boolean> {
   const session = refinementSessionName(item);
   const shellCommand = buildRefinementShellCommand(
@@ -1210,6 +1213,7 @@ async function launchRefinementTmux(
     runner,
     model,
     safetyTier,
+    effort,
   );
   return launchRefinementTmuxSession({ session, shellCommand });
 }
@@ -1339,7 +1343,15 @@ export async function startRoadmapRefinement(
   const promptPath = repoRelative(absolutePromptPath);
   const launched =
     params.launch === true && !existingSession
-      ? await launchRefinementTmux(item, promptPath, runnerCommand, runner, model, safetyTier)
+      ? await launchRefinementTmux(
+          item,
+          promptPath,
+          runnerCommand,
+          runner,
+          model,
+          safetyTier,
+          params.effort ?? undefined,
+        )
       : false;
   const tmuxWorker =
     params.launch === true && (launched || existingSession)

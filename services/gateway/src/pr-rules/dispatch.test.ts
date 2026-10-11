@@ -11,6 +11,7 @@ import {
   type PRWorkspaceExecutionProfile,
   resolveReviewQaDispatch,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
 import { migrateQueuedReviewQa } from '../backlog/review-qa-migration.js';
@@ -24,7 +25,7 @@ import { PRRuleStore } from './store.js';
 const execution: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'exact', machine: 'test-machine' },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 
 let prNumber = 100;
@@ -142,14 +143,40 @@ test('review admission reuses one durable queue entry across concurrent ticks an
   assert.equal(queued.length, 1);
   assert.equal(store.intent(intent.id)?.queueItemId, queued[0].id);
   assert.equal(queued[0].model, 'gpt-6-astra');
-  assert.equal(queued[0].prWork?.review?.options.sessionIntent, 'resume');
+  assert.equal(queued[0].prWork?.review?.options.mode, 'cold');
   const next = await restart();
   await next.dispatcher.reconcile();
   assert.equal(getQueueSnapshot().filter((item) => item.prWork?.sourceId === intent.id).length, 1);
   assert.equal(next.store.intent(intent.id)?.queueItemId, queued[0].id);
 });
 
-test('incremental intake retains the owned predecessor domain for skill and template selection', async (t) => {
+test('runner-default review model and effort remain authorized at final admission', async (t) => {
+  const selection = { runner: 'codex', model: null, effort: null, mode: 'cold' as const };
+  const profile = { ...execution, models: [selection] };
+  const { store, intent, dispatcher, preview } = await fixture(t, profile);
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === intent.id)!;
+  const resolved = executionModelFromSelection(selection);
+  assert.equal(item.model, resolved.model);
+  assert.equal(item.effort, resolved.effort);
+  const admission = new PRReviewDispatcher(
+    store,
+    {
+      refreshTarget: async () => preview,
+      refreshSubmission: async () => {
+        throw new Error('Unexpected submission');
+      },
+    },
+    () => true,
+    () => {},
+    async () => ({ choices: intersectPRExecutionProfiles([profile]), errors: [] }),
+  );
+  await admission.refreshBeforeCreate(item);
+  assert.doesNotThrow(() => admission.assertCurrent(item));
+  assert.throws(() => admission.assertCurrent({ ...item, effort: 'low' }), /changed/);
+});
+
+test('COLD intake retains the owned predecessor domain for skill and template selection', async (t) => {
   const { intent, dispatcher } = await fixture(t);
   for (const [owner, domain] of [
     ['owner', 'perps'],
@@ -191,8 +218,7 @@ test('changing static review to QA creates distinct work that survives restart',
   await dispatcher.reconcile();
   const first = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
   preview.items[0].review = {
-    sessionIntent: 'reset',
-    scope: 'full',
+    mode: 'cold' as const,
     workflow: 'qa',
     qaProfileId: 'changes',
     qaInputs: { scope: 'pr' },
@@ -240,12 +266,7 @@ test('QA completion uses the verified runtime receipt and cannot inherit static 
   for (const receipt of ['missing', 'wrong-head', 'empty', 'invalid-digest', 'valid']) {
     const valid = receipt === 'valid';
     const { store, dispatcher, preview, restart } = await fixture(t);
-    preview.items[0].review = {
-      sessionIntent: 'resume',
-      scope: 'full',
-      workflow: 'qa',
-      qaProfileId: 'changes',
-    };
+    preview.items[0].review = { mode: 'cold' as const, workflow: 'qa', qaProfileId: 'changes' };
     preview.items[0].execution = {
       slotPolicy: { kind: 'exact', slotId: 'test-slot' },
       models: execution.models,
@@ -408,6 +429,7 @@ test('narrower constraints arriving during model resolution cannot be certified 
           {
             machine: 'test-machine',
             transport: 'native' as const,
+            mode: 'cold' as const,
             runner: 'codex',
             model: 'gpt-6-astra',
             effort: 'high',
@@ -531,12 +553,7 @@ test('GitHub approval and an existing review on this head remove queued duplicat
 
 test('publication selection and account are frozen into queue admission and cannot be substituted', async (t) => {
   const { store, intent, dispatcher, preview } = await fixture(t);
-  preview.items[0].review = {
-    sessionIntent: 'reset',
-    scope: 'full',
-    workflow: 'review',
-    publishReview: true,
-  };
+  preview.items[0].review = { mode: 'cold' as const, workflow: 'review', publishReview: true };
   preview.items[0].policySources = { execution: 'rule', review: 'rule', publication: 'rule' };
   await store.applyPreview('owner', preview);
   await dispatcher.reconcile();
@@ -574,17 +591,15 @@ test('farm QA inputs stay identical through PR preview, queue migration and admi
   const workflowDefaults = {
     qa: {
       review: {
+        mode: 'cold' as const,
         workflow: 'qa' as const,
-        sessionIntent: 'reset' as const,
-        scope: 'full' as const,
         qaInputs: { domain: 'payments', chain: 'default' },
       },
     },
   };
   preview.items[0].review = {
+    mode: 'cold' as const,
     workflow: 'qa',
-    sessionIntent: 'reset',
-    scope: 'full',
     qaInputs: { chain: 'requested' },
   };
   preview.items[0].execution = {

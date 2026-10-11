@@ -7,16 +7,18 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
-  latestIndependentReview,
+  latestReview,
   PipelineSteps,
   type ReadyGatePrPackage,
-  type ReviewLoopRequest,
+  reviewPolicySatisfied,
+  type ReviewSelection,
   type ReviewValidationDepth,
   type Run,
   type RunSubtaskMetrics,
   type SlotReleaseParams,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { resolveReviewDispatchDefaults, reviewContextFromRequest } from '@farmslot/review-dispatch';
 
 import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
 import {
@@ -25,10 +27,12 @@ import {
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
+import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { executeReview } from '../review/orchestrator.js';
 import {
-  independentReviewPolicySatisfied,
-  repairLegacyDispatchReviewDepth,
-} from '../quality/review-policy.js';
+  markReviewedInputsRerun,
+  reviewedInputsAwaitingReview,
+} from '../review/reviewed-inputs.js';
 import { refreshArtifactMirror } from '../run-completion/artifact-mirror.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
@@ -42,11 +46,6 @@ import {
   readReadyGatePreparedPackage,
 } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { executeSelfReview } from '../self-review/orchestrator.js';
-import {
-  markReviewedInputsRerun,
-  reviewedInputsAwaitingReview,
-} from '../self-review/reviewed-inputs.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
@@ -84,7 +83,7 @@ import {
 import { reconcileRunPosture } from './resource-posture.js';
 import {
   automaticPublicationReviewPlan,
-  humanGateReviewDepth,
+  humanGateReviewPolicy,
   humanGateReviewRequestFromDecision,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
@@ -97,25 +96,6 @@ const S = PipelineSteps;
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
-}
-
-function repairRunReviewDepthIfNeeded(runId: string): Run {
-  let current = getRun(runId)!;
-  const reviewDepth = current.engineState?.publishGate?.reviewDepth;
-  if (!reviewDepth) return current;
-  const repaired = repairLegacyDispatchReviewDepth(
-    reviewDepth,
-    current.engineState?.publishGate?.independentReviews ?? [],
-    current.engineState?.publishGate?.pendingReviewPlan?.length ?? 0,
-  );
-  if (repaired === reviewDepth) return current;
-  current = updateRun(runId, {
-    engineState: {
-      ...current.engineState,
-      publishGate: { ...current.engineState?.publishGate, reviewDepth: repaired },
-    },
-  });
-  return current;
 }
 
 export function holdInteractiveCompletionForOperator(
@@ -169,7 +149,7 @@ export interface PostDispatchStepContext {
   executePublishGateReviewPlan: (
     runId: string,
     slotId: string,
-    plan: ReviewLoopRequest[],
+    plan: ReviewSelection[],
     trigger: 'dispatch' | 'human-gate',
   ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string) => Promise<string>;
@@ -183,7 +163,7 @@ export interface PostDispatchStepContext {
   ) => Promise<boolean>;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
   prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
-  executeSelfReviewForRun?: typeof executeSelfReview;
+  executeReviewForRun?: typeof executeReview;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
@@ -198,7 +178,7 @@ export interface PostDispatchStepContext {
   deferTerminalSlotRelease: (params: SlotReleaseParams) => void;
 }
 
-export function persistedUpdateBranchNeedsSelfReview(
+export function persistedUpdateBranchNeedsReview(
   run: Pick<Run, 'flowType' | 'steps'>,
 ): boolean | undefined {
   if (run.flowType !== 'update-branch') return undefined;
@@ -207,9 +187,7 @@ export function persistedUpdateBranchNeedsSelfReview(
   const workerSignal = monitorStep.outputs?.workerSignal as WorkerSignal | undefined;
   if (workerSignal === null || typeof workerSignal !== 'object') return undefined;
   if (workerSignal.status !== 'complete' && workerSignal.status !== 'done') return undefined;
-  return typeof workerSignal.needsSelfReview === 'boolean'
-    ? workerSignal.needsSelfReview
-    : undefined;
+  return typeof workerSignal.needsReview === 'boolean' ? workerSignal.needsReview : undefined;
 }
 
 export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): boolean {
@@ -243,7 +221,7 @@ function stampFreshReviewsForPreparedPackage(
   if (reviewIds.length === 0) return;
   const reviewIdSet = new Set(reviewIds);
   const latest = getRun(runId)!;
-  const reviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const reviews = latest.engineState?.publishGate?.reviews ?? [];
   const stampedReviews = reviews.map((review) =>
     reviewIdSet.has(review.id) && reviewFinalSnapshotMatchesPreparedPackage(review, prPackage)
       ? stampPublishGateReviewStatusForPackage(review, prPackage)
@@ -254,7 +232,7 @@ function stampFreshReviewsForPreparedPackage(
       ...latest.engineState,
       publishGate: {
         ...latest.engineState?.publishGate,
-        independentReviews: stampedReviews,
+        reviews: stampedReviews,
       },
     },
   });
@@ -262,7 +240,7 @@ function stampFreshReviewsForPreparedPackage(
 
 async function reconcilePublishGateReviewPlanResult(
   runId: string,
-  plan: ReviewLoopRequest[],
+  plan: ReviewSelection[],
   result: PublishGateReviewPlanResult,
   context: Pick<PostDispatchStepContext, 'getDiffStat' | 'prepareCompletionPackageForRun'>,
   options: {
@@ -280,18 +258,27 @@ async function reconcilePublishGateReviewPlanResult(
       ...afterReviewPlan.engineState,
       publishGate: {
         ...afterReviewPlan.engineState?.publishGate,
-        pendingReviewPlan: remainingPlan,
-        pendingReviewPlanRequestedAt: remainingPlan.length ? new Date().toISOString() : undefined,
+        reviewSequence: remainingPlan,
+        reviewSequenceContext:
+          remainingPlan.length && afterReviewPlan.engineState?.publishGate?.reviewSequenceContext
+            ? {
+                reviewLineages:
+                  afterReviewPlan.engineState.publishGate.reviewSequenceContext.reviewLineages.slice(
+                    completedReviewCount,
+                  ),
+              }
+            : undefined,
+        reviewSequenceRequestedAt: remainingPlan.length ? new Date().toISOString() : undefined,
       },
     },
   });
-  repairRunReviewDepthIfNeeded(runId);
+  getRun(runId)!;
   const diffStat = await context.getDiffStat(getRun(runId)!);
   const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
     runId,
     {
       diffStat,
-      reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+      reviewPolicy: getRun(runId)?.engineState?.publishGate?.reviewPolicy,
       publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
       ...(options.stampFreshReviews
         ? {
@@ -430,14 +417,14 @@ function evidenceRefsMatchAllowingAddedDigests(
 }
 
 /**
- * Base self-review is static (ADR-058). A run whose base review already launched under the
+ * Base review is static (ADR-058). A run whose base review already launched under the
  * live contract keeps it across restarts; the chosen depth is recorded on the step.
  */
-export function baseSelfReviewDepth(run: Run): ReviewValidationDepth {
-  const recorded = run.steps.find((step) => step.name === S.SELF_REVIEW)?.inputs?.validationDepth;
+export function baseReviewPolicy(run: Run): ReviewValidationDepth {
+  const recorded = run.steps.find((step) => step.name === S.REVIEW)?.inputs?.validationDepth;
   if (isReviewValidationDepth(recorded)) return recorded;
   const launchedBeforeRecording = run.agentContexts?.some(
-    (context) => context.role === 'self-review' && !context.artifactScope,
+    (context) => context.role === 'review' && !context.artifactScope,
   );
   return launchedBeforeRecording ? 'full-live' : 'static-code';
 }
@@ -624,7 +611,7 @@ export async function executeMonitorStep(
   }
 }
 
-export async function executeSelfReviewStep(
+export async function executeReviewStep(
   runId: string,
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
@@ -635,7 +622,7 @@ export async function executeSelfReviewStep(
 
   const reviewSkip = await evalReviewAxisSkip(current);
   if (reviewSkip.skipped) {
-    console.log(`[run-engine] run ${runId.slice(0, 8)} — self-review skipped by eval review axis`);
+    console.log(`[run-engine] run ${runId.slice(0, 8)} — review skipped by eval review axis`);
     return {
       inputs: { ...inputs, enabled: false, reviewAxis: reviewSkip.axis },
       outputs: {
@@ -648,15 +635,15 @@ export async function executeSelfReviewStep(
 
   if (isLightweightInteractiveDevRun(current)) {
     console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — self-review skipped for interactive lightweight dev policy`,
+      `[run-engine] run ${runId.slice(0, 8)} — review skipped for interactive lightweight dev policy`,
     );
-    const skipped = interactiveLightweightSkipOutputs(S.SELF_REVIEW);
+    const skipped = interactiveLightweightSkipOutputs(S.REVIEW);
     return { inputs: { ...inputs, ...skipped.inputs }, outputs: skipped.outputs };
   }
 
   if (isNoCodeTerminalDisposition(current.metrics.disposition)) {
     console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — self-review skipped for no-code disposition ${current.metrics.disposition}`,
+      `[run-engine] run ${runId.slice(0, 8)} — review skipped for no-code disposition ${current.metrics.disposition}`,
     );
     return {
       inputs: { ...inputs, enabled: false, disposition: current.metrics.disposition },
@@ -668,12 +655,12 @@ export async function executeSelfReviewStep(
     };
   }
 
-  // update-branch: check worker's signal to decide if self-review is needed
+  // update-branch: check worker's signal to decide if review is needed
   if (current.flowType === 'update-branch') {
-    const persistedNeedsSelfReview = persistedUpdateBranchNeedsSelfReview(current);
-    if (persistedNeedsSelfReview === false) {
+    const persistedNeedsReview = persistedUpdateBranchNeedsReview(current);
+    if (persistedNeedsReview === false) {
       console.log(
-        `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (persisted monitor signal)`,
+        `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says review not needed (persisted monitor signal)`,
       );
       return {
         inputs: { ...inputs, enabled: false },
@@ -684,15 +671,15 @@ export async function executeSelfReviewStep(
         },
       };
     }
-    if (persistedNeedsSelfReview === undefined) {
+    if (persistedNeedsReview === undefined) {
       try {
         const probe = await (context.probeWorkerSignalForRun ?? probeWorkerSignalForRun)(
           runId,
           current.slotId,
         );
-        if (probe.ok && probe.signal?.needsSelfReview === false) {
+        if (probe.ok && probe.signal?.needsReview === false) {
           console.log(
-            `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
+            `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says review not needed (slot signal probe)`,
           );
           return {
             inputs: { ...inputs, enabled: false },
@@ -704,34 +691,46 @@ export async function executeSelfReviewStep(
           };
         }
       } catch (err) {
-        // Signal not found or unreadable — default to running self-review
+        // Signal not found or unreadable — default to running review
         console.warn(
-          `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
+          `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running review: ${(err as Error).message.slice(0, 200)}`,
         );
       }
     }
   }
 
-  const validationDepth = baseSelfReviewDepth(current);
+  const validationDepth = baseReviewPolicy(current);
   inputs.validationDepth = validationDepth;
-  const selfReviewStep = current.steps.find((step) => step.name === S.SELF_REVIEW);
-  updateRunStep(runId, S.SELF_REVIEW, {
-    inputs: { ...selfReviewStep?.inputs, validationDepth },
+  const reviewStep = current.steps.find((step) => step.name === S.REVIEW);
+  updateRunStep(runId, S.REVIEW, {
+    inputs: { ...reviewStep?.inputs, validationDepth },
   });
-  const executeSelfReviewForRun = context.executeSelfReviewForRun ?? executeSelfReview;
-  const result = await executeSelfReviewForRun(runId, current.slotId, { validationDepth });
-  const cliCommand = `farmslot rpc self-review.run '{"runId":"${runId}"}'`;
+  const executeReviewForRun = context.executeReviewForRun ?? executeReview;
+  const mode = current.reviewMode;
+  const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
+  const reviewId =
+    mode === 'warm'
+      ? primaryContext?.reviewLineages[0]?.reviewId
+      : mode === 'cold'
+        ? PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id
+        : undefined;
+  const result = await executeReviewForRun(runId, current.slotId, {
+    validationDepth,
+    mode,
+    reviewId,
+  });
+  const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
 
-  // Interactive mode: present self-review results as a decision before proceeding
-  // In autonomous mode, executeSelfReview already handles feedback + retry internally
+  // Interactive mode: present review results as a decision before proceeding
+  // In autonomous mode, executeReview already handles feedback + retry internally
   if (current.mode === 'interactive' && !result.skipped && result.verdict === 'issues') {
     const issueCount = result.issues?.length ?? 0;
     const issueList =
       result.issues
         ?.map((i) => `- **${i.file}${i.line ? ':' + i.line : ''}**: ${i.description}`)
         .join('\n') ?? '';
-    const desc = `Self-review found ${issueCount} issue${issueCount !== 1 ? 's' : ''}.\n\n${issueList}`;
-    const actionId = await createEngineDecision(runId, 'self_review_complete', desc, [
+    const desc = `Review found ${issueCount} issue${issueCount !== 1 ? 's' : ''}.\n\n${issueList}`;
+    const actionId = await createEngineDecision(runId, 'review_complete', desc, [
       { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
       { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
     ]);
@@ -739,8 +738,10 @@ export async function executeSelfReviewStep(
     // top-level review again would spend another review pass before the worker
     // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
-      const retryResult = await executeSelfReviewForRun(runId, current.slotId, {
+      const retryResult = await executeReviewForRun(runId, current.slotId, {
         validationDepth,
+        mode: 'warm',
+        reviewId: result.reviewId,
         resumeFromResult: result,
       });
       return {
@@ -780,11 +781,11 @@ export async function executeSelfReviewStep(
       const location = firstIssue
         ? `${firstIssue.file}${firstIssue.line ? `:${firstIssue.line}` : ''}`
         : 'unknown';
-      const message = firstIssue?.description ?? 'Self-review found issues';
-      // Persist self-review outputs (verdict, retryCount, maxRetries, issues) so
+      const message = firstIssue?.description ?? 'Review found issues';
+      // Persist review outputs (verdict, retryCount, maxRetries, issues) so
       // the failure step in the UI can render "MAX RETRIES" + the residual issues
       // instead of just "x". Without this stepPartialIO call the catch handler
-      // writes failureOutputs without any self-review fields.
+      // writes failureOutputs without any review fields.
       stepPartialIO.set(runId, {
         inputs,
         outputs: {
@@ -798,7 +799,7 @@ export async function executeSelfReviewStep(
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
       throw new Error(
-        `Self-review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`,
+        `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`,
       );
     }
   }
@@ -820,11 +821,11 @@ export async function holdSlotForPublicationGate(
 
 /**
  * F42: when the evidence or HEAD changed after the last passing
- * review, self-review runs again before the publication gate is presented, once
+ * review, review runs again before the publication gate is presented, once
  * per changed state: one that does not pass leaves review unsatisfied at the
  * gate instead of looping. Returns whether a review ran.
  */
-export async function rerunSelfReviewIfReviewedInputsChanged(
+export async function rerunReviewIfReviewedInputsChanged(
   runId: string,
   context: Pick<
     PostDispatchStepContext,
@@ -837,9 +838,9 @@ export async function rerunSelfReviewIfReviewedInputsChanged(
   const changedInputs = await reviewedInputsAwaitingReview(latest);
   if (!changedInputs) return false;
   console.log(
-    `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running self-review again`,
+    `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
-  const plan: ReviewLoopRequest[] = [{ order: 1, runner: 'same', validationDepth: 'static-code' }];
+  const plan: ReviewSelection[] = [{ runner: 'claude', model: null, effort: null, mode: 'cold' }];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
     runId,
@@ -885,7 +886,7 @@ export async function executeHumanGateStep(
   const artifactOnly = isArtifactOnlyRun(current);
   if (isLightweightInteractiveDevRun(current)) {
     // Kept skipped. In the dev flow HUMAN_GATE runs AFTER COMPLETE
-    // (MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE), so it is a publication
+    // (MONITOR -> REVIEW -> COMPLETE -> HUMAN_GATE), so it is a publication
     // gate, not a completion gate — it cannot hold a run that has already
     // completed and released its slot. The operator hold for this profile is in
     // MONITOR, which parks a worker-authored terminal signal before COMPLETE can
@@ -995,10 +996,9 @@ export async function executeHumanGateStep(
       // Runs persisted before review counting v2 may re-enter directly at the
       // human gate after restart. Repair before deriving an automatic plan so
       // the legacy double-count does not launch a redundant reviewer.
-      const beforeInitialPlan = repairRunReviewDepthIfNeeded(runId);
-      const explicitInitialPlan =
-        beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
-      // Operator may have already resolved request-extra-review (e.g. codex) while
+      const beforeInitialPlan = getRun(runId)!;
+      const explicitInitialPlan = beforeInitialPlan.engineState?.publishGate?.reviewSequence ?? [];
+      // Operator may have already resolved request-review (e.g. codex) while
       // the engine had no live createEngineDecision waiter. Resume must honor that
       // unconsumed selection — not invent automaticPublicationReviewPlan (which
       // picks defaultAlternate for the worker and re-launched claude for a grok
@@ -1014,29 +1014,29 @@ export async function executeHumanGateStep(
         .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
       const fromUnconsumed = unconsumedReviewDecision
         ? resolveHumanGateReviewExecutionPlan({
-            gateAction: unconsumedReviewDecision.resolvedAction ?? 'request-extra-review',
+            gateAction: unconsumedReviewDecision.resolvedAction ?? 'request-review',
             pendingPlan: explicitInitialPlan,
             decisions: beforeInitialPlan.decisions ?? [],
           })
         : [];
-      const reviewsForInitial =
-        beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [];
-      const latestExtraReview = latestIndependentReview(reviewsForInitial);
+      const reviewsForInitial = beforeInitialPlan.engineState?.publishGate?.reviews ?? [];
+      const latestExtraReview = latestReview(reviewsForInitial);
       const latestHasOpenFindings =
         latestExtraReview?.verdict === 'issues' &&
         Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
-      const persistedReviewDepth = beforeInitialPlan.engineState?.publishGate?.reviewDepth;
+      const persistedReviewPolicy = beforeInitialPlan.engineState?.publishGate?.reviewPolicy;
       const replayProjectVars =
-        unconsumedReviewDecision && persistedReviewDepth?.requestedBy !== 'dispatch'
+        (unconsumedReviewDecision && persistedReviewPolicy?.requestedBy !== 'dispatch') ||
+        (!unconsumedReviewDecision && !explicitInitialPlan.length && !latestHasOpenFindings)
           ? await loadProjectVarsOrNull(
               beforeInitialPlan.project,
               'publication review replay',
               beforeInitialPlan.id,
             )
           : null;
-      const replayBaseReviewDepth =
-        persistedReviewDepth?.requestedBy === 'dispatch'
-          ? persistedReviewDepth
+      const replayBaseReviewPolicy =
+        persistedReviewPolicy?.requestedBy === 'dispatch'
+          ? persistedReviewPolicy
           : publicationReviewPolicyForRun(beforeInitialPlan, replayProjectVars?.projectJson);
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
@@ -1051,23 +1051,42 @@ export async function executeHumanGateStep(
           ? []
           : explicitInitialPlan.length
             ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
-                requestedAt:
-                  beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
+                requestedAt: beforeInitialPlan.engineState?.publishGate?.reviewSequenceRequestedAt,
                 source:
-                  beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
+                  beforeInitialPlan.engineState?.publishGate?.reviewPolicy?.requestedBy ===
                   'human-gate'
                     ? 'human-gate'
                     : 'dispatch',
               })
             : automaticPublicationReviewPlan(
-                beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+                beforeInitialPlan.engineState?.publishGate?.reviewPolicy ??
                   publicationReviewPolicyForRun(beforeInitialPlan),
                 reviewsForInitial,
-                beforeInitialPlan.metrics.runner,
+                resolveReviewDispatchDefaults(
+                  {
+                    name: beforeInitialPlan.project,
+                    defaults: replayProjectVars?.projectJson.defaults,
+                    review: replayProjectVars?.projectJson.review,
+                  },
+                  'review-pr',
+                ),
               );
-      const recoveredReviewDepth = unconsumedReviewDecision
-        ? humanGateReviewDepth(
-            replayBaseReviewDepth,
+      const initialContext = unconsumedReviewDecision?.selectionData?.reviewRequest
+        ? reviewContextFromRequest(unconsumedReviewDecision.selectionData.reviewRequest)
+        : beforeInitialPlan.engineState?.publishGate?.reviewSequenceContext;
+      const originalSequenceLength = unconsumedReviewDecision
+        ? fromUnconsumed.length
+        : explicitInitialPlan.length;
+      const initialReviewSequenceContext = initialContext
+        ? {
+            reviewLineages: initialContext.reviewLineages.slice(
+              Math.max(0, originalSequenceLength - initialPlan.length),
+            ),
+          }
+        : undefined;
+      const recoveredReviewPolicy = unconsumedReviewDecision
+        ? humanGateReviewPolicy(
+            replayBaseReviewPolicy,
             humanGateReviewRequestFromDecision(unconsumedReviewDecision),
             {
               actionId: unconsumedReviewDecision.resolvedAction,
@@ -1084,9 +1103,10 @@ export async function executeHumanGateStep(
             ...beforeInitialPlan.engineState,
             publishGate: {
               ...beforeInitialPlan.engineState?.publishGate,
-              ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
-              pendingReviewPlan: [],
-              pendingReviewPlanRequestedAt: undefined,
+              ...(recoveredReviewPolicy ? { reviewPolicy: recoveredReviewPolicy } : {}),
+              reviewSequence: [],
+              reviewSequenceContext: undefined,
+              reviewSequenceRequestedAt: undefined,
             },
           },
         });
@@ -1102,9 +1122,10 @@ export async function executeHumanGateStep(
               ...beforeInitialPlan.engineState,
               publishGate: {
                 ...beforeInitialPlan.engineState?.publishGate,
-                ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
-                pendingReviewPlan: initialPlan,
-                pendingReviewPlanRequestedAt: new Date().toISOString(),
+                ...(recoveredReviewPolicy ? { reviewPolicy: recoveredReviewPolicy } : {}),
+                reviewSequence: initialPlan,
+                reviewSequenceContext: initialReviewSequenceContext,
+                reviewSequenceRequestedAt: new Date().toISOString(),
               },
             },
           });
@@ -1119,7 +1140,7 @@ export async function executeHumanGateStep(
         const dispatchPlan = initialPlan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         const reviewSource =
           unconsumedReviewDecision ||
-          getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
+          getRun(runId)?.engineState?.publishGate?.reviewPolicy?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';
         const reviewPlanResult = await executePublishGateReviewPlan(
@@ -1134,7 +1155,7 @@ export async function executeHumanGateStep(
         const diffStat = await getDiffStat(getRun(runId)!);
         const prepared = await prepareCompletionPackage(runId, {
           diffStat,
-          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+          reviewPolicy: getRun(runId)?.engineState?.publishGate?.reviewPolicy,
           publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
           selectedEvidenceKeys: beforeRefresh?.selectedEvidenceKeys,
           priorEvidenceManifest: beforeRefresh?.evidenceManifest,
@@ -1145,7 +1166,7 @@ export async function executeHumanGateStep(
       }
     }
     const presentReadyGate = async (): Promise<string> => {
-      if (publicationApprovalGate) await rerunSelfReviewIfReviewedInputsChanged(runId, context);
+      if (publicationApprovalGate) await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
     let gateAction = await presentReadyGate();
@@ -1179,7 +1200,7 @@ export async function executeHumanGateStep(
         gateAction = await presentReadyGate();
         continue;
       }
-      if (gateAction === 'request-extra-review' || gateAction === 'request-cross-runner-review') {
+      if (gateAction === 'request-review') {
         reviewRequestLoops += 1;
         if (shouldWarnHumanGateReviewRequestRunaway(reviewRequestLoops)) {
           console.warn(
@@ -1188,14 +1209,14 @@ export async function executeHumanGateStep(
         }
         const beforeReviewPlan = getRun(runId)!;
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
-        // Prefer the latest request-extra-review / request-cross-runner-review
+        // Prefer the latest request-review
         // decision's selectionData over a stale pending plan. Pending alone
         // previously won, so a second request that changed runner (claude→codex)
         // could still launch the old runner. Approval-only decision lookup was
         // also wrong as a fallback — it never sees review-request decisions.
         const plan = resolveHumanGateReviewExecutionPlan({
           gateAction,
-          pendingPlan: beforeReviewPlan.engineState?.publishGate?.pendingReviewPlan ?? [],
+          pendingPlan: beforeReviewPlan.engineState?.publishGate?.reviewSequence ?? [],
           decisions: beforeReviewPlan.decisions ?? [],
         });
         // Each operator request is already bounded. Do not apply a second
@@ -1210,7 +1231,7 @@ export async function executeHumanGateStep(
         const reviewSlotId = current.slotId;
         if (!reviewSlotId)
           throw blockedRunError(
-            'Publication gate requested an independent review but no slot is assigned',
+            'Publication gate requested an review but no slot is assigned',
             gateAction,
           );
         const reviewPlanResult = await executePublishGateReviewPlan(
@@ -1262,7 +1283,7 @@ export async function executeCompleteStep(
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
-  const current = repairRunReviewDepthIfNeeded(runId);
+  const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
   if (current.flowType === 'qa') await assertQaCompletion(current);
@@ -1313,12 +1334,9 @@ export async function executeCompleteStep(
         packageArtifactPath: prepared.prPackage.artifactPath,
         publicationTarget: prepared.prPackage.publicationTarget,
         publicationStatus: prepared.prPackage.publicationStatus,
-        reviewDepth: prepared.reviewDepth,
-        independentReviews: prepared.independentReviews,
-        reviewSatisfied: independentReviewPolicySatisfied(
-          prepared.reviewDepth,
-          prepared.independentReviews,
-        ),
+        reviewPolicy: prepared.reviewPolicy,
+        reviews: prepared.reviews,
+        reviewSatisfied: reviewPolicySatisfied(prepared.reviewPolicy, prepared.reviews),
       },
     };
   }

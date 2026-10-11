@@ -81,10 +81,10 @@ export function effectiveTaskProgressForRun(
 export function activeTaskProgressStepId(
   run: Run | null | undefined,
   taskProgress: TaskProgressStructured | null | undefined,
-): 'monitor' | 'self-review' | 'ci-watch' | null {
+): 'monitor' | 'review' | 'ci-watch' | null {
   const progress = effectiveTaskProgressForRun(run, taskProgress);
   if (!progress?.totalSteps) return null;
-  if (isSelfReviewProgressActive(run)) return 'self-review';
+  if (isReviewProgressActive(run)) return 'review';
   if (isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run))) return 'ci-watch';
   const monitorStep = run?.steps.find((step) => step.name === 'monitor');
   if (monitorStep?.status === 'running') return 'monitor';
@@ -98,7 +98,7 @@ export function isWorkerProgressActive(run: Run | null | undefined): boolean {
   if (
     run.status === 'monitoring' ||
     run.status === 'paused' ||
-    run.status === 'self-reviewing' ||
+    run.status === 'reviewing' ||
     run.status === 'ci-watching' ||
     run.status === 'completing'
   ) {
@@ -107,7 +107,7 @@ export function isWorkerProgressActive(run: Run | null | undefined): boolean {
   if (run.activeTaskFile && run.activeTaskFile !== run.taskFile) return true;
   return run.steps.some(
     (step) =>
-      (step.name === 'monitor' || step.name === 'self-review' || step.name === 'ci-watch') &&
+      (step.name === 'monitor' || step.name === 'review' || step.name === 'ci-watch') &&
       step.status === 'running',
   );
 }
@@ -165,7 +165,7 @@ export function taskProgressUpdateTargetsRun(
 
 /**
  * Slot/run identity check, then the shared protocol rule. The rule replaced a
- * local `SELF-REVIEW.md` string test that knew only one role checklist and
+ * local `REVIEW.md` string test that knew only one role checklist and
  * nothing about child units (ADR-060), so Companion and Command Center now drop
  * and accept exactly the same updates.
  */
@@ -187,7 +187,7 @@ export function taskProgressTitle(
   progress: TaskProgressStructured | null | undefined,
 ): string {
   const activeStep = activeTaskProgressStepId(run, progress);
-  if (activeStep === 'self-review') return 'Self-review progress';
+  if (activeStep === 'review') return 'Review progress';
   if (activeStep === 'ci-watch') return 'CI fix progress';
   return 'Worker progress';
 }
@@ -203,8 +203,8 @@ export function fallbackTaskProgressSummary(
   const activeTaskFile = slot?.activeTaskFile ?? run?.activeTaskFile;
   const activeTaskName = activeTaskFile?.split('/').pop();
   const title =
-    activeTaskName?.startsWith('SELF-REVIEW') || run?.status === 'self-reviewing'
-      ? 'Self-review progress'
+    activeTaskName?.startsWith('REVIEW') || run?.status === 'reviewing'
+      ? 'Review progress'
       : taskProgressTitle(run, undefined);
   const meta =
     slot?.taskPhase ??
@@ -226,12 +226,12 @@ export function fallbackTaskProgressSummary(
   };
 }
 
-function isSelfReviewProgressActive(run: Run | null | undefined): boolean {
-  const selfReviewStep = run?.steps.find((step) => step.name === 'self-review');
-  if (!selfReviewStep) return false;
+function isReviewProgressActive(run: Run | null | undefined): boolean {
+  const reviewStep = run?.steps.find((step) => step.name === 'review');
+  if (!reviewStep) return false;
   return (
-    selfReviewStep.status === 'running' ||
-    run?.status === 'self-reviewing' ||
-    run?.activeTaskFile?.split('/').pop() === 'SELF-REVIEW.md'
+    reviewStep.status === 'running' ||
+    run?.status === 'reviewing' ||
+    run?.activeTaskFile?.split('/').pop() === 'REVIEW.md'
   );
 }

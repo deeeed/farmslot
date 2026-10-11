@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { Events, type Run, type RunDecision, type RunGetResult } from '@farmslot/protocol';
+import {
+  ReviewDispatchViewModel,
+  reviewLineagesForRun,
+  reviewRequestContextForRun,
+} from '@farmslot/review-dispatch';
 
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
@@ -40,6 +45,7 @@ export interface GateReviewEvidenceThumb extends AcceptanceEvidenceStripItem {
 
 export interface GateReviewViewModel {
   run: Run;
+  reviewPicker: ReviewDispatchViewModel;
   decision: RunDecision;
   summary: GateReviewSummary;
   reviews: GateReviewVerdict[];
@@ -80,6 +86,20 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const reviewPicker = useMemo(
+    () =>
+      new ReviewDispatchViewModel({
+        context: { allowedActions: ['request-review'], allowSequence: true },
+      }),
+    [],
+  );
+  useEffect(() => {
+    reviewPicker.setContext({
+      ...reviewPicker.context,
+      reviewLineages: reviewLineagesForRun(run),
+      reviewContext: reviewRequestContextForRun(run),
+    });
+  }, [reviewPicker, run]);
 
   const refresh = useCallback(
     async (reason: string) => {
@@ -150,6 +170,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     const { acceptance } = gate;
     return {
       run,
+      reviewPicker,
       decision,
       summary: gateReviewSummary(decision),
       reviews: gate.reviews,
@@ -164,7 +185,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       actions: gate.actions,
       authHeaders,
     };
-  }, [authHeaders, decision, gate, gatewayUrl, run]);
+  }, [authHeaders, decision, gate, gatewayUrl, reviewPicker, run]);
 
   const openEvidence = useCallback(
     (criterionId: string, path: string) => {
@@ -184,7 +205,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   );
 
   const resolve = useCallback(
-    (action: GateReviewAction) => {
+    (action: GateReviewAction, selectionData?: Record<string, unknown>) => {
       if (!client || !run || !decision || decision.resolvedAt) return;
       if (action.disabledReason) {
         // The button is disabled; this only guards a stale press racing a re-render.
@@ -192,7 +213,12 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         return;
       }
       // Bound to the package on screen now, the one the operator is confirming.
-      const confirmed = decisionResolveRequest(decisionDetailFromRun(run, decision), action.id);
+      const confirmed = decisionResolveRequest(
+        decisionDetailFromRun(run, decision),
+        action.id,
+        null,
+        selectionData,
+      );
       Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -213,6 +239,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
             const now = decisionResolveRequest(
               decisionDetailFromRun(latest.run, latest.decision),
               action.id,
+              null,
+              selectionData,
             );
             if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
               Alert.alert(action.label, 'The publish package changed; review it again.');

@@ -63,7 +63,7 @@ test('PR approval does not hide an outstanding QA request', () => {
           eligible: true,
           autoStart: false,
           configurationErrors: [],
-          review: { workflow: 'qa', sessionIntent: 'reset', scope: 'full' },
+          review: { workflow: 'qa', mode: 'cold' },
         },
       ],
       createdAt: base.observedAt,

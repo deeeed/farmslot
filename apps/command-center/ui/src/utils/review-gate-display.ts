@@ -1,14 +1,14 @@
 import {
   type ArtifactRef,
   type GateSummary,
-  type IndependentReviewAttempt,
-  independentReviewFixRetriesExhausted,
-  independentReviewRetryCapReason,
-  independentReviewRetryCount,
-  type IndependentReviewStatus,
-  latestExhaustedIndependentReview,
+  latestExhaustedReview,
   type ReadyGatePayload,
-  type ReviewDepthPolicy,
+  type ReviewAttempt,
+  reviewFixRetriesExhausted,
+  type ReviewPolicy,
+  reviewRetryCapReason,
+  reviewRetryCount,
+  type ReviewStatus,
   type Run,
 } from '@farmslot/protocol';
 
@@ -22,10 +22,11 @@ export type ReviewFreshnessReason =
   | 'package-review-subject-missing'
   | 'review-subject-missing'
   | 'review-subject-changed'
-  | 'review-snapshot-unavailable';
+  | 'review-snapshot-unavailable'
+  | 'review-session-missing';
 
 export interface ReviewFreshnessDisplay {
-  review: IndependentReviewStatus;
+  review: ReviewStatus;
   reason: ReviewFreshnessReason;
   label: string;
   detail: string;
@@ -36,17 +37,13 @@ export interface ReviewFreshnessDisplay {
 export interface ReviewGateCountSummary {
   requiredReviews: number;
   minimumReviews: number;
-  extraReviewsRequested: number;
-  externalRequired: boolean;
   totalReviews: number;
   totalAttempts: number;
   passingReviews: number;
   freshPassingReviews: number;
   trustedPassingReviews: number;
   staleIgnoredReviews: number;
-  fixLoopCertified: boolean;
   unresolvedFindings: number;
-  externalFreshPassingReviews: number;
   freshness: ReviewFreshnessDisplay[];
 }
 
@@ -62,62 +59,31 @@ function shortSha(value: string | null | undefined): string {
   return value ? value.slice(0, 12) : 'unknown';
 }
 
-export function normalizedReviewDepth(payload: ReadyGatePayload): ReviewDepthPolicy {
-  const policy = payload.prPackage?.reviewDepth ?? payload.reviewDepth;
-  const externalRequired = policy?.requireCrossRunner === true;
-  const minimumReviews = Math.max(
-    externalRequired ? 1 : 0,
-    Math.max(0, policy?.minimumIndependentReviews ?? 1),
-  );
+export function normalizedReviewPolicy(payload: ReadyGatePayload): ReviewPolicy {
+  const policy = payload.prPackage?.reviewPolicy ?? payload.reviewPolicy;
   return {
-    minimumIndependentReviews: minimumReviews,
-    requireCrossRunner: externalRequired,
-    extraLoopsRequested: Math.max(0, policy?.extraLoopsRequested ?? 0),
+    minimumReviews: Math.max(0, policy?.minimumReviews ?? 1),
     requestedBy: policy?.requestedBy ?? 'dispatch',
   };
 }
 
-export function effectiveReviewRequirement(policy: ReviewDepthPolicy): number {
-  return (
-    Math.max(policy.requireCrossRunner ? 1 : 0, Math.max(0, policy.minimumIndependentReviews)) +
-    Math.max(0, policy.extraLoopsRequested)
-  );
+export function effectiveReviewRequirement(policy: ReviewPolicy): number {
+  return Math.max(0, policy.minimumReviews);
 }
 
-export function reviewSourceLabel(
-  review: Pick<IndependentReviewStatus, 'source' | 'crossRunner'>,
-): string {
-  // Every automated review pass is an Independent review; runner diversity is
-  // gate policy metadata (reviewPolicyLabel), not a separate review kind.
-  if (review.source === 'self-review') return 'Self-review';
-  if (review.source === 'human-gate') return 'Independent review (requested)';
-  return 'Independent review';
-}
-
-/**
- * Policy metadata for a review: runner diversity rendered as `runner: <id>`
- * when the reviewer runner is known, else the generic policy name. Null when
- * no diversity requirement applies.
- */
-export function reviewPolicyLabel(
-  review: Pick<IndependentReviewStatus, 'crossRunner'> & { runner?: string | null },
-): string | null {
-  if (!review.crossRunner) return null;
-  return review.runner ? `runner: ${review.runner}` : 'runner diversity';
+export function reviewSourceLabel(review: Pick<ReviewStatus, 'source'>): string {
+  return review.source === 'human-gate' ? 'Review (requested)' : 'Review';
 }
 
 export function reviewAttemptLabel(
-  _review: IndependentReviewStatus,
+  _review: ReviewStatus,
   attemptIndex: number,
   _attemptCount: number,
 ): string {
   return `Review round ${attemptIndex + 1}`;
 }
 
-export function reviewSegmentLabel(
-  review: Pick<IndependentReviewStatus, 'source' | 'crossRunner'>,
-  order: number,
-): string {
+export function reviewSegmentLabel(review: Pick<ReviewStatus, 'source'>, order: number): string {
   return `${reviewSourceLabel(review)} ${order}`;
 }
 
@@ -130,18 +96,17 @@ export function activePublicationReviewLabel(
   if (
     contexts.some(
       (context) =>
-        context.role === 'self-review-fix' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
+        context.role === 'review-fix' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
     )
   ) {
-    return 'Independent review fix';
+    return 'Review fix';
   }
   if (
     contexts.some(
-      (context) =>
-        context.role === 'self-review' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
+      (context) => context.role === 'review' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
     )
   ) {
-    return 'Independent review';
+    return 'Review';
   }
   return null;
 }
@@ -154,8 +119,8 @@ export function compactHumanGateLabel(
   if (run?.engineState?.publishGate?.reviewLaunchRejection) {
     return 'review launch paused';
   }
-  if ((run?.engineState?.publishGate?.pendingReviewPlan?.length ?? 0) > 0) {
-    return 'independent review';
+  if ((run?.engineState?.publishGate?.reviewSequence?.length ?? 0) > 0) {
+    return 'review';
   }
 
   const decision = [...(run?.decisions ?? [])]
@@ -165,47 +130,25 @@ export function compactHumanGateLabel(
     return 'publish ready';
   }
 
-  const reviews = run?.engineState?.publishGate?.independentReviews ?? [];
-  if (latestExhaustedIndependentReview(reviews)) return 'review retries exhausted';
-  if (
-    reviews.some(
-      (review) =>
-        review.source !== 'self-review' &&
-        (review.verdict === 'issues' || review.unresolvedCount > 0),
-    )
-  ) {
+  const reviews = run?.engineState?.publishGate?.reviews ?? [];
+  if (latestExhaustedReview(reviews)) return 'review retries exhausted';
+  if (reviews.some((review) => review.verdict === 'issues' || review.unresolvedCount > 0)) {
     return 'review blocked';
   }
   return 'operator gate';
 }
 
-function reviewIsPassing(review: IndependentReviewStatus): boolean {
+function reviewIsPassing(review: ReviewStatus): boolean {
   return review.verdict === 'pass' && review.unresolvedCount === 0;
 }
 
-function reviewHead(review: IndependentReviewStatus): string | null | undefined {
+function reviewHead(review: ReviewStatus): string | null | undefined {
   return review.reviewedHeadSha ?? review.reviewSnapshot?.headSha;
 }
 
-function reviewHasWorkerFixLoop(review: IndependentReviewStatus): boolean {
-  if (review.feedbackSent) return true;
-  if (review.timeline?.some((segment) => segment.kind === 'worker-fix')) return true;
-  const attempts = review.attempts ?? [];
-  if (attempts.some((attempt) => Boolean(attempt.fixDelta))) return true;
-  const sawIssues = attempts.some(
-    (attempt) => attempt.verdict === 'issues' && attempt.unresolvedCount > 0,
-  );
-  const sawPass = attempts.some(
-    (attempt) => attempt.verdict === 'pass' && attempt.unresolvedCount === 0,
-  );
-  return sawIssues && sawPass;
-}
-
-function reviewCertifiesPreparedPackage(
-  review: IndependentReviewStatus,
-  payload: ReadyGatePayload,
-): boolean {
-  if (!reviewIsPassing(review)) return false;
+function reviewCertifiesPreparedPackage(review: ReviewStatus, payload: ReadyGatePayload): boolean {
+  if (!reviewIsPassing(review) || !(review.reviewerSessionId || review.session?.sessionId))
+    return false;
   const packageHead = payload.prPackage?.headSha ?? payload.headSha;
   const packageSubject = payload.prPackage?.reviewSubjectHash?.trim();
   if (!packageHead || !packageSubject) return false;
@@ -215,25 +158,8 @@ function reviewCertifiesPreparedPackage(
   return review.reviewedReviewSubjectHash === packageSubject;
 }
 
-function reviewCertifiesApprovedHeadAfterFix(
-  review: IndependentReviewStatus,
-  payload: ReadyGatePayload,
-  requireCrossRunner: boolean,
-): boolean {
-  if (!reviewIsPassing(review)) return false;
-  if (requireCrossRunner && !review.crossRunner) return false;
-  const packageHead = payload.prPackage?.headSha ?? payload.headSha;
-  const packageSubject = payload.prPackage?.reviewSubjectHash?.trim();
-  const snapshot = review.reviewSnapshot;
-  if (!packageHead || !packageSubject || !snapshot || snapshot.source === 'unavailable')
-    return false;
-  if (snapshot.headSha !== packageHead) return false;
-  if (review.reviewedReviewSubjectHash !== packageSubject) return false;
-  return reviewHasWorkerFixLoop(review);
-}
-
 export function classifyReviewFreshness(
-  review: IndependentReviewStatus,
+  review: ReviewStatus,
   payload: ReadyGatePayload,
 ): ReviewFreshnessDisplay {
   const sourceLabel = reviewSourceLabel(review);
@@ -269,6 +195,16 @@ export function classifyReviewFreshness(
     };
   }
 
+  if (!(review.reviewerSessionId || review.session?.sessionId)) {
+    return {
+      review,
+      reason: 'review-session-missing',
+      label: `${sourceLabel} session unavailable`,
+      detail: 'Review has no verified separate session.',
+      stale: true,
+      passing,
+    };
+  }
   const packageHead = payload.prPackage?.headSha ?? payload.headSha;
   const packageSubject = payload.prPackage?.reviewSubjectHash?.trim();
   const reviewedHead = reviewHead(review);
@@ -349,19 +285,17 @@ export function classifyReviewFreshness(
 }
 
 export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCountSummary {
-  const reviews = payload.independentReviews ?? [];
-  const reviewDepth = normalizedReviewDepth(payload);
+  const reviews = payload.reviews ?? [];
+  const reviewPolicy = normalizedReviewPolicy(payload);
   const freshness = reviews.map((review) => classifyReviewFreshness(review, payload));
   const freshPassing = reviews.filter((review) => reviewCertifiesPreparedPackage(review, payload));
   const passingReviews = reviews.filter(reviewIsPassing);
-  const fixLoopCertified = reviews.some((review) =>
-    reviewCertifiesApprovedHeadAfterFix(review, payload, reviewDepth.requireCrossRunner),
+  const sessionIds = new Set(
+    freshPassing.map((review) => review.reviewerSessionId || review.session?.sessionId),
   );
   return {
-    requiredReviews: effectiveReviewRequirement(reviewDepth),
-    minimumReviews: reviewDepth.minimumIndependentReviews,
-    extraReviewsRequested: reviewDepth.extraLoopsRequested,
-    externalRequired: reviewDepth.requireCrossRunner,
+    requiredReviews: effectiveReviewRequirement(reviewPolicy),
+    minimumReviews: reviewPolicy.minimumReviews,
     totalReviews: reviews.length,
     totalAttempts: reviews.reduce(
       (sum, review) => sum + Math.max(1, review.attempts?.length ?? 0),
@@ -369,21 +303,17 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
     ),
     passingReviews: passingReviews.length,
     freshPassingReviews: freshPassing.length,
-    trustedPassingReviews: fixLoopCertified ? passingReviews.length : freshPassing.length,
-    staleIgnoredReviews: fixLoopCertified ? 0 : freshness.filter((entry) => entry.stale).length,
-    fixLoopCertified,
+    trustedPassingReviews: sessionIds.size,
+    staleIgnoredReviews: freshness.filter((entry) => entry.stale).length,
     unresolvedFindings: reviews.reduce((sum, review) => sum + review.unresolvedCount, 0),
-    externalFreshPassingReviews: (fixLoopCertified ? passingReviews : freshPassing).filter(
-      (review) => review.crossRunner,
-    ).length,
     freshness,
   };
 }
 
 export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
-  const reviews = payload.independentReviews ?? [];
-  const exhausted = latestExhaustedIndependentReview(reviews);
-  if (exhausted) return independentReviewRetryCapReason(exhausted);
+  const reviews = payload.reviews ?? [];
+  const exhausted = latestExhaustedReview(reviews);
+  if (exhausted) return reviewRetryCapReason(exhausted);
   const unresolved = reviews.find(
     (review) => review.verdict !== 'pass' || review.unresolvedCount > 0,
   );
@@ -407,9 +337,6 @@ export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): str
       return `Trusted passing reviews ${counts.trustedPassingReviews}/${counts.requiredReviews}; stale ignored: ${firstStale.detail}`;
     }
     return `Trusted passing reviews required ${counts.trustedPassingReviews}/${counts.requiredReviews}`;
-  }
-  if (counts.externalRequired && counts.externalFreshPassingReviews === 0) {
-    return 'Fresh passing runner-diversity review required';
   }
   if (firstStale) return `Review gate blocked; stale review ignored: ${firstStale.detail}`;
   return 'Review gate blocked; check package, evidence, and review status';
@@ -505,7 +432,6 @@ export interface GateSummaryReviewRow {
   verdict: string;
   attempts: number;
   unresolvedCount: number;
-  crossRunner: boolean;
   triggeredReWork: boolean;
 }
 
@@ -518,7 +444,7 @@ export interface GateSummaryDisplay {
   headline: string;
   policyLabel: string | null;
   worker: string;
-  selfReview: { status: string; reason: string | null; verdict: string | null } | null;
+  review: { status: string; reason: string | null; verdict: string | null } | null;
   reviews: GateSummaryReviewRow[];
   passingLabel: string;
   reWorkCount: number;
@@ -579,12 +505,11 @@ function checklistRows(summary: GateSummary): GateSummaryChecklistStepRow[] {
 
 export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
   const review = summary.review;
-  const reviewRows: GateSummaryReviewRow[] = review.independentReviews.map((r) => ({
-    label: [reviewSourceLabel(r), reviewPolicyLabel(r)].filter(Boolean).join(' \u00b7 '),
+  const reviewRows: GateSummaryReviewRow[] = review.reviews.map((r) => ({
+    label: reviewSourceLabel(r),
     verdict: r.verdict,
     attempts: r.attempts,
     unresolvedCount: r.unresolvedCount,
-    crossRunner: r.crossRunner,
     triggeredReWork: r.triggeredReWork,
   }));
   const reWorkCount = reviewRows.filter((r) => r.triggeredReWork).length;
@@ -600,11 +525,11 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
       ? `${summary.gatePolicy.owner}-owned${summary.gatePolicy.reason ? ` · ${summary.gatePolicy.reason}` : ''}`
       : null,
     worker: `${summary.worker.model ?? 'unknown model'} · ${summary.worker.turns} turns${summary.worker.outcome ? ` · ${summary.worker.outcome}` : ''}`,
-    selfReview: review.selfReview
+    review: review.review
       ? {
-          status: review.selfReview.status,
-          reason: review.selfReview.reason ?? null,
-          verdict: review.selfReview.verdict ?? null,
+          status: review.review.status,
+          reason: review.review.reason ?? null,
+          verdict: review.review.verdict ?? null,
         }
       : null,
     reviews: reviewRows,
@@ -660,10 +585,10 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
  * exactly as much as a continuation whose feedback did reach the worker.
  */
 export function reviewHasPendingContinuationPhases(
-  review: Pick<IndependentReviewStatus, 'recoveryContinuationPending'> &
+  review: Pick<ReviewStatus, 'recoveryContinuationPending'> &
     Partial<
       Pick<
-        IndependentReviewStatus,
+        ReviewStatus,
         | 'source'
         | 'verdict'
         | 'unresolvedCount'
@@ -675,23 +600,23 @@ export function reviewHasPendingContinuationPhases(
         | 'attempts'
       >
     >,
-  finalAttempt: Pick<IndependentReviewAttempt, 'unresolvedCount'> | undefined,
+  finalAttempt: Pick<ReviewAttempt, 'unresolvedCount'> | undefined,
 ): boolean {
-  if (review.verdict === 'issues' && independentReviewFixRetriesExhausted(review)) return false;
+  if (review.verdict === 'issues' && reviewFixRetriesExhausted(review)) return false;
   return review.recoveryContinuationPending === true && (finalAttempt?.unresolvedCount ?? 0) > 0;
 }
 
-export function reviewRetryCapPhaseLabel(review: IndependentReviewStatus): string | null {
-  if (!independentReviewFixRetriesExhausted(review)) return null;
-  const retryCount = independentReviewRetryCount(review);
+export function reviewRetryCapPhaseLabel(review: ReviewStatus): string | null {
+  if (!reviewFixRetriesExhausted(review)) return null;
+  const retryCount = reviewRetryCount(review);
   return typeof review.maxRetries === 'number'
     ? `exhausted ${retryCount}/${review.maxRetries}`
     : `exhausted after ${retryCount} attempt${retryCount === 1 ? '' : 's'}`;
 }
 
 export function fixDeltaAbsenceReason(
-  review: IndependentReviewStatus,
-  attempt: IndependentReviewAttempt | undefined,
+  review: ReviewStatus,
+  attempt: ReviewAttempt | undefined,
 ): string {
   const rowFixDelta = attempt ? attempt.fixDelta : review.fixDelta;
   const verdict = attempt?.verdict ?? review.verdict;

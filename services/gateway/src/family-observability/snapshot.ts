@@ -346,8 +346,8 @@ function pickBestRecipeQuality(signals: RecipeQualitySignal[]): RecipeQualitySig
   })[0];
 }
 
-function buildSelfReview(run: Run): FamilyObservabilityRunSummary['selfReview'] {
-  const step = run.steps.find((candidate) => candidate.name === 'self-review');
+function buildReview(run: Run): FamilyObservabilityRunSummary['review'] {
+  const step = run.steps.find((candidate) => candidate.name === 'review');
   const outputs = (step?.outputs ?? {}) as Record<string, unknown>;
   const issues = Array.isArray(outputs.issues)
     ? outputs.issues.flatMap((issue) => {
@@ -447,7 +447,7 @@ function buildStepLearnings(
   stepName: string,
   outputs: Record<string, unknown> | undefined,
 ): FamilyLearningEntry[] {
-  if (stepName !== 'self-review' || !Array.isArray(outputs?.issues)) return [];
+  if (stepName !== 'review' || !Array.isArray(outputs?.issues)) return [];
   return outputs.issues.flatMap((issue, index) => {
     if (!issue || typeof issue !== 'object') return [];
     const rec = issue as Record<string, unknown>;
@@ -459,7 +459,7 @@ function buildStepLearnings(
         id: `${run.id}:${stepName}:${index}`,
         runId: run.id,
         stepName,
-        source: 'self-review' as const,
+        source: 'review' as const,
         title: `Self-review issue in ${file}`,
         summary: description,
         detail: typeof rec.line === 'number' ? `Line ${rec.line}` : undefined,
@@ -621,7 +621,7 @@ async function buildRunSummary(
   const ownArtifacts = await buildRunArtifactsWithScanState(run);
   const artifacts = dedupeArtifacts([...ownArtifacts.artifacts, ...recoveredArtifactsForRun]);
   const learnings = await buildRunLearnings(run);
-  const selfReview = buildSelfReview(run);
+  const review = buildReview(run);
   // Coverage for this run's quality signal comes from the acceptance ledger when
   // it kept one, else recipe-coverage.md as before (ADR-060 phase 5). The ledger
   // itself travels on the summary so retrospectives can count proven / total.
@@ -707,8 +707,8 @@ async function buildRunSummary(
     const learningsForStep = buildStepLearnings(run, step.name, outputs);
     const missingData: string[] = [];
     if (artifactsForStep.length === 0 && step.status === 'done') missingData.push('artifacts');
-    if (learningsForStep.length === 0 && step.name === 'self-review' && step.status === 'done')
-      missingData.push('self-review-details');
+    if (learningsForStep.length === 0 && step.name === 'review' && step.status === 'done')
+      missingData.push('review-details');
     return {
       runId: run.id,
       stepName: step.name,
@@ -780,7 +780,7 @@ async function buildRunSummary(
     acceptanceStatus,
     acceptanceSummary,
     ciChecks: buildCiChecks(run),
-    selfReview,
+    review,
     familyScope: familyScope
       ? {
           originalFamilyScopeSummary:

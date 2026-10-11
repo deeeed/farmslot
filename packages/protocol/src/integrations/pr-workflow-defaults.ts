@@ -46,11 +46,6 @@ export function assertProjectWorkflowDefaults(
       if (flow === 'qa' && policy.review.publishReview === true)
         throw new Error('QA cannot publish a static PR review');
       if (
-        policy.review.validationDepth !== undefined &&
-        (policy.review.validationDepth === 'full-live') !== (flow === 'qa')
-      )
-        throw new Error('workflow_defaults validationDepth conflicts with its workflow key');
-      if (
         policy.review.workflow !== undefined &&
         (policy.review.workflow === 'qa') !== (flow === 'qa')
       ) {
@@ -107,7 +102,7 @@ export function resolvePRWorkflowDefaults(
     assertPRReviewOptions(selectedReview);
     if (
       input.workflow &&
-      (selectedReview.workflow !== undefined || selectedReview.validationDepth !== undefined) &&
+      selectedReview.workflow !== undefined &&
       (prReviewWorkflow(selectedReview) === 'qa') !== (workflow === 'qa')
     ) {
       throw new Error('Explicit workflow conflicts with inherited review options');
@@ -136,7 +131,7 @@ export function resolvePRWorkflowDefaults(
       ...(selectedReview ?? DEFAULT_PR_REVIEW_OPTIONS),
       ...(publishReview === undefined ? {} : { publishReview }),
       ...(workflow === 'review-pr' && autoFinish !== undefined ? { autoFinish } : {}),
-      ...(selectedReview?.workflow === undefined && selectedReview?.validationDepth === undefined
+      ...(selectedReview?.workflow === undefined
         ? { workflow: workflow === 'qa' ? ('qa' as const) : ('review' as const) }
         : {}),
     }),

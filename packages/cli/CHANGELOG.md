@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Expose WARM/COLD review mode and ordered review selections through the shared request contract; preserve model, effort and retained lineage across run, dispatch and gate review requests.
+
 - Run the public CLI in its invoking process so signals sent to its PID reach recipe cancellation and teardown. Preserve checkout TypeScript mappings and the scripted-runner entry.
 
 - Reject project packs with private home paths or fixed machine references before project add or update. Validation, registration and update migrations use the same configured pool file. Project copies preserve relative links, and unchanged add/update repairs only recognized links converted by older copies.

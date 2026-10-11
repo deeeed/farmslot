@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { IndependentReviewStatus } from '@farmslot/protocol';
+import type { ReviewStatus } from '@farmslot/protocol';
 
 import { reviewDiffHash } from '../core/review-diff-identity.js';
 
@@ -20,10 +20,11 @@ test('refresh repairs verified legacy review hashes but never missing or tampere
     await mkdir(path.join(root, 'artifacts'));
     await writeFile(path.join(root, 'artifacts/review.diff'), patch);
     const run = makeRun({ taskFile: path.join(root, 'TASK.md'), slotId: null });
-    const review: IndependentReviewStatus = {
+    const review: ReviewStatus = {
+      reviewerSessionId: 'fixture-session-' + 'review-1',
+      mode: 'cold' as const,
       id: 'review-1',
       source: 'dispatch',
-      crossRunner: false,
       loopNumber: 1,
       verdict: 'pass',
       unresolvedCount: 0,

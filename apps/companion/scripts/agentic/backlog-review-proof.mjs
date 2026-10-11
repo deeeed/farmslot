@@ -9,10 +9,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { openSimulatorDevClient } from './simulator-dev-client.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const proofDir = path.join(root, 'temp/companion-backlog-review-proof');
 const statePath = path.join(proofDir, 'state.json');
-const legacyId = 'legacy-live-review-item';
+const seededId = 'saved-review-sequence-item';
 const createdTitle = 'Companion static review round';
 const phase = process.argv[2];
 
@@ -77,15 +79,20 @@ if (phase === 'setup') {
   const seededAt = new Date().toISOString();
   writeJson(path.join(fixture, '.backlog.json'), [
     {
-      id: legacyId,
+      id: seededId,
       project: 'companion-proof',
-      title: 'Legacy live review round',
+      title: 'Saved review sequence',
       sourceKind: 'manual',
       sourceRef: 'MANUAL-901',
       flowType: 'fix-bug',
       status: 'ready',
       priority: 10,
-      pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+      reviewSequence: [{ runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'cold' }],
+      reviewSequenceContext: {
+        reviewLineages: [
+          { repository: 'validation/companion-proof', prNumber: 901, reviewId: 'proof-review-901' },
+        ],
+      },
       createdAt: seededAt,
       updatedAt: seededAt,
     },
@@ -117,56 +124,78 @@ if (phase === 'setup') {
   let seeded;
   while (!seeded && Date.now() < deadline) {
     try {
-      seeded = (await backlogItems()).find((item) => item.id === legacyId);
+      seeded = (await backlogItems()).find((item) => item.id === seededId);
     } catch (error) {
       // The owned gateway is still booting; any other failure repeats until the deadline.
       if (Date.now() + 1000 >= deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
-  assert.equal(seeded?.pendingReviewPlan?.[0]?.validationDepth, 'full-live');
+  assert.equal(seeded?.reviewSequence?.[0]?.mode, 'cold');
   fs.writeFileSync(path.join(proofDir, 'token'), token, { mode: 0o600 });
-  evidence('backlog-before', { legacy: seeded });
-  console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, legacyId }));
-} else if (phase === 'relaunch') {
+  evidence('backlog-before', { seeded });
+  console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, seededId }));
+} else if (phase === 'relaunch' || phase === 'relaunch-connect') {
   // Start from a fresh app process so screens from an earlier step or attempt (an open manual
   // form, a still-mounted create sheet sharing test ids) cannot receive the next step's input.
   // The recipe waits for the tab bar before deep-linking. Relaunching reuses the installed dev client.
   assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
   const bundleId = process.env.BUNDLE_ID ?? 'net.siteed.farmslot.development';
   execFileSync('xcrun', ['simctl', 'terminate', process.env.IOS_SIMULATOR, bundleId]);
-  execFileSync('xcrun', ['simctl', 'launch', process.env.IOS_SIMULATOR, bundleId]);
+  await openSimulatorDevClient(process.env.IOS_SIMULATOR, {
+    waitForBridge: phase !== 'relaunch-connect',
+  });
 } else if (phase === 'open-connection') {
   openUrl('/connection');
 } else if (phase === 'open-create') {
   openUrl('/backlog/create');
+} else if (phase === 'verify-refusal') {
+  const items = await backlogItems();
+  assert.equal(
+    items.some((item) => item.title === createdTitle),
+    false,
+    'saving an unavailable WARM row must not create a COLD fallback item',
+  );
+  evidence('backlog-warm-refused', { created: false });
 } else if (phase === 'verify-create') {
   const created = (await backlogItems())
     .filter((item) => item.title === createdTitle)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   evidence('backlog-created', created ?? null);
   assert(created, 'Companion create must persist the backlog item');
-  assert.equal(created.pendingReviewPlan?.length, 1);
   assert.deepEqual(
-    created.pendingReviewPlan.map((loop) => loop.validationDepth),
-    ['static-code'],
-    'a new Companion review round is static',
+    created.reviewSequence,
+    [
+      { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'cold' },
+      { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'cold' },
+    ],
+    'Companion preserves ordered model and effort choices after explicit COLD recovery',
   );
+  assert.equal(created.reviewSequenceContext, undefined, 'COLD rows carry no retained lineage');
 } else if (phase === 'open-edit') {
-  openUrl(`/backlog/edit/${legacyId}`);
+  openUrl(`/backlog/edit/${seededId}`);
 } else if (phase === 'verify-edit') {
   // Saving closes the edit screen, so the persisted item is the signal; the save is async.
   let repaired;
   for (let attempt = 0; attempt < 20; attempt++) {
-    repaired = (await backlogItems()).find((item) => item.id === legacyId);
-    if (repaired?.pendingReviewPlan?.[0]?.validationDepth === 'static-code') break;
+    repaired = (await backlogItems()).find((item) => item.id === seededId);
+    if (repaired?.reviewSequence?.[0]?.mode === 'warm') break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   evidence('backlog-after-edit', repaired ?? null);
   assert.deepEqual(
-    repaired?.pendingReviewPlan?.map((loop) => [loop.runner, loop.validationDepth]),
-    [['codex', 'static-code']],
-    'saving a legacy round persists it as static with its runner',
+    repaired?.reviewSequence,
+    [{ runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'warm' }],
+    'editing preserves the runner, model and effort while changing mode',
+  );
+  assert.deepEqual(
+    repaired.reviewSequenceContext,
+    {
+      reviewLineages: [
+        { repository: 'validation/companion-proof', prNumber: 901, reviewId: 'proof-review-901' },
+      ],
+    },
+    'the saved WARM row preserves its configured lineage context',
   );
 } else if (phase === 'cleanup') {
   if (fs.existsSync(statePath)) {

@@ -1,6 +1,6 @@
 /**
  * Gate review for an open `engine_human_gate` decision: the package summary, the
- * latest verdict of each independent reviewer, and the client-side guard that
+ * latest verdict of each reviewer, and the client-side guard that
  * withholds publish approval while the evidence is not complete. The guard only
  * withholds buttons; the gateway's own publish checks are unchanged.
  */
@@ -9,13 +9,14 @@ import {
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
-  defaultReviewDepthPolicy,
+  defaultReviewPolicy,
   type DeterministicChecklistCheck,
   effectiveRequiredReviewCount,
-  type IndependentReviewStatus,
   isPublishApprovalAction,
-  isQualifyingIndependentReview,
+  isQualifyingReview,
+  qualifyingPassingReviews,
   type ReadyGatePayload,
+  type ReviewStatus,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -66,9 +67,11 @@ export interface GateReviewSummary {
 }
 
 export interface GateReviewVerdict {
+  id: string;
+  review: ReviewStatus;
   runner: string;
   model: string | null;
-  verdict: IndependentReviewStatus['verdict'];
+  verdict: ReviewStatus['verdict'];
   unresolvedCount: number;
   stale: boolean;
   /** A pass with nothing unresolved, judged on the current package. */
@@ -89,7 +92,7 @@ export interface ApprovePublishGuardInput {
   acceptance: Pick<AcceptanceLedgerView, 'rows'> | null;
   acceptanceError?: string | null;
   reviews: ReadonlyArray<GateReviewVerdict>;
-  /** Independent reviews the gate's policy requires; see {@link gateRequiredReviewCount}. */
+  /** Reviews the gate's policy requires; see {@link gateRequiredReviewCount}. */
   requiredReviews: number;
 }
 
@@ -140,17 +143,17 @@ export function gateReviewSummary(decision: GateDecision): GateReviewSummary {
  * Reviews the gate is judged on: the run's live publish-gate list, else the
  * snapshot the decision carried when it opened.
  */
-export function gateIndependentReviews(
+export function gateReviews(
   run: Pick<Run, 'engineState'> | null | undefined,
   decision: GateDecision,
-): IndependentReviewStatus[] {
-  const live = run?.engineState?.publishGate?.independentReviews;
+): ReviewStatus[] {
+  const live = run?.engineState?.publishGate?.reviews;
   if (live?.length) return live;
-  return readyPayload(decision)?.independentReviews ?? [];
+  return readyPayload(decision)?.reviews ?? [];
 }
 
 /**
- * Independent reviews a publication gate's frozen policy requires, counted the
+ * Reviews a publication gate's frozen policy requires, counted the
  * way the gateway counts them. A gate with no prepared package publishes nothing,
  * and the gateway requires no review for it.
  */
@@ -158,12 +161,12 @@ export function gateRequiredReviewCount(decision: GateDecision): number {
   const payload = readyPayload(decision);
   if (!payload?.prPackage) return 0;
   return effectiveRequiredReviewCount(
-    defaultReviewDepthPolicy(payload.prPackage.reviewDepth ?? payload.reviewDepth),
+    defaultReviewPolicy(payload.prPackage.reviewPolicy ?? payload.reviewPolicy),
   );
 }
 
 /** Later loops win; within a loop, the later start. */
-function isLaterReview(review: IndependentReviewStatus, current: IndependentReviewStatus): boolean {
+function isLaterReview(review: ReviewStatus, current: ReviewStatus): boolean {
   if (review.loopNumber !== current.loopNumber) return review.loopNumber > current.loopNumber;
   const started = Date.parse(review.startedAt ?? '');
   const currentStarted = Date.parse(current.startedAt ?? '');
@@ -171,7 +174,7 @@ function isLaterReview(review: IndependentReviewStatus, current: IndependentRevi
   return started >= currentStarted;
 }
 
-function verdictColor(review: IndependentReviewStatus, approved: boolean): string {
+function verdictColor(review: ReviewStatus, approved: boolean): string {
   if (approved) return colors.statusOk;
   if (review.verdict === 'pending' || review.stale) return colors.statusWarn;
   if (review.verdict === 'cancelled' || review.verdict === 'skipped') return colors.textMuted;
@@ -179,28 +182,27 @@ function verdictColor(review: IndependentReviewStatus, approved: boolean): strin
 }
 
 /**
- * The latest independent review of each reviewer runner, ordered by runner.
- * Self-reviews are the worker's own pass and never count as a reviewer verdict.
+ * The latest result of each review lineage. Runner choice does not group or qualify results.
  * Reviews with no recorded start keep their list order.
  */
-export function latestReviewVerdicts(
-  reviews: ReadonlyArray<IndependentReviewStatus>,
-): GateReviewVerdict[] {
-  const latest = new Map<string, IndependentReviewStatus>();
+export function latestReviewVerdicts(reviews: ReadonlyArray<ReviewStatus>): GateReviewVerdict[] {
+  const latest = new Map<string, ReviewStatus>();
   for (const review of reviews) {
-    if (!isQualifyingIndependentReview(review)) continue;
-    const runner = review.runner?.trim() || 'unknown runner';
-    const current = latest.get(runner);
-    if (!current || isLaterReview(review, current)) latest.set(runner, review);
+    if (!isQualifyingReview(review)) continue;
+    const current = latest.get(review.id);
+    if (!current || isLaterReview(review, current)) latest.set(review.id, review);
   }
   return [...latest.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([runner, review]) => {
+    .map(([id, review]) => {
+      const runner = review.runner?.trim() || 'unknown runner';
       const stale = review.stale === true;
       const approved = review.verdict === 'pass' && review.unresolvedCount === 0 && !stale;
       const unresolved =
         review.unresolvedCount > 0 ? ` · ${review.unresolvedCount} unresolved` : '';
       return {
+        id,
+        review,
         runner,
         model: review.model ?? null,
         verdict: review.verdict,
@@ -236,8 +238,17 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
   }
   const reviewReasons: string[] = [];
   if (input.reviews.length === 0 && input.requiredReviews > 0) {
-    reviewReasons.push('No independent review verdict yet');
+    reviewReasons.push('No review verdict yet');
   }
+  const passing = qualifyingPassingReviews(
+    input.reviews.filter((review) => review.approved).map((review) => review.review),
+  );
+  if (
+    input.reviews.length > 0 &&
+    input.reviews.every((review) => review.approved) &&
+    passing.length < input.requiredReviews
+  )
+    reviewReasons.push(`${passing.length} of ${input.requiredReviews} required reviews approve`);
   for (const review of input.reviews) {
     if (!review.approved) reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
   }
@@ -275,7 +286,7 @@ export function humanGateGuard(
   decision: HumanGateGuardDecision,
   acceptance: GateAcceptanceInput,
 ): HumanGateGuardState {
-  const reviews = latestReviewVerdicts(gateIndependentReviews(run, decision));
+  const reviews = latestReviewVerdicts(gateReviews(run, decision));
   const guard = approvePublishGuard({
     acceptance: acceptance.view,
     acceptanceError: run ? acceptance.error : "the gate's run is not loaded",

@@ -117,15 +117,8 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           >
         </div>
         <div class="rdy-package-facts">
-          ${reviewSummary.fixLoopCertified ? html`<span>Fix loop certified</span>` : nothing}
           ${reviewSummary.staleIgnoredReviews
             ? html`<span>${reviewSummary.staleIgnoredReviews} stale ignored</span>`
-            : nothing}
-          ${reviewSummary.externalRequired
-            ? html`<span
-                >Runner diversity
-                ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
-              >`
             : nothing}
           ${ctx.publishEvidence.length
             ? html`<span>Evidence ${selectedEvidenceCount}/${ctx.publishEvidence.length}</span>`

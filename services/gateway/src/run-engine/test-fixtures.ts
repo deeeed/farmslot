@@ -60,7 +60,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     links: overrides.links,
     summary: overrides.summary ?? 'Original run summary',
     reviewTier: overrides.reviewTier,
-    reviewScope: overrides.reviewScope,
+    reviewMode: overrides.reviewMode,
     reviewValidationDepth: overrides.reviewValidationDepth,
     repeatReviewContext: overrides.repeatReviewContext,
     safetyTier: overrides.safetyTier,
@@ -126,7 +126,7 @@ export function makeReadyGatePackage(
       publishAuthority: 'human',
       reason: 'local-first publication requires human approval',
     },
-    reviewDepth: overrides.reviewDepth,
+    reviewPolicy: overrides.reviewPolicy,
     packageInputHash: overrides.packageInputHash,
     reviewSubjectHash:
       'reviewSubjectHash' in overrides ? overrides.reviewSubjectHash : 'subject-default',

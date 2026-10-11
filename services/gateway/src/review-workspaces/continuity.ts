@@ -1,11 +1,19 @@
-import { isTerminalRunStatus, type RepeatReviewContext, type Run } from '@farmslot/protocol';
+import {
+  isTerminalRunStatus,
+  parseGitHubRef,
+  type RepeatReviewContext,
+  type Run,
+} from '@farmslot/protocol';
 
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { getRunnerDefinition } from '../runners/registry.js';
 
 type WorkspaceReviewerRun = Pick<
   Run,
-  | 'reviewScope'
+  | 'project'
+  | 'ticketOrPr'
+  | 'effort'
+  | 'reviewMode'
   | 'prWork'
   | 'transport'
   | 'nativeOwnerPrincipalId'
@@ -26,39 +34,59 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
     Boolean(getRunnerDefinition(run.metrics.runner).workspaceTerminalSession) &&
     isTerminalRunStatus(prior.status) &&
     sameOwner &&
+    run.project === prior.project &&
+    reviewer?.role === 'review' &&
+    reviewer.status === 'complete' &&
+    (reviewer.effort ?? null) === (run.effort ?? null) &&
     prior.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
     reviewer?.runner === run.metrics.runner &&
     reviewer.model === run.metrics.model;
   return compatible ? reviewer : undefined;
 }
 
-/** Reuse a compatible chat, or preserve findings with an explicit fresh-session fallback. */
+/** Retained identity is required before a WARM workspace review can launch. */
 export function configureWorkspaceContinuity(
   run: WorkspaceReviewerRun,
   prior: Run,
   context: RepeatReviewContext,
 ): void {
-  const incremental = run.reviewScope === 'incremental' && incrementalReviewAvailable(context);
-  context.reviewScope = incremental ? 'incremental' : 'full';
-  context.sessionIntent =
-    run.prWork?.review?.options.sessionIntent ?? (incremental ? 'resume' : 'reset');
-  if (context.sessionIntent !== 'resume') {
-    context.session = { intent: 'reset', continuity: 'fresh', priorRunId: prior.id };
+  const mode = run.prWork?.review?.options.mode ?? run.reviewMode ?? 'cold';
+  context.mode = mode;
+  if (mode === 'cold') {
+    context.session = { mode, continuity: 'fresh', priorRunId: prior.id };
     return;
   }
+  if (!incrementalReviewAvailable(context))
+    throw new Error(
+      `WARM review unavailable: ${context.warmUnavailableReason ?? 'missing prior reviewed head'}`,
+    );
+  const priorPr = prior.prWork?.pr ?? parseGitHubRef(prior.ticketOrPr);
+  const requestedPr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
+  if (
+    !priorPr ||
+    !requestedPr ||
+    priorPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
+    requestedPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
+    priorPr.number !== context.prNumber ||
+    requestedPr.number !== context.prNumber
+  )
+    throw new Error('WARM review unavailable: repository/PR mismatch');
   const reviewer = compatibleWorkspaceReviewer(run, prior);
-  context.session = reviewer?.runnerSessionId
-    ? {
-        intent: 'resume',
-        continuity: 'resumed',
-        priorRunId: prior.id,
-        priorSessionId: reviewer.runnerSessionId,
-        sessionId: reviewer.runnerSessionId,
-      }
-    : {
-        intent: 'resume',
-        continuity: 'fallback-fresh',
-        priorRunId: prior.id,
-        fallbackReason: 'session-unavailable',
-      };
+  if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId)
+    throw new Error('WARM review unavailable: missing or foreign reviewId lineage');
+  if (!reviewer?.runnerSessionId)
+    throw new Error(
+      'WARM review unavailable: retained session is missing, foreign or incompatible',
+    );
+  context.session = {
+    mode,
+    continuity: 'resumed',
+    reviewId: reviewer.reviewId,
+    repository: context.repository,
+    prNumber: context.prNumber,
+    lastReviewedHeadSha: context.priorReviewedHeadSha,
+    priorRunId: prior.id,
+    priorSessionId: reviewer.runnerSessionId,
+    sessionId: reviewer.runnerSessionId,
+  };
 }

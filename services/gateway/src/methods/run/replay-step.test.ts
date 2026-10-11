@@ -500,32 +500,32 @@ test('a requested fresh dispatch never adopts a signal, readable or not', async 
 test('human-gate replay drops a consumed reviewer plan', () => {
   const reset = resetPublishGateApprovalForReplay({
     publishGate: {
-      pendingReviewPlan: [{ order: 1, runner: 'claude', validationDepth: 'full-live' }],
-      pendingReviewPlanRequestedAt: '2026-09-03T05:00:00.000Z',
+      reviewSequence: [{ runner: 'claude', model: null, effort: null, mode: 'cold' as const }],
+      reviewSequenceRequestedAt: '2026-09-03T05:00:00.000Z',
       publicationStatus: 'not_published',
     },
   });
 
-  assert.equal(reset?.publishGate?.pendingReviewPlan, undefined);
-  assert.equal(reset?.publishGate?.pendingReviewPlanRequestedAt, undefined);
+  assert.equal(reset?.publishGate?.reviewSequence, undefined);
+  assert.equal(reset?.publishGate?.reviewSequenceRequestedAt, undefined);
 });
 
 test('human-gate replay preserves the reviewer plan for an active fix recovery', () => {
   const reset = resetPublishGateApprovalForReplay(
     {
       publishGate: {
-        pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
-        pendingReviewPlanRequestedAt: '2026-09-03T05:00:00.000Z',
+        reviewSequence: [{ runner: 'codex', model: null, effort: null, mode: 'cold' as const }],
+        reviewSequenceRequestedAt: '2026-09-03T05:00:00.000Z',
         publicationStatus: 'not_published',
       },
     },
     true,
   );
 
-  assert.deepEqual(reset?.publishGate?.pendingReviewPlan, [
-    { order: 1, runner: 'codex', validationDepth: 'full-live' },
+  assert.deepEqual(reset?.publishGate?.reviewSequence, [
+    { runner: 'codex', model: null, effort: null, mode: 'cold' as const },
   ]);
-  assert.equal(reset?.publishGate?.pendingReviewPlanRequestedAt, '2026-09-03T05:00:00.000Z');
+  assert.equal(reset?.publishGate?.reviewSequenceRequestedAt, '2026-09-03T05:00:00.000Z');
 });
 
 test('runReplayStep abandons a retained handoff and re-enters normal dispatch', async (t) => {
@@ -697,10 +697,10 @@ test('in-flight replay refuses revive after operator force-complete', async (t) 
   });
   updateRun(run.id, {
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     engineState: { generation: 2 },
     steps: run.steps.map((step) =>
-      step.name === 'self-review'
+      step.name === 'review'
         ? { ...step, status: 'failed' }
         : step.name === 'complete' ||
             step.name === 'human-gate' ||
@@ -716,7 +716,7 @@ test('in-flight replay refuses revive after operator force-complete', async (t) 
     release = resolve;
   });
   let replayEntered = false;
-  const replay = runReplayStep({ runId: run.id, stepName: 'self-review' }, () => {}, {
+  const replay = runReplayStep({ runId: run.id, stepName: 'review' }, () => {}, {
     afterGenerationBump: async () => {
       replayEntered = true;
       await held;
@@ -744,7 +744,7 @@ test('in-flight replay refuses revive after operator force-complete', async (t) 
   const stored = getRun(run.id)!;
   assert.equal(stored.status, 'done');
   assert.equal(stored.engineState?.generation, forceGen);
-  assert.equal(stored.steps.find((step) => step.name === 'self-review')?.status, 'skipped');
+  assert.equal(stored.steps.find((step) => step.name === 'review')?.status, 'skipped');
 });
 
 test('runReplayStep refuses a force-completed run before mutating', async (t) => {
@@ -764,7 +764,7 @@ test('runReplayStep refuses a force-completed run before mutating', async (t) =>
   });
   updateRun(run.id, {
     status: 'failed',
-    error: 'self-review exhausted',
+    error: 'review exhausted',
     engineState: { generation: 2 },
   });
   await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
@@ -772,7 +772,7 @@ test('runReplayStep refuses a force-completed run before mutating', async (t) =>
   let bumpHook = false;
   await assert.rejects(
     () =>
-      runReplayStep({ runId: run.id, stepName: 'self-review' }, () => {}, {
+      runReplayStep({ runId: run.id, stepName: 'review' }, () => {}, {
         afterGenerationBump: async () => {
           bumpHook = true;
         },
@@ -845,7 +845,7 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
     'write-task',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
     'finalize',
   ]);
@@ -948,7 +948,7 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
     'write-task',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
     'finalize',
   ]);
@@ -1123,7 +1123,7 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
     'write-task',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
     'finalize',
   ]);
@@ -1186,7 +1186,7 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
     'write-task',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
     'finalize',
   ]);
@@ -1437,7 +1437,7 @@ test('runReplayStep allows chained PR-bound replays when prNumber is already lin
     'write-task',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
     'finalize',
   ]);
@@ -1558,7 +1558,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
         ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
         : step.name === 'monitor'
           ? { ...step, status: 'running', startedAt: '2026-06-22T12:00:00.000Z' }
-          : step.name === 'self-review'
+          : step.name === 'review'
             ? { ...step, status: 'failed', detail: 'retry requested' }
             : step,
     ),
@@ -1572,7 +1572,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
   });
 
   await runReplayStep(
-    { runId: run.id, stepName: 'self-review', triggeredBy: 'operator' },
+    { runId: run.id, stepName: 'review', triggeredBy: 'operator' },
     (event, payload) => {
       if (event === Events.RUN_UPDATED) {
         emittedStatuses.push((payload as { run: { status: string } }).run.status);
@@ -1587,11 +1587,11 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
     replayed.steps.find((step) => step.name === 'monitor')?.outputs?.replayPrerequisiteNormalized,
     true,
   );
-  assert.equal(replayed.steps.find((step) => step.name === 'self-review')?.status, 'running');
-  assert.equal(emittedStatuses[0], 'self-reviewing');
+  assert.equal(replayed.steps.find((step) => step.name === 'review')?.status, 'running');
+  assert.equal(emittedStatuses[0], 'reviewing');
 });
 
-test('runReplayStep can replace an exhausted runner before self-review', async (t) => {
+test('runReplayStep can replace an exhausted runner before review', async (t) => {
   const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   const taskFile = '/tmp/farmslot-runner-replacement/TASK.md';
@@ -1633,7 +1633,7 @@ test('runReplayStep can replace an exhausted runner before self-review', async (
       step.name === 'dispatch' ||
       step.name === 'monitor'
         ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
-        : step.name === 'self-review'
+        : step.name === 'review'
           ? { ...step, status: 'failed' }
           : step,
     ),
@@ -1650,7 +1650,7 @@ test('runReplayStep can replace an exhausted runner before self-review', async (
   await runReplayStep(
     {
       runId: run.id,
-      stepName: 'self-review',
+      stepName: 'review',
       runner: 'claude',
       model: 'opus',
       triggeredBy: 'operator',
@@ -1669,8 +1669,8 @@ test('runReplayStep can replace an exhausted runner before self-review', async (
   assert.equal(workerContext?.model, 'opus');
   assert.equal(workerContext?.runnerSessionId, null);
   assert.equal(workerContext?.runnerSessionPath, null);
-  assert.equal(replayed.status, 'self-reviewing');
-  assert.equal(replayed.steps.find((step) => step.name === 'self-review')?.status, 'pending');
+  assert.equal(replayed.status, 'reviewing');
+  assert.equal(replayed.steps.find((step) => step.name === 'review')?.status, 'pending');
 });
 
 test('runReplayStep rejects an incompatible runner/model override before mutation', async (t) => {
@@ -1692,7 +1692,7 @@ test('runReplayStep rejects an incompatible runner/model override before mutatio
     runReplayStep(
       {
         runId: run.id,
-        stepName: 'self-review',
+        stepName: 'review',
         runner: 'codex',
         model: 'opus',
       },
@@ -1788,7 +1788,7 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
     'prepare',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
   ]);
   updateRun(run.id, {
@@ -1802,7 +1802,7 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
         approvedPackageHash: 'package-hash-stale',
         approvedAt: '2026-04-15T00:10:00.000Z',
         publicationStatus: 'publish_failed',
-        independentReviews: [],
+        reviews: [],
         reviewRecovery: {
           status: 'operator-required',
           attempts: 3,
@@ -1860,7 +1860,7 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
     'prepare',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
   ]);
   updateRun(run.id, {
@@ -1936,7 +1936,7 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
     'prepare',
     'dispatch',
     'monitor',
-    'self-review',
+    'review',
     'complete',
   ]);
   updateRun(run.id, {

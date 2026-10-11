@@ -5,10 +5,10 @@ import type {
   ReadyGateInputSnapshot,
   ReadyGatePayload,
   RecipeRunArtifactGroup,
-  ReviewSessionIntent,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
+import { ReviewDispatchViewModel, reviewLineagesForRun } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
@@ -23,7 +23,6 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
-import type { EffortLevel } from '../../utils/runner-options.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -63,17 +62,6 @@ import {
   selectedReadyWorkspaceLightboxRecipeRun,
 } from './ready-workspace-lightbox.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
-import type { ReviewRunnerChoice } from './ready-workspace-modal-renderers.js';
-import {
-  addReadyReviewLoop,
-  createReadyReviewLoop,
-  readyReviewLoopRequestPayload,
-  readyRunnerLabel,
-  removeReadyReviewLoop,
-  setReadyReviewLoopModelEffort,
-  setReadyReviewLoopRunner,
-  setReadyReviewLoopSessionIntent,
-} from './ready-workspace-review-request-model.js';
 import {
   excludeReadyEvidenceVideos,
   initialReadyEvidenceSelection,
@@ -121,11 +109,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   get _currentRunner(): string {
-    return this.runner?.trim() || this._payload?.independentReviews?.[0]?.runner?.trim() || 'same';
+    return this.runner?.trim() || this._payload?.reviews?.[0]?.runner?.trim() || 'same';
   }
 
   _runnerLabel(runner: string): string {
-    return readyRunnerLabel(runner, this._currentRunner);
+    return runner.charAt(0).toUpperCase() + runner.slice(1);
   }
 
   willUpdate() {
@@ -671,7 +659,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   _openReviewRequestModal() {
     if (this._isRecovering || this._acting) return;
-    this._reviewLoops = [createReadyReviewLoop(this._nextReviewLoopId++, this._currentRunner)];
+    this._reviewPicker = new ReviewDispatchViewModel({
+      context: {
+        allowedActions: ['request-review'],
+        allowSequence: true,
+        reviewLineages: reviewLineagesForRun(this.run),
+        defaults: this._reviewPicker.context.defaults,
+      },
+    });
     this._reviewModalOpen = true;
     this._syncViewStateToHash();
   }
@@ -681,42 +676,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._syncViewStateToHash();
   }
 
-  _addReviewLoop() {
-    const next = addReadyReviewLoop({
-      loops: this._reviewLoops,
-      nextId: this._nextReviewLoopId,
-      currentRunner: this._currentRunner,
-    });
-    this._reviewLoops = next.loops;
-    this._nextReviewLoopId = next.nextId;
-  }
-
-  _removeReviewLoop(id: number) {
-    this._reviewLoops = removeReadyReviewLoop(this._reviewLoops, id);
-  }
-
-  _setReviewLoopRunner(id: number, runner: ReviewRunnerChoice) {
-    this._reviewLoops = setReadyReviewLoopRunner(this._reviewLoops, id, runner);
-  }
-
-  _setReviewLoopModelEffort(id: number, model: string, effort: EffortLevel) {
-    this._reviewLoops = setReadyReviewLoopModelEffort(this._reviewLoops, id, model, effort);
-  }
-
-  _setReviewLoopSessionIntent(id: number, sessionIntent: ReviewSessionIntent) {
-    this._reviewLoops = setReadyReviewLoopSessionIntent(this._reviewLoops, id, sessionIntent);
-  }
-
   async _submitReviewRequest() {
-    const request = readyReviewLoopRequestPayload(this._reviewLoops, this._currentRunner);
+    if (!this._reviewPicker.canInvoke('request-review')) return;
+    const reviewRequest = this._reviewPicker.toRequestPayload();
     this._closeReviewRequestModal();
-    await this._resolve('request-extra-review', {
-      reviewRequest: {
-        extraLoopsRequested: request.loops.length,
-        requireCrossRunner: request.requireCrossRunner,
-        loops: request.loops,
-      },
-    });
+    await this._resolve('request-review', { reviewRequest });
   }
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
@@ -730,12 +694,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     }
     this._acting = true;
     const payload = this._payload;
-    const requestingReview = ['request-extra-review', 'request-cross-runner-review'].includes(
-      actionId,
-    );
+    const requestingReview = actionId === 'request-review';
     const approving = isReadyPublicationApproval(actionId, !!payload?.prPackage);
     this._actionMessage = requestingReview
-      ? 'Requesting independent review…'
+      ? 'Requesting review…'
       : readyDecisionSubmittingMessage(approving);
     this._actionTone = '';
     try {

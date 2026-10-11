@@ -76,7 +76,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
       {{CI_PARITY_STEP}}
 
 - [ ] **11. Acceptance verdicts + recipe coverage** — set `export TASK_DIR="{{TASK_DIR}}"` and use `{{REPO}}/node_modules/.bin/farmslot-agent ac list` to see the ACs registered in `inputs/handoff.json`. For each one, record an honest verdict with `{{REPO}}/node_modules/.bin/farmslot-agent ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>` (choose the actual `state`, `visual`, or `mixed` mode and existing evidence; omit `--recipe-node` if no recipe applies). Use `untestable --note <reason>` only when proof is genuinely unavailable. Check `ac list` again. When `recipe.json` exists, derive `artifacts/recipe-coverage.md` with `{{REPO}}/node_modules/.bin/farmslot-agent ac render > {{TASK_DIR}}/artifacts/recipe-coverage.md`, then run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe --require-acceptance-status`. Checklist completion alone does not prove an AC.
-- [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`.
+- [ ] **12. Review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
       references what you changed; verify each and fix sibling instances in the same pass.
 - [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node

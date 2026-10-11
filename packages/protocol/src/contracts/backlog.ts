@@ -5,8 +5,10 @@ import type { ResourcePostureWaitPolicy } from './resource-posture.js';
 import type {
   DevInteractiveProfile,
   FlowType,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
+  ReviewMode,
+  ReviewPolicy,
+  ReviewRequestContext,
+  ReviewSequence,
   RunStatus,
 } from './runs.js';
 
@@ -232,13 +234,16 @@ export interface BacklogItem {
   prepareProfile?: string;
   mode?: 'interactive' | 'autonomous';
   devInteractiveProfile?: DevInteractiveProfile;
-  reviewDepth?: ReviewDepthPolicy;
+  reviewMode?: ReviewMode;
+  reviewPolicy?: ReviewPolicy;
   /**
    * Dispatch-time resource posture preset copied onto every run created from
    * this item; presets the gate choice for each durable wait (ADR-054).
    */
   waitPolicy?: ResourcePostureWaitPolicy;
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
   launchPlan?: BacklogLaunchPlan;
   launchPlanState?: BacklogLaunchPlanState;
   createdAt: string;
@@ -281,9 +286,12 @@ export interface BacklogCreateInput {
   prepareProfile?: string;
   mode?: 'interactive' | 'autonomous';
   devInteractiveProfile?: DevInteractiveProfile;
-  reviewDepth?: ReviewDepthPolicy;
+  reviewMode?: ReviewMode;
+  reviewPolicy?: ReviewPolicy;
   waitPolicy?: ResourcePostureWaitPolicy;
-  pendingReviewPlan?: ReviewLoopRequest[];
+  reviewSequence?: ReviewSequence;
+  reviewContext?: ReviewRequestContext;
+  reviewSequenceContext?: ReviewRequestContext;
   launchPlan?: BacklogLaunchPlan;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
@@ -312,9 +320,12 @@ export interface BacklogUpdateInput {
   prepareProfile?: string | null;
   mode?: 'interactive' | 'autonomous' | null;
   devInteractiveProfile?: DevInteractiveProfile | null;
-  reviewDepth?: ReviewDepthPolicy | null;
+  reviewMode?: ReviewMode | null;
+  reviewPolicy?: ReviewPolicy | null;
   waitPolicy?: ResourcePostureWaitPolicy | null;
-  pendingReviewPlan?: ReviewLoopRequest[] | null;
+  reviewSequence?: ReviewSequence | null;
+  reviewContext?: ReviewRequestContext | null;
+  reviewSequenceContext?: ReviewRequestContext | null;
   launchPlan?: BacklogLaunchPlan | null;
 }
 

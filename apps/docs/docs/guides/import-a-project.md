@@ -108,7 +108,7 @@ Common configurable flows:
 - **Prompt flow** — render the project-owned task template for bugfix, development, review, PR completion, or merge recovery.
 - **Dispatch flow** — launch the selected runner with the rendered prompt, safety tier, and context.
 - **Validation flow** — run recipes or project-native tests and emit evidence.
-- **Review flow** — attach artifacts, diffs, logs, and cross-runner findings to a human gate.
+- **Review flow** — attach artifacts, diffs, logs, and review findings to a human gate.
 - **Recovery flow** — recycle a stuck slot, clean runtime state, or ask a runner for a bounded fix.
 
 ## Why this matters for large projects

@@ -153,7 +153,7 @@ test('runner-validation catalog includes supported runners and registered scenar
   assert.ok(listScenarios().includes('native-session-authorization-smoke'));
   assert.ok(listScenarios().includes('native-session-startup-close'));
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
-  assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
+  assert.ok(listScenarios().includes('review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
   assert.ok(listScenarios().includes('pane-smoke'));
   assert.ok(listScenarios().includes('interaction-smoke'));
@@ -192,11 +192,11 @@ test('session-reopen-smoke fails when named explicitly without a slot and never 
   assert.equal(JSON.parse(fs.readFileSync(evidenceFile, 'utf8')).marker, 'real-run');
 });
 
-test('self-review routes argv-relaunch handoffs to cold process replacement', () => {
+test('review routes argv-relaunch handoffs to cold process replacement', () => {
   const source = fs.readFileSync(
     path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      '../../services/gateway/src/self-review/review-agent.ts',
+      '../../services/gateway/src/review/review-agent.ts',
     ),
     'utf8',
   );

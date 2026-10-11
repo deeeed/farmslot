@@ -94,6 +94,7 @@ export function defaultRefinementRunnerCommand(
   model: string | undefined,
   promptPath: string,
   safetyTier?: SafetyTier,
+  effort?: string,
 ): string | null {
   const runnerId = runner?.trim();
   if (!runnerId) return null;
@@ -103,6 +104,7 @@ export function defaultRefinementRunnerCommand(
     promptPath,
     repo: farmslotRoot,
     safetyTier,
+    effort,
   });
 }
 
@@ -111,6 +113,7 @@ export function expandRefinementRunnerCommand(
   context: {
     runner?: string;
     model?: string;
+    effort?: string;
     promptPath: string;
     itemFile: string;
     safetyTier?: SafetyTier;
@@ -120,6 +123,7 @@ export function expandRefinementRunnerCommand(
   const replacements: Record<string, string> = {
     runner: shellQuote(context.runner ?? ''),
     model: shellQuote(context.model ?? ''),
+    effort: shellQuote(context.effort ?? ''),
     prompt_path: shellQuote(context.promptPath),
     item_file: shellQuote(context.itemFile),
     safety_tier: shellQuote(context.safetyTier ?? ''),
@@ -143,6 +147,7 @@ export function buildRefinementShellCommand(params: {
   runnerCommand?: string;
   runner?: string;
   model?: string;
+  effort?: string;
   safetyTier?: SafetyTier;
   /** Shell fragment after cd, before the runner (env exports, etc.). */
   prelude: string;
@@ -157,6 +162,7 @@ export function buildRefinementShellCommand(params: {
     params.model,
     absolutePromptPath,
     params.safetyTier,
+    params.effort,
   );
   const prelude = params.prelude;
   if (commandTemplate) {
@@ -165,6 +171,7 @@ export function buildRefinementShellCommand(params: {
       {
         ...(params.runner ? { runner: params.runner } : {}),
         ...(params.model ? { model: params.model } : {}),
+        ...(params.effort ? { effort: params.effort } : {}),
         ...(params.safetyTier ? { safetyTier: params.safetyTier } : {}),
         promptPath: absolutePromptPath,
         itemFile: absoluteItemFile,

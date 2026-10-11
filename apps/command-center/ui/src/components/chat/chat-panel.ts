@@ -26,12 +26,11 @@ import { Events, Methods } from '@farmslot/protocol';
 import './chat-message.js';
 import './native-session-view.js';
 import './chat-history-modal.js';
-import '../shared/runner-model-effort-picker.js';
+import '../shared/review-dispatch-picker.js';
 import '../terminal/terminal-view.js';
 
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
-import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import { buildChatClientContext } from './chat-client-context.js';
 import { collectChatActionIds, pruneStaleChatActions } from './chat-panel-action-model.js';
@@ -399,11 +398,14 @@ export class ChatPanel extends ChatPanelState {
 
   private syncRuntime(session: CopilotRuntimeSession) {
     this.runtime = session;
-    this.runtimeRunner = session.runner;
-    this.runtimeModel = session.model;
-    this.runtimeEffort = (
-      session.effort === 'auto' ? '' : (session.effort ?? '')
-    ) as RunnerModelEffortChangeDetail['effort'];
+    this.runtimePicker.setSequence([
+      {
+        runner: session.runner,
+        model: session.model,
+        effort: session.effort === 'auto' ? null : (session.effort ?? null),
+        mode: 'cold',
+      },
+    ]);
     this.runtimeAutostart = session.autostart;
     this.runtimeWorkerRefJson = session.terminalWorker
       ? JSON.stringify(session.terminalWorker)
@@ -429,12 +431,6 @@ export class ChatPanel extends ChatPanelState {
     } finally {
       if (manageLoading) this.runtimeLoading = false;
     }
-  }
-
-  private handleRuntimePickerChange(event: CustomEvent<RunnerModelEffortChangeDetail>) {
-    this.runtimeRunner = event.detail.runner;
-    this.runtimeModel = event.detail.model;
-    this.runtimeEffort = event.detail.effort;
   }
 
   public async submitPrompt(
@@ -968,13 +964,11 @@ export class ChatPanel extends ChatPanelState {
                   ? html`<div class="cp-runtime-reason">${this.runtime.terminalReason}</div>`
                   : ''}
                 <div class="cp-runtime-config">
-                  <runner-model-effort-picker
-                    .runner=${this.runtimeRunner}
-                    .model=${this.runtimeModel}
-                    .effort=${this.runtimeEffort}
+                  <review-dispatch-picker
+                    .viewModel=${this.runtimePicker}
                     .disabled=${this.runtimeLoading || runtimeStatus === 'running'}
-                    @runner-model-effort-change=${this.handleRuntimePickerChange}
-                  ></runner-model-effort-picker>
+                    @review-dispatch-change=${() => this.requestUpdate()}
+                  ></review-dispatch-picker>
                   <label class="cp-runtime-autostart">
                     <input
                       type="checkbox"

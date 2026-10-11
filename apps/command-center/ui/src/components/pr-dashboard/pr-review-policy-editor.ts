@@ -14,7 +14,11 @@ import {
 import './pr-review-options-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
-import { newPRExecution, newPRWorkspaceExecution } from './pr-execution-picker.js';
+import {
+  newPRExecution,
+  newPRWorkspaceExecution,
+  type PRReviewExecutionChangeDetail,
+} from './pr-execution-picker.js';
 
 export interface PRReviewPolicyChange {
   execution?: PRExecutionProfile;
@@ -98,6 +102,16 @@ export class PRReviewPolicyEditor extends LitElement {
               ${this.execution ? 'Explicit execution and models' : 'Inherited execution and models'}
             </p>
             <pr-execution-picker
+              .review=${workflow === 'review'}
+              .reviewMode=${review.mode}
+              .reviewContext=${review.reviewContext}
+              @review-execution-change=${(event: CustomEvent<PRReviewExecutionChangeDetail>) => {
+                event.stopPropagation();
+                this.change({
+                  execution: event.detail.execution,
+                  review: { ...review, ...event.detail.review },
+                });
+              }}
               .pools=${this.pools}
               .resource=${workflow === 'qa' ? 'slot' : 'workspace'}
               .value=${execution}

@@ -41,21 +41,17 @@ test('computeLayout inserts publication review plan nodes without mutating host 
   const baseRun = makeRun({
     steps: [
       { name: 'find-slot', status: 'done' },
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       { name: 'complete', status: 'pending' },
       { name: 'human-gate', status: 'pending' },
     ],
     engineState: {
       publishGate: {
-        reviewDepth: {
+        reviewPolicy: {
           requestedBy: 'dispatch',
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+          minimumReviews: 1,
         },
-        pendingReviewPlan: [
-          { order: 1, runner: 'claude', model: 'opus', validationDepth: 'full-live' },
-        ],
+        reviewSequence: [{ runner: 'claude', model: 'opus', effort: null, mode: 'cold' }],
       },
     },
   });
@@ -104,7 +100,7 @@ test('operator-held interactive completion renders monitor done and closes task 
           reason: 'interactive-completion-operator-owned',
         },
       },
-      { name: 'self-review', status: 'pending' },
+      { name: 'review', status: 'pending' },
     ],
   });
 
@@ -123,7 +119,7 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
       { name: 'prepare', status: 'done' },
       { name: 'dispatch', status: 'done' },
       { name: 'monitor', status: 'done' },
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       { name: 'complete', status: 'done' },
       { name: 'human-gate', status: 'running' },
       { name: 'finalize', status: 'pending' },
@@ -132,19 +128,18 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
     ],
     engineState: {
       publishGate: {
-        reviewDepth: {
+        reviewPolicy: {
           requestedBy: 'human-gate',
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 1,
+          minimumReviews: 1,
         },
-        independentReviews: [
+        reviews: [
           {
             id: 'independent-review-2',
             source: 'human-gate',
             runner: 'codex',
-            crossRunner: true,
+
             loopNumber: 2,
+            mode: 'cold',
             verdict: 'failed',
             unresolvedCount: 0,
             validationDepth: 'static-code',
@@ -154,8 +149,9 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
             id: 'independent-review-3',
             source: 'human-gate',
             runner: 'claude',
-            crossRunner: true,
+
             loopNumber: 3,
+            mode: 'cold',
             verdict: 'pass',
             unresolvedCount: 0,
             validationDepth: 'static-code',
@@ -167,16 +163,16 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
   });
 
   const layout = computeLayout(run);
-  const selfReview = layout.nodes.find((node) => node.id === 'self-review');
+  const review = layout.nodes.find((node) => node.id === 'review');
   const postGateReview = layout.nodes.find((node) => node.id === 'post-gate-publication-review-1');
   const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
   const finalize = layout.nodes.find((node) => node.id === 'finalize');
-  assert.ok(selfReview);
+  assert.ok(review);
   assert.ok(postGateReview);
   assert.ok(packageRefresh);
   assert.ok(finalize);
   assert.equal(packageRefresh.step.status, 'done');
-  assert.ok(postGateReview.x > selfReview.x + selfReview.w);
+  assert.ok(postGateReview.x > review.x + review.w);
   assert.ok(packageRefresh.x > postGateReview.x + postGateReview.w);
   assert.ok(finalize.x > packageRefresh.x + packageRefresh.w);
 });
@@ -185,26 +181,25 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
   const run = makeRun({
     status: 'blocked',
     steps: [
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       { name: 'complete', status: 'done' },
       { name: 'human-gate', status: 'running' },
       { name: 'finalize', status: 'pending' },
     ],
     engineState: {
       publishGate: {
-        reviewDepth: {
+        reviewPolicy: {
           requestedBy: 'human-gate',
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 1,
+          minimumReviews: 1,
         },
-        independentReviews: [
+        reviews: [
           {
             id: 'independent-review-2',
             source: 'human-gate',
             runner: 'claude',
-            crossRunner: true,
+
             loopNumber: 2,
+            mode: 'cold',
             verdict: 'issues',
             unresolvedCount: 3,
             validationDepth: 'full-live',
@@ -231,9 +226,9 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
 test('live extra-review progress shows on human-gate and package-refresh inspectors', () => {
   const run = makeRun({
     status: 'human-gating',
-    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.rev-cursor.md',
+    activeTaskFile: 'temp/tasks/foo/REVIEW.rev-cursor.md',
     steps: [
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       {
         name: 'human-gate',
         status: 'running',
@@ -243,7 +238,7 @@ test('live extra-review progress shows on human-gate and package-refresh inspect
     agentContexts: [
       {
         id: 'rev-cursor',
-        role: 'self-review',
+        role: 'review',
         status: 'working',
         runner: 'cursor',
       } as never,
@@ -252,7 +247,7 @@ test('live extra-review progress shows on human-gate and package-refresh inspect
   const live = {
     schema: {
       flowType: 'dev',
-      title: 'Independent review',
+      title: 'Review',
       totalSteps: 2,
       phases: [
         {
@@ -328,18 +323,18 @@ test('detached checklist panel hides when the inspector already shows live progr
   );
 });
 
-test('pipeline self-review is not classified as publication extra-review', () => {
+test('pipeline review is not classified as publication extra-review', () => {
   const run = makeRun({
-    status: 'self-reviewing',
-    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.md',
+    status: 'reviewing',
+    activeTaskFile: 'temp/tasks/foo/REVIEW.md',
     steps: [
-      { name: 'self-review', status: 'running' },
+      { name: 'review', status: 'running' },
       { name: 'human-gate', status: 'pending' },
     ],
     agentContexts: [
       {
-        id: 'self-review',
-        role: 'self-review',
+        id: 'review',
+        role: 'review',
         status: 'working',
         runner: 'claude',
       } as never,
@@ -348,7 +343,7 @@ test('pipeline self-review is not classified as publication extra-review', () =>
   const live = {
     schema: {
       flowType: 'dev',
-      title: 'Self-review',
+      title: 'Review',
       totalSteps: 1,
       phases: [{ name: 'Checklist', steps: [{ index: 1, name: 'Start' }] }],
     },
@@ -366,14 +361,14 @@ test('pipeline self-review is not classified as publication extra-review', () =>
     currentStep: 'Start',
   };
   assert.equal(isPublicationReviewProgressActive(run), false);
-  assert.equal(activeTaskProgressStepId(run, live), 'self-review');
-  assert.equal(selectedStepShowsLiveTaskProgress(run, 'self-review'), true);
+  assert.equal(activeTaskProgressStepId(run, live), 'review');
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'review'), true);
 });
 
 test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
   const run = makeRun({
     status: 'blocked',
-    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW-FIX.md',
+    activeTaskFile: 'temp/tasks/foo/REVIEW-FIX.md',
     steps: [{ name: 'human-gate', status: 'running', detail: 'Waiting for operator decision' }],
     decisions: [
       {
@@ -385,8 +380,8 @@ test('waiting publication gate is the current canvas node, not leftover fix prog
     ],
     agentContexts: [
       {
-        id: 'self-review-fix',
-        role: 'self-review-fix',
+        id: 'review-fix',
+        role: 'review-fix',
         status: 'working',
         runner: 'claude',
       } as never,
@@ -400,7 +395,7 @@ test('computeLayout keeps package-refresh pending when a review agent is working
   const run = makeRun({
     status: 'human-gating',
     steps: [
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       { name: 'complete', status: 'done' },
       {
         name: 'human-gate',
@@ -412,26 +407,25 @@ test('computeLayout keeps package-refresh pending when a review agent is working
     agentContexts: [
       {
         id: 'rev1-claude',
-        role: 'self-review',
+        role: 'review',
         status: 'working',
         runner: 'claude',
       } as never,
     ],
     engineState: {
       publishGate: {
-        reviewDepth: {
+        reviewPolicy: {
           requestedBy: 'human-gate',
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 1,
+          minimumReviews: 1,
         },
-        independentReviews: [
+        reviews: [
           {
             id: 'independent-review-6',
             source: 'human-gate',
             runner: 'codex',
-            crossRunner: true,
+
             loopNumber: 6,
+            mode: 'cold',
             verdict: 'failed',
             unresolvedCount: 0,
             validationDepth: 'static-code',
@@ -453,7 +447,7 @@ test('computeLayout does not keep package-refresh pending on sticky re-review de
   const run = makeRun({
     status: 'human-gating',
     steps: [
-      { name: 'self-review', status: 'done' },
+      { name: 'review', status: 'done' },
       { name: 'complete', status: 'done' },
       {
         name: 'human-gate',
@@ -465,26 +459,25 @@ test('computeLayout does not keep package-refresh pending on sticky re-review de
     agentContexts: [
       {
         id: 'rev1-claude',
-        role: 'self-review',
+        role: 'review',
         status: 'complete',
         runner: 'claude',
       } as never,
     ],
     engineState: {
       publishGate: {
-        reviewDepth: {
+        reviewPolicy: {
           requestedBy: 'human-gate',
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 1,
+          minimumReviews: 1,
         },
-        independentReviews: [
+        reviews: [
           {
             id: 'independent-review-6',
             source: 'human-gate',
             runner: 'codex',
-            crossRunner: true,
+
             loopNumber: 6,
+            mode: 'cold',
             verdict: 'failed',
             unresolvedCount: 0,
             validationDepth: 'static-code',

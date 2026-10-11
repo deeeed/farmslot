@@ -1,6 +1,5 @@
 // <ready-workspace> — Rich human-gate workspace for fix-bug/dev flows (D8)
-// Shows worker report, diff, recipe, artifacts, and self-review verdict.
-
+// Shows worker report, diff, recipe, artifacts, and review verdict.
 import { nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
@@ -9,6 +8,7 @@ import {
   isInternalRunArtifactPath,
   type ReadyGatePayload,
 } from '@farmslot/protocol';
+import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
 import '../recipe-graph/recipe-graph.js';
@@ -37,7 +37,6 @@ import {
   renderReadyInputArtifactViewer,
   renderReadyReviewFlowModal,
   renderReadyReviewRequestModal,
-  type ReviewRunnerChoice,
 } from './ready-workspace-modal-renderers.js';
 import {
   renderReadyPackagePanel,
@@ -70,11 +69,25 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
     if (changed.has('run')) {
-      void loadRecipeRunnerUiOptionsForProject(this.run?.project ?? '', requestProjectConfigs).then(
-        (options) => {
-          this._recipeRunnerUiOptions = options;
-        },
-      );
+      const projectName = this.run?.project ?? '';
+      this._reviewPicker.setContext({
+        ...this._reviewPicker.context,
+        defaults: resolveReviewDispatchDefaults(undefined, 'review-pr'),
+      });
+      void loadRecipeRunnerUiOptionsForProject(projectName, async () => {
+        const configs = await requestProjectConfigs();
+        if (this.run?.project === projectName)
+          this._reviewPicker.setContext({
+            ...this._reviewPicker.context,
+            defaults: resolveReviewDispatchDefaults(
+              configs.find((project) => project.name === projectName),
+              'review-pr',
+            ),
+          });
+        return configs;
+      }).then((options) => {
+        this._recipeRunnerUiOptions = options;
+      });
     }
   }
 
@@ -156,16 +169,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _renderReviewRequestModal() {
     return renderReadyReviewRequestModal({
       open: this._reviewModalOpen,
-      loops: this._reviewLoops,
-      currentRunner: this._currentRunner as ReviewRunnerChoice,
+      viewModel: this._reviewPicker,
       acting: this._acting,
-      runnerLabel: (runner) => this._runnerLabel(runner),
       close: () => this._closeReviewRequestModal(),
-      addLoop: () => this._addReviewLoop(),
-      removeLoop: (id) => this._removeReviewLoop(id),
-      setRunner: (id, runner) => this._setReviewLoopRunner(id, runner),
-      setModelEffort: (id, model, effort) => this._setReviewLoopModelEffort(id, model, effort),
-      setSessionIntent: (id, sessionIntent) => this._setReviewLoopSessionIntent(id, sessionIntent),
+      changed: () => this.requestUpdate(),
       submit: () => this._submitReviewRequest(),
     });
   }
@@ -174,19 +181,19 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const reviewCounts = summarizeReviewCounts(payload);
     return renderReadyReviewFlowModal({
       open: this._reviewFlowModalOpen,
-      reviews: payload.independentReviews ?? [],
+      reviews: payload.reviews ?? [],
       passingReviews: reviewCounts.trustedPassingReviews,
       reviewProgress: readyReviewRequestProgress(this.run),
       unresolvedFindings: reviewCounts.unresolvedFindings,
       staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
       continuationActive: (this.run?.agentContexts ?? []).some(
         (context) =>
-          context.role === 'self-review-fix' &&
+          context.role === 'review-fix' &&
           ['launching', 'working', 'waiting'].includes(context.status),
       ),
       activeReviewIds: new Set(
         (this.run?.agentContexts ?? []).flatMap((context) =>
-          context.role === 'self-review' &&
+          context.role === 'review' &&
           ['launching', 'working', 'waiting'].includes(context.status) &&
           context.artifactScope
             ? [context.artifactScope]
@@ -195,7 +202,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       ),
       view: this._reviewFlowView,
       selected: this._reviewFlowSelection,
-      selfReviewSummary: payload.selfReviewSummary,
+      reviewSummary: payload.reviewSummary,
       artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
       close: () => {
         this._reviewFlowModalOpen = false;

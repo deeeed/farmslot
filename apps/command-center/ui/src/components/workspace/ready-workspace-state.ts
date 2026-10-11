@@ -9,11 +9,11 @@ import type {
   Run,
   RunDecision,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 
-import type { ReviewLoopDraft } from './ready-workspace-modal-renderers.js';
 import {
   type RecipeRunnerUiOptions,
   recipeRunnerUiOptions,
@@ -65,13 +65,14 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _reviewFlowModalOpen = false;
   @state() _reviewFlowSelection: 'overall' | string = 'overall';
   @state() _reviewFlowView: 'chronological' | 'reviewer' = 'chronological';
-  @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '', sessionIntent: 'resume' }];
+  _reviewPicker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'], allowSequence: true },
+  });
   @state() _inputArtifactViewerOpen = false;
   @state() _selectedInputArtifactId = '';
   @state() _legacyTaskPromptText = '';
   @state() _legacyTaskPromptLoading = false;
   @state() _legacyTaskPromptError = '';
-  _nextReviewLoopId = 2;
   @state() _packagePanelExpanded = false;
   @state() _recipePackageEvidenceCollapsed = false;
   @state() _defaultPackageTabSelected = false;

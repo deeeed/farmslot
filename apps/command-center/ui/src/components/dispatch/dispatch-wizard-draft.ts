@@ -1,9 +1,6 @@
 import type {
   DevInteractiveProfile,
   FlowType,
-  ReviewDepthPolicy,
-  ReviewLoopRequest,
-  ReviewRunnerId,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
@@ -16,12 +13,6 @@ import {
 
 import type { EffortLevel } from '../../utils/runner-options.js';
 
-/** Independent review rounds are static; runtime validation is a separate QA run (ADR-058). */
-export interface PublicationReviewLoopDraft {
-  id: number;
-  runner: ReviewRunnerId;
-}
-
 export interface DispatchDraftState {
   flowType: FlowType | null;
   ticketId: string;
@@ -33,7 +24,7 @@ export interface DispatchDraftState {
   devInteractiveProfile: DevInteractiveProfile;
   reviewTier: '' | 'light' | 'standard' | 'full';
   skipPrepare: boolean;
-  publicationReviewLoops: PublicationReviewLoopDraft[];
+  reviewSequence: import('@farmslot/protocol').ReviewSequence;
 }
 
 export function selectedTaskTemplate(
@@ -120,83 +111,12 @@ export function appLabel(app: string): string {
   return parts.length > 0 ? (parts[parts.length - 1] ?? app) : app;
 }
 
-export function defaultExtraReviewRunner(
-  currentRunner: string,
-  runnerOptions: ReadonlyArray<ReviewRunnerId>,
-): ReviewRunnerId {
-  const current = runnerOptions.includes(currentRunner as ReviewRunnerId)
-    ? (currentRunner as ReviewRunnerId)
-    : 'claude';
-  return runnerOptions.find((runner) => runner !== current) ?? current;
-}
-
 export function publicationReviewsEnabled(
   flowType: FlowType | null,
   mode?: 'interactive' | 'autonomous',
 ): boolean {
   if (flowType === 'fix-bug') return true;
   return flowType === 'dev' && mode === 'autonomous';
-}
-
-export function buildPublicationReviewPlan(
-  flowType: FlowType | null,
-  currentRunner: string,
-  loops: ReadonlyArray<PublicationReviewLoopDraft>,
-  runnerOptions: ReadonlyArray<ReviewRunnerId>,
-  mode?: 'interactive' | 'autonomous',
-): ReviewLoopRequest[] {
-  if (!publicationReviewsEnabled(flowType, mode)) return [];
-  const current = runnerOptions.includes(currentRunner as ReviewRunnerId)
-    ? (currentRunner as ReviewRunnerId)
-    : 'claude';
-  return loops.slice(0, 5).map((loop, index) => ({
-    order: index + 1,
-    runner: loop.runner || current,
-    validationDepth: 'static-code',
-  }));
-}
-
-export function buildPublicationReviewDepth(
-  flowType: FlowType | null,
-  currentRunner: string,
-  plan: ReadonlyArray<ReviewLoopRequest>,
-  mode?: 'interactive' | 'autonomous',
-): ReviewDepthPolicy | undefined {
-  if (!publicationReviewsEnabled(flowType, mode) || plan.length === 0) return undefined;
-  return reviewDepthForConfiguredPlan(currentRunner, plan);
-}
-
-export function reviewDepthForConfiguredPlan(
-  currentRunner: string,
-  plan: ReadonlyArray<ReviewLoopRequest>,
-): ReviewDepthPolicy {
-  return {
-    minimumIndependentReviews: 1,
-    // The first configured loop satisfies the publication minimum. Only
-    // later loops are additional requirements.
-    extraLoopsRequested: Math.max(0, plan.length - 1),
-    countingVersion: 2,
-    requireCrossRunner: plan.some((loop) => loop.runner !== currentRunner),
-    requestedBy: 'dispatch',
-  };
-}
-
-export function buildPublicationReviewGateParams(
-  flowType: FlowType | null,
-  currentRunner: string,
-  loops: ReadonlyArray<PublicationReviewLoopDraft>,
-  runnerOptions: ReadonlyArray<ReviewRunnerId>,
-  mode?: 'interactive' | 'autonomous',
-): { reviewDepth?: ReviewDepthPolicy; pendingReviewPlan?: ReviewLoopRequest[] } {
-  const pendingReviewPlan = buildPublicationReviewPlan(
-    flowType,
-    currentRunner,
-    loops,
-    runnerOptions,
-    mode,
-  );
-  const reviewDepth = buildPublicationReviewDepth(flowType, currentRunner, pendingReviewPlan, mode);
-  return reviewDepth ? { reviewDepth, pendingReviewPlan } : {};
 }
 
 /** Inputs stay skill-owned; only the selected farm profile and JSON shape are interpreted here. */

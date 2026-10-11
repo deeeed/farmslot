@@ -7,7 +7,7 @@ export function resolveRunSlotId(
   const topLevel = run.slotId?.trim();
   if (topLevel) return topLevel;
 
-  const preferredRoles = ['self-review-fix', 'self-review', 'dev'] as const;
+  const preferredRoles = ['review-fix', 'review', 'dev'] as const;
   for (const role of preferredRoles) {
     const context = run.agentContexts
       ?.slice()

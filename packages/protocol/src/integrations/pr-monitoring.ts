@@ -122,13 +122,15 @@ export function assertPRExecutionProfile(value: unknown): asserts value is PRExe
   }
   for (const model of value.models) {
     record(model, 'execution.models[]');
-    fields(model, ['runner', 'model', 'effort', poolField], 'execution.models[]');
+    fields(model, ['runner', 'model', 'effort', 'mode', poolField], 'execution.models[]');
     text(model.runner, 'model.runner');
-    text(model.model, 'model.model');
+    if (model.model !== null) text(model.model, 'model.model');
     if (nativeProfile && nativeProfile.runner !== model.runner) {
       throw new Error('execution.nativeProfile must match every execution model runner');
     }
-    if (model.effort !== undefined) text(model.effort, 'model.effort');
+    if (model.effort !== null) text(model.effort, 'model.effort');
+    if (model.mode !== 'warm' && model.mode !== 'cold')
+      throw new Error('model.mode must be warm or cold');
     const allowed = model[poolField];
     if (allowed !== undefined) {
       strings(allowed, `model.${poolField}`);
@@ -268,6 +270,7 @@ export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoi
           runner: model.runner,
           model: model.model,
           effort: model.effort,
+          mode: model.mode,
           ...(profile.transport === undefined ? {} : { transport: profile.transport }),
           ...(profile.nativeProfile === undefined
             ? {}
@@ -287,6 +290,7 @@ export function prExecutionChoices(profile: PRExecutionProfile): PRExecutionChoi
         runner: model.runner,
         model: model.model,
         effort: model.effort,
+        mode: model.mode,
       })),
   );
 }
@@ -312,6 +316,7 @@ export function intersectPRExecutionProfiles(profiles: PRExecutionProfile[]): PR
               sameNativeProfileReference(candidate.nativeProfile, choice.nativeProfile)
             : !isPRWorkspaceExecutionChoice(candidate) && candidate.slotId === choice.slotId) &&
           candidate.runner === choice.runner &&
+          candidate.mode === choice.mode &&
           candidate.model === choice.model &&
           candidate.effort === choice.effort,
       ),

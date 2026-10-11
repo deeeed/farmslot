@@ -88,7 +88,7 @@ mock.module('../core/exec.js', {
       if (command.includes('PRIOR-TASK-SIGNAL.json')) {
         return { exitCode: 0, stdout: replacementSignalOutput, stderr: '' };
       }
-      if (command.includes('SELF-REVIEW-FIX-SIGNAL.json')) {
+      if (command.includes('REVIEW-FIX-SIGNAL.json')) {
         return {
           exitCode: 0,
           stdout: taskSignalOutput,
@@ -237,10 +237,10 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     target: '%1',
     runnerId: 'cursor',
     model: 'cursor-grok-4.6-high-fast',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
     onPromptMutationStart: () => {
       mutationStarts += 1;
@@ -255,7 +255,7 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
   assert.equal(mutationStarts, 1);
   const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
   assert.match(command, /cursor-agent/);
-  assert.match(command, /Read and execute SELF-REVIEW-FIX[.]md/);
+  assert.match(command, /Read and execute REVIEW-FIX[.]md/);
   assert.equal(
     commands.some((candidate) => candidate.includes('send-keys')),
     false,
@@ -273,17 +273,17 @@ test('Pi fix handoff launches its task file without typing into the prior sessio
     vars,
     target: '%1',
     runnerId: 'pi',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
-    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
   });
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
   assert.match(command, /FARMSLOT_TASK_FILE=/);
-  assert.match(command, /tasks\/run-1\/SELF-REVIEW-FIX[.]md/);
+  assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
   assert.equal(
     commands.some((candidate) => candidate.includes('send-keys')),
     false,
@@ -301,11 +301,11 @@ test('Pi fix handoff does not replace a worker whose task is still running', asy
     vars,
     target: '%1',
     runnerId: 'pi',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
-    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
   assert.equal(result.delivered, false);
   assert.equal(
@@ -331,16 +331,16 @@ test('Cursor argv relaunch preserves dispatch templates that require task_file',
     },
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
-    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
-  assert.match(command, /tasks\/run-1\/SELF-REVIEW-FIX[.]md/);
+  assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
 });
 
 test('Cursor recovery accepts only prior structured evidence and never relaunches', async (t) => {
@@ -361,9 +361,9 @@ test('Cursor recovery accepts only prior structured evidence and never relaunche
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: existingSignal,
     priorPromptSendAttempted: true,
   });
@@ -421,10 +421,10 @@ test('Cursor argv handoff waits for a terminal prior task before replacement', a
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
   });
 
@@ -451,10 +451,10 @@ test('Cursor argv handoff holds before mutation when process liveness is unknown
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.equal(result.delivered, false);
@@ -480,10 +480,10 @@ test('Cursor argv handoff records a possible send when respawn confirmation fail
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.equal(result.delivered, false);
@@ -514,11 +514,11 @@ test('Cursor argv handoff refreshes a nonterminal prior-task snapshot on retry',
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
     replacementReadySignal: staleSnapshot,
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 2_000,
   });
 
@@ -540,11 +540,11 @@ test('Cursor argv handoff rejects a terminal signal from another attempt', async
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
     replacementReadySignalAttemptId: 'expected-attempt',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.equal(result.delivered, false);
@@ -566,10 +566,10 @@ test('Cursor argv handoff retries a transient baseline read before mutation', as
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.equal(result.delivered, false);
@@ -596,10 +596,10 @@ test('Cursor argv handoff permits a delayed acknowledgement after liveness races
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
   });
 
@@ -631,10 +631,10 @@ test('Cursor argv handoff waits for a delayed replacement process', async (t) =>
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 3_000,
   });
 
@@ -649,8 +649,8 @@ test('Cursor argv handoff refuses a bare session before replacing any window', a
     vars,
     target: 'test-1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
   });
 
   assert.equal(result.delivered, false);
@@ -675,10 +675,10 @@ test('Cursor argv handoff refuses an ambiguous named window', async (t) => {
     vars,
     target: 'test-1:dev',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.equal(result.delivered, false);
@@ -700,8 +700,8 @@ test('Cursor argv handoff refuses a split window before replacing any pane', asy
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    promptMarker: 'SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    promptMarker: 'REVIEW-FIX.md',
   });
 
   assert.equal(result.delivered, false);
@@ -822,8 +822,8 @@ test('retained resume does not consult a generic task signal for exact prompt ac
     runnerId: 'claude',
     sessionId: 'session-123',
     sessionPath: '/sessions/session-123.jsonl',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
   assert.deepEqual(result, {
@@ -832,7 +832,7 @@ test('retained resume does not consult a generic task signal for exact prompt ac
     turnToken: 'session-123:test-turn',
   });
   assert.equal(
-    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
+    commands.some((command) => command.includes('REVIEW-FIX-SIGNAL.json')),
     false,
   );
 });
@@ -911,8 +911,8 @@ test('retained fallback accepts a fresh task signal after the original send veri
     vars,
     target: 'test-1:dev',
     runnerId: 'grok',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
     priorPromptSendAttempted: true,
   });
@@ -948,8 +948,8 @@ test('retained fallback accepts delayed acknowledgement before replacing an idle
     runnerId: 'claude',
     sessionId: 'session-123',
     sessionPath: '/sessions/session-123.jsonl',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
     priorPromptSendAttempted: true,
   });
@@ -988,8 +988,8 @@ test('retained fallback refuses a stale task signal during explicit recovery', a
     vars,
     target: 'test-1:dev',
     runnerId: 'grok',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: existingSignal,
     priorPromptSendAttempted: true,
   });
@@ -1027,8 +1027,8 @@ test('retained recovery prefers the exact prompt digest despite an unchanged tas
     vars,
     target: 'test-1:dev',
     runnerId: 'claude',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: existingSignal,
     priorPromptSendAttempted: true,
   });
@@ -1070,8 +1070,8 @@ test('retained fallback holds when safe-send leaves the task signal unchanged', 
     vars,
     target: 'test-1:dev',
     runnerId: 'claude',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: unchangedSignal,
     timeoutMs: 5,
   });
@@ -1099,8 +1099,8 @@ test('retained fallback uses an exact runner hook when the task signal baseline 
     vars,
     target: 'test-1:dev',
     runnerId: 'claude',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: null,
   });
 
@@ -1124,9 +1124,9 @@ test('warm Cursor retained handoff uses argv relaunch and requires a fresh task 
     vars,
     target: '%1',
     runnerId: 'cursor',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    prompt: 'Read and execute REVIEW-FIX.md',
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
     timeoutMs: 5,
   });
@@ -1161,8 +1161,8 @@ test('retained fallback disables hook proof when the slot-clock baseline is unav
     vars,
     target: 'test-1:dev',
     runnerId: 'claude',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    prompt: 'Read and execute REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: null,
     timeoutMs: 5,
   });

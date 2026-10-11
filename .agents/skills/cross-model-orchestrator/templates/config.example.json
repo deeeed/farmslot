@@ -9,6 +9,8 @@
     {
       "id": "worker",
       "runner": "codex",
+      "model": "your-model-id",
+      "effort": "high",
       "cwd": "worker/checkout",
       "goal": "worker/GOAL.md",
       "report": "worker/REPORT.md",

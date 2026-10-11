@@ -14,7 +14,7 @@ import type {
 } from './pr-monitoring.js';
 import type { PRReviewOptions } from './pr-rules.js';
 import type { ResourceDefinition, SlotActionDefinition } from './resources.js';
-import type { FlowType } from './runs.js';
+import type { FlowType, ReviewSelection } from './runs.js';
 import type { ProjectRuntimeCapabilitiesConfig } from './runtime-capabilities.js';
 import type { PoolSlotMode } from './slots.js';
 import type { TaskSchema } from './task.js';
@@ -91,8 +91,7 @@ export interface ProjectAutoRecoveryConfig {
 }
 
 export interface ProjectPublicationReviewFlowConfig {
-  minimumIndependentReviews?: number;
-  requireCrossRunner?: boolean;
+  minimumReviews?: number;
 }
 
 export interface ProjectScriptedCommandConfig {
@@ -253,7 +252,9 @@ export interface ProjectConfig {
   apps?: string[];
   recipe?: ProjectRecipeConfig;
   paths: { runtimeDir: string; artifactDir: string };
-  defaults: Record<string, { runner: string; model: string }>;
+  defaults: Record<string, { runner: string; model: string; effort?: string }>;
+  /** Absolute review picker defaults configured by the project. */
+  review?: Partial<ReviewSelection>;
   workflowDefaults?: ProjectWorkflowDefaults;
   hooks: Record<string, string | Record<string, string>>;
   health: Record<string, string>;
