@@ -11,6 +11,7 @@ import {
   type PlatformAdapter,
   ADAPTER_SDK_VERSION,
   type RecipeCatalog,
+  type VideoRecorderStartRequest,
 } from '@farmslot/adapter-sdk';
 import {
   type RecipeActionManifestDocument,
@@ -27,10 +28,12 @@ const argument = (flag: string) => {
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 const cdpPort = Number(argument('--cdp-port'));
-const recipePath = argument('--recipe');
+const recipePath =
+  argument('--recipe') ??
+  fileURLToPath(new URL('./runner-validation/recorded-evidence.recipe.json', import.meta.url));
 const artifactsDir = argument('--artifacts-dir');
-if (!Number.isInteger(cdpPort) || cdpPort < 1 || !recipePath || !artifactsDir)
-  throw new Error('Usage: --cdp-port <port> --recipe <plain recipe> --artifacts-dir <output>');
+if (!Number.isInteger(cdpPort) || cdpPort < 1 || !artifactsDir)
+  throw new Error('Usage: --cdp-port <port> --artifacts-dir <output> [--recipe <plain recipe>]');
 const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'recorded-evidence-conformance-'));
 const recipe = JSON.parse(await fs.readFile(recipePath, 'utf8'));
 const manifest: RecipeActionManifestDocument = {
@@ -163,7 +166,7 @@ try {
           name: recorder.name,
           continuousSegments: recorder.continuousSegments,
           doctor: () => recorder.doctor!(),
-          async start(request) {
+          async start(request: VideoRecorderStartRequest) {
             const session = await recorder.start(request);
             return { stop: () => session.stop() };
           },

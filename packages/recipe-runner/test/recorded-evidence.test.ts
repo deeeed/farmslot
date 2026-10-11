@@ -341,6 +341,9 @@ test('package validation refuses omitted registered claim rows', () => {
   };
   const valid = validateRecordedEvidencePackage(bundle);
   assert.equal(valid.status, 'valid', JSON.stringify(valid.findings));
+  const missingRecipe = validateRecordedEvidencePackage({ ...bundle, recipe: undefined });
+  assert.equal(missingRecipe.status, 'invalid');
+  assert.ok(missingRecipe.findings.some((finding) => finding.path === 'recipe.json'));
   for (const retained of [claims.criteria.slice(0, 1), []]) {
     const result = validateRecordedEvidencePackage({
       ...bundle,
@@ -395,5 +398,84 @@ test('a visual judgment binds exact moments and cannot turn missing proof into p
   assert.equal(
     deriveRecipeClaims({ ...visual, trace: [], judgments: [judgment] })[0]?.verdict,
     'missing',
+  );
+});
+
+test('new recorded packages cannot skip the claim ledger, while legacy inspection stays untimed', () => {
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+  };
+  const trace = [
+    {
+      nodeId: 'done',
+      action: 'end',
+      ok: true,
+      status: 'pass',
+      startedAt: '2026-01-01T00:00:00Z',
+      endedAt: '2026-01-01T00:00:00Z',
+      durationMs: 0,
+    },
+  ];
+  const bundle = {
+    recipe,
+    trace,
+    summary: {
+      status: 'pass',
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
+    recipeResolution: {
+      schema_version: 1,
+      root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+      dependencies: [],
+      edges: [],
+    },
+    resolvedRecipes: {},
+    artifactDigests: {},
+    timelines: {},
+    manifest: {
+      version: 1,
+      runStatus: 'pass',
+      artifacts: [
+        { path: 'recipe.json', type: 'recipe' },
+        { path: 'trace.json', type: 'trace' },
+        { path: 'summary.json', type: 'summary' },
+      ],
+    },
+    artifactPaths: [
+      'recipe.json',
+      'trace.json',
+      'summary.json',
+      'artifact-manifest.json',
+      'recipe-resolution.json',
+    ],
+  };
+  const legacy = validateRecordedEvidencePackage(bundle);
+  assert.equal(legacy.status, 'valid', JSON.stringify(legacy.findings));
+  assert.ok(
+    legacy.findings.some(
+      (finding) => finding.severity === 'warning' && finding.message.includes('Legacy'),
+    ),
+  );
+  assert.equal(
+    validateRecordedEvidencePackage({
+      ...bundle,
+      summary: { ...bundle.summary, recipeRunId: 'new-run' },
+    }).status,
+    'invalid',
+  );
+  assert.equal(
+    validateRecordedEvidencePackage({
+      ...bundle,
+      manifest: {
+        ...bundle.manifest,
+        artifacts: [...bundle.manifest.artifacts, { path: 'acceptance-status.json', type: 'json' }],
+      },
+      artifactPaths: [...bundle.artifactPaths, 'acceptance-status.json'],
+    }).status,
+    'invalid',
   );
 });

@@ -63,6 +63,7 @@ export {
   type RecordingSegmentRef,
   recordingTargetClaimKey,
   validateRecipeClaimDeclarations,
+  validateRecipeRecordingTarget,
 } from './evidence.js';
 export {
   HUD_INTENT_LINE_HEIGHT,

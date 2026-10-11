@@ -21,11 +21,65 @@ export type RecipeRecordingTarget =
   | { kind: 'app-window'; appName: string; windowName: string }
   | { kind: 'simulator'; device: string };
 
+/** Canonical serialized identity validation for providers and lease acquisition. */
+export function validateRecipeRecordingTarget(value: unknown): RecipeValidationResult {
+  const context = createContext();
+  const issue = (path: string, message: string) =>
+    addFinding(context, 'error', 'recording_target.invalid', path, message);
+  if (!isRecord(value)) {
+    issue('$', 'Recording target must be an object.');
+    return finishResult(context);
+  }
+  const fields: Readonly<Record<string, readonly string[]>> = {
+    'cdp-page': ['host', 'port', 'targetId'],
+    'android-device': ['serial'],
+    'window-id': ['windowId'],
+    pid: ['pid'],
+    'app-window': ['appName', 'windowName'],
+    simulator: ['device'],
+  };
+  const required =
+    typeof value.kind === 'string' && Object.hasOwn(fields, value.kind)
+      ? fields[value.kind]
+      : undefined;
+  if (!required) {
+    issue('kind', 'Unknown recording target kind.');
+    return finishResult(context);
+  }
+  for (const field of Object.keys(value)) {
+    if (field !== 'kind' && !required.includes(field))
+      issue(field, 'Unknown recording target field.');
+  }
+  for (const field of required) {
+    if (field === 'pid' || field === 'port') {
+      const number = value[field];
+      if (
+        typeof number !== 'number' ||
+        !Number.isSafeInteger(number) ||
+        number < 1 ||
+        (field === 'port' && number > 65_535)
+      )
+        issue(
+          field,
+          `Recording ${field} must be a positive integer${field === 'port' ? ' at most 65535' : ''}.`,
+        );
+    } else if (!isNonEmptyString(value[field])) {
+      issue(field, `Recording ${field} must be non-empty.`);
+    }
+  }
+  return finishResult(context);
+}
+
 /** Shared by SDK admission and the existing lease registry's declared recording binding. */
 export function recordingTargetClaimKey(context: {
   backend: string;
   target: RecipeRecordingTarget;
 }): string {
+  const validation = validateRecipeRecordingTarget(context.target);
+  if (!isNonEmptyString(context.backend) || validation.status !== 'valid')
+    throw new TypeError(
+      `Invalid recording identity: ${validation.findings.map((finding) => finding.message).join('; ') || 'Backend must be non-empty.'}`,
+    );
   return `recording/${context.backend}/${digestRecipeDocument(context.target)}`;
 }
 

@@ -15,6 +15,7 @@ import {
   type RecipeRecordingTimelineDocument,
   type RecipeVideoTiming,
   type RecordingSegmentRef,
+  validateRecipeRecordingTarget,
 } from '@farmslot/protocol';
 
 import { proofDocument } from '../evidence/assertions.js';
@@ -931,7 +932,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       action: 'record.video',
       intent: 'Record the recipe run when motion proof is useful',
     };
-    const target =
+    const resolvedTarget =
       videoOptions.target ??
       (await this.#recording?.targetProvider?.resolveRecordingTarget({
         nodeId: 'recipe-run',
@@ -942,11 +943,19 @@ class DefaultRecipeRunner implements RecipeRunner {
         env,
         scope: 'run',
       }));
-    if (!target) {
+    if (!resolvedTarget) {
       throw new Error(
         '--record-video requires a recording target. Provide a project RecordingTargetProvider or CLI target flags.',
       );
     }
+    const validation = validateRecipeRecordingTarget(resolvedTarget);
+    if (validation.status !== 'valid')
+      throw new RecipeExecutionError(
+        'environment',
+        validation.findings.map((finding) => finding.message).join('; '),
+      );
+    // Admission and backend start use the same immutable provider-resolved identity.
+    const target = Object.freeze({ ...resolvedTarget });
     const relativePath = recordedVideoPath(0);
     const stagingRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-video-'));
     const stagingRelativePath = 'recipe-run.mp4';

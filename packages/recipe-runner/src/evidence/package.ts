@@ -33,6 +33,8 @@ export function validateRecordedEvidencePackage(
       ? input.summary.recipeRunId
       : undefined;
   if (input.claims) {
+    if (!input.recipe)
+      issue('recipe.json', 'The retained root recipe must be supplied for claim derivation.');
     if (!recipeRunId)
       issue('summary.json.recipeRunId', 'Recorded package has no retained execution identity.');
     if (input.recipeRunId && input.recipeRunId !== recipeRunId)
@@ -52,8 +54,6 @@ export function validateRecordedEvidencePackage(
     );
   }
   if (input.claims && validateAcceptanceStatusLedger(input.claims).length === 0) {
-    for (const message of validateAcceptanceStatusLedger(input.claims))
-      issue('acceptance-status.json', message);
     if (input.claims.recipeRunId !== recipeRunId)
       issue('acceptance-status.json', 'Claims belong to another execution.');
     for (const claim of input.claims.criteria) {

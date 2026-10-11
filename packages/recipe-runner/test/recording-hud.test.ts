@@ -79,9 +79,24 @@ for (const outcome of [
         }),
       ],
       recording: {
+        admission: {
+          async acquire(context) {
+            events.push('acquire');
+            assert.equal(Object.isFrozen(context.target), true);
+            assert.deepEqual(context.target, { kind: 'pid', pid: 123 });
+            return {
+              key: 'recording/test/pid-123',
+              async release() {
+                events.push('release');
+              },
+            };
+          },
+        },
         videoRecorder: {
           name: 'test',
           async start(request) {
+            events.push('start');
+            assert.equal(Object.isFrozen(request.target), true);
             return {
               async stop() {
                 events.push('stop');
@@ -138,8 +153,11 @@ for (const outcome of [
       recordVideo: { target: { kind: 'pid', pid: 123 } },
     });
     assert.deepEqual(events, [
+      'acquire',
+      'start',
       `hud:${outcome === 'product-failed-hud-closed' ? 'fail' : 'pass'}`,
       'stop',
+      'release',
     ]);
     assert.equal(result.status, outcome === 'complete' ? 'pass' : 'fail');
     if (outcome === 'interrupted-hud-closed') {
@@ -169,5 +187,68 @@ for (const outcome of [
       assert.equal(timeline.traceDigest, digestRecipeDocument(trace));
       if (outcome === 'hud-failed') assert.equal(trace.at(-1).nodeId, 'recipe-complete:hud');
     }
+  });
+}
+
+for (const outcome of ['start-failed', 'cancelled', 'headless'] as const) {
+  test(`recording admission cleanup follows execution ownership: ${outcome}`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'record-admission-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const events: string[] = [];
+    const controller = new AbortController();
+    const runner = createRecipeRunner({
+      actionManifest: { ...manifest, actions: { end: manifest.actions.end! } },
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: createStandardCoreAdapters({ actions: ['end'] }),
+      recording: {
+        admission: {
+          async acquire() {
+            events.push('acquire');
+            return {
+              key: 'owned',
+              async release() {
+                events.push('release');
+              },
+            };
+          },
+        },
+        videoRecorder: {
+          name: 'fixture',
+          async start() {
+            events.push('start');
+            if (outcome === 'start-failed') throw new Error('Recorder unavailable.');
+            controller.abort();
+            return {
+              async stop() {
+                events.push('stop');
+                return { segments: [] };
+              },
+            };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts'),
+      signal: controller.signal,
+      ...(outcome === 'headless'
+        ? {}
+        : { recordVideo: { target: { kind: 'pid' as const, pid: 123 } } }),
+    });
+    assert.deepEqual(
+      events,
+      outcome === 'headless'
+        ? []
+        : outcome === 'start-failed'
+          ? ['acquire', 'start', 'release']
+          : ['acquire', 'start', 'stop', 'release'],
+    );
+    assert.equal(result.status, outcome === 'headless' ? 'pass' : 'fail');
+    assert.equal(
+      result.claims.recording.status,
+      outcome === 'headless' ? 'not-required' : 'failed',
+    );
   });
 }

@@ -6,8 +6,46 @@ import {
   DEFAULT_RECORDED_EVIDENCE_POLICY,
   EVIDENCE_PADDING_MS,
   normalizeRecipeClaimId,
+  type RecipeRecordingTarget,
+  recordingTargetClaimKey,
   validateRecipeClaimDeclarations,
+  validateRecipeRecordingTarget,
 } from '../src/recipe/evidence.js';
+
+test('recording admission uses one validated target identity for every backend', () => {
+  const targets: RecipeRecordingTarget[] = [
+    { kind: 'cdp-page', host: '127.0.0.1', port: 9323, targetId: 'page-1' },
+    { kind: 'android-device', serial: 'device-1' },
+    { kind: 'window-id', windowId: '42' },
+    { kind: 'pid', pid: 42 },
+    { kind: 'app-window', appName: 'Example', windowName: 'Main' },
+    { kind: 'simulator', device: 'device-1' },
+  ];
+  for (const target of targets) {
+    assert.equal(validateRecipeRecordingTarget(target).status, 'valid');
+    const key = recordingTargetClaimKey({ backend: 'capture', target });
+    assert.equal(key, recordingTargetClaimKey({ backend: 'capture', target: { ...target } }));
+    assert.notEqual(key, recordingTargetClaimKey({ backend: 'other', target }));
+  }
+  assert.notEqual(
+    recordingTargetClaimKey({ backend: 'capture', target: { kind: 'pid', pid: 42 } }),
+    recordingTargetClaimKey({ backend: 'capture', target: { kind: 'pid', pid: 43 } }),
+  );
+});
+
+test('missing or malformed configured recording targets refuse before acquiring a lease', () => {
+  for (const target of [
+    undefined,
+    { kind: 'pid', pid: 0 },
+    { kind: 'cdp-page', host: '127.0.0.1', port: 65_536, targetId: 'page-1' },
+    { kind: 'android-device', serial: '' },
+    { kind: 'simulator' },
+    { kind: 'pid', pid: 42, claimKey: 'arbitrary' },
+  ]) {
+    assert.equal(validateRecipeRecordingTarget(target).status, 'invalid');
+  }
+  assert.throws(() => recordingTargetClaimKey({ backend: '', target: { kind: 'pid', pid: 42 } }));
+});
 
 test('claim registration preserves ordinary proof targets and normalizes task AC ids', () => {
   assert.equal(normalizeRecipeClaimId('AC1'), 'AC-1');
