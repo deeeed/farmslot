@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
 
 import { acceptedPrompt, nativeState, readOptional, writeSentinel } from './native-evidence.mjs';
@@ -162,7 +163,44 @@ function paths(meta) {
   const key = hash(
     `${process.env.TMUX_MODEL_DRIVER_SOCKET || process.env.TMUX || 'default'}:${meta.pane_id}:${meta.pane_pid}:${meta.process_started_at}`,
   );
-  return { obs, receipt: path.join(root, `${key}.json`), lock: path.join(root, `${key}.lock`) };
+  return {
+    obs,
+    receipt: path.join(root, `${key}.json`),
+    lock: path.join(root, `${key}.lock`),
+    acknowledged: path.join(root, `${key}.acknowledged.json`),
+  };
+}
+
+function acquireLock(files) {
+  try {
+    fs.mkdirSync(files.lock, { mode: 0o700 });
+    return true;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    return false;
+  }
+}
+
+function receiptIdentity(receipt) {
+  const { accepted: _accepted, ...original } = receipt;
+  return receipt.receipt_id || hash(JSON.stringify(original));
+}
+
+function readReceipt(files) {
+  const raw = readOptional(files.receipt);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function wasAcknowledged(files, id) {
+  return JSON.parse(readOptional(files.acknowledged) || '[]').includes(id);
+}
+
+function clearAcceptedReceipt(files, receipt) {
+  const ids = JSON.parse(readOptional(files.acknowledged) || '[]');
+  const id = receiptIdentity(receipt);
+  if (!ids.includes(id)) ids.push(id);
+  durableWrite(files.acknowledged, ids);
+  fs.unlinkSync(files.receipt);
 }
 
 export function paneState(pane, expectedRunner) {
@@ -173,21 +211,43 @@ export function paneState(pane, expectedRunner) {
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE ??
     tmux(['capture-pane', '-p', '-t', pane, '-S', '-40']);
   const safety = paneSafety(tail, runner);
-  const { obs, receipt: receiptPath } = paths(meta);
+  const files = paths(meta);
+  const { obs } = files;
   const native = runners.has(state)
     ? nativeState(meta, state, obs)
     : { phase: state === 'shell' ? 'idle' : 'unknown', source: 'process', question: null };
-  const rawReceipt = readOptional(receiptPath);
-  let receipt = rawReceipt ? JSON.parse(rawReceipt) : null;
+  const receipt = readReceipt(files);
   let accepted = receipt?.accepted || null;
+  if (
+    accepted &&
+    (accepted.receipt_id !== receiptIdentity(receipt) ||
+      accepted.payload_hash !== receipt.payload_hash ||
+      accepted.session_id !== receipt.session_id ||
+      accepted.session_id !== native.session_id)
+  )
+    accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt(meta, state, obs, receipt);
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
-        accepted.receipt_id = receipt.receipt_id || hash(JSON.stringify(receipt));
-        receipt.accepted = accepted;
-        fs.writeFileSync(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
+        accepted.receipt_id = receiptIdentity(receipt);
+        // An inspection may finish after another process has acknowledged or sent.
+        // Persist only under the shared mutation lock and for the same receipt.
+        if (acquireLock(files)) {
+          try {
+            const current = readReceipt(files);
+            if (
+              current &&
+              receiptIdentity(current) === accepted.receipt_id &&
+              current.payload_hash === accepted.payload_hash
+            ) {
+              durableWrite(files.receipt, { ...current, accepted });
+            }
+          } finally {
+            fs.rmdirSync(files.lock);
+          }
+        }
       }
     }
   }
@@ -247,32 +307,27 @@ export function paneState(pane, expectedRunner) {
 
 export function acknowledgeAcceptance(pane, runner, receiptId) {
   const before = paneState(pane, runner);
-  let verification =
-    before.state !== runner
-      ? 'wrong_runner'
-      : !before.accepted
-        ? 'no_accepted_receipt'
-        : before.accepted.receipt_id !== receiptId
-          ? 'receipt_mismatch'
-          : null;
+  let verification = before.state !== runner ? 'wrong_runner' : null;
   const files = paths(before);
   let locked = false;
   try {
     if (!verification) {
-      try {
-        fs.mkdirSync(files.lock, { mode: 0o700 });
-        locked = true;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        verification = 'driver_busy';
-      }
+      locked = acquireLock(files);
+      if (!locked)
+        verification = wasAcknowledged(files, receiptId) ? 'already_acknowledged' : 'driver_busy';
     }
     if (!verification) {
       const current = paneState(pane, runner);
-      if (current.state !== runner || current.accepted?.receipt_id !== receiptId)
-        verification = 'receipt_mismatch';
+      if (current.state !== runner) verification = 'wrong_runner';
+      else if (wasAcknowledged(files, receiptId)) {
+        const pending = readReceipt(files);
+        if (pending && receiptIdentity(pending) === receiptId) fs.unlinkSync(files.receipt);
+        verification = 'already_acknowledged';
+      } else if (!current.accepted)
+        verification = readReceipt(files) ? 'receipt_unverified' : 'no_accepted_receipt';
+      else if (current.accepted.receipt_id !== receiptId) verification = 'receipt_mismatch';
       else {
-        fs.unlinkSync(files.receipt);
+        clearAcceptedReceipt(files, readReceipt(files));
         verification = 'acceptance_acknowledged';
       }
     }
@@ -284,7 +339,7 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
     action_kind: runner,
     receipt_id: receiptId,
     verification,
-    acknowledged: verification === 'acceptance_acknowledged',
+    acknowledged: ['acceptance_acknowledged', 'already_acknowledged'].includes(verification),
     accepted: before.accepted,
   };
 }
@@ -325,13 +380,8 @@ export async function answerQuestion(pane, runner, fingerprint, actions, tracePa
   let locked = false;
   try {
     if (!verification) {
-      try {
-        fs.mkdirSync(files.lock, { mode: 0o700 });
-        locked = true;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        verification = 'driver_busy';
-      }
+      locked = acquireLock(files);
+      if (!locked) verification = 'driver_busy';
     }
     if (!verification) {
       const current = paneState(pane, runner);
@@ -397,13 +447,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
   let locked = false;
   try {
     if (!verification) {
-      try {
-        fs.mkdirSync(files.lock, { mode: 0o700 });
-        locked = true;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        verification = 'driver_busy';
-      }
+      locked = acquireLock(files);
+      if (!locked) verification = 'driver_busy';
     }
     if (!verification) {
       before = paneState(pane, runner);
@@ -432,7 +477,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             before_turn_token: before.turn_token,
             typed: false,
           };
-          fs.writeFileSync(files.receipt, JSON.stringify(receipt), { mode: 0o600 });
+          durableWrite(files.receipt, receipt);
         }
       }
       if (!verification) {
@@ -453,7 +498,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           }
           if (receipt) {
             receipt.typed = true;
-            fs.writeFileSync(files.receipt, JSON.stringify(receipt), { mode: 0o600 });
+            durableWrite(files.receipt, receipt);
           }
         }
         after = paneState(pane, runner);
@@ -477,6 +522,27 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   : null
                 : after.accepted || acceptedPrompt(after, runner, files.obs, receipt);
             if (evidence) {
+              if (runner !== 'shell') {
+                const current = readReceipt(files);
+                const id = receiptIdentity(receipt);
+                evidence = {
+                  ...evidence,
+                  receipt_id: evidence.receipt_id || id,
+                  payload_hash: evidence.payload_hash || receipt.payload_hash,
+                };
+                if (
+                  !current ||
+                  receiptIdentity(current) !== id ||
+                  current.payload_hash !== receipt.payload_hash ||
+                  evidence.receipt_id !== id ||
+                  evidence.payload_hash !== receipt.payload_hash
+                ) {
+                  evidence = null;
+                  verification = 'receipt_mismatch';
+                  break;
+                }
+                clearAcceptedReceipt(files, current);
+              }
               verification = 'submitted';
               break;
             }

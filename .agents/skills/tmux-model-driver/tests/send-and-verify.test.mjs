@@ -56,6 +56,8 @@ readline.createInterface({input:process.stdin}).on('line', line=> {
   );
   fs.writeFileSync(path.join(dir, 'mode'), 'accept');
   tmux([
+    '-f',
+    '/dev/null',
     'new-session',
     '-d',
     '-s',
@@ -83,9 +85,7 @@ after(() => {
   }
 });
 
-function reset(mode = 'accept') {
-  fs.writeFileSync(path.join(dir, 'mode'), mode);
-  fs.writeFileSync(path.join(dir, 'received'), '');
+function recordIdle() {
   const row = {
     runner: 'claude',
     tmuxPane: pane,
@@ -100,6 +100,12 @@ function reset(mode = 'accept') {
     path.join(dir, 'panes', `${encodeURIComponent(pane)}.json`),
     JSON.stringify(row),
   );
+}
+
+function reset(mode = 'accept') {
+  fs.writeFileSync(path.join(dir, 'mode'), mode);
+  fs.writeFileSync(path.join(dir, 'received'), '');
+  recordIdle();
   delete process.env.TMUX_PANE_STATE_TAIL_CAPTURE;
   if (fs.existsSync(path.join(dir, 'state')))
     fs.rmSync(path.join(dir, 'state'), { recursive: true });
@@ -143,24 +149,35 @@ test('exact hook digest and new native turn prove one submitted prompt', async (
   assert.equal(paneState(pane, 'claude').accepted, null);
 });
 
-test('late acceptance survives repeated inspection until the lane owner acknowledges it', async () => {
-  reset('drop');
-  assert.equal((await send(pane, 'claude', 'late accepted prompt')).verification, 'unverified');
-  const receiptFile = path.join(
+test('two completed sends need no explicit acknowledgement', async () => {
+  reset();
+  const first = await send(pane, 'claude', 'first sequential prompt');
+  assert.equal(first.verification, 'submitted');
+  assert.equal(paneState(pane, 'claude').accepted, null);
+  recordIdle();
+  const second = await send(pane, 'claude', 'second sequential prompt');
+  assert.equal(second.verification, 'submitted');
+  assert.deepEqual(received(), ['first sequential prompt', 'second sequential prompt']);
+});
+
+const activeReceiptFile = () =>
+  path.join(
     dir,
     'state',
-    fs.readdirSync(path.join(dir, 'state')).find((file) => file.endsWith('.json')),
+    fs
+      .readdirSync(path.join(dir, 'state'))
+      .find((file) => file.endsWith('.json') && !file.endsWith('.acknowledged.json')),
   );
-  const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
-  const now = Date.now();
+
+function recordAcceptance(receipt) {
   const hook = {
     runner: 'claude',
     tmuxPane: pane,
     session_id: 'fixture',
     rootSessionId: 'fixture',
     hook_event_name: 'UserPromptSubmit',
-    observedAt: now,
-    turnStartedAt: now,
+    observedAt: Date.now(),
+    turnStartedAt: Date.now(),
     turnActive: true,
     runnerPromptDigest: receipt.digest,
   };
@@ -169,6 +186,14 @@ test('late acceptance survives repeated inspection until the lane owner acknowle
     path.join(dir, 'panes', `${encodeURIComponent(pane)}.json`),
     JSON.stringify(hook),
   );
+}
+
+test('late acceptance survives repeated inspection until the lane owner acknowledges it', async () => {
+  reset('drop');
+  assert.equal((await send(pane, 'claude', 'late accepted prompt')).verification, 'unverified');
+  const receiptFile = activeReceiptFile();
+  const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  recordAcceptance(receipt);
   const first = paneState(pane, 'claude');
   const second = paneState(pane, 'claude');
   assert.equal(first.accepted.receipt_id, receipt.receipt_id);
@@ -194,7 +219,63 @@ test('late acceptance survives repeated inspection until the lane owner acknowle
     'acceptance_acknowledged',
   );
   assert.equal(paneState(pane, 'claude').accepted, null);
+  assert.equal(
+    acknowledgeAcceptance(pane, 'claude', receipt.receipt_id).verification,
+    'already_acknowledged',
+  );
   assert.deepEqual(received(), ['late accepted prompt']);
+});
+
+test('an overlapping inspection cannot overwrite a newer receipt', async (t) => {
+  reset('drop');
+  await send(pane, 'claude', 'older inspected prompt');
+  const file = activeReceiptFile();
+  const older = JSON.parse(fs.readFileSync(file, 'utf8'));
+  recordAcceptance(older);
+  const newer = {
+    ...older,
+    receipt_id: 'newer-receipt',
+    payload_hash: 'newer-payload-hash',
+    payload: 'newer queued prompt',
+    sent_at: Date.now() + 1000,
+  };
+  const read = fs.readFileSync;
+  let overlapped = false;
+  const lock = file.replace(/\.json$/, '.lock');
+  t.mock.method(fs, 'readFileSync', function (target, ...args) {
+    const value = read.call(fs, target, ...args);
+    if (target === file && !overlapped) {
+      overlapped = true;
+      fs.mkdirSync(lock);
+      try {
+        fs.writeFileSync(file, JSON.stringify(newer), { mode: 0o600 });
+      } finally {
+        fs.rmdirSync(lock);
+      }
+    }
+    return value;
+  });
+  paneState(pane, 'claude');
+  assert.equal(overlapped, true);
+  assert.deepEqual(JSON.parse(read.call(fs, file, 'utf8')), newer);
+});
+
+test('duplicate late acknowledgement preserves an intervening delivery', async () => {
+  reset('drop');
+  await send(pane, 'claude', 'observer-owned late prompt');
+  const old = JSON.parse(fs.readFileSync(activeReceiptFile(), 'utf8'));
+  recordAcceptance(old);
+  assert.equal(acknowledgeAcceptance(pane, 'claude', old.receipt_id).acknowledged, true);
+  recordIdle();
+  await send(pane, 'claude', 'next pending prompt');
+  const currentFile = activeReceiptFile();
+  const current = JSON.parse(fs.readFileSync(currentFile, 'utf8'));
+  assert.notEqual(current.receipt_id, old.receipt_id);
+  assert.equal(
+    acknowledgeAcceptance(pane, 'claude', old.receipt_id).verification,
+    'already_acknowledged',
+  );
+  assert.deepEqual(JSON.parse(fs.readFileSync(currentFile, 'utf8')), current);
 });
 
 test('explicit question answer requires the captured fingerprint and expected runner', async () => {

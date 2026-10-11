@@ -131,9 +131,12 @@ def _observe(config, lane, pane, record):
     _update(config, lane["id"], {"pane_id": pane, **observed})
     if accepted.get("receipt_id"):
         result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
-                      accepted["receipt_id"]], env=_env(config, lane, _record(config, lane["id"])))
-        if not json.loads(result.stdout).get("acknowledged"):
-            raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed")
+                      accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
+                     env=_env(config, lane, _record(config, lane["id"])), check=False)
+        acknowledgement = json.loads(result.stdout)
+        if not acknowledgement.get("acknowledged") and acknowledgement.get("verification") not in {
+                "driver_busy", "no_accepted_receipt"}:
+            raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed: {acknowledgement}")
     return observation
 
 

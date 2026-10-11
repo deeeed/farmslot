@@ -171,6 +171,32 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(output["status"], "existing")
         self.assertEqual(sum(Path(argv[1]).name == "ack-acceptance.sh" for argv in calls), 1)
 
+    def test_concurrent_acknowledgements_do_not_abort_observers(self):
+        for verification in ("driver_busy", "no_accepted_receipt"):
+            with self.subTest(verification=verification):
+                def command(argv, **kwargs):
+                    if "list-panes" in argv:
+                        return result("%1\n")
+                    if Path(argv[1]).name == "ack-acceptance.sh":
+                        return result(json.dumps({"acknowledged": False, "verification": verification}), 2)
+                    return result(json.dumps({"state": "codex", "phase": "idle", "accepted": {
+                        "receipt_id": "shared-accepted-receipt", "payload_hash": "known-prompt"}}))
+                with patch.object(lanes, "run", side_effect=command):
+                    self.assertEqual(lanes.observe(self.config, "one")["status"], "idle")
+                self.assertEqual(lanes._record(self.config, "one")["last_delivery"]["receipt_id"], "shared-accepted-receipt")
+
+    def test_mismatched_acknowledgement_still_refuses(self):
+        def command(argv, **kwargs):
+            if "list-panes" in argv:
+                return result("%1\n")
+            if Path(argv[1]).name == "ack-acceptance.sh":
+                return result(json.dumps({"acknowledged": False, "verification": "receipt_mismatch"}), 2)
+            return result(json.dumps({"state": "codex", "phase": "idle", "accepted": {
+                "receipt_id": "changed-receipt", "payload_hash": "known-prompt"}}))
+        with patch.object(lanes, "run", side_effect=command):
+            with self.assertRaisesRegex(RuntimeError, "receipt_mismatch"):
+                lanes.observe(self.config, "one")
+
     def test_late_goal_acceptance_prevents_duplicate_retry(self):
         goal = "/goal Complete the approved task"
         lanes._update(self.config, "one", {"goal_payload": goal, "goal_submitted": False})
