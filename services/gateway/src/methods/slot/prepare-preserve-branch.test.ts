@@ -167,6 +167,43 @@ test('recovery without a local or published branch fails closed and retains the 
   assert.equal(readFileSync(path.join(slot, 'file.txt'), 'utf8'), 'uncommitted work\n');
 });
 
+test('an early recovery cannot seed a published review branch from main after a ref-lock failure', async () => {
+  const slot = freshSlot('review-locked-ref-slot');
+  git(slot, 'update-ref', 'refs/remotes/origin/published-work', baseHead);
+  const lock = path.join(slot, '.git/refs/remotes/origin/published-work.lock');
+  mkdirSync(path.dirname(lock), { recursive: true });
+  writeFileSync(lock, 'interrupted fetch\n');
+  await assert.rejects(
+    slotPrepare(
+      { ...params, branch: 'published-work', flowType: 'review-pr' },
+      () => {},
+      undefined,
+      {
+        preserveBranch: true,
+        allowMissingReplayBranch: true,
+      },
+    ),
+    /remote absence is unconfirmed.*cannot lock ref/s,
+  );
+  assert.throws(() => git(slot, 'show-ref', '--verify', 'refs/heads/published-work'));
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), baseHead);
+  assert.equal(readFileSync(lock, 'utf8'), 'interrupted fetch\n');
+});
+
+test('an early recovery cannot treat an unreachable remote as an absent branch', async () => {
+  const slot = freshSlot('unreachable-first-branch-slot');
+  git(slot, 'remote', 'set-url', 'origin', path.join(root, 'unreachable.git'));
+  await assert.rejects(
+    slotPrepare({ ...params, branch: 'unseen-work', flowType: 'dev' }, () => {}, undefined, {
+      preserveBranch: true,
+      allowMissingReplayBranch: true,
+    }),
+    /remote absence is unconfirmed.*repository/s,
+  );
+  assert.throws(() => git(slot, 'show-ref', '--verify', 'refs/heads/unseen-work'));
+  assert.equal(git(slot, 'rev-parse', 'HEAD'), baseHead);
+});
+
 test('QA recovery in a new clone lands on the frozen head even when the published branch moved', async () => {
   const slot = freshSlot('qa-cold-slot');
   const result = await slotPrepare(

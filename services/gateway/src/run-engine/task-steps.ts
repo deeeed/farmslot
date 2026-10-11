@@ -271,7 +271,7 @@ export async function executeGradeStep(
     updateRun(runId, { ticketData });
     await refreshRunLinks(runId);
   }
-  let summaryBranchUpdate: Partial<Run> | undefined;
+  let summaryBranchUpdate: Pick<Partial<Run>, 'summary' | 'branch'> | undefined;
   if (ticketData) {
     inputs.ticketSource = ticketData.source;
   }
@@ -659,7 +659,7 @@ export async function executeWriteTaskStep(
 
   // Generate summary if not already set (GRADE step sets it for fix-bug flows)
   const afterFetch = getRun(runId)!;
-  let summaryBranchUpdate: Partial<Run> | undefined;
+  let summaryBranchUpdate: Pick<Partial<Run>, 'summary' | 'branch'> | undefined;
   if (!afterFetch.summary && afterFetch.ticketData) {
     try {
       if (afterFetch.flowType === 'review-pr' || afterFetch.flowType === 'pr-complete') {

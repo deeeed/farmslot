@@ -56,6 +56,9 @@ function copyDefinedKeys(
   return safe;
 }
 
+/** Recovery continues worker-owned work in every flow. Non-review flows,
+ * including update-branch, retain the local tip; integration uses mergeMain or
+ * the worker's workflow. Review/QA prepare can refresh a clean tree safely. */
 export function prepareReusesRunBranch(run: Pick<Run, 'recoveryAttempts'>): boolean {
   return run.recoveryAttempts?.at(-1)?.status === 'started';
 }

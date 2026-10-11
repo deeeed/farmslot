@@ -211,7 +211,11 @@ test('prepare fetches only possible backing refs and keeps timeout diagnostics',
 test('review refresh preserves an unpublished old tip in a durable ref before reset', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);
   const tip = git(repo, 'rev-parse', 'HEAD');
-  await assertPrepareCommitsPublished(vars, BRANCH, bash, 'main', true);
+  const preserved: string[] = [];
+  await assertPrepareCommitsPublished(vars, BRANCH, bash, 'main', true, (ref) =>
+    preserved.push(ref),
+  );
+  assert.deepEqual(preserved, ['refs/farmslot/preserved/' + tip]);
   assert.equal(git(repo, 'rev-parse', 'refs/farmslot/preserved/' + tip), tip);
   git(repo, 'reset', '--hard', 'origin/main');
   assert.equal(git(repo, 'show', 'refs/farmslot/preserved/' + tip + ':fix.txt'), 'fix.txt');

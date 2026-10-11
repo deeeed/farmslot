@@ -85,6 +85,7 @@ export async function assertPrepareCommitsPublished(
   exec: typeof execOnSlot = execOnSlot,
   defaultBranch = DEFAULT_BRANCH,
   preserveUnpublished = false,
+  onPreserved?: (ref: string) => void,
 ): Promise<void> {
   const refs = new Set(['HEAD']);
   if (branch && (await localBranchExists(vars, branch, exec))) refs.add(`refs/heads/${branch}`);
@@ -176,7 +177,7 @@ export async function assertPrepareCommitsPublished(
         // of branches can take minutes and is unnecessary for this proof.
         const fetch = await exec(
           vars,
-          `${git} fetch ${shellQuote(remote)} ${shellQuote(remoteBranchRefspec(name, remote))}`,
+          `${git} fetch --no-tags ${shellQuote(remote)} ${shellQuote(remoteBranchRefspec(name, remote))}`,
         );
         if (fetch.exitCode !== 0) {
           firstFailure ??= prepareGitFailure(
@@ -206,6 +207,8 @@ export async function assertPrepareCommitsPublished(
       );
       if (backup.exitCode !== 0)
         throw prepareGitFailure(`Cannot preserve ${ref}; current work untouched`, backup);
+      // Retain until the operator publishes or explicitly discards these commits.
+      onPreserved?.(preserved);
       console.log(
         `[prepare] preserved ${ref} at ${preserved} before refreshing the review workspace`,
       );

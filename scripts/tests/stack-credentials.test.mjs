@@ -360,7 +360,7 @@ test('configured sandbox lifecycle hooks select current support over an older ch
   ]) {
     const command = hook
       .replaceAll('{{repo}}', f.root)
-      .replaceAll('{{node_support_dir}}', support)
+      .replaceAll('{{farmslot_dir}}', support)
       .replaceAll('{{port}}', '8808');
     const result = execFileSync('bash', ['-c', command], { env: f.env, encoding: 'utf8' });
     assert.match(result, /^(start|health|stop) /);
