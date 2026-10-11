@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Sandbox gateways, nodes and child clients use a private runtime home, isolated from the operator credential store even when checkout environment files reload.
+- Prepare refuses to reset or delete a run branch with unpublished commits and names the commits to push or preserve before retrying.
+
 - Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
 
 - Release protects non-terminal slot owners and rechecks the claim before teardown. Runner input verifies a live foreground process before every send, so an exited runner cannot leave task text executing in its shell.

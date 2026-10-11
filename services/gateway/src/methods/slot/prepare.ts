@@ -117,6 +117,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import { assertPrepareCommitsPublished } from './unmerged-work.js';
 
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
@@ -573,6 +574,10 @@ async function slotPrepareInner(
       `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
     )
   ).stdout.trim();
+
+  // The existing preserveBranch path never resets or deletes the branch.
+  if (phaseEnabled('git') && !opts?.preserveBranch)
+    await assertPrepareCommitsPublished(vars, branch || '');
 
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch

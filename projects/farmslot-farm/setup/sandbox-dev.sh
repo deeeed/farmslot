@@ -42,10 +42,10 @@ SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Use the helper beside this support bundle, even when the slot checkout is older.
-source "$SCRIPT_DIR/../../../scripts/lib/stack-credentials.sh"
+source "$SCRIPT_DIR/sandbox-common.sh"
 clear_inherited_gateway_credentials
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
+RUNTIME_DIR="$(sandbox_runtime_dir "$REPO_ROOT")"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
 SHARED_RUNS_MARKER="$RUNTIME_DIR/shared-runs-dir"
@@ -118,29 +118,8 @@ fi
 OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-}"
 OPERATOR_VITE_PORT="${VITE_PORT:-}"
 
-read_primary_repo() {
-  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
-  [[ -f "$project_json" ]] || return 1
-  node -e "
-    const fs = require('fs');
-    const { execFileSync } = require('node:child_process');
-    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    const configured = String(project.primary_repo || '').trim();
-    const primary = configured || execFileSync('git',
-      ['-C', process.argv[2], 'worktree', 'list', '--porcelain', '-z'],
-      { encoding: 'utf8' }).split('\0')[0].slice('worktree '.length);
-    process.stdout.write(primary);
-  " "$project_json" "$REPO_ROOT"
-}
-
-is_primary_checkout() {
-  local primary_repo
-  primary_repo="$(read_primary_repo)" || return 1
-  [[ "$(cd "$REPO_ROOT" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
-}
-
 PRIMARY_CHECKOUT=0
-if is_primary_checkout; then
+if sandbox_is_primary_checkout "$REPO_ROOT"; then
   PRIMARY_CHECKOUT=1
   # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
   if [[ ! "$OPERATOR_GATEWAY_PORT" =~ ^[0-9]+$ || ! "$OPERATOR_VITE_PORT" =~ ^[0-9]+$ ]]; then
@@ -158,6 +137,13 @@ else
     exit 1
   fi
 fi
+ISOLATED_HOME_RECORD="$RUNTIME_DIR/isolated-home"
+if [[ "$PRIMARY_CHECKOUT" != 1 ]]; then isolate_sandbox_home "$RUNTIME_DIR"; fi
+
+# This records the running stack's private home, not scripts or launch freshness.
+sandbox_home_matches() {
+  [[ -f "$ISOLATED_HOME_RECORD" && "$(cat "$ISOLATED_HOME_RECORD")" == "$FARMSLOT_HOME" ]]
+}
 export GATEWAY_PORT
 export VITE_PORT
 
@@ -169,7 +155,7 @@ resolve_primary_runs_dir() {
     return 0
   fi
   local primary_repo
-  primary_repo="$(read_primary_repo)" || return 0
+  primary_repo="$(sandbox_primary_repo "$REPO_ROOT")" || return 0
   local primary_runs="$primary_repo/.runs"
   if [[ -d "$primary_runs" ]]; then
     export FARMSLOT_RUNS_DIR="$primary_runs"
@@ -251,9 +237,12 @@ case "$ACTION" in
       fi
       exit 1
     fi
-    if gateway_health && ui_health; then
+    if gateway_health && ui_health && sandbox_home_matches; then
       echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}, UI on :${VITE_PORT}"
       exit 0
+    fi
+    if ! sandbox_home_matches; then
+      echo "[sandbox-dev] stack must restart with its isolated home" >&2
     fi
     if ! gateway_health; then
       echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
@@ -287,7 +276,7 @@ case "$ACTION" in
 
     resolve_primary_runs_dir
 
-    if gateway_health && ui_health; then
+    if gateway_health && ui_health && sandbox_home_matches; then
       if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
@@ -327,11 +316,13 @@ case "$ACTION" in
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
         export FARMSLOT_RUNS_DIR
       fi
-      exec bash scripts/dev.sh
+      export FARMSLOT_SLOT_REPO="$REPO_ROOT"
+      exec bash "$SCRIPT_DIR/../../../scripts/dev.sh"
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 
     if wait_for_gateway 90 && wait_for_ui 90; then
+      (umask 077; printf '%s\n' "$FARMSLOT_HOME" >"$ISOLATED_HOME_RECORD")
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
         write_shared_runs_marker "$FARMSLOT_RUNS_DIR"
       else
