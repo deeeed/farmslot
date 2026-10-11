@@ -52,11 +52,15 @@ async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Prom
   await deleteRun(runId);
 }
 
-test('rollback release keeps a blocked replay eligible to acquire proof again', () => {
-  assert.deepEqual(rollbackReclaimedSlotReleaseOptions('blocked', 'run-1'), {
-    restartRunId: 'run-1',
+test('rollback release preserves live posture and binds every replay status to its reclaim epoch', () => {
+  for (const status of ['blocked', 'human-gating', 'paused', 'ci-watching'] as const)
+    assert.deepEqual(rollbackReclaimedSlotReleaseOptions(status, 'run-1', 7), {
+      restartRunId: 'run-1',
+      expectedSlotEpoch: 7,
+    });
+  assert.deepEqual(rollbackReclaimedSlotReleaseOptions('failed', 'run-1', 7), {
+    expectedSlotEpoch: 7,
   });
-  assert.equal(rollbackReclaimedSlotReleaseOptions('failed', 'run-1'), undefined);
 });
 
 test('workspace replay rejects launch and runner changes without mutating the attempt', async (context) => {
