@@ -441,6 +441,7 @@ export function runOwnedRecipeProcess(
     }
     if (options.input !== undefined) {
       child.stdin!.on('error', (error: NodeJS.ErrnoException) => {
+        // Early stdin closure is represented by the child's exit result; a settled run is final.
         if (error.code === 'EPIPE' || settled) return;
         failure ??= error;
         stop('SIGKILL');
