@@ -120,6 +120,26 @@ test('the package summary prefers the prepared package over the worker payload',
   });
 });
 
+test('gate summary preserves the shared command receipt and its log for rendering', () => {
+  const decision = gateDecision();
+  const payload = decision.payload as ReadyGatePayload;
+  const checks = [
+    {
+      checklist: 'CHECKLIST.md',
+      stepNumber: 2,
+      reference: 'ci.local_check',
+      command: 'yarn ci:local',
+      status: 'passed' as const,
+      exitCode: 0,
+      logPath: 'artifacts/deterministic-checks/CHECKLIST.md/check.log',
+      inputHash: 'hash',
+      message: '',
+    },
+  ];
+  payload.prPackage!.deterministicChecks = checks;
+  assert.deepEqual(gateReviewSummary(decision).deterministicChecks, checks);
+});
+
 test('live publish-gate reviews win over the snapshot the gate opened with', () => {
   const live = [review({ id: 'live' })];
   assert.deepEqual(

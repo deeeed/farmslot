@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
+  deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const {
   parseTaskDirMarkArgs,
@@ -449,6 +450,12 @@ function resolveTarget(taskPath, stepNumber, markLast) {
     // Also covers `--mark-last`: the parent must not tick a box whose child is
     // still open, whichever way the row was chosen.
     assertStepNotOwnedBySubtask(item.stepNumber);
+    try {
+      deterministicChecks.execute(path.dirname(taskPath), path.basename(taskPath), item.stepNumber);
+    } catch (error) {
+      console.error(error.message);
+      process.exit(1);
+    }
     const nextLines = [...parsed.lines];
     markStepInLines(nextLines, item);
     updated = nextLines.join('\n');

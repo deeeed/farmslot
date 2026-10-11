@@ -192,6 +192,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     handoff: handoffMetadata,
     terminalContract,
     bugInput: spec.bugInput,
+    deterministicCommands: vars,
   });
   return { ...written, executionTemplate, handoffMetadata };
 }

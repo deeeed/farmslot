@@ -47,6 +47,24 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
         ? html`<gate-summary-panel .summary=${ctx.payload.gateSummary}></gate-summary-panel>`
         : nothing}
       <div class="rdy-package-summary">
+        ${(ctx.payload.prPackage?.deterministicChecks ?? []).map(
+          (check) =>
+            html` <div class="rdy-package-facts" data-ci-parity-status=${check.status}>
+              <strong>CI parity</strong>
+              <code>${check.command ?? check.reference}</code>
+              <span>${check.status} · exit ${check.exitCode ?? '-'}</span>
+              ${check.logPath
+                ? html`<button
+                    class="rdy-cockpit-link"
+                    @click=${() =>
+                      ctx.openPackageArtifact({ path: check.logPath!, purpose: 'ci-parity-log' })}
+                  >
+                    View log
+                  </button>`
+                : nothing}
+              ${check.message ? html`<span>${check.message}</span>` : nothing}
+            </div>`,
+        )}
         <div class="rdy-package-header">
           <div class="rdy-package-title">
             <strong>Pre-publication cockpit</strong>

@@ -2103,6 +2103,7 @@ async function sendOwnedFeedbackToWorker(
   const pv = await loadProjectVars(project);
 
   const replacements: Record<string, string> = {
+    CI_PARITY_CHECKLIST: REVIEW_FIX_CHECKLIST_TARGET.checklist,
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
     TICKET: run?.ticketOrPr ?? '',
