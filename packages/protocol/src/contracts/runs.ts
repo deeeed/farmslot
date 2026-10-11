@@ -2584,7 +2584,8 @@ export interface RunEngineState {
   reviewInputsAtLaunch?: string;
   /** Persisted before branch mutations. started=false for the same branch proves
    * setup never began; absent historical state is unknown. First branch assignment
-   * can precede slot binding. slotId records the original binding for diagnostics. */
+   * can precede slot binding. slotId identifies original work which cross-slot
+   * replay must verify before changing the replacement clone. */
   prepareBranch?: { slotId?: string; branch: string; started: boolean };
   /** Durable worker-launch history. False only for a newly created run, true
    * before any dispatch/handoff; absent historical history is unknown. Replay

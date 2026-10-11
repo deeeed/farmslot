@@ -197,6 +197,11 @@ test('worker launch history persists before dispatch and survives replay resets'
     },
   });
   assert.equal(recoveryMayInitializeBranch(getRun(run.id)!), true);
+  for (const replacement of [undefined, { flags: { warmRecovery: true } }]) {
+    const noWorker = updateRun(run.id, { engineState: replacement });
+    assert.equal(noWorker.engineState?.workerLaunchStarted, false);
+    assert.equal(recoveryMayInitializeBranch(noWorker), true);
+  }
   await recordWorkerLaunchStarting(run.id);
   const reset = updateRun(run.id, {
     steps: run.steps.map((step) => ({
@@ -208,6 +213,15 @@ test('worker launch history persists before dispatch and survives replay resets'
   });
   assert.equal(reset.engineState?.workerLaunchStarted, true);
   assert.equal(recoveryMayInitializeBranch(reset), false);
+  const identity = reset.engineState?.prepareBranch;
+  for (const stale of [
+    undefined,
+    { workerLaunchStarted: false },
+    { flags: { warmRecovery: true } },
+  ]) {
+    assert.equal(updateRun(run.id, { engineState: stale }).engineState?.workerLaunchStarted, true);
+    assert.deepEqual(getRun(run.id)?.engineState?.prepareBranch, identity);
+  }
   const persisted = JSON.parse(readFileSync(path.join(root, run.id + '.json'), 'utf8'));
   assert.equal(persisted.engineState.workerLaunchStarted, true);
 });

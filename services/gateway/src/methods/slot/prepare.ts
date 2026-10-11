@@ -89,7 +89,11 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
-import { recoveryBranchAction } from './prepare-recovery.js';
+import {
+  type RecoveryBranchAction,
+  recoveryBranchAction,
+  type RecoveryBranchPresence,
+} from './prepare-recovery.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -812,34 +816,42 @@ async function slotPrepareInner(
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
     const localExists = await localBranchExists(vars, branch);
+    let presence: RecoveryBranchPresence = localExists ? 'local' : 'unknown';
+    let fetchFailure = '';
     if (!localExists) {
-      // A different clone may not have this published run branch yet. Restore
-      // it without reset/clean; Git must refuse any conflicting local work.
       const published = await fetchRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
         execOnSlot(vars, command),
       );
+      if (published.exitCode === 0) presence = 'published';
+      else {
+        fetchFailure = `Fetch failed (exit ${published.exitCode}): ${published.stderr.slice(-800) || published.stdout.slice(-800)}`;
+        // No-worker authority is required before even considering a fresh base.
+        if (opts.allowMissingReplayBranch) {
+          const probe = await probeRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
+            execOnSlot(vars, command),
+          );
+          presence = probe.presence === 'missing' ? 'missing' : 'unknown';
+          fetchFailure += ` ${probe.result.stderr.slice(-200)}`;
+        }
+      }
+    }
+    let action: RecoveryBranchAction;
+    try {
+      action = recoveryBranchAction({
+        branch,
+        presence,
+        workerNeverStarted: opts.allowMissingReplayBranch === true,
+        sourceWorkSafe: true, // Original cross-slot work was verified above.
+      });
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} ${fetchFailure}`.trim(),
+      );
+    }
+    if (!localExists) {
+      // Restore without reset/clean; Git must refuse conflicting local files.
       let base = `origin/${branch}`;
-      if (published.exitCode !== 0) {
-        if (!opts.allowMissingReplayBranch)
-          throw new Error(
-            `Replay cannot preserve ${branch}: no local branch or fetchable published branch on ${params.slotId}. ` +
-              `Restore or push the run branch before retrying; no local refs were reset or deleted. ${published.stderr.slice(-800) || published.stdout.slice(-800)}`,
-          );
-        const presence = await probeRemoteBranch(vars.remoteRepo, 'origin', branch, (command) =>
-          execOnSlot(vars, command),
-        );
-        if (presence.presence !== 'missing')
-          throw new Error(
-            `Replay cannot initialize ${branch}: remote absence is unconfirmed after fetch failed (exit ${published.exitCode}): ${published.stderr.slice(-800) || published.stdout.slice(-800)}. ${presence.result.stderr.slice(-200)} No local refs were reset or deleted.`,
-          );
-        recoveryBranchAction({
-          branch,
-          presence: 'missing',
-          workerNeverStarted: opts.allowMissingReplayBranch === true,
-          sourceWorkSafe: true,
-        });
-        // Durable proof the worker never launched permits a fresh base, even
-        // when branch setup finished before a later prepare phase failed.
+      if (action === 'fresh') {
         const fetch = await fetchRemoteBranch(vars.remoteRepo, 'origin', defaultBranch, (command) =>
           execOnSlot(vars, command),
         );

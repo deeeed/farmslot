@@ -56,7 +56,11 @@ export function prepareReusesRunBranch(run: Pick<Run, 'recoveryAttempts'>): bool
  * intent alone cannot prove a historical worker never ran. */
 export function recoveryMayInitializeBranch(run: Pick<Run, 'branch' | 'engineState'>): boolean {
   const state = run.engineState;
-  return state?.prepareBranch?.branch === run.branch && state?.workerLaunchStarted === false;
+  return (
+    !!run.branch &&
+    state?.prepareBranch?.branch === run.branch &&
+    state?.workerLaunchStarted === false
+  );
 }
 
 /** Persist before fresh launch, nudge or retained handoff. A failed/uncertain

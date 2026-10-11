@@ -18,7 +18,7 @@ export function recoveryBranchAction(state: RecoveryBranchState): RecoveryBranch
   if (state.presence === 'local' || state.presence === 'published') return 'preserve';
   if (state.presence === 'unknown')
     throw new Error(
-      `Replay cannot initialize ${state.branch}: remote absence is unconfirmed. Restore access to the remote before retrying; no branch was reset or deleted.`,
+      `Replay cannot ${state.workerNeverStarted ? 'initialize' : 'preserve'} ${state.branch}: remote absence is unconfirmed. Restore access to the remote before retrying; no branch was reset or deleted.`,
     );
   if (state.workerNeverStarted) return 'fresh';
   throw new Error(
