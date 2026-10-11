@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type Command, Option } from 'commander';
 
 import {
-  type RecordedEvidencePackageInput,
+  readRecordedEvidencePackage,
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
@@ -20,13 +19,11 @@ import {
   type RecipeProjectHookRunResult,
   type RecipeValidationFinding,
   type RecipeValidationResult,
-  resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
 import {
   applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
-  digestFileWithinRoot,
   type RecipeRunRequest,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
@@ -132,40 +129,6 @@ function addArtifactCheck(
   checks.push({ id, status, message });
 }
 
-async function readArtifactJson(artifactDir: string, relativePath: string): Promise<unknown> {
-  return readRecipeCliJsonFileWithinRoot(artifactDir, relativePath);
-}
-
-async function readArtifactJsonIfPresent(
-  artifactDir: string,
-  relativePath: string,
-): Promise<{ value?: unknown; error?: string }> {
-  try {
-    return { value: await readArtifactJson(artifactDir, relativePath) };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-async function listRelativeArtifactFiles(root: string): Promise<string[]> {
-  const output: string[] = [];
-
-  async function visit(relativeDir: string): Promise<void> {
-    const entries = await readdir(path.join(root, relativeDir), { withFileTypes: true });
-    for (const entry of entries) {
-      const relativePath = path.join(relativeDir, entry.name);
-      if (entry.isDirectory()) {
-        await visit(relativePath);
-      } else if (entry.isFile() || entry.isSymbolicLink()) {
-        output.push(relativePath.split(path.sep).join('/'));
-      }
-    }
-  }
-
-  await visit('');
-  return output.sort();
-}
-
 function hasSummaryRunnerProvenance(summary: unknown): boolean {
   return readRunnerProvenance(summary, 'runner') !== null;
 }
@@ -217,163 +180,28 @@ export async function validateRecipeArtifactDirectory(
   opts: RecipeArtifactsValidateOptions,
 ): Promise<ArtifactValidationResult> {
   const artifactDir = resolveRecipeCliPath(artifactDirInput);
-  const checks: ArtifactValidationCheck[] = [];
-  const artifactPaths = await listRelativeArtifactFiles(artifactDir);
-  const artifactPathSet = new Set(artifactPaths);
-  const reads = {
-    summary: await readArtifactJsonIfPresent(artifactDir, 'summary.json'),
-    trace: await readArtifactJsonIfPresent(artifactDir, 'trace.json'),
-    manifest: await readArtifactJsonIfPresent(artifactDir, 'artifact-manifest.json'),
-    recipe: artifactPathSet.has('recipe.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe.json')
-      : { value: undefined },
-    invocation: artifactPathSet.has('recipe-invocation.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe-invocation.json')
-      : { value: undefined },
-    claims: artifactPathSet.has('acceptance-status.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'acceptance-status.json')
-      : { value: undefined },
-    recipeResolution: artifactPathSet.has('recipe-resolution.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe-resolution.json')
-      : { value: undefined },
-  };
-
-  for (const [requiredPath, read] of [
-    ['summary.json', reads.summary],
-    ['trace.json', reads.trace],
-    ['artifact-manifest.json', reads.manifest],
-  ] as const) {
-    addArtifactCheck(
-      checks,
-      `file.${requiredPath}`,
-      artifactPathSet.has(requiredPath) && !read.error ? 'pass' : 'fail',
-      !artifactPathSet.has(requiredPath)
-        ? `Missing required Recipe v1 artifact ${requiredPath}.`
-        : read.error
-          ? read.error
-          : `${requiredPath} exists.`,
-    );
-  }
-
-  // These files are optional only when the package omits recipe.json. A present but
-  // unreadable file always fails.
-  for (const optionalPath of ['recipe.json', 'recipe-resolution.json'] as const) {
-    if (!artifactPathSet.has(optionalPath)) continue;
-    const read = optionalPath === 'recipe.json' ? reads.recipe : reads.recipeResolution;
-    addArtifactCheck(
-      checks,
-      `file.${optionalPath}`,
-      read.error ? 'fail' : 'pass',
-      read.error ?? `${optionalPath} is readable.`,
-    );
-  }
-
-  for (const [file, read] of [
-    ['recipe-invocation.json', reads.invocation],
-    ['acceptance-status.json', reads.claims],
-  ] as const) {
-    if (artifactPathSet.has(file))
-      addArtifactCheck(
-        checks,
-        `file.${file}`,
-        read.error ? 'fail' : 'pass',
-        read.error ?? `${file} is readable.`,
-      );
-  }
-
-  const summary = reads.summary.value;
-  const trace = reads.trace.value;
-  const manifest = reads.manifest.value;
-  // Default to the package's own recipe.json; --recipe overrides it for cross-checking.
-  const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : reads.recipe.value;
-  const recipeResolution = reads.recipeResolution.value;
-  const resolvedRecipes: Record<string, unknown> = {};
-  if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
-    for (const dependency of recipeResolution.dependencies) {
-      if (!isRecord(dependency)) continue;
-      const artifact = resolvedRecipeArtifactPath(dependency.digest);
-      if (!artifact) continue;
-      const read = await readArtifactJsonIfPresent(artifactDir, artifact);
-      if (read.value !== undefined) resolvedRecipes[String(dependency.digest)] = read.value;
-      if (read.error) {
-        addArtifactCheck(checks, `file.${artifact}`, 'fail', read.error);
-      }
-    }
-  }
-  const bundle = {
-    recipe,
-    trace,
-    summary,
-    manifest,
-    artifactPaths,
-    recipeResolution,
-    resolvedRecipes,
-  };
-  const artifactDigests: Record<string, string> = {};
-  await Promise.all(
-    artifactPaths.map(async (file) => {
-      try {
-        artifactDigests[file] = await digestFileWithinRoot(artifactDir, file);
-      } catch (error) {
-        addArtifactCheck(
-          checks,
-          `digest.${file}`,
-          'fail',
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }),
-  );
-  const timelines: Record<string, unknown> = {};
-  const declaredTimelines = new Set<string>();
-  const indexed = isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  const claims = reads.claims.value;
-  if (artifactPathSet.has('acceptance-status.json') && !isRecord(claims)) {
-    addArtifactCheck(
-      checks,
-      'claims.shape',
-      'fail',
-      'The retained claim package must be a JSON object.',
-    );
-  }
-  const segments =
-    isRecord(claims) && isRecord(claims.recording) && Array.isArray(claims.recording.segments)
-      ? claims.recording.segments
-      : [];
-  for (const entry of [...indexed, ...segments]) {
-    if (isRecord(entry) && typeof entry.timelinePath === 'string')
-      declaredTimelines.add(entry.timelinePath);
-  }
-  for (const file of declaredTimelines) {
-    const read = await readArtifactJsonIfPresent(artifactDir, file);
-    if (read.value !== undefined) timelines[file] = read.value;
-    addArtifactCheck(
-      checks,
-      `file.${file}`,
-      read.error || read.value === undefined ? 'fail' : 'pass',
-      read.error ??
-        (read.value === undefined ? `Missing declared timeline ${file}.` : `${file} is readable.`),
-    );
-  }
-  if (opts.recipe && reads.recipe.value !== undefined) {
+  const loaded = await readRecordedEvidencePackage(artifactDir);
+  const checks: ArtifactValidationCheck[] = loaded.checks;
+  const retained = loaded.input;
+  const { summary, trace, manifest, artifactDigests } = retained;
+  const artifactPaths = retained.artifactPaths ?? [];
+  // --recipe cross-checks the retained root; it cannot replace a recorded package's root.
+  const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : retained.recipe;
+  const bundle = { ...retained, recipe };
+  if (opts.recipe && retained.recipe !== undefined) {
     addArtifactCheck(
       checks,
       'recipe.matches_retained',
-      digestRecipeDocument(recipe) === digestRecipeDocument(reads.recipe.value) ? 'pass' : 'fail',
+      digestRecipeDocument(recipe) === digestRecipeDocument(retained.recipe) ? 'pass' : 'fail',
       'The supplied recipe must match the retained root recipe.',
     );
   }
   const recorded =
     (isRecord(summary) && typeof summary.recipeRunId === 'string') ||
-    artifactPathSet.has('acceptance-status.json');
+    artifactPaths.includes('acceptance-status.json');
   const recipeValidation = validateRecordedEvidencePackage({
     ...bundle,
-    // An external cross-check cannot replace a missing retained root in a claim package.
-    recipe: recorded ? reads.recipe.value : recipe,
-    invocation: reads.invocation.value,
-    claims: claims as RecordedEvidencePackageInput['claims'],
-    timelines: timelines as RecordedEvidencePackageInput['timelines'],
-    artifactDigests,
+    recipe: recorded ? retained.recipe : recipe,
   });
   let captures: string[] = [];
   if (opts.liveProof) {
@@ -463,7 +291,7 @@ export async function validateRecipeArtifactDirectory(
           ...(opts.liveProof.captureRequired || opts.liveProof.hudRequired ? { captures } : {}),
           artifactDir,
           artifacts: await Promise.all(
-            artifactPaths.sort().map(async (file) => ({
+            [...artifactPaths].sort().map(async (file) => ({
               path: file,
               digest: artifactDigests[file]!,
             })),
@@ -624,8 +452,11 @@ export function registerRecipeCommand(program: Command): void {
               : 'No retained artifact package found; pass its directory explicitly.',
           );
         const artifactDir = distinct[0]!;
-        const summary = await readArtifactJson(artifactDir, 'summary.json');
-        const manifest = await readArtifactJson(artifactDir, 'artifact-manifest.json');
+        const summary = await readRecipeCliJsonFileWithinRoot(artifactDir, 'summary.json');
+        const manifest = await readRecipeCliJsonFileWithinRoot(
+          artifactDir,
+          'artifact-manifest.json',
+        );
         const validation = options.validate
           ? await validateRecipeArtifactDirectory(artifactDir, { requireRunnerProvenance: true })
           : undefined;

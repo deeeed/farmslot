@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.
+
 - Collect opt-in rendered HUD observations around screenshot capture for live conformance.
 - Expose the existing contained artifact digest helper for conformance evidence checks.
 - **BREAKING:** Derive claim verdicts, measured moments and source-frame stills automatically; UI runs require a recording target before execution unless explicitly disabled with a reason. Bound recording and preserve original segments and partial capture, including completed media when lease cleanup fails (ADR-062).
