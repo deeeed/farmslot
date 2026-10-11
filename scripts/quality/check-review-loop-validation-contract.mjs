@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-export const SKILL_PATH = '.agents/skills/fs-cross-review-loop/SKILL.md';
+export const SKILL_PATH = '.agents/skills/cross-model-orchestrator/SKILL.md';
 
 export const REQUIRED_ANCHORS = [
   {

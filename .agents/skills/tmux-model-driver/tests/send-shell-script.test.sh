@@ -1,23 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Real tmux only on a private server: no $TMUX, and a TMUX_TMPDIR this test
-# owns, so plain `tmux` here and in the scripts under test lands on it. Cleanup
-# ends that server by its socket, never the operator's.
+# Every tmux call uses this test's private -L socket, including the driver.
 unset TMUX TMUX_PANE
-TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/fs-tmux-XXXXXX")"
-export TMUX_TMPDIR
-FARMSLOT_TMUX_SANDBOX="$TMUX_TMPDIR/tmux-$(id -u)/default"
-export FARMSLOT_TMUX_SANDBOX
-# With -S, tmux does not create the per-user socket directory it would under TMUX_TMPDIR.
-mkdir -m 700 "$TMUX_TMPDIR/tmux-$(id -u)"
-tmux_sandbox_close() {
-  # The socket exists only if the test started a server.
-  if [ -S "$FARMSLOT_TMUX_SANDBOX" ]; then
-    tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-server 2>/dev/null || true # the server may already be gone
-  fi
-  rm -rf "$TMUX_TMPDIR"
-}
+TMUX_MODEL_DRIVER_SOCKET="driver-shell-test-$$"
+export TMUX_MODEL_DRIVER_SOCKET
+tmux_private() { tmux -L "$TMUX_MODEL_DRIVER_SOCKET" "$@"; }
+tmux_sandbox_close() { tmux_private kill-server 2>/dev/null || true; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/scripts/send-shell-script.sh"
@@ -25,7 +14,7 @@ SCRIPT="$ROOT/scripts/send-shell-script.sh"
 tmp="$(mktemp -d)"
 session="tmux-model-driver-test-$$"
 cleanup() {
-  tmux -S "$FARMSLOT_TMUX_SANDBOX" kill-session -t "$session" 2>/dev/null || true
+  tmux_private kill-session -t "$session" 2>/dev/null || true
   rm -rf "$tmp"
   tmux_sandbox_close
 }
@@ -41,8 +30,8 @@ mkdir -p "$repo" "$stage_root"
 git -C "$repo" init --quiet
 before_status="$(git -C "$repo" status --short)"
 
-tmux -S "$FARMSLOT_TMUX_SANDBOX" new-session -d -s "$session" -c "$repo" 'bash --noprofile --norc'
-pane_id="$(tmux -S "$FARMSLOT_TMUX_SANDBOX" display-message -p -t "$session" '#{pane_id}')"
+tmux_private new-session -d -s "$session" -c "$repo" 'bash --noprofile --norc'
+pane_id="$(tmux_private display-message -p -t "$session" '#{pane_id}')"
 
 {
   printf 'if stat -f %%Lp "$0" >/dev/null 2>&1; then stat -f %%Lp "$0"; else stat -c %%a "$0"; fi > %q\n' "$mode_file"

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCHEMA_PATH = path.join(
   ROOT,
-  '.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json',
+  '.agents/skills/cross-model-orchestrator/templates/CROSS-REVIEW-LOOP.schema.json',
 );
 
 const FINAL_VERDICTS = new Set(['pending', 'clean', 'escalated']);
@@ -79,7 +79,8 @@ function validateCycleRecord(c, ctx) {
   }
   if (!Array.isArray(c.reviewerVerdicts)) return fail(`${ctx}: reviewerVerdicts must be array`);
   c.reviewerVerdicts.forEach((v, i) => validateReviewerVerdict(v, `${ctx}.reviewerVerdicts[${i}]`));
-  if (!Array.isArray(c.findingsSentToWorker)) return fail(`${ctx}: findingsSentToWorker must be array`);
+  if (!Array.isArray(c.findingsSentToWorker))
+    return fail(`${ctx}: findingsSentToWorker must be array`);
   c.findingsSentToWorker.forEach((f, i) => validateFinding(f, `${ctx}.findingsSentToWorker[${i}]`));
 }
 
@@ -88,7 +89,7 @@ function validateFile(filePath) {
   try {
     doc = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (error) {
-    return fail(`${filePath}: invalid JSON: ${(error).message}`);
+    return fail(`${filePath}: invalid JSON: ${error.message}`);
   }
   if (!isObj(doc)) return fail(`${filePath}: root must be object`);
 
@@ -122,9 +123,14 @@ function validateFile(filePath) {
   if (!Array.isArray(doc.requiredReviewers) || doc.requiredReviewers.length < 1) {
     return fail(`${filePath}: requiredReviewers must have >= 1 entry`);
   }
-  doc.requiredReviewers.forEach((r, i) => validateReviewer(r, `${filePath}.requiredReviewers[${i}]`));
-  if (!Array.isArray(doc.optionalReviewers)) return fail(`${filePath}: optionalReviewers must be array`);
-  doc.optionalReviewers.forEach((r, i) => validateReviewer(r, `${filePath}.optionalReviewers[${i}]`));
+  doc.requiredReviewers.forEach((r, i) =>
+    validateReviewer(r, `${filePath}.requiredReviewers[${i}]`),
+  );
+  if (!Array.isArray(doc.optionalReviewers))
+    return fail(`${filePath}: optionalReviewers must be array`);
+  doc.optionalReviewers.forEach((r, i) =>
+    validateReviewer(r, `${filePath}.optionalReviewers[${i}]`),
+  );
   if (!Array.isArray(doc.cycleRecords)) return fail(`${filePath}: cycleRecords must be array`);
   doc.cycleRecords.forEach((c, i) => validateCycleRecord(c, `${filePath}.cycleRecords[${i}]`));
 
