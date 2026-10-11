@@ -54,6 +54,15 @@ export interface ProjectRecipeHost {
   finalize(): Promise<void>;
 }
 
+function aggregateFailures(failures: unknown[]): AggregateError {
+  return new AggregateError(
+    failures,
+    failures
+      .map((failure) => (failure instanceof Error ? failure.message : String(failure)))
+      .join('; '),
+  );
+}
+
 /** Resolve, authorize and compose one invocation through the same direct/hosted path. */
 export function withProjectRecipeHost<T>(
   options: ProjectRecipeHostOptions,
@@ -94,8 +103,7 @@ export function withProjectRecipeHost<T>(
         }
         closed = true;
         if (failures.length === 1) throw failures[0];
-        if (failures.length > 1)
-          throw new AggregateError(failures, 'Recipe cancellation and finalization failed.');
+        if (failures.length > 1) throw aggregateFailures(failures);
       };
       const finalize = (): Promise<void> =>
         (finalization ??= signal ? withRecipeCleanup(closeProvider) : closeProvider());
@@ -203,13 +211,7 @@ export function withProjectRecipeHost<T>(
           await finalize();
         } catch (error) {
           if (outcome.status === 'rejected' && outcome.reason !== error) {
-            const errors = [outcome.reason, error];
-            throw new AggregateError(
-              errors,
-              errors
-                .map((failure) => (failure instanceof Error ? failure.message : String(failure)))
-                .join('; '),
-            );
+            throw aggregateFailures([outcome.reason, error]);
           }
           throw error;
         }

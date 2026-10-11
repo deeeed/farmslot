@@ -6,7 +6,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## 0.13.0 - 2026-10-11
 
-- Project commands preserve resolved library provenance and validate provider options before factory construction. Managed execution carries cancellation through command and live-action children, awaits provider cancellation/finalization before success, and retains authored teardown, including streaming cleanup actions on a fresh cancellation context. Explicit slot selection requires a pool match before provider import. JSONL progress stays live while errors and completion wait for host closeout; superseded refusals remain in stderr diagnostics. Streaming leaves have one second to finish signal traps before escalation.
+- Project commands preserve resolved library provenance and validate provider options before factory construction. Managed execution carries cancellation through command and live-action children, awaits provider cancellation/finalization before success and reports every cleanup failure, and retains authored teardown, including streaming cleanup actions on a fresh cancellation context. Explicit slot selection requires a pool match before provider import. JSONL progress stays live while errors and completion wait for host closeout; superseded refusals remain in stderr diagnostics. Streaming leaves have one second to finish signal traps before escalation.
 
 ## 0.12.0 - 2026-10-11
 

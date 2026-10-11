@@ -265,6 +265,37 @@ test('host preserves both invocation and finalization failures', async (t) => {
   );
 });
 
+test('combined invocation, cancellation and finalization failures retain every message', async (t) => {
+  const options = fixture(t);
+  const owner = new AbortController();
+  const hookLog = path.join(options.cwd, 'hooks.log');
+  await assert.rejects(
+    withProjectRecipeHost(
+      {
+        ...options,
+        command: 'run',
+        signal: owner.signal,
+        options: { hookLog, cancelFail: true, finalizeFail: true },
+      },
+      async () => {
+        owner.abort('SIGTERM');
+        throw new Error('invocation failed');
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.message, 'invocation failed; cancellation failed; finalization failed');
+      assert.ok(error.errors[1] instanceof AggregateError);
+      assert.deepEqual(
+        error.errors[1].errors.map((failure: Error) => failure.message),
+        ['cancellation failed', 'finalization failed'],
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(fs.readFileSync(hookLog, 'utf8').trim().split('\n'), ['cancel', 'finalize']);
+});
+
 test('overlapping project hosts wait for the active invocation before changing state', async (t) => {
   const options = fixture(t);
   let release!: () => void;
