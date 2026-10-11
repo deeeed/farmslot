@@ -575,7 +575,9 @@ async function slotPrepareInner(
     )
   ).stdout.trim();
 
-  if (phaseEnabled('git')) await assertPrepareCommitsPublished(vars, branch || '');
+  // The existing preserveBranch path never resets or deletes the branch.
+  if (phaseEnabled('git') && !opts?.preserveBranch)
+    await assertPrepareCommitsPublished(vars, branch || '');
 
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch
