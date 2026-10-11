@@ -54,28 +54,23 @@
         "test_id": "decision-ci-context",
         "timeout_ms": 30000,
         "intent": "The decision contains its CI comparison.",
-        "next": "scroll-context"
-      },
-      "scroll-context": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 340,
-        "intent": "The two check histories fit together on the phone.",
         "next": "current-ready"
       },
       "current-ready": {
         "action": "ui.wait_for",
-        "text": "Open check",
         "timeout_ms": 45000,
         "intent": "Current GitHub metadata has loaded with check links.",
-        "next": "before"
+        "next": "before",
+        "test_id": "ci-current",
+        "text_contains": ["Status:", "Conclusion:"],
+        "expected": "visible"
       },
       "before": {
         "action": "command",
         "cmd": "node scripts/agentic/ci-context-proof.mjs before",
         "intent": "Record the frozen decision and cached current GitHub read.",
         "proves": ["snapshot-context"],
-        "next": "hud-before"
+        "next": "negative-refresh"
       },
       "hud-before": {
         "action": "app.hud",
@@ -89,7 +84,7 @@
         "label": "CI snapshot and current checks before refresh",
         "intent": "Snapshot and current checks have separate labels and source ages.",
         "covers": ["snapshot-context"],
-        "next": "refresh"
+        "next": "refresh-visible"
       },
       "refresh": {
         "action": "ui.press",
@@ -161,21 +156,16 @@
         "timeout_ms": 30000,
         "intent": "The historical gate explicitly labels its missing metadata.",
         "proves": ["legacy-context"],
-        "next": "legacy-scroll"
-      },
-      "legacy-scroll": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 180,
-        "intent": "Show unrecorded snapshot beside current PR checks.",
         "next": "legacy-current"
       },
       "legacy-current": {
         "action": "ui.wait_for",
-        "text": "Open check",
         "timeout_ms": 45000,
         "intent": "Current checks load independently of the missing snapshot.",
-        "next": "hud-legacy"
+        "next": "hud-legacy",
+        "test_id": "ci-current",
+        "text_contains": ["Status:", "Conclusion:"],
+        "expected": "visible"
       },
       "hud-legacy": {
         "action": "app.hud",
@@ -194,6 +184,29 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "refresh-visible": {
+        "action": "ui.wait_for",
+        "test_id": "decision-ci-refresh",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "Current check refresh is reachable beside both labels.",
+        "next": "refresh"
+      },
+      "negative-refresh": {
+        "action": "command",
+        "cmd": "node scripts/agentic/ci-context-proof.mjs after",
+        "allow_failure": true,
+        "intent": "The freshness assertion must reject an omitted phone refresh.",
+        "next": "negative-detected"
+      },
+      "negative-detected": {
+        "action": "assert_output",
+        "source": "negative-refresh",
+        "stream": "stderr",
+        "contains": "Phone refresh must reload GitHub metadata",
+        "intent": "The protocol proof detects the missing refresh before the real press.",
+        "next": "hud-before"
       }
     }
   }
