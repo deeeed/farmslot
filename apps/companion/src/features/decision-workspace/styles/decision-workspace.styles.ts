@@ -35,6 +35,16 @@ export const decisionWorkspaceStyles = StyleSheet.create({
     marginBottom: spacing.xl,
     padding: spacing.sm,
   },
+  hidden: { display: 'none' },
+  ciContext: { gap: spacing.md },
+  ciComparison: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  ciGroup: { gap: spacing.sm, flex: 1, minWidth: 0 },
+  ciCheck: {
+    borderTopWidth: 1,
+    borderColor: colors.accent + '22',
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
+  },
   beforeAfterPriorityPanel: {
     backgroundColor: colors.accent + '10',
     borderColor: colors.accent + '44',

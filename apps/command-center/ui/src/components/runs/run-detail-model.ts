@@ -784,9 +784,21 @@ export function mergeTrimmedRunDetail(shared: Run, direct: Run | null): Run {
     decisions: shared.decisions.map((decision) => {
       if (!decision.payloadTrimmed?.length) return decision;
       const full = directById.get(decision.id);
-      if (!full?.payload) return decision;
+      if (!full) return decision;
       const { payloadTrimmed: _trimmed, ...rest } = decision;
-      return { ...rest, payload: full.payload };
+      const contextRestored =
+        _trimmed.includes('context.checkSnapshot') && full.context?.checkSnapshot !== undefined;
+      const remaining = _trimmed.filter((key) =>
+        key === 'context.checkSnapshot' ? !contextRestored : !full.payload,
+      );
+      return {
+        ...rest,
+        ...(full.payload ? { payload: full.payload } : {}),
+        ...(contextRestored
+          ? { context: { ...rest.context, checkSnapshot: full.context!.checkSnapshot } }
+          : {}),
+        ...(remaining.length ? { payloadTrimmed: remaining } : {}),
+      };
     }),
   };
 }

@@ -10,11 +10,11 @@
 // gateway (loopback-only, unauthenticated), start the app on it, and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
 import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -112,55 +112,18 @@ const openUrl = (route) => {
   execFileSync('xcrun', ['simctl', 'openurl', simulator, `farmslot-development://${route}`]);
 };
 
-/**
- * Start the app on the fixture gateway: one saved profile for the loopback
- * fixture, active, replacing the gateways earlier runs saved. Setup-time only:
- * the app is stopped, nothing on screen is set, and the connection flow is not
- * what this recipe proves. Uses the React Native AsyncStorage iOS layout: small
- * values inline in manifest.json, large ones in a file named by the key's MD5.
- */
 function seedFixtureGateway(port) {
-  const terminated = spawnSync('xcrun', ['simctl', 'terminate', simulator, bundleId], {
-    encoding: 'utf8',
-  });
-  // simctl reports "found nothing to terminate" when the app is not running, which is the goal.
-  if (terminated.status !== 0 && !/found nothing to terminate/i.test(terminated.stderr)) {
-    throw new Error(`simctl terminate failed: ${terminated.stderr.trim()}`);
-  }
-  const data = execFileSync('xcrun', ['simctl', 'get_app_container', simulator, bundleId, 'data'], {
-    encoding: 'utf8',
-  }).trim();
-  const storage = path.join(
-    data,
-    'Library/Application Support',
+  seedIOSGatewayProfile({
+    simulator,
     bundleId,
-    'RCTAsyncLocalStorage_V1',
-  );
-  const manifestPath = path.join(storage, 'manifest.json');
-  const manifest = fs.existsSync(manifestPath)
-    ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-    : {};
-  const url = `ws://127.0.0.1:${port}`;
-  const profile = {
-    id: FIXTURE_PROFILE_ID,
-    name: 'Gate review fixture',
-    url,
-    kind: 'lan',
-    authMode: 'none',
-  };
-  const values = {
-    '@farmslot:gatewayProfiles': JSON.stringify([profile]),
-    '@farmslot:activeGatewayProfileId': FIXTURE_PROFILE_ID,
-    '@farmslot:gatewayUrl': url,
-  };
-  for (const [key, value] of Object.entries(values)) {
-    // A value an earlier run stored out of line would shadow nothing once the
-    // manifest holds it inline, but it would be left behind; remove it.
-    fs.rmSync(path.join(storage, createHash('md5').update(key).digest('hex')), { force: true });
-    manifest[key] = value;
-  }
-  fs.mkdirSync(storage, { recursive: true });
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    profile: {
+      id: FIXTURE_PROFILE_ID,
+      name: 'Gate review fixture',
+      url: `ws://127.0.0.1:${port}`,
+      kind: 'lan',
+      authMode: 'none',
+    },
+  });
 }
 
 async function stopFixture() {

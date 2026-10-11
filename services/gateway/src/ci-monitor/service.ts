@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type CiCheckSummary,
+  ciDecisionSnapshotContext,
   type CIWatchPhase,
   Events,
   type PRStatus,
@@ -422,7 +423,7 @@ export async function monitorCI(
           { id: 'wait', label: 'Keep watching CI', style: 'secondary' },
           { id: 'abort', label: 'Abort', style: 'danger' },
         ],
-        { checks: fresh.checks, failedChecks },
+        { checks: fresh.checks, failedChecks, ...ciDecisionSnapshotContext(fresh) },
       );
       if (actionId === 'dispatch-pr-complete')
         return buildOutcome('failed', failedChecks, actionId);
@@ -557,6 +558,7 @@ export async function monitorCI(
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'secondary' },
           { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
         ],
+        ciDecisionSnapshotContext(pr),
       );
       if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
         return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
@@ -598,7 +600,7 @@ export async function monitorCI(
           { id: 'skip', label: 'Release slot', style: 'secondary' },
           { id: 'abort', label: 'Abort', style: 'danger' },
         ],
-        { checks: pr.checks },
+        { checks: pr.checks, ...ciDecisionSnapshotContext(pr) },
       );
       if (actionId === 'abort') return buildOutcome('aborted');
       if (actionId === 'skip') return buildOutcome('timeout');
@@ -694,6 +696,7 @@ export async function monitorCI(
             { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
             { id: 'dismiss', label: 'Dismiss comments', style: 'secondary' },
           ],
+          ciDecisionSnapshotContext(pr),
         );
         if (actionId === 'dispatch-pr-complete') {
           return buildOutcome('comments', [], actionId);
@@ -800,7 +803,7 @@ export async function monitorCI(
           { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
           { id: 'abort', label: 'Abort', style: 'danger' },
         ],
-        { checks: pr.checks },
+        { checks: pr.checks, ...ciDecisionSnapshotContext(pr) },
       );
       if (actionId === 'abort') return buildOutcome('aborted');
       if (actionId === 'dispatch-pr-complete') return buildOutcome('failed', failedNames, actionId);
@@ -912,6 +915,7 @@ export async function monitorCI(
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete now', style: 'primary' },
           { id: 'wait', label: 'Wait for CI first', style: 'secondary' },
         ],
+        ciDecisionSnapshotContext(pr),
       );
       if (actionId === 'dispatch-pr-complete') {
         return buildOutcome('comments', [], actionId);
