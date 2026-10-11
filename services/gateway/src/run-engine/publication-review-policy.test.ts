@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus } from '@farmslot/protocol';
-
-import {
-  normalizeReviewDepthForRunCreate,
-  repairLegacyDispatchReviewDepth,
-} from '../quality/review-policy.js';
+import type { ReviewStatus } from '@farmslot/protocol';
 
 import {
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -20,68 +15,6 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
-
-test('legacy dispatch review depth counts completed planned reviews once', () => {
-  const policy = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: true,
-    extraLoopsRequested: 1,
-    requestedBy: 'dispatch' as const,
-  };
-  const passingReview: IndependentReviewStatus = {
-    id: 'independent-review-1',
-    source: 'dispatch',
-    crossRunner: true,
-    loopNumber: 1,
-    verdict: 'pass',
-    unresolvedCount: 0,
-  };
-
-  assert.deepEqual(repairLegacyDispatchReviewDepth(policy, [passingReview], 0), {
-    ...policy,
-    extraLoopsRequested: 0,
-    countingVersion: 2,
-  });
-  assert.equal(repairLegacyDispatchReviewDepth(policy, [passingReview], 1), policy);
-  assert.equal(
-    repairLegacyDispatchReviewDepth(policy, [{ ...passingReview, source: 'human-gate' }], 0),
-    policy,
-  );
-
-  const versionedTwoLoopPolicy = { ...policy, extraLoopsRequested: 1, countingVersion: 2 as const };
-  assert.equal(
-    repairLegacyDispatchReviewDepth(
-      versionedTwoLoopPolicy,
-      [
-        passingReview,
-        {
-          ...passingReview,
-          id: 'independent-review-2',
-          verdict: 'issues',
-          unresolvedCount: 1,
-        },
-      ],
-      0,
-    ),
-    versionedTwoLoopPolicy,
-  );
-});
-
-test('legacy queued review plans normalize before run creation', () => {
-  const legacy = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: true,
-    extraLoopsRequested: 1,
-    requestedBy: 'dispatch' as const,
-  };
-  assert.deepEqual(normalizeReviewDepthForRunCreate(legacy, 1), {
-    ...legacy,
-    extraLoopsRequested: 0,
-    countingVersion: 2,
-  });
-  const versioned = { ...legacy, countingVersion: 2 as const };
-  assert.equal(normalizeReviewDepthForRunCreate(versioned, 1), versioned);
-});
 
 test('validatePackageApprovalSelection rejects package id, hash, and HEAD mismatches', () => {
   const pkg = makeReadyGatePackage();
@@ -165,10 +98,8 @@ test('validatePackageApprovalSelection rejects package id, hash, and HEAD mismat
 test('validatePackageApprovalSelection does not demand re-review when review depth is zero', () => {
   const pkg = makeReadyGatePackage({
     selectedEvidenceKeys: ['artifacts/a.png'],
-    reviewDepth: {
-      minimumIndependentReviews: 0,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 0,
       requestedBy: 'dispatch',
     },
   });
@@ -195,17 +126,16 @@ test('publication review policy rejects stale and unavailable review snapshots',
   const validRun = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -224,26 +154,22 @@ test('publication review policy rejects stale and unavailable review snapshots',
       },
     },
   });
-  assert.equal(
-    countStalePublicationReviews(validRun.engineState!.publishGate!.independentReviews!, pkg),
-    0,
-  );
+  assert.equal(countStalePublicationReviews(validRun.engineState!.publishGate!.reviews!, pkg), 0);
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(validRun, pkg));
 
   const unavailableRun = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -258,8 +184,8 @@ test('publication review policy rejects stale and unavailable review snapshots',
     },
   });
   assert.equal(
-    countStalePublicationReviews(unavailableRun.engineState!.publishGate!.independentReviews!, pkg),
-    1,
+    countStalePublicationReviews(unavailableRun.engineState!.publishGate!.reviews!, pkg),
+    0,
   );
   assert.throws(
     () => assertPublicationReviewPolicySatisfied(unavailableRun, pkg),
@@ -269,17 +195,16 @@ test('publication review policy rejects stale and unavailable review snapshots',
   const staleRun = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -293,10 +218,7 @@ test('publication review policy rejects stale and unavailable review snapshots',
       },
     },
   });
-  assert.equal(
-    countStalePublicationReviews(staleRun.engineState!.publishGate!.independentReviews!, pkg),
-    1,
-  );
+  assert.equal(countStalePublicationReviews(staleRun.engineState!.publishGate!.reviews!, pkg), 1);
   assert.throws(() => assertPublicationReviewPolicySatisfied(staleRun, pkg), /approved package/);
 });
 
@@ -309,16 +231,15 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
       capturedAt: '2026-04-15T00:00:00.000Z',
     },
   });
-  const reviewDepth = {
-    minimumIndependentReviews: 1,
-    requireCrossRunner: false,
-    extraLoopsRequested: 0,
+  const reviewPolicy = {
+    minimumReviews: 1,
     requestedBy: 'dispatch' as const,
   };
-  const review: IndependentReviewStatus = {
-    id: 'independent-review-1',
+  const review: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-1',
+    mode: 'cold' as const,
+    id: 'review-1',
     source: 'dispatch',
-    crossRunner: false,
     loopNumber: 1,
     verdict: 'pass',
     unresolvedCount: 0,
@@ -331,12 +252,14 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
     },
   };
   const baseRun = makeRun({
-    engineState: { publishGate: { reviewDepth, independentReviews: [review] } },
+    engineState: { publishGate: { reviewPolicy, reviews: [review] } },
   });
 
-  assert.doesNotThrow(() => assertUnavailableSnapshotOverrideAvailable([review], pkg, reviewDepth));
+  assert.doesNotThrow(() =>
+    assertUnavailableSnapshotOverrideAvailable([review], pkg, reviewPolicy),
+  );
   assert.equal(
-    buildUnavailableSnapshotAction([review], pkg, reviewDepth)?.id,
+    buildUnavailableSnapshotAction([review], pkg, reviewPolicy)?.id,
     APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   );
   assert.throws(
@@ -353,7 +276,7 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
           },
         ],
         pkg,
-        reviewDepth,
+        reviewPolicy,
       ),
     /exact package HEAD and subject/i,
   );
@@ -384,6 +307,22 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
     ],
   });
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(approvedRun, pkg));
+  const latestFailure: ReviewStatus = { ...review, verdict: 'issues', unresolvedCount: 1 };
+  assert.throws(
+    () => assertUnavailableSnapshotOverrideAvailable([review, latestFailure], pkg, reviewPolicy),
+    /exact package HEAD and subject/,
+  );
+  assert.throws(
+    () =>
+      assertPublicationReviewPolicySatisfied(
+        makeRun({
+          ...approvedRun,
+          engineState: { publishGate: { reviewPolicy, reviews: [review, latestFailure] } },
+        }),
+        pkg,
+      ),
+    /requires passing reviews/,
+  );
 });
 test('publication review policy rejects semantic review subject drift', () => {
   const pkg = makeReadyGatePackage({
@@ -393,17 +332,16 @@ test('publication review policy rejects semantic review subject drift', () => {
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -419,26 +357,22 @@ test('publication review policy rejects semantic review subject drift', () => {
       },
     },
   });
-  assert.equal(
-    countStalePublicationReviews(run.engineState!.publishGate!.independentReviews!, pkg),
-    1,
-  );
+  assert.equal(countStalePublicationReviews(run.engineState!.publishGate!.reviews!, pkg), 1);
   assert.throws(() => assertPublicationReviewPolicySatisfied(run, pkg), /approved package/);
 
   const missingSubjectRun = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -454,10 +388,7 @@ test('publication review policy rejects semantic review subject drift', () => {
     },
   });
   assert.equal(
-    countStalePublicationReviews(
-      missingSubjectRun.engineState!.publishGate!.independentReviews!,
-      pkg,
-    ),
+    countStalePublicationReviews(missingSubjectRun.engineState!.publishGate!.reviews!, pkg),
     1,
   );
   assert.throws(
@@ -472,17 +403,16 @@ test('publication review policy rejects semantic review subject drift', () => {
   const reviewWithMissingPackageSubjectRun = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: false,
-          extraLoopsRequested: 0,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: [
+        reviews: [
           {
-            id: 'independent-review-1',
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
             source: 'dispatch',
-            crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -500,7 +430,7 @@ test('publication review policy rejects semantic review subject drift', () => {
   });
   assert.equal(
     countStalePublicationReviews(
-      reviewWithMissingPackageSubjectRun.engineState!.publishGate!.independentReviews!,
+      reviewWithMissingPackageSubjectRun.engineState!.publishGate!.reviews!,
       packageMissingSubjectHash,
     ),
     1,
@@ -516,31 +446,30 @@ test('publication review policy rejects semantic review subject drift', () => {
 });
 test('publication review policy accepts zero-review package snapshots', () => {
   const pkg = makeReadyGatePackage({
-    reviewDepth: {
-      minimumIndependentReviews: 0,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 0,
       requestedBy: 'dispatch',
     },
   });
   const run = makeRun({
     flowType: 'dev',
     mode: 'autonomous',
-    engineState: { publishGate: { independentReviews: [] } },
+    engineState: { publishGate: { reviews: [] } },
   });
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, pkg));
 });
-test('publication review policy does not count worker self-review as independent approval', () => {
+test('publication review policy counts verified pipeline review approval', () => {
   const pkg = makeReadyGatePackage();
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: pkg.reviewDepth,
-        independentReviews: [
+        reviewPolicy: pkg.reviewPolicy,
+        reviews: [
           {
-            id: 'self-review-1',
-            source: 'self-review',
-            crossRunner: true,
+            reviewerSessionId: 'fixture-session-' + 'review-1',
+            mode: 'cold' as const,
+            id: 'review-1',
+            source: 'pipeline',
             loopNumber: 1,
             verdict: 'pass',
             unresolvedCount: 0,
@@ -548,6 +477,7 @@ test('publication review policy does not count worker self-review as independent
             reviewedHeadSha: pkg.headSha,
             reviewedReviewSubjectHash: pkg.reviewSubjectHash,
             reviewSnapshot: {
+              ...pkg.reviewSnapshot,
               headSha: pkg.headSha!,
               capturedAt: '2026-04-15T00:00:00.000Z',
               source: 'local-git',
@@ -558,20 +488,18 @@ test('publication review policy does not count worker self-review as independent
     },
   });
 
-  assert.equal(
-    countStalePublicationReviews(run.engineState!.publishGate!.independentReviews!, pkg),
-    0,
-  );
-  assert.throws(() => assertPublicationReviewPolicySatisfied(run, pkg), /independent reviews/);
+  assert.equal(countStalePublicationReviews(run.engineState!.publishGate!.reviews!, pkg), 0);
+  assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, pkg));
 });
 test('publication review policy accepts stale reviews superseded by a fresh fix-loop certification', () => {
   const pkg = makeReadyGatePackage({ headSha: 'head-new', reviewSubjectHash: 'subject-new' });
-  const reviews: IndependentReviewStatus[] = [
+  const reviews: ReviewStatus[] = [
     {
-      id: 'self-review-1',
-      source: 'self-review',
+      reviewerSessionId: 'fixture-session-' + 'review-1',
+      mode: 'cold' as const,
+      id: 'review-1',
+      source: 'pipeline',
       runner: 'claude',
-      crossRunner: false,
       loopNumber: 1,
       verdict: 'pass',
       unresolvedCount: 0,
@@ -583,10 +511,11 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
       },
     },
     {
-      id: 'independent-review-2',
+      reviewerSessionId: 'fixture-session-' + 'review-2',
+      mode: 'cold' as const,
+      id: 'review-2',
       source: 'dispatch',
       runner: 'cursor',
-      crossRunner: true,
       loopNumber: 2,
       verdict: 'pass',
       unresolvedCount: 0,
@@ -598,10 +527,11 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
       },
     },
     {
-      id: 'independent-review-3',
+      reviewerSessionId: 'fixture-session-' + 'review-3',
+      mode: 'cold' as const,
+      id: 'review-3',
       source: 'dispatch',
       runner: 'codex',
-      crossRunner: true,
       loopNumber: 3,
       verdict: 'pass',
       unresolvedCount: 0,
@@ -610,6 +540,7 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
       reviewedReviewSubjectHash: 'subject-new',
       attempts: [
         {
+          mode: 'cold' as const,
           loopNumber: 3,
           verdict: 'issues',
           unresolvedCount: 2,
@@ -620,6 +551,7 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
           },
         },
         {
+          mode: 'cold' as const,
           loopNumber: 3,
           verdict: 'pass',
           unresolvedCount: 0,
@@ -651,6 +583,7 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
         },
       ],
       reviewSnapshot: {
+        ...pkg.reviewSnapshot,
         headSha: 'head-new',
         capturedAt: '2026-04-15T00:40:00.000Z',
         source: 'local-git',
@@ -660,74 +593,71 @@ test('publication review policy accepts stale reviews superseded by a fresh fix-
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: {
-          minimumIndependentReviews: 1,
-          requireCrossRunner: true,
-          extraLoopsRequested: 2,
+        reviewPolicy: {
+          minimumReviews: 1,
           requestedBy: 'dispatch',
         },
-        independentReviews: reviews,
+        reviews: reviews,
       },
     },
   });
 
-  assert.equal(
-    countStalePublicationReviews(reviews, pkg, { requireCrossRunnerCertification: true }),
-    0,
-  );
+  assert.equal(countStalePublicationReviews(reviews, pkg), 0);
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, pkg));
 
+  const twoReviewPackage = {
+    ...pkg,
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' as const },
+  };
+  assert.equal(countStalePublicationReviews(reviews, twoReviewPackage), 2);
+  assert.throws(
+    () => assertPublicationReviewPolicySatisfied(run, twoReviewPackage),
+    /requires passing reviews/,
+    'one current-head fix-loop approval cannot satisfy a minimum of two',
+  );
+  const secondCurrentApproval = {
+    ...reviews[2]!,
+    id: 'review-4',
+    reviewerSessionId: 'fixture-session-review-4',
+    feedbackSent: false,
+    attempts: [],
+    timeline: [],
+  };
+  const currentReviews = [...reviews, secondCurrentApproval];
+  assert.equal(countStalePublicationReviews(currentReviews, twoReviewPackage), 0);
+  assert.doesNotThrow(() =>
+    assertPublicationReviewPolicySatisfied(
+      makeRun({ engineState: { publishGate: { reviews: currentReviews } } }),
+      twoReviewPackage,
+    ),
+  );
+
   const mismatchedSubjectCertification = reviews.map((review) =>
-    review.id === 'independent-review-3'
-      ? { ...review, reviewedReviewSubjectHash: 'subject-old' }
-      : review,
+    review.id === 'review-3' ? { ...review, reviewedReviewSubjectHash: 'subject-old' } : review,
   );
-  assert.equal(
-    countStalePublicationReviews(mismatchedSubjectCertification, pkg, {
-      requireCrossRunnerCertification: true,
-    }) > 0,
-    true,
-  );
+  assert.equal(countStalePublicationReviews(mismatchedSubjectCertification, pkg) > 0, true);
 
   const missingSubjectCertification = reviews.map((review) =>
-    review.id === 'independent-review-3'
-      ? { ...review, reviewedReviewSubjectHash: undefined }
-      : review,
+    review.id === 'review-3' ? { ...review, reviewedReviewSubjectHash: undefined } : review,
   );
-  assert.equal(
-    countStalePublicationReviews(missingSubjectCertification, pkg, {
-      requireCrossRunnerCertification: true,
-    }) > 0,
-    true,
-  );
-
-  const sameRunnerCertification = reviews.map((review) =>
-    review.id === 'independent-review-3' ? { ...review, crossRunner: false } : review,
-  );
-  assert.equal(
-    countStalePublicationReviews(sameRunnerCertification, pkg, {
-      requireCrossRunnerCertification: true,
-    }) > 0,
-    true,
-  );
+  assert.equal(countStalePublicationReviews(missingSubjectCertification, pkg) > 0, true);
 });
 test('publication review policy accepts fresh re-review after package refresh without worker fix', () => {
   const pkg = makeReadyGatePackage({
     headSha: 'head-new',
     reviewSubjectHash: 'subject-new',
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'human-gate',
     },
   });
-  const reviews: IndependentReviewStatus[] = [
+  const reviews: ReviewStatus[] = [
     {
-      id: 'self-review-1',
-      source: 'self-review',
+      reviewerSessionId: 'fixture-session-' + 'review-1',
+      mode: 'cold' as const,
+      id: 'review-1',
+      source: 'pipeline',
       runner: 'claude',
-      crossRunner: false,
       loopNumber: 1,
       verdict: 'pass',
       unresolvedCount: 0,
@@ -741,10 +671,11 @@ test('publication review policy accepts fresh re-review after package refresh wi
       },
     },
     {
-      id: 'independent-review-2',
+      reviewerSessionId: 'fixture-session-' + 'review-2',
+      mode: 'cold' as const,
+      id: 'review-2',
       source: 'human-gate',
       runner: 'codex',
-      crossRunner: false,
       loopNumber: 2,
       verdict: 'pass',
       unresolvedCount: 0,
@@ -765,8 +696,8 @@ test('publication review policy accepts fresh re-review after package refresh wi
   const run = makeRun({
     engineState: {
       publishGate: {
-        reviewDepth: pkg.reviewDepth,
-        independentReviews: reviews,
+        reviewPolicy: pkg.reviewPolicy,
+        reviews: reviews,
       },
     },
   });
@@ -779,27 +710,25 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
     source: 'dispatch',
     priorReviewCount: 2,
     requestedRunner: 'cursor',
-    workerRunner: 'claude',
     model: 'opus',
     reviewResult: {
       verdict: 'issues',
       issues: [{ file: 'a.ts', description: 'still flaky' }],
       runner: 'cursor',
       model: 'composer-2.5',
-      crossRunner: true,
       validationDepth: 'static-code',
       retryCount: 2,
       feedbackSent: true,
       recoveryContinuationPending: false,
       attempts: [
         {
+          mode: 'cold' as const,
           loopNumber: 1,
           verdict: 'issues',
           unresolvedCount: 2,
           issues: [{ file: 'a.ts', description: 'first finding' }],
           artifactPaths: ['artifacts/review-loop-1/review.diff'],
-          taskProgressArtifactPath:
-            'tasks/foo/artifacts/independent-review-3/review-loop-1/self-review.md',
+          taskProgressArtifactPath: 'tasks/foo/artifacts/review-3/review-loop-1/review.md',
           startedAt: '2026-05-08T00:00:00.000Z',
           completedAt: '2026-05-08T00:02:00.000Z',
           timeline: [
@@ -820,12 +749,12 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
           },
         },
         {
+          mode: 'cold' as const,
           loopNumber: 2,
           verdict: 'issues',
           unresolvedCount: 1,
           artifactPaths: ['artifacts/review-loop-2/review.diff'],
-          taskProgressArtifactPath:
-            'tasks/foo/artifacts/independent-review-3/review-loop-2/self-review.md',
+          taskProgressArtifactPath: 'tasks/foo/artifacts/review-3/review-loop-2/review.md',
           startedAt: '2026-05-08T00:03:00.000Z',
           completedAt: '2026-05-08T00:04:00.000Z',
           timeline: [
@@ -849,16 +778,15 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
     },
   });
 
-  assert.equal(status.id, 'independent-review-3');
+  assert.equal(status.id, 'review-3');
   assert.equal(status.runner, 'cursor');
-  assert.equal(status.crossRunner, true);
   assert.equal(status.verdict, 'issues');
   assert.equal(status.unresolvedCount, 1);
   assert.equal(status.validationDepth, 'static-code');
   assert.equal(status.attempts?.length, 2);
   assert.equal(
     status.taskProgressArtifactPath,
-    'tasks/foo/artifacts/independent-review-3/review-loop-2/self-review.md',
+    'tasks/foo/artifacts/review-3/review-loop-2/review.md',
   );
   assert.equal(status.startedAt, '2026-05-08T00:00:00.000Z');
   assert.equal(status.completedAt, '2026-05-08T00:04:00.000Z');
@@ -883,7 +811,6 @@ test('buildPublishGateReviewStatus clears continuation when retries are exhauste
     source: 'human-gate',
     priorReviewCount: 2,
     requestedRunner: 'cursor',
-    workerRunner: 'claude',
     reviewResult: {
       verdict: 'issues',
       issues: [{ file: 'a.ts', description: 'still broken' }],
@@ -902,7 +829,6 @@ test('buildPublishGateReviewStatus repairs a wiped retryCount from attempts', ()
     source: 'human-gate',
     priorReviewCount: 2,
     requestedRunner: 'cursor',
-    workerRunner: 'claude',
     reviewResult: {
       verdict: 'issues',
       issues: [{ file: 'a.ts', description: 'still broken' }],
@@ -911,10 +837,10 @@ test('buildPublishGateReviewStatus repairs a wiped retryCount from attempts', ()
       recoveryContinuationPending: true,
       feedbackSent: false,
       attempts: [
-        { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
-        { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
-        { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
-        { loopNumber: 4, verdict: 'issues', unresolvedCount: 7 },
+        { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+        { mode: 'cold' as const, loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+        { mode: 'cold' as const, loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+        { mode: 'cold' as const, loopNumber: 4, verdict: 'issues', unresolvedCount: 7 },
       ],
     },
   });
@@ -928,7 +854,6 @@ test('buildPublishGateReviewStatus stamps the prepared package that was reviewed
     source: 'human-gate',
     priorReviewCount: 1,
     requestedRunner: 'codex',
-    workerRunner: 'claude',
     reviewedPackage: {
       headSha: 'reviewed-head',
       packageInputHash: 'package-input-hash',
@@ -937,7 +862,6 @@ test('buildPublishGateReviewStatus stamps the prepared package that was reviewed
     reviewResult: {
       verdict: 'pass',
       runner: 'codex',
-      crossRunner: true,
       retryCount: 0,
       reviewSnapshot: {
         source: 'local-git',
@@ -956,7 +880,6 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
     source: 'human-gate',
     priorReviewCount: 1,
     requestedRunner: 'claude',
-    workerRunner: 'codex',
     reviewedPackage: {
       headSha: 'old-head',
       packageInputHash: 'old-package-input',
@@ -965,10 +888,10 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
     reviewResult: {
       verdict: 'pass',
       runner: 'claude',
-      crossRunner: true,
       retryCount: 1,
       attempts: [
         {
+          mode: 'cold' as const,
           loopNumber: 2,
           verdict: 'issues',
           unresolvedCount: 1,
@@ -980,6 +903,7 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
           },
         },
         {
+          mode: 'cold' as const,
           loopNumber: 3,
           verdict: 'pass',
           unresolvedCount: 0,
@@ -1045,11 +969,12 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
   );
 });
 test('stampPublishGateReviewStatusForPackage only certifies the selected review', () => {
-  const staleReview: IndependentReviewStatus = {
-    id: 'independent-review-2',
+  const staleReview: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-2',
+    mode: 'cold' as const,
+    id: 'review-2',
     source: 'human-gate',
     runner: 'codex',
-    crossRunner: true,
     loopNumber: 2,
     verdict: 'pass',
     unresolvedCount: 0,
@@ -1079,10 +1004,8 @@ test('buildPublishGateReviewStatus does not publish a pass for a blocked review 
   const pkg = makeReadyGatePackage({
     headSha: 'blocked-head',
     reviewSubjectHash: 'subject-blocked',
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'human-gate',
     },
   });
@@ -1090,20 +1013,19 @@ test('buildPublishGateReviewStatus does not publish a pass for a blocked review 
     source: 'human-gate',
     priorReviewCount: 0,
     requestedRunner: 'claude',
-    workerRunner: 'codex',
     reviewedPackage: pkg,
     reviewResult: {
       verdict: 'blocked',
       reason: 'external dependency unavailable',
       runner: 'claude',
-      crossRunner: true,
       retryCount: 1,
       attempts: [
-        { loopNumber: 1, verdict: 'issues', unresolvedCount: 2 },
+        { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 2 },
         // The worker blocked mid-fix and the re-review of its partial changes
         // passed. The final attempt carries the block, so the aggregate verdict
         // stays authoritative and this review cannot satisfy publication.
         {
+          mode: 'cold' as const,
           loopNumber: 2,
           verdict: 'failed',
           reason: 'external dependency unavailable',
@@ -1123,11 +1045,68 @@ test('buildPublishGateReviewStatus does not publish a pass for a blocked review 
 
   const run = makeRun({
     engineState: {
-      publishGate: { reviewDepth: pkg.reviewDepth, independentReviews: [status] },
+      publishGate: { reviewPolicy: pkg.reviewPolicy, reviews: [status] },
     },
   });
-  assert.throws(
-    () => assertPublicationReviewPolicySatisfied(run, pkg),
-    /requires passing independent reviews/,
+  assert.throws(() => assertPublicationReviewPolicySatisfied(run, pkg), /requires passing reviews/);
+});
+
+test('a verified WARM delta certifies the current full PR package head', () => {
+  const pkg = makeReadyGatePackage({
+    headSha: 'current',
+    reviewSubjectHash: 'subject',
+    reviewSnapshot: {
+      source: 'local-git',
+      capturedAt: 'now',
+      baseSha: 'pr-base',
+      headSha: 'current',
+      diffHash: 'whole-pr',
+    },
+  });
+  const review: ReviewStatus = {
+    id: 'review-warm',
+    mode: 'warm',
+    reviewerSessionId: 'retained-session',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: 'current',
+    reviewedReviewSubjectHash: 'subject',
+    session: {
+      mode: 'warm',
+      continuity: 'resumed',
+      reviewId: 'review-warm',
+      sessionId: 'retained-session',
+      lastReviewedHeadSha: 'previous',
+    },
+    reviewSnapshot: {
+      source: 'local-git',
+      capturedAt: 'now',
+      baseSha: 'previous',
+      headSha: 'current',
+      diffHash: 'delta',
+    },
+  };
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(review, pkg), true);
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      { ...review, session: { ...review.session!, lastReviewedHeadSha: 'current' } },
+      pkg,
+    ),
+    false,
+    'the WARM result retains the prior reviewed head, not the advanced retained binding',
+  );
+  assert.doesNotThrow(() =>
+    assertPublicationReviewPolicySatisfied(
+      makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+      pkg,
+    ),
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      { ...review, session: { ...review.session!, reviewId: 'foreign' } },
+      pkg,
+    ),
+    false,
   );
 });

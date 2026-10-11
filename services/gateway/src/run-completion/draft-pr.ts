@@ -191,8 +191,8 @@ async function applyLocalEvidencePreview(
 }
 
 const PUBLICATION_GATE_METADATA_PATTERNS: RegExp[] = [
-  /^artifacts\/independent-review-\d+\.(?:json|md)$/,
-  /^artifacts\/self-review-\d+\.(?:json|md)$/,
+  /^artifacts\/review-\d+\.(?:json|md)$/,
+  /^artifacts\/review-\d+\.(?:json|md)$/,
   /^artifacts\/review-loop-\d+\//,
   /^artifacts\/publication-gate-/,
   /^artifacts\/pr-package\.(?:json|md)$/,

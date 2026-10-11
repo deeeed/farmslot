@@ -233,7 +233,7 @@ export class RunPipelineMini extends LitElement {
         outputs: displayStep.outputs as Record<string, unknown> | undefined,
         detail: displayStep.detail,
       });
-      if (step.name === 'self-review') {
+      if (step.name === 'review') {
         segments.push(...preGateReviews);
       }
       if (step.name === 'human-gate') {
@@ -288,23 +288,22 @@ export class RunPipelineMini extends LitElement {
       | undefined;
     if (!publishGate) return [];
     const requestedBy =
-      publishGate.reviewDepth?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
-    const pendingPlan = Array.isArray(publishGate.pendingReviewPlan)
-      ? (publishGate.pendingReviewPlan as Array<Record<string, unknown>>)
+      publishGate.reviewPolicy?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
+    const pendingPlan = Array.isArray(publishGate.reviewSequence)
+      ? (publishGate.reviewSequence as Array<Record<string, unknown>>)
       : [];
     const segments: MiniSegment[] = [];
     if (pendingPlan.length > 0 && requestedBy === source) {
       segments.push(...this.planSegments(pendingPlan, label));
     }
-    const reviews = Array.isArray(publishGate.independentReviews)
-      ? (publishGate.independentReviews as Array<Record<string, unknown>>)
+    const reviews = Array.isArray(publishGate.reviews)
+      ? (publishGate.reviews as Array<Record<string, unknown>>)
       : [];
-    const minimum = Number(publishGate.reviewDepth?.minimumIndependentReviews ?? 1);
+    const minimum = Number(publishGate.reviewPolicy?.minimumReviews ?? 1);
     for (const review of reviews) {
       const reviewLaneSource = review.source === 'human-gate' ? 'human-gate' : 'dispatch';
       const loopNumber = Number(review.loopNumber ?? 0);
       if (reviewLaneSource !== source) continue;
-      if (source === 'dispatch' && loopNumber <= minimum && review.crossRunner !== true) continue;
       const runner =
         typeof review.runner === 'string' && review.runner.trim()
           ? review.runner.trim()
@@ -313,16 +312,10 @@ export class RunPipelineMini extends LitElement {
       // Shared with canvas: issues → failed+warn (orange), terminal failed → red.
       const status = publicationReviewVerdictStatus(verdict);
       const order = Math.max(1, source === 'dispatch' ? loopNumber - minimum : segments.length + 1);
-      const reviewSource =
-        review.source === 'human-gate'
-          ? 'human-gate'
-          : review.source === 'self-review'
-            ? 'self-review'
-            : 'dispatch';
+      const reviewSource = review.source === 'human-gate' ? 'human-gate' : 'dispatch';
       const segmentName = reviewSegmentLabel(
         {
           source: reviewSource,
-          crossRunner: review.crossRunner === true,
         },
         order,
       );
@@ -412,7 +405,7 @@ export class RunPipelineMini extends LitElement {
   private shortName(name: string): string {
     if (name === 'human-gate') return compactHumanGateLabel(this.run);
     return name
-      .replace('self-review', 'self review')
+      .replace('review', 'review')
       .replace('ci-watch', 'CI')
       .replace('find-slot', 'slot')
       .replace('write-task', 'task');

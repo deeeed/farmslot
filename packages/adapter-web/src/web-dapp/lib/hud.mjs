@@ -13,15 +13,10 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { HUD_PANEL_BOUNDS, hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+
 export const HUD_ELEMENT = 'mm-harness-hud';
 export const HUD_FILE = 'hud.json';
-const MAX_TEXT = 180;
-
-function text(value, max = MAX_TEXT) {
-  if (typeof value !== 'string' && typeof value !== 'number') return '';
-  const flat = String(value).replace(/\s+/gu, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
 
 function progressOf(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -39,11 +34,12 @@ export function nextHudState(prior, node = {}, nodeId = '') {
   const previous = prior?.finished ? { seq: prior.seq } : prior;
   const status = ['running', 'pass', 'fail'].includes(node.status) ? node.status : 'running';
   const progress = progressOf(node.progress);
-  const intent = text(node.intent ?? node.text ?? node.detail) || text(nodeId);
-  const id = text(node.node_id ?? node.nodeId ?? nodeId, 80);
+  const intent =
+    hudIntentDisplay(node.intent ?? node.text ?? node.detail).text || hudIntentDisplay(nodeId).text;
+  const id = hudSecondaryText(node.node_id ?? node.nodeId ?? nodeId, 80);
   const state = {
     seq: (previous?.seq ?? 0) + 1,
-    title: text(node.title, 80) || previous?.title || 'Recipe run',
+    title: hudSecondaryText(node.title, 80) || previous?.title || 'Recipe run',
     current: previous?.current ?? null,
     last: previous?.last ?? null,
     finished: null,
@@ -56,7 +52,7 @@ export function nextHudState(prior, node = {}, nodeId = '') {
     };
     return state;
   }
-  const error = status === 'fail' ? text(node.error) : '';
+  const error = status === 'fail' ? hudSecondaryText(node.error) : '';
   state.last = { nodeId: id, intent, status, ...(error ? { error } : {}) };
   if (progress?.complete || id === 'recipe-complete') {
     state.finished = status;
@@ -96,7 +92,7 @@ export function clearHudState(runtimeDir) {
 
 const STYLE = `
 :host { all: initial; }
-.hud { position: fixed; top: 220px; left: 12px; z-index: 2147483647; width: 360px; max-width: calc(50vw - 24px);
+.hud { position: fixed; top: 220px; left: 12px; z-index: 2147483647; width: ${HUD_PANEL_BOUNDS.card.maxWidth}px; max-width: calc(100vw - 24px); max-height: ${HUD_PANEL_BOUNDS.card.maxHeight}px; overflow: hidden;
   box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18);
   background: rgba(16,18,24,.82); color: #f2f4f7; font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   pointer-events: none; user-select: none; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
@@ -133,6 +129,7 @@ export function hudRenderExpression(state, appOrigin) {
     const el = (tag, cls, value) => { const node = document.createElement(tag); if (cls) node.className = cls; if (value != null) node.textContent = value; return node; };
     const style = el('style', null, ${JSON.stringify(STYLE)});
     const box = el('div', 'hud');
+    const intentStyle = ${JSON.stringify(hudIntentDisplay('').webStyle)};
     const head = el('div', 'row');
     head.append(el('span', 'title', state.title));
     const progress = state.current && state.current.progress;
@@ -140,6 +137,7 @@ export function hudRenderExpression(state, appOrigin) {
     box.append(head);
     if (state.current) {
       const line = el('div', 'intent');
+      Object.assign(line.style, intentStyle);
       const status = state.finished || 'running';
       const intent = el('span', null, state.current.intent);
       intent.setAttribute('data-farmslot-hud-intent', '');
@@ -148,6 +146,7 @@ export function hudRenderExpression(state, appOrigin) {
     }
     if (state.last && !state.finished) {
       const line = el('div', 'last');
+      Object.assign(line.style, intentStyle);
       line.append(el('span', 'badge ' + state.last.status, state.last.status.toUpperCase()), ' ', state.last.intent);
       box.append(line);
     }

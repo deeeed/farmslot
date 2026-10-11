@@ -277,7 +277,7 @@ test('monitor enrollment preserves a stopped notify-only subscription despite au
         mode: 'automatic-repair',
         execution: {
           slotPolicy: { kind: 'exact', slotId: 'slot' },
-          models: [{ runner: 'runner', model: 'model' }],
+          models: [{ effort: null, mode: 'cold' as const, runner: 'runner', model: 'model' }],
         },
       },
     },

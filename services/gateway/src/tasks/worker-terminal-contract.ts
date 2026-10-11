@@ -145,10 +145,10 @@ export async function validateTerminalSignalArtifacts(
   // same reason as an open child: `mark complete` already requires a verdict per
   // criterion, and a signal written around the engine must not skip it.
   //
-  // Three conditions, all of them the mark engine's: `complete` only (a
-  // `no-change` signal reports there was nothing to do), the project opted in
-  // through `worker_terminal.acceptance.require`, and the task registered
-  // criteria. Without the opt-in a template that writes no ledger still completes.
+  // The opt-in emits a compatibility flag for older deployed checkers. Current
+  // checkers enforce every registered verdict on complete without that flag too.
+  // No-change retains its outcome contract; unreadable opted-in handoffs refuse
+  // here, and the current checker refuses unreadable handoffs independently.
   let requiresAcceptanceLedger = false;
   if (terminalCommand === 'complete' && (await acceptanceRequiredByContract(vars, contractPath))) {
     try {

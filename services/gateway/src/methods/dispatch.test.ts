@@ -1923,10 +1923,7 @@ test('native nudge eligibility follows the primary context and refuses stopped o
     }),
     false,
   );
-  assert.equal(
-    eligible({ ...native, agentContexts: [{ ...context, role: 'self-review' }] }),
-    false,
-  );
+  assert.equal(eligible({ ...native, agentContexts: [{ ...context, role: 'review' }] }), false);
 });
 
 test('selectBranchAffinityRefreshSlots refreshes non-nudge working slots for fresh-only branch reuse', () => {

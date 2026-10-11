@@ -9,11 +9,11 @@ import type {
   PressureAdmissionDecision,
   ProfileFitSuggestion,
   QueueItem,
-  ReviewRunnerId,
   Run,
   SlotStatus,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
+import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import '../queue/dispatch-queue-panel.js';
 import '../shared/execution-template-picker.js';
@@ -30,14 +30,10 @@ import {
 } from './dispatch-wizard-banners-renderer.js';
 import { renderDispatchCandidateSelection } from './dispatch-wizard-candidates-renderer.js';
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
-import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 import { renderDispatchHelp } from './dispatch-wizard-help.js';
 import { renderDispatchPressurePanel } from './dispatch-wizard-pressure-renderer.js';
 import { renderDispatchWizardPrimaryControls } from './dispatch-wizard-primary-controls-renderer.js';
-import {
-  type PublicationReviewPlanItem,
-  renderPublicationReviewConfig,
-} from './dispatch-wizard-publication-review-renderer.js';
+import { renderPublicationReviewConfig } from './dispatch-wizard-publication-review-renderer.js';
 
 interface DispatchWizardViewContext {
   discoverModels?: boolean;
@@ -94,8 +90,10 @@ interface DispatchWizardViewContext {
   variantCollision: boolean;
   variantInput: string;
   publicationReviewsEnabled: boolean;
-  publicationReviewLoops: readonly PublicationReviewLoopDraft[];
-  publicationReviewPlan: readonly PublicationReviewPlanItem[];
+  reviewPicker: ReviewDispatchViewModel;
+  reviewsChanged: () => void;
+  executionPicker: ReviewDispatchViewModel;
+  executionChanged: () => void;
   publicationReviewQaPreset: string | null | undefined;
   runnerOptions: readonly string[];
   loadingCandidates: boolean;
@@ -120,9 +118,6 @@ interface DispatchWizardViewContext {
   previewExecutionTemplate: (option: ExecutionTemplateCatalogOption, trigger?: HTMLElement) => void;
   setDomain: (domain: string) => void;
   setMode: (mode: 'interactive' | 'autonomous') => void;
-  setRunner: (runner: string) => void;
-  setModel: (model: string) => void;
-  setEffort: (effort: EffortLevel) => void;
   setPrepareOptions: (options: { skipPrepare: boolean; prepareProfile: string }) => void;
   applySuggestedPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
@@ -135,10 +130,6 @@ interface DispatchWizardViewContext {
   setComparePickerSearch: (value: string) => void;
   exitComparisonMode: () => void;
   setVariantInput: (value: string) => void;
-  setPublicationReviewRunner: (id: number, runner: ReviewRunnerId) => void;
-  removePublicationReviewLoop: (id: number) => void;
-  addWorkerReviewLoop: () => void;
-  addExternalReviewLoop: () => void;
   candidateDispatchable: (candidate: DispatchCandidatesResult['candidates'][number]) => boolean;
   pressureOverrideAvailable: (candidate: DispatchCandidatesResult['candidates'][number]) => boolean;
   beginPressureOverride: (slotId: string, intent?: 'nudge' | 'fresh') => void;
@@ -234,9 +225,8 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
                 ctx.flowType === 'review-pr' || ctx.flowType === 'qa'
                   ? nothing
                   : renderTaskTemplateSelector(ctx),
-              runner: ctx.runner,
-              model: ctx.model,
-              effort: ctx.effort,
+              executionPicker: ctx.executionPicker,
+              executionChanged: ctx.executionChanged,
               workflowControls: ctx.workflowControls,
               skipPrepare: ctx.skipPrepare,
               prepareProfiles: ctx.prepareProfiles,
@@ -249,9 +239,6 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               selectFlowType: ctx.selectFlowType,
               selectProject: ctx.selectProject,
               setApp: ctx.setApp,
-              setRunner: ctx.setRunner,
-              setModel: ctx.setModel,
-              setEffort: ctx.setEffort,
 
               setPrepareOptions: ctx.setPrepareOptions,
               setDevInteractiveProfile: ctx.setDevInteractiveProfile,
@@ -265,17 +252,9 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
             ${ctx.recipeCompatibilityControl ?? nothing}
             ${renderPublicationReviewConfig({
               enabled: ctx.publicationReviewsEnabled,
-              flowType: ctx.flowType,
-              runner: ctx.runner,
-              mode: ctx.mode,
-              loops: ctx.publicationReviewLoops,
-              plan: ctx.publicationReviewPlan,
-              runnerOptions: ctx.runnerOptions,
+              viewModel: ctx.reviewPicker,
               qaPreset: ctx.publicationReviewQaPreset,
-              setRunner: ctx.setPublicationReviewRunner,
-              removeLoop: ctx.removePublicationReviewLoop,
-              addWorkerReviewLoop: ctx.addWorkerReviewLoop,
-              addExternalReviewLoop: ctx.addExternalReviewLoop,
+              changed: ctx.reviewsChanged,
             })}
             ${ctx.flowType === 'review-pr'
               ? nothing

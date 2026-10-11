@@ -9,6 +9,7 @@ This folder holds product scope, architecture decisions, historical snapshots, a
 - [Docs governance](DOCS-GOVERNANCE.md) — placement rules and maintenance checklist for this folder.
 - [Product PRD](PRD-product.md) — top-level product scope.
 - [Roadmap](ROADMAP.md), [next roadmap](ROADMAP-next.md), and [implemented history](IMPLEMENTED-HISTORY.md) — frozen historical snapshots, not current planning records.
+- [Review and dispatch contract](reference/review-modes-warm-cold.md) — accepted WARM/COLD modes and the shared picker.
 - [ADR index](adr/README.md) — accepted architecture/product decisions.
 - [ADR implementation status](reference/adr-implementation-status.md) — what is shipped vs still open per current ADR.
 

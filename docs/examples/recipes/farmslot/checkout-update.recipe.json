@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-checkout-update.mts",
         "timeout_ms": 300000,
-        "intent": "Click Update checkout and confirm the identified gateway repository. Restart the isolated gateway during the real Git merge and verify progress survives. Prove the actual Git HEAD and file contents advanced, then prove a rejected start remains visible and local edits block an update and remain intact. Pull manually and verify the real gateway status and UI stop reporting the old commit.",
+        "intent": "Checkout updates survive restart and preserve local edits on refusal.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

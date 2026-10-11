@@ -17,6 +17,7 @@ import {
   sameNativeProfileReference,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -54,7 +55,7 @@ export type DirectWorkflowRequest = ReviewQaDispatchInput &
     | 'reviewWorkspaceTarget'
     | 'slotId'
     | 'allowedSlots'
-    | 'reviewScope'
+    | 'reviewMode'
     | 'reviewAutoFinish'
     | 'mode'
     | 'executionTemplateId'
@@ -194,7 +195,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   let params = {
     ...original,
     mode: original.mode ?? ('autonomous' as const),
-    reviewScope: original.reviewScope ?? defaults.review.scope,
+    reviewMode: original.reviewMode ?? defaults.review.mode,
     ...(flow === 'review-pr'
       ? { reviewAutoFinish: original.reviewAutoFinish ?? defaults.review.autoFinish ?? false }
       : {}),
@@ -252,11 +253,13 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       {
         runner,
         model,
+        mode: params.reviewMode ?? 'cold',
         effort:
           params.effort ??
           (params.model === undefined || params.model === configured?.model
             ? configured?.effort
-            : undefined),
+            : null) ??
+          null,
       },
     ];
     if (isPRWorkspaceExecutionProfile(profile) && params.transport)
@@ -274,7 +277,14 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   ) {
     profile = {
       workspacePolicy: { kind: 'exact', machine: params.reviewWorkspaceTarget.machine },
-      models: [{ runner: params.runner, model: params.model, effort: params.effort }],
+      models: [
+        {
+          mode: 'cold' as const,
+          runner: params.runner,
+          model: params.model,
+          effort: params.effort ?? null,
+        },
+      ],
       transport: params.transport,
       nativeProfile: params.nativeProfile,
     };
@@ -308,7 +318,12 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       let admission: ReviewWorkspaceAdmission | undefined;
       try {
         admission = await inspectReviewWorkspaceTarget(
-          { project: params.project, ...choice },
+          {
+            project: params.project,
+            ...choice,
+            effort: executionModelFromSelection(choice).effort ?? undefined,
+            model: executionModelFromSelection(choice).model,
+          },
           options.ownerId,
         );
         waiting ??= { choice, admission };
@@ -335,8 +350,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       ...params,
       reviewWorkspaceTarget: { machine: choice.machine },
       runner: choice.runner,
-      model: choice.model,
-      effort: choice.effort,
+      model: executionModelFromSelection(choice).model,
+      effort: executionModelFromSelection(choice).effort ?? undefined,
       transport: choice.transport,
       nativeProfile: choice.nativeProfile,
     };
@@ -365,7 +380,11 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   if (
     !isKnownRunner(choice.runner) ||
     !runnerSupportsModel(choice.runner, choice.model) ||
-    !runnerSupportsEffort(choice.runner, choice.model, choice.effort)
+    !runnerSupportsEffort(
+      choice.runner,
+      executionModelFromSelection(choice).model,
+      executionModelFromSelection(choice).effort ?? undefined,
+    )
   )
     unavailable('Selected runner/model/effort is unsupported');
   params = {
@@ -380,8 +399,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       )
       .map((candidate) => candidate.slotId),
     runner: choice.runner,
-    model: choice.model,
-    effort: choice.effort,
+    model: executionModelFromSelection(choice).model,
+    effort: executionModelFromSelection(choice).effort ?? undefined,
   };
   return { params: params as T, reviewQa, execution, sources: defaults.sources };
 }

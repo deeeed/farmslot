@@ -8,7 +8,7 @@
       "layout": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/check-pr-monitor-layout.mts",
-        "intent": "Navigate the shared PR list/viewer and automation settings on desktop/mobile; verify full-width list geometry, overlay bounds, close/Escape and scroll restoration, URL/history restoration, per-PR monitoring and review controls with the observed PR author, overall GitHub review status, neutral run-setup badges, same-row close, default duplicate-review suppression and the explicit Review anyway setup path, active-work suspension, and unchanged gateway settings.",
+        "intent": "PR controls preserve navigation, monitoring choices and active-work boundaries.",
         "next": "done"
       },
       "done": {

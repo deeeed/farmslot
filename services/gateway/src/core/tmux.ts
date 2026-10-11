@@ -305,10 +305,10 @@ export async function resolveTmuxSession(
  * returning would let downstream send-keys/rename/display-message hit a
  * non-existent pane and produce confusing "exit 1" errors with empty stderr.
  *
- * Lives in core/tmux so dispatch, slot, self-review, and any future caller
+ * Lives in core/tmux so dispatch, slot, review, and any future caller
  * share one source of truth — the prior PR's review found `${session}:0`
  * hardcodes scattered across slot.killAgentInSession, runners.resolvePrimaryWorkerTarget,
- * and self-review's pane-target fallback that all had to converge on this helper.
+ * and review's pane-target fallback that all had to converge on this helper.
  */
 /**
  * Settle after `respawn-window` before polling an interactive runner TUI for

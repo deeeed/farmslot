@@ -409,9 +409,9 @@ test('resolveTaskRelDir rejects task files outside the task root', () => {
 test('resolveTaskRelDir supports alternate task filenames when requested', () => {
   assert.equal(
     resolveTaskRelDir(
-      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks', 'feature', 'SELF-REVIEW.md'),
+      path.join(farmslotRoot, 'projects', 'demo-project', 'tasks', 'feature', 'REVIEW.md'),
       path.join(farmslotRoot, 'projects', 'demo-project', 'tasks'),
-      'SELF-REVIEW.md',
+      'REVIEW.md',
     ),
     'feature',
   );
@@ -523,8 +523,8 @@ test('loadProjectVars validates publication_review snake_case config', async (t)
     JSON.stringify({
       name: project,
       publication_review: {
-        dev: { minimum_independent_reviews: 0, require_cross_runner: false },
-        'fix-bug': { minimum_independent_reviews: 1 },
+        dev: { minimum_reviews: 0 },
+        'fix-bug': { minimum_reviews: 1 },
       },
     }),
   );
@@ -540,12 +540,12 @@ test('loadProjectVars validates publication_review snake_case config', async (t)
     path.join(invalidDir, 'project.json'),
     JSON.stringify({
       name: invalidProject,
-      publication_review: { dev: { minimum_independent_reviews: -1 } },
+      publication_review: { dev: { minimum_reviews: -1 } },
     }),
   );
   await assert.rejects(
     () => loadProjectVars(invalidProject),
-    /publication_review\.dev\.minimum_independent_reviews must be a non-negative integer/,
+    /publication_review\.dev\.minimum_reviews must be a non-negative integer/,
   );
 });
 

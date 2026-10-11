@@ -129,14 +129,14 @@ export function runFamilyPrStatus(
   return prs.find((pr) => prNumbers.includes(pr.pr)) ?? null;
 }
 
-const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch', 'human-gate']);
+const LIVE_PROGRESS_STEPS = new Set(['monitor', 'review', 'ci-watch', 'human-gate']);
 
 /**
  * Whether the run's worker is still working, for wording that says so.
  *
  * Stricter than `isTaskProgressRunActive`, which also counts a differing
  * active task file so progress keeps refreshing: a run cancelled or blocked
- * during a self-review fix keeps that file, and must not read as in progress.
+ * during a review fix keeps that file, and must not read as in progress.
  */
 export function isRunWorking(
   run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
@@ -156,7 +156,7 @@ export function isTaskProgressRunActive(
   if (
     run.status === 'monitoring' ||
     run.status === 'paused' ||
-    run.status === 'self-reviewing' ||
+    run.status === 'reviewing' ||
     run.status === 'human-gating' ||
     run.status === 'ci-watching' ||
     (options.includeCompleting === true && run.status === 'completing') ||
@@ -499,9 +499,9 @@ export const INTERACTIVE_DEV_ACTIONS: readonly InteractiveDevActionModel[] = [
     tone: 'muted',
   },
   {
-    action: 'run-self-review',
-    label: 'Self-review',
-    title: 'Run or replay self-review before finishing.',
+    action: 'run-review',
+    label: 'Review',
+    title: 'Run or replay review before finishing.',
     tone: 'muted',
   },
   {

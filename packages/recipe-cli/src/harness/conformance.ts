@@ -272,6 +272,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           invocation.params,
           undefined,
           invocation,
+          true,
         );
         if (validated.usageError || validated.errorCount > 0) {
           checks.push({
@@ -283,6 +284,20 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
               validated.findings.map((finding) => finding.message).join('; '),
           });
           continue;
+        }
+        const intentWarnings = validated.findings.filter(
+          (finding) =>
+            finding.code === 'workflow.intent_too_long' && finding.severity === 'warning',
+        );
+        if (intentWarnings.length) {
+          checks.push({
+            id: `${id}:intent`,
+            status: 'pass',
+            required: false,
+            message:
+              'Warning: ' +
+              intentWarnings.map((finding) => `${finding.path}: ${finding.message}`).join('; '),
+          });
         }
         const execution = await preflightRecipe(
           engine,

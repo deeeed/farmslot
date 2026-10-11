@@ -45,6 +45,6 @@ The loop can be adopted incrementally:
 2. encode that proof as a narrow recipe/evidence package;
 3. add isolated slots for safer parallel work;
 4. route work through the gateway and Command Center;
-5. add backlog/dispatch policy, cross-runner review, and replay/eval loops.
+5. add backlog/dispatch policy, PR review, and replay/eval loops.
 
 Visual validation, executable recipes, and proof artifacts are the trust layer. The gateway is the control plane. The full loop is the product. See [Roadmap to Work Graph](../guides/roadmap-to-work-graph.md) for the Command Center planning-to-dispatch flow.

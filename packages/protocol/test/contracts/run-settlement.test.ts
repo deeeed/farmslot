@@ -16,7 +16,7 @@ test('isSettledBlockedRun needs blocked status, no running step, no pending deci
   const pending = { ...resolved, id: 'd2', resolvedAt: undefined };
   const skipped = [
     { name: 'monitor', status: 'done' as const },
-    { name: 'self-review', status: 'skipped' as const },
+    { name: 'review', status: 'skipped' as const },
   ];
 
   assert.equal(

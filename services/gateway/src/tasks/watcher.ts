@@ -1264,7 +1264,7 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
 
   await closeSubtaskUnitWatchers(sw);
   // Each context watches only the children of ITS OWN checklist: a unit parented
-  // on SELF-REVIEW.md belongs to the self-review context's watch, and a unit
+  // on REVIEW.md belongs to the review context's watch, and a unit
   // whose parent checklist is not this one is not live here.
   const units = subtaskUnitsForParentChecklist(index, parentChecklist);
   // A registry with no unit for THIS checklist is still a registry the caller

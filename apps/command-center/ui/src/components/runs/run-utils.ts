@@ -166,7 +166,7 @@ export function runStatusColor(status: RunStatus | string): string {
     case 'dispatching':
       return '#3b82f6';
     case 'monitoring':
-    case 'self-reviewing':
+    case 'reviewing':
       return '#818cf8';
     case 'completing':
     case 'ci-watching':

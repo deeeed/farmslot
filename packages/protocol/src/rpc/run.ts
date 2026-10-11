@@ -162,13 +162,15 @@ export interface RunCreateParams {
   reviewTeamId?: string;
   /** Explicitly finish static review without waiting for operator questions/publication. */
   reviewAutoFinish?: boolean;
-  reviewScope?: import('../contracts/index.js').ReviewScope;
+  reviewMode?: import('../contracts/index.js').ReviewMode;
   /** Runtime validation depth for review-pr. Omitted review-pr runs default to static-code. */
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
   /** Fix-bug local-first publication gate review depth requested at dispatch time. */
-  reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
+  reviewPolicy?: import('../contracts/index.js').ReviewPolicy;
   /** Ordered independent review loops to run before the first ready gate is shown. */
-  pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
+  reviewSequence?: import('../contracts/index.js').ReviewSequence;
+  reviewContext?: import('../contracts/index.js').ReviewRequestContext;
+  reviewSequenceContext?: import('../contracts/index.js').ReviewRequestContext;
   /** Runner execution safety tier (ADR-023). Overrides runner/project defaults. */
   safetyTier?: import('../contracts/index.js').SafetyTier;
   /** Deliberate one-dispatch pressure override. The gateway stamps the

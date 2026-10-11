@@ -186,7 +186,7 @@ for (const [name, profile] of [
     ].includes(scenario)
       ? {
           workflow_defaults: {
-            'review-pr': { review: { sessionIntent: 'reset', scope: 'full', publishReview: true } },
+            'review-pr': { review: { mode: 'cold', publishReview: true } },
           },
         }
       : {}),
@@ -196,8 +196,7 @@ for (const [name, profile] of [
             qa: {
               review: {
                 workflow: 'qa',
-                sessionIntent: 'reset',
-                scope: 'full',
+                mode: 'cold',
                 qaInputs: { domain: 'fixture-default' },
               },
             },
@@ -210,7 +209,7 @@ for (const [name, profile] of [
             qa: {
               execution: {
                 slotPolicy: { kind: 'pool', allowedSlots: [`${name}-disabled`, `${name}-other`] },
-                models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
+                models: [{ mode: 'cold', runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
               },
             },
           },
@@ -325,12 +324,12 @@ process.stdout.write(JSON.stringify(body));
   { mode: 0o700 },
 );
 
-// Base self-review depth: the gateway launches real reviewer windows on a private tmux
+// Base review depth: the gateway launches real reviewer windows on a private tmux
 // server. `base-review-depth` uses a fixture reviewer CLI that only keeps its pane alive
 // (no model); `base-review-depth-live` launches a real Codex reviewer that completes the review.
 // Static base review contract for the live reviewer; the gateway prepends its execution
 // contract (mark wrapper, reviewer-scoped feedback/result paths) when it renders the checklist.
-const STATIC_REVIEW_TEMPLATE = `# Worker: Static Code Self-Review
+const STATIC_REVIEW_TEMPLATE = `# Worker: Static Code Review
 
 > **Validation depth:** \`{{VALIDATION_DEPTH}}\`
 > **Checklist marker:** run \`{{TASK_DIR}}/mark start\` once, then \`{{TASK_DIR}}/mark N\` after each step.
@@ -358,7 +357,7 @@ After completing each step, mark its checkbox \`[x]\` in this file. Continue wit
 - [ ] **4. Write \`{{TASK_DIR}}/artifacts/review-feedback.md\`:**
 
   \`\`\`markdown
-  # Static Self-Review: {{TICKET}}
+  # Static Review: {{TICKET}}
 
   ## Verdict: PASS   (or: ## Verdict: ISSUES)
 
@@ -415,7 +414,7 @@ if (depthScenario) {
   }
   const projectPath = path.join(fixture, 'projects/first/project.json');
   const project = JSON.parse(await readFile(projectPath, 'utf8'));
-  project.self_review = {
+  project.review = {
     enabled: true,
     runner: depthReviewer.runner,
     model: depthReviewer.model,
@@ -425,14 +424,14 @@ if (depthScenario) {
   await json(projectPath, project);
   await mkdir(path.join(fixture, 'projects/first/templates/worker'), { recursive: true });
   await writeFile(
-    path.join(fixture, 'projects/first/templates/worker/self-review.md'),
-    '# Fixture self-review\n\nVALIDATION_DEPTH: {{VALIDATION_DEPTH}}\n\n- [ ] Review the change.\n',
+    path.join(fixture, 'projects/first/templates/worker/review.md'),
+    '# Fixture review\n\nVALIDATION_DEPTH: {{VALIDATION_DEPTH}}\n\n- [ ] Review the change.\n',
   );
   // The live reviewer reads the depth-specific static template the gateway selects, and a
   // post-launch runner (codex) needs the project's dispatch prompt to deliver it.
   if (liveReview) {
     await writeFile(
-      path.join(fixture, 'projects/first/templates/worker/self-review.static-code.md'),
+      path.join(fixture, 'projects/first/templates/worker/review.static-code.md'),
       STATIC_REVIEW_TEMPLATE,
     );
     await mkdir(path.join(fixture, 'projects/first/templates/prompts'), { recursive: true });
@@ -490,7 +489,7 @@ if (depthScenario) {
 }
 
 // Seeded while the owning gateway is stopped: dev runs whose worker finished, so the engine's
-// next step is the base self-review.
+// next step is the base review.
 async function seedDepthRuns() {
   const now = new Date().toISOString();
   for (const [runId, slotId] of Object.entries(depthRuns)) {
@@ -498,7 +497,7 @@ async function seedDepthRuns() {
     const steps = FLOW_STEPS.dev.map((name) => ({
       name,
       status:
-        FLOW_STEPS.dev.indexOf(name) < FLOW_STEPS.dev.indexOf(PipelineSteps.SELF_REVIEW)
+        FLOW_STEPS.dev.indexOf(name) < FLOW_STEPS.dev.indexOf(PipelineSteps.REVIEW)
           ? 'done'
           : 'pending',
     }));
@@ -511,7 +510,7 @@ async function seedDepthRuns() {
       variant: null,
       flowType: 'dev',
       mode: 'autonomous',
-      status: 'self-reviewing',
+      status: 'reviewing',
       project: 'first',
       ticketOrPr: 'FIXTURE-DEPTH',
       slotId,
@@ -530,8 +529,8 @@ async function seedDepthRuns() {
             agentContexts: [
               {
                 id: 'legacy-reviewer',
-                role: 'self-review',
-                label: 'Self-review',
+                role: 'review',
+                label: 'Review',
                 status: 'failed',
                 slotId,
                 runId,
@@ -640,10 +639,8 @@ const readyGateDecision = {
   id: 'fixture-publication-gate',
   type: 'engine_human_gate',
   title: 'Publication gate',
-  description: 'Request another independent review',
-  actions: [
-    { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
-  ],
+  description: 'Request review',
+  actions: [{ id: 'request-review', label: 'Request review', style: 'secondary' }],
   createdAt: new Date().toISOString(),
 };
 if (scenario === 'ready-gate-refusal') {
@@ -743,7 +740,7 @@ try {
         execution: {
           workspacePolicy: { kind: 'exact', machine: 'first-node' },
           transport: 'native',
-          models: [{ runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
+          models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
         },
         githubTeams: [],
         notificationPrincipalIds: [],
@@ -915,7 +912,7 @@ try {
         teamId: team.id,
         pr: { host: 'github.com', repo: 'example/app', number: 42 },
         autoStart: false,
-        review: { workflow: 'review', sessionIntent: 'resume', scope: 'incremental' },
+        review: { workflow: 'review', mode: 'warm' },
         source: { client: 'fixture' },
       };
       const otherPublisher =
@@ -1335,108 +1332,72 @@ try {
     assert.equal(persisted.runId, undefined, 'Disabled fixture slot must not launch work');
     await connection!.call('dispatch.queue.remove', { itemId: result.item.id });
   } else if (scenario === 'legacy-plan-repair') {
-    const configurationError = (error: unknown) =>
-      error instanceof GatewayRpcError && error.code === 'REVIEW_QA_NEEDS_CONFIGURATION';
-    const staticPlan = [{ order: 1, runner: 'codex', validationDepth: 'static-code' }];
+    const sequence = [{ runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' }];
     const added = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
       ...base,
       flowType: 'dev',
       ticketOrPr: 'FIXTURE-PLAN',
-      pendingReviewPlan: staticPlan,
+      reviewSequence: sequence,
     });
-    // Queue persistence is asynchronous; stop only once the added row is durable.
-    const queuePath = path.join(fixture, 'queue.json');
-    const persistedIds = async () => {
-      const raw = await readFile(queuePath, 'utf8').catch((error) => {
-        if (error.code === 'ENOENT') return '[]';
-        throw error;
-      });
-      return (JSON.parse(raw) as Array<{ id: string }>).map((item) => item.id);
-    };
-    for (
-      let attempt = 0;
-      attempt < 50 && !(await persistedIds()).includes(added.item.id);
-      attempt++
-    )
-      await delay(100);
-    assert(
-      (await persistedIds()).includes(added.item.id),
-      'added row must be durable before restart',
-    );
-    // Seed a pre-ADR-058 queued plan while its owning gateway is stopped.
-    await stopGateway();
-    const stored = JSON.parse(await readFile(queuePath, 'utf8'));
-    const legacyPlan = [{ order: 1, runner: 'codex', validationDepth: 'full-live' }];
-    stored.find((item: { id: string }) => item.id === added.item.id).pendingReviewPlan = legacyPlan;
-    await json(queuePath, stored);
-    gateway = launchGateway();
-    await connectGateway();
-    const queued = async () =>
-      (await connection!.call<DispatchQueueListResult>('dispatch.queue.list')).items.find(
-        (item) => item.id === added.item.id,
-      );
-    // Any intake runs a dispatch cycle over the whole queue, including the restored row.
-    const kick = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
-      ...base,
-      flowType: 'dev',
-      ticketOrPr: 'FIXTURE-KICK',
-    });
-    let held = await queued();
-    for (let attempt = 0; attempt < 50 && !held?.waitingReason; attempt++) {
-      await delay(100);
-      held = await queued();
-    }
-    const hold = {
-      id: held?.id,
-      waitingReason: held?.waitingReason,
-      plan: held?.pendingReviewPlan,
-    };
-    console.log(JSON.stringify({ hold }));
-    assert.match(held?.waitingReason ?? '', /^Review\/QA migration: .*full-live/);
-    assert.deepEqual(held?.pendingReviewPlan, legacyPlan, 'held plan stays visible and unchanged');
+    assert.deepEqual(added.item.reviewSequence, sequence);
+    const obsolete = [
+      {
+        runner: 'codex',
+        model: 'gpt-6-luna',
+        effort: 'low',
+        mode: 'cold',
+        validationDepth: 'full-live',
+      },
+    ];
     await assert.rejects(
       connection!.call('dispatch.queue.update', {
         itemId: added.item.id,
-        pendingReviewPlan: legacyPlan,
+        reviewSequence: obsolete,
       }),
-      configurationError,
+      /unsupported property: validationDepth/,
     );
-    assert.deepEqual((await queued())?.pendingReviewPlan, legacyPlan, 'refusal changes nothing');
-    const { item: repaired } = await connection!.call<{ item: DispatchQueueAddResult['item'] }>(
-      'dispatch.queue.update',
-      { itemId: added.item.id, pendingReviewPlan: staticPlan },
+    const before = (
+      await connection!.call<DispatchQueueListResult>('dispatch.queue.list')
+    ).items.find((item) => item.id === added.item.id)!;
+    assert.deepEqual(
+      before.reviewSequence,
+      sequence,
+      'Refusing an obsolete field preserves the queued selection',
     );
-    await delay(500);
-    const after = await queued();
-    console.log(
-      JSON.stringify({
-        repair: {
-          id: after?.id,
-          waitingReason: after?.waitingReason,
-          plan: after?.pendingReviewPlan,
-        },
-      }),
+    const changed = [{ ...sequence[0], effort: 'high' }];
+    const { item } = await connection!.call<DispatchQueueAddResult>('dispatch.queue.update', {
+      itemId: added.item.id,
+      reviewSequence: changed,
+    });
+    assert.equal(item.id, added.item.id);
+    assert.deepEqual(item.reviewSequence, changed);
+    await json(
+      path.resolve(
+        process.argv[3] ?? path.join(root, 'temp/review-sequence-contract'),
+        'receipt.json',
+      ),
+      { before, item },
     );
-    assert.equal(repaired.id, added.item.id, 'repair keeps the receipt identity');
-    assert.equal(after?.id, added.item.id);
-    assert.deepEqual(after?.pendingReviewPlan, staticPlan);
-    assert.doesNotMatch(after?.waitingReason ?? '', /^Review\/QA migration: /);
-    for (const itemId of [added.item.id, kick.item.id])
-      await connection!.call('dispatch.queue.remove', { itemId });
+    await connection!.call('dispatch.queue.remove', { itemId: added.item.id });
   } else if (scenario === 'ready-gate-refusal') {
     await assert.rejects(
       connection!.call('run.resolveDecision', {
         runId: 'gated-run',
         decisionId: readyGateDecision.id,
-        actionId: 'request-extra-review',
+        actionId: 'request-review',
         selectionData: {
-          reviewRequest: { loops: [{ runner: 'codex', validationDepth: 'full-live' }] },
+          reviewRequest: {
+            runner: 'codex',
+            model: null,
+            effort: null,
+            mode: 'cold',
+            validationDepth: 'full-live',
+          },
         },
       }),
       (error: unknown) => {
         assert(error instanceof GatewayRpcError);
-        assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION', error.message);
-        assert.match(error.message, /^reviewRequest\.loops\[0\]/);
+        assert.match(error.message, /unsupported property: validationDepth/);
         return true;
       },
     );
@@ -1483,7 +1444,7 @@ try {
         ],
         execution: {
           slotPolicy: { kind: 'exact', slotId: 'first-disabled' },
-          models: [{ runner: 'scripted', model: 'scripted' }],
+          models: [{ mode: 'cold', effort: null, runner: 'scripted', model: 'scripted' }],
         },
         githubTeams: [],
         notificationPrincipalIds: [],
@@ -1563,7 +1524,7 @@ try {
         pr: { host: 'github.com', repo: 'example/app', number: 42 },
         autoStart: false,
         sourceReviewRunId: 'source-review',
-        review: { workflow: 'qa', sessionIntent: 'reset', scope: 'full', qaProfileId: 'changes' },
+        review: { workflow: 'qa', mode: 'cold', qaProfileId: 'changes' },
         source: { client: 'fixture' },
       };
       const submitted = await connection!.call<PRReviewRequestResult>('prReview.submit', {
@@ -1616,10 +1577,10 @@ try {
     }
   } else if (depthScenario) {
     const step = (run: any) =>
-      run.steps.find((entry: { name: string }) => entry.name === PipelineSteps.SELF_REVIEW);
+      run.steps.find((entry: { name: string }) => entry.name === PipelineSteps.REVIEW);
     const reviewer = (run: any) =>
       run.agentContexts?.findLast(
-        (context: any) => context.role === 'self-review' && context.status === 'working',
+        (context: any) => context.role === 'review' && context.status === 'working',
       );
     const waitRun = async (
       runId: string,
@@ -1867,14 +1828,12 @@ try {
         ],
         execution: {
           slotPolicy: { kind: 'exact', slotId: 'first-disabled' },
-          models: [{ runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
+          models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
         },
         review: {
-          sessionIntent: 'resume',
-          scope: 'incremental',
-          ...(scenario === 'approved-qa'
-            ? { workflow: 'qa', qaProfileId: 'changes' }
-            : { validationDepth: 'full-live' }),
+          mode: 'warm',
+          workflow: 'qa',
+          qaProfileId: 'changes',
         },
         githubTeams: [],
         notificationPrincipalIds: [],
@@ -1933,9 +1892,9 @@ try {
         .digest('hex');
       delete legacy.contributions[0].reviewPurpose;
       legacy.contributions[0].review = {
-        sessionIntent: 'resume',
-        scope: 'incremental',
-        validationDepth: 'full-live',
+        mode: 'cold',
+        workflow: 'qa',
+        qaProfileId: 'changes',
       };
       if (scenario === 'legacy-completed') {
         legacy.status = 'completed';

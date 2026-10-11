@@ -1,0 +1,126 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { AcceptanceStatusLedger } from '@farmslot/protocol';
+
+import {
+  acceptanceEvidenceHref,
+  acceptanceEvidenceStrip,
+  acceptanceEvidenceViewer,
+} from './acceptance-evidence';
+import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
+import { acceptanceLedgerView } from './task-progress-view';
+
+function view() {
+  const ledger: AcceptanceStatusLedger = {
+    schemaVersion: 1,
+    criteria: [
+      {
+        id: 'AC-1',
+        text: 'Approve stays disabled',
+        verdict: 'proven',
+        proofMode: 'mixed',
+        evidence: [
+          'artifacts/after-gate.png',
+          'artifacts/after.mp4',
+          'artifacts/gate-run.json',
+          'artifacts/gate.log',
+        ],
+        recipeNodes: ['capture-gate', 'verify-hold'],
+        updatedAt: '2026-10-11T12:00:00.000Z',
+      },
+      {
+        id: 'AC-2',
+        text: 'Evidence opens the viewer',
+        verdict: 'weak',
+        evidence: ['artifacts/after-gate.png', 'artifacts/after-viewer.png'],
+        recipeNodes: [],
+        updatedAt: '2026-10-11T12:01:00.000Z',
+      },
+    ],
+  };
+  return acceptanceLedgerView(ledger, [
+    { id: 'AC-1', text: 'Approve stays disabled' },
+    { id: 'AC-2', text: 'Evidence opens the viewer' },
+    { id: 'AC-3', text: 'Not judged yet' },
+  ]);
+}
+
+const urlFor = (path: string) => `http://gw/api/run-artifact?path=${path}`;
+
+test('an evidence entry opens on itself and swipes through only its criterion', () => {
+  const viewer = acceptanceEvidenceViewer(view().rows[0], 'artifacts/after.mp4', urlFor);
+  assert.ok(viewer);
+  assert.equal(viewer.initialIndex, 1);
+  assert.deepEqual(
+    viewer.items.map((item) => [item.title, item.mediaType]),
+    [
+      ['after-gate.png', 'image'],
+      ['after.mp4', 'video'],
+      ['gate-run.json', 'document'],
+      // Anything that is not an image or a video renders as text.
+      ['gate.log', 'document'],
+    ],
+  );
+  assert.equal(viewer.items[0].uri, urlFor('artifacts/after-gate.png'));
+  // The header carries the criterion's verdict, proof mode and recipe nodes.
+  assert.equal(viewer.items[1].detail, 'AC-1 · proven · mixed · node capture-gate, verify-hold');
+});
+
+test('the header says what the ledger lacks instead of inventing it', () => {
+  const viewer = acceptanceEvidenceViewer(view().rows[1], 'artifacts/after-viewer.png', urlFor);
+  assert.ok(viewer);
+  assert.equal(viewer.initialIndex, 1);
+  assert.equal(viewer.items[0].detail, 'AC-2 · weak · no proof mode · no recipe node');
+});
+
+test('a path that is not evidence of the criterion does not open under its verdict', () => {
+  assert.equal(acceptanceEvidenceViewer(view().rows[1], 'artifacts/after.mp4', urlFor), null);
+  assert.equal(acceptanceEvidenceViewer(view().rows[2], 'artifacts/after-gate.png', urlFor), null);
+});
+
+test('the evidence strip lists each file once, under the first criterion citing it', () => {
+  assert.deepEqual(
+    acceptanceEvidenceStrip(view()).map((item) => [item.criterionId, item.name]),
+    [
+      ['AC-1', 'after-gate.png'],
+      ['AC-1', 'after.mp4'],
+      ['AC-1', 'gate-run.json'],
+      ['AC-1', 'gate.log'],
+      ['AC-2', 'after-viewer.png'],
+    ],
+  );
+});
+
+test('a repeated ledger path is one evidence item', () => {
+  const row = acceptanceLedgerView({
+    schemaVersion: 1,
+    criteria: [
+      {
+        id: 'AC-1',
+        text: 'Repeated',
+        verdict: 'proven',
+        evidence: ['artifacts/a.png', 'artifacts/a.png', 'artifacts/b.png'],
+        recipeNodes: [],
+        updatedAt: '2026-10-11T12:00:00.000Z',
+      },
+    ],
+  }).rows[0];
+  assert.deepEqual(
+    row.evidence.map((entry) => entry.name),
+    ['a.png', 'b.png'],
+  );
+  assert.equal(acceptanceEvidenceViewer(row, 'artifacts/b.png', urlFor)?.initialIndex, 1);
+});
+
+test('the evidence route opens the run files viewer on the task artifact', () => {
+  assert.deepEqual(acceptanceEvidenceHref('run-1', 'AC-2', 'artifacts/after-viewer.png'), {
+    pathname: '/evidence/[runId]',
+    params: {
+      runId: 'run-1',
+      ac: 'AC-2',
+      evidence: 'artifacts/after-viewer.png',
+      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+    },
+  });
+});

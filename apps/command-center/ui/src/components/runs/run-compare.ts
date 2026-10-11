@@ -212,7 +212,7 @@ export class RunCompare extends LitElement {
   }
 
   private defaultStepName(): string {
-    const preferred = ['monitor', 'self-review', 'complete', 'dispatch'];
+    const preferred = ['monitor', 'review', 'complete', 'dispatch'];
     const names = this.allStepNames;
     return preferred.find((name) => names.includes(name)) ?? names[0] ?? '';
   }
@@ -622,10 +622,10 @@ ${this.rawPreview(step.outputs)}`
               ? ` · ${summary.recipeQuality.score}`
               : ''}</span
           >
-          <span class="meta-label">Self-review</span
+          <span class="meta-label">Review</span
           ><span
-            >${summary.selfReview.verdict ?? '—'}${summary.selfReview.issues.length
-              ? ` · ${summary.selfReview.issues.length} issue(s)`
+            >${summary.review.verdict ?? '—'}${summary.review.issues.length
+              ? ` · ${summary.review.issues.length} issue(s)`
               : ''}</span
           >
           <span class="meta-label">Evidence</span

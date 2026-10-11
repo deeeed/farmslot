@@ -31,7 +31,7 @@
         "action": "command",
         "next": "open-artifact-index",
         "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.recipeRunsForRun --gateway-url {{params.gateway_url}} --run-id {{params.run_id}} --slot-id {{params.slot_id}}",
-        "intent": "Request run.recipeRunsForRun and verify the gateway returns current, attempted, and promoted recipe-run groups when available."
+        "intent": "Recipe run groups expose current attempts and promoted evidence."
       },
       "open-artifact-index": {
         "action": "command",
@@ -49,7 +49,7 @@
         "action": "command",
         "next": "index-artifacts",
         "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.familyObservability --gateway-url {{params.gateway_url}} --run-id {{params.run_id}} --slot-id {{params.slot_id}}",
-        "intent": "Verify run/family observability can project recipe-run artifact groups without mixing PR feedback artifacts into recipe evidence."
+        "intent": "Family views keep recipe evidence separate from review feedback."
       },
       "index-artifacts": {
         "action": "index_artifacts",

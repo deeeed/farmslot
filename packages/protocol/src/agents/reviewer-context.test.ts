@@ -7,7 +7,7 @@ import {
   agentRoleForWindowName,
   allocateReviewerContext,
   isReviewerWindowName,
-  LEGACY_SELF_REVIEW_WINDOW,
+  LEGACY_REVIEW_WINDOW,
   reviewerWindowName,
   selectLatestReviewerContext,
 } from './reviewer-context.js';
@@ -22,7 +22,7 @@ test('reviewerWindowName keeps one canonical model-free tab per runner', () => {
 test('isReviewerWindowName recognizes short and legacy names', () => {
   assert.equal(isReviewerWindowName('rev-codex'), true);
   assert.equal(isReviewerWindowName('rev1-claude'), true);
-  assert.equal(isReviewerWindowName(LEGACY_SELF_REVIEW_WINDOW), true);
+  assert.equal(isReviewerWindowName(LEGACY_REVIEW_WINDOW), true);
   assert.equal(isReviewerWindowName('review-fix'), true);
   assert.equal(isReviewerWindowName('review-fix-4'), true);
   assert.equal(isReviewerWindowName('review-fix-old'), false);
@@ -39,7 +39,7 @@ test('allocateReviewerContext coexists for multiple runners on one run', () => {
   });
   assert.equal(first.windowName, 'rev-codex');
   assert.equal(first.id, 'rev-codex');
-  assert.equal(first.role, 'self-review');
+  assert.equal(first.role, 'review');
   assert.match(first.label, /gpt-5/);
 
   const second = allocateReviewerContext({
@@ -67,13 +67,13 @@ test('selectLatestReviewerContext picks newest reviewer independently of worker'
     },
     {
       id: 'rev-codex',
-      role: 'self-review' as const,
+      role: 'review' as const,
       updatedAt: '2026-07-09T12:01:00Z',
       target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
     },
     {
       id: 'rev-claude',
-      role: 'self-review' as const,
+      role: 'review' as const,
       updatedAt: '2026-07-09T12:02:00Z',
       target: { session: 's', window: 'rev-claude', target: 's:rev-claude' },
     },
@@ -82,10 +82,10 @@ test('selectLatestReviewerContext picks newest reviewer independently of worker'
   assert.equal(selectLatestReviewerContext(contexts.slice(0, 1)), null);
 });
 
-test('agentRoleForWindowName maps reviewer tabs to self-review', () => {
-  assert.equal(agentRoleForWindowName('rev-codex'), 'self-review');
-  assert.equal(agentRoleForWindowName('rev1-claude'), 'self-review');
-  assert.equal(agentRoleForWindowName(LEGACY_SELF_REVIEW_WINDOW), 'self-review');
+test('agentRoleForWindowName maps reviewer tabs to review', () => {
+  assert.equal(agentRoleForWindowName('rev-codex'), 'review');
+  assert.equal(agentRoleForWindowName('rev1-claude'), 'review');
+  assert.equal(agentRoleForWindowName(LEGACY_REVIEW_WINDOW), 'review');
   assert.equal(agentRoleForWindowName('bugfix'), 'fix-bug');
   assert.equal(agentRoleForWindowName('unknown'), null);
 });

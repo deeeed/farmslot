@@ -19,7 +19,7 @@ export interface FamilyLearningEntry {
   id: string;
   runId: string;
   stepName?: string | null;
-  source: 'worker-learnings' | 'self-review' | 'retrospective' | 'family-scope' | 'step-output';
+  source: 'worker-learnings' | 'review' | 'retrospective' | 'family-scope' | 'step-output';
   title: string;
   summary: string;
   detail?: string;
@@ -99,7 +99,7 @@ export interface FamilyObservabilityRunSummary {
    */
   acceptanceSummary?: AcceptanceStatusSummary | null;
   ciChecks: Array<{ name: string; status: string; conclusion: string | null }>;
-  selfReview: {
+  review: {
     verdict: string | null;
     summary: string | null;
     issues: Array<{ file: string; line?: number; description: string }>;

@@ -39,7 +39,7 @@ export const DISPATCH_HELP = {
   },
   interactive: {
     label: 'Interactive dev',
-    text: 'Lightweight skips the default self-review and human gate; you finish through task controls. Reviewed enables the normal review checkpoints.',
+    text: 'Lightweight skips the default review and human gate; you finish through task controls. Reviewed enables the normal review checkpoints.',
   },
   slot: {
     label: 'Slots',

@@ -9,7 +9,7 @@ import type {
 
 /**
  * Where a child checklist unit hangs off its parent (ADR-060). The checklist is
- * a task-dir basename (`CHECKLIST.md`, `SELF-REVIEW.md`), never a path, so the
+ * a task-dir basename (`CHECKLIST.md`, `REVIEW.md`), never a path, so the
  * link survives the task directory travelling to a slot.
  */
 export interface WorkerSignalParentLink {
@@ -33,8 +33,8 @@ export interface WorkerSignal {
   step?: string; // current step name
   reason?: string; // why blocked/failed
   prNumber?: number; // if worker created a PR
-  /** The worker completed a trivial update-branch task that does not need self-review. */
-  needsSelfReview?: boolean;
+  /** The worker completed a trivial update-branch task that does not need review. */
+  needsReview?: boolean;
   /** Set only on a child unit signal under `subtasks/`; names the owning step. */
   parent?: WorkerSignalParentLink;
   timestamp: string;

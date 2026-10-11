@@ -6,7 +6,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Add a project compatibility tutorial using the executable example-app pack, with provider actions, live teardown proof and selected-flow dispatch requirements.
 - Generate the recipe CLI reference from the same command grammar as help and completion.
+- Document the shared review picker and COLD/WARM session rules.
 
+- Registered acceptance criteria require verdicts before successful task completion, including contracts without an opt-in.
 - Explain hosted recipe binding, remote cancellation and recovery from unconfirmed process closeout.
 
 - Gateway API reference includes the supported finished-run evidence refresh operation.

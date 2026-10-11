@@ -25,19 +25,14 @@ function item(): PRRulePreviewItem {
     reviewProfile: 'team',
     match: { state: 'match', reasons: [] },
     configurationErrors: [],
-    review: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' },
+    review: { mode: 'cold' as const, workflow: 'qa' },
   };
 }
 
 test('default and explicit farm presets resolve to the same intake purpose', () => {
   const implicit = item();
   const explicit = item();
-  explicit.review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    workflow: 'qa',
-    qaProfileId: 'pr',
-  };
+  explicit.review = { mode: 'warm' as const, workflow: 'qa', qaProfileId: 'pr' };
   resolvePreviewQaPreset(implicit, config);
   resolvePreviewQaPreset(explicit, config);
   assert.deepEqual(implicit.review, explicit.review);
@@ -45,7 +40,6 @@ test('default and explicit farm presets resolve to the same intake purpose', () 
   assert.equal(implicit.reviewPurpose?.resolved, explicit.reviewPurpose?.resolved);
   assert.equal(prReviewPurpose(implicit.review), prReviewPurpose(explicit.review));
   assert.deepEqual(implicit.review?.qaInputs, { domain: 'payments' });
-  assert.equal(implicit.review?.validationDepth, undefined);
 });
 
 test('missing farm presets leave an actionable preview and static review needs none', () => {
@@ -53,7 +47,7 @@ test('missing farm presets leave an actionable preview and static review needs n
   resolvePreviewQaPreset(qa);
   assert.match(qa.configurationErrors.join(' '), /no QA presets/);
   const review = item();
-  review.review = { sessionIntent: 'resume', scope: 'incremental', workflow: 'review' };
+  review.review = { mode: 'warm' as const, workflow: 'review' };
   resolvePreviewQaPreset(review);
   assert.deepEqual(review.configurationErrors, []);
 });

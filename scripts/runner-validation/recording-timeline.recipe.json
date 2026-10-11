@@ -7,13 +7,13 @@
       "record": {
         "action": "command",
         "cmd": "test -n \"$FARMSLOT_RECORDING_VIEWER_WORKER_ARTIFACTS\" && node --import tsx scripts/e2e-recording-timeline.mts",
-        "intent": "Record real composed browser interactions; decode frame pixels and prove unequal action intervals survive variable-frame encoding and align with trace markers.",
+        "intent": "Recorded interactions retain action timing and matching frame evidence.",
         "next": "view"
       },
       "view": {
         "action": "command",
         "cmd": "FARMSLOT_RECORDING_REQUIRE_FRESH=1 node scripts/e2e-recording-viewer.mjs",
-        "intent": "Use the live gateway's recording metadata and real viewer clicks. Prove a capture marker displays the blue state, adjacent frame timestamps match actual presented frames, and slow playback is selectable.",
+        "intent": "The viewer links recorded markers to the correct presented frames.",
         "next": "done"
       },
       "done": {

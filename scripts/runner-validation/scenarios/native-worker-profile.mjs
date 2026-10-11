@@ -307,18 +307,18 @@ export async function runScenario({
         child.agentContexts.find((item) => item.id === contextId).nativeSession.profile,
         nativeProfile,
       );
-      rpc(Methods.RUN_INTERACTIVE_DEV_RESOLVE, { runId, action: 'run-self-review' });
+      rpc(Methods.RUN_INTERACTIVE_DEV_RESOLVE, { runId, action: 'run-review' });
       const reviewed = await wait(
         () => rpc(Methods.RUN_GET, { runId }).run,
         (current) => {
-          const step = current.steps.find((item) => item.name === 'self-review');
+          const step = current.steps.find((item) => item.name === 'review');
           assert.notEqual(
             step?.status,
             'failed',
             current.error ?? step?.detail ?? 'Reviewer failed',
           );
           for (const item of current.agentContexts.filter(
-            (item) => item.role === 'self-review' && item.nativeSession,
+            (item) => item.role === 'review' && item.nativeSession,
           ))
             assert.deepEqual(
               item.nativeSession.profile,
@@ -330,7 +330,7 @@ export async function runScenario({
         timeoutMs,
       );
       const reviewer = reviewed.agentContexts.find(
-        (item) => item.role === 'self-review' && item.nativeSession,
+        (item) => item.role === 'review' && item.nativeSession,
       );
       assert.ok(reviewer?.nativeSession.acceptedAt && reviewer.reviewResultValidatedAt);
       assert.notEqual(reviewer.nativeSession.sessionId, primary.nativeSession.sessionId);
@@ -341,7 +341,7 @@ export async function runScenario({
       assert.equal(page.session.profileId, nativeProfile.profileId);
       assert.equal(page.session.accountContextId, nativeProfile.accountContextId);
       report.checks.push(
-        'Retained child omits requested selection; fresh same-runner reviewer completes using its inherited configuration',
+        'Retained child omits requested selection; fresh reviewer session completes using its inherited configuration',
       );
     }
     report.pass = true;

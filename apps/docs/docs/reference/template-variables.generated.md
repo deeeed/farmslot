@@ -36,6 +36,6 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 ## Secondary in-run templates (double-brace VAR)
 
 - **ci-fix.md:** `CI_ISSUES, CI_ISSUE_TYPE + worker/hook vars`
-- **self-review-fix.md:** `ISSUES + worker/hook vars`
-- **self-review.static-code.md:** `VALIDATION_DEPTH + worker/hook vars`
+- **review-fix.md:** `ISSUES + worker/hook vars`
+- **review.static-code.md:** `VALIDATION_DEPTH + worker/hook vars`
 - **worker-dispatch nudge:** `TASK_FILE, TASK_DIR`

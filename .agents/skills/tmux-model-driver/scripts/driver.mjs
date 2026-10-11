@@ -70,7 +70,7 @@ function metadata(pane) {
     const [pgid, ...birth] = row.split(/\s+/);
     started = Date.parse(birth.join(' ')) || Date.now();
     if (/^\d+$/.test(pgid)) {
-      const processes = execFileSync('ps', ['-o', 'pid=,lstart=,comm=,args=', '-g', pgid], {
+      const processes = execFileSync('ps', ['-o', 'pid=,lstart=,args=', '-g', pgid], {
         encoding: 'utf8',
       });
       foreground = processes

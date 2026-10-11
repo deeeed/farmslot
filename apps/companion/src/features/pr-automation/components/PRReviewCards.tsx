@@ -149,8 +149,8 @@ export function PRReviewCards({ viewModel: vm, actions }: PRAutomationController
                 {run?.repeatReviewContext?.session && (
                   <Text style={styles.muted}>
                     Session {run.repeatReviewContext.session.continuity}
-                    {run.repeatReviewContext.session.fallbackReason
-                      ? ` · ${run.repeatReviewContext.session.fallbackReason}`
+                    {run.repeatReviewContext.session.refusalReason
+                      ? ` · ${run.repeatReviewContext.session.refusalReason}`
                       : ''}
                   </Text>
                 )}

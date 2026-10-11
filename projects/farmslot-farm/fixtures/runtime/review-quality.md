@@ -54,7 +54,7 @@ Persisted review artifact arrays can lead with a **diff** file, not the review n
 review output, prefer named files in this order:
 
 1. `review-feedback.md` — structured reviewer feedback
-2. `self-review.md` — worker self-review
+2. `review.md` — worker review
 3. `review.md` — full review report
 
 Do **not** blindly read the first element of an artifact array — it may be a raw diff with no AC verdicts.

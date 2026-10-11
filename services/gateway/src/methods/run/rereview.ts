@@ -1,19 +1,8 @@
 // rereview.ts — "Re-review on latest head" for a review-pr run whose review
 // could not be posted because the PR head moved.
 //
-// Two paths, decided by whether the reviewer session that produced the stale
-// review is still alive on the run's slot:
-//
-// 1. Warm handoff (preferred): the slot still hosts the run's review context,
-//    so a chained review-pr run is created on that slot with the ci-watch
-//    warm-session flags. DISPATCH pastes the follow-up task into the live
-//    session, and the incremental repeat-review context (prior findings,
-//    reviewed SHA vs. current head) is attached up front so no continuation
-//    gate is raised. This is "reload the previous runner context".
-// 2. Review intake (fallback): the session is gone, so a manual review request
-//    (resume session, incremental scope, same slot/runner/model preferred) goes
-//    through the normal review queue and reviewer continuity picks the best
-//    available session.
+// A verified retained lineage is required before replacing the parent. A live
+// slot takes a chained WARM run; otherwise the same lineage goes through intake.
 
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
@@ -22,6 +11,7 @@ import {
   type RunRereviewLatestHeadParams,
   type RunRereviewLatestHeadResult,
 } from '@farmslot/protocol';
+import { reviewRequestContextForRun } from '@farmslot/review-dispatch';
 
 import { fetchGitHubPR } from '../../external/github.js';
 import {
@@ -34,12 +24,17 @@ import {
   liveReviewSessionSlot,
   rereviewTarget,
 } from '../../pr-rules/rereview-request.js';
+import { WarmReviewRefusal } from '../../review/session-mode.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
 } from '../../run-engine/engine-decisions.js';
 import { applyChainedRunEngineFlags, startRun } from '../../run-engine/orchestrator.js';
+import {
+  assertPrimaryReviewContext,
+  assertWarmReviewRequestAvailable,
+} from '../../run-engine/review-plan.js';
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
@@ -67,6 +62,13 @@ export async function runRereviewLatestHead(
   const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
   const runner = run.metrics.runner;
   const model = run.metrics.model;
+  const reviewContext = reviewRequestContextForRun({ ...run, decisions: run.decisions ?? [] });
+  if (!reviewContext)
+    throw new WarmReviewRefusal(
+      'missing-session',
+      'the previous review lineage is missing or ambiguous',
+    );
+  assertPrimaryReviewContext({ ...run, reviewMode: 'warm', reviewContext });
   // The stale review is the prior round, the live head is the target, and the
   // reviewer keeps its session. The context reads only the prior run, so its
   // ancestry lookup runs before the child exists.
@@ -75,7 +77,7 @@ export async function runRereviewLatestHead(
       ? automatedRepeatReviewSelection(
           await confirmIncrementalAncestry(
             buildRepeatReviewContext(
-              run,
+              { ...run, reviewContext },
               run,
               {
                 project: run.project,
@@ -88,8 +90,7 @@ export async function runRereviewLatestHead(
           ),
           {
             ...DEFAULT_PR_REVIEW_OPTIONS,
-            validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
-            busySession: 'wait',
+            mode: 'warm',
           },
         )
       : undefined;
@@ -110,11 +111,17 @@ export async function runRereviewLatestHead(
   );
   if (existing) return { mode: 'warm-handoff', runId: existing.id, headSha: live.headSha };
 
+  if (runner && model)
+    assertWarmReviewRequestAvailable(
+      parent,
+      { runner, model, effort: run.effort ?? null, mode: 'warm', context: reviewContext },
+      getAllRuns(),
+    );
+
   if (!slot || !runner || !model || !context) {
-    // The blocked review still owns the PR for queue admission; retire it or
-    // the replacement waits on the run it replaces.
-    supersedeBlockedReview(parent, 'via review intake');
     const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
+    const latestParent = getRun(parent.id);
+    if (latestParent) supersedeBlockedReview(latestParent, 'via review intake');
     return { mode: 'review-intake', ...intake };
   }
 
@@ -134,14 +141,15 @@ export async function runRereviewLatestHead(
     // Keep the parent's completion policy: the operator was trying to post
     // this review, so the child must offer the same posting gate.
     completionPolicy: run.completionPolicy,
-    reviewScope: context.reviewScope,
+    reviewMode: context.mode,
+    reviewContext,
     prNumber: target.number,
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
   });
   updateRun(child.id, {
     repeatReviewContext: context,
-    reviewScope: context.reviewScope,
+    reviewMode: context.mode,
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });

@@ -90,7 +90,7 @@ test('scanArtifacts excludes internal launch artifacts from reviewable manifests
     );
     await writeFile(path.join(taskDir, 'artifacts/runtime-launch/runtime-dist/app.js'), 'bundle');
     await writeFile(path.join(taskDir, 'artifacts/runtime-relaunch/runtime-dist/app.js'), 'bundle');
-    await writeFile(path.join(taskDir, 'artifacts/runner-blockers/self-review-launch.txt'), 'pane');
+    await writeFile(path.join(taskDir, 'artifacts/runner-blockers/review-launch.txt'), 'pane');
 
     const artifacts = await scanArtifacts(taskDir);
 

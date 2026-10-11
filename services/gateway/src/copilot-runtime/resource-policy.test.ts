@@ -43,9 +43,9 @@ test('workload counts all primary, nested, QA, recipe, prepare, dev-server, and 
         runId: 'review-run',
       },
       {
-        id: 'self-review-fix',
-        role: 'self-review-fix',
-        label: 'self-review-fix',
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'review-fix',
         status: 'working',
         slotId: 'slot-1',
         runId: 'review-run',
@@ -108,7 +108,7 @@ test('workload counts all primary, nested, QA, recipe, prepare, dev-server, and 
   assert.deepEqual(
     {
       implementation: snapshot.totals.implementation,
-      independentReview: snapshot.totals.independentReview,
+      review: snapshot.totals.review,
       reviewRework: snapshot.totals.reviewRework,
       ciFix: snapshot.totals.ciFix,
       fullQa: snapshot.totals.fullQa,
@@ -119,7 +119,7 @@ test('workload counts all primary, nested, QA, recipe, prepare, dev-server, and 
     },
     {
       implementation: 1,
-      independentReview: 1,
+      review: 1,
       reviewRework: 1,
       ciFix: 1,
       fullQa: 1,

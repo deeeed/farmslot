@@ -414,6 +414,16 @@ function check(dir, ...args) {
     /artifacts\/acceptance-status\.json is missing but inputs\/handoff\.json lists 3/,
   );
   assert.equal(check(dir).status, 0, 'without the flag the ledger is not required');
+  assert.equal(
+    check(dir, '--terminal', 'complete').status,
+    1,
+    'successful completion requires registered verdicts without an opt-in',
+  );
+  assert.equal(
+    check(dir, '--terminal', 'no-change').status,
+    0,
+    'no-change retains its existing outcome contract',
+  );
 
   // One verdict recorded, two still open.
   assert.equal(ac(dir, 'set', 'AC-1', 'proven', '--proof-mode', 'state').status, 0);
@@ -532,7 +542,7 @@ function check(dir, ...args) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. The mark engine gates the check on the project's opt-in.
+// 10. Registered criteria gate completion even without a project's opt-in.
 {
   const engine = path.join(root, 'scripts', 'mark-checklist-step.cjs');
   const contract = (acceptance) => ({
@@ -559,15 +569,22 @@ function check(dir, ...args) {
     return { dir, result, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
   }
 
-  // The state every farm is in today: criteria on the ticket, no ledger written,
-  // and no opt-in. `complete` must pass — enforcing here would fail every run.
+  // Old contracts cannot let an unassessed task complete silently.
   const optedOut = completeWith(undefined);
   assert.equal(
     optedOut.result.status,
-    0,
-    `complete must pass without worker_terminal.acceptance.require: ${optedOut.output}`,
+    1,
+    `complete must refuse registered criteria without a ledger: ${optedOut.output}`,
   );
-
+  assert.match(optedOut.output, /acceptance-status\.json is missing/);
+  const legacy = makeTask();
+  writeFileSync(path.join(legacy, 'artifacts', 'report.md'), '# Report\n\nValidation completed.\n');
+  writeFileSync(path.join(legacy, 'CHECKLIST.md'), '- [x] **1. do the work**\n');
+  const legacyComplete = spawnSync(process.execPath, [engine, legacy, 'complete', '--mark-last'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(legacyComplete.status, 0);
+  assert.match(legacyComplete.stderr, /acceptance-status\.json is missing/);
   // With the opt-in the same task is refused until every criterion has a verdict.
   const optedIn = completeWith({ require: true });
   assert.notEqual(optedIn.result.status, 0, 'complete must fail with require: true and no ledger');

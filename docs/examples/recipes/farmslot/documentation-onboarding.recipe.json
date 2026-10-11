@@ -35,7 +35,7 @@
         "action": "command",
         "cmd": "cd apps/command-center && yarn test:protocol && yarn test:recipe-runner",
         "next": "index-artifacts",
-        "intent": "Validate every Farmslot self-validation recipe package and ensure it emits summary, trace, manifest, and resolved recipe artifacts."
+        "intent": "Every framework proof produces a valid recipe artifact package."
       },
       "index-artifacts": {
         "action": "index_artifacts",

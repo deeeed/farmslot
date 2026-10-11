@@ -6,6 +6,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
 - Bind live recipe conformance to named runtime and teardown proof targets, retained artifact digests and typed capture metadata.
+- Replace runner-diversity review contracts with WARM/COLD selections, ordered review sequences and separate-session review provenance.
+
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
+- `RUNNER_MOBILE_KEY_PROFILES` and `runnerMobileKeyProfile()`: the extra phone terminal keys (the Companion runner row) for claude, codex, cursor, grok and pi, each key recording the CLI version and documented binding it was checked against. `TmuxWorkerSummary.processRunnerIds` (optional) lists the runners whose process matchers hit the pane command, and `TmuxWorkerSummary.linkedRunner` names the linked run's runner only on the pane its worker context records exactly.
+- Export the publish-approval action set (`PUBLISH_APPROVAL_ACTIONS`, `isPublishApprovalAction`) and the review-depth helpers (`defaultReviewDepthPolicy`, `effectiveRequiredReviewCount`, `isQualifyingIndependentReview`) so clients guard publish gates with the gateway's own rules.
+- Share candidate slot selection, improvement Apply routing and validation outcomes between operator clients.
 
 ## 0.38.0 - 2026-10-11
 

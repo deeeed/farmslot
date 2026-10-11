@@ -137,7 +137,7 @@ function iterationReason(
     if (entry.inputDiff?.available) return 'Follow-up after reviewed PR input changed';
     return 'PR completion follow-up';
   }
-  if (entry.flowType === 'review-pr') return 'Independent review iteration';
+  if (entry.flowType === 'review-pr') return 'Review iteration';
   if (hasCiIssue(run)) return 'Follow-up for CI failure';
   if (entry.contributionDiff.available) return 'Follow-up code iteration';
   return 'Family follow-up iteration';

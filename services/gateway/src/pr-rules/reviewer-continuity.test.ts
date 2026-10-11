@@ -8,8 +8,20 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 import { preferRetainedReviewer } from './reviewer-continuity.js';
 
 const choices: PRExecutionChoice[] = [
-  { slotId: 'slot-b', runner: 'codex', model: 'gpt-6-astra', effort: 'high' },
-  { slotId: 'slot-a', runner: 'codex', model: 'gpt-6-astra', effort: 'high' },
+  {
+    slotId: 'slot-b',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    mode: 'warm' as const,
+  },
+  {
+    slotId: 'slot-a',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    mode: 'warm' as const,
+  },
 ];
 
 function fixture(): { intent: PRReviewIntent; prior: Run } {
@@ -34,6 +46,12 @@ function fixture(): { intent: PRReviewIntent; prior: Run } {
         eligible: true,
         configurationErrors: [],
         project: 'project',
+        review: {
+          mode: 'warm' as const,
+          reviewContext: {
+            reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'lineage-a' }],
+          },
+        },
       },
     ],
   };
@@ -55,11 +73,7 @@ function fixture(): { intent: PRReviewIntent; prior: Run } {
       review: {
         ownerId: 'owner',
         profile: 'standard',
-        options: {
-          sessionIntent: 'resume',
-          scope: 'incremental',
-          validationDepth: 'static-code',
-        },
+        options: { mode: 'cold' as const },
       },
     },
     decisions: [
@@ -88,10 +102,12 @@ function fixture(): { intent: PRReviewIntent; prior: Run } {
     agentContexts: [
       {
         id: 'context-a',
+        reviewId: 'lineage-a',
         role: 'review',
         label: 'Reviewer',
         runner: 'codex',
         model: 'gpt-6-astra',
+        effort: 'high',
         slotId: 'slot-a',
         runId: 'review-a',
         runnerSessionId: 'session-a',
@@ -123,35 +139,27 @@ test('a slot reused for another PR still selects the original PR reviewer sessio
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior, differentPR]), [
     choices[1],
   ]);
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', [choices[0]], [prior, differentPR]), [
-    choices[0],
-  ]);
+  assert.deepEqual(
+    preferRetainedReviewer(intent, 'project', [choices[0]], [prior, differentPR]),
+    [],
+  );
 });
 
-test('fresh-slot fallback and explicit Fresh honor the pool without transferring other owners contexts', () => {
+test('WARM refuses missing compatible placement; explicit COLD uses the pool', () => {
   const { intent, prior } = fixture();
-  intent.contributions[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'static-code',
-    busySession: 'fresh',
-  };
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), [
-    choices[1],
-    choices[0],
-  ]);
-  intent.contributions[0].review.sessionIntent = 'reset';
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
-  intent.contributions[0].review.sessionIntent = 'resume';
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), [choices[1]]);
+  intent.contributions[0].review!.mode = 'cold';
+  const coldChoices = choices.map((choice) => ({ ...choice, mode: 'cold' as const }));
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', coldChoices, [prior]), coldChoices);
+  intent.contributions[0].review!.mode = 'warm';
   prior.prWork!.review!.ownerId = 'another-owner';
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), []);
 });
 
 test('QA does not inherit static reviewer session placement', () => {
   const { intent, prior } = fixture();
   intent.contributions[0].review = {
-    sessionIntent: 'resume',
-    scope: 'incremental',
+    mode: 'cold' as const,
     workflow: 'qa',
     qaProfileId: 'changes',
   };
@@ -169,13 +177,36 @@ test('workspace automation prefers the machine holding the compatible retained r
     id: 'review',
     runner: 'cursor',
     model: 'composer-2.5',
+    effort: undefined,
   };
   const workspaces: PRExecutionChoice[] = [
-    { machine: 'machine-b', runner: 'cursor', model: 'composer-2.5', transport: 'tmux' },
-    { machine: 'machine-a', runner: 'cursor', model: 'composer-2.5', transport: 'tmux' },
+    {
+      machine: 'machine-b',
+      runner: 'cursor',
+      model: 'composer-2.5',
+      transport: 'tmux',
+      effort: null,
+      mode: 'warm' as const,
+    },
+    {
+      machine: 'machine-a',
+      runner: 'cursor',
+      model: 'composer-2.5',
+      transport: 'tmux',
+      effort: null,
+      mode: 'warm' as const,
+    },
   ];
   assert.deepEqual(preferRetainedReviewer(intent, 'project', workspaces, [prior]), [workspaces[1]]);
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', [workspaces[0]], [prior]), [
-    workspaces[0],
-  ]);
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', [workspaces[0]], [prior]), []);
+});
+
+test('WARM requires explicit matching review context even when the PR and runner match', () => {
+  const { intent, prior } = fixture();
+  intent.contributions[0].review!.reviewContext = undefined;
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), []);
+  intent.contributions[0].review!.reviewContext = {
+    reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'another-review' }],
+  };
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), []);
 });

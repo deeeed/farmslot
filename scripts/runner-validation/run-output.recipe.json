@@ -8,7 +8,7 @@
       "refresh-output": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/run-output.mjs",
-        "intent": "Prove run.refreshMirror retains indexed output and a review decision while run status, verdict, execution steps and acknowledgement remain unchanged. Open the report in Command Center and follow a nested artifact link; acknowledge only on the isolated copy. Re-run to verify the acknowledgement survives refresh.",
+        "intent": "Output refresh preserves review acknowledgement without changing execution.",
         "next": "browser-output"
       },
       "done": {
@@ -18,19 +18,19 @@
       "browser-output": {
         "action": "command",
         "cmd": "node apps/command-center/scripts/cdp.mjs eval \"$FARMSLOT_OUTPUT_ROUTE\" 'const root = document.querySelector(\"run-detail\")?.shadowRoot; const files = root?.querySelector(\"[data-testid=run-output-files] summary\")?.textContent; if (!files || !/Browse files \\([1-9][0-9]*\\)/.test(files)) throw new Error(\"Retained files missing after navigation\"); if (root.textContent.includes(\"not finished reconciling your last resolution\")) throw new Error(\"Output review incorrectly waits for a resource transition\"); return { files, resourceWait: false };' ",
-        "intent": "Verify the normal detail page hydrates its omitted file manifest after reload, and output acknowledgement does not trigger a resource transition. This reads the real DOM without injecting state.",
+        "intent": "Run detail shows retained files without changing resource ownership.",
         "next": "family-files"
       },
       "family-files": {
         "action": "command",
         "cmd": "node apps/command-center/scripts/cdp.mjs eval \"$FARMSLOT_OUTPUT_FAMILY_ROUTE\" 'const root = document.querySelector(\"family-observability\")?.shadowRoot; const files = root?.querySelector(\"[data-testid=family-browse-files] summary\")?.textContent; if (!files || !/Browse files \\([1-9][0-9]*\\)/.test(files)) throw new Error(\"Family files missing\"); if (!root.querySelector(\"[data-testid=family-read-report]\")) throw new Error(\"Family report link missing\"); return { files, reportAvailable: true };' ",
-        "intent": "Prove the family page exposes the selected run files returned by family.observability.get. Click Read report and a nested evidence link in the real browser to verify file content renders.",
+        "intent": "Family files expose the selected run's report and nested evidence.",
         "next": "family-report-links"
       },
       "family-report-links": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/family-output-browser.mjs",
-        "intent": "Use real CDP clicks to open the family report, assert its expected content, follow a nested artifact link and assert the selected file. Negative control: supply incorrect expected report text and confirm the assertion fails.",
+        "intent": "Report links open the selected evidence and reject incorrect content claims.",
         "next": "done"
       }
     }

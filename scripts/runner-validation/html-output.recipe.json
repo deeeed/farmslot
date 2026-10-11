@@ -8,19 +8,19 @@
       "human-report": {
         "action": "command",
         "cmd": "node scripts/e2e-html-report.mjs",
-        "intent": "Prove artifact deep links hydrate after the full run snapshot, expanded criteria, separate selected-plan versus full-AC coverage, embedded images, native collapsible/filter controls, contents and sticky navigation, opaque parent isolation and shared viewer maximize.",
+        "intent": "The report viewer exposes complete coverage and linked evidence safely.",
         "next": "hostile-report"
       },
       "hostile-report": {
         "action": "command",
         "cmd": "FARMSLOT_HTML_HOSTILE_PROOF=1 FARMSLOT_HTML_REPORT_ROUTE=\"$FARMSLOT_HTML_HOSTILE_ROUTE\" node scripts/e2e-html-report.mjs",
-        "intent": "Prove retained hostile HTML cannot execute scripts/handlers, access the parent, load remote images, render active forms/frames or redirect through meta refresh.",
+        "intent": "Untrusted reports cannot execute code or escape their isolated viewer.",
         "next": "close-execution"
       },
       "close-execution": {
         "action": "command",
         "cmd": "node scripts/e2e-output-close.mjs",
-        "intent": "Click Close run on the marked disposable fixture after the action hydrates; prove done/partial, unchanged criteria evidence and step history, retained downloadable report and visible closed copy. Also exercise refused cleanup, changed report bytes, retry and ownership guards through the corresponding gateway scenario before ship.",
+        "intent": "Closing execution preserves reviewed evidence and reports incomplete outcomes.",
         "next": "family-outcome"
       },
       "done": {
@@ -30,7 +30,7 @@
       "family-outcome": {
         "action": "command",
         "cmd": "node scripts/e2e-family-outcome.mjs",
-        "intent": "Prove closed partial/failure families do not satisfy success dependencies, successful terminal siblings recover the family consistently, and active siblings keep dependencies pending without dispatching work.",
+        "intent": "Family success depends on successful terminal work and pending siblings.",
         "next": "done"
       }
     }

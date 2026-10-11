@@ -8,6 +8,7 @@ import type {
   CopilotObserverNotificationPayload,
   CopilotRuntimeSession,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import type { EffortLevel } from '../../utils/runner-options.js';
 import { safeLsGet } from '../../utils/storage.js';
@@ -44,9 +45,16 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected runtimeLoading = false;
   @state() protected runtimeError = '';
   @state() protected runtimeNotice = '';
-  @state() protected runtimeRunner = '';
-  @state() protected runtimeModel = '';
-  @state() protected runtimeEffort: EffortLevel = '';
+  protected runtimePicker = new ReviewDispatchViewModel({ context: { allowedActions: ['chat'] } });
+  protected get runtimeRunner() {
+    return this.runtimePicker.selection!.runner;
+  }
+  protected get runtimeModel() {
+    return this.runtimePicker.selection!.model ?? '';
+  }
+  protected get runtimeEffort(): EffortLevel {
+    return (this.runtimePicker.selection!.effort ?? '') as EffortLevel;
+  }
   @state() protected runtimeAutostart = false;
   @state() protected runtimeWorkerRefJson = '';
   @state() protected runtimeDetailsOpen = false;

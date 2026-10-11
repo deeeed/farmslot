@@ -11,11 +11,22 @@ import type {
   NativeSessionCatalogResult,
   PRStatus,
   QaInput,
-  ReviewRunnerId,
   Run,
   RunCancelResult,
 } from '@farmslot/protocol';
-import { failedRunCancelEffects, Methods, workspacePolicyMachines } from '@farmslot/protocol';
+import {
+  failedRunCancelEffects,
+  Methods,
+  parseGitHubPullUrl,
+  parseGitHubRef,
+  workspacePolicyMachines,
+} from '@farmslot/protocol';
+import {
+  defaultModelForRunner,
+  resolveReviewDispatchDefaults,
+  reviewLineagesForPR,
+  reviewSequenceForExecution,
+} from '@farmslot/review-dispatch';
 
 import './execution-template-preview-modal.js';
 import '../shared/choice-picker.js';
@@ -24,13 +35,8 @@ import './recipe-compatibility-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
-import {
-  COMPARISON_LANE_RUNNERS,
-  defaultModelForRunner,
-  RUNNER_OPTIONS,
-} from '../../utils/runner-options.js';
-import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
-import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
+import { COMPARISON_LANE_RUNNERS, RUNNER_OPTIONS } from '../../utils/runner-options.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
 import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
@@ -48,6 +54,7 @@ import {
   addDispatchQueueItemFromDraft,
   buildDispatchWizardPayloadDraft,
   dispatchRunCreateFromDraft,
+  dispatchWizardExecutionOptions,
 } from './dispatch-wizard-actions.js';
 import { deriveDispatchWizardBlockingState } from './dispatch-wizard-blockers.js';
 import {
@@ -63,9 +70,6 @@ import {
 } from './dispatch-wizard-comparison-state.js';
 import {
   appLabel,
-  buildPublicationReviewGateParams,
-  buildPublicationReviewPlan,
-  defaultExtraReviewRunner,
   interactiveTemplateOption,
   modeForFlow,
   parseQaInputOverrides,
@@ -88,7 +92,7 @@ import {
   requestUnfilteredTemplateOptions,
 } from './dispatch-wizard-loaders.js';
 import { buildDispatchPreviewParams } from './dispatch-wizard-payload.js';
-import { parseDispatchWizardHash, syncPublicationReviewsHash } from './dispatch-wizard-prefill.js';
+import { parseDispatchWizardHash, syncReviewSequenceHash } from './dispatch-wizard-prefill.js';
 import {
   candidateDispatchable,
   dispatchableCandidates,
@@ -121,19 +125,6 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
-  private _initialModelPending = true;
-  private _unsubVisibleModels?: () => void;
-
-  private _applyInitialModelDefault(): void {
-    if (
-      this.mockMode ||
-      !this._initialModelPending ||
-      rememberedDefaultModel(this._runner) === undefined
-    )
-      return;
-    this._model = defaultModelForRunner(this._runner);
-    this._initialModelPending = false;
-  }
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
 
   updated(changed: Map<string, unknown>) {
@@ -184,12 +175,6 @@ export class DispatchWizard extends DispatchWizardState {
     document.addEventListener('keydown', this._onComparePickerKeydown);
     this._parseHashParams();
     this._applyMockInitial();
-    if (!this.mockMode) {
-      this._unsubVisibleModels = watchVisibleModels((error) => {
-        if (!error) this._applyInitialModelDefault();
-      });
-      this._applyInitialModelDefault();
-    }
     this._syncFleet(getState());
     if (!this.mockMode && gateway.connectionState === 'connected') void this._loadNativeWorkers();
     if (this.mockMode && this.mockProjectConfigs) {
@@ -225,7 +210,6 @@ export class DispatchWizard extends DispatchWizardState {
     document.removeEventListener('keydown', this._onComparePickerKeydown);
     this._unsubConn?.();
     this._unsubState?.();
-    this._unsubVisibleModels?.();
     if (this._matchTimer) clearTimeout(this._matchTimer);
     if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
   }
@@ -357,7 +341,6 @@ export class DispatchWizard extends DispatchWizardState {
     );
     this._runner = next.runner;
     this._model = next.model;
-    this._initialModelPending = false;
     this._comparisonParentEngineHydrated = true;
     this._recomputeVariantCollision();
   }
@@ -986,7 +969,6 @@ export class DispatchWizard extends DispatchWizardState {
     this._comparisonVariant = next.comparisonVariant;
     this._runner = next.runner;
     this._model = next.model;
-    this._initialModelPending = false;
     this._ticketId = run.ticketOrPr;
     this._normalizedTicket = '';
     this._assignFlowType(
@@ -1072,7 +1054,17 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _parseHashParams() {
-    const prefill = parseDispatchWizardHash(location.hash, RUNNER_OPTIONS);
+    let prefill;
+    try {
+      prefill = parseDispatchWizardHash(
+        location.hash,
+        this._executionPicker.catalog.runners.map((runner) => runner.id),
+      );
+    } catch (error) {
+      this._configurationError = error instanceof Error ? error.message : String(error);
+      this._error = this._configurationError;
+      return;
+    }
     if (!prefill) return;
     if (prefill.transport) {
       this._transport = prefill.transport;
@@ -1085,11 +1077,12 @@ export class DispatchWizard extends DispatchWizardState {
     if (prefill.reviewMachine) this._reviewMachine = prefill.reviewMachine;
     if (prefill.qaProfileId) this._qaProfileId = prefill.qaProfileId;
     if (prefill.qaInputs !== undefined) this._qaInputsText = prefill.qaInputs;
-    this._legacyReviewPlacementError = prefill.configurationError ?? '';
-    if (prefill.publicationReviewLoops.length > 0) {
-      this._publicationReviewLoops = prefill.publicationReviewLoops;
-      this._nextPublicationReviewLoopId = prefill.publicationReviewLoops.length + 1;
-    }
+    this._configurationError = prefill.configurationError ?? '';
+    this._reviewPicker.setContext({
+      ...this._reviewPicker.context,
+      reviewContext: prefill.reviewSequenceContext,
+    });
+    this._reviewPicker.setSequence(prefill.reviewSequence);
     if (prefill.startRefRedirectHash) {
       this._error =
         'Direct startRef dispatch moved to #evals so replay creates Reference/Candidate packages instead of a plain run.';
@@ -1106,8 +1099,8 @@ export class DispatchWizard extends DispatchWizardState {
       this._comparisonHashPinnedEngine = Boolean(runner && COMPARISON_LANE_RUNNERS.has(runner));
       if (runner && COMPARISON_LANE_RUNNERS.has(runner)) {
         this._runner = runner;
-        this._model = model || defaultModelForRunner(runner);
-        this._initialModelPending = false;
+        this._model =
+          model || (defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '');
       }
       if (this._comparisonHashPinnedEngine) {
         this._comparisonParentEngineHydrated = true;
@@ -1135,7 +1128,11 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _syncPublicationReviewsToHash(): void {
-    const nextHash = syncPublicationReviewsHash(location.hash, this._publicationReviewLoops);
+    const nextHash = syncReviewSequenceHash(
+      location.hash,
+      this._reviewPicker.toSequence(),
+      this._reviewPicker.toReviewContext(),
+    );
     if (nextHash && location.hash !== nextHash) history.replaceState(null, '', nextHash);
   }
 
@@ -1302,6 +1299,12 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _dispatchPayloadDraft() {
+    if (
+      this._configurationError ||
+      !this._executionPicker.canInvoke('dispatch') ||
+      !this._reviewPicker.canInvoke('dispatch')
+    )
+      return null;
     const mode =
       this._flowType === 'review-pr' || this._flowType === 'qa'
         ? 'autonomous'
@@ -1356,9 +1359,7 @@ export class DispatchWizard extends DispatchWizardState {
       slotOverride: this._slotOverride,
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
-      model: this._model,
-      runner: this._runner,
-      effort: this._effort,
+      ...dispatchWizardExecutionOptions(this._flowType, this._executionPicker),
       app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
       taskTemplate,
       domain: this._domain || undefined,
@@ -1373,13 +1374,9 @@ export class DispatchWizard extends DispatchWizardState {
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
 
-      ...buildPublicationReviewGateParams(
-        this._flowType,
-        this._runner,
-        this._publicationReviewLoops,
-        RUNNER_OPTIONS,
-        mode,
-      ),
+      ...(publicationReviewsEnabled(this._flowType, mode)
+        ? this._reviewPicker.toDispatchOptions()
+        : {}),
       comparison: buildComparisonRunParams({
         comparisonLane: this._comparisonLane,
         comparisonFamilyId: this._comparisonFamilyId,
@@ -1422,7 +1419,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _selectFlowType(flowType: FlowType): void {
-    this._legacyReviewPlacementError = '';
+    this._configurationError = '';
     this._assignFlowType(flowType);
     this._autoFlowType = false;
     this._applyVisibleCatalog();
@@ -1438,11 +1435,33 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _syncWorkflowSelection(): void {
+    const pr =
+      parseGitHubRef(this._normalizedTicket || this._ticketId) ??
+      parseGitHubPullUrl(this._ticketId);
+    const reviewLineages = pr
+      ? reviewLineagesForPR(getState().runs, {
+          host: 'github.com',
+          repo: pr.repo,
+          number: pr.number,
+        })
+      : [];
+    for (const picker of [this._executionPicker, this._reviewPicker]) {
+      if (JSON.stringify(picker.context.reviewLineages ?? []) !== JSON.stringify(reviewLineages))
+        picker.setContext({
+          ...picker.context,
+          reviewLineages,
+          reviewContext: picker.toReviewContext(),
+        });
+    }
+    const project = this._projectConfigs.find((entry) => entry.name === this._project);
+    this._reviewPicker.setContext({
+      ...this._reviewPicker.context,
+      defaults: resolveReviewDispatchDefaults(project, 'review-pr'),
+    });
     if (this._flowType !== 'review-pr' && this._flowType !== 'qa') {
       this._workflowSelectionKey = '';
       return;
     }
-    const project = this._projectConfigs.find((entry) => entry.name === this._project);
     if (!project) return;
     const key = `${this._project}|${this._flowType}`;
     if (key === this._workflowSelectionKey) return;
@@ -1462,10 +1481,16 @@ export class DispatchWizard extends DispatchWizardState {
     this._reviewAutoFinish =
       project.workflowDefaults?.[this._flowType]?.review?.autoFinish === true;
     if (model && !this._comparisonLane) {
-      this._initialModelPending = false;
-      this._runner = model.runner;
-      this._model = model.model;
-      this._effort = (model.effort ?? '') as typeof this._effort;
+      this._executionPicker.setContext({
+        ...this._executionPicker.context,
+        reviewContext: project.workflowDefaults?.[this._flowType]?.review?.reviewContext,
+      });
+      this._executionPicker.setSequence(
+        reviewSequenceForExecution(
+          [model],
+          project.workflowDefaults?.[this._flowType]?.review?.mode,
+        ),
+      );
     }
     if (!this._transportChosen) this._transport = execution?.transport ?? 'tmux';
     if (changedContext || this._flowType === 'review-pr') {
@@ -1551,8 +1576,8 @@ export class DispatchWizard extends DispatchWizardState {
         return (error as Error).message;
       }
     }
+    if (this._configurationError) return this._configurationError;
     if (this._flowType !== 'review-pr') return null;
-    if (this._legacyReviewPlacementError) return this._legacyReviewPlacementError;
     const filters = getState().globalFilters.machines;
     const machine = this._workspaceMachine();
     if (filters.length > 1 && !machine)
@@ -1574,7 +1599,7 @@ export class DispatchWizard extends DispatchWizardState {
             ?disabled=${!this._project}
             @change=${(event: Event) => {
               this._reviewMachine = (event.target as HTMLSelectElement).value;
-              this._legacyReviewPlacementError = '';
+              this._configurationError = '';
             }}
           >
             <option value="">
@@ -1729,49 +1754,15 @@ export class DispatchWizard extends DispatchWizardState {
     this._error = '';
   }
 
-  private _setRunner(runner: string) {
-    this._initialModelPending = false;
-    if (runner === this._runner) return;
-    this._runner = runner;
+  private _executionChanged() {
     if (
       this._nativeCatalogReady &&
       this._transport === 'native' &&
-      !this._nativeWorkerRunners.includes(runner)
+      !this._nativeWorkerRunners.includes(this._runner)
     )
       this._setTransport('tmux');
-    this._model = defaultModelForRunner(runner);
-    this._effort = '';
     this._recomputeVariantCollision();
-  }
-
-  private _setModel(model: string) {
-    this._initialModelPending = false;
-    if (model === this._model) return;
-    this._model = model;
-    this._recomputeVariantCollision();
-  }
-
-  private _addPublicationReviewLoop(
-    runner: ReviewRunnerId = defaultExtraReviewRunner(this._runner, RUNNER_OPTIONS),
-  ): void {
-    if (this._publicationReviewLoops.length >= 5) return;
-    this._publicationReviewLoops = [
-      ...this._publicationReviewLoops,
-      { id: this._nextPublicationReviewLoopId++, runner },
-    ];
-    this._syncPublicationReviewsToHash();
-  }
-
-  private _removePublicationReviewLoop(id: number): void {
-    this._publicationReviewLoops = this._publicationReviewLoops.filter((loop) => loop.id !== id);
-    this._syncPublicationReviewsToHash();
-  }
-
-  private _setPublicationReviewRunner(id: number, runner: ReviewRunnerId): void {
-    this._publicationReviewLoops = this._publicationReviewLoops.map((loop) =>
-      loop.id === id ? { ...loop, runner } : loop,
-    );
-    this._syncPublicationReviewsToHash();
+    this.requestUpdate();
   }
 
   /** Farm-default QA preset shown beside static review rounds; runtime QA is a separate flow. */
@@ -1892,14 +1883,13 @@ export class DispatchWizard extends DispatchWizardState {
       variantCollision: this._variantCollision,
       variantInput: this._variantInput,
       publicationReviewsEnabled: publicationReviewsEnabled(this._flowType, mode),
-      publicationReviewLoops: this._publicationReviewLoops,
-      publicationReviewPlan: buildPublicationReviewPlan(
-        this._flowType,
-        this._runner,
-        this._publicationReviewLoops,
-        RUNNER_OPTIONS,
-        mode,
-      ),
+      reviewPicker: this._reviewPicker,
+      reviewsChanged: () => {
+        if (this._reviewPicker.valid) this._syncPublicationReviewsToHash();
+        this.requestUpdate();
+      },
+      executionPicker: this._executionPicker,
+      executionChanged: () => this._executionChanged(),
       publicationReviewQaPreset: this._effectiveQaPresetTitle(),
       runnerOptions: RUNNER_OPTIONS,
       loadingCandidates: this._loadingCandidates,
@@ -1944,11 +1934,6 @@ export class DispatchWizard extends DispatchWizardState {
         this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
         this._applyVisibleCatalog();
       },
-      setRunner: (runner) => this._setRunner(runner),
-      setModel: (model) => this._setModel(model),
-      setEffort: (effort) => {
-        this._effort = effort;
-      },
       setPrepareOptions: ({ skipPrepare, prepareProfile }) => {
         // Skip Prepare keeps the chosen profile for when it is turned off again.
         const nextProfile = skipPrepare ? this._prepareProfile : prepareProfile;
@@ -1986,15 +1971,6 @@ export class DispatchWizard extends DispatchWizardState {
       setVariantInput: (variantInput) => {
         this._variantInput = variantInput;
       },
-      setPublicationReviewRunner: (id, runner) => this._setPublicationReviewRunner(id, runner),
-      removePublicationReviewLoop: (id) => this._removePublicationReviewLoop(id),
-      addWorkerReviewLoop: () =>
-        this._addPublicationReviewLoop(
-          (RUNNER_OPTIONS.includes(this._runner as ReviewRunnerId)
-            ? this._runner
-            : 'claude') as ReviewRunnerId,
-        ),
-      addExternalReviewLoop: () => this._addPublicationReviewLoop(),
       candidateDispatchable,
       slotSummaryLabel: (slotId) =>
         slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),

@@ -8,6 +8,7 @@ import {
   acceptanceCriteriaView,
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
+  type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   isSettledSubtaskStatus,
   summarizeAcceptanceStatus,
@@ -79,40 +80,65 @@ export function acceptanceVerdictColor(verdict: string | null): string {
   return colors.accent;
 }
 
+export interface AcceptanceEvidenceEntry {
+  /** Task-dir relative path, as the ledger records it. */
+  path: string;
+  /** Basename — a phone has no room for full paths. */
+  name: string;
+}
+
+export interface AcceptanceLedgerRow {
+  criterion: AcceptanceCriterionView;
+  /** The recorded verdict, or null while the criterion is unjudged. */
+  verdict: string | null;
+  color: string;
+  evidence: AcceptanceEvidenceEntry[];
+}
+
 export interface AcceptanceLedgerView {
   /** Assessment progress and proven criteria are separate counts. */
   counts: string;
   /** Long-form tally for the accessibility label. */
   countsLabel: string;
+  /** Fail colour while any registered criterion has no verdict, neutral otherwise. */
+  countsColor: string;
+  /** Registered criteria with no verdict recorded yet. */
+  unassessed: number;
   /** True while any criterion is neither proven nor recorded untestable. */
   hasOpenCriteria: boolean;
-  rows: Array<{
-    criterion: AcceptanceCriterionView;
-    /** The recorded verdict, or null while the criterion is unjudged. */
-    verdict: string | null;
-    color: string;
-    /** Evidence basenames — a phone has no room for full paths. */
-    evidence: string[];
-  }>;
+  rows: AcceptanceLedgerRow[];
 }
 
+/**
+ * @param evidenceLinks Manifest `covers` links for a run with no ledger. They only
+ * fill a row's evidence when that criterion has no recorded verdict, and never
+ * count as one.
+ */
 export function acceptanceLedgerView(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
+  evidenceLinks: ReadonlyArray<AcceptanceEvidenceLink> = [],
 ): AcceptanceLedgerView {
   const summary = summarizeAcceptanceStatus(ledger, criteria);
   const assessed = summary.total - summary.unrecorded;
+  const linked = new Map(evidenceLinks.map((link) => [link.id, link.evidence]));
   return {
-    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
+    counts: `${assessed}/${summary.total} assessed · ${summary.proven} proven`,
     countsLabel:
       `proven ${summary.proven}, weak ${summary.weak}, missing ${summary.missing}, ` +
       `untestable ${summary.untestable}, not assessed ${summary.unrecorded}`,
+    // An unjudged criterion blocks a publish decision, so the tally must not read as neutral.
+    countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
+    unassessed: summary.unrecorded,
     hasOpenCriteria: summary.proven + summary.untestable < summary.total,
     rows: acceptanceCriteriaView(criteria, ledger).map((criterion) => ({
       criterion,
       verdict: criterion.status?.verdict ?? null,
       color: acceptanceVerdictColor(criterion.status?.verdict ?? null),
-      evidence: (criterion.status?.evidence ?? []).map((path) => path.split('/').pop() || path),
+      // A path the ledger repeats is one file: one chip, one viewer slide.
+      evidence: [
+        ...new Set(criterion.status ? criterion.status.evidence : (linked.get(criterion.id) ?? [])),
+      ].map((path) => ({ path, name: path.split('/').pop() || path })),
     })),
   };
 }

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  type IndependentReviewStatus,
+  type ReviewStatus,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -13,7 +13,7 @@ import {
   noChangeDispositionLabel,
   noChangeRejectionMessage,
   normalizeExhaustedReviewContinuation,
-  pendingIndependentReviewContinuation,
+  pendingReviewContinuation,
   publicationGateDecisionActions,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
@@ -59,39 +59,41 @@ test('publish approval refuses an evidence-bearing package with an empty selecti
 
 test('pending continuation ignores later non-verdict placeholders but honors a later pass', () => {
   const issues = {
-    id: 'independent-review-7',
+    reviewerSessionId: 'fixture-session-' + 'review-7',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-7',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 1,
-    crossRunner: true,
     unresolvedCount: 1,
     feedbackSent: false,
     recoveryContinuationPending: true,
     issues: [{ file: 'src/example.ts', description: 'Fix this' }],
-  } satisfies IndependentReviewStatus;
+  } satisfies ReviewStatus;
   const skipped = {
-    id: 'independent-review-8',
+    reviewerSessionId: 'fixture-session-' + 'review-8',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-8',
     source: 'human-gate',
     verdict: 'skipped',
     loopNumber: 1,
-    crossRunner: true,
     unresolvedCount: 0,
-  } satisfies IndependentReviewStatus;
+  } satisfies ReviewStatus;
   const failed = {
-    id: 'independent-review-9',
+    reviewerSessionId: 'fixture-session-' + 'review-9',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-9',
     source: 'human-gate',
     verdict: 'failed',
     loopNumber: 1,
-    crossRunner: true,
     unresolvedCount: 0,
-  } satisfies IndependentReviewStatus;
-  assert.equal(pendingIndependentReviewContinuation([issues, skipped, failed])?.id, issues.id);
+  } satisfies ReviewStatus;
+  assert.equal(pendingReviewContinuation([issues, skipped, failed])?.id, issues.id);
   assert.equal(
-    pendingIndependentReviewContinuation([
-      issues,
-      skipped,
-      { ...skipped, id: 'independent-review-10', verdict: 'pass' },
-    ]),
+    pendingReviewContinuation([issues, skipped, { ...skipped, id: 'review-10', verdict: 'pass' }]),
     undefined,
   );
 });
@@ -161,8 +163,8 @@ test('exhausted review normalization restores only the final undelivered finding
     ],
     feedbackSent: true,
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
-      { loopNumber: 2, verdict: 'issues', unresolvedCount: 2 },
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
+      { mode: 'cold' as const, loopNumber: 2, verdict: 'issues', unresolvedCount: 2 },
     ],
   });
   assert.deepEqual(normalizeExhaustedReviewContinuation(review), {
@@ -179,7 +181,7 @@ test('exhausted review normalization also repairs a single-attempt ISSUES row', 
     unresolvedCount: 1,
     issues: [{ file: 'a.ts', description: 'only finding' }],
     feedbackSent: true,
-    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
+    attempts: [{ mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
   });
   assert.deepEqual(normalizeExhaustedReviewContinuation(review), {
     ...review,
@@ -208,20 +210,19 @@ test('exhausted review normalization does not restore continuation after the ret
     maxRetries: 3,
     maxRetriesExhausted: true,
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
-      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { mode: 'cold' as const, loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
     ],
   });
   assert.equal(normalizeExhaustedReviewContinuation(review), review);
 });
 
-function makeApprovingReview(
-  overrides: Partial<IndependentReviewStatus> = {},
-): IndependentReviewStatus {
+function makeApprovingReview(overrides: Partial<ReviewStatus> = {}): ReviewStatus {
   return {
+    reviewerSessionId: 'fixture-session-' + (overrides.id ?? 'review-1'),
+    mode: 'cold' as const,
     id: overrides.id ?? 'review-1',
     source: overrides.source ?? 'human-gate',
-    crossRunner: overrides.crossRunner ?? false,
     loopNumber: overrides.loopNumber ?? 1,
     verdict: overrides.verdict ?? 'pass',
     unresolvedCount: overrides.unresolvedCount ?? 0,
@@ -477,36 +478,30 @@ test('staleReviewsAreEvidenceOnly is false when any stale approving review is HE
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
 });
 
-test('staleReviewsAreEvidenceOnly respects cross-runner certification requirement', () => {
+test('staleReviewsAreEvidenceOnly accepts verified reviewer sessions', () => {
   const preparedPackage = makeReadyGatePackage({
     headSha: 'abc1234',
     reviewSubjectHash: 'subject-new',
   });
-  // Only a same-runner stale approval exists; with cross-runner required there is
-  // no eligible stale approving review, so the override stays unavailable.
+  // A retained review on the matching head can carry an evidence refresh.
   const reviews = [
     makeApprovingReview({
-      crossRunner: false,
       reviewedHeadSha: 'abc1234',
       reviewedReviewSubjectHash: 'subject-old',
     }),
   ];
-  assert.equal(
-    staleReviewsAreEvidenceOnly(reviews, preparedPackage, {
-      requireCrossRunnerCertification: true,
-    }),
-    false,
-  );
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), true);
 });
 
 test('exhausted extra-review offers a new review and a dangerous bypass, not another auto-fix', () => {
-  const exhausted: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const exhausted: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 3,
-    crossRunner: true,
     unresolvedCount: 6,
     feedbackSent: false,
     recoveryContinuationPending: true,
@@ -515,22 +510,22 @@ test('exhausted extra-review offers a new review and a dangerous bypass, not ano
     maxRetriesExhausted: true,
     issues: [{ file: 'src/example.ts', description: 'still broken' }],
     attempts: [
-      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
-      { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
-      { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
-      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+      { mode: 'cold' as const, loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { mode: 'cold' as const, loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+      { mode: 'cold' as const, loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+      { mode: 'cold' as const, loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
     ],
   };
   const actions = publicationGateDecisionActions({
     reviewSatisfied: false,
     pendingReviewContinuation: exhausted,
-    independentReviews: [exhausted],
+    reviews: [exhausted],
   });
   assert.equal(
     actions.some((action) => action.id === 'continue-review-fix'),
     false,
   );
-  const extra = actions.find((action) => action.id === 'request-extra-review');
+  const extra = actions.find((action) => action.id === 'request-review');
   assert.equal(extra?.style, 'primary');
   const bypass = actions.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION);
   assert.equal(bypass?.style, 'danger');
@@ -538,12 +533,14 @@ test('exhausted extra-review offers a new review and a dangerous bypass, not ano
 });
 
 test('exhausted extra-review is not a pending auto-fix continuation', () => {
-  const exhausted: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const exhausted: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 3,
-    crossRunner: true,
     unresolvedCount: 6,
     feedbackSent: false,
     recoveryContinuationPending: true,
@@ -551,16 +548,18 @@ test('exhausted extra-review is not a pending auto-fix continuation', () => {
     maxRetries: 3,
     issues: [{ file: 'src/example.ts', description: 'still broken' }],
   };
-  assert.equal(pendingIndependentReviewContinuation([exhausted]), undefined);
+  assert.equal(pendingReviewContinuation([exhausted]), undefined);
 });
 
 test('bypass is not offered when review policy is already satisfied', () => {
-  const exhausted: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const exhausted: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    reviewedHeadSha: 'fixture-head',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 3,
-    crossRunner: true,
     unresolvedCount: 6,
     retryCount: 3,
     maxRetries: 3,
@@ -569,7 +568,7 @@ test('bypass is not offered when review policy is already satisfied', () => {
   };
   const actions = publicationGateDecisionActions({
     reviewSatisfied: true,
-    independentReviews: [exhausted],
+    reviews: [exhausted],
   });
   assert.equal(
     actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
@@ -582,12 +581,13 @@ test('bypass is not offered when review policy is already satisfied', () => {
 });
 
 test('exhausted extra-review still offers bypass when only the review subject hash drifted', () => {
-  const exhausted: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const exhausted: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 3,
-    crossRunner: true,
     unresolvedCount: 6,
     feedbackSent: false,
     recoveryContinuationPending: true,
@@ -600,7 +600,7 @@ test('exhausted extra-review still offers bypass when only the review subject ha
   };
   const actions = publicationGateDecisionActions({
     reviewSatisfied: false,
-    independentReviews: [exhausted],
+    reviews: [exhausted],
     preparedPackage: { headSha: 'abc1234', reviewSubjectHash: 'subject-new' },
   });
   assert.equal(
@@ -614,24 +614,26 @@ test('exhausted extra-review still offers bypass when only the review subject ha
 });
 
 test('bypass remains available before a newer review exhausts its retries', () => {
-  const oldCap: IndependentReviewStatus = {
-    id: 'independent-review-2',
+  const oldCap: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-2',
+    mode: 'cold' as const,
+    id: 'review-2',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 2,
-    crossRunner: true,
     unresolvedCount: 4,
     retryCount: 3,
     maxRetries: 3,
     reviewedHeadSha: 'old-head',
     issues: [{ file: 'src/old.ts', description: 'old' }],
   };
-  const later: IndependentReviewStatus = {
-    id: 'independent-review-3',
+  const later: ReviewStatus = {
+    reviewerSessionId: 'fixture-session-' + 'review-3',
+    mode: 'cold' as const,
+    id: 'review-3',
     source: 'human-gate',
     verdict: 'issues',
     loopNumber: 3,
-    crossRunner: true,
     unresolvedCount: 2,
     retryCount: 1,
     maxRetries: 3,
@@ -643,7 +645,7 @@ test('bypass remains available before a newer review exhausts its retries', () =
   const actions = publicationGateDecisionActions({
     reviewSatisfied: false,
     pendingReviewContinuation: later,
-    independentReviews: [oldCap, later],
+    reviews: [oldCap, later],
     preparedPackage: { headSha: 'new-head' },
   });
   assert.equal(
@@ -660,13 +662,13 @@ for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
   test(`review-blocked gate offers explicit bypass for ${verdict ?? 'missing'} review`, () => {
     const actions = publicationGateDecisionActions({
       reviewSatisfied: false,
-      independentReviews: verdict
+      reviews: verdict
         ? [
             {
               id: 'review-1',
               source: 'dispatch',
-              crossRunner: false,
               loopNumber: 1,
+              mode: 'cold',
               verdict,
               unresolvedCount: verdict === 'issues' ? 1 : 0,
             },

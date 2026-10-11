@@ -291,25 +291,25 @@ export interface MonitorStepOutput {
   cliCommand?: string;
 }
 
-// ─── self-review ───
+// ─── review ───
 
-export interface SelfReviewStepInput {
+export interface ReviewStepInput {
   slotId: string;
   enabled: boolean;
   model?: string;
 }
 
-export interface SelfReviewIssue {
+export interface ReviewIssue {
   file: string;
   line?: number;
   description: string;
 }
 
-export interface SelfReviewStepOutput {
+export interface ReviewStepOutput {
   skipped?: boolean;
   reason?: string;
   verdict?: 'pass' | 'issues';
-  issues?: SelfReviewIssue[];
+  issues?: ReviewIssue[];
   retryCount?: number;
   feedbackSent?: boolean;
   durationMs?: number;

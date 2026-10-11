@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import type { Principal, PRWorkspaceExecutionProfile } from '@farmslot/protocol';
+import type {
+  Principal,
+  PRWorkspaceExecutionProfile,
+  ReviewRequestContext,
+  ReviewSequence,
+} from '@farmslot/protocol';
+import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 const root = mkdtempSync(path.join(tmpdir(), 'direct-review-defaults-'));
 for (const directory of [
@@ -39,7 +45,7 @@ for (const flow of ['review-pr', 'validation'])
 const execution: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['one', 'two'] },
   transport: 'native',
-  models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+  models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 const raw = {
   name: 'farm',
@@ -386,6 +392,36 @@ test('an issued offline first alternative does not hide a healthy authorized mac
   assert.deepEqual(result.errors, []);
 });
 
+test('run and queued dispatch preserve primary and additional review context separately', async (t) => {
+  const reviewContext: ReviewRequestContext = {
+    reviewLineages: [{ repository: 'example/app', prNumber: 42, reviewId: 'primary-review' }],
+  };
+  const reviewSequenceContext: ReviewRequestContext = {
+    reviewLineages: [{ repository: 'example/app', prNumber: 42, reviewId: 'additional-review' }],
+  };
+  const reviewSequence: ReviewSequence = [
+    { runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' },
+  ];
+  const input = { ...request, reviewContext, reviewSequence, reviewSequenceContext };
+  const queued = await asOwner(() => dispatchQueueAdd(input));
+  t.after(() => queue.removeQueueItemInternalNow(queued.item.id, 'test-cleanup'));
+  assert.deepEqual(queued.item.reviewContext, reviewContext);
+  assert.deepEqual(queued.item.reviewSequenceContext, reviewSequenceContext);
+  await queue.persistQueueNow();
+  await queue.loadQueue({ kind: 'principal', principalId: 'owner' });
+  const saved = queue.getQueueSnapshot().find((item) => item.id === queued.item.id)!;
+  assert.deepEqual(saved.reviewContext, reviewContext);
+  assert.deepEqual(saved.reviewSequenceContext, reviewSequenceContext);
+  const { run } = await asOwner(() => runCreate(input, () => {}, { awaitPersist: true }));
+  t.after(async () => {
+    run.status = 'cancelled';
+    await deleteRun(run.id);
+  });
+  assert.deepEqual(run.reviewContext, reviewContext);
+  assert.deepEqual(run.engineState?.publishGate?.reviewSequenceContext, reviewSequenceContext);
+  assert.deepEqual(run.engineState?.publishGate?.reviewSequence, reviewSequence);
+});
+
 test('delayed queue dispatch uses frozen alternatives when farm defaults change', async (t) => {
   const queued = await asOwner(() => dispatchQueueAdd(request));
   const busy = createRun(
@@ -448,7 +484,7 @@ test('queued QA pool selection stays unpinned while explicit slot requests survi
   const input = { ...request, flowType: 'qa' as const };
   const execution = {
     slotPolicy: { kind: 'pool' as const, allowedSlots: ['runtime'] },
-    models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
+    models: [{ mode: 'cold' as const, runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
   };
   const queued = await resolveDirectWorkflowDefaults(input, project, {
     purpose: 'queue',
@@ -518,4 +554,22 @@ test('queued portable policies retain model alternatives for future registry adm
     execution: portable,
   });
   assert.deepEqual(resolved.execution, portable);
+});
+
+test('direct admission resolves null defaults and retains them in the saved execution policy', async () => {
+  const defaults: PRWorkspaceExecutionProfile = {
+    ...execution,
+    models: [{ runner: 'codex', model: null, effort: null, mode: 'cold' }],
+  };
+  const expected = executionModelFromSelection(defaults.models[0]);
+  const resolved = await resolveDirectWorkflowDefaults(request, await loadProjectConfig('farm'), {
+    purpose: 'run',
+    ownerId: 'owner',
+    execution: defaults,
+  });
+  assert.equal(resolved.params.model, expected.model);
+  assert.equal(resolved.params.effort, expected.effort ?? undefined);
+  assert.deepEqual(resolved.execution, defaults);
+  assert.equal(resolved.execution!.models[0].model, null);
+  assert.equal(resolved.execution!.models[0].effort, null);
 });

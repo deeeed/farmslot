@@ -349,7 +349,7 @@ function renderRunTokenBody(
         <div class="token-section-title">Role breakdown</div>
         <div class="token-section-hint">
           ${runSummary.usesGateSummary
-            ? 'Worker, independent reviews, and chained pr-complete loops from the gate summary.'
+            ? 'Worker, reviews, and chained pr-complete loops from the gate summary.'
             : 'Worker session metrics for this run.'}
         </div>
         ${renderRoleBreakdown(runSummary.roles)}

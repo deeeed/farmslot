@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/profile-fit-gate.mjs",
         "timeout_ms": 45000,
-        "intent": "Assert incompatible slots report a resource blocker in preview and pause at GRADE, while compatible core slots reach a separate flow decision without creating task files.",
+        "intent": "Profile incompatibility blocks dispatch before task creation.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

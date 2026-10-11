@@ -42,8 +42,8 @@ const FLOW_REPORT_ARTIFACTS = {
   'pr-complete': ['comments-report.md', 'report.md'],
   'update-branch': ['branch-update-report.md', 'report.md'],
   'ci-fix': ['report.md'],
-  'self-review': ['review-feedback.md', 'report.md'],
-  'self-review-fix': ['report.md'],
+  review: ['review-feedback.md', 'report.md'],
+  'review-fix': ['report.md'],
 };
 const FALLBACK_REPORT_ARTIFACTS = [
   'report.md',
@@ -61,16 +61,16 @@ function printHelp() {
       usageLine,
       '',
       'Task-dir mode: farmslot-agent mark <task-dir> <step> — marks CHECKLIST.md (or TASK.md) unless checklist-target.json, written by a role switch, points elsewhere.',
-      'Override: farmslot-agent mark <task-dir> --checklist SELF-REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
+      'Override: farmslot-agent mark <task-dir> --checklist REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
       'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
       '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
       'Terminal:',
-      '  ./mark complete [--mark-last] [--no-self-review] [--skip-learnings] [--skip-checklist]',
+      '  ./mark complete [--mark-last] [--no-review] [--skip-learnings] [--skip-checklist]',
       '  ./mark no-change --reason "..." [--already-fixed] [--mark-last] [--skip-learnings] [--skip-checklist]',
       '  ./mark blocked --reason "..." [--mark-last]',
-      'Terminal success paths require the flow contract artifacts: contribution flows need non-empty artifacts/learnings.md plus a flow outcome artifact (complete) or no-change-report (no-change); reviewer flows (self-review, self-review-fix) need their feedback/report artifact instead of learnings.',
+      'Terminal success paths require the flow contract artifacts: contribution flows need non-empty artifacts/learnings.md plus a flow outcome artifact (complete) or no-change-report (no-change); reviewer flows (review, review-fix) need their feedback/report artifact instead of learnings.',
       'PR flows (dev, fix-bug): write artifacts/pr-description.md. Other flows: review.md, review-feedback.md, branch-update-report.md, report.md, etc.',
       'With --mark-last, every checklist box must be [x] unless --skip-checklist. complete also runs check-task-artifact-contract.mjs.',
       'Do not write SIGNAL.json by hand or with echo.',
@@ -131,7 +131,7 @@ for (let i = 0; i < rest.length; i += 1) {
   if (
     key === '--mark-last' ||
     key === '--already-fixed' ||
-    key === '--no-self-review' ||
+    key === '--no-review' ||
     key === '--skip-learnings' ||
     key === '--skip-checklist'
   ) {
@@ -276,9 +276,8 @@ function inferFlowType(taskPath) {
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
     if (label.includes('update-branch') || label.includes('update branch')) return 'update-branch';
     if (label.includes('ci-fix') || label.includes('ci fix')) return 'ci-fix';
-    if (label.includes('self-review fix') || label.includes('self-review-fix'))
-      return 'self-review-fix';
-    if (label.includes('self-review') || label.includes('self review')) return 'self-review';
+    if (label.includes('review fix') || label.includes('review-fix')) return 'review-fix';
+    if (label.includes('review')) return 'review';
     if (label.includes('interactive dev')) return 'dev';
     if (/\bdev\b/.test(label) && !label.includes('review')) return 'dev';
   }
@@ -321,11 +320,9 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
-  // The ledger blocks `complete` only where the project opted in
-  // (`worker_terminal.acceptance.require`) AND the task registered criteria
-  // (ADR-060). Without the opt-in a template that does not write a ledger yet
-  // still completes; the ledger is watched, projected and preferred for coverage
-  // either way.
+  if (terminalCommand) args.push('--terminal', terminalCommand);
+  // This explicit flag keeps project opt-ins compatible with older checkers.
+  // Current checkers also enforce registered verdicts on terminal complete.
   if (terminalCommand === 'complete' && contract?.acceptance?.require === true) {
     let criteria;
     try {
@@ -342,11 +339,10 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
-    if (terminalCommand) args.push('--terminal', terminalCommand);
     if (opts['skip-learnings']) args.push('--skip-learnings');
   } else {
     // No persisted contract file — honor the resolved builtin contract instead of
-    // assuming learnings: reviewer flows (self-review, self-review-fix) require their
+    // assuming learnings: reviewer flows (review, review-fix) require their
     // feedback/report artifact, not artifacts/learnings.md.
     const contractRequiresLearnings = contract
       ? (contract.commands?.[terminalCommand ?? 'complete']?.artifacts ?? []).includes(
@@ -387,7 +383,7 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   }
 
   if (terminalCommand === 'complete' || terminalCommand === 'no-change') {
-    assertArtifactContract(taskDir, taskPath);
+    assertArtifactContract(taskDir, taskPath, undefined, terminalCommand);
   }
 }
 
@@ -417,9 +413,7 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
     outcome: preset.outcome,
     disposition: preset.disposition,
     ...(opts.reason ? { reason: opts.reason } : {}),
-    ...(terminal.command === 'complete' && opts['no-self-review']
-      ? { needsSelfReview: false }
-      : {}),
+    ...(terminal.command === 'complete' && opts['no-review'] ? { needsReview: false } : {}),
     ...(opts['skip-learnings'] ? { artifactWaivers: { learnings: true } } : {}),
   };
 

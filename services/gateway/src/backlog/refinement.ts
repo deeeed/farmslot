@@ -76,7 +76,7 @@ function formatDispatchSettings(item: BacklogItem): string {
     `- prepareProfile: ${item.prepareProfile?.trim() || '(unset)'}`,
     `- allowedSlots: ${(item.allowedSlots ?? []).join(', ') || '(any)'}`,
     `- taskTemplate: ${item.taskTemplate ? JSON.stringify(item.taskTemplate) : '(unset)'}`,
-    `- reviewDepth: ${item.reviewDepth ? JSON.stringify(item.reviewDepth) : '(unset)'}`,
+    `- reviewPolicy: ${item.reviewPolicy ? JSON.stringify(item.reviewPolicy) : '(unset)'}`,
     `- launchPlan: ${item.launchPlan ? JSON.stringify(item.launchPlan) : '(unset)'}`,
   ];
   return lines.join('\n');

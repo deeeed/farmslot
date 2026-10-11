@@ -127,7 +127,7 @@ function renderSubstep(
 
 export function renderPipelineProgressPanel(
   progress: TaskProgressStructured,
-  activeStep: 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null,
+  activeStep: 'monitor' | 'review' | 'ci-watch' | 'human-gate' | null,
   close: () => void,
   openScope: SubtaskOpenScope,
   activeTaskBasename?: string | null,

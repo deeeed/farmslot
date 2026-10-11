@@ -27,11 +27,11 @@ Farmslot is that framework: a control plane for the fleet, a cockpit for the ope
 
 ## Current / next / later
 
-| Stage   | Product focus                                                                                                                                                     |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Current | Gateway, CLI/protocol, slot lifecycle, project/pool configuration, Command Center operator flows, tmux visibility, recipe/evidence contracts.                     |
-| Next    | Stronger Gateway Intelligence, clearer project-import guides, curated public capability docs, cross-runner review as a standard workflow, sanitized public demos. |
-| Later   | Human-in-the-loop roadmap ingestion, rough-idea refinement, ambient mobile approvals, and increasingly autonomous backlog-to-dispatch operation.                  |
+| Stage   | Product focus                                                                                                                                           |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Current | Gateway, CLI/protocol, slot lifecycle, project/pool configuration, Command Center operator flows, tmux visibility, recipe/evidence contracts.           |
+| Next    | Stronger Gateway Intelligence, clearer project-import guides, curated public capability docs, PR review as a standard workflow, sanitized public demos. |
+| Later   | Human-in-the-loop roadmap ingestion, rough-idea refinement, ambient mobile approvals, and increasingly autonomous backlog-to-dispatch operation.        |
 
 ## Scaling the engineer across projects
 

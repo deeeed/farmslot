@@ -9,17 +9,20 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-recovery-recipe recovery",
         "timeout_ms": 180000,
-        "intent": "Reject runner override and cleaned setup replay over RPC without mutation. Admit live and cleaned monitor replay without replacing the attempt; execution stays disabled in this fixture. Hide unsafe Retry and prefill the same PR request without claiming unknown review readiness.",
+        "intent": "Review recovery refuses unsafe replay and retains the selected attempt.",
         "next": "startup-deadline"
       },
       "startup-deadline": {
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-subtask-workspace.mts",
         "timeout_ms": 180000,
-        "intent": "Block an unacknowledged terminal after its recorded launch deadline without replacing it; accept a real task mark and preserve child progress, evidence checks and completion.",
+        "intent": "Startup expiry blocks unaccepted work while preserving later genuine progress.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

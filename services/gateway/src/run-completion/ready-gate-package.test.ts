@@ -54,10 +54,8 @@ test('ready package hashes separate artifact identity from review subject', () =
       publishAuthority: 'human' as const,
       reason: 'test',
     },
-    reviewDepth: {
-      minimumIndependentReviews: 1,
-      requireCrossRunner: false,
-      extraLoopsRequested: 0,
+    reviewPolicy: {
+      minimumReviews: 1,
       requestedBy: 'dispatch' as const,
     },
     publicationTarget: 'ready' as const,
@@ -124,10 +122,8 @@ test('ready package hashes separate artifact identity from review subject', () =
     computeReadyGateReviewSubjectHash({
       ...base,
       reviewArtifactIds: ['review-2'],
-      reviewDepth: {
-        minimumIndependentReviews: 1,
-        requireCrossRunner: true,
-        extraLoopsRequested: 2,
+      reviewPolicy: {
+        minimumReviews: 1,
         requestedBy: 'human-gate' as const,
       },
       gatePolicy: {

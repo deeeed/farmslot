@@ -58,7 +58,7 @@ try {
               mode: 'automatic-repair',
               execution: {
                 slotPolicy: { kind: 'exact', slotId },
-                models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+                models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
               },
             },
           },

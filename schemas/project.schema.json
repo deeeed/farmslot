@@ -127,7 +127,14 @@
       "type": "object",
       "description": "Core prepare plus explicit legacy compatibility profiles. When core is present it is the default unless an operator names a profile.",
       "additionalProperties": false,
-      "anyOf": [{ "required": ["core"] }, { "required": ["profiles"] }],
+      "anyOf": [
+        {
+          "required": ["core"]
+        },
+        {
+          "required": ["profiles"]
+        }
+      ],
       "properties": {
         "core": {
           "$ref": "#/$defs/prepare_core",
@@ -169,7 +176,9 @@
               },
               "hooks": {
                 "type": "object",
-                "additionalProperties": { "type": "string" },
+                "additionalProperties": {
+                  "type": "string"
+                },
                 "description": "Per-profile hook overrides; unlisted hooks resolve from the project's top-level hooks."
               },
               "requires": {
@@ -200,7 +209,9 @@
           "type": "object",
           "minProperties": 1,
           "patternProperties": {
-            "^[a-z][a-z0-9.-]*$": { "$ref": "#/$defs/runtime_capability_provider" }
+            "^[a-z][a-z0-9.-]*$": {
+              "$ref": "#/$defs/runtime_capability_provider"
+            }
           },
           "additionalProperties": false
         },
@@ -209,7 +220,9 @@
           "description": "ADR-054 lifecycle posture policy. Provider-level retention overrides these defaults.",
           "additionalProperties": false,
           "properties": {
-            "defaults": { "$ref": "#/$defs/resource_posture_retention_map" }
+            "defaults": {
+              "$ref": "#/$defs/resource_posture_retention_map"
+            }
           }
         },
         "host_pressure_admission": {
@@ -396,8 +409,13 @@
       "type": "object",
       "description": "Project-owned external integration fixture policy.",
       "properties": {
-        "mock_mode": { "type": "boolean" },
-        "fixtures_dir": { "type": "string", "minLength": 1 }
+        "mock_mode": {
+          "type": "boolean"
+        },
+        "fixtures_dir": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
@@ -698,7 +716,9 @@
       "properties": {
         "test_patterns": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Extra test-file globs (gitignore-style; no slash = basename anywhere)."
         },
         "use_default_test_patterns": {
@@ -759,8 +779,13 @@
                     "validationDepth": {
                       "const": "full-live"
                     },
-                    "autoFinish": { "type": "boolean", "default": false },
-                    "publishReview": { "const": false }
+                    "autoFinish": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "publishReview": {
+                      "const": false
+                    }
                   }
                 }
               ]
@@ -782,8 +807,14 @@
           "additionalProperties": false,
           "required": ["enabled", "profile_id"],
           "properties": {
-            "enabled": { "type": "boolean", "default": false },
-            "profile_id": { "type": "string", "minLength": 1 }
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "profile_id": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "description": "Opt-in QA after newly admitted static reviews; never backfills older runs."
         },
@@ -1290,20 +1321,19 @@
       },
       "additionalProperties": false
     },
-    "self_review": {
+    "review": {
       "type": "object",
-      "description": "Automated self-review configuration. Spawns a review agent after worker completes to check code quality before human gate. Operator-requested publication reviews are explicit gate work and do not use this enabled flag as a skip.",
+      "description": "Automated review configuration. Spawns a review agent after worker completes to check code quality before human gate. Operator-requested publication reviews are explicit gate work and do not use this enabled flag as a skip.",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Whether automatic post-worker self-review is active for this project.",
+          "description": "Whether automatic post-worker review is active for this project.",
           "default": false
         },
         "runner": {
           "type": "string",
-          "description": "Runner for the review agent. Use `same` to reuse the worker's runner.",
-          "enum": ["claude", "codex", "opencode", "none", "same"],
-          "examples": ["claude", "codex", "same"]
+          "minLength": 1,
+          "description": "Explicit runner for a separate review session. Worker-relative runner aliases are not supported."
         },
         "model": {
           "type": "string",
@@ -1320,7 +1350,7 @@
         },
         "review_timeout_min": {
           "type": "integer",
-          "description": "Per-pass review-agent timeout in minutes (covers reading the diff + rerunning recipes). Bump if reviews repeatedly time out — publication-gate reviews of large diffs have been observed taking 35-45 minutes.",
+          "description": "Per-pass review-agent timeout in minutes (covers reading the diff + rerunning recipes). Bump if reviews repeatedly time out \u2014 publication-gate reviews of large diffs have been observed taking 35-45 minutes.",
           "default": 30,
           "minimum": 5,
           "maximum": 120
@@ -1340,6 +1370,16 @@
               "minLength": 1
             }
           }
+        },
+        "effort": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reasoning effort supported by the selected runner and model."
+        },
+        "mode": {
+          "enum": ["warm", "cold"],
+          "default": "cold",
+          "description": "COLD creates a fresh full review; WARM resumes the identified prior reviewer session and reviews its delta."
         }
       },
       "additionalProperties": false
@@ -1436,27 +1476,43 @@
     },
     "worker_terminal": {
       "type": "object",
-      "description": "Worker terminal contract — required SIGNAL.json via ./mark and packaged artifacts per flow/command (ADR-045).",
+      "description": "Worker terminal contract \u2014 required SIGNAL.json via ./mark and packaged artifacts per flow/command (ADR-045).",
       "properties": {
         "requireSignal": {
           "type": "boolean",
           "description": "When true, worker must write terminal SIGNAL.json via ./mark before the run monitor completes.",
           "default": true
         },
-        "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
-        "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
-        "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" },
-        "acceptance": { "$ref": "#/$defs/worker_terminal_acceptance_rules" },
+        "complete": {
+          "$ref": "#/$defs/worker_terminal_command_spec"
+        },
+        "no-change": {
+          "$ref": "#/$defs/worker_terminal_command_spec"
+        },
+        "blocked": {
+          "$ref": "#/$defs/worker_terminal_command_spec"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/worker_terminal_acceptance_rules"
+        },
         "flows": {
           "type": "object",
-          "description": "Per-flow overrides keyed by flow type (dev, fix-bug, review-pr, …).",
+          "description": "Per-flow overrides keyed by flow type (dev, fix-bug, review-pr, \u2026).",
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
-              "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
-              "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" },
-              "acceptance": { "$ref": "#/$defs/worker_terminal_acceptance_rules" }
+              "complete": {
+                "$ref": "#/$defs/worker_terminal_command_spec"
+              },
+              "no-change": {
+                "$ref": "#/$defs/worker_terminal_command_spec"
+              },
+              "blocked": {
+                "$ref": "#/$defs/worker_terminal_command_spec"
+              },
+              "acceptance": {
+                "$ref": "#/$defs/worker_terminal_acceptance_rules"
+              }
             },
             "additionalProperties": false
           }
@@ -1468,13 +1524,21 @@
             "type": "object",
             "required": ["path", "alsoRequire"],
             "properties": {
-              "path": { "type": "string" },
+              "path": {
+                "type": "string"
+              },
               "alsoRequire": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
-              "requireRecipeQuality": { "type": "boolean" },
-              "requireRecipeCoverage": { "type": "boolean" }
+              "requireRecipeQuality": {
+                "type": "boolean"
+              },
+              "requireRecipeCoverage": {
+                "type": "boolean"
+              }
             },
             "additionalProperties": false
           }
@@ -1499,14 +1563,10 @@
         "^(fix-bug|dev)$": {
           "type": "object",
           "properties": {
-            "minimum_independent_reviews": {
+            "minimum_reviews": {
               "type": "integer",
               "minimum": 0,
               "description": "Minimum passing independent reviews before human package approval may publish."
-            },
-            "require_cross_runner": {
-              "type": "boolean",
-              "description": "Require at least one passing review from a different runner; implies at least one required review."
             }
           },
           "additionalProperties": false
@@ -1555,7 +1615,7 @@
               "total_timeout_min": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Overrides monitoring.total_timeout_min for this flow. Long fix flows (pr-complete, self-review fix passes) commonly need 150+ minutes of legitimate worker time."
+                "description": "Overrides monitoring.total_timeout_min for this flow. Long fix flows (pr-complete, review fix passes) commonly need 150+ minutes of legitimate worker time."
               },
               "stuck_timeout_min": {
                 "type": "integer",
@@ -1593,18 +1653,34 @@
           "allOf": [
             {
               "if": {
-                "properties": { "watch": { "required": ["provider"] } },
+                "properties": {
+                  "watch": {
+                    "required": ["provider"]
+                  }
+                },
                 "required": ["watch"]
               },
               "then": {
                 "properties": {
-                  "type": { "const": "device" },
-                  "platform": { "const": "ios" },
+                  "type": {
+                    "const": "device"
+                  },
+                  "platform": {
+                    "const": "ios"
+                  },
                   "watch": {
                     "properties": {
-                      "type": { "const": "process-poll" },
-                      "cmd": { "type": "string", "pattern": "\\S" },
-                      "target": { "type": "string", "pattern": "\\S" }
+                      "type": {
+                        "const": "process-poll"
+                      },
+                      "cmd": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      "target": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      }
                     },
                     "required": ["type", "cmd", "target"]
                   }
@@ -1915,8 +1991,12 @@
       "additionalProperties": false,
       "required": ["phases"],
       "properties": {
-        "label": { "type": "string" },
-        "description": { "type": "string" },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
         "phases": {
           "type": "array",
           "minItems": 1,
@@ -1926,7 +2006,12 @@
             "enum": ["git", "fixtures", "deps", "preflight", "health"]
           }
         },
-        "hooks": { "type": "object", "additionalProperties": { "type": "string" } }
+        "hooks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
     },
     "runtime_capability_action_ref": {
@@ -1936,8 +2021,13 @@
           "additionalProperties": false,
           "required": ["kind", "resource_id", "action"],
           "properties": {
-            "kind": { "const": "resource" },
-            "resource_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+            "kind": {
+              "const": "resource"
+            },
+            "resource_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
             "action": {
               "type": "string",
               "enum": ["boot", "health", "shutdown", "relaunch"]
@@ -1949,8 +2039,13 @@
           "additionalProperties": false,
           "required": ["kind", "action_id"],
           "properties": {
-            "kind": { "const": "slot-action" },
-            "action_id": { "type": "string", "minLength": 1 }
+            "kind": {
+              "const": "slot-action"
+            },
+            "action_id": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       ]
@@ -1960,21 +2055,38 @@
       "additionalProperties": false,
       "required": ["label", "version", "share_policy", "cost", "actions", "release_effects"],
       "properties": {
-        "label": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "version": { "type": "string", "minLength": 1 },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
         "dependencies": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*$" }
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]*$"
+          }
         },
-        "share_policy": { "type": "string", "enum": ["exclusive", "shared"] },
+        "share_policy": {
+          "type": "string",
+          "enum": ["exclusive", "shared"]
+        },
         "cost": {
           "type": "object",
           "additionalProperties": false,
           "required": ["class", "resources"],
           "properties": {
-            "class": { "type": "string", "enum": ["low", "medium", "high"] },
+            "class": {
+              "type": "string",
+              "enum": ["low", "medium", "high"]
+            },
             "resources": {
               "type": "array",
               "items": {
@@ -1982,8 +2094,14 @@
                 "additionalProperties": false,
                 "required": ["id", "access"],
                 "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "access": { "type": "string", "enum": ["exclusive", "shared"] },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "access": {
+                    "type": "string",
+                    "enum": ["exclusive", "shared"]
+                  },
                   "kind": {
                     "type": "string",
                     "enum": ["port", "device", "process", "service", "other"]
@@ -1998,24 +2116,42 @@
             }
           }
         },
-        "parameters": { "type": "object" },
+        "parameters": {
+          "type": "object"
+        },
         "actions": {
           "type": "object",
           "additionalProperties": false,
           "required": ["acquire", "health", "release"],
           "properties": {
-            "acquire": { "$ref": "#/$defs/runtime_capability_action_ref" },
-            "health": { "$ref": "#/$defs/runtime_capability_action_ref" },
-            "release": { "$ref": "#/$defs/runtime_capability_action_ref" }
+            "acquire": {
+              "$ref": "#/$defs/runtime_capability_action_ref"
+            },
+            "health": {
+              "$ref": "#/$defs/runtime_capability_action_ref"
+            },
+            "release": {
+              "$ref": "#/$defs/runtime_capability_action_ref"
+            }
           }
         },
-        "affected_resources": { "$ref": "#/$defs/runtime_capability_affected_resources" },
+        "affected_resources": {
+          "$ref": "#/$defs/runtime_capability_affected_resources"
+        },
         "release_effects": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "keep_warm_ms": { "type": "integer", "minimum": 0 },
-        "retention": { "$ref": "#/$defs/resource_posture_retention_map" }
+        "keep_warm_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retention": {
+          "$ref": "#/$defs/resource_posture_retention_map"
+        }
       }
     },
     "runtime_capability_affected_resources": {
@@ -2051,15 +2187,25 @@
       "description": "Per-posture retention (ADR-054). 'terminal' must be 'stop': terminal always stops every run- and family-owned provider, bypassing keep-warm.",
       "additionalProperties": false,
       "properties": {
-        "operator-wait": { "type": "string", "enum": ["retain", "warm", "stop"] },
-        "terminal": { "type": "string", "enum": ["stop"] }
+        "operator-wait": {
+          "type": "string",
+          "enum": ["retain", "warm", "stop"]
+        },
+        "terminal": {
+          "type": "string",
+          "enum": ["stop"]
+        }
       }
     },
     "worker_terminal_acceptance_rules": {
       "type": "object",
       "properties": {
-        "require": { "type": "boolean" },
-        "allowWeak": { "type": "boolean" }
+        "require": {
+          "type": "boolean"
+        },
+        "allowWeak": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
@@ -2072,7 +2218,9 @@
         },
         "artifacts": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Required non-empty artifact paths relative to the task dir."
         }
       },
@@ -2123,7 +2271,7 @@
         },
         "optional": {
           "type": "boolean",
-          "description": "Skip silently when the resolved src does not exist — for overlay fixtures (e.g. domain files) that only some deployments provide.",
+          "description": "Skip silently when the resolved src does not exist \u2014 for overlay fixtures (e.g. domain files) that only some deployments provide.",
           "default": false
         },
         "vars": {
@@ -2156,7 +2304,7 @@
                   },
                   "includes": {
                     "type": "array",
-                    "description": "List of files to concatenate. Entries are a path string (required — warns when missing) or {file, optional} where optional entries skip quietly when the resolved path is absent. Paths may contain {{var}} placeholders resolved at sync time.",
+                    "description": "List of files to concatenate. Entries are a path string (required \u2014 warns when missing) or {file, optional} where optional entries skip quietly when the resolved path is absent. Paths may contain {{var}} placeholders resolved at sync time.",
                     "items": {
                       "oneOf": [
                         {
@@ -2429,7 +2577,7 @@
           "maxItems": 20,
           "items": {
             "type": "object",
-            "required": ["runner", "model"],
+            "required": ["runner", "model", "effort", "mode"],
             "properties": {
               "runner": {
                 "type": "string",
@@ -2438,13 +2586,13 @@
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
               },
               "model": {
-                "type": "string",
+                "type": ["string", "null"],
                 "minLength": 1,
                 "maxLength": 256,
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
               },
               "effort": {
-                "type": "string",
+                "type": ["string", "null"],
                 "minLength": 1,
                 "maxLength": 256,
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
@@ -2460,6 +2608,9 @@
                   "maxLength": 256,
                   "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
                 }
+              },
+              "mode": {
+                "enum": ["warm", "cold"]
               }
             },
             "additionalProperties": false
@@ -2514,14 +2665,8 @@
     },
     "workflowReviewOptions": {
       "type": "object",
-      "required": ["sessionIntent", "scope"],
+      "required": ["mode"],
       "properties": {
-        "sessionIntent": {
-          "enum": ["resume", "reset"]
-        },
-        "scope": {
-          "enum": ["incremental", "full"]
-        },
         "workflow": {
           "enum": ["review", "qa"]
         },
@@ -2538,11 +2683,15 @@
           "type": "boolean",
           "description": "Publish static review results to the PR. Omitted inherits policy; false keeps Farmslot-only results. QA cannot enable this."
         },
-        "busySession": {
-          "enum": ["wait", "fresh"]
+        "mode": {
+          "enum": ["warm", "cold"]
         },
-        "validationDepth": {
-          "enum": ["static-code", "full-live"]
+        "autoFinish": {
+          "type": "boolean",
+          "default": false
+        },
+        "reviewContext": {
+          "$ref": "#/$defs/reviewRequestContext"
         }
       },
       "additionalProperties": false,
@@ -2557,38 +2706,14 @@
         ]
       },
       "then": {
-        "anyOf": [
-          {
-            "required": ["workflow"],
-            "properties": {
-              "workflow": {
-                "const": "qa"
-              }
-            }
-          },
-          {
-            "required": ["validationDepth"],
-            "properties": {
-              "validationDepth": {
-                "const": "full-live"
-              }
-            }
+        "required": ["workflow"],
+        "properties": {
+          "workflow": {
+            "const": "qa"
           }
-        ]
+        }
       },
       "allOf": [
-        {
-          "if": {
-            "anyOf": [
-              { "required": ["workflow"], "properties": { "workflow": { "const": "qa" } } },
-              {
-                "required": ["validationDepth"],
-                "properties": { "validationDepth": { "const": "full-live" } }
-              }
-            ]
-          },
-          "then": { "properties": { "publishReview": { "const": false } } }
-        },
         {
           "if": {
             "required": ["workflow"],
@@ -2600,20 +2725,8 @@
           },
           "then": {
             "properties": {
-              "validationDepth": {
-                "const": "full-live"
-              }
-            }
-          },
-          "else": {
-            "if": {
-              "required": ["workflow"]
-            },
-            "then": {
-              "properties": {
-                "validationDepth": {
-                  "const": "static-code"
-                }
+              "publishReview": {
+                "const": false
               }
             }
           }
@@ -2672,7 +2785,7 @@
           "maxItems": 20,
           "items": {
             "type": "object",
-            "required": ["runner", "model"],
+            "required": ["runner", "model", "effort", "mode"],
             "properties": {
               "runner": {
                 "type": "string",
@@ -2681,13 +2794,13 @@
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
               },
               "model": {
-                "type": "string",
+                "type": ["string", "null"],
                 "minLength": 1,
                 "maxLength": 256,
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
               },
               "effort": {
-                "type": "string",
+                "type": ["string", "null"],
                 "minLength": 1,
                 "maxLength": 256,
                 "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
@@ -2703,9 +2816,51 @@
                   "maxLength": 256,
                   "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
                 }
+              },
+              "mode": {
+                "enum": ["warm", "cold"]
               }
             },
             "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewContinuationContext": {
+      "type": "object",
+      "required": ["repository", "prNumber", "reviewId"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reviewId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewRequestContext": {
+      "type": "object",
+      "required": ["reviewLineages"],
+      "properties": {
+        "reviewLineages": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/reviewContinuationContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

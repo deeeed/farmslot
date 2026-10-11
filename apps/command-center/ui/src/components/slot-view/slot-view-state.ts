@@ -63,7 +63,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _selectedAgentContextIds: Record<string, string> = {};
   _lastLinkedRunId: string | null = null;
   _lastLinkedRunActiveTaskFile: string | null = null;
-  _lastLinkedRunSelfReviewProgress: string | null = null;
+  _lastLinkedRunReviewProgress: string | null = null;
   @state() _repoPath = '';
   @state() _editor: EditorId = 'cursor';
 

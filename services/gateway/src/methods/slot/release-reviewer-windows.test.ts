@@ -14,7 +14,7 @@ test('shouldKillAgentWindowName covers role windows and short reviewer tabs', ()
   const excluded = new Set(['bugfix']);
 
   assert.equal(shouldKillAgentWindowName('dev', { roleWindowNames }), true);
-  assert.equal(shouldKillAgentWindowName('self-review', { roleWindowNames }), true);
+  assert.equal(shouldKillAgentWindowName('review', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('rev-codex', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('rev1-claude', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('review-fix', { roleWindowNames }), true);

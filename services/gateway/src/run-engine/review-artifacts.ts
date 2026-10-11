@@ -197,7 +197,7 @@ export async function readFrozenPlanningContext(
  * Renders the reviewer's copy of the worker's related-context brief from the
  * frozen artifact, so both briefs quote the same snapshot hash.
  */
-export async function buildIndependentReviewPlanningBrief(
+export async function buildReviewPlanningBrief(
   taskFile: string | null,
   slotTaskDir: string,
 ): Promise<string> {

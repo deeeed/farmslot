@@ -22,9 +22,9 @@ import {
 } from '../../src/contracts/recipes.js';
 import type { ResourceDefinition } from '../../src/contracts/resources.js';
 import {
-  type IndependentReviewStatus,
   isReviewValidationDepth,
   type ReviewGatePayload,
+  type ReviewStatus,
 } from '../../src/contracts/reviews.js';
 import {
   type EvidenceManifestEntry,
@@ -334,7 +334,7 @@ const _typeSmoke: {
   liveRecipe?: LiveRecipeContext;
   recipeGroup?: RecipeRunArtifactGroup;
   resource?: ResourceDefinition;
-  review?: IndependentReviewStatus;
+  review?: ReviewStatus;
   reviewGate?: ReviewGatePayload;
   familyReadiness?: RunFamilyReadinessSummary;
   slotHistory?: SlotRunHistoryEntry;

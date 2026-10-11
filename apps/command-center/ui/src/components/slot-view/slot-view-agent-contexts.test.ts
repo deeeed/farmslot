@@ -61,7 +61,7 @@ test('native worker and referenced fix contexts remain selectable without tmux t
   });
   const fix = context({
     id: 'follow-up',
-    role: 'self-review-fix',
+    role: 'review-fix',
     runId: 'run-1',
     target: null,
     nativeSessionOwner: {
@@ -161,16 +161,16 @@ test('selectSlotViewAgentContext opens latest or specific reviewer tabs', () => 
     }),
     context({
       id: 'rev-codex',
-      role: 'self-review',
-      label: 'Self-review',
+      role: 'review',
+      label: 'Review',
       updatedAt: '2026-07-09T12:01:00Z',
       model: 'gpt-5',
       target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
     }),
     context({
       id: 'rev-claude',
-      role: 'self-review',
-      label: 'Self-review',
+      role: 'review',
+      label: 'Review',
       updatedAt: '2026-07-09T12:02:00Z',
       model: 'opus',
       target: { session: 's', window: 'rev-claude', target: 's:rev-claude' },
@@ -179,7 +179,7 @@ test('selectSlotViewAgentContext opens latest or specific reviewer tabs', () => 
 
   assert.equal(selectSlotViewAgentContext(contexts, 'rev-codex')?.id, 'rev-codex');
   assert.equal(selectSlotViewAgentContext(contexts, 'latest-reviewer')?.id, 'rev-claude');
-  assert.equal(selectSlotViewAgentContext(contexts, 'self-review')?.id, 'rev-claude');
+  assert.equal(selectSlotViewAgentContext(contexts, 'review')?.id, 'rev-claude');
   assert.equal(slotViewAgentContextChipLabel(contexts[1]), 'rev-codex');
 });
 
@@ -196,15 +196,15 @@ test('deriveSlotViewAgentContexts keeps multiple reviewer tabs for one run', () 
         }),
         context({
           id: 'rev-codex',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           runId: 'run-1',
           target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
         }),
         context({
           id: 'rev-claude',
-          role: 'self-review',
-          label: 'Self-review',
+          role: 'review',
+          label: 'Review',
           runId: 'run-1',
           target: { session: 's', window: 'rev-claude', target: 's:rev-claude' },
         }),
@@ -228,8 +228,8 @@ test('selectSlotViewTaskContext joins canonical prepared and worker task roots',
     }),
     context({
       id: 'review',
-      role: 'self-review',
-      taskFile: '.sandbox/farmslot-farm/worker-task/review/547-0814-135435/SELF-REVIEW.md',
+      role: 'review',
+      taskFile: '.sandbox/farmslot-farm/worker-task/review/547-0814-135435/REVIEW.md',
     }),
   ];
 
@@ -245,7 +245,7 @@ test('selectSlotViewTaskContext joins canonical prepared and worker task roots',
 
 test('selectSlotViewTaskContext does not join arbitrary suffix-only paths', () => {
   const contexts = [
-    context({ id: 'review', role: 'self-review', taskFile: '/tmp/review/547/TASK.md' }),
+    context({ id: 'review', role: 'review', taskFile: '/tmp/review/547/TASK.md' }),
     context({ id: 'primary', role: 'primary', taskFile: '/tmp/primary/TASK.md' }),
   ];
 
@@ -253,15 +253,16 @@ test('selectSlotViewTaskContext does not join arbitrary suffix-only paths', () =
     selectSlotViewTaskContext(contexts, 'review-pr', '/another/root/review/547/TASK.md')?.id,
     'primary',
   );
+  assert.equal(selectSlotViewTaskContext(contexts, 'review-pr')?.id, 'review');
 });
 
 test('selectSlotViewTaskContext uses gateway identity for configured task roots', () => {
   const contexts = [
     context({
       id: 'review',
-      role: 'self-review',
-      taskFile: '/worker/custom-root/review/547/SELF-REVIEW.md',
-      taskIdentity: '547/SELF-REVIEW.md',
+      role: 'review',
+      taskFile: '/worker/custom-root/review/547/REVIEW.md',
+      taskIdentity: '547/REVIEW.md',
     }),
     context({ id: 'primary', role: 'primary', taskFile: '/worker/custom-root/review/547/TASK.md' }),
   ];
@@ -270,7 +271,7 @@ test('selectSlotViewTaskContext uses gateway identity for configured task roots'
     selectSlotViewTaskContext(
       contexts,
       'review-pr',
-      '/prepared/different-root/review/547/SELF-REVIEW.md',
+      '/prepared/different-root/review/547/REVIEW.md',
     )?.id,
     'review',
   );

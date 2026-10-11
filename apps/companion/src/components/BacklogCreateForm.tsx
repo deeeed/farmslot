@@ -15,9 +15,9 @@ import {
   type FlowType,
   Methods,
   type ProjectConfig,
-  type ReviewLoopRequest,
   type TaskTemplateSelection,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import {
   PlanningChoices,
@@ -25,6 +25,8 @@ import {
   PlanningSection,
   PlanningToggle,
 } from '../features/planning/PlanningControls';
+import { ReviewDispatchPicker } from '../features/review-dispatch/ReviewDispatchPicker';
+import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
@@ -39,60 +41,12 @@ const FLOW_OPTIONS: readonly { value: FlowType; label: string }[] = [
   { value: 'update-branch', label: 'Update branch' },
 ];
 
-const REVIEW_RUNNERS: readonly ReviewLoopRequest['runner'][] = [
-  'same',
-  'claude',
-  'codex',
-  'cursor',
-  'grok',
-  'opencode',
-];
-
 function csv(value: string): string[] | undefined {
   const entries = value
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
   return entries.length ? [...new Set(entries)] : undefined;
-}
-
-function projectRunnerOptions(project: ProjectConfig | undefined): string[] {
-  return [
-    ...new Set(
-      Object.values(project?.defaults ?? {})
-        .map((entry) => entry.runner)
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function projectModelOptions(project: ProjectConfig | undefined, runner: string): string[] {
-  return [
-    ...new Set(
-      Object.values(project?.defaults ?? {})
-        .filter((entry) => !runner || entry.runner === runner)
-        .map((entry) => entry.model)
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function projectDefaultRunner(project: ProjectConfig | undefined, flowType: FlowType): string {
-  const key = flowType.includes('review')
-    ? 'review'
-    : flowType.includes('fix')
-      ? 'fix'
-      : flowType.includes('dev')
-        ? 'dev'
-        : 'feature';
-  return (
-    project?.defaults[flowType]?.runner ??
-    project?.defaults[key]?.runner ??
-    project?.defaults.feature?.runner ??
-    project?.defaults.dev?.runner ??
-    project?.defaults.fix?.runner ??
-    ''
-  );
 }
 
 export function BacklogCreateForm({
@@ -129,9 +83,6 @@ export function BacklogCreateForm({
   const [allowedSlots, setAllowedSlots] = useState<string[]>(item?.allowedSlots ?? []);
   const [autoDispatch, setAutoDispatch] = useState(item?.autoDispatch ?? false);
   const [multiPr, setMultiPr] = useState(item?.multiPr ?? false);
-  const [runner, setRunner] = useState(item?.runner ?? '');
-  const [model, setModel] = useState(item?.model ?? '');
-  const [effort, setEffort] = useState(item?.effort ?? '');
   const [taskTemplate, setTaskTemplate] = useState<TaskTemplateSelection | undefined>(
     item?.taskTemplate,
   );
@@ -141,18 +92,37 @@ export function BacklogCreateForm({
   const [devInteractiveProfile, setDevInteractiveProfile] = useState<
     '' | 'lightweight' | 'reviewed'
   >(item?.devInteractiveProfile ?? '');
-  const [reviewPlan, setReviewPlan] = useState<ReviewLoopRequest[]>(item?.pendingReviewPlan ?? []);
   const [createReady, setCreateReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdLabel, setCreatedLabel] = useState<string | null>(null);
 
   const selectedProject = projects.find((candidate) => candidate.name === project);
-  const runnerOptions = useMemo(() => projectRunnerOptions(selectedProject), [selectedProject]);
-  const modelOptions = useMemo(
-    () => projectModelOptions(selectedProject, runner),
-    [runner, selectedProject],
+  const executionPicker = useMemo(
+    () =>
+      new ReviewDispatchViewModel({
+        context: {
+          allowedActions: ['configure'],
+          defaults: backlogExecutionDefaults(selectedProject, flowType, item),
+          allowSequence: false,
+          reviewContext: flowType === 'review-pr' ? item?.reviewContext : undefined,
+        },
+      }),
+    [selectedProject, flowType, item],
   );
+  const [reviewPicker] = useState(
+    () =>
+      new ReviewDispatchViewModel({
+        context: {
+          allowedActions: ['configure'],
+          allowSequence: true,
+          allowEmpty: true,
+          reviewContext: item?.reviewSequenceContext,
+        },
+        sequence: item?.reviewSequence ?? [],
+      }),
+  );
+  const [, refreshPicker] = useState(0);
   const prepareProfiles = Object.entries(selectedProject?.prepare?.profiles ?? {}).map(
     ([value, profile]) => ({ value, label: profile.label ?? value }),
   );
@@ -235,28 +205,17 @@ export function BacklogCreateForm({
       setError(`${sourceKind === 'jira' ? 'Jira' : 'GitHub'} items require a source ref.`);
       return;
     }
-    // Review rounds are static; saving converts a legacy full-live loop (ADR-058).
-    const pendingReviewPlan = reviewPlan.length
-      ? reviewPlan.map((loop) => ({ ...loop, validationDepth: 'static-code' as const }))
-      : undefined;
     setSubmitting(true);
     setError(null);
     try {
-      const reviewDepth = pendingReviewPlan
-        ? {
-            minimumIndependentReviews: pendingReviewPlan.length,
-            requireCrossRunner: pendingReviewPlan.some((loop) => {
-              const workerRunner = runner || projectDefaultRunner(selectedProject, flowType);
-              return Boolean(
-                workerRunner && loop.runner !== 'same' && loop.runner !== workerRunner,
-              );
-            }),
-            extraLoopsRequested: 0,
-            requestedBy: 'dispatch' as const,
-          }
-        : item?.pendingReviewPlan?.length
-          ? undefined
-          : item?.reviewDepth;
+      const execution = executionPicker.toSelection();
+      const {
+        reviewSequence,
+        reviewPolicy: selectedReviewPolicy,
+        reviewSequenceContext,
+      } = reviewPicker.toDispatchOptions();
+      const reviewPolicy =
+        selectedReviewPolicy ?? (item?.reviewSequence?.length ? undefined : item?.reviewPolicy);
       const common = {
         title: title.trim(),
         sourceKind,
@@ -271,16 +230,19 @@ export function BacklogCreateForm({
         allowedSlots: allowedSlots.length ? allowedSlots : undefined,
         autoDispatch,
         multiPr: multiPr || undefined,
-        runner: runner || undefined,
-        model: model.trim() || undefined,
-        effort: effort.trim() || undefined,
+        runner: execution.runner,
+        model: execution.model ?? undefined,
+        effort: execution.effort ?? undefined,
         taskTemplate,
         app: app || undefined,
         prepareProfile: prepareProfile || undefined,
         mode: mode || undefined,
         devInteractiveProfile: devInteractiveProfile || undefined,
-        reviewDepth,
-        pendingReviewPlan,
+        reviewMode: flowType === 'review-pr' ? execution.mode : undefined,
+        reviewPolicy,
+        reviewContext: flowType === 'review-pr' ? executionPicker.toReviewContext() : undefined,
+        reviewSequenceContext,
+        reviewSequence: reviewSequence.length ? reviewSequence : undefined,
       };
       if (item) {
         const updated = await client.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
@@ -302,8 +264,11 @@ export function BacklogCreateForm({
           prepareProfile: common.prepareProfile ?? null,
           mode: common.mode ?? null,
           devInteractiveProfile: common.devInteractiveProfile ?? null,
-          reviewDepth: common.reviewDepth ?? null,
-          pendingReviewPlan: common.pendingReviewPlan ?? null,
+          reviewMode: common.reviewMode ?? null,
+          reviewPolicy: common.reviewPolicy ?? null,
+          reviewSequence: common.reviewSequence ?? null,
+          reviewContext: common.reviewContext ?? null,
+          reviewSequenceContext: common.reviewSequenceContext ?? null,
         });
         setCreatedLabel(updated.item.sourceRef || updated.item.id);
         onSaved?.(updated.item);
@@ -332,13 +297,6 @@ export function BacklogCreateForm({
     setAllowedSlots((current) =>
       current.includes(slotId) ? current.filter((entry) => entry !== slotId) : [...current, slotId],
     );
-  };
-
-  const addReview = () => {
-    setReviewPlan((current) => [
-      ...current,
-      { order: current.length + 1, runner: 'codex', validationDepth: 'static-code' },
-    ]);
   };
 
   return (
@@ -511,45 +469,11 @@ export function BacklogCreateForm({
           value={mode}
           onChange={setMode}
         />
-        {runnerOptions.length ? (
-          <PlanningChoices
-            label="Configured runners"
-            options={[
-              { value: '', label: 'Default' },
-              ...runnerOptions.map((value) => ({ value })),
-            ]}
-            value={runner}
-            onChange={(value) => {
-              setRunner(value);
-              setModel('');
-            }}
-          />
-        ) : null}
-        <PlanningField
-          label="Runner"
-          value={runner}
-          onChangeText={setRunner}
-          placeholder="Project default or runner id"
-        />
-        {modelOptions.length ? (
-          <PlanningChoices
-            label="Configured models"
-            options={[{ value: '', label: 'Default' }, ...modelOptions.map((value) => ({ value }))]}
-            value={model}
-            onChange={setModel}
-          />
-        ) : null}
-        <PlanningField
-          label="Model"
-          value={model}
-          onChangeText={setModel}
-          placeholder="Runner default or model id"
-        />
-        <PlanningField
-          label="Effort"
-          value={effort}
-          onChangeText={setEffort}
-          placeholder="Runner default"
+        <ReviewDispatchPicker
+          model={executionPicker}
+          review={flowType === 'review-pr'}
+          testID="companion-backlog-execution"
+          disabled={submitting}
         />
         {templateOptions.length ? (
           <PlanningChoices
@@ -594,82 +518,17 @@ export function BacklogCreateForm({
       <PlanningSection
         title="Publication review"
         testID="companion-backlog-review-section"
-        summary={`${reviewPlan.length} additional review loop${reviewPlan.length === 1 ? '' : 's'}`}
+        summary={`${reviewPicker.rows.length} review${reviewPicker.rows.length === 1 ? '' : 's'}`}
       >
-        {reviewPlan.map((loop, index) => (
-          <View key={loop.order} style={styles.reviewCard}>
-            <View style={styles.reviewHeader}>
-              <Text style={styles.reviewTitle}>Review {index + 1}</Text>
-              <Pressable
-                onPress={() =>
-                  setReviewPlan((current) =>
-                    current
-                      .filter((_, currentIndex) => currentIndex !== index)
-                      .map((entry, currentIndex) => ({ ...entry, order: currentIndex + 1 })),
-                  )
-                }
-              >
-                <Text style={styles.remove}>Remove</Text>
-              </Pressable>
-            </View>
-            <PlanningChoices
-              label="Runner"
-              options={REVIEW_RUNNERS.map((value) => ({ value }))}
-              value={loop.runner}
-              onChange={(value) =>
-                setReviewPlan((current) =>
-                  current.map((entry, currentIndex) =>
-                    currentIndex === index ? { ...entry, runner: value } : entry,
-                  ),
-                )
-              }
-            />
-            <Text style={styles.chipText} testID={`companion-backlog-review-depth-${index}`}>
-              {loop.validationDepth === 'full-live'
-                ? 'Legacy full live: saving makes it static. Run runtime validation with QA.'
-                : 'Static review. Run runtime validation separately with QA.'}
-            </Text>
-            <PlanningField
-              label="Model override"
-              value={loop.model ?? ''}
-              onChangeText={(value) =>
-                setReviewPlan((current) =>
-                  current.map((entry, currentIndex) =>
-                    currentIndex === index ? { ...entry, model: value || null } : entry,
-                  ),
-                )
-              }
-              placeholder="Runner default"
-            />
-            <PlanningChoices
-              label="Session"
-              options={
-                [
-                  { value: '', label: 'Default' },
-                  { value: 'resume', label: 'Reuse context' },
-                  { value: 'reset', label: 'Fresh review' },
-                ] as const
-              }
-              value={loop.sessionIntent ?? ''}
-              onChange={(value) =>
-                setReviewPlan((current) =>
-                  current.map((entry, currentIndex) =>
-                    currentIndex === index
-                      ? { ...entry, sessionIntent: value || undefined }
-                      : entry,
-                  ),
-                )
-              }
-            />
-          </View>
-        ))}
-        <Pressable
-          testID="companion-backlog-review-add"
-          style={styles.addReview}
-          onPress={addReview}
-        >
-          <Text style={styles.addReviewText}>+ Add independent review</Text>
-        </Pressable>
+        <ReviewDispatchPicker
+          model={reviewPicker}
+          testID="companion-backlog-review"
+          disabled={submitting}
+          onChange={() => refreshPicker((current) => current + 1)}
+        />
+        <Text style={styles.chipText}>
+          Static review. Run runtime validation separately with QA.
+        </Text>
       </PlanningSection>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -720,23 +579,6 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: colors.accent + '20', borderColor: colors.accent },
   chipText: { color: colors.textMuted, fontSize: fonts.sizeXs },
   chipTextSelected: { color: colors.accent },
-  reviewCard: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radii.md,
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  reviewHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  reviewTitle: { color: colors.textPrimary, fontSize: fonts.sizeSm, fontWeight: '900' },
-  remove: { color: colors.statusFail, fontSize: fonts.sizeXs, fontWeight: '800' },
-  addReview: {
-    alignItems: 'center',
-    borderColor: colors.accent,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    padding: spacing.md,
-  },
-  addReviewText: { color: colors.accent, fontSize: fonts.sizeSm, fontWeight: '800' },
   error: { color: colors.statusFail, fontSize: fonts.sizeSm },
   success: { color: colors.statusOk, fontSize: fonts.sizeSm },
   submit: {

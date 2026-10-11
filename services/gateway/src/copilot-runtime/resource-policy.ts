@@ -23,7 +23,7 @@ export interface WorkloadResourceInput {
 function emptyTotals(): CopilotWorkloadTotals {
   return {
     implementation: 0,
-    independentReview: 0,
+    review: 0,
     reviewRework: 0,
     ciFix: 0,
     fullQa: 0,
@@ -37,8 +37,8 @@ function emptyTotals(): CopilotWorkloadTotals {
 
 function roleBucket(role: string, flowType: string): keyof CopilotWorkloadTotals {
   if (role === 'ci-fix') return 'ciFix';
-  if (role === 'self-review' || role === 'self-review-fix') return 'reviewRework';
-  if (role === 'review' || flowType === 'review-pr') return 'independentReview';
+  if (role === 'review-fix') return 'reviewRework';
+  if (role === 'review' || flowType === 'review-pr') return 'review';
   return 'implementation';
 }
 
@@ -118,7 +118,7 @@ export function buildCopilotWorkloadSnapshot(input: {
   }
   totals.total =
     totals.implementation +
-    totals.independentReview +
+    totals.review +
     totals.reviewRework +
     totals.ciFix +
     totals.fullQa +
@@ -129,7 +129,7 @@ export function buildCopilotWorkloadSnapshot(input: {
   for (const host of hosts) {
     host.total =
       host.implementation +
-      host.independentReview +
+      host.review +
       host.reviewRework +
       host.ciFix +
       host.fullQa +

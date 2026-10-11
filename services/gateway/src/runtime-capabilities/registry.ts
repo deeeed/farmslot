@@ -629,7 +629,21 @@ export class RuntimeCapabilityRegistry {
         lease.providerProcesses,
       );
       if (blocker) return { ok: false, detail: blocker };
-      return this.runAction(lease.slotId, entry.actions.release, lease.parameters, entry);
+      const result = await this.runAction(
+        lease.slotId,
+        entry.actions.release,
+        lease.parameters,
+        entry,
+      );
+      if (!result.ok) return result;
+      // A successful hook can lose its pidfile while the captured process survives.
+      // Recheck the same identities before reporting the provider released.
+      const residual = await this.options.checkProviderCleanup?.(
+        lease.slotId,
+        entry,
+        lease.providerProcesses,
+      );
+      return residual ? { ok: false, detail: residual } : result;
     } catch (error) {
       return {
         ok: false,

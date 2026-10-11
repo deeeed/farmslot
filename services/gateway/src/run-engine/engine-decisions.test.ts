@@ -241,32 +241,20 @@ test('buildRepeatReviewContext freezes prior findings, review range, and Farmslo
     [prior, origin],
   );
 
-  assert.equal(context.reviewScope, 'incremental');
+  assert.equal(context.mode, 'warm');
   assert.equal(context.validationDepth, 'static-code');
-  assert.equal(context.sessionIntent, 'resume');
-  const continued = automatedRepeatReviewSelection(context, {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'full-live',
-  });
-  assert.equal(continued.sessionIntent, 'resume');
-  assert.equal(continued.validationDepth, 'full-live');
+  assert.equal(context.mode, 'warm');
+  const continued = automatedRepeatReviewSelection(context, { mode: 'warm' as const });
+  assert.equal(continued.mode, 'warm');
+  assert.equal(continued.validationDepth, 'static-code');
   assert.deepEqual(continued.unresolvedFindings, context.unresolvedFindings);
-  const fresh = automatedRepeatReviewSelection(context, {
-    sessionIntent: 'reset',
-    scope: 'incremental',
-    validationDepth: 'static-code',
-  });
-  assert.equal(fresh.sessionIntent, 'reset');
-  assert.equal(fresh.reviewScope, 'full');
+  const fresh = automatedRepeatReviewSelection(context, { mode: 'cold' as const });
+  assert.equal(fresh.mode, 'cold');
+  assert.equal(fresh.mode, 'cold');
   assert.deepEqual(fresh.unresolvedFindings, []);
-  const full = automatedRepeatReviewSelection(context, {
-    sessionIntent: 'resume',
-    scope: 'full',
-    validationDepth: 'full-live',
-  });
-  assert.equal(full.sessionIntent, 'reset');
-  assert.equal(full.validationDepth, 'full-live');
+  const full = automatedRepeatReviewSelection(context, { mode: 'cold' as const });
+  assert.equal(full.mode, 'cold');
+  assert.equal(full.validationDepth, 'static-code');
   assert.deepEqual(
     context.priorGenerations?.map((entry) => entry.generation),
     [1],
@@ -280,10 +268,10 @@ test('buildRepeatReviewContext freezes prior findings, review range, and Farmslo
   assert.deepEqual(context.farmslotEvidenceRefs, [
     { path: 'artifacts/recipe.json', purpose: 'recipe proof' },
   ]);
-  assert.equal(repeatReviewDecisionActions(context)[0]?.id, 'reuse-incremental-static');
+  assert.equal(repeatReviewDecisionActions(context)[0]?.id, 'warm');
   assert.equal(
-    repeatReviewDecisionActions(context).some((action) => action.id === 'fresh-full-live'),
-    false,
+    repeatReviewDecisionActions(context).some((action) => action.id === 'cold'),
+    true,
   );
 });
 
@@ -308,16 +296,16 @@ test('missing prior reviewed head disables only incremental continuation', () =>
     [prior],
   );
 
-  assert.equal(context.reviewScope, 'full');
-  assert.equal(context.sessionIntent, 'reset');
-  assert.match(context.incrementalUnavailableReason ?? '', /head SHA/);
+  assert.equal(context.mode, 'cold');
+  assert.equal(context.mode, 'cold');
+  assert.match(context.warmUnavailableReason ?? '', /head SHA/);
   assert.deepEqual(
     repeatReviewDecisionActions(context).map((action) => action.id),
-    ['reuse-full-static', 'fresh-full-static'],
+    ['cold'],
   );
 });
 
-test('a rebased prior head falls back to a full review that keeps prior findings', async () => {
+test('a rebased prior head refuses WARM and offers COLD', async () => {
   // MetaMask/metamask-mobile#36969: the author rebased between review generations.
   const priorHead = '5f85b47bfa4f7d8ec1888605f0cd2f025fffb804';
   const rebasedHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
@@ -361,34 +349,30 @@ test('a rebased prior head falls back to a full review that keeps prior findings
 
   const rebased = await confirmIncrementalAncestry(build(rebasedHead), isAncestor);
   assert.deepEqual(checked, [`metamask/metamask-mobile ${priorHead}...${rebasedHead}`]);
-  assert.equal(rebased.reviewScope, 'full');
-  assert.equal(rebased.sessionIntent, 'reset');
+  assert.equal(rebased.mode, 'warm');
+  assert.equal(rebased.mode, 'warm');
   assert.equal(rebased.priorReviewedHeadSha, priorHead);
-  assert.match(rebased.incrementalUnavailableReason ?? '', /not an ancestor/);
+  assert.match(rebased.warmUnavailableReason ?? '', /not an ancestor/);
   assert.deepEqual(rebased.unresolvedFindings, [
     { file: 'src/a.ts', line: 7, description: 'Fix this.' },
   ]);
   assert.deepEqual(
     repeatReviewDecisionActions(rebased).map((action) => action.id),
-    ['reuse-full-static', 'fresh-full-static'],
+    ['cold'],
   );
-  const automated = automatedRepeatReviewSelection(rebased, {
-    sessionIntent: 'resume',
-    scope: 'incremental',
-    validationDepth: 'static-code',
-  });
-  assert.equal(automated.reviewScope, 'full');
-  assert.deepEqual(automated.unresolvedFindings, rebased.unresolvedFindings);
+  const automated = automatedRepeatReviewSelection(rebased, { mode: 'cold' as const });
+  assert.equal(automated.mode, 'cold');
+  assert.deepEqual(automated.unresolvedFindings, []);
 
   const descendant = build('b2cabb9ef367a86aeb273dbbf1a6b38e91852209');
   assert.equal(await confirmIncrementalAncestry(descendant, isAncestor), descendant);
-  assert.equal(descendant.reviewScope, 'incremental');
+  assert.equal(descendant.mode, 'warm');
 
   const unverified = await confirmIncrementalAncestry(build(rebasedHead), async () => {
     throw new Error('HTTP 404: No commit found');
   });
-  assert.equal(unverified.reviewScope, 'full');
-  assert.match(unverified.incrementalUnavailableReason ?? '', /HTTP 404/);
+  assert.equal(unverified.mode, 'warm');
+  assert.match(unverified.warmUnavailableReason ?? '', /HTTP 404/);
 
   checked.length = 0;
   assert.equal(await confirmIncrementalAncestry(rebased, isAncestor), rebased);
@@ -416,19 +400,12 @@ test('full repeat-review selections always reset reviewer reasoning', () => {
     [prior],
   );
 
-  assert.equal(
-    applyRepeatReviewSelection(context, 'reuse-incremental-static').sessionIntent,
-    'resume',
-  );
-  assert.equal(applyRepeatReviewSelection(context, 'reuse-full-static').sessionIntent, 'reset');
-  assert.equal(applyRepeatReviewSelection(context, 'fresh-full-static').sessionIntent, 'reset');
-  const legacyLive = applyRepeatReviewSelection(context, 'fresh-full-live');
-  assert.equal(legacyLive.sessionIntent, 'reset');
-  assert.equal(
-    legacyLive.validationDepth,
-    'full-live',
-    'pre-ADR-058 decisions keep their contract',
-  );
+  assert.equal(applyRepeatReviewSelection(context, 'warm').mode, 'warm');
+  assert.equal(applyRepeatReviewSelection(context, 'cold').mode, 'cold');
+  assert.equal(applyRepeatReviewSelection(context, 'cold').mode, 'cold');
+  const legacyLive = applyRepeatReviewSelection(context, 'cold');
+  assert.equal(legacyLive.mode, 'cold');
+  assert.equal(legacyLive.validationDepth, 'static-code', 'COLD review is static');
 });
 
 test('repeat-review context accumulates the complete predecessor chain', () => {
@@ -628,7 +605,7 @@ test('an intake-owned round chains onto a manual review of the same PR', () => {
       review: {
         profile: 'standard',
         ownerId: 'owner',
-        options: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'static-code' },
+        options: { mode: 'cold' as const },
       },
     },
   });

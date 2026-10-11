@@ -1,6 +1,5 @@
 // run-store.ts — In-memory Run cache + JSON file persistence
 // Each run persisted as .runs/{id}.json
-
 import { randomUUID } from 'node:crypto';
 import {
   mkdir,
@@ -26,7 +25,7 @@ import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
   type FlowType,
-  isReviewScope,
+  isReviewMode,
   isReviewValidationDepth,
   isSettledBlockedRun,
   isTerminalRunStatus,
@@ -46,6 +45,7 @@ import {
   type RunStepStatus,
   signalFileForTask,
 } from '@farmslot/protocol';
+import { parseReviewRequestContext } from '@farmslot/review-dispatch';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
@@ -55,6 +55,7 @@ import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -73,7 +74,7 @@ import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-l
 // ADR-023 shipped 2026-04-20. Runs persisted before this date have no
 // safetyTier field and were executed under the pre-refactor hardcoded
 // --dangerously-* posture. Load-time backfill preserves that posture so
-// relaunch paths (self-review, ci-monitor) don't silently demote legacy
+// relaunch paths (review, ci-monitor) don't silently demote legacy
 // runs to `sandboxed` and stall on approval prompts after an upgrade.
 export const SAFETY_TIER_EPOCH_ISO = '2026-04-20T00:00:00Z';
 const SAFETY_TIER_EPOCH = Date.parse(SAFETY_TIER_EPOCH_ISO);
@@ -141,7 +142,7 @@ const ACTIVE_STATUSES: Set<RunStatus> = new Set([
   'preparing',
   'dispatching',
   'monitoring',
-  'self-reviewing',
+  'reviewing',
   'human-gating',
   'completing',
   'ci-watching',
@@ -713,14 +714,15 @@ export function createRun(
       'Refusing to create gateway test fixture run in production .runs/ — run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1',
     );
   }
+  assertCurrentReviewConfiguration(params, 'run');
   const now = new Date().toISOString();
   if (
     params.reviewAutoFinish !== undefined &&
     (params.flowType !== 'review-pr' || typeof params.reviewAutoFinish !== 'boolean')
   )
     throw new Error('reviewAutoFinish requires a static review boolean');
-  if (params.reviewScope !== undefined && !isReviewScope(params.reviewScope)) {
-    throw new Error(`Invalid reviewScope: ${String(params.reviewScope)}`);
+  if (params.reviewMode !== undefined && !isReviewMode(params.reviewMode)) {
+    throw new Error(`Invalid reviewMode: ${String(params.reviewMode)}`);
   }
   if (
     params.reviewValidationDepth !== undefined &&
@@ -780,20 +782,28 @@ export function createRun(
       ? (params.devInteractiveProfile ?? DEFAULT_DEV_INTERACTIVE_PROFILE)
       : undefined;
   const engineState: Run['engineState'] =
-    params.reviewDepth ||
-    params.pendingReviewPlan?.length ||
+    params.reviewPolicy ||
+    params.reviewSequence?.length ||
     devInteractiveProfile ||
     params.initialContext ||
     params.devChecklist?.length
       ? {
           ...params.engineState,
-          ...(params.reviewDepth || params.pendingReviewPlan?.length
+          ...(params.reviewPolicy || params.reviewSequence?.length
             ? {
                 publishGate: {
                   ...params.engineState?.publishGate,
-                  ...(params.reviewDepth ? { reviewDepth: params.reviewDepth } : {}),
-                  ...(params.pendingReviewPlan?.length
-                    ? { pendingReviewPlan: params.pendingReviewPlan }
+                  ...(params.reviewSequenceContext
+                    ? {
+                        reviewSequenceContext: parseReviewRequestContext(
+                          params.reviewSequenceContext,
+                          params.reviewSequence?.length ?? 0,
+                        ),
+                      }
+                    : {}),
+                  ...(params.reviewPolicy ? { reviewPolicy: params.reviewPolicy } : {}),
+                  ...(params.reviewSequence?.length
+                    ? { reviewSequence: params.reviewSequence }
                     : {}),
                 },
               }
@@ -889,7 +899,10 @@ export function createRun(
     reviewTier: params.reviewTier,
     reviewAutoFinish:
       params.flowType === 'review-pr' ? params.reviewAutoFinish === true : undefined,
-    reviewScope: params.flowType === 'review-pr' ? (params.reviewScope ?? 'full') : undefined,
+    reviewMode: params.reviewMode ?? (params.flowType === 'review-pr' ? 'cold' : undefined),
+    reviewContext: params.reviewContext
+      ? parseReviewRequestContext(params.reviewContext, 1)
+      : undefined,
     reviewValidationDepth:
       params.flowType === 'review-pr' && !options?.reviewQa
         ? (params.reviewValidationDepth ?? 'static-code')

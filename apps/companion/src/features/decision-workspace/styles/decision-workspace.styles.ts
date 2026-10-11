@@ -341,6 +341,7 @@ export const decisionWorkspaceStyles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
+  actionButtonDisabled: { opacity: 0.4 },
   actionText: { color: '#fff', fontSize: fonts.sizeMd, fontWeight: '800' },
   actionDescription: { color: '#ffffffcc', fontSize: fonts.sizeSm, marginTop: spacing.sm },
   safetyCard: {

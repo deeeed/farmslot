@@ -4,7 +4,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
   type GitBranchDiffFile,
-  latestExhaustedIndependentReview,
+  latestExhaustedReview,
   type ReadyGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -42,9 +42,9 @@ export function renderReadyTopBar(input: {
       (action) => action.id === 'approve-publish' || action.id === 'ready',
     ) ?? !packageGate;
   const extraReviewAction = input.decision?.actions?.find(
-    (action) => action.id === 'request-extra-review',
+    (action) => action.id === 'request-review',
   );
-  const exhaustedReview = latestExhaustedIndependentReview(input.payload.independentReviews);
+  const exhaustedReview = latestExhaustedReview(input.payload.reviews);
   // Only actions the decision itself carries. The gateway refuses any other id
   // and still verifies the selected package and current source before publishing.
   const bypassAction = input.decision?.actions?.find(
@@ -118,7 +118,7 @@ export function renderReadyTopBar(input: {
                     ?disabled=${input.acting || input.recovering}
                     @click=${input.openReviewRequestModal}
                   >
-                    Independent Review
+                    Review
                   </button>
                 `
               : nothing}
@@ -144,7 +144,7 @@ export function renderReadyTopBar(input: {
               ?disabled=${input.acting || input.recovering || !canApprove}
               title=${canApprove
                 ? ''
-                : reviewBlockingReason || 'Required independent review policy is not satisfied yet'}
+                : reviewBlockingReason || 'Required review policy is not satisfied yet'}
               @click=${() => input.confirmAction(approveActionId)}
             >
               ${input.acting

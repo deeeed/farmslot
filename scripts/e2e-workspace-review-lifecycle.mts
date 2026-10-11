@@ -211,11 +211,13 @@ await json(path.join(project, 'project.json'), {
     ? {
         workflow_defaults: {
           'review-pr': {
-            review: { sessionIntent: 'reset', scope: 'full' },
+            review: { mode: 'cold' },
             execution: {
               workspacePolicy: { kind: 'exact', machine: 'review-node' },
               transport: 'tmux',
-              models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+              models: [
+                { mode: 'cold', effort: null, runner: 'cursor', model: 'cursor-grok-4.6-xhigh' },
+              ],
             },
           },
         },
@@ -1049,7 +1051,7 @@ try {
       const repeated = await connection.call<{ run: Run }>('run.create', {
         ...parameters,
         ticketOrPr: 'example/app#42',
-        reviewScope: 'incremental',
+        reviewMode: 'warm',
       });
       runs.push(repeated.run);
       continue;
@@ -1076,6 +1078,15 @@ try {
     await delay(1000);
   }
   for (const [index, run] of runs.entries()) {
+    if (scenario === 'repeat-review' && index === 1) {
+      assert(['failed', 'blocked'].includes(run.status), 'Unavailable WARM must be refused');
+      assert.match(run.error ?? '', /WARM review unavailable/);
+      assert(
+        !run.agentContexts?.some((context) => context.nativeSession?.acceptedAt),
+        'Unavailable WARM must not launch a fresh reviewer',
+      );
+      continue;
+    }
     if (scenario === 'blocked') {
       assert.equal(run.status, 'blocked', 'Blocked signal must remain a blocked run');
       assert.match(run.error ?? '', /Fixture review input unavailable/);
@@ -1153,7 +1164,7 @@ try {
         actionId: 'dismiss',
       });
       await verifyReviewUi('saved-review-after-reopen-ui', true);
-      // The saved result is also the entry point for the incremental review proof.
+      // The saved result is also the entry point for the WARM review proof.
     }
     assert.equal(run.slotId, null);
     assert(run.reviewWorkspace?.support?.sha256, 'Review must retain its admitted skill digest');
@@ -1241,55 +1252,16 @@ try {
     );
   }
   if (scenario === 'repeat-review') {
-    assert.equal(runs.length, 2, 'Repeat proof needs two completed native reviewers');
-    const [prior, repeated] = runs;
-    assert(
-      prior.reviewResult?.lineComments?.some((comment) => comment.path === 'greeting.js'),
-      'Repeat review must carry at least one actual finding',
-    );
-    const context = repeated.repeatReviewContext;
-    assert.equal(context?.priorRunId, prior.id);
-    assert.equal(context?.priorReviewedHeadSha, headSha);
-    assert.equal(context?.currentHeadSha, headSha);
-    assert.equal(
-      context?.session?.continuity,
-      'fallback-fresh',
-      'Repeat review must disclose a fresh-session fallback',
-    );
-    assert.equal(context?.session?.fallbackReason, 'session-unavailable');
-    assert.equal(context?.reviewScope, 'incremental');
-    assert.equal(context?.sessionIntent, 'resume');
-    assert.equal(repeated.reviewScope, 'incremental');
-    assert.equal(context?.incrementalUnavailableReason, undefined);
-    assert.deepEqual(
-      JSON.parse(
-        await readFile(
-          path.join(path.dirname(repeated.taskFile!), 'inputs/prior-review.json'),
-          'utf8',
-        ),
-      ),
-      context,
-      'The new task must carry the saved review context',
-    );
-    assert.deepEqual(
-      context.unresolvedFindings,
-      (prior.reviewResult?.lineComments ?? []).map((comment) => ({
-        file: comment.path,
-        line: comment.line,
-        description: comment.body,
-      })),
-    );
-    const sessions = runs.map(
-      (run) => run.agentContexts?.find((entry) => entry.id === 'review')?.nativeSession,
-    );
-    assert(sessions.every((session) => session?.acceptedAt && session.closedAt));
-    assert.notEqual(
-      sessions[0]?.sessionId,
-      sessions[1]?.sessionId,
-      'A fresh workspace must not reuse old permissions',
-    );
-    assert.notEqual(prior.reviewWorkspace?.checkoutPath, repeated.reviewWorkspace?.checkoutPath);
-    await json(path.join(evidence, 'repeat-review.json'), { context, sessions });
+    assert.equal(runs.length, 2, 'Refusal proof needs the prior review and one WARM request');
+    const [prior, refused] = runs;
+    assert(prior.reviewResult?.lineComments?.some((comment) => comment.path === 'greeting.js'));
+    assert.equal(refused.reviewMode, 'warm');
+    assert(['failed', 'blocked'].includes(refused.status), 'Unavailable WARM must be refused');
+    assert.match(refused.error ?? '', /WARM review unavailable/);
+    assert(!refused.reviewResult, 'Refused WARM cannot create a passing result');
+    assert(!refused.agentContexts?.some((context) => context.nativeSession?.acceptedAt));
+    assert.equal(prior.reviewResult?.reviewSnapshot?.headSha, headSha);
+    await json(path.join(evidence, 'warm-unavailable.json'), { prior, refused });
   }
   if (count === 3) {
     const starts = runs.map((run) =>

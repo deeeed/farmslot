@@ -76,7 +76,7 @@ test('project edits do not re-enroll prior publications or upgrade existing per-
         mode: 'automatic-repair',
         execution: {
           slotPolicy: { kind: 'exact', slotId: 'slot' },
-          models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+          models: [{ effort: null, mode: 'cold' as const, runner: 'codex', model: 'gpt-6-astra' }],
         },
       },
     },

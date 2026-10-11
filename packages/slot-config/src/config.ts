@@ -10,6 +10,7 @@ import {
   type FlowType,
   HOST_PRESSURE_ADMISSION_MODES,
   type HostPressureAdmissionMode,
+  isReviewMode,
   isRuntimeCapabilityClaimScope,
   isValidDomainName,
   normalizeProjectWorkflowDefaults,
@@ -23,7 +24,7 @@ import {
   type ProjectHostPressureAdmissionConfig,
   type ProjectQaConfig,
   type ProjectWorkflowDefaults,
-  type ReviewSessionPolicy,
+  type ReviewMode,
   type ReviewWorkspaceSupportConfig,
   RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS,
   RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS,
@@ -456,24 +457,22 @@ export interface RawProjectJson {
   // 'full-auto' or 'dangerous'; fresh or audited projects leave this unset
   // to inherit the runner's intrinsic 'sandboxed' fallback.
   default_safety_tier?: 'sandboxed' | 'full-auto' | 'dangerous';
-  self_review?: {
+  review?: {
     enabled?: boolean;
     runner?: string;
     model?: string;
+    effort?: string;
     max_retries?: number;
     review_timeout_min?: number;
     execution_templates?: Record<'static-code' | 'full-live', string>;
-    // Reviewer session lifecycle across one run's review loops:
-    // 'warm-per-reviewer' (default) resumes the same reviewer session for
-    // re-reviews within the run; 'fresh-per-pass' relaunches cold every pass.
-    session_policy?: ReviewSessionPolicy;
+    // Initial review is cold; warm rechecks require verified retained PR provenance.
+    mode?: ReviewMode;
   };
   publication_review?: Partial<
     Record<
       'fix-bug' | 'dev',
       {
-        minimum_independent_reviews?: number;
-        require_cross_runner?: boolean;
+        minimum_reviews?: number;
       }
     >
   >;
@@ -809,6 +808,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRoadmapConfig(projectJson, projectConfig);
   validateScriptedConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
+  validateReviewConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
   validateRuntimeCapabilitiesConfig(projectJson, projectConfig);
@@ -1196,27 +1196,68 @@ export async function resolveProjectRuntimeDir(project?: string | null): Promise
   }
 }
 
+export function validateReviewConfig(projectJson: RawProjectJson, projectConfig: string): void {
+  if ('self_review' in projectJson)
+    throw new Error(
+      `${projectConfig}: self_review was removed; convert it to review with a warm/cold mode`,
+    );
+  const review = projectJson.review;
+  if (!review) return;
+  if (typeof review !== 'object' || Array.isArray(review))
+    throw new Error(`${projectConfig}: review must be an object`);
+  const allowed = [
+    'enabled',
+    'runner',
+    'model',
+    'effort',
+    'max_retries',
+    'review_timeout_min',
+    'execution_templates',
+    'mode',
+  ];
+  const unknown = Object.keys(review).find((key) => !allowed.includes(key));
+  if (unknown)
+    throw new Error(
+      `${projectConfig}: review contains unsupported property: ${unknown}${unknown === 'session_policy' ? '; convert session policy to review.mode warm or cold' : ''}`,
+    );
+  if (review.mode !== undefined && !isReviewMode(review.mode))
+    throw new Error(`${projectConfig}: review.mode must be warm or cold`);
+}
+
 export function validatePublicationReviewConfig(
   projectJson: RawProjectJson,
   projectConfig: string,
 ): void {
   const cfg = projectJson.publication_review;
   if (!cfg) return;
+  if (typeof cfg !== 'object' || Array.isArray(cfg))
+    throw new Error(`${projectConfig}: publication_review must be an object`);
+  const unknownFlow = Object.keys(cfg).find((key) => key !== 'fix-bug' && key !== 'dev');
+  if (unknownFlow)
+    throw new Error(
+      `${projectConfig}: publication_review contains unsupported flow: ${unknownFlow}`,
+    );
   for (const flow of ['fix-bug', 'dev'] as const) {
     const flowConfig = cfg[flow];
     if (!flowConfig) continue;
-    const minReviews = flowConfig.minimum_independent_reviews;
-    if (minReviews !== undefined && (!Number.isInteger(minReviews) || minReviews < 0)) {
+    if (typeof flowConfig !== 'object' || Array.isArray(flowConfig))
+      throw new Error(`${projectConfig}: publication_review.${flow} must be an object`);
+    const unknown = Object.keys(flowConfig).find((key) => key !== 'minimum_reviews');
+    if (unknown) {
+      const hint =
+        unknown === 'minimum_independent_reviews'
+          ? '; convert it to minimum_reviews'
+          : unknown === 'require_cross_runner'
+            ? '; remove runner-diversity policy'
+            : '';
       throw new Error(
-        `${projectConfig}: publication_review.${flow}.minimum_independent_reviews must be a non-negative integer`,
+        `${projectConfig}: publication_review.${flow} contains unsupported property: ${unknown}${hint}`,
       );
     }
-    if (
-      flowConfig.require_cross_runner !== undefined &&
-      typeof flowConfig.require_cross_runner !== 'boolean'
-    ) {
+    const minReviews = flowConfig.minimum_reviews;
+    if (minReviews !== undefined && (!Number.isInteger(minReviews) || minReviews < 0)) {
       throw new Error(
-        `${projectConfig}: publication_review.${flow}.require_cross_runner must be a boolean`,
+        `${projectConfig}: publication_review.${flow}.minimum_reviews must be a non-negative integer`,
       );
     }
   }

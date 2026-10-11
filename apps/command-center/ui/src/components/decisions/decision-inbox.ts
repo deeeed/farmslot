@@ -5,6 +5,7 @@ import { customElement, state } from 'lit/decorators.js';
 import type {
   DecisionAction,
   DecisionType,
+  ImprovementApplyResult,
   ImprovementDiffPayload,
   ImprovementFileChange,
   LearningsDraftPayload,
@@ -12,7 +13,11 @@ import type {
   RetrospectivePayload,
   RunMeta,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import {
+  buildRunDecisionActionRequest,
+  improvementApplyOutcome,
+  Methods,
+} from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 import '../shared/hydrating-placeholder.js';
@@ -294,24 +299,12 @@ export class DecisionInbox extends LitElement {
     const runId = decision.runMeta?.runId;
     this._resolving = new Set([...this._resolving, decisionId]);
     try {
-      const res = (await gateway.request(Methods.IMPROVEMENT_APPLY, { runId, decisionId })) as {
-        applied: unknown[];
-        validationPassed: boolean;
-        validationOutput?: string;
-        refused?: { filePath: string; reason: string }[];
-      };
-      const refusals = res.refused ?? [];
+      if (!runId) throw new Error('Improvement decision is missing its run');
+      const request = buildRunDecisionActionRequest({ runId, decision, actionId: 'apply' });
+      const res = (await gateway.request(request.method, request.params)) as ImprovementApplyResult;
       // Refusals keep the card pending server-side; "0 files applied,
       // validation passed" must read as a failure, not success.
-      const passed = res.validationPassed && refusals.length === 0;
-      const msg = !res.validationPassed
-        ? `Applied but validation FAILED:\n${(res.validationOutput ?? '').slice(0, 300)}`
-        : refusals.length > 0
-          ? `Applied ${res.applied.length}, refused ${refusals.length} change(s) — card stays pending:\n${refusals
-              .map((r) => `${r.filePath}: ${r.reason}`)
-              .join('\n')
-              .slice(0, 300)}\nRefine the card so it re-reads the current file, then re-apply.`
-          : `Applied ${res.applied.length} file(s). Validation passed.`;
+      const { passed, message: msg } = improvementApplyOutcome(res);
       this._applyToast = new Map([
         ...this._applyToast,
         [decisionId, passed ? `ok:${msg}` : `fail:${msg}`],
@@ -548,19 +541,19 @@ export class DecisionInbox extends LitElement {
               </div>
             `
           : nothing}
-        ${payload.selfReviewVerdict
+        ${payload.reviewVerdict
           ? html`
               <div class="retro-row">
-                <span class="retro-label">Self Review</span
-                ><span class="retro-value">${payload.selfReviewVerdict}</span>
+                <span class="retro-label">Review</span
+                ><span class="retro-value">${payload.reviewVerdict}</span>
               </div>
             `
           : nothing}
-        ${payload.selfReviewSummary
+        ${payload.reviewSummary
           ? html`
               <div class="retro-row">
-                <span class="retro-label">Self Review Summary</span>
-                <div class="retro-text">${payload.selfReviewSummary}</div>
+                <span class="retro-label">Review Summary</span>
+                <div class="retro-text">${payload.reviewSummary}</div>
               </div>
             `
           : nothing}

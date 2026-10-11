@@ -108,7 +108,7 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
     updatedAt: '2026-04-15T02:00:00.000Z',
     steps: [
       {
-        name: 'self-review',
+        name: 'review',
         status: 'done',
         outputs: {
           verdict: 'issues',
@@ -139,7 +139,7 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
     true,
   );
   assert.equal(
-    snapshot.learnings.some((entry) => entry.source === 'self-review'),
+    snapshot.learnings.some((entry) => entry.source === 'review'),
     true,
   );
   assert.equal(

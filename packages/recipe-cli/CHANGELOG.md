@@ -7,6 +7,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 - Match local checkout origins written as file URLs or absolute paths during project binding, while refusing a different repository.
 - Share validated lifecycle options, cancellation and runtime log access with project hosts; preserve named application-log defaults, the `app` selector, full raw follow and missing-console failures, and retain the latest proof after subsequent lifecycle commands.
 - Require executed smoke and cleanup assertions for live conformance, with complete observed HUD intent when capture requires it.
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 
 ## 0.13.0 - 2026-10-11
 

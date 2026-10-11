@@ -23,7 +23,7 @@ export interface RunPipelineSpecialNodeRenderContext {
   visibleStatus: (step: RunStep) => RunStepStatus;
   inlineCiFixActive: boolean;
   monitorTaskProgress: TaskProgressStructured | undefined;
-  selfReviewTaskProgress: TaskProgressStructured | undefined;
+  reviewTaskProgress: TaskProgressStructured | undefined;
   /** Active/recent file transfer for this run (mirror/upload during package refresh). */
   transferProgress?: FileTransferUiEntry | null;
   toggleProgressPanel: () => void;
@@ -126,7 +126,7 @@ export function renderMonitorPipelineNode(n: NodePos, ctx: RunPipelineSpecialNod
   `;
 }
 
-export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNodeRenderContext) {
+export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNodeRenderContext) {
   const step = n.step;
   const vis = ctx.visibleStatus(step);
   const isRunning = vis === 'running';
@@ -158,7 +158,7 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
       : '';
 
   const detail = step.detail ?? '';
-  const tp = ctx.selfReviewTaskProgress;
+  const tp = ctx.reviewTaskProgress;
   const progressMatch = detail.match(/(\d+)\/(\d+)/);
   const done = tp?.completedSteps ?? (progressMatch ? parseInt(progressMatch[1], 10) : 0);
   const total = tp?.totalSteps ?? (progressMatch ? parseInt(progressMatch[2], 10) : 0);
@@ -196,7 +196,7 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
       <text class="node-label" x="8" y="11"
             dominant-baseline="central"
             fill="${colors.textPrimary}">
-        self-review${hasRetry ? ` (${phase})` : ''}
+        review${hasRetry ? ` (${phase})` : ''}
       </text>
       ${
         elapsed
