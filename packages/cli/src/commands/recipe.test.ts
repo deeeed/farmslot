@@ -201,9 +201,21 @@ function standaloneRun(root: string, file: string) {
   return command;
 }
 
-function callPublic(root: string, args: string[], operation: 'call' | 'run' = 'call') {
+function callPublic(
+  root: string,
+  args: string[],
+  operation: 'call' | 'run' = 'call',
+  entry: 'command' | 'bin' = 'command',
+) {
   const command = publicCall(root, args, operation);
-  const result = spawnSync(process.execPath, command.args, { ...command.options, timeout: 4900 });
+  const argv =
+    entry === 'bin'
+      ? [
+          path.join(packageRoot, 'bin/farmslot.mjs'),
+          ...command.args.slice(command.args.indexOf('--') + 1),
+        ]
+      : command.args;
+  const result = spawnSync(process.execPath, argv, { ...command.options, timeout: 4900 });
   assert.ifError(result.error);
   return result;
 }
@@ -463,7 +475,7 @@ for (const failure of ['runtime', 'closeout', 'usage']) {
           "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
         ),
       );
-    const invocation = publicCall(
+    const result = callPublic(
       root,
       [
         file,
@@ -472,14 +484,8 @@ for (const failure of ['runtime', 'closeout', 'usage']) {
         ...(failure === 'usage' ? ['a=1', 'a=1'] : []),
       ],
       'run',
+      'bin',
     );
-    const args = invocation.args.slice(invocation.args.indexOf('--') + 1);
-    const result = spawnSync(
-      process.execPath,
-      [path.join(packageRoot, 'bin/farmslot.mjs'), ...args],
-      { ...invocation.options, timeout: 4900 },
-    );
-    assert.ifError(result.error);
     assert.notEqual(result.status, 0);
     const diagnostic = finalizeFail
       ? result.stderr
@@ -507,6 +513,35 @@ for (const failure of ['runtime', 'closeout', 'usage']) {
     assert.ok(diagnostic.userAction.includes('--project example'));
     assert.ok(diagnostic.userAction.includes('--projects-dir'));
     assert.doesNotMatch(diagnostic.userAction, /--target|--fix|recipe doctor/u);
+  });
+}
+
+for (const operation of ['run', 'call'] as const) {
+  test(`public-bin ${operation} overlay failure names the configured doctor command`, (t) => {
+    const { root, file } = runFixture(t);
+    const provider = path.join(root, 'projects/example/provider.mjs');
+    const installer = path.join(root, 'projects/example/install.mjs');
+    fs.writeFileSync(installer, 'process.exitCode = 1;');
+    const harness = { install: { entry: installer, fallback: installer, node: true } };
+    fs.writeFileSync(
+      provider,
+      fs
+        .readFileSync(provider, 'utf8')
+        .replace('headless: true', 'headless: false')
+        .replace('harness: {}', `harness: ${JSON.stringify(harness)}`),
+    );
+    const result = callPublic(
+      root,
+      operation === 'run' ? [file] : ['command', 'cmd=printf unsafe > artifacts/effect'],
+      operation,
+      'bin',
+    );
+    assert.notEqual(result.status, 0);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.error.code, 'OVERLAY_INSTALL_FAILED');
+    assert.match(output.error.userAction, /^farmslot doctor --conformance /u);
+    assert.ok(output.error.userAction.includes('--project example'));
+    assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
   });
 }
 

@@ -60,7 +60,13 @@ import {
   recipeRunning,
   recipeRunningRefusal,
 } from './heal-bounds.js';
-import { harnessHost, hostEnvName, recipeEnvName, withRecipeCleanup } from './host.js';
+import {
+  harnessDoctorHint,
+  harnessHost,
+  hostEnvName,
+  recipeEnvName,
+  withRecipeCleanup,
+} from './host.js';
 import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
 import { runNetworkCaptureAction } from './network-observation.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
@@ -1045,7 +1051,9 @@ export async function prepareHeal(
   prepareOptions.onPhase?.('install');
   const ensured = await ensureOverlay(adapter, target, heal, state, json);
   if (!ensured.ok) {
-    const userAction = `${host} install --adapter ${adapter} --target ${shellQuoteArg(target)}`;
+    const userAction = harnessDoctorHint(
+      `${host} install --adapter ${adapter} --target ${shellQuoteArg(target)}`,
+    );
     if (json) {
       console.log(
         JSON.stringify(

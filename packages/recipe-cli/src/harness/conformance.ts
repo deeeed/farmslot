@@ -271,7 +271,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           identity.adapter,
           cli,
           invocation.params,
-          invocation.librarySources,
+          undefined,
           invocation,
         );
         if (validated.usageError || validated.errorCount > 0) {
