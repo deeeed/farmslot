@@ -6,6 +6,22 @@ export function runnerPaneContainsInstruction(pane: string, message: string): bo
   return normalizeInstructionText(pane).includes(needle);
 }
 
+export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
+  const lines = pane
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .trimEnd()
+    .split('\n');
+  const composer = lines.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
+  if (composer === -1) return false;
+  const body = lines.slice(composer);
+  // The composer ends at its blank separator, before the runner's status/footer.
+  const end = body.map((line) => !line.trim()).lastIndexOf(true);
+  const buffered = (end === -1 ? body : body.slice(0, end))
+    .map((line, index) => (index === 0 ? line.replace(/^\s*[›❯]\s?/, '') : line))
+    .join('\n');
+  return normalizeInstructionText(buffered) === normalizeInstructionText(message);
+}
+
 export function runnerPaneHasQueuedInstruction(
   pane: string,
   message?: string,

@@ -33,7 +33,7 @@ test('a pending unknown-session receipt binds only through exact native acceptan
     before_turn_token: null,
   };
   const records = [
-    { type: 'session_meta', payload: { id: 'late-session' } },
+    { type: 'session_meta', payload: { id: 'late-session', source: 'cli' } },
     {
       type: 'event_msg',
       timestamp: new Date(now - 1).toISOString(),
@@ -47,15 +47,45 @@ test('a pending unknown-session receipt binds only through exact native acceptan
   ];
   fs.writeFileSync(file, records.map(JSON.stringify).join('\n') + '\n');
   const fd = fs.openSync(file, 'r');
+  const child = path.join(dir, 'rollout-subagent.jsonl');
+  fs.writeFileSync(
+    child,
+    JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: 'child',
+        source: { subagent: { thread_spawn: { parent_thread_id: 'late-session' } } },
+      },
+    }) + '\n',
+  );
+  const childFd = fs.openSync(child, 'r');
   try {
     assert.equal(acceptedPrompt(meta, 'codex', dir, receipt).session_id, 'late-session');
     assert.equal(acceptedPrompt({ ...meta, process_started_at: 2 }, 'codex', dir, receipt), null);
-    assert.equal(
-      acceptedPrompt(meta, 'codex', dir, { ...receipt, payload: payload + ' wrong' }),
-      null,
+    const other = path.join(dir, 'rollout-other-parent.jsonl');
+    fs.writeFileSync(
+      other,
+      JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          id: 'other-parent',
+          source: 'cli',
+        },
+      }) + '\n',
     );
+    const otherFd = fs.openSync(other, 'r');
+    try {
+      assert.equal(
+        acceptedPrompt(meta, 'codex', dir, receipt),
+        null,
+        'two root sessions remain ambiguous',
+      );
+    } finally {
+      fs.closeSync(otherFd);
+    }
   } finally {
     fs.closeSync(fd);
+    fs.closeSync(childFd);
     fs.rmSync(dir, { recursive: true });
   }
 });

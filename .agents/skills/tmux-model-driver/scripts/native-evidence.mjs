@@ -25,7 +25,10 @@ import {
   instructionNeedle,
   runnerPromptDigest,
 } from '../../../../services/gateway/src/runners/observability-prompt-digest.ts';
-import { runnerPaneHasQueuedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
+import {
+  runnerPaneHasBufferedInstruction,
+  runnerPaneHasQueuedInstruction,
+} from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 export function readOptional(file) {
   try {
@@ -138,11 +141,16 @@ function sessionBinding(meta, runner, obsDir) {
       if (/\/rollout-[^/]+\.jsonl$/.test(file)) paths.add(file);
     }
   }
-  if (paths.size !== 1) return null;
-  const binding = runProbe(
-    buildCodexSessionBindingProbeCommand([...paths][0]),
-    parseCodexSessionBindingProbe,
-  );
+  const roots = [...paths]
+    .map((file) =>
+      runProbe(
+        buildCodexSessionBindingProbeCommand(file, undefined, true),
+        parseCodexSessionBindingProbe,
+      ),
+    )
+    .filter((binding) => binding.status === 'matched');
+  if (roots.length !== 1) return null;
+  const binding = roots[0];
   return binding.status === 'matched'
     ? {
         sessionId: binding.sessionId,
@@ -219,7 +227,6 @@ export function writeSentinel(obsDir, payload, sentAt) {
 }
 
 export function queuedPrompt(meta, runner, receipt) {
-  // A queue is pending input, never terminal native acceptance. Retain its receipt.
   if (!receipt || !supportsMidTurnPrompt(runner)) return null;
   if (
     receipt.submitted_at &&
@@ -235,7 +242,20 @@ export function queuedPrompt(meta, runner, receipt) {
   return null;
 }
 
+export function bufferedPrompt(meta, runner, receipt) {
+  return Boolean(
+    receipt?.typed &&
+    supportsMidTurnPrompt(runner) &&
+    receipt.pane_identity === paneIdentity(meta) &&
+    runnerPaneHasBufferedInstruction(meta.tail || '', receipt.payload),
+  );
+}
+
 export function acceptedPrompt(meta, runner, obsDir, receipt) {
+  // An Enter-submitted, complete driver-owned queue proves delivery, not a new turn.
+  // Native /goal still needs its objective and turn boundary below.
+  const queued = !receipt.payload.startsWith('/goal ') && queuedPrompt(meta, runner, receipt);
+  if (queued) return queued;
   const bound = sessionBinding(meta, runner, obsDir);
   const mayBind =
     receipt.session_id === null &&

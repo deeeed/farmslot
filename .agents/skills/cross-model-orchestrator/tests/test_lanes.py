@@ -214,6 +214,23 @@ class LaneTests(unittest.TestCase):
                     self.assertEqual(lanes.observe(self.config, "one")["status"], "idle")
                 self.assertEqual(lanes._record(self.config, "one")["last_delivery"]["receipt_id"], "shared-accepted-receipt")
 
+    def test_send_records_its_queue_delivery_before_acknowledging_the_exact_receipt(self):
+        accepted = {"receipt_id": "this-handoff", "payload_hash": "payload", "source": "runner-queue", "session_id": None}
+        def command(argv, **kwargs):
+            self.assertEqual(Path(argv[1]).name, "ack-acceptance.sh")
+            self.assertEqual(argv[-1], accepted["receipt_id"])
+            self.assertEqual(lanes._record(self.config, "one")["last_delivery"], accepted)
+            return result(json.dumps({"acknowledged": True}))
+        def older_observation(*args):
+            lanes._update(self.config, "one", {"last_delivery": {"receipt_id": "older-alias"}})
+        with patch.object(lanes, "_pane", return_value="%1"), \
+             patch.object(lanes, "_send", return_value={"submitted": True, "evidence": accepted}), \
+             patch.object(lanes, "_observe", side_effect=older_observation), \
+             patch.object(lanes, "run", side_effect=command):
+            output = lanes.send(self.config, "one", "handoff")
+        self.assertTrue(output["delivery"]["submitted"])
+        self.assertEqual(lanes._record(self.config, "one")["last_delivery"], accepted)
+
     def test_mismatched_acknowledgement_still_refuses(self):
         def command(argv, **kwargs):
             if "list-panes" in argv:

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
+- Verify complete Enter-submitted queue messages as guarded lane delivery, retry owned input without duplicate pastes, and discover parent sessions alongside subagents.
 
 - Retain CI check metadata at decisions and return current details through pr.status.
 - Validate deterministic local CI receipts before package preparation and publication, including current source inputs and runtime support.

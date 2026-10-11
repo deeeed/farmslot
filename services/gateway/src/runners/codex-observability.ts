@@ -543,6 +543,7 @@ PY`;
 export function buildCodexSessionBindingProbeCommand(
   sessionPath: string,
   persistedSessionId?: string,
+  rootOnly = false,
 ): string {
   return `
 python3 - <<'PY'
@@ -552,6 +553,7 @@ from pathlib import Path
 
 requested_path = Path(${JSON.stringify(sessionPath)})
 persisted_session_id = ${persistedSessionId === undefined ? 'None' : JSON.stringify(persistedSessionId)}
+root_only = ${rootOnly ? 'True' : 'False'}
 try:
     session_path = Path(os.path.realpath(requested_path))
     with session_path.open() as handle:
@@ -562,6 +564,11 @@ except (OSError, UnicodeDecodeError, json.JSONDecodeError):
     raise SystemExit(0)
 
 if not isinstance(session_id, str) or not session_id:
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
+source = first.get('payload', {}).get('source')
+if root_only and isinstance(source, dict) and 'subagent' in source:
     print(json.dumps({'status': 'unavailable'}))
     raise SystemExit(0)
 

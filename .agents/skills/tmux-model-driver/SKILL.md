@@ -23,26 +23,27 @@ cat prompt.txt | scripts/send-and-verify.sh <pane> <runner> [trace.jsonl]
 The process tree and argv identify Codex, Claude, Cursor, Gemini, Grok or a
 shell. A rendered prompt cannot establish runner identity. Native session
 records and pane-bound hooks establish idle or active turns. An unhooked Codex
-process can bind its sole kernel-owned rollout file for exact native acceptance. Missing or stale
+process can bind its sole kernel-owned parent rollout, excluding subagents, for exact native acceptance. Missing or stale
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
 It refuses the wrong runner, a shell when a model is expected, a pending question
-or an existing queue. Codex accepts Enter-submitted steering during busy or unknown
+or a foreign queue. Codex accepts Enter-submitted steering during busy or unknown
 phases. Other runners and explicit flush still require idle native readiness.
 It pastes the payload once and submits with `Enter`. It never answers a question.
 
 `submitted` requires exact acceptance of the owned prompt. Codex native history
 can prove steering within the active turn, without claiming a new turn started.
-A fresh Enter-submitted queue block reports `queued`, with `submitted: false`,
-for the complete payload and same pane process. Its receipt stays pending until
-exact native acceptance. Cancellation or a disappearing banner never clears it.
+A complete driver-owned "Messages to be submitted after next tool call" block reports
+`queued`, with `submitted: true`, for the same pane process. This proves queue delivery,
+with no new-turn claim. Its receipt stays until the owner acknowledges delivery.
+Cancellation or a disappearing banner never clears that evidence.
 A marker or shared prefix alone is insufficient.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.
-Rendered output vetoes questions, foreign queues and launch gates and reports
-pending queued input. It does not establish native acceptance.
+Rendered output vetoes questions, foreign queues and launch gates. The exact owned
+Codex submitted-queue block also proves delivery. It does not establish a native turn.
 Cursor, Gemini and Grok identities can be detected, but sends fail closed unless
 compatible structured observability is installed.
 
@@ -65,13 +66,17 @@ are accepted. A changed question is refused. `response_sent` acknowledges the
 input attempt; it does not claim the runner started a turn. Read native state
 again before continuing. Historical screen questions never authorize a response.
 
-An unverified send retains a private receipt. A later send refuses to append or
-repeat its prompt. A synchronously verified send clears its receipt under the transport lock and returns its
+An unverified send retains a private receipt. A retry of the same owned Codex prompt
+returns existing delivery evidence without typing, or submits only Enter when the exact
+original remains in the composer. It never pastes that prompt again. A synchronously
+native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance
 remains recorded across inspections. Ordinary sends refuse
-`acceptance_unacknowledged` until the owner records completion of the handoff in its registry
+`acceptance_unacknowledged` for a different prompt until the owner records completion of the handoff in its registry
 and calls `scripts/ack-acceptance.sh <pane> <runner> <receipt_id>`. The lane CLI performs this
-acknowledgement after persisting its state. Repeated acknowledgements are harmless; inspection
+acknowledgement after persisting its state. Receipt and lock identity uses the server socket,
+not the caller session. Old caller-specific receipts remain discoverable without migration.
+Repeated acknowledgements are harmless; inspection
 never consumes a late receipt. Receipt updates share the send lock and use atomic private writes.
 
 ```bash
