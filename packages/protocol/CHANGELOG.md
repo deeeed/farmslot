@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RUNNER_MOBILE_KEY_PROFILES` and `runnerMobileKeyProfile()`: the extra phone terminal keys (the Companion runner row) for claude, codex, cursor, grok and pi, each key recording the CLI version and documented binding it was checked against. `TmuxWorkerSummary.processRunnerIds` (optional) lists the runners whose process matchers hit the pane command, and `TmuxWorkerSummary.linkedRunner` names the linked run's runner only on the pane its worker context records exactly.
 - Export the publish-approval action set (`PUBLISH_APPROVAL_ACTIONS`, `isPublishApprovalAction`) and the review-depth helpers (`defaultReviewDepthPolicy`, `effectiveRequiredReviewCount`, `isQualifyingIndependentReview`) so clients guard publish gates with the gateway's own rules.
 - Share candidate slot selection, improvement Apply routing and validation outcomes between operator clients.
 
