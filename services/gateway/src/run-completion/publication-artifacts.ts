@@ -30,8 +30,10 @@ import {
 } from './evidence-paths.js';
 import {
   assertPublicationEvidenceSelection,
+  publicationEvidenceChangedError,
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
+import { verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -367,7 +369,7 @@ export async function uploadArtifacts(
       uploadDir = tempUploadDir;
     }
     console.log(
-      `[run-completion] uploading ${files.length} artifact(s) to ${artifactsRepo} (${flowDir}/${prNumber})`,
+      `[run-completion] uploading ${files.length} artifact(s) to ${artifactsRepo} (${flowDir}/${publicationId})`,
     );
     await execLocal(
       `bash '${uploadScript}' --dir '${uploadDir}' --artifacts-repo '${artifactsRepo}' --flow '${flow}' --id '${publicationId}'`,
@@ -430,11 +432,11 @@ export async function publishSelectedEvidence(
   const selectedEvidenceKeys =
     expandEvidenceSelectionForManifest(selection.trustedEvidenceManifest, selected) ?? [];
   if (selectedEvidenceKeys.length) {
-    const { verifyReadyGateSelectedEvidenceFiles } = await import('./ready-gate-package.js');
     await verifyReadyGateSelectedEvidenceFiles(
       run,
       { evidenceManifest: selection.evidenceManifest },
       selectedEvidenceKeys,
+      publicationEvidenceChangedError,
     );
   }
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {

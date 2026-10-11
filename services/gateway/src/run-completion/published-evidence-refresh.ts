@@ -2,6 +2,7 @@ import {
   Events,
   type RunRefreshPublishedEvidenceParams,
   type RunRefreshPublishedEvidenceResult,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars } from '../core/config.js';
@@ -10,10 +11,13 @@ import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.j
 import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { getRun } from '../runs/store.js';
 
-import { evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
 import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
 import { postProcessPRBody, publishSelectedEvidence } from './publication-artifacts.js';
+import {
+  allSelectedEvidenceKeysForPublication,
+  publicationEvidenceChangedError,
+} from './publication-evidence-policy.js';
 import { sha256Text, verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
 
 interface PublishedPrDescription {
@@ -35,7 +39,7 @@ export async function refreshPublishedEvidence(
   if (!isPublishedStatus(publicationStatusForRun(run)) || !run.prNumber) {
     throw new Error('Evidence refresh requires an already published PR');
   }
-  if (run.status !== 'done' || run.activeTaskFile) {
+  if (!TERMINAL_RUN_STATUSES.includes(run.status) || run.activeTaskFile) {
     throw new Error('Wait for the published run to finish before refreshing its evidence');
   }
   if (!run.taskFile) throw new Error('Published evidence requires the run artifact mirror');
@@ -47,7 +51,8 @@ export async function refreshPublishedEvidence(
   const { manifest, inventory } = await readCurrentPackageEvidence(run);
   if (!manifest) throw new Error('Published evidence refresh requires a valid evidence manifest');
   const selection = {
-    selectedEvidenceKeys: params.selectedEvidenceKeys ?? evidenceManifestArtifactPaths(manifest),
+    selectedEvidenceKeys:
+      params.selectedEvidenceKeys ?? allSelectedEvidenceKeysForPublication(inventory),
     evidenceManifest: inventory,
     trustedEvidenceManifest: manifest,
   };
@@ -87,7 +92,12 @@ export async function refreshPublishedEvidence(
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {
-      await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: inventory }, expanded);
+      await verifyReadyGateSelectedEvidenceFiles(
+        run,
+        { evidenceManifest: inventory },
+        expanded,
+        publicationEvidenceChangedError,
+      );
       const current = await readPr();
       if (current.headRefOid !== before.headRefOid || current.body !== before.body) {
         throw new Error(

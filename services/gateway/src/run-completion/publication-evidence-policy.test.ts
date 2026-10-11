@@ -5,6 +5,7 @@ import type { ArtifactRef } from '@farmslot/protocol';
 
 import { resolveSelectedEvidenceRef } from './evidence-paths.js';
 import {
+  allSelectedEvidenceKeysForPublication,
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
@@ -128,5 +129,19 @@ test('a video-only inventory defaults to its recording without a declared manife
       trustedEvidenceManifest: null,
     }),
     ['artifacts/after.mp4'],
+  );
+});
+
+test('ungated publication includes optional recording alongside preferred screenshots', () => {
+  assert.deepEqual(
+    allSelectedEvidenceKeysForPublication(inventory),
+    inventory.map((artifact) => artifact.path).sort(),
+  );
+  assert.equal(
+    defaultSelectedEvidenceKeysForPublication({
+      evidenceManifest: inventory,
+      trustedEvidenceManifest: manifest,
+    }).length,
+    2,
   );
 });

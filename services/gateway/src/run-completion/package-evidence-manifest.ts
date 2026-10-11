@@ -35,25 +35,8 @@ function evidenceManifestOmitSet(manifest: EvidenceManifest | null | undefined):
   return omitted;
 }
 
-function evidenceManifestExplicitPublishEvidenceSet(
-  manifest: EvidenceManifest | null | undefined,
-): Set<string> | null {
-  const explicit = new Set<string>();
-  // Inventory and operator selection are distinct. A declared recording must
-  // remain selectable even when screenshots are the preferred publication mode.
-  for (const key of evidenceManifestArtifactPaths(manifest)) {
-    for (const variant of exactEvidenceKeys(key)) explicit.add(variant);
-  }
-
-  return explicit.size > 0 ? explicit : null;
-}
-
 function artifactPathOmitted(artifactPath: string, omitted: Set<string>): boolean {
   return exactEvidenceKeys(artifactPath).some((variant) => omitted.has(variant));
-}
-
-function artifactPathMatchesEvidenceSet(artifactPath: string, evidenceSet: Set<string>): boolean {
-  return exactEvidenceKeys(artifactPath).some((variant) => evidenceSet.has(variant));
 }
 
 export async function buildPackageEvidenceManifest(
@@ -62,7 +45,7 @@ export async function buildPackageEvidenceManifest(
   evidenceManifest: EvidenceManifest | null | undefined,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
-  const explicitPublishEvidenceKeys = evidenceManifestExplicitPublishEvidenceSet(evidenceManifest);
+  const hasDeclaredEvidence = evidenceManifestArtifactPaths(evidenceManifest).length > 0;
   const trustedArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, evidenceManifest);
   const entries: ArtifactRef[] = [];
   for (const artifact of trustedArtifacts) {
@@ -77,14 +60,7 @@ export async function buildPackageEvidenceManifest(
       artifactPathOmitted(artifact.path, omittedEvidenceKeys)
     )
       continue;
-    const publishableEvidence = isPublishEvidenceArtifact(artifact) || manifestReferenced;
-    if (!publishableEvidence) continue;
-    if (
-      explicitPublishEvidenceKeys &&
-      !artifactPathMatchesEvidenceSet(artifact.path, explicitPublishEvidenceKeys)
-    ) {
-      continue;
-    }
+    if (!(hasDeclaredEvidence ? manifestReferenced : isPublishEvidenceArtifact(artifact))) continue;
     let digest: string | undefined;
     if (taskDir) {
       const artifactPath = path.resolve(taskDir, artifact.path);

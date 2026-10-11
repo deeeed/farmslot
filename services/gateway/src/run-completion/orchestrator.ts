@@ -86,6 +86,7 @@ import {
   scanArtifacts,
 } from './publication-artifacts.js';
 import {
+  allSelectedEvidenceKeysForPublication,
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
@@ -977,10 +978,7 @@ export async function runCompletionPipeline(
   if (!isReviewPR && prNumber && run.taskFile) {
     const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
     const published = await publishSelectedEvidence(updatedRun, prNumber, {
-      selectedEvidenceKeys: defaultSelectedEvidenceKeysForPublication({
-        evidenceManifest: inventory,
-        trustedEvidenceManifest: manifest,
-      }),
+      selectedEvidenceKeys: allSelectedEvidenceKeysForPublication(inventory),
       evidenceManifest: inventory,
       trustedEvidenceManifest: manifest,
     });

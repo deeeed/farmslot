@@ -1,13 +1,16 @@
-import type { ArtifactRef } from '@farmslot/protocol';
+import { type ArtifactRef, isPublishEvidenceArtifact } from '@farmslot/protocol';
 
-import { isPackageSelectableEvidenceArtifact } from './draft-pr.js';
 import {
   EVIDENCE_VIDEO_EXT,
   type EvidenceManifest,
   evidenceManifestArtifactPaths,
   manifestPrefersVideo,
 } from './evidence-manifest.js';
-import { isUploadableMediaPath, resolveSelectedEvidenceRef } from './evidence-paths.js';
+import {
+  exactEvidenceKeys,
+  isUploadableMediaPath,
+  resolveSelectedEvidenceRef,
+} from './evidence-paths.js';
 
 export interface PublicationEvidenceSelection {
   selectedEvidenceKeys: readonly string[] | undefined;
@@ -15,14 +18,44 @@ export interface PublicationEvidenceSelection {
   trustedEvidenceManifest: EvidenceManifest | null | undefined;
 }
 
+export function isEvidenceManifestReferencedArtifact(
+  artifactPath: string,
+  manifest: EvidenceManifest | null | undefined,
+): boolean {
+  const referenced = new Set(evidenceManifestArtifactPaths(manifest).flatMap(exactEvidenceKeys));
+  return exactEvidenceKeys(artifactPath).some((variant) => referenced.has(variant));
+}
+
+export function isPackageSelectableEvidenceArtifact(
+  artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
+  manifest: EvidenceManifest | null | undefined,
+): boolean {
+  return (
+    isPublishEvidenceArtifact(artifact) ||
+    isEvidenceManifestReferencedArtifact(artifact.path, manifest)
+  );
+}
+
+/** Inventories have already passed the package evidence filter. */
 function isEligibleEvidence(
   artifact: ArtifactRef,
   manifest: EvidenceManifest | null | undefined,
 ): boolean {
   return (
-    isUploadableMediaPath(artifact.path) &&
-    (manifest === undefined || isPackageSelectableEvidenceArtifact(artifact, manifest))
+    isUploadableMediaPath(artifact.path) && isPackageSelectableEvidenceArtifact(artifact, manifest)
   );
+}
+
+/** Ungated completion has no operator selector, so retain every selectable recording. */
+export function allSelectedEvidenceKeysForPublication(inventory: ArtifactRef[]): string[] {
+  return inventory
+    .filter((artifact) => isUploadableMediaPath(artifact.path))
+    .map((artifact) => artifact.path)
+    .sort();
+}
+
+export function publicationEvidenceChangedError(_runId: string, detail: string): Error {
+  return new Error(`Publication blocked: ${detail}; regenerate the evidence and retry`);
 }
 
 export function selectedEvidenceKeysForPublication(input: PublicationEvidenceSelection): string[] {
@@ -44,7 +77,7 @@ export function defaultSelectedEvidenceKeysForPublication(
   const manifest = input.trustedEvidenceManifest;
   const preferredVideo = manifestPrefersVideo(manifest);
   const candidates = input.evidenceManifest.filter((artifact) =>
-    isEligibleEvidence(artifact, manifest),
+    isEligibleEvidence(artifact, input.trustedEvidenceManifest),
   );
   const videoOnly =
     candidates.length > 0 && candidates.every((artifact) => EVIDENCE_VIDEO_EXT.test(artifact.path));
