@@ -12,7 +12,11 @@ export function runnerPaneBufferedInstruction(pane: string): string {
     .trimEnd()
     .split('\n');
   const footer = lines
-    .map((line) => /\? for shortcuts|\bcontext left\b/i.test(line))
+    .map((line) =>
+      /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
+        line,
+      ),
+    )
     .lastIndexOf(true);
   const content = footer === -1 ? lines : lines.slice(0, footer);
   const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);

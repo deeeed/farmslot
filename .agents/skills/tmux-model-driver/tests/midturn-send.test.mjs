@@ -295,7 +295,38 @@ for (const [name, phase] of [
       'acknowledging the fresh handoff cannot consume the old receipt',
     );
   });
+
+  test(`${phase} reported footer protects a foreign draft when shortcut and context hints are absent`, async (t) => {
+    const f = fixture(t);
+    const tail = fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+    const draft = 'Foreign current draft';
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = tail
+      .replace('› Ask Codex to do anything', `› ${draft}`)
+      .replace('← for agents · ? for shortcuts', phase === 'busy' ? 'tab to queue message' : '');
+    assert.equal(runnerPaneBufferedInstruction(process.env.TMUX_PANE_STATE_TAIL_CAPTURE), draft);
+    const state = paneState('%1', 'codex');
+    assert.equal(state.queued, true);
+    assert.equal(state.queue_kind, 'unowned-buffer');
+    assert.equal((await send('%1', 'codex', f.payload)).verification, 'queued_input');
+    assert.equal(f.keys.length, 0, 'a foreign draft must remain untouched');
+    assert.equal(
+      fs.readdirSync(f.dir).some((name) => name.endsWith('.json')),
+      false,
+    );
+  });
 }
+
+test('a populated composer honours the Context percent left footer', async (t) => {
+  const f = fixture(t);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+    '› foreign draft\n\n  GPT-6.1-Sol xhigh · Context 85% left\n  ← for agents';
+  assert.equal(
+    runnerPaneBufferedInstruction(process.env.TMUX_PANE_STATE_TAIL_CAPTURE),
+    'foreign draft',
+  );
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'queued_input');
+  assert.equal(f.keys.length, 0);
+});
 
 test('only current composer text may block or authorize an owned retry', async (t) => {
   const f = fixture(t);
