@@ -320,11 +320,9 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
-  // The ledger blocks `complete` only where the project opted in
-  // (`worker_terminal.acceptance.require`) AND the task registered criteria
-  // (ADR-060). Without the opt-in a template that does not write a ledger yet
-  // still completes; the ledger is watched, projected and preferred for coverage
-  // either way.
+  if (terminalCommand) args.push('--terminal', terminalCommand);
+  // This explicit flag keeps project opt-ins compatible with older checkers.
+  // Current checkers also enforce registered verdicts on terminal complete.
   if (terminalCommand === 'complete' && contract?.acceptance?.require === true) {
     let criteria;
     try {
@@ -341,7 +339,6 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
-    if (terminalCommand) args.push('--terminal', terminalCommand);
     if (opts['skip-learnings']) args.push('--skip-learnings');
   } else {
     // No persisted contract file — honor the resolved builtin contract instead of
@@ -386,7 +383,7 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   }
 
   if (terminalCommand === 'complete' || terminalCommand === 'no-change') {
-    assertArtifactContract(taskDir, taskPath);
+    assertArtifactContract(taskDir, taskPath, undefined, terminalCommand);
   }
 }
 

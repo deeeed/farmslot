@@ -336,6 +336,9 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
   assert.match(task, /^- The regression test covers the fee path$/m);
   assert.match(task, /^ {2}and the refund path$/m);
   assert.doesNotMatch(task, /- \[[ xX]\]/, 'TASK.md never carries a checkbox');
+  assert.match(task, /Acceptance verdicts \+ recipe coverage/);
+  assert.match(task, /farmslot-agent ac set AC-N proven/);
+  assert.match(task, /--require-acceptance-status/);
 }
 
 process.stdout.write('agent-runtime task init tests: ok\n');

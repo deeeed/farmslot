@@ -50,7 +50,13 @@ import {
   type RunResolveDecisionResult,
   type SafetyTier,
 } from '@farmslot/protocol';
-import { assertReviewRequestPayload, assertReviewSequence } from '@farmslot/review-dispatch';
+import {
+  assertReviewPolicy,
+  assertReviewRequestPayload,
+  assertReviewSequence,
+  assertWarmReviewContext,
+  parseReviewRequestContext,
+} from '@farmslot/review-dispatch';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
@@ -387,6 +393,11 @@ export async function runCreate(
     throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   assertPrimaryReviewContext(params);
+  if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
+  if (params.reviewSequenceContext)
+    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewSequence)
+    assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
 
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
@@ -1648,6 +1659,10 @@ export async function resolveRunDecision(
   // effects on a real machine — and a request that was never going to be
   // accepted must not buy any of them. A typo'd action id did exactly that:
   // full restore, then `Action not found`.
+  if (['request-extra-review', 'request-cross-runner-review'].includes(params.actionId))
+    throw new Error(
+      'This review action was removed. Convert the pending decision and use request-review with runner, model, effort and mode.',
+    );
   if (!isAllowedRunDecisionAction(decision, params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }

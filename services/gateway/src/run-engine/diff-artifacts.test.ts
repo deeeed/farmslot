@@ -142,10 +142,20 @@ test('captureReviewInputArtifactsForRun writes PR input metadata, diff, and stat
       headSha: 'head-sha',
       number: 123,
     }),
-    fetchPRDiffFiles: async () => [
-      { filename: 'src/a.ts', status: 'modified', additions: 10, deletions: 2, patch: '@@ patch' },
-      { filename: 'assets/logo.png', status: 'modified', additions: 0, deletions: 0 },
-    ],
+    fetchPRDiffFiles: async (_repo, _number, options) => {
+      assert.equal(options?.baseSha, 'base-sha');
+      assert.equal(options?.headSha, 'head-sha');
+      return [
+        {
+          filename: 'src/a.ts',
+          status: 'modified',
+          additions: 10,
+          deletions: 2,
+          patch: '@@ patch',
+        },
+        { filename: 'assets/logo.png', status: 'modified', additions: 0, deletions: 0 },
+      ];
+    },
   });
 
   assert.deepEqual(

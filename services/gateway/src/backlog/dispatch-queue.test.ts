@@ -2129,7 +2129,13 @@ test('dispatch.queue.update preserves ordered WARM/COLD selections and effort', 
   t.after(() => removeItem(item.id));
   const second: ReviewSelection = { ...initial, mode: 'warm', effort: 'low' };
   const updated = updateItem(
-    { itemId: item.id, reviewSequence: [initial, second] },
+    {
+      itemId: item.id,
+      reviewSequence: [initial, second],
+      reviewSequenceContext: {
+        reviewLineages: [null, { repository: 'owner/repo', prNumber: 42, reviewId: 'lineage' }],
+      },
+    },
     { kind: 'system' },
   );
   assert.deepEqual(updated.reviewSequence, [initial, second]);

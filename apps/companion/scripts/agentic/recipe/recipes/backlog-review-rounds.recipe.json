@@ -281,7 +281,7 @@
         "action": "ui.press",
         "test_id": "companion-backlog-review-runner-0-codex",
         "intent": "Choose Codex for the first review.",
-        "next": "create-model"
+        "next": "reveal-create-model"
       },
       "create-model": {
         "action": "ui.press",
@@ -392,6 +392,13 @@
         "pixels": 400,
         "intent": "Return to the review mode controls after the refused save.",
         "next": "create-second-cold"
+      },
+      "reveal-create-model": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 250,
+        "intent": "Bring the first shared picker model choices into view before choosing one.",
+        "next": "create-model"
       }
     }
   }

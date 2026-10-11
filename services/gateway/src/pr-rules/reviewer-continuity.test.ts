@@ -149,7 +149,8 @@ test('WARM refuses missing compatible placement; explicit COLD uses the pool', (
   const { intent, prior } = fixture();
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), [choices[1]]);
   intent.contributions[0].review!.mode = 'cold';
-  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
+  const coldChoices = choices.map((choice) => ({ ...choice, mode: 'cold' as const }));
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', coldChoices, [prior]), coldChoices);
   intent.contributions[0].review!.mode = 'warm';
   prior.prWork!.review!.ownerId = 'another-owner';
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), []);

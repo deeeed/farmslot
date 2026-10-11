@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { makeVars } from '../runners/test-fixtures.js';
@@ -156,4 +160,58 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
   );
   assert.equal(invalid.snapshot.source, 'unavailable');
   assert.match(invalid.snapshot.error ?? '', /not an ancestor/);
+});
+
+// A real diff proves that source-only filters cannot hide changed documentation.
+test('immutable review ranges include committed text and docs excluded by source filters', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'review-whole-diff-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  try {
+    git('init', '-q');
+    await writeFile(path.join(repo, 'README.md'), 'old guide\n');
+    await writeFile(path.join(repo, 'message.txt'), 'old message\n');
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-qm',
+      'test: seed',
+    );
+    const prior = git('rev-parse', 'HEAD');
+    await writeFile(path.join(repo, 'README.md'), 'new guide\n');
+    await writeFile(path.join(repo, 'message.txt'), 'new message\n');
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-qm',
+      'test: change',
+    );
+    const deps: NonNullable<Parameters<typeof captureCurrentReviewSnapshot>[2]> = {
+      resolveContext: async () => ({ baseRef: prior, pathspecs: ['*.ts'] }),
+      exec: async (_vars, command) => ({
+        exitCode: 0,
+        stdout: execFileSync('bash', ['-c', command], { cwd: repo, encoding: 'utf8' }),
+        stderr: '',
+      }),
+    };
+    for (const range of [
+      { mode: 'cold' as const },
+      { mode: 'warm' as const, lastReviewedHeadSha: prior },
+    ]) {
+      const captured = await captureCurrentReviewSnapshot(makeVars(), range, deps);
+      assert.equal(captured.snapshot.diffStat?.files, 2);
+      assert.match(captured.diffText!, /README\.md/);
+      assert.match(captured.diffText!, /message\.txt/);
+    }
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });

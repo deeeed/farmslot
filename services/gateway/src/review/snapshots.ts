@@ -280,7 +280,8 @@ export async function captureCurrentReviewSnapshot(
       if (ancestor.exitCode !== 0)
         throw new Error('Last reviewed head is not an ancestor of the current PR head');
     }
-    const pathspec = pathspecs.map(shellQuote).join(' ');
+    // Immutable COLD/WARM ranges cover the complete committed PR diff.
+    const pathspec = (range ? ['.'] : pathspecs).map(shellQuote).join(' ');
     const capturedRange = `${shellQuote(baseSha)} ${shellQuote(headSha)} -- ${pathspec}`;
     const numstat = await deps.exec(
       vars,

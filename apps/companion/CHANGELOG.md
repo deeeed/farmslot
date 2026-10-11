@@ -6,6 +6,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Configure gate requests, backlog reviews, and PR execution with runner, model, effort, and WARM/COLD choices. Review sequences preserve selections and lineage; missing or ambiguous WARM context blocks submission without changing mode.
 
+- Choose an available candidate before using a slot decision; improvement Apply writes and validates the proposal and keeps refused changes pending.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - The recipe scripts and Metro bridge use `@farmslot/adapter-rn` and its `farmslot-adapter-rn` bin (renamed from `@farmslot/expo-recipe`); `COMPANION_EXPO_RECIPE_BIN` is now `COMPANION_ADAPTER_RN_BIN`.
 

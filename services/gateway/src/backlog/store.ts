@@ -53,6 +53,7 @@ import {
 } from '@farmslot/protocol';
 import {
   assertReviewSequence,
+  assertWarmReviewContext,
   parseReviewPolicy,
   parseReviewRequestContext,
 } from '@farmslot/review-dispatch';
@@ -379,6 +380,7 @@ function normalizePendingReviewPlan(value: unknown): ReviewSelection[] | undefin
 }
 
 function assertExecutionHintsCompatible(item: BacklogItem): void {
+  if (item.reviewSequence) assertWarmReviewContext(item.reviewSequence, item.reviewSequenceContext);
   if (item.multiPr && item.launchPlan) {
     // Launch-plan roll-up has its own completion semantics (all candidates
     // succeeded => done) that the multi-PR ready-after-run rule would fight.

@@ -74,6 +74,7 @@ Remain idle after completing the checklist so the gateway can verify the native 
   git('init', '-b', 'main');
   write(path.join(repo, '.git/info/exclude'), 'tasks/\n.agent/\n.observability\n.omc/\n.omx/\n');
   write(path.join(repo, 'message.txt'), 'base\n');
+  write(path.join(repo, 'greeting.js'), 'export function greeting() { return greetingText; }\n');
   git('add', '.');
   git(
     '-c',
@@ -86,6 +87,7 @@ Remain idle after completing the checklist so the gateway can verify the native 
   );
   git('checkout', '-b', 'proof-change');
   write(path.join(repo, 'message.txt'), 'hello\n');
+  write(path.join(repo, 'greeting.js'), 'export function greeting() { return \"hello\"; }\n');
   git('add', '.');
   git(
     '-c',

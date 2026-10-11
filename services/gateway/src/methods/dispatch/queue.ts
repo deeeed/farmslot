@@ -11,7 +11,12 @@ import {
   type DispatchQueueUpdateParams,
   type DispatchQueueUpdateResult,
 } from '@farmslot/protocol';
-import { assertReviewSequence } from '@farmslot/review-dispatch';
+import {
+  assertReviewPolicy,
+  assertReviewSequence,
+  assertWarmReviewContext,
+  parseReviewRequestContext,
+} from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -78,6 +83,12 @@ export async function dispatchQueueAdd(
     );
   }
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
+  if (params.reviewSequenceContext)
+    parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewContext) parseReviewRequestContext(params.reviewContext, 1);
+  if (params.reviewSequence)
+    assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
   const projectVars = await loadProjectVars(params.project);
   if (params.flowType === 'review-pr') {
     const repo = projectVars.projectJson.ci?.repo;

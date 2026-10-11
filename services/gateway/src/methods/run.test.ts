@@ -11,7 +11,6 @@ import {
   type ReadyGatePrPackage,
   type RunDecision,
 } from '@farmslot/protocol';
-import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
@@ -69,11 +68,11 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
     id: 'review-decision-refusal',
     type: 'engine_human_gate',
     title: 'Publication gate',
-    description: 'Request another independent review',
+    description: 'Request another review',
     actions: [
       {
         id: 'request-review',
-        label: 'Request Independent Review',
+        label: 'Request Review',
         style: 'secondary',
       },
     ],
@@ -88,6 +87,9 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
   await assert.rejects(
     runResolveDecision(
       {
+        selectionData: {
+          reviewRequest: { runner: 'claude', model: null, effort: null, mode: 'cold' },
+        },
         runId: run.id,
         decisionId: decision.id,
         actionId: 'request-review',
@@ -97,7 +99,7 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
         assertReviewLaunchAllowed: async () => {
           throw new GatewayMethodError(
             'PUBLICATION_REVIEW_LAUNCH_REJECTED',
-            'Independent review launch refused: test worktree is dirty.',
+            'Review launch refused: test worktree is dirty.',
             { userAction: 'Commit the validated fixes, then request re-review.' },
           );
         },
@@ -131,8 +133,8 @@ test('runResolveDecision refuses a full-live review loop before any restore or l
     id: 'review-decision-live-loop',
     type: 'engine_human_gate',
     title: 'Publication gate',
-    description: 'Request another independent review',
-    actions: [{ id: 'request-review', label: 'Request Independent Review', style: 'secondary' }],
+    description: 'Request another review',
+    actions: [{ id: 'request-review', label: 'Request Review', style: 'secondary' }],
     createdAt: '2026-09-23T00:00:00.000Z',
   };
   updateRun(run.id, { status: 'blocked', decisions: [decision] });
@@ -149,9 +151,13 @@ test('runResolveDecision refuses a full-live review loop before any restore or l
         decisionId: decision.id,
         actionId: 'request-review',
         selectionData: {
-          reviewRequest: reviewRequestFromSequence([
-            { runner: 'codex', validationDepth: 'full-live' },
-          ]),
+          reviewRequest: {
+            runner: 'codex',
+            model: null,
+            effort: null,
+            mode: 'cold',
+            validationDepth: 'full-live',
+          },
         },
       },
       () => {},
@@ -165,9 +171,7 @@ test('runResolveDecision refuses a full-live review loop before any restore or l
         },
       },
     ),
-    (error: Error & { code?: string }) =>
-      error.code === 'REVIEW_QA_NEEDS_CONFIGURATION' &&
-      /^reviewRequest\.loops\[0\]/.test(error.message),
+    (error: Error) => /unsupported property: validationDepth/.test(error.message),
   );
   assert.deepEqual(touched, []);
   const persisted = getRun(run.id)?.decisions.find((candidate) => candidate.id === decision.id);
@@ -187,11 +191,11 @@ test('runResolveDecision reports a recoverable action when a review run has no a
     id: 'review-decision-no-slot',
     type: 'engine_human_gate',
     title: 'Publication gate',
-    description: 'Request another independent review',
+    description: 'Request another review',
     actions: [
       {
         id: 'request-review',
-        label: 'Request Independent Review',
+        label: 'Request Review',
         style: 'secondary',
       },
     ],
@@ -206,6 +210,9 @@ test('runResolveDecision reports a recoverable action when a review run has no a
   await assert.rejects(
     runResolveDecision(
       {
+        selectionData: {
+          reviewRequest: { runner: 'claude', model: null, effort: null, mode: 'cold' },
+        },
         runId: run.id,
         decisionId: decision.id,
         actionId: 'request-review',
@@ -246,11 +253,11 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
     id: 'review-decision-success',
     type: 'engine_human_gate',
     title: 'Publication gate',
-    description: 'Request another independent review',
+    description: 'Request another review',
     actions: [
       {
         id: 'request-review',
-        label: 'Request Independent Review',
+        label: 'Request Review',
         style: 'secondary',
       },
     ],
@@ -263,6 +270,9 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
 
   await runResolveDecision(
     {
+      selectionData: {
+        reviewRequest: { runner: 'claude', model: null, effort: null, mode: 'cold' },
+      },
       runId: run.id,
       decisionId: decision.id,
       actionId: 'request-review',
@@ -2353,7 +2363,14 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
 
   await assert.rejects(
     runResolveDecision(
-      { runId: run.id, decisionId: decision.id, actionId: 'request-review' },
+      {
+        selectionData: {
+          reviewRequest: { runner: 'claude', model: null, effort: null, mode: 'cold' },
+        },
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-review',
+      },
       () => {},
       {
         // The park lands inside an awaited probe — the window the entry check

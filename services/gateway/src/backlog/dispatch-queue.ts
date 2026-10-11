@@ -23,7 +23,9 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 import {
+  assertReviewPolicy,
   assertReviewSequence,
+  assertWarmReviewContext,
   executionModelFromSelection,
   parseReviewRequestContext,
 } from '@farmslot/review-dispatch';
@@ -448,6 +450,9 @@ export function addItem(
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   if (params.reviewSequenceContext)
     parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
+  if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
+  if (params.reviewSequence)
+    assertWarmReviewContext(params.reviewSequence, params.reviewSequenceContext);
   if (params.workflowExecution) assertPRExecutionProfile(params.workflowExecution);
   const transport =
     params.transport ?? (params.parentRunId ? getRun(params.parentRunId)?.transport : undefined);
@@ -881,6 +886,15 @@ export function updateItem(
   }
   if (params.reviewSequence !== undefined)
     if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
+  const nextSequence =
+    params.reviewSequence === undefined ? item.reviewSequence : (params.reviewSequence ?? []);
+  const nextContext =
+    params.reviewSequenceContext === undefined
+      ? item.reviewSequenceContext
+      : (params.reviewSequenceContext ?? undefined);
+  if (nextContext) parseReviewRequestContext(nextContext, nextSequence?.length ?? 0);
+  if (nextSequence) assertWarmReviewContext(nextSequence, nextContext);
+  if (params.reviewContext) parseReviewRequestContext(params.reviewContext, 1);
   const workflowExecution =
     item.workflowExecution && (params.slotId !== undefined || params.allowedSlots !== undefined)
       ? constrainDirectWorkflowExecution(item.workflowExecution, {
@@ -916,6 +930,7 @@ export function updateItem(
         item.reviewSequence?.length ?? 0,
       );
   }
+  if (item.reviewSequence) assertWarmReviewContext(item.reviewSequence, item.reviewSequenceContext);
   setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();

@@ -140,11 +140,21 @@ export interface PRDiffFile {
   patch?: string;
 }
 
+export interface GitHubPrDiffOptions extends GhRequestOpts {
+  baseSha?: string;
+  headSha?: string;
+}
+
 export async function fetchPRDiffFiles(
   repo: string,
   prNumber: number,
-  opts?: GhRequestOpts,
+  opts?: GitHubPrDiffOptions,
 ): Promise<PRDiffFile[]> {
+  if (opts?.baseSha !== undefined || opts?.headSha !== undefined) {
+    if (!opts.baseSha || !opts.headSha)
+      throw new Error('Captured PR diff requires both base and head commit SHAs');
+    return fetchGitHubCompareFiles(repo, opts.baseSha, opts.headSha, opts);
+  }
   // Sanitize repo to prevent command injection (only allow owner/repo format)
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) {
     throw new Error(`Invalid repo format: ${repo}. Expected owner/repo.`);

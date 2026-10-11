@@ -33,7 +33,12 @@ import {
   type SourceDiffFilter,
 } from '../core/source-diff-filter.js';
 import { shellQuote } from '../core/tmux.js';
-import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
+import {
+  fetchGitHubCompareFiles,
+  fetchGitHubPR,
+  fetchPRDiffFiles,
+  type GitHubPrDiffOptions,
+} from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { getRunWithArchived } from '../runs/store.js';
 
@@ -1022,7 +1027,7 @@ interface ReviewInputCaptureDeps {
   fetchPRDiffFiles: (
     repo: string,
     prNumber: number,
-    opts?: { signal?: AbortSignal },
+    opts?: GitHubPrDiffOptions,
   ) => ReturnType<typeof fetchPRDiffFiles>;
   fetchGitHubCompareFiles?: (
     repo: string,
@@ -1283,6 +1288,8 @@ async function captureReviewInputArtifactsForRunUnlocked(
               { signal: controller.signal },
             )
           : await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
+              baseSha: fetchedPr.baseSha,
+              headSha: fetchedPr.headSha,
               signal: controller.signal,
             });
         return { pr: fetchedPr, files: fetchedFiles };
