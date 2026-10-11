@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
+- Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
+
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
 - Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.

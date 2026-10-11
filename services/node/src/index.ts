@@ -12,6 +12,7 @@ import {
 
 import { captureHelperPath } from './commands/capture-helper-path.js';
 import { exec } from './commands/exec.js';
+import { ExecRequests } from './commands/exec-requests.js';
 import {
   fsCheckIgnore,
   fsDelete,
@@ -68,6 +69,7 @@ const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
 const MAX_BACKOFF = 30_000;
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 
+const execConnections = new Map<WebSocket, ExecRequests>();
 let ws: WebSocket | null = null;
 let backoff = 500;
 let disposed = false;
@@ -81,6 +83,8 @@ function connect(): void {
   console.log(`Connecting to gateway at ${GATEWAY_URL} as "${MACHINE_NAME}"...`);
   const socket = new WebSocket(GATEWAY_URL);
   ws = socket;
+  const requests = new ExecRequests();
+  execConnections.set(socket, requests);
 
   socket.on('open', () => {
     console.log('Transport open; authenticating and registering with gateway');
@@ -95,7 +99,11 @@ function connect(): void {
     try {
       const frame: Frame = JSON.parse(raw.toString());
       if (frame.type === 'req') {
-        await handleRequest(frame);
+        if (disposed && frame.method !== 'exec.cancel') {
+          sendResponse(frame.id, false, undefined, 'Node is shutting down.', undefined, socket);
+          return;
+        }
+        await handleRequest(frame, socket, requests);
       }
     } catch (err) {
       console.error('Failed to handle message:', err);
@@ -103,6 +111,7 @@ function connect(): void {
   });
 
   socket.on('close', () => {
+    void requests.close().then(() => execConnections.delete(socket));
     if (ws !== socket) {
       // A superseded socket closing late must not tear down the subscriptions
       // the current socket owns, nor schedule a second reconnect chain.
@@ -155,6 +164,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       capabilities,
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
+      execCancellation: true,
     });
     if (ws !== socket) {
       // Superseded while awaiting: the newer socket runs its own handshake and
@@ -276,8 +286,10 @@ function sendResponse(
   payload?: unknown,
   error?: string,
   errorCode?: string,
+  responseSocket?: WebSocket,
 ): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const destination = responseSocket ?? ws;
+  if (!destination || destination.readyState !== WebSocket.OPEN) return;
   const frame: ResponseFrame = {
     type: 'res',
     id,
@@ -285,7 +297,7 @@ function sendResponse(
     payload: ok ? payload : undefined,
     error: ok ? undefined : { code: errorCode ?? 'EXEC_ERROR', message: error ?? 'Unknown error' },
   };
-  ws.send(JSON.stringify(frame));
+  destination.send(JSON.stringify(frame));
 }
 
 // Extract a string param, throwing if missing
@@ -322,8 +334,14 @@ function parseScreenCaptureConfig(params: Record<string, unknown>): ScreenCaptur
   };
 }
 
-async function handleRequest(frame: RequestFrame): Promise<void> {
+async function handleRequest(
+  frame: RequestFrame,
+  socket: WebSocket,
+  requests: ExecRequests,
+): Promise<void> {
   const params = (frame.params ?? {}) as Record<string, unknown>;
+  const responseSocket =
+    params.requestScoped === true || frame.method === 'exec.cancel' ? socket : undefined;
 
   try {
     switch (frame.method) {
@@ -331,7 +349,33 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         sendResponse(frame.id, true, await nativeSessions.route(params));
         break;
       }
+      case 'exec.cancel': {
+        const requestId = requireString(params, 'requestId');
+        sendResponse(
+          frame.id,
+          true,
+          { cancelled: requests.cancel(requestId) },
+          undefined,
+          undefined,
+          socket,
+        );
+        break;
+      }
       case 'exec': {
+        if (params.requestScoped !== undefined && typeof params.requestScoped !== 'boolean') {
+          throw new Error('requestScoped must be a boolean');
+        }
+        const requestScoped = params.requestScoped === true;
+        const closeoutTimeoutMs = params.closeoutTimeoutMs;
+        if (
+          closeoutTimeoutMs !== undefined &&
+          (typeof closeoutTimeoutMs !== 'number' ||
+            !Number.isInteger(closeoutTimeoutMs) ||
+            closeoutTimeoutMs < 1 ||
+            closeoutTimeoutMs > 300_000)
+        ) {
+          throw new Error('closeoutTimeoutMs must be an integer from 1 to 300000.');
+        }
         const hasCmd = typeof params.cmd === 'string';
         const hasArgv = Array.isArray(params.argv);
         if (hasCmd === hasArgv) {
@@ -355,17 +399,31 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const cwd = typeof params.cwd === 'string' ? params.cwd : undefined;
         const timeout = typeof params.timeout === 'number' ? params.timeout : undefined;
         const maxBuffer = typeof params.maxBuffer === 'number' ? params.maxBuffer : undefined;
-        const result = await exec({ ...command, cwd, timeout, maxBuffer }, (stream, data) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(
-            JSON.stringify({
-              type: 'event',
-              event: 'node.exec.output',
-              payload: { requestId: frame.id, machine: MACHINE_NAME, stream, data },
-            }),
+        const execute = (signal?: AbortSignal) =>
+          exec(
+            {
+              ...command,
+              cwd,
+              timeout,
+              maxBuffer,
+              ...(typeof closeoutTimeoutMs === 'number' ? { closeoutTimeoutMs } : {}),
+              ...(requestScoped ? { requestScoped: true } : {}),
+            },
+            (stream, data) => {
+              const destination = responseSocket ?? ws;
+              if (!destination || destination.readyState !== WebSocket.OPEN) return;
+              destination.send(
+                JSON.stringify({
+                  type: 'event',
+                  event: 'node.exec.output',
+                  payload: { requestId: frame.id, machine: MACHINE_NAME, stream, data },
+                }),
+              );
+            },
+            signal,
           );
-        });
-        sendResponse(frame.id, true, result);
+        const result = requestScoped ? await requests.run(frame.id, execute) : await execute();
+        sendResponse(frame.id, true, result, undefined, undefined, responseSocket);
         break;
       }
 
@@ -706,13 +764,16 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
       undefined,
       err instanceof Error ? err.message : String(err),
       typeof error.code === 'string' ? error.code : undefined,
+      responseSocket,
     );
   }
 }
 
-function shutdown(): void {
+async function shutdown(): Promise<void> {
+  if (disposed) return;
   console.log('Shutting down node...');
   disposed = true;
+  await Promise.all([...execConnections.values()].map((requests) => requests.close()));
   stopScreenControlServer();
   stopAllCaptures();
   stopAllResourceWatches();
@@ -721,8 +782,11 @@ function shutdown(): void {
   process.exit(0);
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(signal, () => {
+    void shutdown();
+  });
+}
 
 if (process.platform === 'darwin') {
   startScreenControlServer();

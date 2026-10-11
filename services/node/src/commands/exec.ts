@@ -1,7 +1,14 @@
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
+import {
+  createNodeExecCloseout,
+  type ExecResult,
+  type NodeExecParams,
+  observeNodeExecAbort,
+} from '@farmslot/protocol';
 
 export type { ExecResult };
 
@@ -72,7 +79,19 @@ export async function resolveLoginPath(): Promise<string> {
   return (await resolveLoginEnvironment()).PATH ?? SYSTEM_PATH_FALLBACK;
 }
 
-export async function exec(params: NodeExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
+export async function exec(
+  params: NodeExecParams,
+  onOutput?: OutputCallback,
+  signal?: AbortSignal,
+): Promise<ExecResult> {
+  if (params.requestScoped && !signal)
+    throw new Error('Scoped execution requires a request owner.');
+  const cancelled = (): ExecResult => ({
+    stdout: '',
+    stderr: 'Command cancelled before execution.',
+    exitCode: 130,
+  });
+  if (signal?.aborted) return cancelled();
   const { cwd, timeout, maxBuffer } = params;
   const { FORCE_COLOR: _droppedForceColor, ...envNoForceColor } = process.env;
   void _droppedForceColor;
@@ -81,6 +100,7 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
     throw new Error('exec argv must contain at least one element');
   }
   const loginEnvironment = await resolveLoginEnvironment();
+  if (signal?.aborted) return cancelled();
   const { FORCE_COLOR: _droppedLoginForceColor, ...loginEnvNoForceColor } = loginEnvironment;
   void _droppedLoginForceColor;
   const env: NodeJS.ProcessEnv = argvMode
@@ -89,6 +109,12 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
   if (!argvMode) {
     for (const name of SHELL_BOOKKEEPING_ENV) delete env[name];
   }
+  if (params.requestScoped) {
+    // The daemon knows its deployment, while a login shell may point at another gateway's pool.
+    env.FARMSLOT_POOL_DIR = process.env.FARMSLOT_POOL_DIR
+      ? path.resolve(process.env.FARMSLOT_POOL_DIR)
+      : fileURLToPath(new URL('../../../../pool', import.meta.url));
+  }
 
   return new Promise((resolve) => {
     let stdout = '';
@@ -96,8 +122,9 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
     let outputBytes = 0;
     let maxBufferExceeded = false;
     let timedOut = false;
+    let aborted = false;
+    const ownsGroup = timeout != null || signal != null;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-    let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
 
     // Drop FORCE_COLOR so child shells/tools don't emit ANSI escapes when stdout
     // is a pipe. Critical for shell scripts that match command output verbatim —
@@ -112,11 +139,11 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
       cwd: cwd ?? process.cwd(),
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: timeout != null,
+      detached: ownsGroup,
     });
 
     const killProcessTree = (sig: NodeJS.Signals) => {
-      if (timeout != null && proc.pid) {
+      if (ownsGroup && proc.pid) {
         try {
           process.kill(-proc.pid, sig);
           return;
@@ -135,11 +162,10 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
       proc.kill(sig);
     };
 
-    const terminateWithEscalation = () => {
-      killProcessTree('SIGTERM');
-      timeoutEscalation = setTimeout(() => killProcessTree('SIGKILL'), 5000);
-      timeoutEscalation.unref();
-    };
+    const closeout = createNodeExecCloseout(killProcessTree, params.closeoutTimeoutMs, () => {
+      stderr += '\ncommand required forced termination before closeout completed';
+    });
+    const terminateWithEscalation = closeout.terminate;
 
     const appendOutput = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const nextOutputBytes = outputBytes + chunk.byteLength;
@@ -173,8 +199,13 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
       if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (timeoutEscalation) clearTimeout(timeoutEscalation);
-      resolve({ stdout, stderr, exitCode: timedOut ? 124 : maxBufferExceeded ? 1 : exitCode });
+      closeout.dispose();
+      stopObservingAbort();
+      resolve({
+        stdout,
+        stderr,
+        exitCode: timedOut ? 124 : aborted ? 130 : maxBufferExceeded ? 1 : exitCode,
+      });
     };
 
     const markStreamClosed = (stream: 'stdout' | 'stderr') => {
@@ -207,11 +238,17 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
 
     proc.on('error', (err) => {
       resolved = true;
+      stopObservingAbort();
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (timeoutEscalation) clearTimeout(timeoutEscalation);
+      closeout.dispose();
       resolve({ stdout, stderr: stderr + `\nspawn error: ${err.message}`, exitCode: 1 });
     });
 
+    const onAbort = () => {
+      aborted = true;
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      terminateWithEscalation();
+    };
     if (timeout != null) {
       timeoutTimer = setTimeout(() => {
         timedOut = true;
@@ -220,5 +257,6 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
       }, timeout);
       timeoutTimer.unref();
     }
+    const stopObservingAbort = observeNodeExecAbort(signal, onAbort);
   });
 }

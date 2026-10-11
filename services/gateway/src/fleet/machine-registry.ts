@@ -13,6 +13,7 @@ export interface ConnectedNode {
   nativeAuthority?: { principalId: string; valid(): boolean };
   /** URL the node itself dials to reach this gateway (its GATEWAY_URL). */
   gatewayUrl?: string;
+  execCancellation?: boolean;
 }
 
 const nodes = new Map<string, ConnectedNode>();
@@ -39,6 +40,7 @@ export function registerNode(
   nativeSessions?: NativeExecutionNodeDeclaration,
   nativeAuthority?: ConnectedNode['nativeAuthority'],
   gatewayUrl?: string,
+  execCancellation?: boolean,
 ): void {
   const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
@@ -51,6 +53,7 @@ export function registerNode(
     nativeSessions,
     nativeAuthority,
     gatewayUrl: workerGatewayUrl(gatewayUrl),
+    ...(execCancellation ? { execCancellation: true } : {}),
   });
 }
 
@@ -75,6 +78,7 @@ export function getAllNodes(): NodeInfo[] {
     connectedAt: node.connectedAt,
     protocolVersion: node.protocolVersion,
     versionMatch: node.versionMatch,
+    ...(node.execCancellation ? { execCancellation: true } : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

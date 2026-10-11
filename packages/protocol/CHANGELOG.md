@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Declare connection-scoped node execution and cancellation support.
+
 - Workspace pool policies may omit allowedMachines; admission binds them to the configured pool registry while explicit and model lists still narrow access. Slot policies and native authority keep their existing requirements.
 
 - Provide shared file:line portability validation for project packs, including home aliases and SSH hosts. Copied packs retain their ignore rules; control test source stays hashed while runtime references remain checked.

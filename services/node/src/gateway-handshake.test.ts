@@ -158,10 +158,12 @@ test('auth then registration resolve on their own ACKs while unrelated frames fl
         machine: string;
         nativeSessions?: unknown;
         gatewayUrl?: string;
+        execCancellation?: boolean;
       };
       assert.equal(params.machine, 'proof-node');
       assert.deepEqual(params.nativeSessions, { ownerPrincipalId: 'owner-1' });
       assert.equal(params.gatewayUrl, 'ws://10.0.0.5:7777');
+      assert.equal(params.execCancellation, true);
       server.send(
         JSON.stringify({ type: 'res', id: frame.id, ok: true, payload: { registered: true } }),
       );
@@ -180,6 +182,7 @@ test('auth then registration resolve on their own ACKs while unrelated frames fl
       capabilities: [],
       nativeSessions: { ownerPrincipalId: 'owner-1' },
       gatewayUrl: 'ws://10.0.0.5:7777',
+      execCancellation: true,
     });
     assert.deepEqual(registration, { registered: true });
     assert.deepEqual(seen, ['auth.connect', 'node.connect']);

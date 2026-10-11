@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -9,6 +9,41 @@ import type { SlotVars } from '../core/config.js';
 await import('../runtime/mock-pty.test-support.js');
 
 let repo = '';
+let declared = false;
+let cli = '';
+let row: Record<string, unknown> = { current_run_id: null, slot_epoch: 1 };
+let throwAtExec: (() => never) | undefined;
+let resetTracking: (slotId: string) => void;
+const state = await import('../core/state.js');
+mock.module('../core/state.js', {
+  namedExports: {
+    ...state,
+    onSlotReset: (listener: typeof resetTracking) => {
+      resetTracking = listener;
+    },
+    readSlotRow: async () => ({ ...row }),
+    updateSlotStatusIf: async (
+      _slotId: string,
+      predicate: (value: Record<string, unknown>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      if (!predicate(row)) return false;
+      Object.assign(row, fields);
+      return true;
+    },
+  },
+});
+const execution = await import('../core/exec.js');
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...execution,
+    execOnSlot: async (...args: Parameters<typeof execution.execOnSlot>) => {
+      if (throwAtExec) throwAtExec();
+      return execution.execOnSlot(...args);
+    },
+  },
+});
+const { NodeExecUnconfirmedError } = await import('../fleet/node-rpc.js');
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
@@ -35,13 +70,18 @@ mock.module('../core/config.js', {
       sshTarget: '',
       projectName: 'fixture-project',
       resourceVars: {},
-      machineEnv: { AUDIOLAB_NODE_BIN: path.join(repo, 'configured node') },
+      machineEnv: {
+        AUDIOLAB_NODE_BIN: path.join(repo, 'configured node'),
+        ...(cli ? { FARMSLOT_CLI: cli } : {}),
+      },
     }),
     loadProjectVars: async () => ({
       projectName: 'fixture-project',
+      projectConfig: path.join(repo, 'projects', 'fixture-project', 'project.json'),
       runtimeDir: '.agent',
       artifactDir: '.agent/artifacts',
       projectJson: {
+        ...(declared ? { recipe: { provider: { module: './provider.mjs' } } } : {}),
         hooks: {
           recipe_doctor:
             'cd "{{repo}}" && test -x "$AUDIOLAB_NODE_BIN/node" && printf \'{"runner_protocol_version":1,"status":"pass","checks":[{"id":"configured-node","status":"pass"}]}\'',
@@ -50,8 +90,12 @@ mock.module('../core/config.js', {
     }),
   },
 });
-const { recipeProjectHookRun } = await import('./recipe.js');
-test('recipe project hooks execute with configured pool tools before output validation', async (t) => {
+const { recipeProjectHookRun, recipeCancel } = await import('./recipe.js');
+test('declared projects keep readiness hooks and configured pool tools before output validation', async (t) => {
+  declared = true;
+  t.after(() => {
+    declared = false;
+  });
   repo = await mkdtemp(path.join(tmpdir(), 'recipe pool env '));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const bin = path.join(repo, 'configured node');
@@ -67,3 +111,80 @@ test('recipe project hooks execute with configured pool tools before output vali
   assert.equal(result.validation.status, 'pass');
   assert.equal(JSON.parse(result.stdout).checks[0].id, 'configured-node');
 });
+
+const actionManifest = {
+  $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+  actions: {
+    end: { description: 'Finish the recipe.', examples: [{ action: 'end', status: 'pass' }] },
+  },
+};
+
+test('declared hooks use the shared CLI with exact checkout, registry and slot arguments', async (t) => {
+  repo = await mkdtemp(path.join(tmpdir(), "recipe 'hosted' env "));
+  declared = true;
+  cli = path.join(repo, 'cli');
+  t.after(async () => {
+    declared = false;
+    cli = '';
+    await rm(repo, { recursive: true, force: true });
+  });
+  const argvFile = path.join(repo, 'argv.json');
+  await writeFile(
+    cli,
+    `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2))); process.stdout.write(${JSON.stringify(JSON.stringify(actionManifest))});
+`,
+  );
+  await chmod(cli, 0o755);
+  const result = await recipeProjectHookRun({
+    slotId: 'recipe-env',
+    project: 'fixture-project',
+    hook: 'recipe_action_manifest',
+  });
+  assert.equal(result.validation.status, 'pass');
+  assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), [
+    'recipe',
+    'actions',
+    '--target',
+    repo,
+    '--raw',
+    '--project',
+    'fixture-project',
+    '--slot',
+    'recipe-env',
+    '--json',
+    '--projects-dir',
+    path.join(repo, 'projects'),
+  ]);
+});
+
+for (const changedOwner of [false, true]) {
+  test(`unconfirmed closeout retains tracking and ${changedOwner ? 'preserves a new owner' : 'persists a hold across tracking reset'}`, async (t) => {
+    row = { current_run_id: null, slot_epoch: 1, lifecycle: 'ready' };
+    throwAtExec = () => {
+      if (changedOwner) row = { current_run_id: 'new-owner', slot_epoch: 2, lifecycle: 'busy' };
+      throw new NodeExecUnconfirmedError('fixture-node', 'lost-request', 'disconnected');
+    };
+    t.after(() => {
+      throwAtExec = undefined;
+      resetTracking('recipe-env');
+      row = { current_run_id: null, slot_epoch: 1 };
+    });
+    const params = {
+      slotId: 'recipe-env',
+      project: 'fixture-project',
+      hook: 'recipe_doctor' as const,
+    };
+    await assert.rejects(recipeProjectHookRun(params), NodeExecUnconfirmedError);
+    assert.equal(row.lifecycle, changedOwner ? 'busy' : 'held');
+    if (changedOwner)
+      assert.deepEqual(row, { current_run_id: 'new-owner', slot_epoch: 2, lifecycle: 'busy' });
+    else assert.match(String(row.held_reason), /Recipe process closeout unconfirmed/);
+    assert.deepEqual(await recipeCancel({ slotId: 'recipe-env', requestId: 'another-request' }), {
+      cancelled: false,
+    });
+    await assert.rejects(recipeProjectHookRun(params), /already active|closeout unconfirmed/);
+    resetTracking('recipe-env');
+    if (!changedOwner) await assert.rejects(recipeProjectHookRun(params), /closeout unconfirmed/);
+  });
+}

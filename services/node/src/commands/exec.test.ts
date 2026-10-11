@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { exec, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
+import { ExecRequests } from './exec-requests.js';
 
 test('node command exec preserves a cached non-PATH login export', async () => {
   const key = 'FARMSLOT_TEST_LOGIN_EXPORT';
@@ -75,3 +76,116 @@ test('node exec captures stdout larger than one pipe chunk', async () => {
   assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.length, 50000);
 });
+
+const closingProcess = `
+  process.on('SIGTERM', () => { process.stdout.write('closed'); process.exit(0); });
+  process.stdout.write(JSON.stringify({ pid: process.pid }) + String.fromCharCode(10));
+  setInterval(() => {}, 50);
+`;
+
+for (const scenario of [
+  {
+    name: 'cancellation waits for the signal handler',
+    source: closingProcess,
+    disconnect: false,
+    forced: false,
+  },
+  {
+    name: 'connection close waits for its owned process',
+    source: closingProcess,
+    disconnect: true,
+    forced: false,
+  },
+  {
+    name: 'cancellation kills a stubborn descendant after its parent exits',
+    source: `
+      const { spawn } = require('node:child_process');
+      spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write(JSON.stringify({ pid: Number(process.argv[1]) }) + String.fromCharCode(10)); setInterval(() => {}, 50);", String(process.pid)], { stdio: 'inherit' });
+      setInterval(() => {}, 50);
+    `,
+    disconnect: false,
+    forced: true,
+  },
+]) {
+  test(`scoped exec ${scenario.name}`, { timeout: 4000 }, async (t) => {
+    const owner = new ExecRequests();
+    let pid: number | undefined;
+    let output = '';
+    let connectionClosed: Promise<void> | undefined;
+    t.after(async () => {
+      owner.cancel('process');
+      if (pid) {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        }
+      }
+      await owner.close();
+    });
+    const result = await owner.run('process', (signal) =>
+      exec(
+        {
+          requestScoped: true,
+          closeoutTimeoutMs: 60,
+          argv: [process.execPath, '-e', scenario.source],
+        },
+        (stream, data) => {
+          if (stream !== 'stdout') return;
+          output += data;
+          if (!pid && output.includes('\n')) {
+            pid = JSON.parse(output.split('\n')[0]!).pid;
+            if (scenario.disconnect) connectionClosed = owner.close();
+            else owner.cancel('process');
+          }
+        },
+        signal,
+      ),
+    );
+    await connectionClosed;
+    assert.equal(result.exitCode, 130);
+    if (scenario.forced) assert.match(result.stderr, /forced termination/);
+    else assert.equal(result.stdout.split('\n').at(-1), 'closed');
+    assert.equal(owner.cancel('process'), false);
+  });
+}
+
+test(
+  'scoped exec refuses an absent owner and does not start after cancellation',
+  { timeout: 4000 },
+  async () => {
+    const params = {
+      requestScoped: true,
+      argv: [process.execPath, '-e', 'process.stdout.write("started")'],
+    };
+    await assert.rejects(exec(params), /request owner/);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await exec(params, undefined, controller.signal);
+    assert.equal(result.exitCode, 130);
+    assert.equal(result.stdout, '');
+  },
+);
+
+test(
+  'scoped exec supplies the daemon pool directory to a command',
+  { timeout: 4000 },
+  async (t) => {
+    const previous = process.env.FARMSLOT_POOL_DIR;
+    process.env.FARMSLOT_POOL_DIR = '/pool/request-proof';
+    t.after(() => {
+      if (previous === undefined) delete process.env.FARMSLOT_POOL_DIR;
+      else process.env.FARMSLOT_POOL_DIR = previous;
+    });
+    const result = await exec(
+      {
+        requestScoped: true,
+        argv: [process.execPath, '-e', 'process.stdout.write(process.env.FARMSLOT_POOL_DIR)'],
+      },
+      undefined,
+      new AbortController().signal,
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, '/pool/request-proof');
+  },
+);

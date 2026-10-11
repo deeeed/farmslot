@@ -21,6 +21,7 @@ import {
   assertRecipeRerunProofCapabilities,
   assertSlotProjectMatchesRequestedProject,
   awaitRecipeRerunProofCapabilities,
+  buildHostedRecipeCommand,
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
@@ -1528,4 +1529,64 @@ test('a queue place that cannot be given up still reports why the wait ended', a
   } finally {
     await cleanupPostureRun(run.id);
   }
+});
+
+test('hosted recipe paths preserve node-support remapping and reject artifact escapes', () => {
+  const slot = { ...createSlotVars(), host: 'remote.invalid', remoteRepo: '~/repos/product' };
+  const project = {
+    projectName: 'demo-project',
+    projectConfig: '/registry/demo-project/project.json',
+    projectFixturesDir: '/fixtures',
+    projectTemplatesDir: '/templates',
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+    projectJson: { name: 'demo-project', recipe: { provider: { module: './provider.mjs' } } },
+  };
+  const command = buildHostedRecipeCommand('recipe_run', project, slot, {
+    recipePath: '~/repos/product/.task/recipe.json',
+    artifactsDir: '~/repos/product/.task/artifacts',
+  })!;
+  assert.match(command, /farmslot-recipe ~\/farmslot-node recipe run/);
+  assert.match(command, /--artifacts-dir '\.task\/artifacts'/);
+  assert.throws(
+    () =>
+      buildHostedRecipeCommand('recipe_run', project, slot, {
+        recipePath: '~/repos/product/.task/recipe.json',
+        artifactsDir: '~/repos/another/artifacts',
+      }),
+    /inside the selected slot checkout/,
+  );
+  assert.throws(
+    () => buildHostedRecipeCommand('recipe_run', project, { ...slot, projectName: 'other' }),
+    /belongs to project other/,
+  );
+  const retargeted = buildHostedRecipeCommand('recipe_run', project, slot, {
+    recipePath: '~/repos/product/.task/recipe.json',
+    artifactsDir: '~/repos/product/.task/artifacts',
+    target: { udid: 'selected-device', platform: 'ios' },
+  })!;
+  assert.match(retargeted, /--device 'selected-device' --platform 'ios'/);
+  assert.throws(
+    () =>
+      buildHostedRecipeCommand('recipe_run', project, slot, {
+        recipePath: '~/repos/product/.task/recipe.json',
+        artifactsDir: '~/repos/product/.task/artifacts',
+        target: { udid: 'ios-device', adb_serial: 'android-device' },
+      }),
+    /select one device/,
+  );
+});
+
+test('an unconfirmed closeout hold blocks replay even for the same run', () => {
+  assert.equal(
+    canRecipeRerunOnSlot(
+      {
+        currentRunId: 'run',
+        lifecycle: 'held',
+        heldReason: 'Recipe process closeout unconfirmed: lost reply',
+      },
+      'run',
+    ),
+    false,
+  );
 });

@@ -262,7 +262,7 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
-          handleNodeExecOutput(peek.payload.requestId, peek.payload.stream, peek.payload.data);
+          handleNodeExecOutput(peek.payload.requestId, peek.payload.stream, peek.payload.data, ws);
           return;
         }
         // Route node resource.changed events to resource manager
