@@ -580,6 +580,60 @@ test('exact-plan approval is bound to the execution context before side effects'
   }
 });
 
+test('approval survives a new run owner but still binds every substantive environment input', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
+    });
+    const request = {
+      recipeDocument: recipe({ action: 'command', cmd: 'touch owner-marker.txt' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      env: { RECIPE_RUN_OWNER_PID: '101', RECIPE_MODE: 'review' },
+      inheritProcessEnv: false,
+      source: untrusted,
+    };
+    let planDigest = '';
+    await assert.rejects(runner.preflight(request), (error: unknown) => {
+      assert.ok(error instanceof RecipeTrustError);
+      assert.equal(error.code, 'RECIPE_TRUST_REQUIRED');
+      planDigest = error.failure.recipeDigest ?? '';
+      return true;
+    });
+    assert.match(planDigest, /^sha256:[a-f0-9]{64}$/u);
+    for (const env of [
+      { ...request.env, RECIPE_MODE: 'execute' },
+      { ...request.env, RECIPE_RUN_OWNER_EXTRA: 'changed' },
+      { ...request.env, MM_HARNESS_RUN_OWNER_PID: '202' },
+    ]) {
+      await assert.rejects(
+        runner.run({ ...request, env, approval: { planDigest } }),
+        (error: unknown) =>
+          error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+      );
+    }
+    assert.equal(await missing(path.join(root, 'owner-marker.txt')), true);
+    assert.equal(await missing(request.artifactsDir), true);
+    const plan = await runner.preflight({
+      ...request,
+      env: { RECIPE_MODE: 'review' },
+      approval: { planDigest },
+    });
+    assert.equal(plan.digest, planDigest);
+    const result = await runner.run({
+      ...request,
+      env: { ...request.env, RECIPE_RUN_OWNER_PID: '202' },
+      approval: { planDigest },
+    });
+    assert.equal(result.status, 'pass');
+    assert.equal(await missing(path.join(root, 'owner-marker.txt')), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('exact-plan approval is bound to effective recipe parameters before side effects', async () => {
   const root = await tempRoot();
   try {

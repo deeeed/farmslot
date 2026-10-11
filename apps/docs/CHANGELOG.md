@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Explain project runtimes, ordered recipe libraries and static conformance reports in the Concepts reference.
 - Gateway onboarding documents URL-matched profile authentication and local sandbox routing.
 - Document read-only node prerequisites before prepare and in slot.check.
 - Recipe Protocol v1 reference: array indexing in templates (`[n]` or `.n`, a key on an object), and `workflow.invalid_template` for a template that does not parse.

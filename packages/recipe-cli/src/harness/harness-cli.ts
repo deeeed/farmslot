@@ -9,6 +9,7 @@ import path from 'node:path';
 import { Command, CommanderError } from 'commander';
 
 import type { AdapterRegistry } from '@farmslot/adapter-sdk';
+import { SlotByRepoError } from '@farmslot/protocol/node/slot-by-repo';
 import { RecipeResolutionError, RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { RECIPE_CLI_VERSION } from '../version.js';
@@ -138,6 +139,8 @@ export interface HarnessCliOptions {
    * it exists; none reports the slot as unknown (no pool dir).
    */
   slotPoolDir?(): string | undefined;
+  /** Legacy --slot is a provisioned identity; opt into a registered pool selector where declared. */
+  slotSelection?: 'pool' | 'identity';
 }
 
 export interface HarnessCliResult {
@@ -175,7 +178,7 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
   // One invocation at a time per process: each sets the process-wide context
   // and port environment for its dispatch, so an overlapping one must wait.
   function main(argv: readonly string[]): Promise<HarnessCliResult> {
-    return serializeInvocation(() => runInvocation(argv));
+    return withHarnessInvocation(() => runInvocation(argv));
   }
 
   async function runInvocation(argv: readonly string[]): Promise<HarnessCliResult> {
@@ -341,6 +344,8 @@ async function loadSelectedAdapter(
           ...(command.hidden ? {} : { positionals: contractPositionals(tokens, command.contract) }),
           adapter,
           load: libraries,
+          strictSlot: !quiet,
+          slotSelection: options.slotSelection ?? 'identity',
           ...(options.help.slotAdapter ? { slotAdapter: options.help.slotAdapter } : {}),
           ...(slotPoolDir ? { slotPoolDir } : {}),
           ...(options.defaultAdapter ? { defaultAdapter: options.defaultAdapter } : {}),
@@ -383,6 +388,7 @@ async function loadSelectedAdapter(
       error instanceof AdapterPluginError ||
       error instanceof RecipeTrustError ||
       error instanceof RecipeResolutionError ||
+      error instanceof SlotByRepoError ||
       error instanceof AdapterAmbiguousError
     ) {
       return { refused: refusalOut(command.name, argv, error), env: {} };
@@ -447,7 +453,9 @@ function refusalOut(
     code: error.code,
     message: error.message,
     userAction: error.userAction,
-    ...(error instanceof AdapterAmbiguousError ? { candidates: error.candidates } : {}),
+    ...(error instanceof AdapterAmbiguousError || error instanceof SlotByRepoError
+      ? { candidates: error.candidates }
+      : {}),
   };
   if (requested(argv, '--json-stream')) {
     const stream = new JsonStreamWriter(command, true);
@@ -611,7 +619,7 @@ let invocationQueue: Promise<unknown> = Promise.resolve();
 // at once instead of queueing behind itself forever.
 const runningInvocation = new AsyncLocalStorage<true>();
 
-function serializeInvocation<T>(invoke: () => Promise<T>): Promise<T> {
+export function withHarnessInvocation<T>(invoke: () => Promise<T>): Promise<T> {
   if (runningInvocation.getStore())
     return Promise.reject(
       new Error(

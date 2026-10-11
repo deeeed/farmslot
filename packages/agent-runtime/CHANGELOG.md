@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+## 0.17.5 - 2026-10-11
+
+- Align the protocol dependency with 0.37.0 so consumers resolve one copy.
 
 ## 0.17.4 - 2026-10-10
 

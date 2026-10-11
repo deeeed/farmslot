@@ -391,12 +391,12 @@ const VOLATILE_PACKAGE_MANAGER_ENV = new Set([
   'COREPACK_ROOT',
   'COREPACK_ENABLE_DOWNLOAD_PROMPT',
 ]);
+const RUN_OWNER_ENV = 'RECIPE_RUN_OWNER_PID';
 const PACKAGE_METADATA_ENV = /^npm_package_/u;
 
 /**
- * The environment an approval binds to. Only the volatile package-manager values above are
- * dropped, plus the per-invocation shim folder Yarn puts first on PATH, so repeated runs through
- * the same invocation path (for example `yarn farmslot recipe run`) approve the same digest.
+ * Approval binds substantive environment inputs, excluding package-manager invocation metadata
+ * and the lifecycle owner PID. The provider validates ownership separately from plan approval.
  */
 export function planEnvironment(
   env: Readonly<Record<string, string | undefined>>,
@@ -404,7 +404,12 @@ export function planEnvironment(
   const shims = env.BERRY_BIN_FOLDER;
   return Object.fromEntries(
     Object.entries(env)
-      .filter(([key]) => !VOLATILE_PACKAGE_MANAGER_ENV.has(key) && !PACKAGE_METADATA_ENV.test(key))
+      .filter(
+        ([key]) =>
+          key !== RUN_OWNER_ENV &&
+          !VOLATILE_PACKAGE_MANAGER_ENV.has(key) &&
+          !PACKAGE_METADATA_ENV.test(key),
+      )
       .map(([key, value]) => {
         if (key !== 'PATH' || !shims || !value) return [key, value];
         const [first, ...rest] = value.split(path.delimiter);

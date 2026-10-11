@@ -4,6 +4,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.12.0 - 2026-10-11
+
+- Resolve project providers and ordered libraries through one authorized binding and compose the shared SDK engine. Static conformance reports bind checkout and SDK code, runtime and pool selection, recipe inputs and trust; task-local code remains bound inside artifact directories. `run --plan` and conformance require mutation providers to expose read-only `trustedMutation.preflight`; missing support refuses with an upgrade hint. Recipe state stays separate from farm state, and legacy scratch-slot identities remain supported.
+
+- Align Farmslot runtime dependencies with protocol 0.37.0 and recipe-runner 0.28.5 so consumers resolve one copy of each package.
+
 ## 0.11.4 - 2026-10-10
 
 - Finalize the framed recorder before the completion HUD draws its result. Keep its partial video and bind the timeline to the final trace; stop using cached session screenshots once the stream reports `stream_stopped`. Reports omit unavailable frame counts and media times instead of showing zero as a measurement.
