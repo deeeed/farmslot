@@ -54,8 +54,9 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
       );
       if (disposed) return;
       const node = list.nodes.find((entry) => entry.nodeId === nodeId);
-      // Only a node that answered lists all of its panes.
-      if (node?.ok) {
+      // Only a node that answered, with no panes hidden by the pool's tmuxWorkers rules, lists
+      // all of its panes.
+      if (node?.ok && !node.hiddenWorkers) {
         forgetClosedPanes(
           nodeId,
           node.workers.map((worker) => worker.ref.target),
