@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Pass the resolved task directory to project scripted commands so they can retain run-bound QA evidence.
+
 - Use pack-declared default recipe checks and preserve explicit raw versus compact log selection.
 
 - Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.

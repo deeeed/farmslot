@@ -120,12 +120,23 @@ test('scripted command uses support-only config and the executing CLI provenance
   writeFileSync(
     path.join(support, 'projects', project, 'project.json'),
     JSON.stringify({
-      scripted: { commands: { check: { command: 'printf supported-command' } } },
+      scripted: {
+        commands: {
+          check: {
+            command:
+              'printf %s "$FARMSLOT_TASK_DIR" > "$FARMSLOT_TASK_DIR/artifacts/observed-task.txt"; printf supported-command',
+          },
+        },
+      },
     }),
   );
   const previous = process.env.FARMSLOT_ROOT;
+  const previousTask = process.env.FARMSLOT_TASK_DIR;
+  process.env.FARMSLOT_TASK_DIR = '/foreign-task';
   process.env.FARMSLOT_ROOT = support;
   t.after(() => {
+    if (previousTask === undefined) delete process.env.FARMSLOT_TASK_DIR;
+    else process.env.FARMSLOT_TASK_DIR = previousTask;
     if (previous === undefined) delete process.env.FARMSLOT_ROOT;
     else process.env.FARMSLOT_ROOT = previous;
     rmSync(taskDir, { recursive: true, force: true });
@@ -135,6 +146,11 @@ test('scripted command uses support-only config and the executing CLI provenance
     await runScriptedRunner({ taskDir, mode: 'command', project, commandRef: 'check' }),
     0,
   );
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/observed-task.txt'), 'utf8'),
+    path.resolve(taskDir),
+  );
+  assert.equal(process.env.FARMSLOT_TASK_DIR, '/foreign-task');
   const provenance = JSON.parse(
     await readFile(path.join(taskDir, 'artifacts/scripted-runner-provenance.json'), 'utf8'),
   );

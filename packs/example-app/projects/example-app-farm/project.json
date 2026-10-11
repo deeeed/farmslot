@@ -45,6 +45,7 @@
           "artifacts": [
             "artifacts/report.md",
             "artifacts/scripted-command-result.json",
+            "artifacts/qa-result.json",
             "artifacts/scripted-command.stdout.txt",
             "artifacts/scripted-runner-provenance.json"
           ]

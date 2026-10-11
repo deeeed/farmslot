@@ -111,6 +111,8 @@ yarn farmslot run create \
   --scripted-command-ref smoke
 ```
 
+The worker sets `FARMSLOT_TASK_DIR` to the resolved absolute task directory for the child command. Project commands use it to read admitted inputs and retain their flow-specific evidence under `artifacts/`; the example recipe smoke writes the existing QA result and suite contracts there.
+
 The gateway rejects undeclared `commandRef` values. Do not pass arbitrary shell from UI/RPC.
 
 ## Invariants for agents
