@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -11,7 +11,9 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { evidenceKeyVariants } from './evidence-paths.js';
+import { evidenceKeyVariants, resolveSelectedEvidenceRef } from './evidence-paths.js';
+
+export { resolveSelectedEvidenceRef } from './evidence-paths.js';
 
 export function sha256Text(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -228,8 +230,9 @@ export async function readReadyGatePreparedPackage(
 
 export async function verifyReadyGateSelectedEvidenceFiles(
   current: Run,
-  preparedPackage: ReadyGatePrPackage,
+  preparedPackage: Partial<ReadyGatePrPackage>,
   selectedEvidenceKeys: string[],
+  invalidEvidence: (runId: string, detail: string) => Error = packageChangedError,
 ): Promise<void> {
   if (!current.taskFile) throw new Error('Approved package evidence requires a task directory');
   const taskDir = path.dirname(current.taskFile);
@@ -241,38 +244,29 @@ export async function verifyReadyGateSelectedEvidenceFiles(
       evidenceByPath.get(key) ??
       resolveSelectedEvidenceRef(key, preparedPackage.evidenceManifest ?? []);
     if (!evidence) {
-      throw packageChangedError(current.id, `selected evidence missing from package: ${key}`);
+      throw invalidEvidence(current.id, `selected evidence missing from package: ${key}`);
     }
     const artifactPath = path.resolve(taskDir, evidence.path);
     const relative = path.relative(taskDir, artifactPath);
     if (relative.startsWith('..') || path.isAbsolute(relative) || !existsSync(artifactPath)) {
-      throw packageChangedError(current.id, `selected evidence file missing: ${evidence.path}`);
+      throw invalidEvidence(current.id, `selected evidence file missing: ${evidence.path}`);
+    }
+    const resolvedRelative = path.relative(await realpath(taskDir), await realpath(artifactPath));
+    if (resolvedRelative.startsWith('..') || path.isAbsolute(resolvedRelative)) {
+      throw invalidEvidence(current.id, `selected evidence escapes the task: ${evidence.path}`);
+    }
+    const info = await stat(artifactPath);
+    if (!info.isFile() || info.size === 0) {
+      throw invalidEvidence(
+        current.id,
+        `selected evidence is empty or not a file: ${evidence.path}`,
+      );
     }
     if (evidence.sha256) {
       const actual = await sha256File(artifactPath);
       if (actual !== evidence.sha256) {
-        throw packageChangedError(current.id, `selected evidence hash mismatch: ${evidence.path}`);
+        throw invalidEvidence(current.id, `selected evidence hash mismatch: ${evidence.path}`);
       }
     }
   }
-}
-
-export function resolveSelectedEvidenceRef(
-  selectedKey: string,
-  evidenceManifest: ArtifactRef[],
-): ArtifactRef | null {
-  const exact = evidenceManifest.find((artifact) => artifact.path === selectedKey);
-  if (exact) return exact;
-
-  const selectedVariants = new Set(evidenceKeyVariants(selectedKey));
-  const matches = evidenceManifest.filter((artifact) =>
-    evidenceKeyVariants(artifact.path).some((variant) => selectedVariants.has(variant)),
-  );
-  const uniquePaths = [...new Set(matches.map((artifact) => artifact.path))];
-  if (uniquePaths.length > 1) {
-    throw new Error(
-      `Selected evidence key is ambiguous (${selectedKey} matches ${uniquePaths.join(', ')})`,
-    );
-  }
-  return matches[0] ?? null;
 }

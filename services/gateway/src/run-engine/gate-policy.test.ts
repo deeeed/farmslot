@@ -18,8 +18,44 @@ import {
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
+  validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('publish approval refuses an evidence-bearing package with an empty selection', () => {
+  const prepared = makeReadyGatePackage({
+    evidenceManifest: [
+      { path: 'artifacts/recipe-run/screenshots/after.png', purpose: 'screenshot' },
+    ],
+    selectedEvidenceKeys: [],
+  });
+  const decision: RunDecision = {
+    id: 'approve',
+    type: 'engine_human_gate',
+    title: 'Publish',
+    description: 'Publish selected evidence',
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    actions: [],
+    selectionData: {
+      packageId: prepared.id,
+      packageHash: prepared.packageHash,
+      packageHeadSha: prepared.headSha,
+      selectedEvidenceKeys: [],
+    },
+  };
+  assert.throws(
+    () => validatePackageApprovalSelection(prepared, decision),
+    /visual evidence is required/,
+  );
+  const selected = ['artifacts/recipe-run/screenshots/after.png'];
+  assert.doesNotThrow(() =>
+    validatePackageApprovalSelection(
+      { ...prepared, selectedEvidenceKeys: selected },
+      { ...decision, selectionData: { ...decision.selectionData, selectedEvidenceKeys: selected } },
+    ),
+  );
+});
 
 test('pending continuation ignores later non-verdict placeholders but honors a later pass', () => {
   const issues = {

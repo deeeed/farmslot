@@ -24,7 +24,8 @@ import {
   isQualifyingIndependentReview,
 } from '../quality/review-policy.js';
 import { EXTRA_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
-import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
+import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
+import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
 import { normalizeRunner } from '../runners/registry.js';
 import type { SelfReviewResult } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -517,6 +518,13 @@ export function validatePackageApprovalSelection(
   ) {
     throw packageChanged('selected evidence differs from the prepared package');
   }
+  assertPublicationEvidenceSelection({
+    selectedEvidenceKeys: Array.isArray(selectedEvidenceKeys)
+      ? selectedEvidenceKeys
+      : preparedPackage.selectedEvidenceKeys,
+    evidenceManifest: preparedPackage.evidenceManifest ?? [],
+    trustedEvidenceManifest: undefined,
+  });
 }
 
 function canonicalEvidenceSelectionForPackage(
@@ -524,15 +532,7 @@ function canonicalEvidenceSelectionForPackage(
   keys: readonly string[] | undefined,
 ): string[] {
   const manifest = preparedPackage.evidenceManifest ?? [];
-  const resolve = (key: string): string => {
-    const exact = manifest.find((artifact) => artifact.path === key);
-    if (exact) return exact.path;
-    const selectedVariants = new Set(evidenceKeyVariants(key));
-    const matches = manifest.filter((artifact) =>
-      evidenceKeyVariants(artifact.path).some((variant) => selectedVariants.has(variant)),
-    );
-    return matches.length === 1 ? matches[0].path : key;
-  };
+  const resolve = (key: string): string => resolveSelectedEvidenceRef(key, manifest)?.path ?? key;
   return [
     ...new Set((keys ?? []).filter((key): key is string => typeof key === 'string').map(resolve)),
   ].sort();

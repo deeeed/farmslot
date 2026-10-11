@@ -728,6 +728,12 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
           sizeBytes: imageBytes.length,
           sha256,
         },
+        {
+          path: 'artifacts/after.mp4',
+          purpose: 'video-after',
+          sizeBytes: videoBytes.length,
+          sha256: videoSha256,
+        },
       ],
       selectedEvidenceKeys: ['artifacts/after-ac1.png'],
       validationSummaryPath: null,
@@ -740,19 +746,11 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       createdAt: '2026-05-18T00:00:00.000Z',
     } satisfies Parameters<typeof assertReadyGatePackageInputsCurrent>[1];
 
-    // A package from before screenshot-only curation needs a refresh and re-review.
+    // Candidate recordings remain in inventory even when only screenshots are selected.
     await assert.rejects(
       assertReadyGatePackageInputsCurrent(run, {
         ...prPackage,
-        evidenceManifest: [
-          ...prPackage.evidenceManifest,
-          {
-            path: 'artifacts/after.mp4',
-            purpose: 'video-after',
-            sizeBytes: videoBytes.length,
-            sha256: videoSha256,
-          },
-        ],
+        evidenceManifest: prPackage.evidenceManifest.filter((entry) => entry.path.endsWith('.png')),
       }),
       /Package changed; refresh package and re-review/,
     );
@@ -832,10 +830,8 @@ test('expandEvidenceSelectionForManifest publishes before/after counterparts for
     new Set([
       'artifacts/after-ac1.png',
       'artifacts/after.mp4',
-      'before-ac1.png',
-      'after-ac1.png',
-      'before.mp4',
-      'after.mp4',
+      'artifacts/before-ac1.png',
+      'artifacts/before.mp4',
     ]),
   );
 });

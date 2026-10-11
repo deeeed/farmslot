@@ -33,6 +33,7 @@ export const RunMethods = {
   ciWatchPoke: Methods.RUN_CI_WATCH_POKE,
   refreshReviewGate: Methods.RUN_REFRESH_REVIEW_GATE,
   refreshPublishPackage: Methods.RUN_REFRESH_PUBLISH_PACKAGE,
+  refreshPublishedEvidence: Methods.RUN_REFRESH_PUBLISHED_EVIDENCE,
   refreshMirror: Methods.RUN_REFRESH_MIRROR,
   rehydratePrNumber: Methods.RUN_REHYDRATE_PR_NUMBER,
   interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
@@ -477,6 +478,22 @@ export interface RunRefreshPublishPackageResult {
 
 export interface RunRefreshMirrorParams {
   runId: string;
+}
+
+export interface RunRefreshPublishedEvidenceParams {
+  runId: string;
+  /** Defaults to all media explicitly named by the current mirrored manifest. */
+  selectedEvidenceKeys?: string[];
+}
+
+export interface RunRefreshPublishedEvidenceResult {
+  runId: string;
+  prNumber: number;
+  ciRepo: string;
+  selectedEvidenceKeys: string[];
+  artifactUrls: Record<string, string>;
+  bodyHash: string;
+  publishedAt: string;
 }
 
 export type RunRefreshMirrorResult = { ok: true; copied: number } | { ok: false; reason: string };

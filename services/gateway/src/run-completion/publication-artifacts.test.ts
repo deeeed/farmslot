@@ -4,7 +4,52 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { collectUploadableMediaFiles, scanArtifacts } from './publication-artifacts.js';
+import {
+  assertSelectedEvidencePublished,
+  collectUploadableMediaFiles,
+  expandEvidenceSelectionForManifest,
+  filterArtifactUrlsByEvidenceSelection,
+  scanArtifacts,
+} from './publication-artifacts.js';
+
+test('qualified upload and render selections do not include same-named older captures', () => {
+  const urls = new Map([
+    ['recipe-run/screenshots/before.png', 'https://example.invalid/current.png'],
+    ['old/screenshots/before.png', 'https://example.invalid/old.png'],
+  ]);
+  assert.deepEqual(
+    [
+      ...filterArtifactUrlsByEvidenceSelection(urls, [
+        'artifacts/recipe-run/screenshots/before.png',
+      ]).keys(),
+    ],
+    ['recipe-run/screenshots/before.png'],
+  );
+  assert.throws(
+    () =>
+      assertSelectedEvidencePublished(
+        ['artifacts/recipe-run/screenshots/before.png'],
+        new Map([['old/screenshots/before.png', 'https://example.invalid/old.png']]),
+      ),
+    /missing/,
+  );
+  assert.throws(() => filterArtifactUrlsByEvidenceSelection(urls, ['before.png']), /ambiguous/);
+  assert.deepEqual(
+    expandEvidenceSelectionForManifest(
+      {
+        before_after_pairs: [
+          {
+            label: 'Current',
+            before: 'recipe-run/screenshots/before.png',
+            after: 'recipe-run/screenshots/after.png',
+          },
+        ],
+      },
+      ['old/screenshots/before.png'],
+    ),
+    ['artifacts/old/screenshots/before.png'],
+  );
+});
 
 test('scanArtifacts retains package-relative recording timelines and rejects escaping metadata', async (t) => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-recording-artifacts-'));

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Gateway API reference includes the supported finished-run evidence refresh operation.
 - Explain project runtimes, ordered recipe libraries, static conformance and shared execution in the Concepts reference, with a reusable browser provider example.
 - Gateway onboarding documents URL-matched profile authentication and local sandbox routing.
 - Document read-only node prerequisites before prepare and in slot.check.
