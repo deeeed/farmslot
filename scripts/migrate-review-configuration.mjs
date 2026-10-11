@@ -14,7 +14,17 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertReviewSequence, assertWarmReviewContext } from '@farmslot/review-dispatch';
+import { tsImport } from 'tsx/esm/api';
+
+const { assertReviewSequence, assertWarmReviewContext } = await tsImport(
+  '../packages/review-dispatch/src/index.ts',
+  {
+    parentURL: import.meta.url,
+    tsconfig: fileURLToPath(
+      new URL('../packages/review-dispatch/test/tsconfig.json', import.meta.url),
+    ),
+  },
+);
 
 const RENAMES = {
   reviewDepth: 'reviewPolicy',

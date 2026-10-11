@@ -5,7 +5,8 @@ and its [review contract](../reference/review-modes-warm-cold.md). Maintainers o
 it until every runtime store uses the current contract. It is an offline
 conversion, with no compatibility layer in the gateway.
 
-Run the script from the implementation checkout, with its shared package built.
+Run the script from the implementation checkout with workspace dependencies installed.
+It loads shared validation from source and requires no package builds.
 Set `FARMSLOT_ROOT` to the runtime checkout being upgraded. The script uses the
 gateway's `FARMSLOT_BACKLOG_FILE`, `FARMSLOT_DISPATCH_QUEUE_FILE`,
 `FARMSLOT_RUNS_DIR` and `FARMSLOT_PROJECTS_DIR` overrides when configured; otherwise
