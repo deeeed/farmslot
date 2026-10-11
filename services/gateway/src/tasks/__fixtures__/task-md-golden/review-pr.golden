@@ -35,6 +35,11 @@ Render the task document for a run that is not stacked.
 - The task document is unchanged
 - No stack section appears
 
+## Acceptance verdicts + recipe coverage
+
+Before successful completion or handing off a PR, set TASK_DIR to `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>` and run `node "<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs" ac list`. Record an honest verdict for every registered AC with `node "<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs" ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>`; choose the actual state, visual or mixed mode and existing evidence, and omit the recipe node when no recipe applies. Use `untestable --note <reason>` only when proof is unavailable.
+Run `ac list` again. When recipe.json exists, render coverage with `node "<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs" ac render` to a temporary file, then replace `artifacts/recipe-coverage.md` only after a successful render. Run `node "<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs" artifact-check .sandbox/farmslot-farm/worker-task/review/<TASK_ID> --require-recipe-coverage-if-recipe --require-acceptance-status` before `mark complete`. Missing or unrecorded verdicts refuse completion; checked checklist items alone do not assess an AC.
+
 ## Affected Area
 
 Task writer

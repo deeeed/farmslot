@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Choose an available candidate before using a slot decision; improvement Apply writes and validates the proposal and keeps refused changes pending.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - Terminal key bars add a runner row and your own keys. Each pane shows the extra keys of its runner, picked from a saved choice, the linked run's runner, or a single matching pane process, and otherwise only the generic keys; you can pick a runner or return to auto per pane. The Yours row holds up to 8 device-wide keys built from a palette of Shift, Alt or Ctrl arrows and Ctrl+A to Ctrl+Z, added and deleted in the terminal. Both rows send through the same terminal input calls as the generic keys.
 - The dev recipe HUD is a single line in the bottom safe-area inset, so proof captures show the screen's bottom controls with it, and `app.hud` with `clear: true` hides it.
