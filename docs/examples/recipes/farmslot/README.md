@@ -23,23 +23,24 @@ The suite covers:
   output artifacts.
 - Documentation/onboarding: v1 contract validation for examples and fixtures.
 
-Validate current recipes and available retained fixtures from the repository root with:
+Validate available retained fixtures from the repository root with:
 
 ```bash
 cd apps/command-center
 for recipe in ../../docs/examples/recipes/farmslot/*.recipe.json; do
   name=$(basename "$recipe" .recipe.json)
   artifacts="../../docs/examples/recipes/farmslot/artifacts/$name"
-  yarn farmslot recipe validate "$recipe"
   if [ -f "$artifacts/recipe.json" ]; then
     yarn farmslot recipe validate "$artifacts/recipe.json" --artifact-dir "$artifacts"
   fi
 done
 ```
 
-The first validation lints current authored copy. The second checks the retained
-recipe snapshot against its original evidence; shortening authored intent does
-not rewrite those artifacts.
+This checks each retained recipe snapshot against its original evidence.
+Shortening authored intent does not rewrite those artifacts. Recipes without a
+retained fixture need their declared inputs when validating current authoring.
+For example, `yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/gateway-rpc-api.recipe.json`
+checks the current gateway recipe's intent lengths.
 
 A real Farmslot runner may replace these fixture artifacts with live outputs, but
 it should keep the same package shape: `summary.json`, `trace.json`,
