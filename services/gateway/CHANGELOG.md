@@ -5,6 +5,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Publication, including completion without an approval gate, blocks failed uploads and empty or missing visual evidence, keeps qualified image paths scoped, and retains declared recordings as selectable candidates. Finished published runs can refresh hosted evidence through `run.refreshPublishedEvidence` without reopening approval or changing review stamps. Older pending packages may require a package refresh to include declared recordings.
+
+- Dispatch can release a target branch from an idle linked-worktree holder after checking configured ownership, park records, tracked changes and remote ancestry. It detaches without moving the branch; active, parked, dirty and unpushed work stays protected. Branch conflicts are local to the machine.
+
+- Keep slot readiness consistent with skills source reconciliation, additive local Git ignores and quiet live server logs, and apply the farm signing identity during health-only preparation without resetting the checkout.
+
 - Portable workspace pool defaults use configured pool machines at admission for direct, queued and automatic reviews. An empty registry refuses; runner, model, effort and native authority remain explicit.
 
 - Reject nonportable project packs before node support sync, with file:line diagnostics and pool/slot placeholder guidance.
