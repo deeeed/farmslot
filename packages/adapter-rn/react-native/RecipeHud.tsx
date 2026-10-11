@@ -10,30 +10,6 @@ import {
 
 import { hudIntentDisplay } from '@farmslot/protocol/recipe';
 
-// react-native-screens' FullWindowOverlay (iOS) paints in a UIWindow above every
-// native layer — including native-stack modal screens (sheets, perps-style modal
-// presentations) — which a plain root-level absolute View cannot reach. Resolve
-// it optionally so this proof HUD also works in Siteed apps that copy the demo
-// without installing react-native-screens: when the module is absent we fall back
-// to the root View (the HUD is then hidden behind native modals — a documented
-// known limitation). On Android/web FullWindowOverlay is a passthrough.
-const FullWindowOverlay = resolveFullWindowOverlay();
-
-function resolveFullWindowOverlay(): React.ComponentType<{
-  children: React.ReactNode;
-  unstable_accessibilityContainerViewIsModal?: boolean;
-}> | null {
-  try {
-    return require('react-native-screens').FullWindowOverlay ?? null;
-  } catch (error) {
-    // Expected & recoverable ONLY when react-native-screens is not installed
-    // (it is an optional peer for the proof HUD). Any other failure is a real
-    // bug and must surface rather than be swallowed.
-    if ((error as { code?: string }).code === 'MODULE_NOT_FOUND') return null;
-    throw error;
-  }
-}
-
 export type FarmslotRecipeHudStatus = 'idle' | 'running' | 'pass' | 'fail';
 
 export interface FarmslotRecipeHudState {
@@ -61,7 +37,13 @@ export interface FarmslotRecipeHudStyles {
   error?: StyleProp<TextStyle>;
 }
 
+export interface RecipeHudOverlayProps {
+  children: React.ReactNode;
+  unstable_accessibilityContainerViewIsModal?: boolean;
+}
+
 export interface RecipeHudOptions {
+  overlay?: React.ComponentType<RecipeHudOverlayProps>;
   text?: FarmslotRecipeHudText;
   styles?: FarmslotRecipeHudStyles;
 }
@@ -74,6 +56,7 @@ export function RecipeHud({
   state,
   styles: customStyles,
   text,
+  overlay: Overlay,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
   if (!state || state.status === 'idle') return null;
   const badge = text?.badge?.(state) ?? formatBadge(state);
@@ -133,10 +116,8 @@ export function RecipeHud({
       </View>
     </View>
   );
-  return FullWindowOverlay ? (
-    <FullWindowOverlay unstable_accessibilityContainerViewIsModal={false}>
-      {overlay}
-    </FullWindowOverlay>
+  return Overlay ? (
+    <Overlay unstable_accessibilityContainerViewIsModal={false}>{overlay}</Overlay>
   ) : (
     overlay
   );

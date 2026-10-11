@@ -8,7 +8,7 @@
       "setup": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/check-pr-team-setup.mts",
-        "intent": "Verify real farm metadata fills the draft, configured accounts are selected, advanced settings collapse, and editing does not request PR discovery.",
+        "intent": "Team setup preserves configured defaults without requesting PR discovery.",
         "next": "done"
       },
       "done": {

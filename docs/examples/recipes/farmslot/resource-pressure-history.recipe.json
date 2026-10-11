@@ -52,14 +52,14 @@
         "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-pressure-history.js",
         "timeout_ms": 20000,
         "next": "capture-pressure-history",
-        "intent": "Verify three compact SVG pressure trends, then press Details and confirm expansion adds process diagnosis without duplicating the graphs."
+        "intent": "Machine details show pressure trends alongside process diagnosis."
       },
       "assert-cleanup-preview": {
         "action": "command",
         "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-cleanup-preview.js",
         "timeout_ms": 20000,
         "next": "capture-cleanup-preview",
-        "intent": "Verify both entry points open the same impact review and intercept the explicit second-step confirmation before it reaches the gateway, using a clearly labelled UI-only candidate when the live filtered fleet has none."
+        "intent": "Both cleanup entry points share an impact review before confirmation."
       },
       "probe-pressure-rpc": {
         "action": "command",
@@ -73,7 +73,7 @@
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
         "next": "open-and-assert-machine-details",
-        "intent": "Prove the live gateway rejects empty and missing exact targets plus a real busy slot before resource resolution, without risking a resource shutdown."
+        "intent": "Unsafe cleanup targets leave resources running."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",

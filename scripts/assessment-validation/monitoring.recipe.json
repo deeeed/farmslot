@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node scripts/assessment-validation/prove.mjs",
         "timeout_ms": 60000,
-        "intent": "Read real RPC history and verify all terminal states, uncertainty, feedback persistence and inconclusive evaluation without references.",
+        "intent": "Assessment history preserves terminal uncertainty and saved feedback.",
         "next": "browser-proof"
       },
       "done": {
@@ -20,21 +20,21 @@
         "action": "command",
         "cmd": "node scripts/assessment-validation/browser.mjs",
         "timeout_ms": 60000,
-        "intent": "Open the real assessment detail, type feedback with CDP and confirm its persisted revision through assessment.get. Requires isolated CDP and UI URLs; dismiss the first-launch welcome modal before running.",
+        "intent": "Assessment feedback persists the revision entered through the real detail view.",
         "next": "pagination-proof"
       },
       "pagination-proof": {
         "action": "command",
         "cmd": "node scripts/assessment-validation/pagination.mjs",
         "timeout_ms": 60000,
-        "intent": "Verify draft identity survives a newer RPC record, then save two feedback questions on a loaded older page. Seed --pagination before startup.",
+        "intent": "Paginated assessment edits preserve their draft identity.",
         "next": "restart-proof"
       },
       "restart-proof": {
         "action": "command",
         "cmd": "node scripts/assessment-validation/restart.mjs",
         "timeout_ms": 60000,
-        "intent": "Own and restart a separate gateway process on FARMSLOT_ASSESSMENT_RESTART_PORT, proving persisted feedback/report and interrupted attempts.",
+        "intent": "Assessment restart retains saved feedback and interrupted attempts.",
         "next": "screenshot"
       },
       "screenshot": {

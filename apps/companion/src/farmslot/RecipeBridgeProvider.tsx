@@ -1,5 +1,6 @@
 import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
 import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
@@ -105,7 +106,7 @@ export function RecipeBridgeProvider({
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
       <View style={{ flex: 1 }}>
         {children}
-        {renderHud ? renderHud(hud) : <RecipeHud state={hud} />}
+        {renderHud ? renderHud(hud) : <RecipeHud state={hud} overlay={FullWindowOverlay} />}
       </View>
     </FarmslotRecipeBridgeContext.Provider>
   );

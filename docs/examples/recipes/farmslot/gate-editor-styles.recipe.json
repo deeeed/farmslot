@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node --import tsx scripts/verify-gate-editor-styles.mts",
         "timeout_ms": 60000,
-        "intent": "The gate displays the gateway's real diff and both split panes share a row, with the modified code visible to the right. Unified mode retains code lines.",
+        "intent": "Both diff modes show the gate's real modified code.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

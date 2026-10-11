@@ -16,7 +16,7 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/concurrency runtime-concurrency",
         "timeout_ms": 480000,
-        "intent": "Three real reviewers overlap, a fourth exceeds host capacity, and two real browser smoke tasks remain responsive with unchanged runtime-slot ownership.",
+        "intent": "Concurrent reviews respect capacity and preserve runtime-slot ownership.",
         "next": "cancel-review"
       },
       "cancel-review": {
@@ -30,7 +30,7 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/restart restart",
         "timeout_ms": 480000,
-        "intent": "Kill and restart the gateway during an accepted review after removing the original skill/config; recover the same reservation and frozen skill, finish and retain its report.",
+        "intent": "Restarted review work retains its reservation, frozen skill and final report.",
         "next": "restart-cleanup"
       },
       "source-write-denied": {
@@ -44,7 +44,7 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/repeat repeat-review",
         "timeout_ms": 840000,
-        "intent": "Request incremental review after a completed workspace review. Retain the prior findings and exact head in the new task, explicitly fall back to a full pass, and verify distinct accepted sessions and cleaned checkouts.",
+        "intent": "Incremental review preserves prior findings and the exact source head.",
         "next": "node-authority"
       },
       "done": {
@@ -55,56 +55,56 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/cancel-allocation cancel-allocation",
         "timeout_ms": 120000,
-        "intent": "Cancel while an owned Git command is paused during checkout creation. The cancellation RPC returns within 15 seconds, the exact Git process stops, and no reviewer or checkout survives.",
+        "intent": "Cancelled allocation stops its owned process and removes the review checkout.",
         "next": "restart-allocation"
       },
       "restart-allocation": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/restart-allocation restart-allocation",
         "timeout_ms": 480000,
-        "intent": "Restart the gateway during checkout creation, recover the existing allocation, and complete one reviewer with its retained report and cleaned checkout.",
+        "intent": "Restarted allocation resumes one reviewer and retains its report.",
         "next": "restart-launch"
       },
       "restart-cleanup": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/restart-cleanup restart-cleanup",
         "timeout_ms": 480000,
-        "intent": "Restart the gateway while Git removes a completed review checkout, then verify the original session and report survive and cleanup completes.",
+        "intent": "Review cleanup survives restart without losing the session or report.",
         "next": "cancel-cleanup"
       },
       "restart-launch": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/restart-launch restart-launch",
         "timeout_ms": 480000,
-        "intent": "Restart the gateway before native task acceptance. Recover the same reserved session and command, finish exactly one review, and retain the report after process and checkout cleanup.",
+        "intent": "Review launch recovery retains one accepted session and its completed report.",
         "next": "cancel-launch"
       },
       "node-authority": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-remote.mts temp/workspace-review-recipe/node-authority authority",
         "timeout_ms": 480000,
-        "intent": "Restart a separate production node during review, recover its original native session, then revoke its credential and refuse new reviews and native history access while preserving the completed result.",
+        "intent": "Node recovery preserves review identity and enforces credential revocation.",
         "next": "blocked-review"
       },
       "cancel-launch": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/cancel-launch cancel-launch",
         "timeout_ms": 120000,
-        "intent": "Cancel while the native server is starting but has not accepted the reviewer command. Stop the reserved process and remove its checkout.",
+        "intent": "Cancelled review launch leaves no reserved process or checkout.",
         "next": "single-review"
       },
       "cancel-cleanup": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/cancel-cleanup cancel-cleanup",
         "timeout_ms": 480000,
-        "intent": "Cancel during checkout removal after the review has completed. Interrupt the original cleanup, finish owned cleanup and retain the completed review report.",
+        "intent": "Cancellation during cleanup preserves the completed review report.",
         "next": "source-write-denied"
       },
       "blocked-review": {
         "action": "command",
         "cmd": "yarn exec tsx scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/blocked blocked",
         "timeout_ms": 480000,
-        "intent": "A real reviewer marking blocked retains its reason, closes its owned process and cleans its checkout without becoming a failed or completed review.",
+        "intent": "Blocked review work retains its reason and releases owned resources.",
         "next": "done"
       }
     }

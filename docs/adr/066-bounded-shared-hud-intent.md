@@ -26,7 +26,8 @@ pass-through pointer behavior, status/progress and existing placement modes.
 
 Use one native HUD component in the React Native adapter, re-exported by
 Companion and scaffold templates. Retain scaffold text/style options and the
-iOS FullWindowOverlay behavior. Mandatory line, width and height limits apply
+iOS FullWindowOverlay behavior. Companion supplies its installed overlay through
+`RecipeHudOptions.overlay`; the scaffold has no screens dependency. Mandatory line, width and height limits apply
 after custom styling; HUD text has fixed font scaling. Custom renderHud callbacks
 remain supported and must consume the shared helper to conform. Existing copied
 project HUDs adopt the package renderer through a deliberate scaffold update;
@@ -39,8 +40,8 @@ validation, execution and retained-artifact verification keep their v1 behavior,
 so old evidence is readable and old farm recipes are not silently rewritten. Count Unicode code points after trimming:
 0..80 has no length finding, 81..120 warns, and 121+ fails. Existing goal/action/selector checks remain in force. One plain sentence is the
 authoring rule; grammar is guidance rather than a new sentence parser/error.
-Shorten the three committed Companion intents above 120 characters as part of
-this bounded fix; no farm repository is changed. Do not rewrite recipes in farm repositories.
+Shorten committed framework example and validation intents above 120 characters
+as part of enabling this authoring rule; no farm repository is changed. Do not rewrite recipes in farm repositories.
 
 ## Public surface
 

@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-desktop-live-ui.mts",
         "timeout_ms": 300000,
-        "intent": "Save a real gateway login through desktop settings, read fleet.status, observe a source edit reload through Vite, reject remote source configuration, verify the Dev link scheme and gateway-derived Dock badge, relaunch with saved credentials, stop Vite and recover through bundled settings, then retry the live UI. Verify production keeps separate login settings and rejects Development UI.",
+        "intent": "Desktop development reloads and saved connections stay isolated from production.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

@@ -9,17 +9,20 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/grading-deadline.mjs",
         "timeout_ms": 240000,
-        "intent": "Use run.replayStep and run.get through an isolated production gateway to prove an unresponsive grading request is cancelled and the workflow completes grading without replacing the selected worker or fabricating a grade.",
+        "intent": "An unresponsive grader stops without replacing the worker or inventing a grade.",
         "next": "no-auth-gateway"
       },
       "no-auth-gateway": {
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/grading-deadline.mjs --no-auth",
         "timeout_ms": 240000,
-        "intent": "Prove grading without API credentials skips explicitly and never launches a CLI fallback; the unchanged summary path uses a fake executable. Run with --no-auth --cli-negative-control to demonstrate the no-fallback assertion fails.",
+        "intent": "Missing grading credentials skip explicitly without launching a CLI fallback.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }
