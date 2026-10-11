@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Publish the recorded-evidence claim, retry and composition fields in the Recipe v1 editor schema.
 - Document the shared review picker and COLD/WARM session rules.
 
 - Registered acceptance criteria require verdicts before successful task completion, including contracts without an opt-in.

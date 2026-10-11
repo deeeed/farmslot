@@ -109,6 +109,28 @@ test('admission refusal does not release the conflicting holder', async () => {
   assert.equal(releases, 0);
 });
 
+test('recording acquisition inherits the proof requirement parameter defaults', async () => {
+  let acquired: RuntimeCapabilityAcquireParams | undefined;
+  const admission = createRuntimeCapabilityRecordingAdmission(
+    {
+      async acquire(params) {
+        acquired = params;
+        return { ok: true, lease, dependencyLeases: [], idempotent: true };
+      },
+      async release() {
+        throw new Error('A pre-held lease cannot be released.');
+      },
+    },
+    {
+      ...owner,
+      parameters: undefined,
+      proofRequirement: { ...owner.proofRequirement, parameters: { quality: 'required' } },
+    },
+  );
+  await admission.acquire(context);
+  assert.equal(acquired?.parameters?.quality, 'required');
+});
+
 test('owned cleanup failures remain visible to the engine', async () => {
   const admission = createRuntimeCapabilityRecordingAdmission(
     {

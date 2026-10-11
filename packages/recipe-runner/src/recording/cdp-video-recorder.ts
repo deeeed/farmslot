@@ -179,6 +179,7 @@ class CdpVideoRecorder implements VideoRecorder {
       timestamps.push(frame.timestampMs);
       spoolBytes += bytes.length;
       lastReceivedAt = frame.receivedAtUnixMs;
+      latestFrame = { ...frame, segmentIndex: segments.length };
     };
     const unsubscribe = session.on('Page.screencastFrame', (params) => {
       const timestamp = (params.metadata as { timestamp?: number } | undefined)?.timestamp;
@@ -209,7 +210,6 @@ class CdpVideoRecorder implements VideoRecorder {
           const frame = { timestampMs: timestamp * 1000, receivedAtUnixMs, data };
           const ready = sampler.accept(frame);
           if (ready) await retain(ready);
-          latestFrame = { ...frame, segmentIndex: segments.length };
           receivedFrames++;
         })
         .catch((error) => {
@@ -240,17 +240,29 @@ class CdpVideoRecorder implements VideoRecorder {
     let stopped = false;
     return {
       async snapshot(outputPath) {
-        await writeChain;
-        if (stopped || captureError || !latestFrame)
-          throw new Error('CDP recording has no active source frame.');
-        const frame = latestFrame;
-        await writeFile(outputPath, Buffer.from(frame.data, 'base64'));
-        return {
-          output: outputPath,
-          provider: 'cdp-screencast',
-          sourceTimestampMs: frame.timestampMs,
-          segmentIndex: frame.segmentIndex,
-        };
+        const snapshot = writeChain.then(async () => {
+          if (stopped || captureError) throw new Error('CDP recording has no active source frame.');
+          // A proof still pins this source frame before another repaint can replace it.
+          const pending = sampler.finish();
+          if (pending) await retain(pending);
+          if (!latestFrame) throw new Error('CDP recording has no retained source frame.');
+          const frame = latestFrame;
+          await writeFile(outputPath, Buffer.from(frame.data, 'base64'));
+          return {
+            output: outputPath,
+            provider: 'cdp-screencast',
+            sourceTimestampMs: frame.timestampMs,
+            segmentIndex: frame.segmentIndex,
+          };
+        });
+        writeChain = snapshot.then(
+          () => undefined,
+          (error) => {
+            // The caller receives this failure; stop retains usable originals as partial capture.
+            captureError = error;
+          },
+        );
+        return snapshot;
       },
       async stop() {
         if (stopped) throw new Error('CDP recording was already stopped.');

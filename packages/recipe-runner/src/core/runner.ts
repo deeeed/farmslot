@@ -557,7 +557,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const { videos, interruption } = await this.#stopRunVideoRecording(
+          const { videos, interruption, releaseFailure } = await this.#stopRunVideoRecording(
             recordingToStop,
             traceWriter,
             artifactWriter,
@@ -565,6 +565,10 @@ class DefaultRecipeRunner implements RecipeRunner {
           );
           for (const video of videos)
             if (video.timing) videoTimelines.push({ entry: video.entry, timing: video.timing });
+          if (releaseFailure) {
+            this.#logger.error(`Recording lease cleanup failed: ${releaseFailure}`);
+            status = 'fail';
+          }
           if (interruption) {
             // The partial video stays registered as evidence; the run still fails, typed.
             captureInterruption = interruption;
@@ -945,7 +949,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       }));
     if (!resolvedTarget) {
       throw new Error(
-        '--record-video requires a recording target. Provide a project RecordingTargetProvider or CLI target flags.',
+        'UI recording requires a target. Provide a project RecordingTargetProvider or disable recording with a reason.',
       );
     }
     const validation = validateRecipeRecordingTarget(resolvedTarget);
@@ -961,6 +965,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const stagingRelativePath = 'recipe-run.mp4';
     const outputPath = path.join(stagingRoot, stagingRelativePath);
     let admission: RecordingAdmissionLease | undefined;
+    let releaseFailure: string | undefined;
     let recording: ActiveVideoRecording;
     try {
       admission = await this.#recording?.admission?.acquire({
@@ -994,7 +999,12 @@ class DefaultRecipeRunner implements RecipeRunner {
             }
             throw error;
           }
-          await admission?.release();
+          try {
+            await admission?.release();
+          } catch (error) {
+            // Completed originals remain usable; the caller records failed lease cleanup separately.
+            releaseFailure = errorMessage(error);
+          }
           return result;
         },
       };
@@ -1027,6 +1037,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(videoOptions.maxFps != null ? { maxFps: videoOptions.maxFps } : {}),
     };
     return {
+      get releaseFailure() {
+        return releaseFailure;
+      },
       recording: boundRecording(recording, outputPath, videoOptions),
       entry,
       outputPath,
@@ -1044,8 +1057,22 @@ class DefaultRecipeRunner implements RecipeRunner {
   ): Promise<{
     videos: { entry: RecipeArtifactManifestEntry; timing?: RecipeVideoTiming }[];
     interruption?: RecipeRunCaptureInterruption;
+    releaseFailure?: string;
   }> {
     const result = await runRecording.recording.stop();
+    const releaseFailure = runRecording.releaseFailure;
+    if (releaseFailure)
+      traceWriter.record({
+        nodeId: 'recipe-run:video',
+        action: 'record.video',
+        startedAt: runStartedAt.toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: Date.now() - runStartedAt.getTime(),
+        ok: false,
+        cause_class: 'environment',
+        error_code: 'RECORDING_ADMISSION_RELEASE_FAILED',
+        error: releaseFailure,
+      });
     if (!result.segments.length) throw new Error('Recorder returned no original media segments.');
     const interruption = result.interruption
       ? runCaptureInterruption(result.interruption, recordedVideoPath(result.segments.length - 1))
@@ -1097,7 +1124,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       videos.push({ entry, ...(segment.timing ? { timing: segment.timing } : {}) });
     }
     await rm(runRecording.stagingRoot, { recursive: true, force: true });
-    return { videos, ...(interruption ? { interruption } : {}) };
+    return {
+      videos,
+      ...(interruption ? { interruption } : {}),
+      ...(releaseFailure ? { releaseFailure } : {}),
+    };
   }
 
   #hudAction(): string | undefined {
@@ -1229,6 +1260,7 @@ function recordedVideoPath(index: number): string {
 }
 
 interface RunVideoRecording {
+  readonly releaseFailure?: string;
   recording: ActiveVideoRecording;
   entry: RecipeArtifactManifestEntry;
   outputPath: string;

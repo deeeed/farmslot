@@ -42,14 +42,17 @@
             "description": "Human-readable statement that successful linked nodes establish."
           },
           "kind": {
-            "enum": ["acceptance", "qa-case", "qa-check"]
+            "enum": ["acceptance", "qa-case", "qa-check"],
+            "description": "Acceptance criterion, QA case or QA check proved by the recipe."
           },
           "parentId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Registered parent claim whose outcome includes this required check."
           },
           "proofMode": {
-            "enum": ["state", "visual", "mixed"]
+            "enum": ["state", "visual", "mixed"],
+            "description": "State assertions, visual review, or both are required to prove this claim."
           }
         },
         "additionalProperties": false
@@ -278,12 +281,14 @@
         },
         "retryGroup": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Declared retry identity; earlier failed attempts remain in the trace."
         },
         "retryAttempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 3
+          "maximum": 3,
+          "description": "Maximum attempts for a declared retry, including the first execution."
         }
       },
       "allOf": [
@@ -373,7 +378,8 @@
           "additionalProperties": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "description": "Map declared child claims to registered parent claims; unbound child ids are qualified by this call."
         }
       },
       "additionalProperties": false

@@ -98,6 +98,21 @@ test('a failed composed call does not promote an earlier passed child assertion'
     { nodeId: 'journey', action: 'call', ok: false },
   ];
   assert.equal(executedProofIndex('journey', composedNodes, trace, []), 2);
+  const interrupted = [...trace.slice(0, 2), { ...trace[2]!, cause_class: 'environment' }];
+  assert.equal(executedProofIndex('journey', composedNodes, interrupted, []), null);
+  assert.equal(
+    deriveRecipeClaims({
+      ...base,
+      nodes: new Map(
+        [...composedNodes].map(([id, node]) => [
+          id,
+          id === 'journey' ? { ...node, proves: ['AC1'] } : node,
+        ]),
+      ),
+      trace: interrupted,
+    })[0]?.verdict,
+    'missing',
+  );
 });
 
 test('ordinary repetitions retain failure; only a declared retry may supersede it', () => {

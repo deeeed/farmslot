@@ -35,6 +35,7 @@ for (const outcome of [
   'interrupted',
   'unmeasured',
   'failed',
+  'release-failed',
   'hud-failed',
   'interrupted-hud-closed',
   'interrupted-hud-failed',
@@ -88,6 +89,7 @@ for (const outcome of [
               key: 'recording/test/pid-123',
               async release() {
                 events.push('release');
+                if (outcome === 'release-failed') throw new Error('Gateway disconnected.');
               },
             };
           },
@@ -160,6 +162,21 @@ for (const outcome of [
       'release',
     ]);
     assert.equal(result.status, outcome === 'complete' ? 'pass' : 'fail');
+    if (outcome === 'release-failed') {
+      assert.equal(result.claims.recording.status, 'complete');
+      assert.equal(
+        await readFile(path.join(root, 'artifacts/videos/recipe-run.mp4'), 'utf8'),
+        'finalized video',
+      );
+      const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
+      assert.ok(
+        trace.some(
+          (entry: { error_code?: string; cause_class?: string }) =>
+            entry.error_code === 'RECORDING_ADMISSION_RELEASE_FAILED' &&
+            entry.cause_class === 'environment',
+        ),
+      );
+    }
     if (outcome === 'interrupted-hud-closed') {
       assert.ok(loneCaptureInterruption(result));
       const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));

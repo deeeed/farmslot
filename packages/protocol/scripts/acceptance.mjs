@@ -220,14 +220,14 @@ function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
 // ---------------------------------------------------------------------------
 // task-dir IO
 
-module.exports = {
+export {
+  ACCEPTANCE_CRITERION_ID_PATTERN,
+  ACCEPTANCE_PROOF_MODES,
   ACCEPTANCE_STATUS_ARTIFACT,
   ACCEPTANCE_VERDICTS,
-  ACCEPTANCE_PROOF_MODES,
-  ACCEPTANCE_CRITERION_ID_PATTERN,
-  acceptanceCriterionId,
-  validateAcceptanceStatusLedger,
   acceptanceCriteriaView,
-  summarizeAcceptanceStatus,
+  acceptanceCriterionId,
   renderAcceptanceCoverage,
+  summarizeAcceptanceStatus,
+  validateAcceptanceStatusLedger,
 };

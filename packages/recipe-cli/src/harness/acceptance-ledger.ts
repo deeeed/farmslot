@@ -31,18 +31,19 @@ export function acceptanceIdForProofTarget(target: string): string | null {
 }
 
 /** Resolve the task once for CLI artifacts and engine registration. */
-export function runTaskDir(target: string): string | null {
+export function runTaskDir(target: string, ignoreOutside = false): string | null {
   const configured = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
   if (!configured) return null;
   const task = path.resolve(target, configured);
   const relative = path.relative(path.resolve(target), task);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`))
+  if (relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    if (ignoreOutside) return null;
     throw new Error(`task directory must be inside the target checkout: ${configured}`);
+  }
   return task;
 }
 
-export function registeredTaskClaims(target: string): RecipeClaimDeclaration[] | undefined {
-  const task = runTaskDir(target);
+export function registeredTaskClaims(task: string | null): RecipeClaimDeclaration[] | undefined {
   return task
     ? ledger.handoffAcceptanceCriteria(task).map(({ id, text }) => ({ id, claim: text }))
     : undefined;

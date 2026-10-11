@@ -171,6 +171,7 @@ export function executedProofIndices(
   const currentIndex = lastTraceIndex(entries, id, before);
   const current = entries[currentIndex];
   if (!current || current.action !== node.action) return [];
+  if (!current.ok && current.cause_class && current.cause_class !== 'subject') return [];
   if (node.action === 'call') {
     const children = [...nodes.keys()]
       .filter((key) => key.startsWith(`${id}/`))
@@ -179,7 +180,6 @@ export function executedProofIndices(
     return current.ok ? [...new Set(children)].sort((a, b) => a - b) : [currentIndex];
   }
   if (!assertionActions.has(node.action) || !hasProofExpectation(node)) return [];
-  if (!current.ok && current.cause_class && current.cause_class !== 'subject') return [];
   if (current.ok && (!current.output || typeof current.output !== 'object')) return [];
   if (node.action === 'assert_output') {
     const source = proofAssertionSource(id, node);

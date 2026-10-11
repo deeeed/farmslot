@@ -26,7 +26,7 @@ export function createRuntimeCapabilityRecordingAdmission(
       const result = await authority.acquire({
         ...owner,
         parameters: {
-          ...owner.parameters,
+          ...(owner.parameters ?? owner.proofRequirement.parameters),
           recording: { backend: context.backend, target: context.target },
         },
       });

@@ -25,7 +25,7 @@ const {
   acceptanceCriteriaView,
   summarizeAcceptanceStatus,
   renderAcceptanceCoverage,
-} = require('@farmslot/protocol/scripts/acceptance.cjs');
+} = require('@farmslot/protocol/scripts/acceptance.mjs');
 
 /** A refused command: the message is worker-facing, the code is the exit code. */
 class AcceptanceRefusal extends Error {

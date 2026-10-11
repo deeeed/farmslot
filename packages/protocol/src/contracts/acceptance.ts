@@ -1,4 +1,4 @@
-import contract from '../../scripts/acceptance.cjs';
+import * as contract from '../../scripts/acceptance.mjs';
 import type { EvidenceMomentRef, RecipeClaimKind } from '../recipe/evidence.js';
 
 // Acceptance-criteria ledger (ADR-060): one verdict per criterion, with the

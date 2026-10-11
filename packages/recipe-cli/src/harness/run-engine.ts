@@ -25,7 +25,6 @@ import {
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-runner';
 
-import { registeredTaskClaims } from './acceptance-ledger.js';
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
@@ -76,6 +75,8 @@ export type {
 
 /** A run's options: the generic ones (with the platform's own) and the command line it came from. */
 export type RecipeEngineRunOptions = RecipeRunOptions & {
+  /** Command-resolved task registration; the engine never reads ambient task paths. */
+  claims?: RecipeRunRequest['claims'];
   signal?: AbortSignal;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
@@ -301,7 +302,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     },
     recordVideo,
     recordingReason: runtimeOptions.recordingReason,
-    claims: registeredTaskClaims(projectRoot),
+    claims: runtimeOptions.claims,
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,
