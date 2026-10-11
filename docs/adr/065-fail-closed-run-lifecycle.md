@@ -19,6 +19,15 @@ incomplete evidence or missing reviewer output. Template instructions cannot
 enforce these requirements. A run can also report blocked while work continues,
 or show a human gate while the worker fixes review findings.
 
+## Alternatives considered
+
+- Template instructions only. Rejected because prompts cannot prevent gateway
+  advancement when required results or evidence are missing.
+- A new lifecycle or resource manager. Rejected because existing lifecycle
+  routes, the posture reconciler and capability registry already own this work.
+- Per-client gate logic. Rejected because clients could disagree and RPC callers
+  could bypass their checks. The gateway must enforce one set of prerequisites.
+
 ## Decision
 
 The gateway enforces prerequisites before offering advancement and checks them
@@ -106,13 +115,17 @@ private paths. Acquisition does not authorize funding, resets or external writes
 
 1. Obtain independent ADR/spec review, Goal 3 conflict review and lead approval.
    The documentation remains Proposed until approval.
-2. PR 1 implements prerequisite enforcement and truthful state, including shared
-   DTOs, CLI and thin client consumers. It consumes merged ADR-062/ADR-063 work
-   and the existing acceptance-completion guard; it does not replace them.
-3. PR 2 adds the six recovery scenarios and only repairs their demonstrated
-   gaps. Reuse existing branch, runner, sandbox and release protections.
-4. PR 3 consumes merged Goal 3 requirements for automatic acquisition through
-   the existing posture reconciler, with target/ownership and recovery proof.
+2. PR 2 may start immediately after ADR/spec approval. It adds the six recovery
+   scenarios and only repairs their demonstrated gaps. Reuse existing branch,
+   runner, sandbox and release protections.
+3. PR 1 starts only after cx-orchestrator's ADR-063 implementation PR merges,
+   because both touch the gate and pipeline UI. It implements prerequisite
+   enforcement and truthful state, including shared DTOs, CLI and thin client
+   consumers. It consumes merged ADR-062/ADR-063 work and the existing
+   acceptance-completion guard; it does not replace them.
+4. PR 3 waits for Goal 3's declaration contract to merge, then consumes those
+   requirements for automatic acquisition through the existing posture
+   reconciler, with target/ownership and recovery proof.
 5. Reserve the exact paths before each PR. Keep at most two unmerged PRs, use
    independent exact-head reviews with a five-round maximum, and freeze an
    approved head. The lead owns merging and coordinated rollout.
