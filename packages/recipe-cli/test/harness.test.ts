@@ -15,6 +15,7 @@ import {
   colorHumanMessage,
   commandJournalPath,
   configureHarnessHost,
+  failStream,
   gitLibraryProvenance,
   harnessExecutable,
   harnessHost,
@@ -485,6 +486,39 @@ describe('library provenance', () => {
 });
 
 describe('output', () => {
+  for (const sameCause of [true, false]) {
+    test(`deferred closeout ${sameCause ? 'retains the original throw' : 'distinguishes another failure with identical text'}`, (t) => {
+      const lines: string[] = [];
+      const diagnostics: string[] = [];
+      t.mock.method(console, 'error', (message: string) => diagnostics.push(message));
+      const stream = new JsonStreamWriter('run', true, {
+        write: (chunk: string) => lines.push(chunk) > 0,
+      });
+      const release = stream.deferResult();
+      const original = Object.assign(new Error('invalid input'), { exitCode: sameCause ? 2 : 1 });
+      stream.error(
+        {
+          code: sameCause ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
+          message: original.message,
+          userAction: 'inspect the input',
+        },
+        original,
+      );
+      stream.complete('fail', original.exitCode);
+      failStream(stream, sameCause ? original : new Error(original.message), 'RUN_FAILED');
+      release();
+      const events = lines.map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.event),
+        ['error', 'complete'],
+      );
+      assert.equal(events[0].error.code, sameCause ? 'CLI_USAGE_ERROR' : 'RUN_FAILED');
+      assert.equal(events[0].error.userAction, sameCause ? 'inspect the input' : undefined);
+      assert.equal(events[1].exitCode, sameCause ? 2 : 1);
+      assert.equal(diagnostics.length, sameCause ? 0 : 1);
+    });
+  }
+
   test('deferred results keep progress live and replace failure only after closeout', (t) => {
     const lines: string[] = [];
     const diagnostics: string[] = [];

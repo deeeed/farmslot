@@ -11,6 +11,7 @@ interface StreamCompletion {
 }
 interface DeferredStreamResult {
   error?: JsonFields;
+  cause?: unknown;
   completion?: StreamCompletion;
 }
 
@@ -131,13 +132,24 @@ export class JsonStreamWriter implements CommandEventStream {
     this.emit('recovery', { code });
   }
 
-  error(error: JsonFields): void {
+  error(error: JsonFields, cause?: unknown): void {
     if (this.completed) return;
     if (this.deferredResult) {
       const prior = this.deferredResult.error;
-      const sameFailure = prior && prior.code === error.code && prior.message === error.message;
+      const sameCause = cause !== undefined && cause === this.deferredResult.cause;
+      const sameFailure =
+        prior &&
+        (cause !== undefined && this.deferredResult.cause !== undefined
+          ? sameCause
+          : prior.code === error.code && prior.message === error.message);
       if (prior && !sameFailure) console.error(JSON.stringify(prior));
-      this.deferredResult.error = sameFailure ? { ...prior, ...error } : error;
+      // A host catch may classify the same throw differently; keep its original diagnostic.
+      this.deferredResult.error = sameCause
+        ? { ...error, ...prior }
+        : sameFailure
+          ? { ...prior, ...error }
+          : error;
+      this.deferredResult.cause = cause;
       delete this.deferredResult.completion;
       return;
     }
@@ -173,10 +185,13 @@ export function failStream(
     typeof (error as { exitCode?: unknown }).exitCode === 'number'
       ? (error as { exitCode: number }).exitCode
       : defaultExitCode;
-  stream.error({
-    code: exitCode === 2 ? 'USAGE' : code,
-    message: error instanceof Error ? error.message : String(error),
-  });
+  stream.error(
+    {
+      code: exitCode === 2 ? 'USAGE' : code,
+      message: error instanceof Error ? error.message : String(error),
+    },
+    error,
+  );
   stream.complete('fail', exitCode);
   return exitCode;
 }

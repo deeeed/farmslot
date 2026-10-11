@@ -447,23 +447,30 @@ for (const operation of ['run', 'call'] as const) {
   });
 }
 
-for (const finalizeFail of [false, true]) {
-  test(`public-bin failure diagnostics name the registered doctor command after ${finalizeFail ? 'failing' : 'successful'} cleanup`, (t) => {
+for (const failure of ['runtime', 'closeout', 'usage']) {
+  test(`public-bin failure diagnostics name the registered doctor command after ${failure} failure`, (t) => {
     const { root, file } = runFixture(t);
+    const finalizeFail = failure === 'closeout';
     const provider = path.join(root, 'projects/example/provider.mjs');
     const source = fs.readFileSync(provider, 'utf8');
     const marker = 'actions: {manifestPath:';
     assert.ok(source.includes(marker));
-    fs.writeFileSync(
-      provider,
-      source.replace(
-        marker,
-        "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
-      ),
-    );
+    if (failure !== 'usage')
+      fs.writeFileSync(
+        provider,
+        source.replace(
+          marker,
+          "actions: {adapters: async () => { throw new Error('adapter construction failed'); }, manifestPath:",
+        ),
+      );
     const invocation = publicCall(
       root,
-      [file, '--json-stream', ...(finalizeFail ? ['--finalize-fail'] : [])],
+      [
+        file,
+        '--json-stream',
+        ...(finalizeFail ? ['--finalize-fail'] : []),
+        ...(failure === 'usage' ? ['a=1', 'a=1'] : []),
+      ],
       'run',
     );
     const args = invocation.args.slice(invocation.args.indexOf('--') + 1);
@@ -486,6 +493,8 @@ for (const finalizeFail of [false, true]) {
           .map((line) => JSON.parse(line))
           .find((event) => event.event === 'error')?.error;
     assert.ok(diagnostic, result.stderr);
+    if (failure === 'usage') assert.equal(diagnostic.code, 'CLI_USAGE_ERROR');
+    assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
     assert.match(diagnostic.userAction, /^farmslot doctor --conformance /u);
     const program = new Command('farmslot').option('--json');
     registerDoctorCommand(program);

@@ -221,11 +221,14 @@ export async function handleRun<TMutation, TAllowlist extends ConsoleAllowlist>(
       typeof (error as { exitCode?: unknown }).exitCode === 'number'
         ? (error as { exitCode: number }).exitCode
         : EXIT.runtime;
-    stream.error({
-      code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
-      message: error instanceof Error ? error.message : String(error),
-      userAction: harnessDoctorHint(`${host} doctor --target ${shellQuote(target)} --json`),
-    });
+    stream.error(
+      {
+        code: exitCode === EXIT.usage ? 'CLI_USAGE_ERROR' : 'RUN_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+        userAction: harnessDoctorHint(`${host} doctor --target ${shellQuote(target)} --json`),
+      },
+      error,
+    );
     stream.complete('fail', exitCode);
     // The owning host finalizes after a throw and retains both failure causes.
     throw error;
