@@ -121,8 +121,7 @@ export interface SlotReleaseOptions {
   prepareStopHeartbeatMs?: number;
 }
 
-class ReleaseClaimLostError extends Error {}
-class BoundReleaseClaimLostError extends ReleaseClaimLostError {}
+class BoundReleaseClaimLostError extends Error {}
 
 function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOptions): string {
   // Only semantically identical requests may share one teardown; a request
@@ -243,8 +242,8 @@ export async function slotReleasePreflight(
   // A gate-parked run (ADR-054 `free-slot`) gave the slot up but keeps a park
   // record whose restore target is this workspace. Releasing destroys it, so
   // refuse — but only when this release is aimed at the parked run itself.
-  // A new occupant is not blocked by this park record, but still must pass
-  // the owner guard below. `preserveAgents` does not bypass this park guard:
+  // Once another run claims the freed slot, ITS release must still work, which
+  // is the whole point of freeing the slot. `preserveAgents` does not bypass:
   // there are no agents left to preserve, and the record dies either way.
   const gateParkedRun = findGateParkedRunForSlot(params.slotId);
   if (gateParkedRun && !forceReset) {
@@ -470,7 +469,7 @@ async function slotReleaseImpl(
       throw new BoundReleaseClaimLostError();
     }
     complete(1);
-    throw new ReleaseClaimLostError(
+    throw new Error(
       refusal ??
         `Slot ${params.slotId} ownership changed before teardown; remaining release actions refused`,
     );
@@ -771,7 +770,6 @@ async function slotReleaseImpl(
           `Collected ${collected.roots} scaffolding roots to ${collected.directory}`,
         );
       } catch (error) {
-        if (error instanceof ReleaseClaimLostError) throw error;
         await assertReleaseClaim();
         const reason = `Scaffolding collection failed; cleanup stopped: ${(error as Error).message}`;
         const held = await guardedTeardownWrite({
@@ -970,8 +968,9 @@ export async function killAgentInSession(
   role: AgentRole = 'primary',
   options: { graceful?: boolean; assertClaim?: () => Promise<void> } = {},
 ): Promise<void> {
-  // Release and dispatch must not resend teardown after reconnect: the runner
-  // may have exited, so a resend could type /exit into a shell or signal a recycled PID.
+  // Mutations cannot be automatically resent after reconnect: that would skip
+  // the ownership check and could reach a newer claim. A failed mutation leaves
+  // the releasing fence for the stale-fence reconciler to reclaim.
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
   const roleWindow = agentDispatchWindow(role);

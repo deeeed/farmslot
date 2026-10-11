@@ -217,7 +217,7 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('#{pane_current_command}')) {
         callOrder.push('input:foreground');
-        return { exitCode: 0, stdout: `%1\t123\t${foregroundCommand}`, stderr: '' };
+        return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
       }
       if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
         callOrder.push('input:process');

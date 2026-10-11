@@ -63,7 +63,7 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: '@1\n', stderr: '' };
       }
       if (command.includes('#{pane_current_command}')) {
-        return { exitCode: 0, stdout: `%1\t123\t${runnerAlive ? 'node' : 'zsh'}`, stderr: '' };
+        return { exitCode: 0, stdout: `%1|123|${runnerAlive ? 'node' : 'zsh'}`, stderr: '' };
       }
       if (command.includes('display-message -p -t')) {
         return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };

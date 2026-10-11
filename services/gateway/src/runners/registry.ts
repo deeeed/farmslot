@@ -31,7 +31,6 @@ import { execOnSlot } from '../core/exec.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
-  resolveTmuxPaneIdentity,
   resolveTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -2479,15 +2478,20 @@ export async function execRunnerInput(
   command: (paneId: string) => string,
   exec: typeof execOnSlot = execOnSlot,
 ): Promise<ExecResult> {
-  const pane = await resolveTmuxPaneIdentity(vars, target, { currentCommand: true, exec });
-  if (!pane)
+  const pane = await exec(
+    vars,
+    tmuxShellSnippet(
+      `display-message -p -t ${shellQuote(target)} '#{pane_id}|#{pane_pid}|#{pane_current_command}'`,
+    ),
+  );
+  const [paneId, panePid, foreground] = pane.stdout.trim().split('|');
+  if (pane.exitCode !== 0 || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''))
     throw new Error(`Runner input refused: terminal ${target} is unavailable; no input was sent`);
-  const { paneId, panePid, currentCommand: foreground } = pane;
   const { buildRunnerInputHostGuardCommand, probeRunnerDescendantPid, isShellProcessCommand } =
     await import('./session-process.js');
   const probe = await probeRunnerDescendantPid(
     vars,
-    panePid,
+    panePid!,
     runner,
     { foregroundOnly: true, attempts: 2, deadline: Date.now() + 20_000 },
     { exec },
@@ -2499,12 +2503,12 @@ export async function execRunnerInput(
   // A transport resend could reach a shell after the checked runner exited.
   // Only the caller may retry, by entering this guard again.
   const hostGuard = buildRunnerInputHostGuardCommand(
-    paneId,
-    panePid,
+    paneId!,
+    panePid!,
     runner,
     PROMPT_TYPE_FAILURE_EXIT_CODE,
   );
-  return exec(vars, `${hostGuard}\n${command(paneId)}`, { noRetry: true });
+  return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
 }
 
 function runnerKeysCommand(paneId: string, keys: string): string {
