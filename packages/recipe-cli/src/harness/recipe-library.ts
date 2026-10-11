@@ -165,12 +165,13 @@ export async function resolveRunRecipeArg(
   recipeArg: string,
   adapter: string,
   librarySources?: RecipeLibrarySource[],
+  libraryOnly = false,
 ): Promise<ResolvedRecipeArgument> {
   const direct = path.resolve(recipeArg);
-  if (isRecipeFile(direct)) return { recipeFile: direct };
+  if (!libraryOnly && isRecipeFile(direct)) return { recipeFile: direct };
   const sources = effectiveLibrarySources(catalog, librarySources);
   const resolution = await loadRecipeLibraries(sources, { adapter });
-  if (!recipeArg.includes('/') && !recipeArg.includes(path.sep)) {
+  if (libraryOnly || (!recipeArg.includes('/') && !recipeArg.includes(path.sep))) {
     const selected = resolution.recipes.get(recipeArg);
     if (selected) return { recipeFile: selected.path, ref: selected.ref };
   }
@@ -194,9 +195,10 @@ export async function resolveRecipeInvocation(
   adapter: string,
   libraryEntry?: string | readonly string[],
   resolvedSources?: RecipeLibrarySource[],
+  libraryOnly = false,
 ): Promise<ResolvedRecipeInvocation> {
   const sources = resolvedSources ?? (await resolveLibrarySources(catalog, libraryEntry));
-  const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, sources);
+  const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, sources, libraryOnly);
   const librarySources =
     'recipeFile' in resolved && !resolved.ref
       ? await resolveLibrarySources(catalog, libraryEntry, resolved.recipeFile, sources)

@@ -555,3 +555,87 @@ test('readiness and conformance mutation modes cannot be mixed before provider i
   assert.match(result.envelope.error.message, /cannot be combined/u);
   assert.equal(fs.existsSync(`${root}.imported`), false);
 });
+
+test('default checks bind declared parameters and explicit selection replaces them', async (t) => {
+  const { root, write } = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.recipe.checks = [{ recipe: 'smoke', params: { mode: 'declared' } }];
+  write('project.json', config);
+  const recipePath = 'recipes/headless/smoke.recipe.json';
+  const recipe = JSON.parse(fs.readFileSync(path.join(root, recipePath), 'utf8'));
+  recipe.paramsSchema = {
+    type: 'object',
+    required: ['mode'],
+    properties: { mode: { type: 'string' } },
+    additionalProperties: false,
+  };
+  write(recipePath, recipe);
+  const flags = ['--authorize-provider', path.join(root, 'provider.mjs')];
+  const defaults = await run(t, root, flags);
+  assert.equal(defaults.status, 0, JSON.stringify(defaults.envelope));
+  assert.equal(defaults.envelope.data.context.project.checks[0].params.mode, 'declared');
+  const selected = await run(t, root, [...flags, '--recipe', 'smoke', '--param', 'mode=explicit']);
+  assert.equal(selected.status, 0, JSON.stringify(selected.envelope));
+  assert.notEqual(
+    defaults.envelope.data.report.identity.invocations[0].paramsDigest,
+    selected.envelope.data.report.identity.invocations[0].paramsDigest,
+  );
+  const missing = await run(t, root, [...flags, '--recipe', 'smoke']);
+  assert.equal(missing.status, 1);
+});
+
+test('missing defaults teach declaration or explicit selection', async (t) => {
+  const { root, write } = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  delete config.recipe.checks;
+  write('project.json', config);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  assert.equal(result.status, 1);
+  assert.match(result.envelope.error.message, /recipe.checks.*--recipe/);
+});
+
+test('invalid default metadata refuses before provider import even with explicit selection', async (t) => {
+  const { root, write } = fixture(t);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.recipe.checks = [];
+  write('project.json', config);
+  const result = await run(t, root, [
+    '--authorize-provider',
+    path.join(root, 'provider.mjs'),
+    '--recipe',
+    'smoke',
+  ]);
+  assert.equal(result.status, 1);
+  assert.equal(fs.existsSync(`${root}.imported`), false);
+});
+
+test('default smoke still refuses a missing handler for an unused declared action', async (t) => {
+  const { root, write } = fixture(t);
+  const file = 'manifests/headless.action-manifest.json';
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
+  manifest.actions['example.unused'] = {
+    ...manifest.actions['example.read'],
+    examples: [{ action: 'example.unused', intent: 'Inspect unused capability.', next: 'done' }],
+  };
+  write(file, manifest);
+  const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.envelope.data.report.checks[0].message,
+    /example.unused.*no registered adapter/,
+  );
+});
+
+test('default library refs cannot be shadowed by a same-name working-directory file', async (t) => {
+  const { root, write } = fixture(t);
+  write('smoke', 'not a recipe');
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);
+    assert.equal(result.status, 0, JSON.stringify(result.envelope));
+    assert.equal(result.envelope.data.report.identity.invocations[0].recipe, 'smoke');
+  } finally {
+    process.chdir(cwd);
+  }
+});

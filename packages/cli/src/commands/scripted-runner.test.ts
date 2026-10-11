@@ -111,3 +111,42 @@ test('scripted command failure resolves project-owned commandRef evidence', asyn
   assert.equal(result.commandRef, 'fail-smoke');
   assert.equal(result.exitCode, 7);
 });
+
+test('scripted command uses support-only config and the executing CLI provenance', async (t) => {
+  const taskDir = makeTaskDir();
+  const support = mkdtempSync(path.join(tmpdir(), 'scripted-support-only-'));
+  const project = 'scripted-product';
+  mkdirSync(path.join(support, 'projects', project), { recursive: true });
+  writeFileSync(
+    path.join(support, 'projects', project, 'project.json'),
+    JSON.stringify({
+      scripted: { commands: { check: { command: 'printf supported-command' } } },
+    }),
+  );
+  const previous = process.env.FARMSLOT_ROOT;
+  process.env.FARMSLOT_ROOT = support;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_ROOT;
+    else process.env.FARMSLOT_ROOT = previous;
+    rmSync(taskDir, { recursive: true, force: true });
+    rmSync(support, { recursive: true, force: true });
+  });
+  assert.equal(
+    await runScriptedRunner({ taskDir, mode: 'command', project, commandRef: 'check' }),
+    0,
+  );
+  const provenance = JSON.parse(
+    await readFile(path.join(taskDir, 'artifacts/scripted-runner-provenance.json'), 'utf8'),
+  );
+  assert.equal(provenance.farmslotRoot, support);
+  assert.notEqual(provenance.cliRoot, support);
+  assert.equal(typeof provenance.packageVersion, 'string');
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/scripted-command.stdout.txt'), 'utf8'),
+    'supported-command',
+  );
+  assert.equal(
+    JSON.parse(await readFile(path.join(taskDir, 'SIGNAL.json'), 'utf8')).outcome,
+    'success',
+  );
+});

@@ -4,6 +4,10 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use pack-declared default recipe checks and preserve explicit raw versus compact log selection.
+
+- Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.
+
 - Use shared protocol outcomes for artifact validation; retain partial-run warnings without certifying partial results as live proof.
 
 - Run project lifecycle commands through the declared provider and inspect retained recipe evidence with journal-backed status. Logs preserve application-source selection and `--full` raw follow. Recipe commands and conformance use the explicitly selected Farmslot root's registry before an inherited workspace, keeping project and pool resolution together.

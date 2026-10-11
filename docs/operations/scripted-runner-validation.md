@@ -120,8 +120,8 @@ The gateway rejects undeclared `commandRef` values. Do not pass arbitrary shell 
 - `runner=scripted` requires `scripted` config.
 - Scenario mode requires `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1`.
 - Command mode must resolve through project config.
-- The launched worker command uses checkout-local CLI:
-  `FARMSLOT_ROOT="$PWD" node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner ...`.
+- Scenario mode uses the worker checkout's CLI. Command mode resolves the CLI through the verified node support bundle, keeps the product checkout as its working directory and reads only the registered command reference. Provenance records the support root and executing CLI root separately.
+- Scripted command text is a shell command, not a project hook template. Use the provided `FARMSLOT_ROOT` and shell working directory where needed; `{{...}}` hook placeholders are not expanded.
 
 ## Artifacts
 

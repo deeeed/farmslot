@@ -38,6 +38,7 @@
     }
   },
   "recipe": {
+    "checks": [{ "recipe": "smoke" }],
     "adapter": "headless",
     "domain": "example",
     "provider": {

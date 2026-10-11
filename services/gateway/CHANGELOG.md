@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.
+
 - Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
 - Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
 - Review requests share runner, model, effort and WARM/COLD selections across gates and dispatch, including runner defaults and retained rechecks. Publication counts current-package reviewer approvals, including pipeline reviews; refresh preserves the latest result, WARM refuses unavailable continuity and COLD creates a fresh full-diff review.

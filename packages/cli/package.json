@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "@farmslot/adapter-sdk": "workspace:*",
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/credential-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",

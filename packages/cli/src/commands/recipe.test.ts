@@ -937,3 +937,88 @@ test('public launch rejects a provider flag typo before construction', (t) => {
   assert.equal(JSON.parse(result.stdout).error.code, 'CLI_UNKNOWN_OPTION');
   assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
 });
+
+for (const [label, flags, expected] of [
+  ['omitted lines', [], 'compact'],
+  ['explicit events', ['--events', '7'], 'compact'],
+  ['explicit lines', ['--lines', '1'], 'raw'],
+  ['JSON inspection', ['--json'], 'metadata'],
+  ['raw/event conflict', ['--events', '2', '--lines', '1'], 'refusal'],
+  ['owned window JSON', ['--window', '--json'], 'window'],
+] as const) {
+  test(`public log grammar preserves ${label}`, (t) => {
+    const root = callFixture(t);
+    const file = path.join(root, 'projects/example/provider.mjs');
+    const logFile = path.join(root, 'runtime.log');
+    const marker = path.join(root, 'artifacts/log-view.json');
+    fs.writeFileSync(logFile, 'older line\nnewest line\n');
+    fs.writeFileSync(
+      file,
+      fs
+        .readFileSync(file, 'utf8')
+        .replace(
+          'runtime: {',
+          `commandOptions: { logs: {
+        compact: async request => { fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(request)); return 0; },
+        window: async request => ({ window: 'owned', logFile: request.logFile, exitCode: 0 })
+      } }, runtime: {`,
+        )
+        .replace(
+          'logSources: () => []',
+          `logSources: () => [{label:'runtime',path:${JSON.stringify(logFile)}}]`,
+        ),
+    );
+    const command = publicCall(root, [...flags], 'logs');
+    command.args.splice(command.args.indexOf('--json'), 1);
+    command.args[command.args.indexOf('-e') + 1] =
+      `Object.defineProperty(process.stdout, 'isTTY', {value:true});\n${driver}`;
+    const result = spawnSync(process.execPath, command.args, { ...command.options, timeout: 4900 });
+    assert.ifError(result.error);
+    assert.equal(result.status, expected === 'refusal' ? 1 : 0, result.stdout + result.stderr);
+    assert.equal(fs.existsSync(marker), expected === 'compact');
+    if (expected === 'compact') {
+      const request = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      assert.equal(request.logFile, logFile);
+      assert.equal(
+        request.events,
+        label === 'explicit events' ? '7' : (process.env.RECIPE_LOG_EVENTS ?? '20'),
+      );
+    }
+    if (expected === 'raw') {
+      assert.match(result.stdout, /newest line/);
+      assert.doesNotMatch(result.stdout, /older line/);
+    }
+    if (expected === 'metadata') assert.equal(JSON.parse(result.stdout).logFile, logFile);
+    if (expected === 'window') assert.equal(JSON.parse(result.stdout).window, 'owned');
+  });
+}
+
+test('public logs without a compact hook defaults to 20 bounded raw lines', (t) => {
+  const root = callFixture(t);
+  const file = path.join(root, 'projects/example/provider.mjs');
+  const logFile = path.join(root, 'runtime.log');
+  fs.writeFileSync(
+    logFile,
+    Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, 'utf8')
+      .replace(
+        'logSources: () => []',
+        `logSources: () => [{label:'runtime',path:${JSON.stringify(logFile)}}]`,
+      ),
+  );
+  const command = publicCall(root, [], 'logs');
+  command.args.splice(command.args.indexOf('--json'), 1);
+  command.args[command.args.indexOf('-e') + 1] =
+    `Object.defineProperty(process.stdout, 'isTTY', {value:true});\n${driver}`;
+  const result = spawnSync(process.execPath, command.args, { ...command.options, timeout: 4900 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(
+    result.stdout.trim().split('\n'),
+    Array.from({ length: 20 }, (_, index) => `line-${index + 11}`),
+  );
+});

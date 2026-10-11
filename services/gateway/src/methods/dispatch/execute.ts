@@ -1729,12 +1729,15 @@ export async function dispatchExecute(
   }
 
   // Launch from the bundle that matches this gateway's tree (hooks + runner installer).
-  await ensureNodeSupportBundle(vars, projectVars?.runtimeDir ?? '.agent', { projectVars });
+  const nodeSupport = await ensureNodeSupportBundle(vars, projectVars?.runtimeDir ?? '.agent', {
+    projectVars,
+  });
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
     scripted,
     scriptedCommand,
+    scriptedSupportDir: nodeSupport?.supportDir,
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,

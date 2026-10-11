@@ -17,7 +17,6 @@ import type {
   JsonStreamWriter,
   RecipeConformanceOptions,
 } from '@farmslot/recipe-cli/harness';
-import { loadRecipeLibraries } from '@farmslot/recipe-runner';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
 import { bold, dim, green, red, yellow } from '../colors.js';
@@ -66,7 +65,7 @@ export function registerDoctorCommand(program: Command): void {
     .option('--report-name <name>', 'Conformance report filename within its artifact directory')
     .option(
       '--recipe <ref>',
-      'Check a specific invocation instead of every catalog recipe',
+      'Check a specific invocation instead of the declared defaults',
       collectRecipeOption,
       [],
     )
@@ -276,16 +275,15 @@ async function prepareProjectConformance(
     await projectRecipeHostOptions('doctor', checkout, options),
     async ({ context, provider, engine, librarySources: sources, cli }) => {
       const binding = context.project!;
-      const recipes = selected.length
-        ? selected
-        : [
-            ...(
-              await loadRecipeLibraries(sources, { adapter: provider.runtime.id })
-            ).recipes.values(),
-          ]
-            .filter((entry) => !entry.aliasFor)
-            .map((entry) => entry.ref);
       const params = parseRecipeParamAssignments(suppliedParams);
+      const recipes = selected.length
+        ? selected.map((recipe) => ({ recipe, params }))
+        : binding.checks;
+      if (!recipes?.length) {
+        throw shared.usageError(
+          'Declare recipe.checks in the selected project or pass --recipe <ref>.',
+        );
+      }
       const artifactsDir = path.join(binding.checkoutRoot, binding.artifactDir, 'conformance');
       const implementationSources: NonNullable<RecipeConformanceOptions['implementationSources']> =
         [];
@@ -354,7 +352,8 @@ async function prepareProjectConformance(
             ? { proof: true, teardownProofTarget: String(options.teardownTarget) }
             : {}),
         },
-        recipes: recipes.map((recipe) => ({ recipe, params })),
+        recipes,
+        libraryRefsOnly: selected.length === 0,
       };
       const report = await shared.checkRecipeConformance(engine, checkOptions);
       const captureRequired = !provider.runtime.headless;

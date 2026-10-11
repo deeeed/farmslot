@@ -307,6 +307,98 @@ describe('runtime log selection', () => {
   });
 });
 
+describe('project log views', () => {
+  const parseLogs = (argv: string[]) =>
+    parseArgs(argv, {
+      optionSpecs: { '--window': { kind: 'boolean' }, '--follow': { kind: 'boolean' } },
+    });
+  function setup() {
+    const target = tempRoot();
+    const build = path.join(target, 'build.log');
+    const app = path.join(target, 'app.log');
+    fs.writeFileSync(build, 'build ready\n');
+    fs.writeFileSync(app, 'app ready\n');
+    useAdapters(
+      fakeAdapter('shop', {
+        logSources: () => [{ label: 'build', path: build }],
+        appLogSource: () => ({ label: 'client', path: app }),
+      }),
+    );
+    return { target, build, app, args: ['--adapter', 'shop', '--target', target] };
+  }
+
+  test('compact receives the selected app and explicit count before environment defaults', async () => {
+    const { args, app } = setup();
+    const prior = process.env.RECIPE_LOG_EVENTS;
+    process.env.RECIPE_LOG_EVENTS = '3';
+    try {
+      const seen: string[] = [];
+      for (const [extra, count] of [
+        [[], '3'],
+        [['--events', '5'], '5'],
+      ] as const) {
+        assert.equal(
+          await handleLogs(parseLogs([...args, ...extra]), {
+            compact: async (request) => {
+              assert.equal(request.logFile, app);
+              assert.equal(request.events, count);
+              seen.push(count);
+              return 0;
+            },
+          }),
+          0,
+        );
+      }
+      assert.deepEqual(seen, ['3', '5']);
+    } finally {
+      if (prior === undefined) delete process.env.RECIPE_LOG_EVENTS;
+      else process.env.RECIPE_LOG_EVENTS = prior;
+    }
+  });
+
+  test('JSON inspection never calls viewers and window JSON uses the primary dev log', async () => {
+    const { args, build } = setup();
+    const compact = async () => {
+      throw new Error('unexpected compact viewer');
+    };
+    const inspected = await capture(() =>
+      handleLogs(parseLogs([...args, '--json']), {
+        compact,
+        window: async () => {
+          throw new Error('unexpected window');
+        },
+      }),
+    );
+    assert.equal(inspected.result, 0);
+    const windowed = await capture(() =>
+      handleLogs(parseLogs([...args, '--window', '--json']), {
+        compact,
+        window: async (request) => {
+          assert.equal(request.logFile, build);
+          return { window: 'owned-log', logFile: build, exitCode: 0 };
+        },
+      }),
+    );
+    assert.equal(JSON.parse(windowed.stdout).action, 'window');
+    assert.equal(JSON.parse(windowed.stdout).window, 'owned-log');
+  });
+
+  test('event/raw conflicts and missing hooks refuse without spawning a viewer', async () => {
+    const { args } = setup();
+    for (const extra of [
+      ['--events', '2', '--lines', '1'],
+      ['--events', '2', '--follow'],
+      ['--events', 'bad'],
+    ]) {
+      await assert.rejects(() => handleLogs(parseLogs([...args, ...extra])), /--events/);
+    }
+    for (const extra of [['--events', '2'], ['--window']]) {
+      const result = await capture(() => handleLogs(parseLogs([...args, ...extra, '--json'])));
+      assert.equal(result.result, 2);
+    }
+  });
+});
+
 describe('the doctor report', () => {
   test('lists the manifest check, then the host checks, then the platform checks, and tallies the required ones', () => {
     shopHost();
@@ -901,6 +993,9 @@ describe('status', () => {
       'adapter',
       'target',
       'context',
+      'journalPath',
+      'lastCommand',
+      'latestProof',
       'view',
       'devices',
       'featureFlags',
@@ -935,6 +1030,9 @@ describe('status', () => {
       'adapter',
       'target',
       'context',
+      'journalPath',
+      'lastCommand',
+      'latestProof',
       'devices',
       'featureFlags',
       'next',
@@ -954,6 +1052,9 @@ describe('status', () => {
       'adapter',
       'target',
       'context',
+      'journalPath',
+      'lastCommand',
+      'latestProof',
       'devices',
       'featureFlags',
       'portHints',
@@ -980,6 +1081,9 @@ describe('status', () => {
       'adapter',
       'target',
       'context',
+      'journalPath',
+      'lastCommand',
+      'latestProof',
       'devices',
       'runtime',
       'next',

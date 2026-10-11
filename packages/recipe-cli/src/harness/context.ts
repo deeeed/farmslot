@@ -591,6 +591,7 @@ export interface ProjectProvider {
     doctor?: Partial<import('./commands/doctor.js').DoctorCommandOptions>;
     status?: import('./commands/status.js').StatusCommandOptions;
     stop?: import('./commands/stop.js').StopCommandOptions;
+    logs?: import('./commands/logs.js').LogsCommandOptions;
   };
   cancel?(): void | Promise<void>;
   finalize?(): void | Promise<void>;
@@ -937,6 +938,7 @@ export async function resolveProjectContext(
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
+    checks: recipe.checks?.map((check) => ({ ...check, recipe: check.recipe.trim() })),
     ...(recipe.manifest ? { manifest: path.resolve(root, recipe.manifest) } : {}),
     provider,
     libraries,

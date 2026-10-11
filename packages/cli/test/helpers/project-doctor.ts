@@ -45,7 +45,11 @@ export function fixture(t: TestContext, missing = false) {
   write('project.json', {
     name: 'example',
     paths: { runtime_dir: '.runtime', artifact_dir: 'artifacts' },
-    recipe: { adapter: 'headless', provider: { module: 'provider.mjs' } },
+    recipe: {
+      adapter: 'headless',
+      provider: { module: 'provider.mjs' },
+      checks: [{ recipe: 'smoke' }],
+    },
   });
   const example = {
     description: 'Read the checkout.',

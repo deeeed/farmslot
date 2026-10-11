@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow project packs to declare default static recipe check invocations.
+
 - Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
 - Bind live recipe conformance to named runtime and teardown proof targets, retained artifact digests and typed capture metadata.
 - Replace runner-diversity review contracts with WARM/COLD selections, ordered review sequences and separate-session review provenance.

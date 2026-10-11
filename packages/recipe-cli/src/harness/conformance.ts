@@ -45,6 +45,8 @@ export interface RecipeConformanceOptions {
   cli?: CliOptions;
   implementationSources?: Array<{ name: string; root: string; module?: string }>;
   recipes: Array<{ recipe: string; params?: Record<string, unknown> }>;
+  /** Pack defaults are library refs; explicit CLI invocations may also name files. */
+  libraryRefsOnly?: boolean;
 }
 
 export { conformanceChecksPass } from '@farmslot/protocol';
@@ -80,6 +82,7 @@ async function resolveConformanceInputs(
         adapter,
         undefined,
         options.librarySources,
+        options.libraryRefsOnly,
       );
       const recipeFile =
         'recipeFile' in resolution.resolved ? resolution.resolved.recipeFile : undefined;

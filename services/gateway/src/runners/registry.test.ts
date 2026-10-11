@@ -2239,6 +2239,26 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /(^|\s)farmslot fake-runner/);
     });
 
+    it('uses verified support for product command mode and preserves pool environment', () => {
+      const vars = makeVars({
+        remoteRepo: '/tmp/product repo',
+        machineEnv: { NODE_BIN: '/configured/bin' },
+      });
+      const cmd = buildLaunchCommand(vars, 'scripted', null, PROMPT, {
+        taskDir: TASK_DIR,
+        scripted: { mode: 'command', commandRef: 'smoke' },
+        scriptedCommand: { command: 'node app.mjs' },
+        scriptedSupportDir: '/tmp/verified support',
+      });
+      assert.match(cmd, /cd '\/tmp\/product repo'/);
+      assert.match(cmd, /'\/tmp\/verified support' scripted-runner/);
+      assert.match(cmd, /resolve-farmslot-cli\.sh/);
+      assert.match(cmd, /NODE_BIN='\/configured\/bin'/);
+      assert.doesNotMatch(cmd, /\$PWD\/packages\/cli/);
+      assert.doesNotMatch(cmd, /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS/);
+      assert.ok(cmd.includes(CLEAR_RECIPE_TRUST_ENV));
+    });
+
     it('passes only resolved project-owned command config for command mode', () => {
       const vars = makeVars();
       const cmd = buildLaunchCommand(vars, 'scripted', null, PROMPT, {

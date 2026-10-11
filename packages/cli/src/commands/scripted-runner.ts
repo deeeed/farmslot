@@ -6,6 +6,8 @@ import type { Command } from 'commander';
 
 import type { WorkerSignal } from '@farmslot/protocol';
 
+import { repoRoot } from '../onboarding/workspace.js';
+
 export interface ScriptedRunnerOptions {
   taskDir: string;
   mode: 'scenario' | 'command';
@@ -191,8 +193,9 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
     kind: 'farmslot-scripted-runner',
     cliEntrypoint: process.argv[1] ?? null,
     farmslotRoot,
-    packageVersion: await packageVersion(farmslotRoot),
-    gitSha: await gitSha(farmslotRoot),
+    cliRoot: repoRoot,
+    packageVersion: await packageVersion(repoRoot),
+    gitSha: await gitSha(repoRoot),
     mode: options.mode,
     scenario: options.scenario ?? null,
     project: options.project ?? null,

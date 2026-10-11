@@ -203,7 +203,9 @@ Options:
   --target <path>                Checkout to inspect or operate
   --source <name>                Select one runtime log source
   --full                         Follow the entire selected log without filtering
-  --lines <count>                Number of initial log lines (default: "20")
+  --lines <count>                Number of initial raw log lines
+  --events <count>               Number of compact events to follow
+  --window                       Reopen the owned primary log window
   --follow                       Follow the selected log until interrupted
   -h, --help                     display help for command
 ```
@@ -483,8 +485,8 @@ Options:
   --artifacts-dir <path>         Checkout-relative conformance report directory
   --report-name <name>           Conformance report filename within its artifact
                                  directory
-  --recipe <ref>                 Check a specific invocation instead of every catalog
-                                 recipe (default: [])
+  --recipe <ref>                 Check a specific invocation instead of the declared
+                                 defaults (default: [])
   --param <key=value>            Supply checked invocation parameters (default: [])
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind

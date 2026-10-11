@@ -37,6 +37,12 @@ HUD defaults on for targets that support it. Their live proof must retain a scre
 
 Only positive evidence establishes a capability. A missing, skipped, unsupported or failed required check never becomes success. A verified target does not certify another target or domain. Engine approval, project funding policy and gateway resource ownership remain separate from compatibility.
 
+### Declare default static checks
+
+A project may declare default conformance invocations in its existing recipe binding as `recipe.checks`. They name concrete recipe refs and optional parameter values. With no explicit recipe selection, doctor checks those invocations through the same complete preflight used by an explicit invocation. It does not treat the entire callable library catalog as a list of runnable default invocations.
+
+Explicit recipe selection replaces these defaults. An absent default declaration requires an explicit selection; missing inputs, unavailable handlers and authorization failures remain failures. The report identifies only the invocations it checked. This default applies to direct static conformance, not selected-flow dispatch requirements or automatic resource acquisition. Live consent and proof-target selection remain explicit.
+
 ### Check the selected flow
 
 Use ADR-049's selected execution-template entry and ADR-058's resolved QA preset. The template declares required smoke refs, action support and optional capture, HUD or resource providers. Parameter values use the existing CLI parameter grammar, with a template JSON object as data. The specification defines that proposed field before its implementation.
@@ -48,6 +54,12 @@ Static Review retains its independent template admission. Runtime requirements d
 `@farmslot/protocol` owns the pure requirement validation and compatibility projection. The gateway supplies current reports and existing resource-catalog facts. Command Center renders the resulting data; a future Companion renderer consumes the same model.
 
 The conformance view explains registration and checked recipe support for a selected flow. The existing resource-capabilities panel owns lease acquisition, health and release. Keep that resource controller; reuse the conformance renderer wherever the same conformance job is shown. Clients must not duplicate badge or admission derivation.
+
+### Preserve project log views during lifecycle migration
+
+The shared logs handler owns target/source selection, argument validation, raw output, JSON envelopes and cancellation. Optional `ProjectProvider.commandOptions.logs` callbacks supply the existing project compact view and owned-window recovery. MetaMask reuses its current log viewer and session resolver through asynchronous helpers; it does not dispatch to its old CLI or copy the handler into the framework.
+
+This restores compact follow, event-count/environment precedence and window recovery without changing launch/watch consumers of the same provider helper. The final Phase 3 cutover must still move generic viewer/session mechanics to shared packages, migrate every launcher/injected consumer, and delete the old command glue. These callbacks do not exempt provider code from that deletion gate.
 
 ### Cut over only after equivalence
 

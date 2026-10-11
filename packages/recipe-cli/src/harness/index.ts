@@ -120,7 +120,13 @@ export {
 export { handleExecutionTemplate } from './commands/execution-template.js';
 export { handleLast } from './commands/last.js';
 export { handleLaunch, type LaunchCommandOptions } from './commands/launch.js';
-export { handleLogs } from './commands/logs.js';
+export {
+  handleLogs,
+  type LogsCommandOptions,
+  type LogsViewRequest,
+  type LogsWindowRequest,
+  type LogsWindowResult,
+} from './commands/logs.js';
 export {
   handlePrepare,
   type PrepareCommandOptions,
