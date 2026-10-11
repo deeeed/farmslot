@@ -37,6 +37,11 @@ Launch Codex with its native `/goal`. For Claude, install the supplied
 [goal command](templates/goal.md) as the lane checkout's `.claude/commands/goal.md`, then set
 `goal_command` to `/goal`. Restore resumes the recorded session and leaves surviving panes intact.
 
+`lanes-status` observes without persisting bindings or acknowledging receipts. Existing lanes
+may configure `pane_id` and `observability_dir`. Unhooked native sessions held open by a foreground
+process can supply observational state; that state does not authorize transport or recovery.
+Unknown state is reported explicitly. Keep paused and farm-managed sessions outside recovery.
+
 ## Review
 
 Run `review --repo <owner/repo> --pr <n> --cwd <worktree> --report <REPORT.md>` for one round.
@@ -49,6 +54,10 @@ IDs in `reviews.clean_sessions`; fresh lanes start without a worker goal. Sessio
 bound to one canonical PR. Missing or changed identity, pending questions, queued input, or a
 timeout fails the round. Fresh subprocess fallback records prior findings and its continuity choice.
 Project config may choose reviewer argv commands. Missing output never approves.
+
+Configure `reviews.legacy_root` for existing PRs. Their canonical verdict files remain there until
+merge; do not copy historical rounds or start new state for them. Only new PRs use durable review
+state. A new review state always owns its verdicts exclusively, with no fallback to old approvals.
 
 Only the latest top-level `codex.md` and `claude.md` in the PR's review directory count.
 Their first two lines must be exactly:
@@ -82,28 +91,52 @@ toward the hard maximum.
 ## Validation Contract
 
 - Intermediate rounds: run the exact affected tests for the changed files, then `yarn prepush:quality`.
-- Final round: run the full `yarn quality` once on the final committed SHA.
+- Final round: run the full `yarn quality` once on the final committed SHA when lane rules permit it.
+- If full local quality needs a real or private tmux server that the lane may not start, accept
+  focused local gates plus green CI on the final committed SHA. Record the prohibited server cases,
+  focused commands, results and exact-head CI evidence. Do not start a server to satisfy local quality.
 
 Record commands, evidence, and measured test durations before another review. The loop stops only
-when the full `yarn quality` has been run once on the final committed SHA, required evidence passes,
-both latest reviews approve it, and CI is green. Never start or kill a real tmux server in tests.
+when the final validation rule is satisfied, required evidence passes, both latest reviews approve
+the final committed SHA, and CI is green. Never start or kill a real tmux server in tests.
 Use a private socket with teardown. Default tests take less than five seconds each and default
 suites less than five minutes; live proofs belong outside CI. Never rebuild shared dist under readers.
 
 ## Lead loop
 
-Use `heartbeat` to inspect lane state, missing nodes, protocol mismatches, PR gates, round 4 alarms,
-and approved PRs still unmerged. Use `attention <owner/repo>` with a `runs` hook returning run-list
-JSON. Failed, blocked, or stale active runs raise one alert per changed state and rearm after recovery.
+Use `heartbeat` to inspect lane state, missing nodes, protocol mismatches, PR verdicts/CI, round 4
+alarms and approved PRs still unmerged. It discovers PR references and GitHub PR URLs in lane reports
+and optional `reports` paths/globs. Existing PRs need no review-state migration. Configure project
+`heartbeat_hooks` for machine checks; these are names of existing argv hooks. Mark mutating names
+in `mutating_heartbeat_hooks`; `heartbeat --read-only` reports those as skipped. Errors stay visible
+without hiding other lane, hook or PR observations.
+
+Use `attention <owner/repo>` with a `runs` hook returning run-list JSON. Failed, blocked or active
+runs unchanged for 20 minutes alert with ticket, slot and error. Missing timestamps have age zero.
+Deduplicate by run ID plus status permanently, including after recovery or timestamp changes.
+An optional project `attention_seen_file` seeds acknowledgements read-only from legacy ID|status
+lines. `attention <owner/repo> --watch` waits at 120-second intervals until a new alert appears.
 
 Run `ready <owner/repo> <n> <sha> <REPORT.md>` to validate and write MERGE-READY.
 `merge-watch` is a dry run. `merge-watch --execute --watch` polls every minute and merges only
 repositories with `auto_merge: true`. An explicitly authorized project can set `merge_admin: true`
-for its existing GitHub approval override. Every readiness gate still applies. Require an open non-draft PR at the reported head, both latest
-approvals, at least one CI check, every check finished without failure, at least one successful check, no unresolved threads,
-confirmed mergeability, and a clean portability grep. The merge command pins the head SHA.
-Completed skipped or neutral path-filtered jobs are allowed alongside a successful check.
-Required checks must succeed. No empty-check or failed-check exception is implied by config.
+for its existing GitHub approval override. Every readiness gate still applies. Require an open PR
+at the reported head, both latest approvals, non-Vercel CI present and every check completed with
+SUCCESS/SKIPPED/NEUTRAL, no unresolved threads, confirmed mergeability and a clean portability scan.
+`ci.no_ci_repos` is the explicit absent-CI exception list; failures still block those repositories.
+Project `required_workflows` names require successful Actions runs at the exact head.
+`ci.workflow_skip_repos` or the read-only `ci.workflow_skip_file` waive workflow presence only.
+Optional `required_checks` still require named successes. Vercel is excluded from all CI gates.
+
+MERGE-READY markers may appear anywhere in configured reports, with a full SHA. One execution
+pass merges at most one PR, then exits so the next pass rereads mergeability. Drafts are marked
+ready only after all gates pass, followed by an exact-head recheck before merge. Conflicts alert
+once per head and never merge. Merged/closed heads are remembered and suppressed in later passes.
+Dry runs never mark drafts ready or write to GitHub. Merge commands pin the head SHA.
+
+Project `forbidden_patterns` and `portability_exclusions` are regex lists. Exclusions match added
+lines or their diff filenames, covering configured guard code, tests and examples. The built-in
+home-path scan honors the same exclusions. Keep exclusions scoped to those files or guard lines.
 
 Configure gateway update, node deploy, package sync, cleanup, or other project steps as named hooks.
 Run them with `hook <owner/repo> <name>`. Core code does not choose live checkouts or deployment nodes.

@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { paneSafety, processState, refusal, validateAnswer } from '../scripts/driver.mjs';
-import { nativeState, transcriptQuestion } from '../scripts/native-evidence.mjs';
+import {
+  paneSafety,
+  paneState,
+  processState,
+  refusal,
+  validateAnswer,
+} from '../scripts/driver.mjs';
+import { nativeState, transcriptQuestion, writeSentinel } from '../scripts/native-evidence.mjs';
 
 test('identity comes from process metadata, never rendered runner text', () => {
   for (const runner of ['claude', 'codex', 'cursor', 'gemini', 'grok']) {
@@ -137,6 +144,92 @@ test('durable hooks reject a stale reused pane and expose native question detail
     );
     assert.equal(transcriptQuestion(transcript).questions[0].question, 'Which option?');
   } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('read-only inspection reports late acceptance without writing its receipt', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-read-test-'));
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, {
+      TMUX_MODEL_DRIVER_READ_ONLY: '1',
+      TMUX_MODEL_DRIVER_SOCKET: 'read-test',
+      TMUX_MODEL_DRIVER_STATE_DIR: path.join(dir, 'state'),
+      TMUX_MODEL_DRIVER_OBSERVABILITY_DIR: dir,
+      TMUX_PANE_STATE_CURRENT_COMMAND: 'claude',
+      TMUX_PANE_STATE_CURRENT_PATH: dir,
+      TMUX_PANE_STATE_SESSION_NAME: 'fixture',
+      TMUX_PANE_STATE_PANE_TITLE: '',
+      TMUX_PANE_STATE_PANE_PID: '1',
+      TMUX_PANE_STATE_PROCESS_STARTED_AT: '0',
+      TMUX_PANE_STATE_TAIL_CAPTURE: '',
+    });
+    fs.mkdirSync(path.join(dir, 'state'));
+    fs.mkdirSync(path.join(dir, 'panes'));
+    const now = Date.now();
+    const digest = writeSentinel(dir, 'exact prompt', now - 1);
+    const hook = {
+      runner: 'claude',
+      tmuxPane: '%1',
+      session_id: 'fixture',
+      rootSessionId: 'fixture',
+      hook_event_name: 'UserPromptSubmit',
+      observedAt: now,
+      turnStartedAt: now,
+      turnActive: true,
+      runnerPromptDigest: digest,
+    };
+    fs.writeFileSync(path.join(dir, 'panes', '%251.json'), JSON.stringify(hook));
+    fs.writeFileSync(path.join(dir, 'hooks.jsonl'), JSON.stringify(hook) + '\n');
+    const key = createHash('sha256').update('read-test:%1:1:0').digest('hex');
+    const receipt = {
+      payload: 'exact prompt',
+      digest,
+      payload_hash: createHash('sha256').update('exact prompt').digest('hex'),
+      sent_at: now - 1,
+      session_id: 'fixture',
+      receipt_id: 'late',
+    };
+    const file = path.join(dir, 'state', key + '.json');
+    fs.writeFileSync(file, JSON.stringify(receipt));
+    const before = fs.readFileSync(file, 'utf8');
+    assert.equal(paneState('%1', 'claude').accepted.receipt_id, 'late');
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'state')), [key + '.json']);
+  } finally {
+    for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('unhooked observation reads the native session held open by the runner', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-native-read-test-'));
+  const saved = process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+  let fd;
+  try {
+    process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
+    const file = path.join(dir, 'rollout-fixture.jsonl');
+    const records = [
+      { type: 'session_meta', payload: { id: 'fixture' } },
+      {
+        type: 'event_msg',
+        timestamp: new Date().toISOString(),
+        payload: { type: 'task_complete', turn_id: 'done' },
+      },
+    ];
+    fs.writeFileSync(file, records.map(JSON.stringify).join('\n') + '\n');
+    fd = fs.openSync(file, 'r');
+    const meta = { pane_id: '%1', process_started_at: 0, runner_pids: [String(process.pid)] };
+    assert.equal(nativeState(meta, 'codex', dir).phase, 'idle');
+    assert.equal(nativeState(meta, 'codex', dir).source, 'native-session-read-only');
+    delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    assert.equal(nativeState(meta, 'codex', dir).phase, 'unknown');
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    if (saved === undefined) delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    else process.env.TMUX_MODEL_DRIVER_READ_ONLY = saved;
     fs.rmSync(dir, { recursive: true });
   }
 });

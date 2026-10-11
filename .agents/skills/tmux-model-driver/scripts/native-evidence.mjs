@@ -4,9 +4,13 @@ import path from 'node:path';
 
 import {
   buildCodexPromptProbeCommand,
+  buildCodexSessionBindingProbeCommand,
   buildCodexTurnStateProbeCommand,
+  buildRunnerOpenFileProbeCommand,
   parseCodexPromptProbe,
+  parseCodexSessionBindingProbe,
   parseCodexTurnStateProbe,
+  parseOpenFilePaths,
 } from '../../../../services/gateway/src/runners/codex-observability.ts';
 import {
   deriveRunnerActivity,
@@ -116,6 +120,39 @@ export function transcriptQuestion(transcriptPath) {
 
 export function nativeState(meta, runner, obsDir) {
   const bound = hookSnapshot(meta, runner, obsDir);
+  // Existing manual lanes have native transcripts but no installed hooks. Observation only:
+  // require kernel ownership of one rollout file, never guess from pane text or newest files.
+  if (!bound && runner === 'codex' && process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1') {
+    const paths = new Set();
+    for (const pid of meta.runner_pids || []) {
+      for (const file of runProbe(buildRunnerOpenFileProbeCommand(pid), parseOpenFilePaths)) {
+        if (/\/rollout-[^/]+\.jsonl$/.test(file)) paths.add(file);
+      }
+    }
+    if (paths.size === 1) {
+      const binding = runProbe(
+        buildCodexSessionBindingProbeCommand([...paths][0]),
+        parseCodexSessionBindingProbe,
+      );
+      if (binding.status === 'matched') {
+        const turn = runProbe(
+          buildCodexTurnStateProbeCommand(binding.sessionId, binding.sessionPath),
+          parseCodexTurnStateProbe,
+        );
+        if (turn.status === 'matched') {
+          return {
+            phase: turn.state === 'active' ? 'busy' : 'idle',
+            source: 'native-session-read-only',
+            session_id: binding.sessionId,
+            session_path: binding.sessionPath,
+            turn_token: turn.turnId,
+            observed_at: turn.observedAt,
+            question: transcriptQuestion(binding.sessionPath),
+          };
+        }
+      }
+    }
+  }
   if (!bound)
     return {
       phase: 'unknown',

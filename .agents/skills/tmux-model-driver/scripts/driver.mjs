@@ -62,6 +62,7 @@ function metadata(pane) {
   const pid = override('PANE_PID', pane_pid);
   let foreground = '';
   let started = 0;
+  const runnerPids = [];
   if (pid) {
     const row = execFileSync('ps', ['-o', 'tpgid=,lstart=', '-p', pid], {
       encoding: 'utf8',
@@ -79,6 +80,7 @@ function metadata(pane) {
           const fields = line.trim().split(/\s+/);
           const command = fields.slice(6).join(' ');
           if (runners.has(processState({ current_command: '', foreground_commands: [command] }))) {
+            runnerPids.push(fields[0]);
             started = Math.max(started, Date.parse(fields.slice(1, 6).join(' ')) || started);
           }
           return command;
@@ -95,6 +97,7 @@ function metadata(pane) {
     pane_pid: pid,
     process_started_at: Number(process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT ?? started),
     foreground_commands: override('FOREGROUND_COMMANDS', foreground).split('\n').filter(Boolean),
+    runner_pids: runnerPids,
   };
 }
 
@@ -234,7 +237,7 @@ export function paneState(pane, expectedRunner) {
         accepted.receipt_id = receiptIdentity(receipt);
         // An inspection may finish after another process has acknowledged or sent.
         // Persist only under the shared mutation lock and for the same receipt.
-        if (acquireLock(files)) {
+        if (process.env.TMUX_MODEL_DRIVER_READ_ONLY !== '1' && acquireLock(files)) {
           try {
             const current = readReceipt(files);
             if (

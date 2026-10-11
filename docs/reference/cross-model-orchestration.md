@@ -17,6 +17,9 @@ All lane messages use `tmux-model-driver`. The runner adapter owns launch syntax
 and structured acceptance signals. Questions and queued input stop ordinary delivery.
 `restore` recovers missing sessions, leaving surviving sessions alone.
 `reserve` and `transfer` persist ownership changes without reapplying old config reservations.
+Status reads neither persist lane bindings nor acknowledge delivery receipts. Configure existing
+pane IDs and hook directories in `pane_id` and `observability_dir`; unknown native state stays
+explicit. A read-only native transcript probe can observe manual lanes without installing hooks.
 
 ## Review and merge
 
@@ -38,9 +41,25 @@ Both approvals freeze the head. `ready` checks CI and the merge gate, then write
 `MERGE-READY owner/repo#number <SHA>` to REPORT.md. Later work goes under `FOLLOW-UPS`.
 `merge-watch` defaults to a dry run. Execution requires project permission, the matching
 head, both approvals, at least one finished CI check, all checks green, resolved review
-threads, and a clean portability scan. `heartbeat` exposes lane state, missing nodes,
+threads, and a clean portability scan. Vercel is excluded; completed SUCCESS/SKIPPED/NEUTRAL
+checks pass. `ci.no_ci_repos` explicitly lists absent-CI exceptions. Project `required_workflows`
+requires successful Actions runs at that head; `ci.workflow_skip_repos` and `ci.workflow_skip_file`
+waive only workflow presence. One pass merges at most one PR. Drafts are readied after the gate
+and rechecked; conflicts alert once per head, merged/closed heads are suppressed. Markers may be
+embedded in configured reports. Portability exclusions match added lines or filenames, including
+the built-in home-path scan.
+
+Existing PRs keep their legacy verdict files under `reviews.legacy_root` until merged. Never
+migrate historical rounds. New review state takes exclusive ownership of its latest verdicts.
+`heartbeat` discovers PR references from reports and exposes lane state, missing nodes,
 review escalation, and approved PRs waiting to merge. `attention` reads the project's
-`runs` hook and reports failed, blocked, or stale runs. Hooks execute bounded argv commands.
+`runs` hook and reports failed, blocked, or stale runs with ticket, slot and error. It remembers
+run ID/status pairs permanently and may read a legacy `attention_seen_file`. `attention --watch`
+waits for new alerts. Hooks execute bounded argv commands. Project `heartbeat_hooks` calls existing
+machine scripts; `heartbeat --read-only` skips names listed in `mutating_heartbeat_hooks`.
+
+Final review validation uses full local quality when permitted. If that suite requires a real
+or private tmux server the lane cannot start, record focused local gates plus exact-head green CI.
 
 ## Removed capability map
 
