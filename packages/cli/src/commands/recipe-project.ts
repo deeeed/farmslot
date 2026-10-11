@@ -208,7 +208,7 @@ export function registerProjectExecutionCommand(
           {
             code: 'CLI_INVALID_OPTION_VALUE',
             userAction:
-              'use --library name=path for a project, or --project-root <path> for standalone execution',
+              'use --library name=path for a project, or --project-root <path> --action-manifest <path> --artifacts-dir <path> for standalone execution',
           },
         );
       }
