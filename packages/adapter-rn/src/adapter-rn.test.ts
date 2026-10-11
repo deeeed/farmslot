@@ -216,8 +216,8 @@ test('installs optional bridge files and validates the dev guard contract', asyn
 
     const hud = await readFile(path.join(root, 'src/farmslot/RecipeHud.tsx'), 'utf-8');
     assert.doesNotMatch(hud, /numberOfLines/u);
-    assert.match(hud, /StyleProp/u);
-    assert.match(hud, /formatBadge/u);
+    assert.match(hud, /export \{ RecipeHud \} from '@farmslot\/adapter-rn\/recipe-hud'/u);
+    assert.match(hud, /RecipeHudOptions/u);
 
     const doctor = await runExpoRecipeDoctor({ projectRoot: root });
     assert.equal(doctor.status, 'pass');

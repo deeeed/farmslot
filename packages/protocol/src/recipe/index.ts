@@ -41,6 +41,15 @@ export {
   validateResolvedRecipeActionNode,
 } from './document.js';
 export {
+  HUD_INTENT_LINE_HEIGHT,
+  HUD_INTENT_MAX_LINES,
+  HUD_PANEL_BOUNDS,
+  hudIntentDisplay,
+  hudSecondaryText,
+  RECIPE_INTENT_MAX_LENGTH,
+  RECIPE_INTENT_WARN_LENGTH,
+} from './hud-intent.js';
+export {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,
 } from './manifest.js';

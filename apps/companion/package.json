@@ -61,6 +61,7 @@
     "@babel/runtime": "^7.29.2",
     "@expo/log-box": "^57.0.2",
     "@expo/vector-icons": "^15.0.3",
+    "@farmslot/adapter-rn": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",
@@ -103,7 +104,6 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
-    "@farmslot/adapter-rn": "workspace:*",
     "@farmslot/recipe-runner": "workspace:*",
     "@types/babel__core": "^7",
     "@types/node": "^25.9.1",

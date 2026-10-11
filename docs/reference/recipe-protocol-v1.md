@@ -67,6 +67,34 @@ The main and teardown graphs are acyclic, reachable, and disjoint. Bounded polli
 
 `intent` is shown in HUD and trace evidence. It explains why the step matters to a human, not how the adapter implements it.
 
+Write one plain sentence. Validation warns above 80 Unicode code points and fails
+above 120, counted after trimming surrounding whitespace. These checks apply to authoring lint/conformance validation. Warnings are
+nonfatal; errors fail validation. Execution and retained-artifact verification
+keep their existing v1 behavior, so old recorded evidence remains readable.
+One plain sentence is authoring guidance, not a new grammar parser. Existing intent checks also reject action names,
+selectors and other implementation-only copy.
+
+HUDs preserve the full intent until platform layout wraps it, show at most two
+lines, and use a trailing ellipsis only when more than two lines would be needed.
+The shared intent display policy limits native panels to 360 by 88 logical pixels
+and DOM cards to 360 by 144 CSS pixels, further bounded by the viewport.
+CDP bottom-bar and docked-bottom modes have fixed maximums of 960 by 144 CSS
+pixels while retaining their existing position/space-reservation behavior. Auxiliary
+HUD copy cannot enlarge the panel across the application.
+
+#### Public surface
+
+The existing `farmslot recipe validate` and recipe conformance path emit these
+findings; there are no new CLI flags. The additive `@farmslot/protocol/recipe`
+display helper and policy constants are consumed by Companion's shared native
+HUD, the web adapter and the runner CDP HUD. Native projects consume the shared
+renderer through `@farmslot/adapter-rn/recipe-hud`; CLI consumers need no native
+runtime. Harnesses such as mm-harness inherit this policy through the runner and
+adapter, retaining `app.hud` as the extension point. Custom app-owned renderers
+must adopt the shared helper explicitly. Existing copied HUDs can adopt the
+shared native export through a deliberate scaffold update; no farm files are
+overwritten by this change. Recipe schema version stays v1.
+
 For UI actions, prefer `"Open the purchase path for the selected asset."` over `"Press buy"` or a selector name. Selectors, routes, keys, and test IDs stay in action parameters.
 
 ## Parameters and outputs

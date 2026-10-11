@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Configure gate requests, backlog reviews, and PR execution with runner, model, effort, and WARM/COLD choices. Review sequences preserve selections and lineage; missing or ambiguous WARM context blocks submission without changing mode.
+- Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 
 - Review a publish gate on the phone: one screen, reached from run detail and the decision workspace, shows the package, each reviewer's latest verdict, the acceptance criteria with their evidence, and the gate's actions. Approve-publish stays disabled, with the reason, while a criterion has no verdict or a latest review is not an approval, here, on the Gate tab and for worker packets; an unjudged criterion also withholds the review overrides. Hold and review requests stay available. Criterion evidence opens in the artifact viewer and swipes through that criterion's files, and the criteria header turns red while any criterion is unassessed. An action is sent for the package you confirmed and refused if the package changed meanwhile; the gate re-reads after the app reconnects, and text evidence loads at most its first 200,000 bytes.
 - Choose an available candidate before using a slot decision; improvement Apply writes and validates the proposal and keeps refused changes pending.
