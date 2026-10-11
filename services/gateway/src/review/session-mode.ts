@@ -1,5 +1,6 @@
 import {
   parseGitHubRef,
+  type ReviewGatePayload,
   type ReviewMode,
   type ReviewSessionRefusalReason,
   type Run,
@@ -132,6 +133,47 @@ export function resetWarmReviewerSessionsForTest(): void {
   warmSessions.clear();
 }
 
+type PrimaryReviewEvidence = Pick<ReviewGatePayload, 'session' | 'reviewSnapshot'> &
+  Partial<Pick<ReviewGatePayload, 'repo' | 'prNumber'>>;
+type PrimaryReviewEvidenceScope = Pick<
+  WarmReviewerScope,
+  'reviewId' | 'repository' | 'prNumber'
+> & {
+  runnerSessionId: string;
+};
+
+/** Standalone reviews retain their immutable result separately from publication reviews. */
+export function primaryReviewedHeadForSession(
+  run: Run,
+  scope: PrimaryReviewEvidenceScope,
+): string | null {
+  if (run.flowType !== 'review-pr') return null;
+  const evidence: PrimaryReviewEvidence[] = [
+    ...(run.reviewResult ? [run.reviewResult] : []),
+    ...[...(run.decisions ?? [])]
+      .reverse()
+      .flatMap((decision) => (decision.payload?.kind === 'review' ? [decision.payload] : [])),
+  ];
+  const matching = evidence.find((result) => {
+    const trace = result.session;
+    const snapshot = result.reviewSnapshot;
+    const repository = result.repo ?? trace?.repository;
+    const prNumber = result.prNumber ?? trace?.prNumber;
+    return (
+      trace?.reviewId === scope.reviewId &&
+      trace.sessionId === scope.runnerSessionId &&
+      ['fresh', 'resumed'].includes(trace.continuity) &&
+      repository?.toLowerCase() === scope.repository.toLowerCase() &&
+      prNumber === scope.prNumber &&
+      (!trace.repository || trace.repository.toLowerCase() === scope.repository.toLowerCase()) &&
+      (!trace.prNumber || trace.prNumber === scope.prNumber) &&
+      snapshot?.source !== 'unavailable' &&
+      !!snapshot?.headSha
+    );
+  });
+  return matching?.reviewSnapshot?.headSha ?? null;
+}
+
 /** Recover only completed reviewer contexts with matching PR/head verdict provenance. */
 export function persistedWarmReviewerSession(
   scope: WarmReviewerScope,
@@ -163,24 +205,38 @@ export function persistedWarmReviewerSession(
         candidate.reviewedHeadSha &&
         candidate.reviewerSessionId,
     );
-  if (!review?.reviewedHeadSha || !review.reviewerSessionId || !run.slotId) return null;
-  const context = [...(run.agentContexts ?? [])]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.role === 'review' &&
-        candidate.reviewId === scope.reviewId &&
-        candidate.runner === scope.runner &&
-        candidate.status === 'complete' &&
-        candidate.reviewResultValidatedAt &&
-        (candidate.runnerSessionCapturedAt || candidate.nativeSession?.acceptedAt) &&
-        candidate.runnerSessionId === review.reviewerSessionId &&
-        ((candidate.runnerSessionPath && candidate.target?.window) ||
-          (candidate.nativeSession &&
-            !candidate.nativeSession.releasedAt &&
-            !candidate.nativeSession.recovery)),
-    );
+  if (!run.slotId) return null;
+  const contexts = [...(run.agentContexts ?? [])].reverse().filter(
+    (candidate) =>
+      candidate.role === 'review' &&
+      candidate.reviewId === scope.reviewId &&
+      candidate.runner === scope.runner &&
+      candidate.status === 'complete' &&
+      candidate.reviewResultValidatedAt &&
+      (candidate.runnerSessionCapturedAt || candidate.nativeSession?.acceptedAt) &&
+      candidate.runnerSessionId &&
+      (review
+        ? candidate.runnerSessionId === review.reviewerSessionId
+        : primaryReviewedHeadForSession(run, {
+            ...scope,
+            runnerSessionId: candidate.runnerSessionId,
+          })) &&
+      ((candidate.runnerSessionPath && candidate.target?.window) ||
+        (candidate.nativeSession &&
+          !candidate.nativeSession.releasedAt &&
+          !candidate.nativeSession.recovery)),
+  );
+  if (new Set(contexts.map((candidate) => candidate.runnerSessionId)).size > 1)
+    throw new WarmReviewRefusal('missing-session', 'the reviewId has ambiguous session provenance');
+  const context = contexts[0];
   if (!context) return null;
+  const reviewedHeadSha =
+    review?.reviewedHeadSha ??
+    primaryReviewedHeadForSession(run, {
+      ...scope,
+      runnerSessionId: context.runnerSessionId!,
+    });
+  if (!reviewedHeadSha) return null;
   return {
     ...scope,
     runId: run.id,
@@ -193,8 +249,8 @@ export function persistedWarmReviewerSession(
     slotId: run.slotId,
     runnerSessionId: context.runnerSessionId!,
     runnerSessionPath: context.runnerSessionPath ?? null,
-    lastLoopNumber: context.reviewLoopNumber ?? review.loopNumber,
-    lastReviewedHeadSha: review.reviewedHeadSha,
+    lastLoopNumber: context.reviewLoopNumber ?? review?.loopNumber ?? 1,
+    lastReviewedHeadSha: reviewedHeadSha,
     forensicOnly: false,
     busy: false,
   };

@@ -6,6 +6,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { primaryReviewedHeadForSession } from '../review/session-mode.js';
 import {
   runnerRetainedSessionHandoff,
   runnerSupportsNativeTaskReuse,
@@ -170,6 +171,12 @@ export function resolveRepeatReviewResumePlan(
     return { kind: 'refused', reason: 'effort-mismatch' };
   const reviewedHead = context.priorReviewedHeadSha;
   const headProvenance =
+    primaryReviewedHeadForSession(prior, {
+      reviewId,
+      runnerSessionId: reviewer.runnerSessionId,
+      repository: context.repository,
+      prNumber: context.prNumber,
+    }) === reviewedHead ||
     prior.decisions?.some((decision) => {
       const payload = decision.payload as
         | {

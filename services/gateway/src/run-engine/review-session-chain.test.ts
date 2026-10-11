@@ -107,6 +107,41 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
   });
 });
 
+test('an artifact-only primary review resumes from its immutable result without a posting gate', () => {
+  const { current, prior } = runs();
+  const payload = prior.decisions[0].payload;
+  assert.equal(payload?.kind, 'review');
+  if (payload?.kind !== 'review') throw new Error('fixture review result missing');
+  const standalone: Run = {
+    ...prior,
+    decisions: [],
+    reviewResult: {
+      ...payload,
+      session: {
+        mode: 'cold',
+        continuity: 'fresh',
+        reviewId: 'review-lineage-1',
+        sessionId: 'session-1',
+        repository: 'deeeed/farmslot',
+        prNumber: 1,
+        lastReviewedHeadSha: '1111111',
+      },
+    },
+  };
+  assert.equal(resolveRepeatReviewResumePlan(current, standalone, 'codex').kind, 'resume');
+  const foreign: Run = {
+    ...standalone,
+    reviewResult: {
+      ...standalone.reviewResult!,
+      session: { ...standalone.reviewResult!.session!, repository: 'foreign/repo' },
+    },
+  };
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, foreign, 'codex'), {
+    kind: 'refused',
+    reason: 'missing-session',
+  });
+});
+
 test('reviewer continuity does not cross models or automation owners', () => {
   const { current, prior } = runs();
   assert.equal(

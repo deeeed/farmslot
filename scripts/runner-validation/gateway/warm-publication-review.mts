@@ -20,6 +20,8 @@ const reviewModulePath =
   process.env.FARMSLOT_WARM_PROOF_REVIEW_MODULE ??
   '../../../services/gateway/src/review/review-agent.js';
 const { runReviewAgent } = await import(reviewModulePath);
+const { resetWarmReviewerSessionsForTest, resolveWarmReviewerSession } =
+  await import('../../../services/gateway/src/review/session-mode.js');
 
 const [phase, fixture] = process.argv.slice(2);
 assert.ok(fixture);
@@ -254,6 +256,41 @@ if (phase === 'first') {
   );
 }
 after = getRun(runId)!;
+// Exercise the same verified session as standalone result provenance, with no publication rows
+// or in-memory registration. IDs, captured head and session evidence come from the real review.
+const standalone = {
+  ...after,
+  flowType: 'review-pr' as const,
+  decisions: [],
+  engineState: { ...after.engineState!, publishGate: undefined },
+  reviewResult: {
+    recommendation: 'approve',
+    reviewMd: result.artifactPaths.find((file: string) => file.endsWith('/review.md')) ?? '',
+    lineComments: [],
+    reviewSnapshot: result.reviewSnapshot,
+    session: result.session,
+  },
+};
+resetWarmReviewerSessionsForTest();
+const recoveredPrimary = resolveWarmReviewerSession(
+  {
+    runId: runId,
+    reviewId: priorReviewScope,
+    project: after.project,
+    ownerPrincipalId: after.nativeOwnerPrincipalId ?? after.createdByPrincipalId ?? null,
+    transport: 'tmux',
+    taskDir,
+    artifactScope: priorReviewScope,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    repository: result.session.repository,
+    prNumber: result.session.prNumber,
+  },
+  [standalone],
+);
+assert.equal(recoveredPrimary?.runnerSessionId, context.runnerSessionId);
+assert.equal(recoveredPrimary?.lastReviewedHeadSha, result.reviewSnapshot.headSha);
 assert.equal(
   context.runner,
   after.metrics.runner,

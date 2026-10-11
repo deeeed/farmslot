@@ -26,6 +26,25 @@ const prior = {
   decisions: [],
   metrics: { runner: 'codex', model: 'gpt-6-astra' },
   effort: 'high',
+  agentContexts: [
+    {
+      id: 'review-context',
+      reviewId: 'review-lineage',
+      role: 'review',
+      label: 'Review',
+      runId: 'prior-review',
+      slotId: 'slot-1',
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      status: 'complete',
+      reviewResultValidatedAt: 'validated',
+      runnerSessionCapturedAt: 'captured',
+      runnerSessionId: 'prior-session',
+      runnerSessionPath: '/tmp/reviewer.jsonl',
+      target: { session: 'slot-1', window: 'review-window', target: 'slot-1:review-window' },
+    },
+  ],
   reviewResult: {
     kind: 'review',
     prNumber: 42,
@@ -118,8 +137,7 @@ mock.module('../../run-engine/orchestrator.js', {
 
 const { runRereviewLatestHead } = await import('./rereview.js');
 const { assertPrimaryReviewContext } = await import('../../run-engine/review-plan.js');
-const { registerWarmReviewerSession, resetWarmReviewerSessionsForTest } =
-  await import('../../review/session-mode.js');
+const { resetWarmReviewerSessionsForTest } = await import('../../review/session-mode.js');
 
 beforeEach(() => {
   runs.clear();
@@ -128,27 +146,6 @@ beforeEach(() => {
   ancestor = true;
   releaseAncestry = () => {};
   resetWarmReviewerSessionsForTest();
-  registerWarmReviewerSession({
-    runId: prior.id,
-    reviewId: 'review-lineage',
-    project: prior.project,
-    ownerPrincipalId: null,
-    transport: 'tmux',
-    taskDir: '/tmp/review',
-    artifactScope: 'review-lineage',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-    repository: 'owner/repo',
-    prNumber: 42,
-    contextId: 'review-context',
-    windowName: 'review-window',
-    slotId: 'slot-1',
-    runnerSessionId: 'prior-session',
-    runnerSessionPath: '/tmp/reviewer.jsonl',
-    lastLoopNumber: 1,
-    lastReviewedHeadSha: priorHead,
-  });
 });
 
 test('a retried click during ancestry lookup reuses the WARM child with its primary lineage', async () => {
@@ -171,6 +168,67 @@ test('a retried click during ancestry lookup reuses the WARM child with its prim
   ]);
 });
 
+test('a standalone posting decision supplies retained provenance without a publication registry', async () => {
+  runs.set(prior.id, {
+    ...prior,
+    reviewResult: undefined,
+    decisions: [
+      {
+        id: 'posting',
+        type: 'engine_review_posting',
+        title: 'Review',
+        description: 'Head moved',
+        actions: [],
+        createdAt: prior.createdAt,
+        payload: { ...prior.reviewResult!, kind: 'review', repo: 'owner/repo', prNumber: 42 },
+      },
+    ],
+  });
+  const click = runRereviewLatestHead({ runId: prior.id });
+  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseAncestry();
+  const result = await click;
+  assert.equal(result.mode, 'warm-handoff');
+  assert.equal(
+    runs.get(result.runId!)?.reviewContext?.reviewLineages[0]?.reviewId,
+    'review-lineage',
+  );
+});
+
+test('ambiguous standalone session evidence refuses before replacing the parent', async () => {
+  runs.set(prior.id, {
+    ...prior,
+    agentContexts: [
+      ...prior.agentContexts!,
+      { ...prior.agentContexts![0], id: 'other-context', runnerSessionId: 'other-session' },
+    ],
+    decisions: [
+      {
+        id: 'other-posting',
+        type: 'engine_review_posting',
+        title: 'Review',
+        description: 'Head moved',
+        actions: [],
+        createdAt: prior.createdAt,
+        payload: {
+          ...prior.reviewResult!,
+          kind: 'review',
+          repo: 'owner/repo',
+          prNumber: 42,
+          session: { ...prior.reviewResult!.session!, sessionId: 'other-session' },
+        },
+      },
+    ],
+  });
+  const click = runRereviewLatestHead({ runId: prior.id });
+  const refused = assert.rejects(click, /ambiguous session provenance/);
+  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseAncestry();
+  await refused;
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'blocked');
+});
+
 test('missing or ambiguous lineage preserves the parent without creating a child', async () => {
   const result = prior.reviewResult!;
   for (const state of [
@@ -186,6 +244,7 @@ test('missing or ambiguous lineage preserves the parent without creating a child
 
 test('unavailable retained session refuses before superseding the parent', async () => {
   resetWarmReviewerSessionsForTest();
+  runs.set(prior.id, { ...prior, agentContexts: [] });
   const click = runRereviewLatestHead({ runId: prior.id });
   const refused = assert.rejects(click, /no verified retained session/);
   while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
