@@ -37,7 +37,7 @@ import {
   shellQuoteArg,
   targetPath,
 } from './parse-args.js';
-import { resolveLibrarySources, resolveRunRecipeArg } from './recipe-library.js';
+import { type ResolvedRecipeInvocation, resolveRecipeInvocation } from './recipe-library.js';
 import { type ProofDocument, validateRuntimeProofPlan } from './runtime-proof.js';
 
 // Static validation sees parameters as the runner's lenient view: exact
@@ -249,20 +249,18 @@ export async function validateRunRecipeStatic(
   options: CliOptions,
   params: Record<string, unknown> = {},
   resolvedSources?: RecipeLibrarySource[],
+  resolvedInvocation?: ResolvedRecipeInvocation,
 ): Promise<RunRecipeStaticValidation> {
-  // Resolve library sources first so resolveRunRecipeArg can probe personal and team
-  // recipe dirs with correct precedence before the canonical packaged library.
-  let librarySources =
-    resolvedSources ?? (await resolveLibrarySources(catalog, optionStrings(options, 'library')));
-  const resolved = await resolveRunRecipeArg(catalog, recipeArg, adapter, librarySources);
-  const recipeFile = 'recipeFile' in resolved ? resolved.recipeFile : path.resolve(recipeArg);
-  if ('recipeFile' in resolved && !resolved.ref && !resolvedSources) {
-    librarySources = await resolveLibrarySources(
+  const { resolved, librarySources } =
+    resolvedInvocation ??
+    (await resolveRecipeInvocation(
       catalog,
+      recipeArg,
+      adapter,
       optionStrings(options, 'library'),
-      recipeFile,
-    );
-  }
+      resolvedSources,
+    ));
+  const recipeFile = 'recipeFile' in resolved ? resolved.recipeFile : path.resolve(recipeArg);
   const empty = {
     recipe: undefined,
     recipeFile,

@@ -4,7 +4,6 @@
 // reads the host's catalog over the same library sources and renders actions
 // with one catalog renderer and one detail renderer.
 
-import fs from 'node:fs';
 import path from 'node:path';
 
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
@@ -46,6 +45,7 @@ import {
   listRunnableRecipes,
   resolveCommandManifest,
   resolveLibrarySources,
+  resolveRecipeInvocation,
 } from '../recipe-library.js';
 import { EXIT } from '../shared.js';
 
@@ -683,14 +683,20 @@ export async function handleDescribeRecipe(
   const json = optionFlag(options, 'json');
   const { adapter } = resolveAdapter(options);
   const libraryEntries = optionStrings(options, 'library');
-  const directRecipePath = path.resolve(recipeArg);
-  const librarySources = await resolveLibrarySources(
+  const { resolved, librarySources } = await resolveRecipeInvocation(
     catalog,
+    recipeArg,
+    adapter,
     libraryEntries,
-    fs.existsSync(directRecipePath) ? directRecipePath : undefined,
     commandOptions.librarySources,
   );
-  const result = await describeRunnableRecipe(catalog, recipeArg, adapter, librarySources);
+  const result = await describeRunnableRecipe(
+    catalog,
+    recipeArg,
+    adapter,
+    librarySources,
+    resolved,
+  );
   const targetEntry = optionString(options, 'target');
   const replayTarget = targetEntry ? path.resolve(targetEntry) : undefined;
   const contextFlags = [

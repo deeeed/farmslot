@@ -22,7 +22,7 @@ import {
 } from './execution-provenance.js';
 import { type CliOptions, optionString } from './parse-args.js';
 import { recipeOutputRoots } from './paths.js';
-import { resolveLibrarySources, resolveRunRecipeArg } from './recipe-library.js';
+import { type ResolvedRecipeInvocation, resolveRecipeInvocation } from './recipe-library.js';
 import { validateRunRecipeStatic } from './recipe-validation.js';
 import type { ConsoleAllowlist } from './run-diagnostics.js';
 import {
@@ -62,10 +62,8 @@ export async function recipeConformanceIdentity(
   return resolvedConformanceIdentity(options, await resolveConformanceInputs(catalog, options));
 }
 
-type ResolvedConformanceInvocation = RecipeConformanceOptions['recipes'][number] & {
-  recipeFile?: string;
-  librarySources: RecipeLibrarySource[];
-};
+type ResolvedConformanceInvocation = RecipeConformanceOptions['recipes'][number] &
+  ResolvedRecipeInvocation & { recipeFile?: string };
 
 interface ConformanceInputs {
   invocations: ResolvedConformanceInvocation[];
@@ -81,18 +79,16 @@ async function resolveConformanceInputs(
   if (!adapter) throw new Error('Conformance requires a resolved adapter.');
   const invocations = await Promise.all(
     options.recipes.map(async (invocation) => {
-      const resolved = await resolveRunRecipeArg(
+      const resolution = await resolveRecipeInvocation(
         catalog,
         invocation.recipe,
         adapter,
+        undefined,
         options.librarySources,
       );
-      const recipeFile = 'recipeFile' in resolved ? resolved.recipeFile : undefined;
-      const librarySources =
-        recipeFile && !('ref' in resolved)
-          ? await resolveLibrarySources(catalog, undefined, recipeFile, options.librarySources)
-          : options.librarySources;
-      return { ...invocation, recipeFile, librarySources };
+      const recipeFile =
+        'recipeFile' in resolution.resolved ? resolution.resolved.recipeFile : undefined;
+      return { ...invocation, ...resolution, recipeFile };
     }),
   );
   const librarySources = new Map<string, RecipeLibrarySource>();
@@ -276,6 +272,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
           cli,
           invocation.params,
           invocation.librarySources,
+          invocation,
         );
         if (validated.usageError || validated.errorCount > 0) {
           checks.push({

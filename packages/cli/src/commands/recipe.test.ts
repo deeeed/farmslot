@@ -660,7 +660,7 @@ for (const flag of ['--list', '--describe'] as const) {
   });
 }
 
-for (const mode of ['plan', 'run', 'untrusted'] as const) {
+for (const mode of ['describe', 'plan', 'run', 'untrusted'] as const) {
   test(`public project ${mode} includes the adjacent task library before declared libraries`, (t) => {
     const root = declaredLibraryFixture(t);
     const task = path.join(root, 'task');
@@ -668,7 +668,7 @@ for (const mode of ['plan', 'run', 'untrusted'] as const) {
     fs.mkdirSync(localRecipes, { recursive: true });
     const child = JSON.parse(fs.readFileSync(path.join(root, 'recipe.json'), 'utf8'));
     child.workflow.nodes.effect.cmd = 'printf local > artifacts/effect';
-    const childName = mode === 'plan' ? 'task-only' : 'library-only';
+    const childName = mode === 'plan' || mode === 'describe' ? 'task-only' : 'library-only';
     fs.writeFileSync(path.join(localRecipes, `${childName}.recipe.json`), JSON.stringify(child));
     const file = path.join(task, 'recipe.json');
     fs.writeFileSync(
@@ -698,8 +698,8 @@ for (const mode of ['plan', 'run', 'untrusted'] as const) {
     };
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     const flags =
-      mode === 'plan'
-        ? ['--plan']
+      mode === 'plan' || mode === 'describe'
+        ? [`--${mode}`]
         : mode === 'untrusted'
           ? ['--source-trust', 'untrusted', '--source-kind', 'task']
           : [];
@@ -708,10 +708,23 @@ for (const mode of ['plan', 'run', 'untrusted'] as const) {
     if (mode === 'untrusted') {
       assert.notEqual(result.status, 0);
       assert.equal(output.error.code, 'RECIPE_TRUST_REQUIRED');
+      assert.ok(
+        output.error.details.blocked.some(
+          (node: { action: string; source: string }) =>
+            node.action === 'command' && node.source === 'task',
+        ),
+        JSON.stringify(output.error.details.blocked),
+      );
       assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
       return;
     }
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    if (mode === 'describe') {
+      assert.deepEqual(output.recipe.unresolvedRecipes, []);
+      assert.ok(output.recipe.nestedRecipes.includes(childName));
+      assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+      return;
+    }
     assert.equal(output.status, 'pass');
     if (mode === 'plan') {
       assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
