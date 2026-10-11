@@ -26,6 +26,8 @@ let claimDuringPaneProbe = false;
 let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
 let claimAfterReap = false;
+let claimDuringScaffolding = false;
+let scaffoldingCopyFails = false;
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -149,6 +151,31 @@ mock.module('../../fleet/slot-storage-cleanup.js', {
     },
   },
 });
+const realScaffolding = await import('../../fleet/slot-scaffolding.js');
+mock.module('../../fleet/slot-scaffolding.js', {
+  namedExports: {
+    ...realScaffolding,
+    excludeSlotScaffolding: async () => true,
+    archiveSlotScaffolding: async (
+      _vars: unknown,
+      _project: unknown,
+      options: { beforeRemove: () => Promise<void>; destination: string },
+    ) => {
+      events.push('scaffolding-copy');
+      if (claimDuringScaffolding)
+        slotRow = {
+          ...slotRow,
+          current_run_id: 'incoming',
+          lifecycle: 'busy',
+          phase: 'working',
+        };
+      if (scaffoldingCopyFails) throw new Error('fixture archive transfer failed');
+      await options.beforeRemove();
+      events.push('scaffolding-remove');
+      return { directory: options.destination, roots: 1 };
+    },
+  },
+});
 const realTmux = await import('../../core/tmux.js');
 mock.module('../../core/tmux.js', {
   namedExports: { ...realTmux, resolveTmuxSession: async () => 'mm-1' },
@@ -193,6 +220,8 @@ beforeEach(async () => {
   claimAfterTaskClean = false;
   hasMirrorArtifacts = false;
   claimAfterReap = false;
+  claimDuringScaffolding = false;
+  scaffoldingCopyFails = false;
 
   for (const [id, status] of [
     ['incoming', 'monitoring'],
@@ -420,6 +449,20 @@ test('a claim during artifact collection refuses task deletion and storage clean
   assert.equal(slotRow.current_run_id, 'incoming');
   assert.equal(slotRow.slot_epoch, 2);
 });
+
+for (const copyFails of [false, true])
+  test(`an owner change during scaffolding copy leaves the new owner intact, copyFails=${copyFails}`, async () => {
+    claimDuringScaffolding = true;
+    scaffoldingCopyFails = copyFails;
+    await assert.rejects(slotRelease({ slotId: SLOT_ID }, emit), /non-terminal run incoming/);
+    assert.ok(events.includes('scaffolding-copy'));
+    assert.ok(!events.includes('scaffolding-remove'));
+    assert.ok(!events.includes('task-clean'));
+    assert.ok(!events.includes('storage-clean'));
+    assert.equal(slotRow.current_run_id, 'incoming');
+    assert.equal(slotRow.lifecycle, 'busy');
+    assert.equal(slotRow.phase, 'working');
+  });
 
 test('a claim during task deletion refuses the following storage cleanup', async () => {
   slotRow.task_file = '.task/dev/proof/TASK.md';
