@@ -31,6 +31,8 @@ import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js
 import { trimRunForList } from '../../runs/list-trim.js';
 import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
 
+import { readRunRecordedEvidence } from './evidence-review.js';
+
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
   return enrichDecisionsWithGateSummary(
@@ -159,6 +161,37 @@ export async function runRecipeRunsForRun(
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const enrichedRun = await attachLiveRecipeContext(run);
   const recipeRuns = await listRecipeRunArtifactGroupsForRun(enrichedRun);
-  const selectedRecipeRunId = selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
-  return { recipeRuns, selectedRecipeRunId };
+  const requested = params.recipeRunId
+    ? recipeRuns.find((group) => group.id === params.recipeRunId)
+    : undefined;
+  const missingHint = Boolean(params.recipeRunId && !requested);
+  const selectedRecipeRunId =
+    requested?.id ?? selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
+  const selected = recipeRuns.find((group) => group.id === selectedRecipeRunId);
+  const recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] =
+    params.includeRecordedEvidence
+      ? missingHint
+        ? {
+            artifactPrefix: 'artifacts/',
+            errors: [`Recipe group is no longer available: ${params.recipeRunId}`],
+          }
+        : await readRunRecordedEvidence(
+            enrichedRun,
+            selected,
+            params.decisionId
+              ? { decisionId: params.decisionId, packageHash: params.evidenceSnapshotHash }
+              : undefined,
+          )
+      : undefined;
+  if (recordedEvidence && run.output)
+    recordedEvidence.report = {
+      reportPath: run.output.reportPath,
+      manifestDigest: run.output.manifestDigest,
+      artifactManifest: run.output.artifactManifest,
+    };
+  return {
+    recipeRuns,
+    selectedRecipeRunId: params.decisionId ? null : selectedRecipeRunId,
+    ...(recordedEvidence ? { recordedEvidence } : {}),
+  };
 }

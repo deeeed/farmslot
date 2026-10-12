@@ -5,7 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
-
+- Derive plain free-text task and report titles while preserving the complete task and report bodies.
+- Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.
 - Wait for the reviewer-owned terminal mark before archiving its checklist and result.
 
 - Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.

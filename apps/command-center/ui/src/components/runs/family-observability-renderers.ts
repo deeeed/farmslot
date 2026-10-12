@@ -13,6 +13,7 @@ import {
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import {
   type EvidenceGroup,
@@ -396,7 +397,7 @@ export function renderRelatedByTicket(
                     >`
                   : nothing}
               </div>
-              <div class="run-item-title">${group.latest.summary ?? group.latest.ticketOrPr}</div>
+              ${renderRunTitle(group.latest, 'run-item-title')}
               <div class="run-item-meta">
                 family ${group.familyId.slice(0, 8)} · ${group.latest.branch ?? 'no branch'} ·
                 ${group.runs.length === 1

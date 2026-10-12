@@ -1,3 +1,4 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   CiCheckUpdatedPayload,
@@ -21,6 +22,7 @@ import {
   shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
 } from '@farmslot/protocol';
 
+import { artifactLightboxItem } from '../shared/artifact-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
@@ -212,6 +214,7 @@ export interface RunEvidenceLightboxItem {
   timelineUnavailableReason?: string;
   resolveArtifactUrl?: (path: string) => string;
   viewUrl?: string;
+  evidenceModel?: EvidenceReviewModel;
 }
 
 export function runEvidenceLightboxItems(
@@ -219,9 +222,7 @@ export function runEvidenceLightboxItems(
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string,
 ): RunEvidenceLightboxItem[] {
   return artifacts.map((artifact) => ({
-    url: artifactUrl(artifact),
-    path: artifact.path,
-    purpose: artifact.purpose,
+    ...artifactLightboxItem(artifact, artifactUrl),
     viewUrl: `#run/${artifact.runId}?artifactRun=${encodeURIComponent(artifact.runId)}&artifact=${encodeURIComponent(artifact.path)}`,
     caption: [
       artifact.stepName ? `step ${artifact.stepName}` : '',
@@ -229,17 +230,6 @@ export function runEvidenceLightboxItems(
     ]
       .filter(Boolean)
       .join(' · '),
-    ...(artifact.timelinePath
-      ? {
-          sha256: artifact.sha256,
-          timelinePath: artifact.timelinePath,
-          resolveArtifactUrl: (path: string) =>
-            artifactUrl({ ...artifact, path, sha256: undefined }),
-        }
-      : {}),
-    ...(artifact.timelineUnavailableReason
-      ? { timelineUnavailableReason: artifact.timelineUnavailableReason }
-      : {}),
   }));
 }
 
@@ -257,6 +247,7 @@ export function acceptanceEvidenceLightboxItems(args: {
   runId: string;
   familyId: string;
   criterion: AcceptanceCriterionRef;
+  evidenceModel?: EvidenceReviewModel;
   evidence: readonly string[];
   runArtifacts: readonly FamilyObservabilityArtifact[];
   artifactUrl: (artifact: FamilyObservabilityArtifact) => string;
@@ -275,6 +266,12 @@ export function acceptanceEvidenceLightboxItems(args: {
   const criterion = [args.criterion.id, args.criterion.text].filter(Boolean).join(' · ');
   return runEvidenceLightboxItems(artifacts, args.artifactUrl).map((item) => ({
     ...item,
+    ...(args.evidenceModel
+      ? {
+          evidenceModel: args.evidenceModel,
+          resolveArtifactUrl: (path: string) => args.artifactUrl({ ...artifacts[0]!, path }),
+        }
+      : {}),
     caption: [criterion, item.caption].filter(Boolean).join(' — '),
   }));
 }

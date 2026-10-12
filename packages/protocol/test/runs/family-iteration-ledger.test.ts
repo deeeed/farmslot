@@ -230,3 +230,11 @@ test('iteration ledger calls out CI-driven follow-ups', () => {
   assert.equal(ciCard.ciLabel, '1 failed check · 1 CI decision');
   assert.equal(presentation.summary.ciIssueRuns, 1);
 });
+
+test('iteration cards retain plain report titles for the native shared ledger', () => {
+  const run = makeRun({
+    summary: '<!doctype html><title>EchoBridge Android native QA</title><p>PASS</p>',
+  });
+  const presentation = buildFamilyIterationLedgerPresentation(makeSnapshot([run], []));
+  assert.equal(presentation.cards[0].title, 'EchoBridge Android native QA');
+});

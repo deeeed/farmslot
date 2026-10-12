@@ -8,6 +8,7 @@ import {
   type RunGrade,
   type RunTicketData,
   type StepLLMUsage,
+  taskTitleText,
 } from '@farmslot/protocol';
 
 import { loadPromptTemplate } from '../core/prompt-templates.js';
@@ -207,14 +208,14 @@ ${ticket.labels?.length ? `Labels: ${ticket.labels.join(', ')}` : ''}`;
 
     const parsed = JSON.parse(jsonMatch[0]);
     return {
-      summary: parsed.summary ?? ticket.title,
+      summary: taskTitleText(parsed.summary ?? ticket.title),
       branchSlug: sanitizeBranchSlug(parsed.branchSlug ?? slugify(ticket.title)),
       usage: result.usage,
     };
   } catch (err) {
     console.warn(`[intelligence] summary generation failed (non-fatal): ${(err as Error).message}`);
     return {
-      summary: ticket.title,
+      summary: taskTitleText(ticket.title),
       branchSlug: slugify(ticket.title),
       usage: { provider: 'fallback', model: 'none', durationMs: 0 },
     };

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { RunTitle } from '../../components/RunTitle';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
 import { runDisplayTitle } from '../../lib/run-display';
 import { baseStyles, colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
@@ -67,9 +68,10 @@ function SlotCard({
         <View style={{ flex: 1 }}>
           <Text style={styles.slotId}>{slot.slot}</Text>
           {displayTitle.title && displayTitle.title !== slot.slot ? (
-            <Text style={baseStyles.textSecondary} numberOfLines={1}>
-              {displayTitle.title}
-            </Text>
+            <RunTitle
+              style={baseStyles.textSecondary}
+              title={contextRun ? runDisplayTitle(contextRun, Infinity).title : displayTitle.title}
+            />
           ) : null}
           {displayTitle.subtitle && displayTitle.subtitle !== displayTitle.title ? (
             <Text style={styles.slotSubtitle} numberOfLines={1}>

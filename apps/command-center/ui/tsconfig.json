@@ -3,6 +3,8 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
+      "@farmslot/adapter-sdk/evidence": ["../../../packages/adapter-sdk/src/evidence.ts"],
+      "@farmslot/recipe-runner/evidence": ["../../../packages/recipe-runner/src/evidence/index.ts"],
       "@farmslot/protocol": ["../../../packages/protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../../../packages/protocol/src/*"],
       "@farmslot/theme": ["../../../packages/theme/src/index.ts"],

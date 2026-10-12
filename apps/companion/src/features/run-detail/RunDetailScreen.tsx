@@ -4,6 +4,7 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
@@ -17,6 +18,7 @@ import {
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
+  type RunRecordedEvidenceReview,
   type RunReplayStepResult,
   type RunStep,
   type TaskProgressResult,
@@ -25,6 +27,7 @@ import {
 } from '@farmslot/protocol';
 
 import { RunPipelineFull } from '../../components/RunPipeline';
+import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
@@ -126,6 +129,7 @@ export default function RunDetailScreen() {
   const upsertRun = useRunStore((s) => s.upsertRun);
   const [run, setRun] = useState<Run | null>(storeRun ?? null);
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +173,19 @@ export default function RunDetailScreen() {
     requestedRecipeRunIdRef.current = requestedRecipeRunId;
   }, [requestedRecipeRunId]);
 
+  const evidenceModel = useMemo(
+    () =>
+      createEvidenceReviewModel({
+        context: 'run-detail',
+        package: recordedEvidence?.input,
+        readErrors: recordedEvidence?.errors,
+        artifactPrefix: recordedEvidence?.artifactPrefix,
+        ledger: acceptanceStatus,
+        criteria: acceptanceCriteria ?? undefined,
+        report: recordedEvidence?.report,
+      }),
+    [acceptanceCriteria, acceptanceStatus, recordedEvidence, run?.output],
+  );
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
       const requestId = recipeRunsRequestRef.current + 1;
@@ -179,10 +196,17 @@ export default function RunDetailScreen() {
       }
       setRecipeRunsLoaded(false);
       return client
-        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId: resolvedRunId })
+        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+          runId: resolvedRunId,
+          includeRecordedEvidence: true,
+          ...(selectionHint && selectionHint !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+            ? { recipeRunId: selectionHint }
+            : {}),
+        })
         .then((result) => {
           if (recipeRunsRequestRef.current !== requestId) return;
           setRecipeRuns(result.recipeRuns);
+          setRecordedEvidence(result.recordedEvidence ?? null);
           setSelectedRecipeRunId(
             selectionHint === DECISION_EVIDENCE_RECIPE_RUN_PARAM
               ? null
@@ -571,7 +595,7 @@ export default function RunDetailScreen() {
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-          {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
+          {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
             {run.slotId && (
               <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
@@ -995,13 +1019,20 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'timeline' ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
-            {acceptanceStatus || acceptanceCriteria?.length || acceptanceStatusError ? (
+            {acceptanceStatus ||
+            acceptanceCriteria?.length ||
+            acceptanceStatusError ||
+            evidenceModel.claims.length ||
+            evidenceModel.errors.length ? (
               <TaskAcceptancePanel
+                evidenceModel={evidenceModel}
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
                 onOpenEvidence={(criterionId, path) =>
-                  router.push(acceptanceEvidenceHref(run.id, criterionId, path))
+                  router.push(
+                    acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId),
+                  )
                 }
               />
             ) : null}
