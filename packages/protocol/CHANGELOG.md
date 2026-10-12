@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
 
+## 0.40.0 - 2026-10-12
+
 - Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.
 
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
