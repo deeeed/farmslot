@@ -383,7 +383,7 @@ try {
       );
       const recovery = await client.call<SourcesSyncResult>('sources.sync', {
         ...request,
-        operationId: `proof-remount-${node.id}`,
+        operationId: `proof-remount-${node.id}-${lock.digest}`,
         nodeId: node.id,
       });
       assert.deepEqual(recovery.errors, []);
