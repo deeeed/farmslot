@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
 
 import { litBindings, litText } from '../../testing/lit-text.js';
@@ -344,4 +345,27 @@ test('an unreadable evidence manifest is shown muted, apart from a ledger error'
     })?.evidenceLinksError,
     'artifacts/evidence-manifest.json: Unexpected token',
   );
+});
+
+test('legacy package diagnostics render once in neutral collapsed details even without criteria', () => {
+  const model = createEvidenceReviewModel({
+    package: {
+      summary: undefined,
+      trace: undefined,
+      manifest: undefined,
+      artifactPaths: [],
+      artifactDigests: {},
+      timelines: {},
+    },
+    packagePath: 'artifacts/old-run',
+    readErrors: ['Missing required Recipe v1 artifact summary.json.'],
+  });
+  const text = litText(renderAcceptancePanel(ledger([]), { evidenceModel: model }));
+  assert.match(text, /evidence-package-status/);
+  assert.match(text, /Legacy/);
+  assert.match(text, /old-run/);
+  assert.match(text, /Show details/);
+  assert.equal((text.match(/Missing summary.json/g) ?? []).length, 1);
+  assert(!text.includes('class="ac-error"'));
+  assert(!text.includes('<details open'));
 });

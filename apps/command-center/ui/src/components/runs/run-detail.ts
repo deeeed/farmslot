@@ -175,6 +175,7 @@ export class RunDetail extends RunDetailState {
         package: this._recordedEvidence?.input,
         readErrors: this._recordedEvidence?.errors,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
+        packagePath: this._recordedEvidence?.packagePath,
         ledger: this.acceptanceStatus,
         criteria: this.acceptanceCriteria ?? undefined,
         evidenceLinks: this.acceptanceEvidenceLinks ?? undefined,
