@@ -169,6 +169,7 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
+import { withSourcePlanning } from '../sources/runtime.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -375,6 +376,15 @@ export async function runCreate(
   params: RunCreateParams,
   emit: Emit,
   options: RunCreateInternalOptions = {},
+): Promise<RunCreateResult> {
+  if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
+  return withSourcePlanning(params.project, () => runCreateWithSources(params, emit, options));
+}
+
+async function runCreateWithSources(
+  params: RunCreateParams,
+  emit: Emit,
+  options: RunCreateInternalOptions,
 ): Promise<RunCreateResult> {
   if (params.taskFile !== undefined && !path.isAbsolute(params.taskFile)) {
     throw new Error(
@@ -1955,7 +1965,9 @@ export async function resolveRunDecision(
               console.log(
                 `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
               );
-              const chainRun = createRun(chainSpec.createParams);
+              const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
+                createRun(chainSpec.createParams),
+              );
               applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
               if (Object.keys(chainSpec.updateFields).length)
                 updateRun(chainRun.id, chainSpec.updateFields);

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve declared execution-template sources through an attested source binding.
+
 ## 0.18.1 - 2026-10-12
 
 - Update shared runtime dependencies for bounded recipe log observations.

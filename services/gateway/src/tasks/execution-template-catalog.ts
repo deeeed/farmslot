@@ -23,7 +23,11 @@ import {
   type ExecutionTemplateOptions,
   type ExecutionTemplateRunMode,
 } from '@farmslot/protocol';
-import { resolveEffectiveDomain } from '@farmslot/slot-config';
+import {
+  currentProjectSources,
+  resolveEffectiveDomain,
+  resolveSourceBinding,
+} from '@farmslot/slot-config';
 
 import type { ProjectVars } from '../core/config.js';
 
@@ -65,7 +69,12 @@ function configuredCatalog(projectVars: ProjectVars): {
   const root = projectPackRoot(projectVars);
   const configured = resolveConfiguredExecutionTemplateSources(
     projectVars.projectJson.execution_templates,
-    { projectPackRoot: root },
+    {
+      projectPackRoot: root,
+      resolveSourceBinding: currentProjectSources()
+        ? (selection) => resolveSourceBinding(selection, currentProjectSources()!.materialization)
+        : undefined,
+    },
   );
   return {
     sources: [

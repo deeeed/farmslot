@@ -49,6 +49,7 @@ import {
 } from '@farmslot/protocol';
 import { parseReviewRequestContext } from '@farmslot/review-dispatch';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
+import { freezePlannedRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -645,6 +646,7 @@ export function createRun(
     directReviewPublication?: import('@farmslot/protocol').DirectReviewPublication;
   },
 ): Run {
+  if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
     throw new Error('Run ownership cannot be supplied in run parameters');
   if ('reviewPublication' in params || 'directReviewPublication' in params)
@@ -903,6 +905,7 @@ export function createRun(
     updatedAt: now,
   };
   run.agentContexts = initialAgentContextsForRun(run);
+  run.sourceProvenance = freezePlannedRunSources(run.id);
   runs.set(run.id, run);
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');

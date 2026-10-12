@@ -65,6 +65,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
+import { SourceAdmissionRefusal, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { schedulerTick } from '../work-graph/store.js';
 
@@ -891,6 +892,19 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
+      if (err instanceof SourceAdmissionRefusal) {
+        // Source refusal is not worker completion. Keep ownership while an operator
+        // restores the exact admitted inputs, even when the worker is still active.
+        updateRunStep(runId, stepName, {
+          status: 'failed',
+          detail: msg,
+          outputs: { sourceAdmissionRefused: true },
+        });
+        updateRun(runId, { status: 'reconciling', error: msg });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        return;
+      }
+
       if (
         err instanceof PromptDeliveryUncertainError ||
         err instanceof NativeWorkerOperationUncertainError
@@ -1548,6 +1562,14 @@ interface StepIO {
 }
 
 async function executeStep(runId: string, step: string, generation: number): Promise<StepIO> {
+  return withRunSources(getRun(runId)!, () => executeSourcedStep(runId, step, generation));
+}
+
+async function executeSourcedStep(
+  runId: string,
+  step: string,
+  generation: number,
+): Promise<StepIO> {
   const run = getRun(runId)!;
   if (run.reviewWorkspaceTarget && run.flowType === 'review-pr') {
     return executeReviewWorkspaceStep(runId, step, generation, broadcastFn);

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Require an attested source binding for declared providers and recipe libraries.
+
 ## 0.14.2 - 2026-10-12
 
 - Validate called log-observation parameters before execution using the shared invocation checks.

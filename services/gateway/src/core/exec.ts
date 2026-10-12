@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@farmslot/protocol';
+import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
@@ -229,6 +230,17 @@ export async function execOnSlot(
   const opts: ExecOnSlotOptions =
     typeof optsOrCwd === 'string' ? { cwd: optsOrCwd } : (optsOrCwd ?? {});
   const cwd = opts.cwd ?? slotVars.remoteRepo;
+  const sources = currentProjectSources();
+  if (sources) {
+    const execution = sources.execution ?? sources.materialization;
+    const { verifyExecutionSources } = await import('../sources/runtime.js');
+    await verifyExecutionSources(slotVars.machine, execution);
+    const env = sourceExecutionEnvironment(sources);
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    cmd = `${Object.entries(env)
+      .map(([key, value]) => `export ${key}=${quote(value)};`)
+      .join(' ')} ${cmd}`;
+  }
 
   if (isLocal(slotVars.host, slotVars.machine)) {
     return execLocal(cmd, {

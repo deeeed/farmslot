@@ -18,3 +18,6 @@ export {
   runSessionUsage,
   sampleSessionUsageIncremental,
 } from './session-usage.js';
+export * from './source-binding.js';
+export * from './source-environment.js';
+export * from './source-runtime-settings.js';

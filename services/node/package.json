@@ -15,6 +15,7 @@
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/slot-config": "workspace:*",
     "ws": "^8.18.0"
   },
   "devDependencies": {

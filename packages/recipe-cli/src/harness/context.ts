@@ -19,6 +19,7 @@ import {
   DEFAULT_TASK_DIR,
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
+  type SourceEntryRef,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
 import {
@@ -577,6 +578,12 @@ export interface ConfiguredRecipeProject {
 }
 
 export interface ResolveProjectContextOptions extends ResolveHarnessContextOptions {
+  /** Supplied by the farm's shared, attested binding resolver. Harnesses never resolve refs. */
+  resolveSourceBinding?: (selection: SourceEntryRef) => {
+    root: string;
+    commit: string;
+    lockDigest: string;
+  };
   projects?: readonly ConfiguredRecipeProject[];
   /** Explicit operator-owned project registry, with <name>/project.json entries. */
   projectsDir?: string;
@@ -820,13 +827,30 @@ export async function resolveProjectContext(
     }
   };
   const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
+    if (ref.sourceId) {
+      if (!options.resolveSourceBinding)
+        throw new ProjectBindingError(
+          'SOURCE_LOCK_REQUIRED',
+          'Declared source has no verified materialization.',
+          'execute through a source-admitted Farmslot invocation',
+        );
+      return options.resolveSourceBinding({ sourceId: ref.sourceId, entry: ref.entry }).root;
+    }
+    if (options.resolveSourceBinding && ref.env)
+      throw new ProjectBindingError(
+        'SOURCE_UNDECLARED',
+        'A locked provider or library cannot use an environment checkout.',
+        'declare a sourceId and contained entry instead',
+      );
     if (!configured)
       throw new ProjectBindingError(
         'SOURCE_UNAUTHORIZED',
         'Discovered root references cannot read operator environment or checkout paths.',
         'register the project before resolving provider or library root references',
       );
-    const value = ref.env ? environment[ref.env] : path.resolve(checkoutRoot, ref.projectPath!);
+    const value = ref.env
+      ? environment[ref.env]
+      : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)
       throw new ProjectBindingError(
         'SOURCE_ROOT_MISSING',
@@ -846,6 +870,12 @@ export async function resolveProjectContext(
     cliEntries: optionValues(options.tokens, '--library'),
     ...(options.load?.env ? { env: options.load.env } : {}),
   });
+  if (options.resolveSourceBinding && overrides.length)
+    throw new ProjectBindingError(
+      'SOURCE_UNDECLARED',
+      'Locked execution cannot override libraries with loose checkout paths.',
+      'use a pushed branch source pin',
+    );
   const libraries: ResolvedProjectLibrary[] = overrides.map((entry) => {
     const libraryRoot = existingSourceRoot(path.resolve(cwd, entry.root));
     const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
@@ -865,7 +895,9 @@ export async function resolveProjectContext(
           ? path.resolve(root, entry.source)
           : entry.source.env
             ? `env:${entry.source.env}`
-            : path.resolve(checkoutRoot, entry.source.projectPath!);
+            : entry.source.sourceId
+              ? sourceRoot(entry.source)
+              : path.resolve(checkoutRoot, entry.source.projectPath!);
       override.overrides ??= original;
       override.overriddenSource = {
         root: original,

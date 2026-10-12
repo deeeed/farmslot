@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Carry exact source receipts into project recipe execution.
+
 - Use the configured project registry for recipe commands and conformance when `--projects-dir` is omitted.
 
 - Show roadmap delivery status and filter lists by delivered or undelivered outcomes.

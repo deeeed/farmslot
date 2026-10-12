@@ -2374,6 +2374,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Immutable ADR-069 inputs. Absence on historical runs retains unknown legacy provenance. */
+  sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
   /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
   reviewRoundAdmissions?: string[];
   /** Run cleanup preserved resources whose ownership could not be proven. */

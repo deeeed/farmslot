@@ -36,6 +36,7 @@ export * from './runner-models.js';
 export * from './runtime-capabilities.js';
 export * from './search.js';
 export * from './slot.js';
+export * from './sources.js';
 export * from './task.js';
 export * from './terminal.js';
 export * from './terminal-attachment.js';

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
+import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
 import {
   execOnSlot,
@@ -29,6 +30,7 @@ import {
   wrapWorkerShellCommand,
 } from '../../runners/launch-command.js';
 import { normalizeRunner } from '../../runners/registry.js';
+import { withSlotSources } from '../../sources/runtime.js';
 
 import { ignoreFixtureMatches, skillsFixtureMatches } from './fixture-content.js';
 import { checkCommitSigning, loadGitIdentity } from './git-identity.js';
@@ -46,6 +48,13 @@ export async function slotCheck(
   params: SlotCheckParams,
   emit: EventEmitter,
 ): Promise<SlotCheckResult> {
+  return withSlotSources(params.slotId, () => slotCheckWithSources(params, emit));
+}
+
+async function slotCheckWithSources(
+  params: SlotCheckParams,
+  emit: EventEmitter,
+): Promise<SlotCheckResult> {
   const slotVars = await loadSlotVars(params.slotId);
   await applySelectedApp(slotVars);
 
@@ -54,8 +63,8 @@ export async function slotCheck(
   try {
     projectVars = await loadProjectVars(slotVars.projectName);
     projectJson = projectVars.projectJson;
-  } catch {
-    /* project config may not exist */
+  } catch (error) {
+    if (!isMissingProjectConfigError(error)) throw error;
   }
 
   const devServerName = getProjectField(projectJson, 'health.dev_server_name') || 'DevServer';

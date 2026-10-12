@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Resolve source bindings from verified, read-only Git commit materializations.
+
 - Validate exclusive recording-target claim declarations and preserve their binding and provider parameter schemas in the capability catalog.
 
 - Use WARM/COLD review defaults and minimum review counts without runner-diversity configuration.

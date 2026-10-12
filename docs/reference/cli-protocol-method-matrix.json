@@ -1487,6 +1487,14 @@
     "run.adopt": {
       "surface": "typed-command",
       "command": "farmslot run adopt"
+    },
+    "sources.status": {
+      "surface": "rpc-only",
+      "note": "ADR-069 source authority; dedicated sources CLI lands in the next approved stage."
+    },
+    "sources.sync": {
+      "surface": "rpc-only",
+      "note": "ADR-069 source authority; dedicated sources CLI lands in the next approved stage."
     }
   }
 }

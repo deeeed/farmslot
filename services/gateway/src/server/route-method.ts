@@ -1,5 +1,4 @@
 // route-method.ts — Gateway RPC dispatch boundary for non-run method families
-
 import { WebSocket } from 'ws';
 
 import {
@@ -487,6 +486,7 @@ import {
   slotSoftRefresh,
 } from '../methods/slot.js';
 import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
+import { sourcesStatus, sourcesSync } from '../methods/sources.js';
 import { streamSubscribe, streamUnsubscribe } from '../methods/stream-feed.js';
 import { taskProgress } from '../methods/task.js';
 import {
@@ -1248,6 +1248,10 @@ async function routeAuthorizedMethod(
       });
       return { registered: true };
     }
+    case Methods.SOURCES_STATUS:
+      return sourcesStatus(p as import('@farmslot/protocol').SourcesStatusParams);
+    case Methods.SOURCES_SYNC:
+      return sourcesSync(p as import('@farmslot/protocol').SourcesSyncParams);
     case Methods.NODES_LIST:
       return { nodes: getAllNodes(), gatewayProtocolVersion: PROTOCOL_VERSION };
 

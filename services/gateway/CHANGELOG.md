@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resolve declared source refs into immutable admission locks and refuse source drift.
+
 - Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
 
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.

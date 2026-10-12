@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
   ConfiguredExecutionTemplateSource,
   ProjectExecutionTemplatesConfig,
+  SourceEntryRef,
   UnavailableExecutionTemplateSource,
 } from '@farmslot/protocol';
 
@@ -18,6 +19,11 @@ export interface ResolvedExecutionTemplateSources {
 }
 
 export interface ResolveConfiguredExecutionTemplateSourcesOptions {
+  resolveSourceBinding?: (selection: SourceEntryRef) => {
+    root: string;
+    commit: string;
+    lockDigest: string;
+  };
   projectPackRoot: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -53,13 +59,24 @@ function configuredRoot(
   source: ConfiguredExecutionTemplateSource,
   options: ResolveConfiguredExecutionTemplateSourcesOptions,
 ): { path?: string; reason?: UnavailableExecutionTemplateSource['reason'] } {
+  if (source.root.sourceId) {
+    if (!options.resolveSourceBinding) return { reason: 'invalid-root' };
+    return {
+      path: options.resolveSourceBinding({
+        sourceId: source.root.sourceId,
+        entry: source.root.entry,
+      }).root,
+    };
+  }
   if (typeof source.root.env === 'string') {
     const value = (options.env ?? process.env)[source.root.env]?.trim();
     if (!value) return { reason: 'missing-environment' };
     if (!path.isAbsolute(value)) return { reason: 'invalid-root' };
     return { path: value };
   }
-  return { path: path.resolve(options.projectPackRoot, source.root.projectPath) };
+  return source.root.projectPath
+    ? { path: path.resolve(options.projectPackRoot, source.root.projectPath) }
+    : { reason: 'invalid-root' };
 }
 
 /**

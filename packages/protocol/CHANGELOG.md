@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Declare versioned source locks, exact source receipts and run input provenance.
+
 - Share the five-round review budget and its gate display independently of passing-review counts.
 
 ## 0.40.0 - 2026-10-12

@@ -13,8 +13,10 @@ import type {
   ReviewWorkspaceSupportConfig,
 } from '@farmslot/protocol';
 import {
+  currentProjectSources,
   type RawProjectJson,
   referenceRepoPlaceholder,
+  resolveSourceBinding,
   staticReviewSupportPlaceholdersAllowed,
 } from '@farmslot/slot-config';
 export type {
@@ -202,7 +204,13 @@ export async function collectReviewWorkspaceSupport(
         ...(source.subpath ? { subpath: source.subpath } : {}),
       })),
     },
-    { projectPackRoot: path.dirname(project.projectConfig), ...options },
+    {
+      resolveSourceBinding: currentProjectSources()
+        ? (selection) => resolveSourceBinding(selection, currentProjectSources()!.materialization)
+        : undefined,
+      projectPackRoot: path.dirname(project.projectConfig),
+      ...options,
+    },
   );
   if (resolution.unavailable.length)
     throw new Error(
