@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { Methods, type Run } from '@farmslot/protocol';
 
-import { retryReviewPublication } from '../features/workspace-shared/review-publication-action';
+import {
+  readReviewRun,
+  retryReviewPublication,
+} from '../features/workspace-shared/review-publication-action';
 
 import type { GatewayClient } from './gateway-client';
 
@@ -50,4 +53,46 @@ test('publication failures propagate without fetching or accepting a run', async
     /Policy revoked/,
   );
   assert.deepEqual(calls, [Methods.PR_REVIEW_PUBLISH]);
+});
+
+test('full saved reads reject invalidated authority, superseded requests and another run', async () => {
+  let release!: (result: { run: Run }) => void;
+  let sequence = 0;
+  const accepted: Run[] = [];
+  const client = {
+    request: () =>
+      new Promise<{ run: Run }>((resolve) => {
+        release = resolve;
+      }),
+  } as Pick<GatewayClient, 'request'>;
+  const first = ++sequence;
+  const read = readReviewRun(
+    client,
+    'review',
+    () => sequence === first,
+    (run) => accepted.push(run),
+  );
+  ++sequence;
+  release({ run: { id: 'review' } as Run });
+  await read;
+  assert.equal(accepted.length, 0);
+  const current = readReviewRun(
+    client,
+    'review',
+    () => true,
+    (run) => accepted.push(run),
+  );
+  release({ run: { id: 'other' } as Run });
+  await current;
+  assert.equal(accepted.length, 0);
+  const full = { id: 'review', reviewResult: { reviewMd: 'large'.repeat(1000) } } as Run;
+  const successful = readReviewRun(
+    client,
+    'review',
+    () => true,
+    (run) => accepted.push(run),
+  );
+  release({ run: full });
+  await successful;
+  assert.deepEqual(accepted, [full]);
 });

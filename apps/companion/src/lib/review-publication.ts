@@ -19,3 +19,14 @@ export function reviewPublicationView(run: Run) {
     canRetry: run.status === 'done' && policy?.enabled === true && !published,
   };
 }
+
+/** Equal-timestamp run.list projections must not replace full historical payloads. */
+export function reviewRunForDisplay(run: Run | null, stored: Run | undefined): Run | null {
+  if (!run || !stored || stored.id !== run.id || stored.updatedAt < run.updatedAt) return run;
+  if (
+    stored.updatedAt === run.updatedAt &&
+    stored.decisions.some((decision) => decision.payloadTrimmed?.length)
+  )
+    return run;
+  return stored;
+}

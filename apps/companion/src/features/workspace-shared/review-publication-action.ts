@@ -7,6 +7,18 @@ import {
 
 import type { GatewayClient } from '../../lib/gateway-client';
 
+/** Full detail is required before calling historical review fields unavailable. */
+export async function readReviewRun(
+  client: Pick<GatewayClient, 'request'>,
+  runId: string,
+  isCurrent: () => boolean,
+  accept: (run: Run) => void,
+) {
+  if (!isCurrent()) return;
+  const result = await client.request<RunGetResult>(Methods.RUN_GET, { runId });
+  if (isCurrent() && result.run.id === runId) accept(result.run);
+}
+
 /** Recheck authority after each reply before adopting data into the current farm. */
 export async function retryReviewPublication(
   client: Pick<GatewayClient, 'request'>,
