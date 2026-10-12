@@ -20,6 +20,7 @@ import { assertSourceAttestation } from './attestation.js';
 import { type FetchedSource, SourceGitStore } from './git.js';
 import { sourceLockDigest } from './lock.js';
 import {
+  ReadOnlySourceVolume,
   SourceMaterializer,
   sourceTreeIdentity,
   type SourceVolume,
@@ -247,3 +248,19 @@ test('legacy work retains original input routing while new runs freeze their own
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test(
+  'an unmounted macOS directory is identified before diskutil can reject its path',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'source-unmounted-path-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const mount = path.join(root, 'mount');
+    await mkdir(mount);
+    const { realpath } = await import('node:fs/promises');
+    const volume = new ReadOnlySourceVolume(async () => {
+      throw new Error('diskutil must not identify an unmounted path');
+    });
+    await assert.rejects(volume.verify(await realpath(mount)), SourceVolumeMissing);
+  },
+);

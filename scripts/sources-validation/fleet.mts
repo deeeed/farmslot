@@ -699,9 +699,12 @@ try {
         teardownErrors.push(`${runId}: ${(error as Error).message}`);
       }
     }
-    for (const node of configuration.nodes) {
+    for (const node of [
+      { id: 'gateway', home: path.join(output, 'home'), kind: 'gateway', ssh: undefined },
+      ...configuration.nodes.map((node) => ({ ...node, kind: 'node' })),
+    ]) {
       try {
-        const detach = `python3 - <<'PY'\nimport json,subprocess\nfrom pathlib import Path\nreceipts=Path(${JSON.stringify(path.join(node.home, 'sources/node/receipts'))})\nmounts={str(Path(root).parent) for record in receipts.glob('*.json') for root in json.loads(record.read_text())['roots'].values()}\nfor mount in mounts:\n subprocess.run(['hdiutil','detach','-quiet',mount],check=True)\nPY\n`;
+        const detach = `python3 - <<'PY'\nimport json,subprocess\nfrom pathlib import Path\nreceipts=Path(${JSON.stringify(path.join(node.home, 'sources', node.kind, 'receipts'))})\nmounts={str(Path(root).parent) for record in receipts.glob('*.json') for root in json.loads(record.read_text())['roots'].values()}\nfor mount in mounts:\n try:\n  mounted=Path(mount).stat().st_dev != Path(mount).parent.stat().st_dev\n except FileNotFoundError:\n  mounted=False\n if mounted:\n  subprocess.run(['hdiutil','detach','-quiet',mount],check=True)\nPY\n`;
         if (node.ssh)
           await pipeScript('ssh', ['-T', '-o', 'BatchMode=yes', node.ssh, 'bash -s'], detach);
         else await pipeScript('bash', ['-s'], detach);

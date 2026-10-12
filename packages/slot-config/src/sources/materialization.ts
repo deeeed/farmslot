@@ -139,6 +139,10 @@ export class ReadOnlySourceVolume implements SourceVolume {
   async verify(mount: string): Promise<void> {
     if ((await realpath(mount)) !== mount) throw new Error('Source mount path was substituted');
     if (process.platform === 'darwin') {
+      // diskutil cannot identify an ordinary directory after its image detaches.
+      // A source image has a distinct device from the directory containing it.
+      if ((await lstat(mount)).dev === (await lstat(path.dirname(mount))).dev)
+        throw new SourceVolumeMissing('Source volume is missing');
       const plist = (await this.command('diskutil', ['info', '-plist', mount])).toString();
       const location = /<key>MountPoint<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
       if (location !== mount) throw new SourceVolumeMissing('Source volume is missing');
