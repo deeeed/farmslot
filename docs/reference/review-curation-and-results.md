@@ -1,6 +1,11 @@
 # Review curation and saved results
 
-Normative contract for [ADR-068](../adr/068-shared-review-curation-and-results.md).
+**Status:** Accepted under [ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results).
+**Implementation:** Finding curation and reviewed-line inspection merged in [#963](https://github.com/deeeed/farmslot/pull/963); the saved-result reader merged in [#985](https://github.com/deeeed/farmslot/pull/985).
+
+This delivered contract is separate from the Proposed completed-evidence/storage
+work in [#967](https://github.com/deeeed/farmslot/pull/967). It does not accept or
+implement that proposal.
 
 ## Publication view
 
@@ -49,7 +54,7 @@ appendices and evidence overrides.
 
 ## Saved view
 
-The second delivery renders `reviewResultForRun(run)` after the publication gate
+The saved-result reader renders `reviewResultForRun(run)` after the publication gate
 closes, including saved-but-unpublished and automatically finished reviews.
 Display raw saved verdict, full reviewed SHA and the complete report through the
 existing document viewer. Use the retained result first, then the latest
@@ -69,6 +74,10 @@ native saved-result reader. Both read existing Run fields and add no storage or 
 It owns pure finding/curation models and optional fingerprint
 validation for the two clients and gateway. Existing request/response methods,
 review result persistence and review-dispatch controls remain the consumers.
+Shared comment identity/grouping, recommendation normalization and serialization
+belong to the same protocol projection, used by both clients. The existing
+ADR-063 dispatch picker remains the owner of review-request choices. The saved
+reader retains results after Post, Dismiss or automatic finish.
 No new public command, flag, harness extension or result-store version. The
 internal post-review snapshot flag is owned by the gateway slot publisher.
 
@@ -96,3 +105,17 @@ target and Android recorder. Explicit recording target overrides retain preceden
    data. Each PR has a connected recipe on the operator's phone platform proving RPC/store effects and HUD
    stills with intents shorter than 80 characters. Browser proof validates any
    changed desktop rendering. Proof uses no external review posting.
+
+Private gateway acceptance MUST exercise the production resolver and verify
+persisted selection plus outgoing payload on both workspace and slot paths,
+using an isolated provider sink with stubbed reads and writes, without GitHub
+mutations. Assert the report/recommendation, finding reorder and refresh in flight
+during resolution without altering accepted data.
+
+## Boundaries
+
+Review generation, WARM/COLD dispatch policy, reruns, report rewriting,
+publication account policy, gate approvals, evidence-engine changes and HTML
+report rendering remain outside this contract. Reuse the existing native review
+component/controller, diff/code viewer and document viewer, without another
+viewer, picker or report component.

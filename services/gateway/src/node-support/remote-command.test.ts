@@ -205,6 +205,10 @@ async function withTempFarm(t: test.TestContext): Promise<{
   writeFileSync(
     path.join(dir, 'project.json'),
     JSON.stringify({
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
       hooks: { health_check: `bash {{farmslot_dir}}/projects/${name}/scripts/h.sh` },
     }),
   );

@@ -736,11 +736,6 @@ export async function evalTrialStart(
   );
   const axes = templateResolution.axes;
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
-  if (axes.template && (await loadProjectConfig(params.project))?.executionTemplates) {
-    throw new Error(
-      'Template-variant eval axes are not supported for projects using execution_templates. Use an exact execution-template selection outside the eval variant axis.',
-    );
-  }
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
   const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
@@ -892,14 +887,23 @@ export async function evalTrialStart(
       effort: params.effort,
       app: params.app,
       safetyTier: params.safetyTier,
+      mode: templateResolution.mode,
+      executionTemplateId: templateResolution.executionTemplate?.id,
       taskTemplate: templateResolution.taskTemplate?.variant
         ? templateResolution.taskTemplate
         : undefined,
     },
     emit,
     {
+      expectedExecutionTemplate: params.slotId ? templateResolution.executionTemplate : undefined,
       beforeCreate: options.beforeCreate,
-      afterCreateSync: options.afterCreateSync,
+      afterCreateSync: (run) => {
+        // A queued trial has no slot yet. Retain the selected snapshot so final
+        // admission and task writing can reject a changed template later.
+        if (templateResolution.executionTemplate)
+          run.executionTemplate = structuredClone(templateResolution.executionTemplate);
+        options.afterCreateSync?.(run);
+      },
       durableStamp: options.durableStamp,
       awaitPersist: options.awaitPersist,
     },

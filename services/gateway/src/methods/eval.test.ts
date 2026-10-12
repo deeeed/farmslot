@@ -364,7 +364,7 @@ test('harnessLifecycleForAxes rejects abbreviated harness commit refs early', ()
   );
 });
 
-test('evalTrialStart creates a new eval-family candidate without original parent binding', async (t) => {
+test('evalTrialStart creates a catalog candidate without a template axis or original parent binding', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-startref-'));
   const runIds: string[] = [];
   const taskDirs: string[] = [];
@@ -427,7 +427,6 @@ test('evalTrialStart creates a new eval-family candidate without original parent
         project: 'farmslot-farm',
         experimentManifestPath,
         axes: {
-          template: { path: 'templates/worker/fix-bug.md' },
           harness: {
             version: 'mobile',
             ref: '2ceae4a099afcb183ae475d8b2724dd87a3f8645',
@@ -456,6 +455,8 @@ test('evalTrialStart creates a new eval-family candidate without original parent
   assert.equal(result.run?.lane, 'comparison');
   assert.equal(result.run?.completionPolicy, 'artifact-only');
   assert.equal(result.run?.flowType, 'fix-bug');
+  assert.equal(result.run?.executionTemplate?.id, 'fix-bug/default');
+  assert.equal(result.run?.taskTemplate, undefined);
   assert.equal(result.run?.ticketOrPr.startsWith('EVAL-'), true);
   assert.equal(result.run?.startRef?.requestedRef, 'release/v1.0.0');
   assert.deepEqual(result.run?.startRef?.source, { kind: 'manual' });

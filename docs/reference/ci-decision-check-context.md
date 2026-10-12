@@ -1,5 +1,8 @@
 # CI decision check context
 
+**Status:** Accepted under [ADR-064 Amendment 1](../adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context).
+**Implementation:** Merged in [#951](https://github.com/deeeed/farmslot/pull/951).
+
 ## Contract
 
 The six decisions are `ci_inline_fix_blocked`, `ci_merge_conflict`,
@@ -11,6 +14,9 @@ timestamp and an array of check rows. Each row has a name, normalized progress s
 nullable latest source timestamp and nullable check link. A legacy status creation
 time is an activity timestamp, never a check-start claim or duration. Every individual check is included, rather than only
 watched group summaries. GitHub CLI and GraphQL sources use the same row model.
+Check age uses the latest recorded completion/start timestamp, or a legacy status
+creation timestamp; fetch age is a separate measurement. Status records progress
+or completion, while conclusion retains the provider's reported terminal state.
 
 New CI decisions retain that same field in `context.checkSnapshot`, without changing which older decision types carry watched-check context. The snapshot belongs to the gate's creation
 and remains unchanged on refresh. Older records may lack the field; their
@@ -35,6 +41,14 @@ not resolve, rerun, publish or modify the gate's actions.
 raising a decision. Command Center and Companion use the same model inside their
 existing decision components. No additional CLI flag, RPC or harness hook.
 
+The optional snapshot and named row/view-model exports are additive package and
+decision-context changes. Existing watched groups, recommendations, actions and
+cache semantics remain unchanged. Extend the existing check queries without an
+additional request or endpoint. Harnesses inherit the gateway response and
+decision context, without a new project policy, gate-resolution rule or schema
+version. Gate-review screens, review posting/curation, CI reruns, auto-resolution,
+historical reconstruction and farm changes remain outside this contract.
+
 ## Read availability and refresh boundary
 
 Populate the field only for successful complete check reads. A genuine empty
@@ -57,13 +71,6 @@ The new Companion refresh path is read-only. Command Center consumes the shared
 model only in its existing renderer; its existing timeout auto-resume and timer
 remain separate and unchanged. This work adds no call to their resolver.
 
-The iOS proof uses a non-validation CI-watch run on a real open PR, with a sandbox
-watched group that never matches and a short hold timeout. It opens the resulting
-pending CI timeout, refreshes, and reads gateway state to prove snapshot/actions
-and unresolved state stay intact while current metadata reloads. A seeded legacy
-decision covers unrecorded data. Other CI types are covered at unit level. No
-inline fixes, model dispatch or review posting are part of the proof.
-
 ## Existing desktop data and bounded list projection
 
 Companion shows both sections for all six CI types. Command Center uses the
@@ -83,3 +90,17 @@ A successful CLI no-check response yields available-empty data. If the CLI
 reports no checks as a failed query, keep unavailable; do not parse its message
 or invent a successful read. Different provider paths can retain different
 counts of repeated check names, so both sections list independent rows.
+
+## Acceptance
+
+Unit checks cover all six decisions, legacy/missing data, PR/repository identity,
+changing current checks, immutable gate snapshots and ages. Real read-only RPC
+proof covers metadata and force refresh.
+
+The iOS proof uses a non-validation CI-watch run on a real open PR, with a sandbox
+watched group that never matches and a short hold timeout. It opens the resulting
+pending CI timeout, refreshes, and reads gateway state to prove snapshot/actions
+and unresolved state stay intact while current metadata reloads. HUD stills have
+intents below 80 characters and no error banners. A seeded legacy decision covers
+unrecorded data. Other CI types are covered at unit level. No inline fixes, model
+dispatch or review posting are part of the proof.
